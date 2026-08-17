@@ -13,10 +13,16 @@ const { requireAuth } = require("./middleware/requireAuth");
 
 const authRoutes = require("./routes/auth");
 const conversationsRoutes = require("./routes/conversations");
+const { bootstrapAdminUser } = require("./db/bootstrapAdmin");
 
 const app = express();
 
 const PORT = process.env.PORT || 3000;
+
+// Creates a first staff login from ADMIN_USERNAME/ADMIN_PASSWORD env vars,
+// but only if no staff logins exist yet. Needed for hosts without shell
+// access (e.g. Render's free tier) — see src/db/bootstrapAdmin.js.
+bootstrapAdminUser();
 
 // ── WhatsApp webhook: needs the raw body for signature verification, so it
 // gets its own JSON parser instance separate from the portal API's. ──
