@@ -1,0 +1,68 @@
+@import "tailwindcss";
+@import "@fontsource/manrope/600.css";
+@import "@fontsource/manrope/700.css";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+
+@theme {
+  --font-display: "Manrope", ui-sans-serif, sans-serif;
+  --font-body: "Inter", ui-sans-serif, sans-serif;
+
+  --color-bg: #faf9f6;
+  --color-surface: #ffffff;
+  --color-sidebar: #16211d;
+  --color-sidebar-hover: #202f29;
+  --color-sidebar-text: #e7ece9;
+  --color-sidebar-text-muted: #8fa199;
+
+  --color-primary: #2f6f62;
+  --color-primary-hover: #245a4f;
+  --color-primary-light: #e4efec;
+
+  --color-accent: #d8a34e;
+  --color-accent-light: #faf1e0;
+
+  --color-text: #1a211f;
+  --color-text-muted: #5b675f;
+  --color-border: #e6e5de;
+
+  --color-danger: #b5462f;
+  --color-danger-light: #f7e9e5;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+h1, h2, h3, .font-display {
+  font-family: var(--font-display);
+}
+
+/* Chat bubble notch — the small consistent signature detail used across
+   the Inbox thread view. */
+.bubble-in::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  bottom: 6px;
+  width: 12px;
+  height: 12px;
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  clip-path: polygon(100% 0, 0 100%, 100% 100%);
+}
+
+.bubble-out::before {
+  content: "";
+  position: absolute;
+  right: -6px;
+  bottom: 6px;
+  width: 12px;
+  height: 12px;
+  background: var(--color-primary);
+  clip-path: polygon(0 0, 100% 100%, 0 100%);
+}
