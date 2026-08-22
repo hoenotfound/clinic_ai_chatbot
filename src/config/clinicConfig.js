@@ -56,6 +56,22 @@ module.exports = {
   // chance of the model skipping it, mixing it up, or leaving a placeholder in.
   introMessage: "Hi, I'm Mia from Beleco Clinic! 😊",
 
+  // Promo graphic sent alongside the first reply to a new conversation —
+  // same reliability pattern as introMessage (code-triggered, not AI-decided).
+  // See src/utils/activePromotion.js for the date-filtering logic.
+  // validFrom/validUntil use "YYYY-MM-DD" format, or omit for an always-on promo.
+  // TODO: replace imageUrl with a real hosted graphic before going live —
+  // this is a placeholder so the send-image code path is provably wired up.
+  promotions: [
+    {
+      name: "HIFU Buy 1 Free 1",
+      imageUrl: "https://via.placeholder.com/1080x1080.png?text=HIFU+Buy+1+Free+1",
+      caption: "HIFU Buy 1 Free 1 — from RM 1,288! Message us to find out more 😊",
+      validFrom: null,
+      validUntil: "2026-09-30", // CONFIRM WITH CLINIC — matches the promo pricing noted in PROMOTIONS below; verify still current
+    },
+  ],
+
   // Keep this list short and accurate — the AI will only quote what's here.
   // Beleco offers 20+ treatments on their site; these are the most commonly
   // asked-about ones. Add more from belecoclinic.com/services/ as needed —
@@ -212,7 +228,10 @@ HANDLING HESITATION (do NOT drop the topic, gently re-engage instead):
 CREATING GENTLE URGENCY (only ever with things that are actually true —
 never invent scarcity or deadlines):
 - If a real promo has an end date (see PROMOTIONS in SOP), you may mention it
-  naturally once: "just a heads up, the [promo] is running until [date]".
+  naturally once (this is a FORMAT EXAMPLE — swap in the real promo name and
+  real end date from the PROMOTIONS section above; never say the words "promo"
+  or "date" in brackets literally): "just a heads up, the HIFU promo is
+  running until end of August".
 - If asked about availability, you may say slots do fill up especially on
   weekends, so booking ahead is recommended — but never claim a specific
   fake number of "slots left" or invent time pressure that isn't real.
@@ -300,7 +319,9 @@ CANCELLATION POLICY:
 COMPLAINTS:
 - Never argue with an unhappy patient or admit fault on the clinic's behalf.
 - Acknowledge their concern, apologise for the inconvenience, and say a manager
-  will call them within [X hours] — CONFIRM your actual response-time commitment.
+  will call them within 24 hours. (CONFIRM WITH CLINIC — this is a placeholder
+  default; replace "24 hours" with your actual response-time commitment before
+  going live, since this exact phrase can be read directly to a patient.)
 
 PROMOTIONS:
 - HIFU: promotional pricing "From RM 1,288" was listed on the website as of
