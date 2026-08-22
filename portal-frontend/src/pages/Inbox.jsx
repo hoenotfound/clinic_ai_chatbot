@@ -173,12 +173,28 @@ function formatPhone(number) {
   return `+${number}`;
 }
 
-function formatTime(isoLike) {
-  if (!isoLike) return "";
-  // SQLite datetime('now') gives "YYYY-MM-DD HH:MM:SS" in UTC without a timezone marker.
-  const date = new Date(isoLike.replace(" ", "T") + "Z");
+function formatTime(value) {
+  if (!value) return "";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    console.warn("Invalid date received:", value);
+    return "";
+  }
+
   const now = new Date();
   const sameDay = date.toDateString() === now.toDateString();
-  if (sameDay) return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+
+  if (sameDay) {
+    return date.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  return date.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+  });
 }
