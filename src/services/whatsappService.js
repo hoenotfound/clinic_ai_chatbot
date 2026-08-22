@@ -31,6 +31,46 @@ async function sendMessage(to, text) {
 }
 
 /**
+ * Sends an image message (by public URL) via the Cloud API, with an optional caption.
+ * @param {string} to - recipient's WhatsApp ID (phone number, no '+')
+ * @param {string} imageUrl - publicly accessible URL of the image
+ * @param {string} [caption] - optional text shown under the image
+ * @returns {Promise<boolean>} true if sent successfully, false otherwise (never throws —
+ *   a failed promo image should never take down the actual text reply around it)
+ */
+async function sendImage(to, imageUrl, caption) {
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const token = process.env.WHATSAPP_TOKEN;
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "image",
+        image: caption ? { link: imageUrl, caption } : { link: imageUrl },
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error("WhatsApp image send failed:", res.status, errBody);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("WhatsApp image send threw an error:", err);
+    return false;
+  }
+}
+
+/**
  * Pulls out every inbound message from a WhatsApp webhook payload.
  * Returns an array (usually 0 or 1 entries, but Meta can batch several
  * if a patient sends multiple texts in quick succession).
@@ -62,4 +102,4 @@ function parseIncomingMessages(body) {
   }
 }
 
-module.exports = { sendMessage, parseIncomingMessages };
+module.exports = { sendMessage, sendImage, parseIncomingMessages };
