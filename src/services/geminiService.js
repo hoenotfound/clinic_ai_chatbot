@@ -26,7 +26,10 @@ async function getReply(messages) {
     contents,
     config: {
       systemInstruction: buildSystemPrompt(),
-      maxOutputTokens: 500,
+      maxOutputTokens: 1000,        // was 500 — more headroom for a full reply
+      thinkingConfig: {
+        thinkingBudget: 0,          // NEW — turns off Gemini's invisible "thinking" tokens
+      },
     },
   });
 
