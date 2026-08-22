@@ -1,6 +1,6 @@
 /**
  * Same getHistory/appendMessage interface as the old in-memory version,
- * but now backed by SQLite — so conversation history survives restarts
+ * but now backed by Postgres — so conversation history survives restarts
  * and the management portal can read the exact same data.
  */
 
@@ -11,11 +11,11 @@ const MAX_MESSAGES_FOR_AI_CONTEXT = 20; // bounds prompt size/cost, not what's s
 
 /**
  * @param {string} waId - patient's WhatsApp number
- * @returns {Array<{role: 'user'|'assistant', content: string}>}
+ * @returns {Promise<Array<{role: 'user'|'assistant', content: string}>>}
  */
-function getHistory(waId) {
-  const contact = contactsRepo.getOrCreateContact(waId);
-  const rows = messagesRepo.getMessagesForContact(contact.id, MAX_MESSAGES_FOR_AI_CONTEXT);
+async function getHistory(waId) {
+  const contact = await contactsRepo.getOrCreateContact(waId);
+  const rows = await messagesRepo.getMessagesForContact(contact.id, MAX_MESSAGES_FOR_AI_CONTEXT);
   return rows.map((r) => ({ role: r.role, content: r.content }));
 }
 
@@ -24,10 +24,11 @@ function getHistory(waId) {
  * @param {'user'|'assistant'} role
  * @param {string} content
  * @param {string|null} whatsappMessageId - only set for inbound patient messages
+ * @returns {Promise<void>}
  */
-function appendMessage(waId, role, content, whatsappMessageId = null) {
-  const contact = contactsRepo.getOrCreateContact(waId);
-  messagesRepo.saveMessage(contact.id, role, content, whatsappMessageId);
+async function appendMessage(waId, role, content, whatsappMessageId = null) {
+  const contact = await contactsRepo.getOrCreateContact(waId);
+  await messagesRepo.saveMessage(contact.id, role, content, whatsappMessageId);
 }
 
 module.exports = { getHistory, appendMessage };
