@@ -24,6 +24,9 @@ function buildSystemPrompt() {
 
 TONE: ${clinic.tone}
 
+TEXTING STYLE — follow these literally, this is how you should actually write every message:
+${clinic.messagingStyle || ""}
+
 CLINIC INFO:
 - Branches (ask which is most convenient if the patient doesn't specify):
 ${branchesList}
