@@ -16,15 +16,11 @@ const { requireAuth } = require("./middleware/requireAuth");
 const authRoutes = require("./routes/auth");
 const conversationsRoutes = require("./routes/conversations");
 const { bootstrapAdminUser } = require("./db/bootstrapAdmin");
+const { initSchema } = require("./db/db");
 
 const app = express();
 
 const PORT = process.env.PORT || 3000;
-
-// Creates a first staff login from ADMIN_USERNAME/ADMIN_PASSWORD env vars,
-// but only if no staff logins exist yet. Needed for hosts without shell
-// access (e.g. Render's free tier) — see src/db/bootstrapAdmin.js.
-bootstrapAdminUser();
 
 // ── WhatsApp webhook: needs the raw body for signature verification, so it
 // gets its own JSON parser instance separate from the portal API's. ──
@@ -77,7 +73,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
     // Persisted dedup check (survives restarts) — the messages table has a
     // unique constraint on whatsapp_message_id, this is just a friendlier
     // early-exit than catching that constraint error.
-    if (messagesRepo.messageExistsByWhatsappId(id)) {
+    if (await messagesRepo.messageExistsByWhatsappId(id)) {
       console.log(`Skipping duplicate/retried message ${id}`);
       continue;
     }
@@ -95,9 +91,9 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
 
       // Save the patient's message first, independent of whether the AI
       // reply succeeds — so it always shows in the inbox, even on failure.
-      conversationStore.appendMessage(from, "user", text, id);
+      await conversationStore.appendMessage(from, "user", text, id);
 
-      const history = conversationStore.getHistory(from); // now includes the message just saved
+      const history = await conversationStore.getHistory(from); // now includes the message just saved
 
       // history.length === 1 means this save was the very first message this
       // patient has ever sent — a reliable, code-level check (not something
@@ -111,7 +107,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
         ? `${clinicConfig.introMessage}\n\n${aiReply}`
         : aiReply;
 
-      conversationStore.appendMessage(from, "assistant", reply);
+      await conversationStore.appendMessage(from, "assistant", reply);
 
       await whatsapp.sendMessage(from, reply);
       console.log(`Replied to ${from}: ${reply}`);
@@ -158,6 +154,21 @@ app.get(/^(?!\/(webhook|api)).*/, (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+async function start() {
+  // Create tables if they don't exist yet — safe to run every startup.
+  await initSchema();
+
+  // Creates a first staff login from ADMIN_USERNAME/ADMIN_PASSWORD env vars,
+  // but only if no staff logins exist yet. Needed for hosts without shell
+  // access (e.g. Render's free tier) — see src/db/bootstrapAdmin.js.
+  await bootstrapAdminUser();
+
+  app.listen(PORT, () => {
+    console.log(`Server listening on port ${PORT}`);
+  });
+}
+
+start().catch((err) => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
 });
