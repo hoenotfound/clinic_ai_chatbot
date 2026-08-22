@@ -10,7 +10,7 @@
 
 module.exports = {
   clinicName: "Beleco Clinic",
-  aiAssistantName: "Mia", // gives the bot a friendly identity, not "AI"
+  aiAssistantName: "Deon", // gives the bot a friendly identity, not "AI"
 
   // Beleco has 3 branches — patients may ask about any of them, or just
   // ask "where are you" without specifying. The AI should list all three
