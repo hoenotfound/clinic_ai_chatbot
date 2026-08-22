@@ -54,7 +54,7 @@ module.exports = {
   // to the AI to decide — it's prepended in code (see server.js) so the
   // clinic/assistant name is guaranteed correct every single time, with zero
   // chance of the model skipping it, mixing it up, or leaving a placeholder in.
-  introMessage: "Hi, I'm Mia from Beleco Clinic! 😊",
+  introMessage: "Hi, I'm Deon from Beleco Clinic! 😊",
 
   // Promo graphic sent alongside the first reply to a new conversation —
   // same reliability pattern as introMessage (code-triggered, not AI-decided).
@@ -65,7 +65,7 @@ module.exports = {
   promotions: [
     {
       name: "HIFU Buy 1 Free 1",
-      imageUrl: "https://via.placeholder.com/1080x1080.png?text=HIFU+Buy+1+Free+1",
+      imageUrl: "https://res.cloudinary.com/dboju5krg/image/upload/v1787414189/487510987_1062467509234755_8247724301894839842_n_ubilq7.jpg",
       caption: "HIFU Buy 1 Free 1 — from RM 1,288! Message us to find out more 😊",
       validFrom: null,
       validUntil: "2026-09-30", // CONFIRM WITH CLINIC — matches the promo pricing noted in PROMOTIONS below; verify still current
