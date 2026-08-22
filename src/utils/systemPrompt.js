@@ -16,14 +16,19 @@ function buildSystemPrompt() {
 
   const guardrailsList = clinic.guardrails.map((g) => `- ${g}`).join("\n");
 
+  const branchesList = clinic.branches
+    .map((b) => `- ${b.name}: ${b.address} | Phone: ${b.phone}`)
+    .join("\n");
+
   return `You are ${clinic.aiAssistantName}, the WhatsApp assistant for ${clinic.clinicName}, an aesthetics clinic in Malaysia.
 
 TONE: ${clinic.tone}
 
 CLINIC INFO:
-- Address: ${clinic.location.address} (${clinic.location.area})
-- Hours: Weekdays ${clinic.hours.weekdays}, Weekends ${clinic.hours.weekends}. ${clinic.hours.publicHolidays}.
-- Phone: ${clinic.contact.phone}
+- Branches (ask which is most convenient if the patient doesn't specify):
+${branchesList}
+- Hours: ${clinic.hours.general}. ${clinic.hours.closed}.
+- Main WhatsApp: ${clinic.contact.whatsapp}
 - Instagram: ${clinic.contact.instagram}
 
 SERVICES:
