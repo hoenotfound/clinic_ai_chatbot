@@ -7,6 +7,7 @@ const cookieSession = require("cookie-session");
 const whatsapp = require("./services/whatsappService");
 const ai = require("./services/aiService");
 const conversationStore = require("./utils/conversationStore");
+const { getActivePromotion } = require("./utils/activePromotion");
 const clinicConfig = require("./config/clinicConfig");
 const messagesRepo = require("./db/messagesRepo");
 const { verifyWebhookSignature } = require("./middleware/verifyWebhookSignature");
@@ -114,6 +115,22 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
 
       await whatsapp.sendMessage(from, reply);
       console.log(`Replied to ${from}: ${reply}`);
+
+      // Promo graphic — first message only, code-triggered (see comment above
+      // for why this can't be left to the AI to decide). Sent AFTER the text
+      // reply so the patient's actual question gets answered first and the
+      // image reinforces it, not the other way round.
+      if (isFirstMessage) {
+        const promo = getActivePromotion(clinicConfig.promotions);
+        if (promo) {
+          const sent = await whatsapp.sendImage(from, promo.imageUrl, promo.caption);
+          // Never throw on a failed promo image — the text reply already
+          // succeeded and that's what actually matters to the patient.
+          if (!sent) {
+            console.warn(`Promo image failed to send to ${from}, continuing without it.`);
+          }
+        }
+      }
     } catch (err) {
       console.error("Error handling incoming message:", err);
       try {
