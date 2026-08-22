@@ -9,13 +9,14 @@ const MODEL = "claude-sonnet-5";
 
 /**
  * @param {Array<{role: 'user'|'assistant', content: string}>} messages - full conversation, ending in the latest user message
+ * @param {boolean} isFirstMessage - true if this is the patient's first-ever message (see server.js)
  * @returns {Promise<string>} the assistant's reply text
  */
-async function getReply(messages) {
+async function getReply(messages, isFirstMessage = false) {
   const response = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 500,
-    system: buildSystemPrompt(),
+    max_tokens: 800,
+    system: buildSystemPrompt(isFirstMessage),
     messages,
   });
 
