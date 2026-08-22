@@ -7,6 +7,7 @@ const cookieSession = require("cookie-session");
 const whatsapp = require("./services/whatsappService");
 const ai = require("./services/aiService");
 const conversationStore = require("./utils/conversationStore");
+const clinicConfig = require("./config/clinicConfig");
 const messagesRepo = require("./db/messagesRepo");
 const { verifyWebhookSignature } = require("./middleware/verifyWebhookSignature");
 const { requireAuth } = require("./middleware/requireAuth");
@@ -96,7 +97,18 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
       conversationStore.appendMessage(from, "user", text, id);
 
       const history = conversationStore.getHistory(from); // now includes the message just saved
-      const reply = await ai.getReply(history);
+
+      // history.length === 1 means this save was the very first message this
+      // patient has ever sent — a reliable, code-level check (not something
+      // left to the AI to remember). This guarantees the intro is correct
+      // and present 100% of the time, with zero chance of the model skipping
+      // it, leaving a placeholder in, or getting the clinic name wrong.
+      const isFirstMessage = history.length === 1;
+
+      const aiReply = await ai.getReply(history, isFirstMessage);
+      const reply = isFirstMessage
+        ? `${clinicConfig.introMessage}\n\n${aiReply}`
+        : aiReply;
 
       conversationStore.appendMessage(from, "assistant", reply);
 
