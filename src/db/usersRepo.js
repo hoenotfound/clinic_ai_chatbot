@@ -1,18 +1,20 @@
-const db = require("./db");
+const { pool } = require("./db");
 
-function getUserByUsername(username) {
-  return db.prepare("SELECT * FROM users WHERE username = ?").get(username);
+async function getUserByUsername(username) {
+  const result = await pool.query("SELECT * FROM users WHERE username = $1", [username]);
+  return result.rows[0] || null;
 }
 
-function createUser(username, passwordHash) {
-  db.prepare("INSERT INTO users (username, password_hash) VALUES (?, ?)").run(
-    username,
-    passwordHash
+async function createUser(username, passwordHash) {
+  await pool.query(
+    "INSERT INTO users (username, password_hash) VALUES ($1, $2)",
+    [username, passwordHash]
   );
 }
 
-function countUsers() {
-  return db.prepare("SELECT COUNT(*) AS count FROM users").get().count;
+async function countUsers() {
+  const result = await pool.query("SELECT COUNT(*) AS count FROM users");
+  return parseInt(result.rows[0].count, 10);
 }
 
 module.exports = { getUserByUsername, createUser, countUsers };
