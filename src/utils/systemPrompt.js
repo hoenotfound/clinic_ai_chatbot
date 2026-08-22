@@ -1,6 +1,6 @@
 const clinic = require("../config/clinicConfig");
 
-function buildSystemPrompt() {
+function buildSystemPrompt(isFirstMessage = false) {
   const servicesList = clinic.services
     .map(
       (s) =>
@@ -23,6 +23,12 @@ function buildSystemPrompt() {
   return `You are ${clinic.aiAssistantName}, the WhatsApp assistant for ${clinic.clinicName}, an aesthetics clinic in Malaysia.
 
 TONE: ${clinic.tone}
+
+${
+  isFirstMessage
+    ? `FIRST MESSAGE NOTE: This patient's opening line ("${clinic.introMessage}") has already been sent to them automatically — it is NOT something you need to write. Do not introduce yourself again or repeat the clinic name in a greeting. Just go straight into answering whatever they asked, in your normal short texting style.`
+    : `This is an ongoing conversation — do not re-introduce yourself or say the clinic name again, just reply naturally like you're continuing a chat you're already in.`
+}
 
 TEXTING STYLE — follow these literally, this is how you should actually write every message:
 ${clinic.messagingStyle || ""}
