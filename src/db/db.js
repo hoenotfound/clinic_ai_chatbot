@@ -1,16 +1,29 @@
 const path = require("path");
 const fs = require("fs");
-const Database = require("better-sqlite3");
+const { Pool } = require("pg");
 
-const DB_PATH = process.env.DATABASE_PATH || path.join(__dirname, "../../data/clinic.db");
+// Neon (and most managed Postgres hosts) require SSL. Neon connection
+// strings work with the default `ssl: { rejectUnauthorized: false }` — no
+// need to fuss with CA certs for this use case.
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
-// Ensure the data/ directory exists before SQLite tries to create the file there.
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+pool.on("error", (err) => {
+  // Fired on idle client errors (e.g. a dropped connection) — log instead of
+  // crashing the whole process, since the pool recovers on its own.
+  console.error("Unexpected Postgres pool error:", err);
+});
 
-const db = new Database(DB_PATH);
-db.pragma("journal_mode = WAL"); // better concurrent read/write behaviour
+/**
+ * Runs schema.sql against the database. Safe to call on every startup —
+ * every statement is CREATE TABLE/INDEX IF NOT EXISTS, so this is a no-op
+ * once the schema already exists.
+ */
+async function initSchema() {
+  const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
+  await pool.query(schema);
+}
 
-const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
-db.exec(schema);
-
-module.exports = db;
+module.exports = { pool, initSchema };
