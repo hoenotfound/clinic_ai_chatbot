@@ -49,6 +49,13 @@ module.exports = {
     tiktok: "@belecoclinic",
   },
 
+  // Fixed, non-AI-generated intro line sent as the start of the very first
+  // reply to a brand-new patient conversation. This is deliberately NOT left
+  // to the AI to decide — it's prepended in code (see server.js) so the
+  // clinic/assistant name is guaranteed correct every single time, with zero
+  // chance of the model skipping it, mixing it up, or leaving a placeholder in.
+  introMessage: "Hi, I'm Mia from Beleco Clinic! 😊",
+
   // Keep this list short and accurate — the AI will only quote what's here.
   // Beleco offers 20+ treatments on their site; these are the most commonly
   // asked-about ones. Add more from belecoclinic.com/services/ as needed —
