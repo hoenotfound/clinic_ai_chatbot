@@ -7,8 +7,8 @@ const usersRepo = require("./usersRepo");
  * Only ever runs if the users table is empty, so it's safe to leave these
  * env vars set permanently; it won't create duplicates or reset passwords.
  */
-function bootstrapAdminUser() {
-  const existingCount = usersRepo.countUsers();
+async function bootstrapAdminUser() {
+  const existingCount = await usersRepo.countUsers();
   if (existingCount > 0) return; // already have at least one staff login
 
   const username = process.env.ADMIN_USERNAME;
@@ -24,7 +24,7 @@ function bootstrapAdminUser() {
   }
 
   const passwordHash = bcrypt.hashSync(password, 10);
-  usersRepo.createUser(username, passwordHash);
+  await usersRepo.createUser(username, passwordHash);
   console.log(`✅ Created initial staff login "${username}" from ADMIN_USERNAME/ADMIN_PASSWORD.`);
 }
 
