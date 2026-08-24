@@ -24,4 +24,13 @@ export const api = {
   me: () => request("/auth/me"),
   listConversations: () => request("/conversations"),
   getMessages: (contactId) => request(`/conversations/${contactId}/messages`),
+  sendMessage: (contactId, text) =>
+    request(`/conversations/${contactId}/messages`, { method: "POST", body: JSON.stringify({ text }) }),
+  takeOver: (contactId) => request(`/conversations/${contactId}/takeover`, { method: "POST" }),
+  returnToAi: (contactId) => request(`/conversations/${contactId}/return-to-ai`, { method: "POST" }),
+  setAttention: (contactId, needsAttention, reason) =>
+    request(`/conversations/${contactId}/attention`, {
+      method: "PATCH",
+      body: JSON.stringify({ needsAttention, reason }),
+    }),
 };

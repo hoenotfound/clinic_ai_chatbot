@@ -10,6 +10,8 @@ const conversationStore = require("./utils/conversationStore");
 const { getActivePromotion } = require("./utils/activePromotion");
 const clinicConfig = require("./config/clinicConfig");
 const messagesRepo = require("./db/messagesRepo");
+const contactsRepo = require("./db/contactsRepo");
+const { checkKeywordTriggers, extractHandoffSignal } = require("./utils/attentionTriggers");
 const { verifyWebhookSignature } = require("./middleware/verifyWebhookSignature");
 const { requireAuth } = require("./middleware/requireAuth");
 
@@ -89,9 +91,34 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
 
       console.log(`Incoming from ${from}: ${text}`);
 
+      // Fetch (or create) the contact first — we need its current mode
+      // before deciding whether the AI should even respond.
+      const contact = await contactsRepo.getOrCreateContact(from);
+
       // Save the patient's message first, independent of whether the AI
       // reply succeeds — so it always shows in the inbox, even on failure.
       await conversationStore.appendMessage(from, "user", text, id);
+
+      // Keyword safety-net — runs on every inbound message regardless of
+      // mode, so urgent messages get flagged even if a human already owns
+      // the conversation. See utils/attentionTriggers.js.
+      const keywordReason = checkKeywordTriggers(text);
+      if (keywordReason) {
+        await contactsRepo.setAttention(contact.id, true, keywordReason);
+      }
+
+      // ── Human takeover: a staff member owns this conversation ──
+      // The AI stays completely silent — no auto-reply, no promo. Staff
+      // reply manually from the portal until they hit "Return to AI".
+      // We still flag needs_attention (above, if triggered, or here
+      // unconditionally) so staff know there's a new unread message.
+      if (contact.mode === "human") {
+        if (!keywordReason) {
+          await contactsRepo.setAttention(contact.id, true, "New message — conversation is staff-owned.");
+        }
+        console.log(`Skipping AI reply for ${from} — conversation is in human mode.`);
+        continue;
+      }
 
       const history = await conversationStore.getHistory(from); // now includes the message just saved
 
@@ -102,7 +129,15 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
       // it, leaving a placeholder in, or getting the clinic name wrong.
       const isFirstMessage = history.length === 1;
 
-      const aiReply = await ai.getReply(history, isFirstMessage);
+      const rawAiReply = await ai.getReply(history, isFirstMessage);
+
+      // Strip the internal [[NEEDS_HUMAN]] marker (see systemPrompt.js) —
+      // the patient never sees it, but it tells us to flag this chat.
+      const { text: aiReply, flagged } = extractHandoffSignal(rawAiReply);
+      if (flagged) {
+        await contactsRepo.setAttention(contact.id, true, "AI handed off this conversation.");
+      }
+
       const reply = isFirstMessage
         ? `${clinicConfig.introMessage}\n\n${aiReply}`
         : aiReply;

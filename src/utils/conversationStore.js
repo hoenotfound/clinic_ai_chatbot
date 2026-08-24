@@ -24,11 +24,12 @@ async function getHistory(waId) {
  * @param {'user'|'assistant'} role
  * @param {string} content
  * @param {string|null} whatsappMessageId - only set for inbound patient messages
- * @returns {Promise<void>}
+ * @param {string|null} sentByUsername - only set for outbound messages a staff member typed themselves
+ * @returns {Promise<object>} the saved message row
  */
-async function appendMessage(waId, role, content, whatsappMessageId = null) {
+async function appendMessage(waId, role, content, whatsappMessageId = null, sentByUsername = null) {
   const contact = await contactsRepo.getOrCreateContact(waId);
-  await messagesRepo.saveMessage(contact.id, role, content, whatsappMessageId);
+  return messagesRepo.saveMessage(contact.id, role, content, whatsappMessageId, sentByUsername);
 }
 
 module.exports = { getHistory, appendMessage };

@@ -7,6 +7,24 @@ CREATE TABLE IF NOT EXISTS contacts (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- ── AI ↔ Human takeover state ──
+-- 'ai'    = the bot auto-replies to inbound messages (default).
+-- 'human' = a staff member has taken over; the bot stays silent and only
+--           staff (via the portal) send replies, until someone hits
+--           "Return to AI".
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'ai' CHECK (mode IN ('ai', 'human'));
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS takeover_by TEXT;               -- username of staff who took over, null if mode='ai'
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS takeover_at TIMESTAMPTZ;        -- when the current takeover started
+
+-- True whenever this conversation needs a human's eyes: the AI explicitly
+-- handed off, a keyword safety-net matched, or a patient messaged while a
+-- staff member already owns the conversation. Cleared when staff takes
+-- over / sends a reply / explicitly dismisses it.
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS needs_attention BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS attention_reason TEXT;          -- short human-readable reason, shown as a tooltip in the portal
+
+CREATE INDEX IF NOT EXISTS idx_contacts_needs_attention ON contacts(needs_attention) WHERE needs_attention = true;
+
 -- Every inbound (patient) and outbound (assistant) message, so the portal
 -- can show full chat history and the AI can still read context.
 CREATE TABLE IF NOT EXISTS messages (
@@ -17,6 +35,11 @@ CREATE TABLE IF NOT EXISTS messages (
   whatsapp_message_id TEXT UNIQUE, -- null for outbound messages we send ourselves
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Who actually wrote an outbound ('assistant') message: null means the AI
+-- generated it, a username means a staff member sent it manually from the
+-- Inbox. Always null for inbound ('user') messages.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS sent_by_username TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_messages_contact_id ON messages(contact_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);

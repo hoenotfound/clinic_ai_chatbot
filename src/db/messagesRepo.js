@@ -3,12 +3,16 @@ const { pool } = require("./db");
 /**
  * Saves a message for a contact. whatsappMessageId is only present for
  * inbound patient messages (used for dedup); outbound AI replies pass null.
+ * sentByUsername is only set for outbound messages a staff member typed
+ * themselves from the portal — leave null for AI-generated replies.
  */
-async function saveMessage(contactId, role, content, whatsappMessageId = null) {
-  await pool.query(
-    `INSERT INTO messages (contact_id, role, content, whatsapp_message_id) VALUES ($1, $2, $3, $4)`,
-    [contactId, role, content, whatsappMessageId]
+async function saveMessage(contactId, role, content, whatsappMessageId = null, sentByUsername = null) {
+  const result = await pool.query(
+    `INSERT INTO messages (contact_id, role, content, whatsapp_message_id, sent_by_username)
+     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [contactId, role, content, whatsappMessageId, sentByUsername]
   );
+  return result.rows[0];
 }
 
 /**
@@ -17,7 +21,7 @@ async function saveMessage(contactId, role, content, whatsappMessageId = null) {
  */
 async function getMessagesForContact(contactId, limit = 50) {
   const result = await pool.query(
-    `SELECT role, content, created_at FROM messages
+    `SELECT role, content, created_at, sent_by_username FROM messages
      WHERE contact_id = $1
      ORDER BY created_at DESC, id DESC
      LIMIT $2`,

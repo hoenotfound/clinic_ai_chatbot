@@ -4,29 +4,38 @@ const GRAPH_API_VERSION = "v20.0";
  * Sends a plain text WhatsApp message via the Cloud API.
  * @param {string} to - recipient's WhatsApp ID (phone number, no '+')
  * @param {string} text
+ * @returns {Promise<boolean>} true if sent successfully, false otherwise (never throws —
+ *   callers, e.g. the AI auto-reply flow, already have their own fallback logic around this)
  */
 async function sendMessage(to, text) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      to,
-      type: "text",
-      text: { body: text },
-    }),
-  });
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "text",
+        text: { body: text },
+      }),
+    });
 
-  if (!res.ok) {
-    const errBody = await res.text();
-    console.error("WhatsApp send failed:", res.status, errBody);
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error("WhatsApp send failed:", res.status, errBody);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("WhatsApp send threw an error:", err);
+    return false;
   }
 }
 
