@@ -159,6 +159,10 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
           // succeeded and that's what actually matters to the patient.
           if (!sent) {
             console.warn(`Promo image failed to send to ${from}, continuing without it.`);
+          } else {
+            // Persist it so it shows up in the Inbox too, not just on the
+            // patient's WhatsApp — previously this was sent but never saved.
+            await conversationStore.appendMessage(from, "assistant", promo.caption || "", null, null, promo.imageUrl);
           }
         }
       }

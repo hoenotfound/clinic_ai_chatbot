@@ -48,6 +48,7 @@ async function listConversations() {
       c.attention_reason,
       m.content AS last_message,
       m.role AS last_message_role,
+      m.media_url AS last_message_media_url,
       m.created_at AS last_message_at
     FROM contacts c
     JOIN messages m ON m.id = (

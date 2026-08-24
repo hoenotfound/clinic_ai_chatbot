@@ -204,7 +204,8 @@ function ConversationList({ conversations, selectedId, onSelect }) {
           </div>
           <p className="text-xs text-[var(--color-text-muted)] truncate mt-0.5 pl-2">
             {c.last_message_role === "assistant" ? "You: " : ""}
-            {c.last_message}
+            {c.last_message_media_url ? "📷 " : ""}
+            {c.last_message || (c.last_message_media_url ? "Photo" : "")}
           </p>
         </button>
       ))}
@@ -374,7 +375,14 @@ function MessageBubble({ message }) {
             {sentByStaff ? message.sent_by_username : "AI"}
           </p>
         )}
-        <p className="whitespace-pre-wrap">{message.content}</p>
+        {message.media_url && (
+          <img
+            src={message.media_url}
+            alt={message.content || "Sent image"}
+            className="rounded-lg mb-1.5 max-w-full max-h-64 object-cover"
+          />
+        )}
+        {message.content && <p className="whitespace-pre-wrap">{message.content}</p>}
         <p className={`text-[10px] mt-1 ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/70"}`}>
           {formatTime(message.created_at)}
         </p>
