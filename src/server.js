@@ -7,6 +7,7 @@ const cookieSession = require("cookie-session");
 const whatsapp = require("./services/whatsappService");
 const ai = require("./services/aiService");
 const { transcribeAudio } = require("./services/transcriptionService");
+const { convertToMp3 } = require("./services/audioConvertService");
 const conversationStore = require("./utils/conversationStore");
 const { getActivePromotion } = require("./utils/activePromotion");
 const clinicConfig = require("./config/clinicConfig");
@@ -94,11 +95,14 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
 
       // Voice note: download from WhatsApp and transcribe (English / Bahasa
       // Malaysia / Chinese, incl. mixed-language "Manglish" speech), then
-      // treat it exactly like a text message from here on. Also persist the
-      // audio itself (base64, in Postgres — see schema.sql) so staff can
-      // play the original recording in the Inbox — useful since transcription
-      // isn't perfect, especially with mixed languages or medical/treatment
-      // names, and tone/urgency don't come through in text.
+      // treat it exactly like a text message from here on. Also persist a
+      // playable copy of the audio (base64, in Postgres — see schema.sql) so
+      // staff can play the original recording in the Inbox — useful since
+      // transcription isn't perfect, especially with mixed languages or
+      // medical/treatment names, and tone/urgency don't come through in
+      // text. WhatsApp voice notes are Ogg/Opus, which Safari can't play at
+      // all, so we transcode to MP3 for storage/playback; transcription
+      // itself uses the original audio, since that format is irrelevant to Gemini.
       if (mediaType === "audio") {
         const media = await whatsapp.downloadMedia(mediaId);
         const transcript = media ? await transcribeAudio(media.buffer, media.mimeType) : null;
@@ -111,7 +115,15 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
           continue;
         }
         text = `🎤 ${transcript}`;
-        mediaAttachment = { mimeType: media.mimeType, data: media.buffer.toString("base64") };
+
+        const mp3 = await convertToMp3(media.buffer);
+        mediaAttachment = mp3
+          ? { mimeType: mp3.mimeType, data: mp3.buffer.toString("base64") }
+          // Conversion failing shouldn't block the reply — fall back to the
+          // original audio (playable in Chrome/Firefox/Edge, just not
+          // Safari) rather than losing playback entirely. Mime type is
+          // sanitized (no "; codecs=opus" param) so it's still a valid data URI.
+          : { mimeType: media.mimeType.split(";")[0].trim(), data: media.buffer.toString("base64") };
       }
 
       // Photo: download and persist it (base64, in Postgres — see schema.sql)
