@@ -46,11 +46,15 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS sent_by_username TEXT;
 -- caption (may be empty). Null media_url means a plain text message.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_url TEXT;
 
--- Photos a *patient* sends us (e.g. a skin/treatment-area photo) — unlike
--- media_url above (a public link we control, used for outbound images we
--- send), inbound WhatsApp media only gives us a short-lived download URL,
--- so we persist the actual bytes here to keep the photo available for the
--- AI to look at in later turns, not just the turn it arrived on.
+-- Photos and voice notes a *patient* sends us — unlike media_url above (a
+-- public link we control, used for outbound images we send), inbound
+-- WhatsApp media only gives us a short-lived download URL, so we persist
+-- the actual bytes here instead. For a photo this lets the AI look at it in
+-- later turns, not just the turn it arrived on (see conversationStore.js,
+-- which decides which is which from media_mime_type); for a voice note it's
+-- purely so staff can play the original recording in the Inbox (the AI
+-- already has the transcript in `content`, so audio bytes are never
+-- re-sent to it — see transcriptionService.js).
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_base64 TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_mime_type TEXT;
 
