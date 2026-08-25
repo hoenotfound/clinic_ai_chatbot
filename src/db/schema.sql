@@ -46,6 +46,14 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS sent_by_username TEXT;
 -- caption (may be empty). Null media_url means a plain text message.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_url TEXT;
 
+-- Photos a *patient* sends us (e.g. a skin/treatment-area photo) — unlike
+-- media_url above (a public link we control, used for outbound images we
+-- send), inbound WhatsApp media only gives us a short-lived download URL,
+-- so we persist the actual bytes here to keep the photo available for the
+-- AI to look at in later turns, not just the turn it arrived on.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_base64 TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_mime_type TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_messages_contact_id ON messages(contact_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 
