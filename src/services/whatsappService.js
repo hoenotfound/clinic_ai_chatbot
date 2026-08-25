@@ -138,6 +138,7 @@ function parseIncomingMessages(body) {
           from: message.from, // patient's WhatsApp number, used as the conversation key
           text: message.text.body,
           mediaId: null,
+          mediaType: null,
           unsupportedType: null,
         };
       }
@@ -147,10 +148,21 @@ function parseIncomingMessages(body) {
           from: message.from,
           text: null,
           mediaId: message.audio.id, // resolved via downloadMedia() in server.js
+          mediaType: "audio",
           unsupportedType: null,
         };
       }
-      return { id: message.id, from: message.from, text: null, mediaId: null, unsupportedType: message.type };
+      if (message.type === "image") {
+        return {
+          id: message.id,
+          from: message.from,
+          text: message.image.caption || null, // patients often send a photo with no caption
+          mediaId: message.image.id, // resolved via downloadMedia() in server.js
+          mediaType: "image",
+          unsupportedType: null,
+        };
+      }
+      return { id: message.id, from: message.from, text: null, mediaId: null, mediaType: null, unsupportedType: message.type };
     });
   } catch (err) {
     console.error("Failed to parse webhook payload:", err);
