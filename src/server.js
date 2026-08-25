@@ -71,8 +71,9 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   const incomingMessages = whatsapp.parseIncomingMessages(req.body);
 
   for (const incoming of incomingMessages) {
-    const { id, from, mediaId, unsupportedType } = incoming;
+    const { id, from, mediaId, mediaType, unsupportedType } = incoming;
     let text = incoming.text;
+    let mediaAttachment = null; // patient photo, persisted via appendMessage below
 
     // Persisted dedup check (survives restarts) — the messages table has a
     // unique constraint on whatsapp_message_id, this is just a friendlier
@@ -86,7 +87,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
       if (unsupportedType) {
         await whatsapp.sendMessage(
           from,
-          "Sorry, I can only read text or voice messages for now — could you type that out for me? 🙂"
+          "Sorry, I can only read text, voice, or photo messages for now — could you type that out for me? 🙂"
         );
         continue;
       }
@@ -96,7 +97,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
       // treat it exactly like a text message from here on. A small marker
       // is kept on the saved text so staff in the portal and the AI both
       // know this originated as a voice note.
-      if (mediaId) {
+      if (mediaType === "audio") {
         const media = await whatsapp.downloadMedia(mediaId);
         const transcript = media ? await transcribeAudio(media.buffer, media.mimeType) : null;
 
@@ -110,6 +111,26 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
         text = `🎤 ${transcript}`;
       }
 
+      // Photo: download and persist it (base64, in Postgres — see schema.sql)
+      // so it shows in the Inbox and so the AI can still look at it in later
+      // turns, not just the turn it arrived on. The AI already has a
+      // guardrail (clinicConfig guardrails) against assessing treatment
+      // suitability from a photo — it can comment on/discuss it, but hands
+      // off medical judgment calls to a doctor same as it would for a text
+      // question.
+      if (mediaType === "image") {
+        const media = await whatsapp.downloadMedia(mediaId);
+        if (!media) {
+          await whatsapp.sendMessage(
+            from,
+            "Sorry, I couldn't load that photo — mind sending it again? 🙂"
+          );
+          continue;
+        }
+        mediaAttachment = { mimeType: media.mimeType, data: media.buffer.toString("base64") };
+        text = text ? `📷 ${text}` : "📷 [Patient sent a photo]";
+      }
+
       console.log(`Incoming from ${from}: ${text}`);
 
       // Fetch (or create) the contact first — we need its current mode
@@ -118,7 +139,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
 
       // Save the patient's message first, independent of whether the AI
       // reply succeeds — so it always shows in the inbox, even on failure.
-      await conversationStore.appendMessage(from, "user", text, id);
+      await conversationStore.appendMessage(from, "user", text, id, null, null, mediaAttachment);
 
       // Keyword safety-net — runs on every inbound message regardless of
       // mode, so urgent messages get flagged even if a human already owns
