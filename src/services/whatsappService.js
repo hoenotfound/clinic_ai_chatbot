@@ -80,6 +80,88 @@ async function sendImage(to, imageUrl, caption) {
 }
 
 /**
+ * Uploads a local file (e.g. an image a staff member picked from their
+ * computer) to the WhatsApp Cloud API's media endpoint, returning a media ID
+ * that can be passed to sendImageById(). This is the counterpart to
+ * sendImage() above: sendImage() needs a *publicly hosted* URL (fine for the
+ * promo graphic, which lives on our own server/CDN), but staff-uploaded
+ * images only exist as bytes in memory — uploading them to WhatsApp first
+ * avoids having to stand up public hosting just to send one photo.
+ * @param {Buffer} buffer - raw file bytes
+ * @param {string} mimeType - e.g. "image/jpeg", "image/png"
+ * @returns {Promise<string|null>} the WhatsApp media ID, or null on failure
+ */
+async function uploadMedia(buffer, mimeType) {
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const token = process.env.WHATSAPP_TOKEN;
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/media`;
+
+  try {
+    const form = new FormData();
+    form.append("messaging_product", "whatsapp");
+    form.append("file", new Blob([buffer], { type: mimeType }), "upload");
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error("WhatsApp media upload failed:", res.status, errBody);
+      return null;
+    }
+    const data = await res.json();
+    return data.id || null;
+  } catch (err) {
+    console.error("WhatsApp media upload threw an error:", err);
+    return null;
+  }
+}
+
+/**
+ * Sends an image message by a WhatsApp media ID (from uploadMedia()) rather
+ * than a public URL — used for one-off images staff upload from the Inbox,
+ * as opposed to sendImage()'s link-based approach for pre-hosted graphics.
+ * @param {string} to - recipient's WhatsApp ID (phone number, no '+')
+ * @param {string} mediaId
+ * @param {string} [caption]
+ * @returns {Promise<boolean>} true if sent successfully, false otherwise
+ */
+async function sendImageById(to, mediaId, caption) {
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const token = process.env.WHATSAPP_TOKEN;
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "image",
+        image: caption ? { id: mediaId, caption } : { id: mediaId },
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error("WhatsApp image (by id) send failed:", res.status, errBody);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("WhatsApp image (by id) send threw an error:", err);
+    return false;
+  }
+}
+
+/**
  * Downloads a media attachment (e.g. a voice note) from the WhatsApp Cloud API.
  * This is a two-step process: first resolve the media ID to a short-lived
  * URL, then fetch the bytes from that URL — both requests need the same
@@ -170,4 +252,4 @@ function parseIncomingMessages(body) {
   }
 }
 
-module.exports = { sendMessage, sendImage, downloadMedia, parseIncomingMessages };
+module.exports = { sendMessage, sendImage, uploadMedia, sendImageById, downloadMedia, parseIncomingMessages };
