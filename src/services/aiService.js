@@ -1,6 +1,6 @@
 /**
  * Picks which AI backend to use, based on AI_PROVIDER in .env.
- * Both claudeService and geminiService expose the same getReply(history, message) shape,
+ * Both claudeService and geminiService expose the same getReply(messages, isFirstMessage) shape,
  * so switching providers is just changing this one env var — no other code needs to change.
  */
 
