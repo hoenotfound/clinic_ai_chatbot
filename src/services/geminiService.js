@@ -16,11 +16,23 @@ const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
  */
 async function getReply(messages, isFirstMessage = false) {
   // Gemini uses "model" instead of "assistant" as the role name, and expects
-  // parts arrays rather than plain strings.
-  const contents = messages.map((m) => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: m.content }],
-  }));
+  // parts arrays rather than plain strings. Most messages have plain string
+  // content (from history); a message with a live photo attached (see
+  // aiService.js) instead has content as an array of {type, ...} parts.
+  const contents = messages.map((m) => {
+    const role = m.role === "assistant" ? "model" : "user";
+
+    if (Array.isArray(m.content)) {
+      const parts = m.content.map((part) =>
+        part.type === "image"
+          ? { inlineData: { mimeType: part.mimeType, data: part.data } }
+          : { text: part.text }
+      );
+      return { role, parts };
+    }
+
+    return { role, parts: [{ text: m.content }] };
+  });
 
   const response = await ai.models.generateContent({
     model: MODEL,
