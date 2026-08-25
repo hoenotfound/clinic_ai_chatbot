@@ -375,9 +375,9 @@ function MessageBubble({ message }) {
             {sentByStaff ? message.sent_by_username : "AI"}
           </p>
         )}
-        {message.media_url && (
+        {(message.media_url || message.media_base64) && (
           <img
-            src={message.media_url}
+            src={message.media_url || `data:${message.media_mime_type || "image/jpeg"};base64,${message.media_base64}`}
             alt={message.content || "Sent image"}
             className="rounded-lg mb-1.5 max-w-full max-h-64 object-cover"
           />
