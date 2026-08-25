@@ -375,12 +375,21 @@ function MessageBubble({ message }) {
             {sentByStaff ? message.sent_by_username : "AI"}
           </p>
         )}
-        {(message.media_url || message.media_base64) && (
-          <img
-            src={message.media_url || `data:${message.media_mime_type || "image/jpeg"};base64,${message.media_base64}`}
-            alt={message.content || "Sent image"}
-            className="rounded-lg mb-1.5 max-w-full max-h-64 object-cover"
+        {message.media_base64?.length > 0 && message.media_mime_type?.startsWith("audio/") ? (
+          <audio
+            controls
+            src={`data:${message.media_mime_type};base64,${message.media_base64}`}
+            className="mb-1.5 max-w-full"
+            style={{ height: "36px" }}
           />
+        ) : (
+          (message.media_url || message.media_base64) && (
+            <img
+              src={message.media_url || `data:${message.media_mime_type || "image/jpeg"};base64,${message.media_base64}`}
+              alt={message.content || "Sent image"}
+              className="rounded-lg mb-1.5 max-w-full max-h-64 object-cover"
+            />
+          )
         )}
         {message.content && <p className="whitespace-pre-wrap">{message.content}</p>}
         <p className={`text-[10px] mt-1 ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/70"}`}>
