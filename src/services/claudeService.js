@@ -8,16 +8,30 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = "claude-sonnet-5";
 
 /**
- * @param {Array<{role: 'user'|'assistant', content: string}>} messages - full conversation, ending in the latest user message
+ * @param {Array<{role: 'user'|'assistant', content: string|Array<object>}>} messages - full conversation, ending in the latest user message
  * @param {boolean} isFirstMessage - true if this is the patient's first-ever message (see server.js)
  * @returns {Promise<string>} the assistant's reply text
  */
 async function getReply(messages, isFirstMessage = false) {
+  // Most messages have plain string content (from history); a message with a
+  // live photo attached (see aiService.js) instead has content as an array
+  // of generic {type, ...} parts that need converting to Claude's block format.
+  const claudeMessages = messages.map((m) => {
+    if (!Array.isArray(m.content)) return m;
+
+    const content = m.content.map((part) =>
+      part.type === "image"
+        ? { type: "image", source: { type: "base64", media_type: part.mimeType, data: part.data } }
+        : { type: "text", text: part.text }
+    );
+    return { role: m.role, content };
+  });
+
   const response = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 800,
     system: buildSystemPrompt(isFirstMessage),
-    messages,
+    messages: claudeMessages,
   });
 
   const textBlock = response.content.find((block) => block.type === "text");
