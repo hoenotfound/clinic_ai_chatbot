@@ -136,6 +136,24 @@ export default function Inbox() {
     }
   }
 
+  async function handleSendImage(file, caption) {
+    if (selectedId == null || !file) return;
+    setActionPending(true);
+    try {
+      const result = await api.sendImage(selectedId, file, caption);
+      await Promise.all([refreshMessages(), refreshConversations()]);
+      if (result?.delivered === false) {
+        alert("Image saved but WhatsApp delivery failed — the patient may not have received it. Please try resending.");
+      }
+    } catch (err) {
+      console.error("Failed to send image:", err);
+      alert(err.message || "Couldn't send that image — please try again.");
+      throw err;
+    } finally {
+      setActionPending(false);
+    }
+  }
+
   const selectedContact = conversations?.find((c) => c.contact_id === selectedId);
 
   return (
@@ -154,6 +172,7 @@ export default function Inbox() {
         onReturnToAi={handleReturnToAi}
         onDismissAttention={handleDismissAttention}
         onSend={handleSend}
+        onSendImage={handleSendImage}
       />
     </div>
   );
@@ -222,10 +241,14 @@ function ThreadView({
   onReturnToAi,
   onDismissAttention,
   onSend,
+  onSendImage,
 }) {
   const bottomRef = useRef(null);
+  const fileInputRef = useRef(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
@@ -234,7 +257,34 @@ function ThreadView({
   // Clear the draft whenever the selected conversation changes.
   useEffect(() => {
     setDraft("");
+    clearImage();
   }, [contact?.contact_id]);
+
+  // Revoke the object URL when it's replaced/unmounted, so we don't leak memory.
+  useEffect(() => {
+    return () => {
+      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    };
+  }, [imagePreviewUrl]);
+
+  function handleFilePicked(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow picking the same file again later
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      alert("Please choose an image file.");
+      return;
+    }
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    setImageFile(file);
+    setImagePreviewUrl(URL.createObjectURL(file));
+  }
+
+  function clearImage() {
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    setImageFile(null);
+    setImagePreviewUrl(null);
+  }
 
   if (!contact) {
     return (
@@ -247,13 +297,21 @@ function ThreadView({
   async function handleSubmit(e) {
     e.preventDefault();
     const text = draft.trim();
-    if (!text || sending) return;
+    if (sending) return;
+    if (!text && !imageFile) return;
     setSending(true);
     try {
-      await onSend(text);
+      if (imageFile) {
+        // Caption travels with the image as one WhatsApp message, same as
+        // how a phone's WhatsApp app attaches a caption to a photo.
+        await onSendImage(imageFile, text);
+        clearImage();
+      } else {
+        await onSend(text);
+      }
       setDraft("");
     } catch {
-      // error already surfaced to the user in onSend; keep draft so they can retry
+      // error already surfaced to the user in onSend/onSendImage; keep draft so they can retry
     } finally {
       setSending(false);
     }
@@ -311,31 +369,67 @@ function ThreadView({
         <div ref={bottomRef} />
       </div>
 
-      <form onSubmit={handleSubmit} className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface)] flex items-end gap-3">
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSubmit(e);
+      <form onSubmit={handleSubmit} className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface)]">
+        {imagePreviewUrl && (
+          <div className="flex items-center gap-3 mb-3 pb-3 border-b border-[var(--color-border)]">
+            <img src={imagePreviewUrl} alt="Selected attachment" className="w-16 h-16 rounded-lg object-cover border border-[var(--color-border)]" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium truncate">{imageFile.name}</p>
+              <p className="text-[11px] text-[var(--color-text-muted)]">Add a caption below (optional) and hit Send</p>
+            </div>
+            <button
+              type="button"
+              onClick={clearImage}
+              className="text-xs font-medium px-2.5 py-1 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors"
+            >
+              Remove
+            </button>
+          </div>
+        )}
+        <div className="flex items-end gap-3">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFilePicked}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={sending}
+            title="Attach an image"
+            className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
+          >
+            📷
+          </button>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSubmit(e);
+              }
+            }}
+            placeholder={
+              imageFile
+                ? "Add a caption (optional)…"
+                : contact.mode === "human"
+                ? "Type a WhatsApp message to this patient…"
+                : "Type a message — sending will take over this conversation from the AI…"
             }
-          }}
-          placeholder={
-            contact.mode === "human"
-              ? "Type a WhatsApp message to this patient…"
-              : "Type a message — sending will take over this conversation from the AI…"
-          }
-          rows={1}
-          className="flex-1 resize-none rounded-xl border border-[var(--color-border)] px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] max-h-32"
-        />
-        <button
-          type="submit"
-          disabled={!draft.trim() || sending}
-          className="shrink-0 px-4 py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
-        >
-          Send
-        </button>
+            rows={1}
+            className="flex-1 resize-none rounded-xl border border-[var(--color-border)] px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] max-h-32"
+          />
+          <button
+            type="submit"
+            disabled={(!draft.trim() && !imageFile) || sending}
+            className="shrink-0 px-4 py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
+          >
+            Send
+          </button>
+        </div>
       </form>
     </div>
   );
