@@ -6,6 +6,7 @@ const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
 const ai = require("./services/aiService");
+const { transcribeAudio } = require("./services/transcriptionService");
 const conversationStore = require("./utils/conversationStore");
 const { getActivePromotion } = require("./utils/activePromotion");
 const clinicConfig = require("./config/clinicConfig");
@@ -70,7 +71,8 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   const incomingMessages = whatsapp.parseIncomingMessages(req.body);
 
   for (const incoming of incomingMessages) {
-    const { id, from, text, unsupportedType } = incoming;
+    const { id, from, mediaId, unsupportedType } = incoming;
+    let text = incoming.text;
 
     // Persisted dedup check (survives restarts) — the messages table has a
     // unique constraint on whatsapp_message_id, this is just a friendlier
@@ -84,9 +86,28 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
       if (unsupportedType) {
         await whatsapp.sendMessage(
           from,
-          "Sorry, I can only read text messages for now — could you type that out for me? 🙂"
+          "Sorry, I can only read text or voice messages for now — could you type that out for me? 🙂"
         );
         continue;
+      }
+
+      // Voice note: download from WhatsApp and transcribe (English / Bahasa
+      // Malaysia / Chinese, incl. mixed-language "Manglish" speech), then
+      // treat it exactly like a text message from here on. A small marker
+      // is kept on the saved text so staff in the portal and the AI both
+      // know this originated as a voice note.
+      if (mediaId) {
+        const media = await whatsapp.downloadMedia(mediaId);
+        const transcript = media ? await transcribeAudio(media.buffer, media.mimeType) : null;
+
+        if (!transcript) {
+          await whatsapp.sendMessage(
+            from,
+            "Sorry, I couldn't quite catch that voice message — mind typing it out, or sending the voice note again? 🙂"
+          );
+          continue;
+        }
+        text = `🎤 ${transcript}`;
       }
 
       console.log(`Incoming from ${from}: ${text}`);
