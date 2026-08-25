@@ -378,7 +378,7 @@ function MessageBubble({ message }) {
         {message.media_base64?.length > 0 && message.media_mime_type?.startsWith("audio/") ? (
           <audio
             controls
-            src={`data:${message.media_mime_type};base64,${message.media_base64}`}
+            src={`data:${message.media_mime_type.split(";")[0].trim()};base64,${message.media_base64}`}
             className="mb-1.5 max-w-full"
             style={{ height: "36px" }}
           />
