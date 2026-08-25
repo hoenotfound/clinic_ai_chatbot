@@ -73,7 +73,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   for (const incoming of incomingMessages) {
     const { id, from, mediaId, mediaType, unsupportedType } = incoming;
     let text = incoming.text;
-    let mediaAttachment = null; // patient photo, persisted via appendMessage below
+    let mediaAttachment = null; // patient photo or voice note audio, persisted via appendMessage below
 
     // Persisted dedup check (survives restarts) — the messages table has a
     // unique constraint on whatsapp_message_id, this is just a friendlier
@@ -94,9 +94,11 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
 
       // Voice note: download from WhatsApp and transcribe (English / Bahasa
       // Malaysia / Chinese, incl. mixed-language "Manglish" speech), then
-      // treat it exactly like a text message from here on. A small marker
-      // is kept on the saved text so staff in the portal and the AI both
-      // know this originated as a voice note.
+      // treat it exactly like a text message from here on. Also persist the
+      // audio itself (base64, in Postgres — see schema.sql) so staff can
+      // play the original recording in the Inbox — useful since transcription
+      // isn't perfect, especially with mixed languages or medical/treatment
+      // names, and tone/urgency don't come through in text.
       if (mediaType === "audio") {
         const media = await whatsapp.downloadMedia(mediaId);
         const transcript = media ? await transcribeAudio(media.buffer, media.mimeType) : null;
@@ -109,6 +111,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
           continue;
         }
         text = `🎤 ${transcript}`;
+        mediaAttachment = { mimeType: media.mimeType, data: media.buffer.toString("base64") };
       }
 
       // Photo: download and persist it (base64, in Postgres — see schema.sql)
