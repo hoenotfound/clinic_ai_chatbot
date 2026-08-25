@@ -80,6 +80,43 @@ async function sendImage(to, imageUrl, caption) {
 }
 
 /**
+ * Downloads a media attachment (e.g. a voice note) from the WhatsApp Cloud API.
+ * This is a two-step process: first resolve the media ID to a short-lived
+ * URL, then fetch the bytes from that URL — both requests need the same
+ * bearer token, but the second one is what actually returns the audio.
+ * @param {string} mediaId
+ * @returns {Promise<{buffer: Buffer, mimeType: string}|null>} null on any failure
+ */
+async function downloadMedia(mediaId) {
+  const token = process.env.WHATSAPP_TOKEN;
+
+  try {
+    const metaRes = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${mediaId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!metaRes.ok) {
+      console.error("WhatsApp media lookup failed:", metaRes.status, await metaRes.text());
+      return null;
+    }
+    const meta = await metaRes.json();
+
+    const fileRes = await fetch(meta.url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!fileRes.ok) {
+      console.error("WhatsApp media download failed:", fileRes.status);
+      return null;
+    }
+
+    const arrayBuffer = await fileRes.arrayBuffer();
+    return { buffer: Buffer.from(arrayBuffer), mimeType: meta.mime_type || "audio/ogg" };
+  } catch (err) {
+    console.error("WhatsApp media download threw an error:", err);
+    return null;
+  }
+}
+
+/**
  * Pulls out every inbound message from a WhatsApp webhook payload.
  * Returns an array (usually 0 or 1 entries, but Meta can batch several
  * if a patient sends multiple texts in quick succession).
@@ -95,15 +132,25 @@ function parseIncomingMessages(body) {
     if (!messages || messages.length === 0) return []; // status update, not a new message
 
     return messages.map((message) => {
-      if (message.type !== "text") {
-        return { id: message.id, from: message.from, text: null, unsupportedType: message.type };
+      if (message.type === "text") {
+        return {
+          id: message.id, // used for de-duplicating retried webhooks
+          from: message.from, // patient's WhatsApp number, used as the conversation key
+          text: message.text.body,
+          mediaId: null,
+          unsupportedType: null,
+        };
       }
-      return {
-        id: message.id, // used for de-duplicating retried webhooks
-        from: message.from, // patient's WhatsApp number, used as the conversation key
-        text: message.text.body,
-        unsupportedType: null,
-      };
+      if (message.type === "audio") {
+        return {
+          id: message.id,
+          from: message.from,
+          text: null,
+          mediaId: message.audio.id, // resolved via downloadMedia() in server.js
+          unsupportedType: null,
+        };
+      }
+      return { id: message.id, from: message.from, text: null, mediaId: null, unsupportedType: message.type };
     });
   } catch (err) {
     console.error("Failed to parse webhook payload:", err);
@@ -111,4 +158,4 @@ function parseIncomingMessages(body) {
   }
 }
 
-module.exports = { sendMessage, sendImage, parseIncomingMessages };
+module.exports = { sendMessage, sendImage, downloadMedia, parseIncomingMessages };
