@@ -1,10 +1,25 @@
 const express = require("express");
+const multer = require("multer");
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
 const conversationStore = require("../utils/conversationStore");
 const whatsapp = require("../services/whatsappService");
 
 const router = express.Router();
+
+// Staff image uploads from the Inbox — kept in memory (never written to
+// disk) since we immediately forward the bytes to WhatsApp and to Postgres.
+// 16MB matches WhatsApp Cloud API's own image size limit.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 16 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.startsWith("image/")) {
+      return cb(new Error("Only image files are allowed."));
+    }
+    cb(null, true);
+  },
+});
 
 // GET /api/conversations — list every conversation, most recently active first.
 router.get("/", async (req, res) => {
@@ -125,6 +140,63 @@ router.post("/:contactId/messages", async (req, res) => {
   } catch (err) {
     console.error("Failed to send staff message:", err);
     res.status(500).json({ error: "Something went wrong sending this message." });
+  }
+});
+
+// POST /api/conversations/:contactId/media — staff uploads an image file
+// from their computer and sends it as a WhatsApp image message. Same
+// implicit-takeover behavior as the text-send route above. multipart/form-data
+// with a single "image" file field and an optional "caption" text field.
+router.post("/:contactId/media", upload.single("image"), async (req, res) => {
+  try {
+    const contact = await contactsRepo.getContactById(req.params.contactId);
+    if (!contact) return res.status(404).json({ error: "Contact not found." });
+
+    if (!req.file) {
+      return res.status(400).json({ error: "An image file is required." });
+    }
+
+    const caption = (req.body?.caption || "").trim();
+
+    // Implicit takeover — same as the text-send route.
+    if (contact.mode !== "human") {
+      await contactsRepo.takeOver(contact.id, req.session.username);
+    } else {
+      await contactsRepo.setAttention(contact.id, false);
+    }
+
+    // Upload the bytes to WhatsApp first to get a media ID, then send the
+    // actual message referencing it — no public hosting needed for
+    // one-off staff uploads (contrast with the promo graphic, which is
+    // sent by public link — see whatsappService.sendImage).
+    const mediaId = await whatsapp.uploadMedia(req.file.buffer, req.file.mimetype);
+    if (!mediaId) {
+      return res.status(502).json({ error: "Failed to upload image to WhatsApp. Please try again." });
+    }
+
+    const delivered = await whatsapp.sendImageById(contact.whatsapp_number, mediaId, caption || undefined);
+
+    // Persist it either way (even if delivery failed) so it's never lost
+    // from the thread, same reasoning as the text-send route. Stored as
+    // base64 — same field the Inbox already renders for patient-sent
+    // photos and for the promo graphic's media_url case.
+    const saved = await conversationStore.appendMessage(
+      contact.whatsapp_number,
+      "assistant",
+      caption,
+      null,
+      req.session.username,
+      null,
+      { mimeType: req.file.mimetype, data: req.file.buffer.toString("base64") }
+    );
+
+    res.status(201).json({ ...saved, delivered });
+  } catch (err) {
+    console.error("Failed to send staff image:", err);
+    if (err.message === "Only image files are allowed.") {
+      return res.status(400).json({ error: err.message });
+    }
+    res.status(500).json({ error: "Something went wrong sending this image." });
   }
 });
 
