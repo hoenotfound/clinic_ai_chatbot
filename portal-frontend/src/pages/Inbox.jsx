@@ -1,9 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { useAuth } from "../context/AuthContext";
+import { useToasts, ToastContainer } from "../components/Toast";
+import Lightbox from "../components/Lightbox";
 
 const POLL_INTERVAL_MS = 5000;
+const MAX_IMAGE_BYTES = 16 * 1024 * 1024; // matches the server's Multer limit / WhatsApp's own cap
 
 export default function Inbox() {
+  const { username } = useAuth();
+  const { toasts, showToast, dismissToast } = useToasts();
+
   const [conversations, setConversations] = useState(null); // null = loading
   const [selectedId, setSelectedId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -88,7 +95,7 @@ export default function Inbox() {
       await refreshConversations();
     } catch (err) {
       console.error("Failed to take over conversation:", err);
-      alert("Couldn't take over this conversation — please try again.");
+      showToast("Couldn't take over this conversation — please try again.", "error");
     } finally {
       setActionPending(false);
     }
@@ -102,7 +109,7 @@ export default function Inbox() {
       await refreshConversations();
     } catch (err) {
       console.error("Failed to return conversation to AI:", err);
-      alert("Couldn't return this conversation to the AI — please try again.");
+      showToast("Couldn't return this conversation to the AI — please try again.", "error");
     } finally {
       setActionPending(false);
     }
@@ -118,18 +125,47 @@ export default function Inbox() {
     }
   }
 
+  // Optimistic bubbles get a locally-unique string id (never collides with a
+  // real numeric DB id) so they can be targeted for removal if the send fails.
+  function makeOptimisticId() {
+    return `optimistic-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+
   async function handleSend(text) {
     if (selectedId == null || !text.trim()) return;
     setActionPending(true);
+
+    const optimisticId = makeOptimisticId();
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: optimisticId,
+        role: "assistant",
+        content: text.trim(),
+        sent_by_username: username,
+        created_at: new Date().toISOString(),
+        media_url: null,
+        media_base64: null,
+        media_mime_type: null,
+        _optimistic: true,
+      },
+    ]);
+
     try {
       const result = await api.sendMessage(selectedId, text.trim());
+      // Replaces the whole list from the server, so the optimistic bubble
+      // above is swapped out for the real (persisted) message in one go.
       await Promise.all([refreshMessages(), refreshConversations()]);
       if (result?.delivered === false) {
-        alert("Message saved but WhatsApp delivery failed — the patient may not have received it. Please try resending.");
+        showToast(
+          "Message saved but WhatsApp delivery failed — the patient may not have received it. Please try resending.",
+          "warning"
+        );
       }
     } catch (err) {
       console.error("Failed to send message:", err);
-      alert("Couldn't send that message — please try again.");
+      setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+      showToast("Couldn't send that message — please try again.", "error");
       throw err;
     } finally {
       setActionPending(false);
@@ -139,17 +175,42 @@ export default function Inbox() {
   async function handleSendImage(file, caption) {
     if (selectedId == null || !file) return;
     setActionPending(true);
+
+    const optimisticId = makeOptimisticId();
+    const previewUrl = URL.createObjectURL(file);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: optimisticId,
+        role: "assistant",
+        content: caption,
+        sent_by_username: username,
+        created_at: new Date().toISOString(),
+        media_url: null,
+        media_base64: null,
+        media_mime_type: null,
+        previewUrl,
+        _optimistic: true,
+        _uploading: true,
+      },
+    ]);
+
     try {
       const result = await api.sendImage(selectedId, file, caption);
       await Promise.all([refreshMessages(), refreshConversations()]);
       if (result?.delivered === false) {
-        alert("Image saved but WhatsApp delivery failed — the patient may not have received it. Please try resending.");
+        showToast(
+          "Image saved but WhatsApp delivery failed — the patient may not have received it. Please try resending.",
+          "warning"
+        );
       }
     } catch (err) {
       console.error("Failed to send image:", err);
-      alert(err.message || "Couldn't send that image — please try again.");
+      setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+      showToast(err.message || "Couldn't send that image — please try again.", "error");
       throw err;
     } finally {
+      URL.revokeObjectURL(previewUrl);
       setActionPending(false);
     }
   }
@@ -173,7 +234,9 @@ export default function Inbox() {
         onDismissAttention={handleDismissAttention}
         onSend={handleSend}
         onSendImage={handleSendImage}
+        onToast={showToast}
       />
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
@@ -242,13 +305,16 @@ function ThreadView({
   onDismissAttention,
   onSend,
   onSendImage,
+  onToast,
 }) {
   const bottomRef = useRef(null);
   const fileInputRef = useRef(null);
+  const textareaRef = useRef(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [imageFile, setImageFile] = useState(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
+  const [lightboxSrc, setLightboxSrc] = useState(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
@@ -258,6 +324,7 @@ function ThreadView({
   useEffect(() => {
     setDraft("");
     clearImage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contact?.contact_id]);
 
   // Revoke the object URL when it's replaced/unmounted, so we don't leak memory.
@@ -267,12 +334,24 @@ function ThreadView({
     };
   }, [imagePreviewUrl]);
 
+  // Auto-grow the textarea to fit its content, up to the max-h-32 cap below.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
+  }, [draft]);
+
   function handleFilePicked(e) {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow picking the same file again later
     if (!file) return;
     if (!file.type.startsWith("image/")) {
-      alert("Please choose an image file.");
+      onToast("Please choose an image file.", "error");
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      onToast("That image is larger than 16MB — please choose a smaller file.", "error");
       return;
     }
     if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
@@ -363,8 +442,8 @@ function ThreadView({
 
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-3">
         {loading && <p className="text-sm text-[var(--color-text-muted)] text-center">Loading…</p>}
-        {messages.map((m, i) => (
-          <MessageBubble key={i} message={m} />
+        {messages.map((m) => (
+          <MessageBubble key={m.id} message={m} onImageClick={setLightboxSrc} />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -399,11 +478,13 @@ function ThreadView({
             onClick={() => fileInputRef.current?.click()}
             disabled={sending}
             title="Attach an image"
+            aria-label="Attach an image"
             className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
           >
             📷
           </button>
           <textarea
+            ref={textareaRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -420,17 +501,20 @@ function ThreadView({
                 : "Type a message — sending will take over this conversation from the AI…"
             }
             rows={1}
-            className="flex-1 resize-none rounded-xl border border-[var(--color-border)] px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] max-h-32"
+            className="flex-1 resize-none rounded-xl border border-[var(--color-border)] px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] max-h-32 overflow-y-auto"
           />
           <button
             type="submit"
             disabled={(!draft.trim() && !imageFile) || sending}
-            className="shrink-0 px-4 py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
+            className="shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
           >
-            Send
+            {sending && <Spinner />}
+            {sending ? (imageFile ? "Uploading…" : "Sending…") : "Send"}
           </button>
         </div>
       </form>
+
+      <Lightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
     </div>
   );
 }
@@ -452,9 +536,34 @@ function ModeBadge({ mode, compact }) {
   );
 }
 
-function MessageBubble({ message }) {
+function Spinner({ className = "" }) {
+  return (
+    <svg
+      className={`animate-spin h-3.5 w-3.5 ${className}`}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+  );
+}
+
+function MessageBubble({ message, onImageClick }) {
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
+
+  // previewUrl (a local object URL) is only present on an optimistic bubble
+  // for an image still uploading; otherwise fall back to the real stored
+  // image source once it's come back from the server.
+  const imageSrc =
+    message.previewUrl ||
+    message.media_url ||
+    (message.media_base64 ? `data:${message.media_mime_type || "image/jpeg"};base64,${message.media_base64}` : null);
+  const hasImage = !!imageSrc && !message.media_mime_type?.startsWith("audio/");
+
   return (
     <div className={`flex ${isPatient ? "justify-start" : "justify-end"}`}>
       <div
@@ -462,7 +571,7 @@ function MessageBubble({ message }) {
           isPatient
             ? "bubble-in bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]"
             : "bubble-out bg-[var(--color-primary)] text-white"
-        }`}
+        } ${message._optimistic ? "opacity-70" : ""}`}
       >
         {!isPatient && (
           <p className="text-[10px] font-semibold uppercase tracking-wide mb-0.5 text-white/70">
@@ -477,16 +586,25 @@ function MessageBubble({ message }) {
             style={{ height: "36px" }}
           />
         ) : (
-          (message.media_url || message.media_base64) && (
-            <img
-              src={message.media_url || `data:${message.media_mime_type || "image/jpeg"};base64,${message.media_base64}`}
-              alt={message.content || "Sent image"}
-              className="rounded-lg mb-1.5 max-w-full max-h-64 object-cover"
-            />
+          hasImage && (
+            <div className="relative mb-1.5">
+              <img
+                src={imageSrc}
+                alt={message.content || "Sent image"}
+                onClick={() => !message._uploading && onImageClick?.(imageSrc)}
+                className={`rounded-lg max-w-full max-h-64 object-cover ${message._uploading ? "" : "cursor-zoom-in"}`}
+              />
+              {message._uploading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/30 rounded-lg">
+                  <Spinner className="text-white h-6 w-6" />
+                </div>
+              )}
+            </div>
           )
         )}
         {message.content && <p className="whitespace-pre-wrap">{message.content}</p>}
-        <p className={`text-[10px] mt-1 ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/70"}`}>
+        <p className={`text-[10px] mt-1 flex items-center gap-1 ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/70"}`}>
+          {message._optimistic && <Spinner className="h-2.5 w-2.5" />}
           {formatTime(message.created_at)}
         </p>
       </div>
