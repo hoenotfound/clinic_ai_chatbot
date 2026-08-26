@@ -61,6 +61,20 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_mime_type TEXT;
 CREATE INDEX IF NOT EXISTS idx_messages_contact_id ON messages(contact_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 
+-- Clinic configuration editable from the portal's Settings page — clinic
+-- name/branches/hours/services/FAQs, plus the AI's tone/playbook/SOP/
+-- guardrails text. A single row (id = 1, enforced below) holding the whole
+-- config as one JSONB blob, since it's always read and written as one unit
+-- (see config/clinicConfig.js and db/configRepo.js) — no per-field columns
+-- needed. Seeded from config/clinicConfig.default.js the first time the app
+-- starts against a fresh database.
+CREATE TABLE IF NOT EXISTS clinic_config (
+  id INTEGER PRIMARY KEY DEFAULT 1,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT clinic_config_single_row CHECK (id = 1)
+);
+
 -- Staff who can log into the management portal. All staff currently have
 -- identical access — no roles column yet, but adding one later is a small
 -- migration, not a redesign.
