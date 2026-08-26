@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useToasts, ToastContainer } from "../components/Toast";
 import Spinner from "../components/Spinner";
+import ContactAvatar from "../components/ContactAvatar";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -156,17 +157,22 @@ function ContactList({ contacts, selectedId, onSelect, onAddNew, searchInput, on
               : "hover:bg-[var(--color-bg)]"
           }`}
         >
-          <div className="flex items-center justify-between gap-2">
-            <span className="font-medium text-sm truncate flex items-center gap-1.5">
-              {c.name || formatPhone(c.whatsapp_number)}
-              {c.mode === "human" && <ModeBadge mode="human" />}
-            </span>
-            <span className="text-[11px] text-[var(--color-text-muted)] shrink-0">{formatTime(c.last_message_at)}</span>
+          <div className="flex items-center gap-3">
+            <ContactAvatar src={c.photo_url} channel={c.channel} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium text-sm truncate flex items-center gap-1.5">
+                  {c.name || formatPhone(c.whatsapp_number)}
+                  {c.mode === "human" && <ModeBadge mode="human" />}
+                </span>
+                <span className="text-[11px] text-[var(--color-text-muted)] shrink-0">{formatTime(c.last_message_at)}</span>
+              </div>
+              <p className="text-xs text-[var(--color-text-muted)] truncate mt-0.5">
+                {formatPhone(c.whatsapp_number)}
+                {c.message_count === 0 && " · No conversation yet"}
+              </p>
+            </div>
           </div>
-          <p className="text-xs text-[var(--color-text-muted)] truncate mt-0.5">
-            {formatPhone(c.whatsapp_number)}
-            {c.message_count === 0 && " · No conversation yet"}
-          </p>
         </button>
       ))}
     </div>
@@ -228,15 +234,18 @@ function ContactProfile({ contact, onEdit, onToast }) {
   return (
     <div className="max-w-2xl px-8 py-8">
       <div className="flex items-start justify-between gap-4 mb-6">
-        <div>
-          <h2 className="font-display text-xl font-bold flex items-center gap-2">
-            {contact.name || "Unnamed contact"}
-            {contact.mode === "human" && <ModeBadge mode="human" />}
-          </h2>
-          <p className="text-sm text-[var(--color-text-muted)] mt-1">{formatPhone(contact.whatsapp_number)}</p>
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-            Added {new Date(contact.created_at).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })}
-          </p>
+        <div className="flex items-center gap-3 min-w-0">
+          <ContactAvatar src={contact.photo_url} channel={contact.channel} size={48} />
+          <div className="min-w-0">
+            <h2 className="font-display text-xl font-bold flex items-center gap-2">
+              <span className="truncate">{contact.name || "Unnamed contact"}</span>
+              {contact.mode === "human" && <ModeBadge mode="human" />}
+            </h2>
+            <p className="text-sm text-[var(--color-text-muted)] mt-1">{formatPhone(contact.whatsapp_number)}</p>
+            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+              Added {new Date(contact.created_at).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })}
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button
