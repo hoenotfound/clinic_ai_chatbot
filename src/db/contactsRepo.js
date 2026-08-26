@@ -53,6 +53,7 @@ async function listContacts(search) {
     `
     SELECT
       c.id, c.whatsapp_number, c.name, c.mode, c.needs_attention, c.created_at, c.updated_at,
+      c.channel, c.photo_url,
       COUNT(m.id)::int AS message_count,
       MAX(m.created_at) AS last_message_at
     FROM contacts c
@@ -103,6 +104,8 @@ async function listConversations() {
       c.id AS contact_id,
       c.whatsapp_number,
       c.name,
+      c.channel,
+      c.photo_url,
       c.mode,
       c.takeover_by,
       c.takeover_at,
