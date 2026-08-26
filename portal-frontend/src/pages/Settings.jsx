@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { api, extractPromoImageId } from "../api";
 import { useToasts, ToastContainer } from "../components/Toast";
 import Spinner from "../components/Spinner";
 
@@ -232,6 +232,20 @@ function ImageFieldEditor({ value, onChange, onError }) {
   const fileInputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
 
+  // Best-effort cleanup of a promo image row we previously uploaded and no
+  // longer need (superseded by a replace, or cleared via Remove). Only
+  // fires for URLs that are actually one of our own /promo-images/:id links
+  // — a staff-pasted external URL has nothing in Postgres to clean up.
+  // Failures are logged, not surfaced: worst case is one orphaned row,
+  // which shouldn't block the staff member from continuing to edit.
+  function cleanupOldImage(oldUrl) {
+    const id = extractPromoImageId(oldUrl);
+    if (id === null) return;
+    api.deletePromoImage(id).catch((err) => {
+      console.error("Failed to clean up old promo image:", err);
+    });
+  }
+
   async function handleFilePicked(e) {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow picking the same file again later
@@ -244,15 +258,22 @@ function ImageFieldEditor({ value, onChange, onError }) {
       onError("That image is larger than 16MB — please choose a smaller file.");
       return;
     }
+    const previousValue = value;
     setUploading(true);
     try {
       const { url } = await api.uploadPromoImage(file);
       onChange(url);
+      cleanupOldImage(previousValue);
     } catch (err) {
       onError(err.message || "Couldn't upload that image.");
     } finally {
       setUploading(false);
     }
+  }
+
+  function handleRemove() {
+    cleanupOldImage(value);
+    onChange("");
   }
 
   return (
@@ -278,7 +299,7 @@ function ImageFieldEditor({ value, onChange, onError }) {
         {value && !uploading && (
           <button
             type="button"
-            onClick={() => onChange("")}
+            onClick={handleRemove}
             className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors"
           >
             Remove
