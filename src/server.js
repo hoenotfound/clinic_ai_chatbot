@@ -22,8 +22,13 @@ const conversationsRoutes = require("./routes/conversations");
 const configRoutes = require("./routes/config");
 const { bootstrapAdminUser } = require("./db/bootstrapAdmin");
 const configRepo = require("./db/configRepo");
+const { pruneOrphanedPromoImages } = configRepo;
 const promoImagesRepo = require("./db/promoImagesRepo");
 const { initSchema } = require("./db/db");
+
+// How often the backstop sweep for abandoned promo-image uploads runs —
+// see the setInterval call in start() below.
+const PROMO_IMAGE_PRUNE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 
 const app = express();
 
@@ -297,6 +302,17 @@ async function start() {
   app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
   });
+
+  // Catches promo images that were uploaded (writing a row immediately —
+  // see promoImagesRepo.saveImage) but never made it into a saved config:
+  // staff picked a file then closed the tab, switched away, or the browser
+  // crashed before hitting Save. The explicit deletes in
+  // routes/config.js/Settings.jsx and the post-save reconcile in
+  // configRepo.updateConfig() cover the normal flows; this timer is the
+  // backstop for everything else. Runs on startup too, in case the server
+  // was down when an abandoned upload's grace period elapsed.
+  pruneOrphanedPromoImages();
+  setInterval(pruneOrphanedPromoImages, PROMO_IMAGE_PRUNE_INTERVAL_MS);
 }
 
 start().catch((err) => {
