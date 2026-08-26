@@ -143,11 +143,28 @@ router.post("/:contactId/messages", async (req, res) => {
   }
 });
 
+// Wraps upload.single("image") so Multer errors (file too large, wrong
+// mimetype) are turned into a JSON response instead of being passed to
+// next(err) — which would skip straight past our try/catch below and hit
+// Express's default HTML error handler.
+function handleImageUpload(req, res, next) {
+  upload.single("image")(req, res, (err) => {
+    if (!err) return next();
+
+    if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({ error: "Image is too large. Please choose a file under 16MB." });
+    }
+    // Covers both other MulterErrors and the fileFilter's plain Error
+    // ("Only image files are allowed.").
+    return res.status(400).json({ error: err.message || "Failed to upload image." });
+  });
+}
+
 // POST /api/conversations/:contactId/media — staff uploads an image file
 // from their computer and sends it as a WhatsApp image message. Same
 // implicit-takeover behavior as the text-send route above. multipart/form-data
 // with a single "image" file field and an optional "caption" text field.
-router.post("/:contactId/media", upload.single("image"), async (req, res) => {
+router.post("/:contactId/media", handleImageUpload, async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
@@ -193,9 +210,6 @@ router.post("/:contactId/media", upload.single("image"), async (req, res) => {
     res.status(201).json({ ...saved, delivered });
   } catch (err) {
     console.error("Failed to send staff image:", err);
-    if (err.message === "Only image files are allowed.") {
-      return res.status(400).json({ error: err.message });
-    }
     res.status(500).json({ error: "Something went wrong sending this image." });
   }
 });
