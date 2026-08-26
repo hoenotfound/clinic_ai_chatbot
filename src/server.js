@@ -20,6 +20,7 @@ const { requireAuth } = require("./middleware/requireAuth");
 const authRoutes = require("./routes/auth");
 const conversationsRoutes = require("./routes/conversations");
 const configRoutes = require("./routes/config");
+const contactsRoutes = require("./routes/contacts");
 const { bootstrapAdminUser } = require("./db/bootstrapAdmin");
 const configRepo = require("./db/configRepo");
 const { pruneOrphanedPromoImages } = configRepo;
@@ -274,6 +275,7 @@ app.get("/promo-images/:id", async (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/conversations", requireAuth, conversationsRoutes);
 app.use("/api/config", requireAuth, configRoutes);
+app.use("/api/contacts", requireAuth, contactsRoutes);
 
 // ── Serve the built portal frontend in production ──
 const portalBuildPath = path.join(__dirname, "../portal-frontend/dist");
