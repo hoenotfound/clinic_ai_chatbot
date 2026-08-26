@@ -52,40 +52,34 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-2 space-y-1">
-        {NAV_ITEMS.map((item) =>
-          item.active ? (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  isActive
+        {NAV_ITEMS.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            className={({ isActive }) =>
+              `flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                isActive
+                  ? item.active
                     ? "bg-[var(--color-primary)] text-white"
-                    : "text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)]"
-                }`
-              }
-            >
+                    : "bg-[var(--color-sidebar-hover)] text-white"
+                  : item.active
+                    ? "text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)]"
+                    : "text-[var(--color-sidebar-text-muted)] hover:bg-[var(--color-sidebar-hover)] hover:text-[var(--color-sidebar-text)]"
+              }`
+            }
+          >
+            <span className="flex items-center gap-3">
               <item.icon className="w-[18px] h-[18px] shrink-0" />
               <span>{item.label}</span>
-            </NavLink>
-          ) : (
-            <div
-              key={item.to}
-              title="Coming soon"
-              aria-disabled="true"
-              className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-[var(--color-sidebar-text-muted)] cursor-not-allowed select-none"
-            >
-              <span className="flex items-center gap-3">
-                <item.icon className="w-[18px] h-[18px] shrink-0" />
-                <span>{item.label}</span>
-              </span>
-
+            </span>
+      
+            {!item.active && (
               <span className="text-[10px] uppercase tracking-wide bg-white/10 px-1.5 py-0.5 rounded">
                 Soon
               </span>
-            </div>
-          )
-        )}
+            )}
+          </NavLink>
+        ))}
       </nav>
 
       {/* User and logout */}
