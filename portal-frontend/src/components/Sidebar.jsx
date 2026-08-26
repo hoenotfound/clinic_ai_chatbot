@@ -3,7 +3,7 @@ import { useAuth } from "../context/AuthContext";
 
 const NAV_ITEMS = [
   { to: "/inbox", label: "Inbox", icon: ChatIcon, active: true },
-  { to: "/contacts", label: "Contacts", icon: ContactsIcon, active: false },
+  { to: "/contacts", label: "Contacts", icon: ContactsIcon, active: true },
   { to: "/pipeline", label: "Pipeline", icon: PipelineIcon, active: false },
   { to: "/settings", label: "Settings", icon: SettingsIcon, active: true },
 ];
