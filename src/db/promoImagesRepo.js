@@ -32,4 +32,30 @@ async function deleteImage(id) {
   await pool.query("DELETE FROM promo_images WHERE id = $1", [id]);
 }
 
-module.exports = { saveImage, getImage, deleteImage };
+/**
+ * Safety net for the case the explicit deleteImage() calls above can't
+ * catch: staff upload a promo image (which writes a row immediately — see
+ * saveImage() above) and then close the tab, switch away, or their browser
+ * crashes before they hit Save on the Promotions tab. Nothing ever
+ * references that row, and no client-side event fires to clean it up.
+ *
+ * Called from configRepo.js after every successful config save, and on a
+ * timer from server.js, to delete any promo_images row that isn't
+ * referenced by `referencedIds` (the ids currently used in
+ * config.promotions[].imageUrl) — but only once it's older than
+ * `olderThanMinutes`, so an image uploaded seconds ago while staff are
+ * still filling out the rest of the form is never at risk of being swept
+ * out from under them before they get a chance to save.
+ */
+async function pruneUnreferenced(referencedIds, olderThanMinutes = 60) {
+  const result = await pool.query(
+    `DELETE FROM promo_images
+     WHERE created_at < now() - ($2 || ' minutes')::interval
+       AND NOT (id = ANY($1::int[]))
+     RETURNING id`,
+    [referencedIds, olderThanMinutes]
+  );
+  return result.rows.map((r) => r.id);
+}
+
+module.exports = { saveImage, getImage, deleteImage, pruneUnreferenced };
