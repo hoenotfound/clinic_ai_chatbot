@@ -25,6 +25,20 @@ ALTER TABLE contacts ADD COLUMN IF NOT EXISTS attention_reason TEXT;          --
 
 CREATE INDEX IF NOT EXISTS idx_contacts_needs_attention ON contacts(needs_attention) WHERE needs_attention = true;
 
+-- Which inbound channel this contact came from. Everyone today is
+-- 'whatsapp' (the only channel this app talks to), but this is here so
+-- Instagram/Facebook Messenger contacts can be told apart once those
+-- channels are wired up — each gets its own badge icon in the portal.
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'whatsapp' CHECK (channel IN ('whatsapp', 'instagram', 'facebook'));
+
+-- Public URL of the contact's real profile photo, when the channel's API
+-- provides one. WhatsApp's Cloud API does not expose a patient's profile
+-- picture at all, so this stays NULL for WhatsApp contacts and the portal
+-- falls back to a silhouette. Instagram/Facebook Messenger's APIs do return
+-- a profile_pic URL for a user, so this column is ready to be populated
+-- once those integrations exist.
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS photo_url TEXT;
+
 -- Freeform staff notes on a contact — shown on their profile in the
 -- Contacts directory (see routes/contacts.js, db/contactNotesRepo.js).
 -- Independent of `messages`: these are internal staff notes, never sent to
