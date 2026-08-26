@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import Inbox from "./pages/Inbox";
+import Settings from "./pages/Settings";
 import ComingSoon from "./pages/ComingSoon";
 
 function ProtectedRoute({ children }) {
@@ -59,10 +60,7 @@ export default function App() {
             path="/settings"
             element={
               <ProtectedRoute>
-                <ComingSoon
-                  title="Settings"
-                  description="Manage clinic info, staff accounts, and bot behaviour from here in a future update."
-                />
+                <Settings />
               </ProtectedRoute>
             }
           />
