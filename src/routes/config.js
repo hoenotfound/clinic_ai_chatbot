@@ -1,7 +1,39 @@
 const express = require("express");
+const multer = require("multer");
 const configRepo = require("../db/configRepo");
+const promoImagesRepo = require("../db/promoImagesRepo");
 
 const router = express.Router();
+
+// Staff promo-graphic uploads from Settings > Promotions — kept in memory
+// (never written to disk), then persisted to Postgres (see
+// db/promoImagesRepo.js) and served back out at a public URL WhatsApp's
+// Cloud API can fetch. Same limits as the Inbox's staff image upload
+// (routes/conversations.js) — 16MB matches WhatsApp's own image size cap.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 16 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.startsWith("image/")) {
+      return cb(new Error("Only image files are allowed."));
+    }
+    cb(null, true);
+  },
+});
+
+// Wraps upload.single("image") so Multer errors (file too large, wrong
+// mimetype) are turned into a JSON response instead of falling through to
+// Express's default HTML error handler — see the identical pattern (and
+// fuller explanation) in routes/conversations.js.
+function handleImageUpload(req, res, next) {
+  upload.single("image")(req, res, (err) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({ error: "Image is too large. Please choose a file under 16MB." });
+    }
+    return res.status(400).json({ error: err.message || "Failed to upload image." });
+  });
+}
 
 // Shape checks for each top-level config key — deliberately loose (this
 // isn't a full schema validator), just enough to stop an obviously wrong
@@ -56,6 +88,32 @@ function isNonEmptyString(v) {
 function isPlainObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
+
+// POST /api/config/promotions/image — staff uploads a promo graphic directly
+// (instead of pasting an already-hosted URL). Stored in Postgres and handed
+// back as a public URL pointing at GET /promo-images/:id (see server.js) —
+// the Settings page drops that URL straight into the promotion's imageUrl
+// field, no separate hosting step needed.
+router.post("/promotions/image", handleImageUpload, async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "An image file is required." });
+    }
+
+    const id = await promoImagesRepo.saveImage(req.file.mimetype, req.file.buffer.toString("base64"));
+
+    // PUBLIC_BASE_URL lets you override this for unusual setups (custom
+    // domain behind a CDN, etc.) — otherwise it's inferred from the request
+    // itself, which works fine on Render/most hosts as long as `trust
+    // proxy` is set (see server.js) so req.protocol reflects the original
+    // https scheme rather than the proxy's internal http hop.
+    const baseUrl = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
+    res.status(201).json({ url: `${baseUrl}/promo-images/${id}` });
+  } catch (err) {
+    console.error("Failed to upload promo image:", err);
+    res.status(500).json({ error: "Something went wrong uploading this image." });
+  }
+});
 
 // GET /api/config — full clinic config, used to populate the Settings page.
 router.get("/", async (req, res) => {
