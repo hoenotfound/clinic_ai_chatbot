@@ -17,7 +17,11 @@ function ProtectedRoute({ children }) {
       </div>
     );
   }
-  if (!username) return <Navigate to="/login" replace />;
+
+  if (!username) {
+    return <Navigate to="/login" replace />;
+  }
+
   return <Layout>{children}</Layout>;
 }
 
@@ -27,6 +31,7 @@ export default function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<Login />} />
+
           <Route
             path="/inbox"
             element={
@@ -35,6 +40,7 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+
           <Route
             path="/contacts"
             element={
@@ -43,17 +49,43 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+
           <Route
             path="/pipeline"
             element={
               <ProtectedRoute>
                 <ComingSoon
                   title="Pipeline"
-                  description="Track leads from first message through to booked and converted patients. Coming in the next build phase."
+                  description="Track leads from their first message through to booked and converted patients. Coming in the next build phase."
                 />
               </ProtectedRoute>
             }
           />
+
+          <Route
+            path="/analytics"
+            element={
+              <ProtectedRoute>
+                <ComingSoon
+                  title="Analytics"
+                  description="View conversation performance, response times, leads, bookings, and conversion results. Coming soon."
+                />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/tools"
+            element={
+              <ProtectedRoute>
+                <ComingSoon
+                  title="Tools"
+                  description="Access helpful tools for managing conversations, customers, and daily sales activities. Coming soon."
+                />
+              </ProtectedRoute>
+            }
+          />
+
           <Route
             path="/settings"
             element={
@@ -62,6 +94,7 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+
           <Route path="*" element={<Navigate to="/inbox" replace />} />
         </Routes>
       </AuthProvider>
