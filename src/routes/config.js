@@ -115,6 +115,28 @@ router.post("/promotions/image", handleImageUpload, async (req, res) => {
   }
 });
 
+// DELETE /api/config/promotions/image/:id — cleans up a promo image row
+// once it's no longer referenced by any promotion (staff replaced it with a
+// new upload, or hit "Remove"). See portal-frontend/src/pages/Settings.jsx
+// ImageFieldEditor, which calls this right after a successful replace and
+// right before clearing the field on remove. Best-effort from the client's
+// point of view — a failed delete here just leaves an orphaned row rather
+// than losing anything, so it's safe to fire without blocking the UI.
+router.delete("/promotions/image/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: "Invalid image id." });
+    }
+
+    await promoImagesRepo.deleteImage(id);
+    res.status(204).end();
+  } catch (err) {
+    console.error("Failed to delete promo image:", err);
+    res.status(500).json({ error: "Something went wrong deleting this image." });
+  }
+});
+
 // GET /api/config — full clinic config, used to populate the Settings page.
 router.get("/", async (req, res) => {
   try {
