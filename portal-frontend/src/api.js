@@ -59,4 +59,26 @@ export const api = {
   // in `updates` are changed server-side; everything else is left as-is.
   getConfig: () => request("/config"),
   updateConfig: (updates) => request("/config", { method: "PATCH", body: JSON.stringify(updates) }),
+  // Uploads a promo graphic file directly (Settings > Promotions) instead of
+  // requiring an already-hosted URL. Same multipart pattern as sendImage
+  // above. Returns { url } — a public link the server will serve the image
+  // back from, ready to drop straight into a promotion's imageUrl field.
+  uploadPromoImage: async (file) => {
+    const form = new FormData();
+    form.append("image", file);
+
+    const res = await fetch(`${BASE}/config/promotions/image`, {
+      method: "POST",
+      credentials: "include",
+      body: form,
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const error = new Error(body.error || `Request failed (${res.status})`);
+      error.status = res.status;
+      throw error;
+    }
+    return res.json();
+  },
 };
