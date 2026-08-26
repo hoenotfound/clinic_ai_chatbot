@@ -81,4 +81,18 @@ export const api = {
     }
     return res.json();
   },
+  // Cleans up a promo image row that's no longer referenced (replaced or
+  // removed in Settings > Promotions). Takes the row id — callers get it
+  // via extractPromoImageId() below. See ImageFieldEditor in Settings.jsx.
+  deletePromoImage: (id) => request(`/config/promotions/image/${id}`, { method: "DELETE" }),
 };
+
+// Pulls the numeric id out of one of our own hosted promo-image URLs, e.g.
+// "https://host/promo-images/42" -> 42. Returns null for anything else
+// (a staff-pasted external URL, an empty value, etc.) so callers know not
+// to try deleting something we don't own.
+export function extractPromoImageId(url) {
+  if (!url) return null;
+  const match = String(url).match(/\/promo-images\/(\d+)(?:[/?#]|$)/);
+  return match ? Number(match[1]) : null;
+}
