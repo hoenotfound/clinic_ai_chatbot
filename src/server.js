@@ -22,9 +22,16 @@ const conversationsRoutes = require("./routes/conversations");
 const configRoutes = require("./routes/config");
 const { bootstrapAdminUser } = require("./db/bootstrapAdmin");
 const configRepo = require("./db/configRepo");
+const promoImagesRepo = require("./db/promoImagesRepo");
 const { initSchema } = require("./db/db");
 
 const app = express();
+
+// Needed so req.protocol correctly reflects the original https scheme when
+// running behind a reverse proxy (Render, most PaaS hosts) — used to build
+// a correct public URL for uploaded promo images (see routes/config.js and
+// the GET /promo-images/:id route below).
+app.set("trust proxy", true);
 
 const PORT = process.env.PORT || 3000;
 
@@ -236,6 +243,25 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
         console.error("Also failed to send fallback message:", sendErr);
       }
     }
+  }
+});
+
+// ── Promo graphics uploaded from Settings > Promotions — served publicly,
+// deliberately with NO auth, since WhatsApp's Cloud API has to fetch this
+// URL directly (by link, see services/whatsappService.js sendImage()) to
+// actually send the image, and Meta's servers obviously can't log in as
+// staff first. Nothing sensitive lives here — just clinic promo graphics. ──
+app.get("/promo-images/:id", async (req, res) => {
+  try {
+    const image = await promoImagesRepo.getImage(req.params.id);
+    if (!image) return res.status(404).send("Not found");
+
+    res.set("Content-Type", image.mime_type);
+    res.set("Cache-Control", "public, max-age=3600");
+    res.send(Buffer.from(image.data, "base64"));
+  } catch (err) {
+    console.error("Failed to serve promo image:", err);
+    res.status(500).send("Something went wrong.");
   }
 });
 
