@@ -25,6 +25,20 @@ ALTER TABLE contacts ADD COLUMN IF NOT EXISTS attention_reason TEXT;          --
 
 CREATE INDEX IF NOT EXISTS idx_contacts_needs_attention ON contacts(needs_attention) WHERE needs_attention = true;
 
+-- Freeform staff notes on a contact — shown on their profile in the
+-- Contacts directory (see routes/contacts.js, db/contactNotesRepo.js).
+-- Independent of `messages`: these are internal staff notes, never sent to
+-- the patient or seen by the AI.
+CREATE TABLE IF NOT EXISTS contact_notes (
+  id SERIAL PRIMARY KEY,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  author TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_contact_notes_contact_id ON contact_notes(contact_id);
+
 -- Every inbound (patient) and outbound (assistant) message, so the portal
 -- can show full chat history and the AI can still read context.
 CREATE TABLE IF NOT EXISTS messages (
