@@ -56,6 +56,17 @@ h1, h2, h3, .font-display {
   clip-path: polygon(100% 0, 0 100%, 100% 100%);
 }
 
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .bubble-out::before {
   content: "";
   position: absolute;
