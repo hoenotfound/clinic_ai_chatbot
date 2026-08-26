@@ -21,4 +21,15 @@ async function getImage(id) {
   return result.rows[0] || null;
 }
 
-module.exports = { saveImage, getImage };
+/**
+ * Deletes one uploaded promo image by id. Called whenever a promo image is
+ * replaced or removed from Settings > Promotions (see routes/config.js
+ * DELETE /promotions/image/:id) so old rows don't pile up in Postgres.
+ * Idempotent — deleting an id that's already gone (or never existed) is not
+ * an error, it just affects zero rows.
+ */
+async function deleteImage(id) {
+  await pool.query("DELETE FROM promo_images WHERE id = $1", [id]);
+}
+
+module.exports = { saveImage, getImage, deleteImage };
