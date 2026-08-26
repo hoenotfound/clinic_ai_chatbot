@@ -5,7 +5,7 @@ const NAV_ITEMS = [
   { to: "/inbox", label: "Inbox", icon: ChatIcon, active: true },
   { to: "/contacts", label: "Contacts", icon: ContactsIcon, active: false },
   { to: "/pipeline", label: "Pipeline", icon: PipelineIcon, active: false },
-  { to: "/settings", label: "Settings", icon: SettingsIcon, active: false },
+  { to: "/settings", label: "Settings", icon: SettingsIcon, active: true },
 ];
 
 export default function Sidebar() {
