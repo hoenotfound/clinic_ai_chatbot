@@ -19,7 +19,9 @@ const { requireAuth } = require("./middleware/requireAuth");
 
 const authRoutes = require("./routes/auth");
 const conversationsRoutes = require("./routes/conversations");
+const configRoutes = require("./routes/config");
 const { bootstrapAdminUser } = require("./db/bootstrapAdmin");
+const configRepo = require("./db/configRepo");
 const { initSchema } = require("./db/db");
 
 const app = express();
@@ -240,6 +242,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
 // ── Management portal API ──
 app.use("/api/auth", authRoutes);
 app.use("/api/conversations", requireAuth, conversationsRoutes);
+app.use("/api/config", requireAuth, configRoutes);
 
 // ── Serve the built portal frontend in production ──
 const portalBuildPath = path.join(__dirname, "../portal-frontend/dist");
@@ -253,6 +256,12 @@ app.get(/^(?!\/(webhook|api)).*/, (req, res) => {
 async function start() {
   // Create tables if they don't exist yet — safe to run every startup.
   await initSchema();
+
+  // Loads the clinic config (branches, services, AI tone/playbook/SOP, etc.)
+  // from Postgres into the shared, in-memory clinicConfig object — see
+  // db/configRepo.js. On a brand-new database this also seeds the table
+  // from config/clinicConfig.default.js.
+  await configRepo.loadConfig();
 
   // Creates a first staff login from ADMIN_USERNAME/ADMIN_PASSWORD env vars,
   // but only if no staff logins exist yet. Needed for hosts without shell
