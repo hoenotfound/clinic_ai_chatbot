@@ -14,16 +14,32 @@ function normalizeWhatsappNumber(input) {
  * Finds a contact by WhatsApp number, creating one if it doesn't exist yet.
  * This is the natural entry point every inbound message goes through.
  */
-async function getOrCreateContact(whatsappNumber) {
+async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
   const existing = await pool.query(
     "SELECT * FROM contacts WHERE whatsapp_number = $1",
     [whatsappNumber]
   );
-  if (existing.rows[0]) return existing.rows[0];
+  if (existing.rows[0]) {
+    const contact = existing.rows[0];
+    const profileName = whatsappProfileName?.trim() || null;
+
+    if (profileName && profileName !== contact.whatsapp_profile_name) {
+      const updated = await pool.query(
+        `UPDATE contacts
+         SET whatsapp_profile_name = $1, updated_at = now()
+         WHERE id = $2
+         RETURNING *`,
+        [profileName, contact.id]
+      );
+      return updated.rows[0];
+    }
+
+    return contact;
+  }
 
   const inserted = await pool.query(
-    "INSERT INTO contacts (whatsapp_number) VALUES ($1) RETURNING *",
-    [whatsappNumber]
+    "INSERT INTO contacts (whatsapp_number, whatsapp_profile_name) VALUES ($1, $2) RETURNING *",
+    [whatsappNumber, whatsappProfileName?.trim() || null]
   );
   return inserted.rows[0];
 }
@@ -52,13 +68,13 @@ async function listContacts(search) {
   const result = await pool.query(
     `
     SELECT
-      c.id, c.whatsapp_number, c.name, c.mode, c.needs_attention, c.created_at, c.updated_at,
+      c.id, c.whatsapp_number, c.name, c.whatsapp_profile_name, c.mode, c.needs_attention, c.created_at, c.updated_at,
       c.channel, c.photo_url,
       COUNT(m.id)::int AS message_count,
       MAX(m.created_at) AS last_message_at
     FROM contacts c
     LEFT JOIN messages m ON m.contact_id = c.id
-    ${term ? "WHERE c.name ILIKE $1 OR c.whatsapp_number ILIKE $1" : ""}
+    ${term ? "WHERE c.name ILIKE $1 OR c.whatsapp_profile_name ILIKE $1 OR c.whatsapp_number ILIKE $1" : ""}
     GROUP BY c.id
     ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
     `,
@@ -104,6 +120,7 @@ async function listConversations() {
       c.id AS contact_id,
       c.whatsapp_number,
       c.name,
+      c.whatsapp_profile_name,
       c.channel,
       c.photo_url,
       c.mode,

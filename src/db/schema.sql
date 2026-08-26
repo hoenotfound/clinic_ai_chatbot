@@ -7,6 +7,11 @@ CREATE TABLE IF NOT EXISTS contacts (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- The display name supplied by WhatsApp in inbound webhook payloads. Keep
+-- this separate from `name`, which staff can edit in the portal, so a later
+-- WhatsApp profile change never overwrites a clinic's own contact name.
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS whatsapp_profile_name TEXT;
+
 -- ── AI ↔ Human takeover state ──
 -- 'ai'    = the bot auto-replies to inbound messages (default).
 -- 'human' = a staff member has taken over; the bot stays silent and only
