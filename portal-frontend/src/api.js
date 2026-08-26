@@ -85,6 +85,15 @@ export const api = {
   // removed in Settings > Promotions). Takes the row id — callers get it
   // via extractPromoImageId() below. See ImageFieldEditor in Settings.jsx.
   deletePromoImage: (id) => request(`/config/promotions/image/${id}`, { method: "DELETE" }),
+  // ── Contacts directory (Contacts nav item) ──
+  listContacts: (search) => request(`/contacts${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+  getContact: (id) => request(`/contacts/${id}`),
+  createContact: (data) => request("/contacts", { method: "POST", body: JSON.stringify(data) }),
+  updateContact: (id, data) => request(`/contacts/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  listContactNotes: (id) => request(`/contacts/${id}/notes`),
+  addContactNote: (id, content) =>
+    request(`/contacts/${id}/notes`, { method: "POST", body: JSON.stringify({ content }) }),
+  deleteContactNote: (id, noteId) => request(`/contacts/${id}/notes/${noteId}`, { method: "DELETE" }),
 };
 
 // Pulls the numeric id out of one of our own hosted promo-image URLs, e.g.
