@@ -1,6 +1,7 @@
 const { pool } = require("./db");
 const clinicConfig = require("../config/clinicConfig");
 const defaultConfig = require("../config/clinicConfig.default");
+const promoImagesRepo = require("./promoImagesRepo");
 
 // Every top-level key the Settings page is allowed to read/write. Kept as a
 // single list shared by loadConfig/updateConfig so there's one place to
@@ -23,6 +24,37 @@ const CONFIG_KEYS = [
   "escalation",
   "guardrails",
 ];
+
+/**
+ * Pulls the numeric row id out of one of our own hosted promo-image URLs
+ * (e.g. ".../promo-images/42" -> 42). Returns null for anything else — a
+ * staff-pasted external URL, an empty imageUrl, etc. — since those have no
+ * corresponding row to protect from pruning.
+ */
+function extractPromoImageId(url) {
+  if (!url) return null;
+  const match = String(url).match(/\/promo-images\/(\d+)(?:[/?#]|$)/);
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * Deletes any promo_images row that isn't referenced by the current
+ * config's promotions and is older than the grace period — cleans up
+ * uploads that were replaced/removed outside the normal flow (see
+ * promoImagesRepo.pruneUnreferenced for the full explanation). Errors are
+ * logged, not thrown: this is best-effort housekeeping and should never be
+ * allowed to break a config load or save.
+ */
+async function pruneOrphanedPromoImages() {
+  try {
+    const referencedIds = (clinicConfig.promotions || [])
+      .map((p) => extractPromoImageId(p.imageUrl))
+      .filter((id) => id !== null);
+    await promoImagesRepo.pruneUnreferenced(referencedIds);
+  } catch (err) {
+    console.error("Failed to prune orphaned promo images:", err);
+  }
+}
 
 /**
  * Loads the DB-backed config into the shared `clinicConfig` object,
@@ -68,7 +100,16 @@ async function updateConfig(updates) {
     clinicConfig,
   ]);
 
+  // If this update touched promotions, some image(s) may have just been
+  // dropped from the config (staff removed a promotion entirely, or
+  // replaced/cleared its image via an edit that bypassed the immediate
+  // DELETE call in Settings.jsx). Reconcile now rather than waiting for the
+  // next timed sweep.
+  if (Object.prototype.hasOwnProperty.call(updates, "promotions")) {
+    await pruneOrphanedPromoImages();
+  }
+
   return clinicConfig;
 }
 
-module.exports = { CONFIG_KEYS, loadConfig, getConfig, updateConfig };
+module.exports = { CONFIG_KEYS, loadConfig, getConfig, updateConfig, pruneOrphanedPromoImages };
