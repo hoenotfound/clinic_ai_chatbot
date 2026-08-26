@@ -36,7 +36,7 @@ async function saveMessage(
  */
 async function getMessagesForContact(contactId, limit = 50) {
   const result = await pool.query(
-    `SELECT role, content, created_at, sent_by_username, media_url, media_base64, media_mime_type FROM messages
+    `SELECT id, role, content, created_at, sent_by_username, media_url, media_base64, media_mime_type FROM messages
      WHERE contact_id = $1
      ORDER BY created_at DESC, id DESC
      LIMIT $2`,
