@@ -61,6 +61,20 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_mime_type TEXT;
 CREATE INDEX IF NOT EXISTS idx_messages_contact_id ON messages(contact_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 
+-- Promo graphics uploaded directly from the Settings > Promotions page.
+-- Stored as base64 bytes (same pattern as patient-sent photos in messages)
+-- and served back out at a public URL (see GET /promo-images/:id in
+-- server.js) — WhatsApp's Cloud API needs a real, publicly fetchable URL to
+-- send an image message by link, it can't take an upload directly for this
+-- flow (contrast with staff Inbox uploads, which go straight to WhatsApp's
+-- own media endpoint instead — see services/whatsappService.js uploadMedia()).
+CREATE TABLE IF NOT EXISTS promo_images (
+  id SERIAL PRIMARY KEY,
+  mime_type TEXT NOT NULL,
+  data TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Clinic configuration editable from the portal's Settings page — clinic
 -- name/branches/hours/services/FAQs, plus the AI's tone/playbook/SOP/
 -- guardrails text. A single row (id = 1, enforced below) holding the whole
