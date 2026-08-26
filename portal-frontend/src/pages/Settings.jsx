@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useToasts, ToastContainer } from "../components/Toast";
 import Spinner from "../components/Spinner";
@@ -148,10 +148,11 @@ function SaveButton({ saving, onClick, label = "Save changes" }) {
 }
 
 // Generic editor for an array of objects sharing the same fields (branches,
-// services, FAQs, promotions, service aliases). Each field is either a
-// single-line `input` or a `textarea` — see the `fields` prop shape used by
-// each tab below.
-function RepeatableListEditor({ items, fields, onChange, emptyItem, addLabel }) {
+// services, FAQs, promotions, service aliases). Each field is a single-line
+// `input`, a `textarea`, or an `image` uploader — see the `fields` prop
+// shape used by each tab below. `onError` is only needed if any field is
+// type "image" (surfaces upload failures as a toast).
+function RepeatableListEditor({ items, fields, onChange, emptyItem, addLabel, onError }) {
   function updateItem(idx, key, value) {
     const next = items.slice();
     next[idx] = { ...next[idx], [key]: value };
@@ -181,7 +182,13 @@ function RepeatableListEditor({ items, fields, onChange, emptyItem, addLabel }) 
             {fields.map((f) => (
               <div key={f.key}>
                 <label className="block text-[11px] font-medium text-[var(--color-text-muted)] mb-1">{f.label}</label>
-                {f.type === "textarea" ? (
+                {f.type === "image" ? (
+                  <ImageFieldEditor
+                    value={item[f.key] ?? ""}
+                    onChange={(value) => updateItem(idx, f.key, value)}
+                    onError={onError}
+                  />
+                ) : f.type === "textarea" ? (
                   <textarea
                     rows={f.rows || 2}
                     className={textareaClass}
@@ -209,6 +216,81 @@ function RepeatableListEditor({ items, fields, onChange, emptyItem, addLabel }) 
       >
         + {addLabel}
       </button>
+    </div>
+  );
+}
+
+const MAX_PROMO_IMAGE_BYTES = 16 * 1024 * 1024; // matches the server's Multer limit
+
+// Upload-a-file control for the promotion image field — staff pick a photo
+// straight from their computer instead of needing to host it somewhere and
+// paste a URL. Uploads immediately on selection (separate from the tab's
+// Save button) and writes the resulting hosted URL into the field; the raw
+// URL is still shown/editable underneath as a fallback for pasting an
+// already-hosted link.
+function ImageFieldEditor({ value, onChange, onError }) {
+  const fileInputRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+
+  async function handleFilePicked(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow picking the same file again later
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      onError("Please choose an image file.");
+      return;
+    }
+    if (file.size > MAX_PROMO_IMAGE_BYTES) {
+      onError("That image is larger than 16MB — please choose a smaller file.");
+      return;
+    }
+    setUploading(true);
+    try {
+      const { url } = await api.uploadPromoImage(file);
+      onChange(url);
+    } catch (err) {
+      onError(err.message || "Couldn't upload that image.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div>
+      {value && (
+        <img
+          src={value}
+          alt="Promotion graphic"
+          className="w-full max-h-40 object-cover rounded-lg border border-[var(--color-border)] mb-2"
+        />
+      )}
+      <div className="flex items-center gap-2 mb-2">
+        <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFilePicked} className="hidden" />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
+          className="inline-flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
+        >
+          {uploading && <Spinner className="h-3 w-3" />}
+          {uploading ? "Uploading…" : value ? "Replace image" : "Upload image"}
+        </button>
+        {value && !uploading && (
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors"
+          >
+            Remove
+          </button>
+        )}
+      </div>
+      <input
+        className={`${inputClass} text-xs`}
+        value={value}
+        placeholder="or paste an already-hosted image URL"
+        onChange={(e) => onChange(e.target.value)}
+      />
     </div>
   );
 }
@@ -595,7 +677,7 @@ function FaqsTab({ config, onSaved, onError }) {
 
 const PROMOTION_FIELDS = [
   { key: "name", label: "Promo name" },
-  { key: "imageUrl", label: "Image URL", placeholder: "https://..." },
+  { key: "imageUrl", label: "Promo image", type: "image" },
   { key: "caption", label: "Caption", type: "textarea", rows: 2 },
   { key: "validFrom", label: "Valid from (YYYY-MM-DD, optional)", placeholder: "Always on if blank" },
   { key: "validUntil", label: "Valid until (YYYY-MM-DD, optional)", placeholder: "No end date if blank" },
@@ -645,6 +727,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         onChange={setItems}
         emptyItem={{ name: "", imageUrl: "", caption: "", validFrom: "", validUntil: "" }}
         addLabel="Add promotion"
+        onError={onError}
       />
       <div className="mt-4">
         <SaveButton saving={saving} onClick={handleSave} />
