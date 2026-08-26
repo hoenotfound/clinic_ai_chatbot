@@ -210,14 +210,19 @@ function parseIncomingMessages(body) {
     const change = entry?.changes?.[0];
     const value = change?.value;
     const messages = value?.messages;
+    const contacts = value?.contacts || [];
 
     if (!messages || messages.length === 0) return []; // status update, not a new message
 
     return messages.map((message) => {
+      const whatsappContact = contacts.find((contact) => contact.wa_id === message.from);
+      const profileName = whatsappContact?.profile?.name?.trim() || null;
+
       if (message.type === "text") {
         return {
           id: message.id, // used for de-duplicating retried webhooks
           from: message.from, // patient's WhatsApp number, used as the conversation key
+          profileName,
           text: message.text.body,
           mediaId: null,
           mediaType: null,
@@ -228,6 +233,7 @@ function parseIncomingMessages(body) {
         return {
           id: message.id,
           from: message.from,
+          profileName,
           text: null,
           mediaId: message.audio.id, // resolved via downloadMedia() in server.js
           mediaType: "audio",
@@ -238,13 +244,22 @@ function parseIncomingMessages(body) {
         return {
           id: message.id,
           from: message.from,
+          profileName,
           text: message.image.caption || null, // patients often send a photo with no caption
           mediaId: message.image.id, // resolved via downloadMedia() in server.js
           mediaType: "image",
           unsupportedType: null,
         };
       }
-      return { id: message.id, from: message.from, text: null, mediaId: null, mediaType: null, unsupportedType: message.type };
+      return {
+        id: message.id,
+        from: message.from,
+        profileName,
+        text: null,
+        mediaId: null,
+        mediaType: null,
+        unsupportedType: message.type,
+      };
     });
   } catch (err) {
     console.error("Failed to parse webhook payload:", err);

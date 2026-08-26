@@ -162,7 +162,7 @@ function ContactList({ contacts, selectedId, onSelect, onAddNew, searchInput, on
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-medium text-sm truncate flex items-center gap-1.5">
-                  {c.name || formatPhone(c.whatsapp_number)}
+                  {displayName(c)}
                   {c.mode === "human" && <ModeBadge mode="human" />}
                 </span>
                 <span className="text-[11px] text-[var(--color-text-muted)] shrink-0">{formatTime(c.last_message_at)}</span>
@@ -238,7 +238,7 @@ function ContactProfile({ contact, onEdit, onToast }) {
           <ContactAvatar src={contact.photo_url} channel={contact.channel} size={48} />
           <div className="min-w-0">
             <h2 className="font-display text-xl font-bold flex items-center gap-2">
-              <span className="truncate">{contact.name || "Unnamed contact"}</span>
+              <span className="truncate">{displayName(contact)}</span>
               {contact.mode === "human" && <ModeBadge mode="human" />}
             </h2>
             <p className="text-sm text-[var(--color-text-muted)] mt-1">{formatPhone(contact.whatsapp_number)}</p>
@@ -420,6 +420,10 @@ function ModeBadge({ mode }) {
 
 function formatPhone(number) {
   return `+${number}`;
+}
+
+function displayName(contact) {
+  return contact.name || contact.whatsapp_profile_name || formatPhone(contact.whatsapp_number);
 }
 
 function formatTime(value) {

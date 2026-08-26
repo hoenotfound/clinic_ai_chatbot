@@ -87,7 +87,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   const incomingMessages = whatsapp.parseIncomingMessages(req.body);
 
   for (const incoming of incomingMessages) {
-    const { id, from, mediaId, mediaType, unsupportedType } = incoming;
+    const { id, from, profileName, mediaId, mediaType, unsupportedType } = incoming;
     let text = incoming.text;
     let mediaAttachment = null; // patient photo or voice note audio, persisted via appendMessage below
 
@@ -165,7 +165,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
 
       // Fetch (or create) the contact first — we need its current mode
       // before deciding whether the AI should even respond.
-      const contact = await contactsRepo.getOrCreateContact(from);
+      const contact = await contactsRepo.getOrCreateContact(from, profileName);
 
       // Save the patient's message first, independent of whether the AI
       // reply succeeds — so it always shows in the inbox, even on failure.
