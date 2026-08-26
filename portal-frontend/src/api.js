@@ -55,4 +55,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ needsAttention, reason }),
     }),
+  // Clinic config (Settings page) — partial update, only the keys included
+  // in `updates` are changed server-side; everything else is left as-is.
+  getConfig: () => request("/config"),
+  updateConfig: (updates) => request("/config", { method: "PATCH", body: JSON.stringify(updates) }),
 };
