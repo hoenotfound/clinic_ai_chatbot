@@ -909,7 +909,6 @@ function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpe
                     )}
                   </div>
                   <div className="mt-2 flex min-w-0 items-center gap-1.5">
-                    <ChannelBadge channel={conversation.channel} />
                     <ModeBadge mode={conversation.mode} compact />
                     {conversation.needs_follow_up && <StatusBadge tone="accent">Follow-up</StatusBadge>}
                     {conversation.needs_attention && <StatusBadge tone="danger">Attention</StatusBadge>}
