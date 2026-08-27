@@ -4,6 +4,21 @@ import { useAuth } from "../context/AuthContext";
 import { useToasts, ToastContainer } from "../components/Toast";
 import Lightbox from "../components/Lightbox";
 import ContactAvatar from "../components/ContactAvatar";
+import {
+  AlertIcon,
+  ArrowLeftIcon,
+  BotIcon,
+  ChatOutlineIcon,
+  ChevronDownIcon,
+  CloseIcon,
+  FlagIcon,
+  ImageIcon,
+  MailIcon,
+  MicrophoneIcon,
+  SearchIcon,
+  SendIcon,
+  UserIcon,
+} from "../components/InboxIcons";
 
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_INCREMENTAL_MESSAGES = 100;
@@ -19,7 +34,7 @@ const STATUS_FILTERS = [
   { key: "unreplied", label: "Unreplied" },
   { key: "follow-up", label: "Follow-up" },
   { key: "unread", label: "Unread" },
-  { key: "attention", label: "Attention" },
+  { key: "attention", label: "Needs attention" },
 ];
 
 const DELIVERY_STATUS_RANK = {
@@ -97,6 +112,7 @@ export default function Inbox() {
   const [hasMoreOlderMessages, setHasMoreOlderMessages] = useState(false);
   const [actionPending, setActionPending] = useState(false);
   const [conversationStatePending, setConversationStatePending] = useState(false);
+  const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
   const selectedIdRef = useRef(selectedId);
   const messagesRef = useRef(messages);
   const latestMessageIdRef = useRef(null);
@@ -203,7 +219,8 @@ export default function Inbox() {
       const firstConversation = conversations[0];
       setSelectedId(firstConversation.contact_id);
 
-      if (firstConversation.is_unread) {
+      const threadIsVisible = window.matchMedia("(min-width: 768px)").matches;
+      if (firstConversation.is_unread && threadIsVisible) {
         setConversations((current) =>
           current?.map((conversation) =>
             conversation.contact_id === firstConversation.contact_id
@@ -418,6 +435,7 @@ export default function Inbox() {
 
   async function handleSelectConversation(contactId) {
     setSelectedId(contactId);
+    setMobileThreadOpen(true);
     const conversation = conversations?.find((item) => item.contact_id === contactId);
     if (!conversation?.is_unread) return;
 
@@ -633,11 +651,12 @@ export default function Inbox() {
   const selectedContact = conversations?.find((c) => c.contact_id === selectedId);
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full bg-[var(--color-bg)]">
       <ConversationList
         conversations={conversations}
         selectedId={selectedId}
         onSelect={handleSelectConversation}
+        mobileThreadOpen={mobileThreadOpen}
       />
       <ThreadView
         key={selectedId ?? "no-conversation"}
@@ -659,13 +678,15 @@ export default function Inbox() {
         onSendImage={handleSendImage}
         onSendVoice={handleSendVoice}
         onToast={showToast}
+        mobileThreadOpen={mobileThreadOpen}
+        onBack={() => setMobileThreadOpen(false)}
       />
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
 
-function ConversationList({ conversations, selectedId, onSelect }) {
+function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpen }) {
   const [filters, setFilters] = useState({
     status: "all",
     channel: "all",
@@ -723,16 +744,19 @@ function ConversationList({ conversations, selectedId, onSelect }) {
   }
 
   return (
-    <div className="w-[23rem] shrink-0 border-r border-[var(--color-border)] h-full overflow-y-auto bg-[var(--color-surface)]">
-      <div className="px-4 py-4 border-b border-[var(--color-border)] sticky top-0 z-20 bg-[var(--color-surface)] shadow-[0_1px_0_rgba(0,0,0,0.02)]">
+    <aside
+      className={`${mobileThreadOpen ? "hidden md:flex" : "flex"} h-full w-full shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] md:w-[21.5rem] lg:w-[23rem] xl:w-[24.5rem]`}
+      aria-label="Conversation inbox"
+    >
+      <header className="shrink-0 border-b border-[var(--color-border)] px-4 pb-4 pt-5 sm:px-5">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h1 className="font-display text-lg font-bold">Inbox</h1>
-            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+            <h1 className="font-display text-xl font-bold tracking-[-0.02em]">Inbox</h1>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]" aria-live="polite">
               {!conversations
-                ? "Loading…"
+                ? "Loading conversations…"
                 : hasActiveFilters
-                ? `${filteredConversations.length} of ${conversationList.length} conversations`
+                ? `${filteredConversations.length} shown from ${conversationList.length}`
                 : `${conversationList.length} conversation${conversationList.length === 1 ? "" : "s"}`}
             </p>
           </div>
@@ -740,36 +764,36 @@ function ConversationList({ conversations, selectedId, onSelect }) {
             <button
               type="button"
               onClick={clearFilters}
-              className="text-[11px] font-semibold text-[var(--color-primary)] hover:underline mt-1"
+              className="rounded-lg px-2 py-1 text-[11px] font-semibold text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-light)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
             >
-              Clear filters
+              Clear all
             </button>
           )}
         </div>
 
-        <div className="relative mt-3">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            aria-hidden="true"
-            className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-muted)]"
-          >
-            <circle cx="11" cy="11" r="7" />
-            <path d="m20 20-3.5-3.5" />
-          </svg>
+        <div className="relative mt-4">
+          <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" />
           <input
             type="search"
             value={filters.query}
             onChange={(event) => updateFilter("query", event.target.value)}
-            placeholder="Search name, number or message"
-            aria-label="Search conversations"
-            className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] pl-9 pr-3 py-2 text-xs outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+            placeholder="Search conversations"
+            aria-label="Search by name, number, or message"
+            className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] py-2.5 pl-9 pr-9 text-xs outline-none transition focus:border-[var(--color-primary)] focus:bg-white focus:ring-2 focus:ring-[var(--color-primary-light)]"
           />
+          {filters.query && (
+            <button
+              type="button"
+              onClick={() => updateFilter("query", "")}
+              aria-label="Clear search"
+              className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-white hover:text-[var(--color-text)]"
+            >
+              <CloseIcon className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
 
-        <div className="grid grid-cols-5 gap-1 mt-3" aria-label="Conversation status filters">
+        <div className="-mx-1 mt-3 flex gap-1.5 overflow-x-auto px-1 pb-1" aria-label="Conversation status filters">
           {STATUS_FILTERS.map((filter) => {
             const active = filters.status === filter.key;
             return (
@@ -779,14 +803,14 @@ function ConversationList({ conversations, selectedId, onSelect }) {
                 onClick={() => updateFilter("status", filter.key)}
                 aria-pressed={active}
                 title={filter.key === "attention" ? "Needs attention" : undefined}
-                className={`rounded-lg px-1 py-2 text-[10px] font-semibold transition-colors ${
+                className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${
                   active
-                    ? "bg-[var(--color-primary)] text-white"
-                    : "bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                    ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white"
+                    : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:border-[var(--color-primary)]/40 hover:text-[var(--color-text)]"
                 }`}
               >
                 <span>{filter.label}</span>
-                <span className={`ml-1 ${active ? "text-white/70" : "text-[var(--color-text-muted)]"}`}>
+                <span className={`rounded-full px-1.5 py-0.5 text-[9px] leading-none ${active ? "bg-white/20 text-white" : "bg-[var(--color-bg)]"}`}>
                   {statusCounts[filter.key]}
                 </span>
               </button>
@@ -794,110 +818,210 @@ function ConversationList({ conversations, selectedId, onSelect }) {
           })}
         </div>
 
-        <div className="grid grid-cols-2 gap-2 mt-2">
-          <label className="relative">
-            <span className="sr-only">Filter by channel</span>
-            <select
-              value={filters.channel}
-              onChange={(event) => updateFilter("channel", event.target.value)}
-              className="w-full appearance-none rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 pr-7 text-xs font-medium outline-none focus:border-[var(--color-primary)]"
-            >
-              <option value="all">All channels</option>
-              <option value="whatsapp">WhatsApp</option>
-              <option value="facebook">Facebook</option>
-              <option value="instagram">Instagram</option>
-            </select>
-            <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-[var(--color-text-muted)]">▼</span>
-          </label>
-          <label className="relative">
-            <span className="sr-only">Filter by conversation owner</span>
-            <select
-              value={filters.owner}
-              onChange={(event) => updateFilter("owner", event.target.value)}
-              className="w-full appearance-none rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 pr-7 text-xs font-medium outline-none focus:border-[var(--color-primary)]"
-            >
-              <option value="all">Bot + human</option>
-              <option value="ai">Bot controlled</option>
-              <option value="human">Human controlled</option>
-            </select>
-            <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-[var(--color-text-muted)]">▼</span>
-          </label>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <FilterSelect
+            label="Filter by channel"
+            value={filters.channel}
+            onChange={(value) => updateFilter("channel", value)}
+            options={[
+              ["all", "All channels"],
+              ["whatsapp", "WhatsApp"],
+              ["facebook", "Facebook"],
+              ["instagram", "Instagram"],
+            ]}
+          />
+          <FilterSelect
+            label="Filter by owner"
+            value={filters.owner}
+            onChange={(value) => updateFilter("owner", value)}
+            options={[
+              ["all", "AI + staff"],
+              ["ai", "AI controlled"],
+              ["human", "Staff controlled"],
+            ]}
+          />
         </div>
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        {!conversations && <ConversationListSkeleton />}
+
+        {conversations && conversations.length === 0 && (
+          <EmptyListState
+            title="No conversations yet"
+            description="New patient messages will appear here automatically."
+          />
+        )}
+
+        {conversations && conversations.length > 0 && filteredConversations.length === 0 && (
+          <EmptyListState
+            title="No matching conversations"
+            description="Try changing your search or filters."
+            action={
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="mt-4 rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-xs font-semibold hover:bg-[var(--color-bg)]"
+              >
+                Clear filters
+              </button>
+            }
+          />
+        )}
+
+        {filteredConversations.map((conversation) => {
+          const selected = conversation.contact_id === selectedId;
+          return (
+            <button
+              key={conversation.contact_id}
+              type="button"
+              onClick={() => onSelect(conversation.contact_id)}
+              aria-current={selected ? "true" : undefined}
+              className={`group relative mb-1 w-full rounded-xl px-3 py-3 text-left outline-none transition ${
+                selected
+                  ? "bg-[var(--color-primary-light)] shadow-[inset_0_0_0_1px_rgba(47,111,98,0.12)]"
+                  : conversation.needs_attention
+                  ? "bg-[var(--color-danger-light)]/70 hover:bg-[var(--color-danger-light)]"
+                  : "hover:bg-[var(--color-bg)]"
+              } focus:ring-2 focus:ring-inset focus:ring-[var(--color-primary)]/35`}
+            >
+              {selected && <span className="absolute inset-y-3 left-0 w-1 rounded-r-full bg-[var(--color-primary)]" />}
+              <div className="flex items-start gap-3">
+                <ContactAvatar src={conversation.photo_url} channel={conversation.channel} size={44} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={`truncate text-sm ${conversation.is_unread ? "font-semibold" : "font-medium"}`}>
+                      {displayName(conversation)}
+                    </span>
+                    <span className={`shrink-0 text-[10px] ${conversation.is_unread ? "font-semibold text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
+                      {formatTime(conversation.last_message_at)}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-2">
+                    <p className={`min-w-0 flex-1 truncate text-xs leading-5 ${conversation.is_unread ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                      {conversation.last_message_role === "assistant" ? "You: " : ""}
+                      {conversation.last_message_media_url ? "Photo · " : ""}
+                      {conversation.last_message || (conversation.last_message_media_url ? "Attachment" : "No messages yet")}
+                    </p>
+                    {conversation.is_unread && (
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--color-primary)] ring-4 ring-[var(--color-primary-light)]" title="Unread" />
+                    )}
+                  </div>
+                  <div className="mt-2 flex min-w-0 items-center gap-1.5">
+                    <ChannelBadge channel={conversation.channel} />
+                    <ModeBadge mode={conversation.mode} compact />
+                    {conversation.needs_follow_up && <StatusBadge tone="accent">Follow-up</StatusBadge>}
+                    {conversation.needs_attention && <StatusBadge tone="danger">Attention</StatusBadge>}
+                  </div>
+                </div>
+              </div>
+            </button>
+          );
+        })}
       </div>
+    </aside>
+  );
+}
 
-      {conversations && conversations.length === 0 && (
-        <div className="px-5 py-10 text-center">
-          <p className="text-sm text-[var(--color-text-muted)]">
-            No conversations yet. Once a customer messages you, they'll show up here.
-          </p>
-        </div>
-      )}
+function FilterSelect({ label, value, onChange, options }) {
+  return (
+    <label className="relative block">
+      <span className="sr-only">{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full appearance-none rounded-lg border border-[var(--color-border)] bg-white py-2 pl-2.5 pr-7 text-[11px] font-medium text-[var(--color-text)] outline-none transition focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+      >
+        {options.map(([optionValue, optionLabel]) => (
+          <option key={optionValue} value={optionValue}>{optionLabel}</option>
+        ))}
+      </select>
+      <ChevronDownIcon className="pointer-events-none absolute right-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--color-text-muted)]" />
+    </label>
+  );
+}
 
-      {conversations && conversations.length > 0 && filteredConversations.length === 0 && (
-        <div className="px-6 py-12 text-center">
-          <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-[var(--color-bg)] text-lg">⌕</div>
-          <p className="text-sm font-semibold mt-3">No matching conversations</p>
-          <p className="text-xs text-[var(--color-text-muted)] mt-1">Try changing or clearing the filters.</p>
-          <button
-            type="button"
-            onClick={clearFilters}
-            className="mt-4 text-xs font-semibold px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)]"
-          >
-            Clear filters
-          </button>
-        </div>
-      )}
-
-      {filteredConversations.map((c) => (
-        <button
-          key={c.contact_id}
-          onClick={() => onSelect(c.contact_id)}
-          className={`relative w-full text-left px-4 py-3.5 border-b border-[var(--color-border)] transition-colors ${
-            c.contact_id === selectedId
-              ? "bg-[var(--color-primary-light)]"
-              : c.needs_attention
-              ? "bg-[var(--color-danger-light)] hover:brightness-95"
-              : c.is_unread
-              ? "bg-[var(--color-bg)] hover:brightness-98"
-              : "hover:bg-[var(--color-bg)]"
-          }`}
-        >
-          {c.needs_attention && (
-            <span
-              className="absolute left-1.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-[var(--color-danger)]"
-              title={c.attention_reason || "Needs attention"}
-            />
-          )}
-          <div className="flex items-center gap-3 pl-1.5">
-            <ContactAvatar src={c.photo_url} channel={c.channel} />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-2">
-                <span className={`${c.is_unread ? "font-semibold" : "font-medium"} text-sm truncate flex items-center gap-1.5`}>
-                  {displayName(c)}
-                  {c.is_unread && <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-primary)]" title="Unread" />}
-                </span>
-                <span className={`text-[11px] shrink-0 ${c.is_unread ? "font-semibold text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
-                  {formatTime(c.last_message_at)}
-                </span>
-              </div>
-              <p className={`text-xs truncate mt-0.5 ${c.is_unread ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
-                {c.last_message_role === "assistant" ? "You: " : ""}
-                {c.last_message_media_url ? "📷 " : ""}
-                {c.last_message || (c.last_message_media_url ? "Photo" : "")}
-              </p>
-              <div className="flex items-center gap-1.5 mt-1.5">
-                <ChannelBadge channel={c.channel} />
-                <ModeBadge mode={c.mode} compact />
-                {c.needs_follow_up && (
-                  <span className="inline-flex items-center rounded-full bg-[var(--color-accent-light)] text-[var(--color-accent)] text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5">
-                    Follow-up
-                  </span>
-                )}
-              </div>
-            </div>
+function ConversationListSkeleton() {
+  return (
+    <div className="space-y-2 p-1" aria-label="Loading conversations">
+      {[0, 1, 2, 3, 4].map((item) => (
+        <div key={item} className="flex animate-pulse items-center gap-3 rounded-xl px-2 py-3">
+          <div className="h-11 w-11 shrink-0 rounded-full bg-[var(--color-border)]/70" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="h-3 w-2/3 rounded bg-[var(--color-border)]/70" />
+            <div className="h-2.5 w-full rounded bg-[var(--color-border)]/50" />
+            <div className="h-2 w-1/2 rounded bg-[var(--color-border)]/40" />
           </div>
-        </button>
+        </div>
       ))}
+    </div>
+  );
+}
+
+function EmptyListState({ title, description, action }) {
+  return (
+    <div className="px-5 py-14 text-center">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--color-primary-light)] text-[var(--color-primary)]">
+        <ChatOutlineIcon className="h-5 w-5" />
+      </div>
+      <p className="mt-4 text-sm font-semibold">{title}</p>
+      <p className="mx-auto mt-1 max-w-[15rem] text-xs leading-5 text-[var(--color-text-muted)]">{description}</p>
+      {action}
+    </div>
+  );
+}
+
+function StatusBadge({ tone, children }) {
+  const styles = {
+    accent: "bg-[var(--color-accent-light)] text-[#8a5d13]",
+    danger: "bg-[var(--color-danger-light)] text-[var(--color-danger)]",
+  };
+  return (
+    <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${styles[tone]}`}>
+      {children}
+    </span>
+  );
+}
+
+function ThreadLoadingSkeleton() {
+  return (
+    <div className="space-y-4 py-4" aria-label="Loading messages">
+      <div className="h-14 w-2/3 animate-pulse rounded-2xl rounded-bl-md bg-white shadow-sm" />
+      <div className="ml-auto h-20 w-3/5 animate-pulse rounded-2xl rounded-br-md bg-[var(--color-primary)]/20" />
+      <div className="h-20 w-1/2 animate-pulse rounded-2xl rounded-bl-md bg-white shadow-sm" />
+      <div className="ml-auto h-14 w-2/3 animate-pulse rounded-2xl rounded-br-md bg-[var(--color-primary)]/20" />
+    </div>
+  );
+}
+
+function shouldShowDateSeparator(messages, index) {
+  if (index === 0) return true;
+  const current = new Date(messages[index]?.created_at);
+  const previous = new Date(messages[index - 1]?.created_at);
+  if (Number.isNaN(current.getTime()) || Number.isNaN(previous.getTime())) return false;
+  return current.toDateString() !== previous.toDateString();
+}
+
+function DateSeparator({ value }) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  const label =
+    date.toDateString() === today.toDateString()
+      ? "Today"
+      : date.toDateString() === yesterday.toDateString()
+      ? "Yesterday"
+      : date.toLocaleDateString([], { month: "short", day: "numeric", year: date.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+
+  return (
+    <div className="flex items-center gap-3 py-2" aria-label={label}>
+      <span className="h-px flex-1 bg-[var(--color-border)]/80" />
+      <span className="rounded-full border border-[var(--color-border)] bg-white/90 px-3 py-1 text-[10px] font-semibold text-[var(--color-text-muted)] shadow-sm">
+        {label}
+      </span>
+      <span className="h-px flex-1 bg-[var(--color-border)]/80" />
     </div>
   );
 }
@@ -921,6 +1045,8 @@ function ThreadView({
   onSendImage,
   onSendVoice,
   onToast,
+  mobileThreadOpen,
+  onBack,
 }) {
   const bottomRef = useRef(null);
   const threadScrollRef = useRef(null);
@@ -1193,10 +1319,26 @@ function ThreadView({
     }
   }
 
+  function handleBackToConversations() {
+    if (isStartingRecording || isRecording || voiceBlob) {
+      onToast("Finish or cancel the voice message before returning to the Inbox.", "warning");
+      return;
+    }
+    onBack();
+  }
+
   if (!contact) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <p className="text-sm text-[var(--color-text-muted)]">Select a conversation to view the chat history.</p>
+      <div className="hidden flex-1 items-center justify-center bg-[var(--color-bg)] md:flex">
+        <div className="max-w-xs text-center">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-[var(--color-primary-light)] text-[var(--color-primary)]">
+            <ChatOutlineIcon className="h-7 w-7" />
+          </div>
+          <h2 className="mt-5 font-display text-lg font-bold">Choose a conversation</h2>
+          <p className="mt-2 text-sm leading-6 text-[var(--color-text-muted)]">
+            Select a patient from the Inbox to view their messages and reply.
+          </p>
+        </div>
       </div>
     );
   }
@@ -1223,107 +1365,150 @@ function ThreadView({
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full min-w-0">
-      <div className="px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <ContactAvatar src={contact.photo_url} channel={contact.channel} size={40} />
+    <section className={`${mobileThreadOpen ? "flex" : "hidden md:flex"} min-w-0 flex-1 flex-col h-full bg-[var(--color-bg)]`} aria-label={`Conversation with ${displayName(contact)}`}>
+      <header className="relative z-10 shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] shadow-[0_1px_8px_rgba(24,39,33,0.04)]">
+        <div className="flex items-center justify-between gap-3 px-3 py-3 sm:px-5">
+          <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+            <button
+              type="button"
+              onClick={handleBackToConversations}
+              aria-label="Back to conversations"
+              title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice message first" : "Back to conversations"}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] md:hidden"
+            >
+              <ArrowLeftIcon className="h-5 w-5" />
+            </button>
+            <ContactAvatar src={contact.photo_url} channel={contact.channel} size={44} />
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h2 className="font-display font-bold text-base truncate">{displayName(contact)}</h2>
-                <ModeBadge mode={contact.mode} />
+              <h2 className="truncate font-display text-[15px] font-bold sm:text-base">{displayName(contact)}</h2>
+              <div className="mt-1 flex items-center gap-1.5 overflow-hidden">
+                <ChannelBadge channel={contact.channel} />
+                <ModeBadge mode={contact.mode} compact />
+                <span className="truncate text-[10px] text-[var(--color-text-muted)] sm:text-[11px]">
+                  {contact.whatsapp_number}
+                  {contact.mode === "human" && contact.takeover_by && ` · ${contact.takeover_by}`}
+                </span>
               </div>
-              <p className="text-xs text-[var(--color-text-muted)] truncate">
-                {contact.whatsapp_number}
-                {contact.mode === "human" && contact.takeover_by && ` · Taken over by ${contact.takeover_by}`}
-              </p>
             </div>
           </div>
           {contact.mode === "human" ? (
             <button
+              type="button"
               onClick={onReturnToAi}
               disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
-              title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice recording first" : undefined}
-              className="text-xs font-medium px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
+              title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice recording first" : "Return control to AI"}
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50"
             >
+              {actionPending && <Spinner />}
+              <BotIcon className="hidden h-4 w-4 sm:block" />
               Return to AI
             </button>
           ) : (
             <button
+              type="button"
               onClick={onTakeOver}
               disabled={actionPending}
-              className="text-xs font-medium px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-[var(--color-primary)] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50"
             >
-              Take Over Conversation
+              {actionPending && <Spinner />}
+              <UserIcon className="hidden h-4 w-4 sm:block" />
+              Take over
             </button>
           )}
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap mt-3 pt-3 border-t border-[var(--color-border)]">
+        <div className="flex items-center gap-2 overflow-x-auto border-t border-[var(--color-border)] px-3 py-2 sm:px-5">
+          <span className="hidden shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)] lg:inline">Actions</span>
           <button
             type="button"
             onClick={onToggleFollowUp}
             disabled={conversationStatePending}
             aria-pressed={!!contact.needs_follow_up}
             title={contact.needs_follow_up ? "Remove follow-up flag" : "Add to follow-up list"}
-            className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-50 ${
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${
               contact.needs_follow_up
-                ? "border-[var(--color-accent)] bg-[var(--color-accent-light)] text-[var(--color-accent)]"
-                : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-bg)]"
+                ? "border-[var(--color-accent)]/40 bg-[var(--color-accent-light)] text-[#8a5d13]"
+                : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
             }`}
           >
+            <FlagIcon className="h-3.5 w-3.5" />
             {contact.needs_follow_up ? "Follow-up saved" : "Add follow-up"}
           </button>
           <button
             type="button"
             onClick={onToggleUnread}
             disabled={conversationStatePending}
-            className="text-xs font-medium px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
+            aria-pressed={!!contact.is_unread}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] disabled:opacity-50"
           >
+            <MailIcon className="h-3.5 w-3.5" />
             {contact.is_unread ? "Mark as read" : "Mark unread"}
           </button>
-          {contact.needs_attention && (
-            <button
-              type="button"
-              onClick={onDismissAttention}
-              title={contact.attention_reason || "Needs attention"}
-              className="text-xs font-medium px-3 py-1.5 rounded-lg bg-[var(--color-danger-light)] text-[var(--color-danger)] hover:brightness-95 transition-all"
-            >
-              ⚠ Needs attention · Dismiss
-            </button>
-          )}
         </div>
-      </div>
 
-      <div ref={threadScrollRef} onScroll={handleThreadScroll} className="flex-1 overflow-y-auto px-6 py-6 space-y-3">
-        {hasMoreOlderMessages && (
-          <div className="text-center pb-2">
-            <button
-              type="button"
-              onClick={onLoadOlder}
-              disabled={olderMessagesLoading}
-              className="text-xs font-medium px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] disabled:opacity-50"
-            >
-              {olderMessagesLoading ? "Loading older messages…" : "Load 50 older messages"}
+        {contact.needs_attention && (
+          <div className="flex items-start justify-between gap-3 border-t border-[var(--color-danger)]/15 bg-[var(--color-danger-light)] px-4 py-2.5 text-[var(--color-danger)] sm:px-5">
+            <div className="flex min-w-0 items-start gap-2">
+              <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-xs font-semibold">Needs attention</p>
+                <p className="truncate text-[11px] opacity-80">{contact.attention_reason || "This conversation was flagged for staff review."}</p>
+              </div>
+            </div>
+            <button type="button" onClick={onDismissAttention} className="shrink-0 rounded-lg px-2 py-1 text-[11px] font-semibold hover:bg-white/60">
+              Dismiss
             </button>
           </div>
         )}
-        {loading && <p className="text-sm text-[var(--color-text-muted)] text-center">Loading…</p>}
-        {messages.map((m) => (
-          <MessageBubble
-            key={m.id}
-            contactId={contact.contact_id}
-            message={m}
-            onImageClick={setLightboxSrc}
-            onRetry={onRetryMessage}
-          />
-        ))}
-        <div ref={bottomRef} />
+      </header>
+
+      <div ref={threadScrollRef} onScroll={handleThreadScroll} className="inbox-thread-bg min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-5 sm:py-6">
+        <div className="mx-auto w-full max-w-4xl space-y-3">
+          {hasMoreOlderMessages && (
+            <div className="pb-2 text-center">
+              <button
+                type="button"
+                onClick={onLoadOlder}
+                disabled={olderMessagesLoading}
+                className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-white px-3.5 py-2 text-xs font-semibold text-[var(--color-text-muted)] shadow-sm transition hover:text-[var(--color-text)] disabled:opacity-50"
+              >
+                {olderMessagesLoading && <Spinner className="text-[var(--color-primary)]" />}
+                {olderMessagesLoading ? "Loading older messages…" : "Load older messages"}
+              </button>
+            </div>
+          )}
+
+          {loading && <ThreadLoadingSkeleton />}
+
+          {!loading && messages.length === 0 && (
+            <div className="py-16 text-center">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-[var(--color-primary)] shadow-sm">
+                <ChatOutlineIcon className="h-5 w-5" />
+              </div>
+              <p className="mt-4 text-sm font-semibold">No messages yet</p>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">Start the conversation using the message box below.</p>
+            </div>
+          )}
+
+          {!loading && messages.map((message, index) => (
+            <div key={message.id} className="space-y-3">
+              {shouldShowDateSeparator(messages, index) && <DateSeparator value={message.created_at} />}
+              <MessageBubble
+                contactId={contact.contact_id}
+                message={message}
+                onImageClick={setLightboxSrc}
+                onRetry={onRetryMessage}
+              />
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface)]">
+      <form onSubmit={handleSubmit} className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 shadow-[0_-4px_14px_rgba(24,39,33,0.03)] sm:px-5">
+        <div className="mx-auto w-full max-w-4xl">
         {isStartingRecording && (
-          <div className="flex items-center gap-3 mb-3 pb-3 border-b border-[var(--color-border)]">
+          <div className="mb-3 flex items-center gap-3 rounded-xl bg-[var(--color-primary-light)] px-3 py-2.5">
             <Spinner className="text-[var(--color-primary)]" />
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold">Starting microphone…</p>
@@ -1333,7 +1518,7 @@ function ThreadView({
           </div>
         )}
         {isRecording && (
-          <div className="flex items-center gap-3 mb-3 pb-3 border-b border-[var(--color-border)]">
+          <div className="mb-3 flex items-center gap-3 rounded-xl bg-red-50 px-3 py-2.5">
             <span className="relative flex h-3 w-3 shrink-0"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" /><span className="relative inline-flex h-3 w-3 rounded-full bg-red-500" /></span>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold text-red-600">Recording voice message</p>
@@ -1344,20 +1529,22 @@ function ThreadView({
           </div>
         )}
         {voicePreviewUrl && !isRecording && (
-          <div className="flex items-center gap-3 mb-3 pb-3 border-b border-[var(--color-border)]">
-            <audio controls src={voicePreviewUrl} className="h-9 max-w-[260px]" />
+          <div className="mb-3 flex flex-col gap-3 rounded-xl bg-[var(--color-bg)] px-3 py-2.5 sm:flex-row sm:items-center">
+            <audio controls src={voicePreviewUrl} className="h-9 w-full min-w-0 sm:max-w-[260px]" />
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium">Voice message · {formatDuration(voiceDuration)}</p>
               <p className="text-[11px] text-[var(--color-text-muted)]">Listen before sending to the patient</p>
             </div>
-            <button type="button" onClick={clearVoice} disabled={sending} className="text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50">Remove</button>
-            <button type="button" onClick={sendRecordedVoice} disabled={sending} className="inline-flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50">
-              {sending && <Spinner />}{sending ? "Sending…" : "Send voice"}
-            </button>
+            <div className="flex shrink-0 items-center justify-end gap-2">
+              <button type="button" onClick={clearVoice} disabled={sending} className="text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-white transition-colors disabled:opacity-50">Remove</button>
+              <button type="button" onClick={sendRecordedVoice} disabled={sending} className="inline-flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50">
+                {sending && <Spinner />}{sending ? "Sending…" : "Send voice"}
+              </button>
+            </div>
           </div>
         )}
         {imagePreviewUrl && (
-          <div className="flex items-center gap-3 mb-3 pb-3 border-b border-[var(--color-border)]">
+          <div className="mb-3 flex items-center gap-3 rounded-xl bg-[var(--color-bg)] px-3 py-2.5">
             <img src={imagePreviewUrl} alt="Selected attachment" className="w-16 h-16 rounded-lg object-cover border border-[var(--color-border)]" />
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium truncate">{imageFile.name}</p>
@@ -1366,11 +1553,11 @@ function ThreadView({
             <button type="button" onClick={clearImage} className="text-xs font-medium px-2.5 py-1 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors">Remove</button>
           </div>
         )}
-        <div className="flex items-end gap-3">
+        <div className="flex items-end gap-1.5 rounded-2xl border border-[var(--color-border)] bg-white p-1.5 shadow-[0_3px_14px_rgba(24,39,33,0.06)] transition focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)] sm:gap-2">
           <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFilePicked} className="hidden" />
-          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={sending || isStartingRecording || isRecording || !!voiceBlob} title="Attach an image" aria-label="Attach an image" className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50">📷</button>
+          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={sending || isStartingRecording || isRecording || !!voiceBlob} title="Attach an image" aria-label="Attach an image" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50 sm:h-10 sm:w-10"><ImageIcon className="h-[18px] w-[18px]" /></button>
           {contact.mode === "human" && (
-            <button type="button" onClick={startRecording} disabled={sending || isStartingRecording || isRecording || !!voiceBlob || !!imageFile} title="Record a voice message" aria-label="Record a voice message" className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50">🎙️</button>
+            <button type="button" onClick={startRecording} disabled={sending || isStartingRecording || isRecording || !!voiceBlob || !!imageFile} title="Record a voice message" aria-label="Record a voice message" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50 sm:h-10 sm:w-10"><MicrophoneIcon className="h-[18px] w-[18px]" /></button>
           )}
           <textarea
             ref={textareaRef}
@@ -1385,16 +1572,21 @@ function ThreadView({
             }}
             placeholder={imageFile ? "Add a caption (optional)…" : contact.mode === "human" ? "Type a WhatsApp message to this patient…" : "Type a message — sending will take over this conversation from the AI…"}
             rows={1}
-            className="flex-1 resize-none rounded-xl border border-[var(--color-border)] px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] max-h-32 overflow-y-auto disabled:opacity-50"
+            className="max-h-32 min-h-9 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-2 py-2 text-sm leading-relaxed outline-none disabled:opacity-50 sm:min-h-10 sm:px-2.5 sm:py-2.5"
           />
-          <button type="submit" disabled={(!draft.trim() && !imageFile) || sending || isStartingRecording || isRecording || !!voiceBlob} className="shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50">
-            {sending && <Spinner />}{sending ? (imageFile ? "Uploading…" : "Sending…") : "Send"}
+          <button type="submit" disabled={(!draft.trim() && !imageFile) || sending || isStartingRecording || isRecording || !!voiceBlob} title="Send message" className="flex h-9 shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40 sm:h-10 sm:px-4 sm:text-sm">
+            {sending ? <Spinner /> : <SendIcon className="h-4 w-4" />}
+            <span className="hidden sm:inline">{sending ? (imageFile ? "Uploading…" : "Sending…") : "Send"}</span>
           </button>
+        </div>
+        <p className="mt-1.5 hidden text-center text-[10px] text-[var(--color-text-muted)] sm:block">
+          Enter to send · Shift + Enter for a new line
+        </p>
         </div>
       </form>
 
       <Lightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
-    </div>
+    </section>
   );
 }
 
@@ -1445,8 +1637,8 @@ function MessageBubble({ contactId, message, onImageClick, onRetry }) {
 
   return (
     <div className={`flex ${isPatient ? "justify-start" : "justify-end"}`}>
-      <div className={`relative max-w-[70%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${isPatient ? "bubble-in bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]" : "bubble-out bg-[var(--color-primary)] text-white"} ${message._optimistic ? "opacity-70" : ""} ${deliveryFailed ? "ring-2 ring-[var(--color-danger)] ring-offset-2" : ""}`}>
-        {!isPatient && <p className="text-[10px] font-semibold uppercase tracking-wide mb-0.5 text-white/70">{sentByStaff ? message.sent_by_username : "AI"}</p>}
+      <div className={`relative max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryFailed ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}>
+        {!isPatient && <p className="mb-1 text-[10px] font-semibold text-white/70">{sentByStaff ? message.sent_by_username : "AI assistant"}</p>}
         {isAudio && storedMediaSrc ? (
           <audio controls preload="none" src={storedMediaSrc} className="mb-1.5 max-w-full" style={{ height: "36px" }} />
         ) : (
@@ -1457,8 +1649,8 @@ function MessageBubble({ contactId, message, onImageClick, onRetry }) {
             </div>
           )
         )}
-        {message.content && <p className="whitespace-pre-wrap">{message.content}</p>}
-        <div className={`text-[10px] mt-1 flex items-center gap-2 ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/70"}`}>
+        {message.content && <p className="whitespace-pre-wrap break-words">{message.content}</p>}
+        <div className={`mt-1.5 flex items-center gap-2 text-[10px] ${isPatient ? "text-[var(--color-text-muted)]" : "justify-end text-white/70"}`}>
           {message._optimistic && <Spinner className="h-2.5 w-2.5" />}
           <span>{formatTime(message.created_at)}</span>
           {!isPatient && !message._optimistic && !deliveryFailed && (
