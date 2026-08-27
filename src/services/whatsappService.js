@@ -1,5 +1,3 @@
-const crypto = require("crypto");
-
 const GRAPH_API_VERSION = "v26.0";
 
 // A 200 OK from POST .../messages only means Meta *accepted* the send
@@ -10,10 +8,6 @@ const GRAPH_API_VERSION = "v26.0";
 // that lets that later callback be matched back to this specific message.
 function extractWamid(data) {
   return data?.messages?.[0]?.id || null;
-}
-
-function sha256(buffer) {
-  return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
 /**
@@ -119,15 +113,6 @@ async function uploadMedia(buffer, mimeType, filename = "upload") {
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/media`;
 
   try {
-    console.log(
-      "[uploadMedia] uploading with mimeType:",
-      JSON.stringify(mimeType),
-      "filename:",
-      filename,
-      "bytes:",
-      buffer.length
-    );
-
     // Keep this multipart shape aligned with the raw curl request that was
     // independently proven to deliver a WhatsApp voice note successfully:
     // messaging_product + one file part whose own Content-Type is audio/ogg.
@@ -149,40 +134,7 @@ async function uploadMedia(buffer, mimeType, filename = "upload") {
     }
 
     const data = await res.json();
-    const mediaId = data.id || null;
-    if (!mediaId) return null;
-
-    // Diagnostic only for OGG voice uploads. Download the exact media bytes
-    // Meta stored and compare them to what Node sent. This does not block the
-    // send if Meta's just-created media is not immediately downloadable.
-    const baseMimeType = String(mimeType || "").split(";")[0].trim().toLowerCase();
-    if (baseMimeType === "audio/ogg") {
-      try {
-        const downloaded = await downloadMedia(mediaId);
-        if (downloaded?.buffer) {
-          const originalSha256 = sha256(buffer);
-          const downloadedSha256 = sha256(downloaded.buffer);
-          console.log("[voice-upload-roundtrip]", {
-            mediaId,
-            requestedMimeType: mimeType,
-            metaMimeType: downloaded.mimeType,
-            originalBytes: buffer.length,
-            downloadedBytes: downloaded.buffer.length,
-            originalSha256,
-            downloadedSha256,
-            matches: originalSha256 === downloadedSha256,
-          });
-        } else {
-          console.warn(
-            `[voice-upload-roundtrip] Could not immediately download media ${mediaId} for byte comparison.`
-          );
-        }
-      } catch (verifyErr) {
-        console.warn("[voice-upload-roundtrip] Verification failed:", verifyErr);
-      }
-    }
-
-    return mediaId;
+    return data.id || null;
   } catch (err) {
     console.error("WhatsApp media upload threw an error:", err);
     return null;
