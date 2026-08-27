@@ -23,15 +23,21 @@ export const api = {
   logout: () => request("/auth/logout", { method: "POST" }),
   me: () => request("/auth/me"),
   listConversations: () => request("/conversations"),
-  getMessages: (contactId, { includeMedia = true } = {}) =>
-    request(`/conversations/${contactId}/messages${includeMedia ? "" : "?includeMedia=false"}`),
+  getMessages: (
+    contactId,
+    { includeMedia = false, limit = 50, beforeId = null, afterId = null } = {}
+  ) => {
+    const params = new URLSearchParams();
+    params.set("includeMedia", includeMedia ? "true" : "false");
+    params.set("limit", String(limit));
+    if (beforeId != null) params.set("beforeId", String(beforeId));
+    if (afterId != null) params.set("afterId", String(afterId));
+    return request(`/conversations/${contactId}/messages?${params.toString()}`);
+  },
   messageMediaUrl: (contactId, messageId) =>
     `${BASE}/conversations/${contactId}/messages/${messageId}/media`,
   sendMessage: (contactId, text) =>
     request(`/conversations/${contactId}/messages`, { method: "POST", body: JSON.stringify({ text }) }),
-  // Multipart upload — bypasses the JSON `request()` helper above since a
-  // File can't be JSON-stringified and must NOT have a manual
-  // Content-Type header (the browser sets the multipart boundary itself).
   sendImage: async (contactId, file, caption) => {
     const form = new FormData();
     form.append("image", file);
@@ -77,14 +83,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ needsAttention, reason }),
     }),
-  // Clinic config (Settings page) — partial update, only the keys included
-  // in `updates` are changed server-side; everything else is left as-is.
   getConfig: () => request("/config"),
   updateConfig: (updates) => request("/config", { method: "PATCH", body: JSON.stringify(updates) }),
-  // Uploads a promo graphic file directly (Settings > Promotions) instead of
-  // requiring an already-hosted URL. Same multipart pattern as sendImage
-  // above. Returns { url } — a public link the server will serve the image
-  // back from, ready to drop straight into a promotion's imageUrl field.
   uploadPromoImage: async (file) => {
     const form = new FormData();
     form.append("image", file);
@@ -103,11 +103,7 @@ export const api = {
     }
     return res.json();
   },
-  // Cleans up a promo image row that's no longer referenced (replaced or
-  // removed in Settings > Promotions). Takes the row id — callers get it
-  // via extractPromoImageId() below. See ImageFieldEditor in Settings.jsx.
   deletePromoImage: (id) => request(`/config/promotions/image/${id}`, { method: "DELETE" }),
-  // ── Contacts directory (Contacts nav item) ──
   listContacts: (search) => request(`/contacts${search ? `?search=${encodeURIComponent(search)}` : ""}`),
   getContact: (id) => request(`/contacts/${id}`),
   createContact: (data) => request("/contacts", { method: "POST", body: JSON.stringify(data) }),
@@ -118,10 +114,6 @@ export const api = {
   deleteContactNote: (id, noteId) => request(`/contacts/${id}/notes/${noteId}`, { method: "DELETE" }),
 };
 
-// Pulls the numeric id out of one of our own hosted promo-image URLs, e.g.
-// "https://host/promo-images/42" -> 42. Returns null for anything else
-// (a staff-pasted external URL, an empty value, etc.) so callers know not
-// to try deleting something we don't own.
 export function extractPromoImageId(url) {
   if (!url) return null;
   const match = String(url).match(/\/promo-images\/(\d+)(?:[/?#]|$)/);
