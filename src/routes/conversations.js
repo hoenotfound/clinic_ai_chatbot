@@ -13,6 +13,9 @@ const STAFF_TRANSCRIPTION_TIMEOUT_MS = 15 * 1000;
 const DEFAULT_MESSAGE_PAGE_SIZE = 50;
 const MAX_INCREMENTAL_PAGE_SIZE = 100;
 const SSE_HEARTBEAT_MS = 25 * 1000;
+const SEND_REJECTED_ERROR =
+  "WhatsApp did not accept this message. Check the reply window or connection and try again.";
+const retryingMessageIds = new Set();
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -54,6 +57,87 @@ function parsePositiveInt(value) {
   if (value == null || value === "") return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function publishDeliveryStatus(message) {
+  if (!message) return;
+  realtimeEvents.publish("conversation_changed", {
+    contactId: message.contact_id,
+    messageId: message.id,
+    deliveryStatus: message.delivery_status,
+    deliveryError: message.delivery_error,
+    reason: "delivery_status",
+  });
+}
+
+async function persistSendOutcome(savedMessage, sendResult, errorText = SEND_REJECTED_ERROR) {
+  let updated = null;
+  if (sendResult.wamid) {
+    updated = await messagesRepo.setWhatsappMessageId(savedMessage.id, sendResult.wamid);
+  } else if (!sendResult.success) {
+    updated = await messagesRepo.setDeliveryStatusById(savedMessage.id, "failed", errorText);
+  } else {
+    // Extremely defensive: Meta normally returns a WAMID for every accepted
+    // request. Keep the row lightweight even if an accepted response omits it.
+    updated = await messagesRepo.setDeliveryStatusById(savedMessage.id, null, null);
+  }
+  publishDeliveryStatus(updated);
+  return updated || savedMessage;
+}
+
+async function sendStoredMessage(contact, message) {
+  const mimeType = String(message.media_mime_type || "").toLowerCase();
+
+  if (mimeType.startsWith("audio/")) {
+    if (!message.media_base64) {
+      return { success: false, wamid: null, error: "The saved voice recording is unavailable." };
+    }
+    const converted = await convertToWhatsAppVoice(
+      Buffer.from(message.media_base64, "base64"),
+      mimeType
+    );
+    if (!converted) {
+      return { success: false, wamid: null, error: "The saved voice recording could not be processed." };
+    }
+    const mediaId = await whatsapp.uploadMedia(
+      converted.whatsapp.buffer,
+      converted.whatsapp.mimeType,
+      converted.whatsapp.filename
+    );
+    if (!mediaId) {
+      return { success: false, wamid: null, error: "The voice recording could not be uploaded to WhatsApp." };
+    }
+    return whatsapp.sendVoiceById(contact.whatsapp_number, mediaId);
+  }
+
+  if (mimeType.startsWith("image/") && message.media_base64) {
+    const mediaId = await whatsapp.uploadMedia(
+      Buffer.from(message.media_base64, "base64"),
+      mimeType
+    );
+    if (!mediaId) {
+      return { success: false, wamid: null, error: "The image could not be uploaded to WhatsApp." };
+    }
+    return whatsapp.sendImageById(
+      contact.whatsapp_number,
+      mediaId,
+      message.content || undefined
+    );
+  }
+
+  if (message.media_url) {
+    return whatsapp.sendImage(
+      contact.whatsapp_number,
+      message.media_url,
+      message.content || undefined
+    );
+  }
+
+  if (message.content?.trim()) {
+    return whatsapp.sendMessage(contact.whatsapp_number, message.content.trim());
+  }
+
+  return { success: false, wamid: null, error: "This message has no retryable content." };
 }
 
 router.get("/", async (req, res) => {
@@ -291,6 +375,57 @@ router.patch("/:contactId/follow-up", async (req, res) => {
   }
 });
 
+router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
+  const contactId = parsePositiveInt(req.params.contactId);
+  const messageId = parsePositiveInt(req.params.messageId);
+  if (!contactId || !messageId) {
+    return res.status(400).json({ error: "Invalid contact or message id." });
+  }
+
+  const retryKey = `${contactId}:${messageId}`;
+  if (retryingMessageIds.has(retryKey)) {
+    return res.status(409).json({ error: "This message is already being retried." });
+  }
+  retryingMessageIds.add(retryKey);
+
+  try {
+    const contact = await contactsRepo.getContactById(contactId);
+    if (!contact) return res.status(404).json({ error: "Contact not found." });
+
+    const message = await messagesRepo.getMessageForRetry(contactId, messageId);
+    if (!message) return res.status(404).json({ error: "Message not found." });
+    if (message.role !== "assistant") {
+      return res.status(400).json({ error: "Only outbound messages can be retried." });
+    }
+    if (message.delivery_status !== "failed") {
+      return res.status(409).json({ error: "Only failed messages can be retried." });
+    }
+
+    const sendResult = await sendStoredMessage(contact, message);
+    const errorText = sendResult.error || SEND_REJECTED_ERROR;
+    const updated = await persistSendOutcome(message, sendResult, errorText);
+
+    if (sendResult.success) {
+      if (contact.needs_attention && contact.attention_reason?.startsWith("Delivery failed:")) {
+        await contactsRepo.setAttention(contact.id, false);
+      }
+    } else {
+      await contactsRepo.setAttention(contact.id, true, `Delivery failed: ${errorText}`);
+    }
+
+    res.json({
+      ...updated,
+      accepted: !!sendResult.success,
+      retry_error: sendResult.success ? null : errorText,
+    });
+  } catch (err) {
+    console.error("Failed to retry message:", err);
+    res.status(500).json({ error: "Something went wrong retrying this message." });
+  } finally {
+    retryingMessageIds.delete(retryKey);
+  }
+});
+
 router.post("/:contactId/messages", async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
@@ -316,12 +451,13 @@ router.post("/:contactId/messages", async (req, res) => {
       req.session.username
     );
 
-    const { success: delivered, wamid } = await whatsapp.sendMessage(contact.whatsapp_number, text.trim());
-    if (wamid) {
-      await messagesRepo.setWhatsappMessageId(saved.id, wamid);
+    const sendResult = await whatsapp.sendMessage(contact.whatsapp_number, text.trim());
+    const finalMessage = await persistSendOutcome(saved, sendResult);
+    if (!sendResult.success) {
+      await contactsRepo.setAttention(contact.id, true, `Delivery failed: ${SEND_REJECTED_ERROR}`);
     }
 
-    res.status(201).json({ ...saved, delivered });
+    res.status(201).json({ ...finalMessage, delivered: sendResult.success });
   } catch (err) {
     console.error("Failed to send staff message:", err);
     res.status(500).json({ error: "Something went wrong sending this message." });
@@ -373,7 +509,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       return res.status(502).json({ error: "Failed to upload image to WhatsApp. Please try again." });
     }
 
-    const { success: delivered, wamid } = await whatsapp.sendImageById(
+    const sendResult = await whatsapp.sendImageById(
       contact.whatsapp_number,
       mediaId,
       caption || undefined
@@ -388,11 +524,12 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       null,
       { mimeType: req.file.mimetype, data: req.file.buffer.toString("base64") }
     );
-    if (wamid) {
-      await messagesRepo.setWhatsappMessageId(saved.id, wamid);
+    const finalMessage = await persistSendOutcome(saved, sendResult);
+    if (!sendResult.success) {
+      await contactsRepo.setAttention(contact.id, true, `Delivery failed: ${SEND_REJECTED_ERROR}`);
     }
 
-    res.status(201).json({ ...saved, delivered });
+    res.status(201).json({ ...finalMessage, delivered: sendResult.success });
   } catch (err) {
     console.error("Failed to send staff image:", err);
     res.status(500).json({ error: "Something went wrong sending this image." });
@@ -459,23 +596,21 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       }
     );
 
-    const { success: delivered, wamid } = await whatsapp.sendVoiceById(currentContact.whatsapp_number, mediaId);
-    if (wamid) {
-      await messagesRepo.setWhatsappMessageId(saved.id, wamid);
-    }
+    const sendResult = await whatsapp.sendVoiceById(currentContact.whatsapp_number, mediaId);
+    const finalMessage = await persistSendOutcome(saved, sendResult);
     try {
       await contactsRepo.setAttention(
         currentContact.id,
-        !delivered,
-        delivered ? null : "Staff voice message failed to deliver. Please resend it."
+        !sendResult.success,
+        sendResult.success ? null : `Delivery failed: ${SEND_REJECTED_ERROR}`
       );
     } catch (attentionErr) {
       console.error("Failed to update attention after staff voice message:", attentionErr);
     }
 
     res.status(201).json({
-      ...saved,
-      delivered,
+      ...finalMessage,
+      delivered: sendResult.success,
       transcribed: !!transcript,
     });
   } catch (err) {

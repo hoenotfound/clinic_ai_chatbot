@@ -38,6 +38,8 @@ export const api = {
     `${BASE}/conversations/${contactId}/messages/${messageId}/media`,
   sendMessage: (contactId, text) =>
     request(`/conversations/${contactId}/messages`, { method: "POST", body: JSON.stringify({ text }) }),
+  retryMessage: (contactId, messageId) =>
+    request(`/conversations/${contactId}/messages/${messageId}/retry`, { method: "POST" }),
   sendImage: async (contactId, file, caption) => {
     const form = new FormData();
     form.append("image", file);

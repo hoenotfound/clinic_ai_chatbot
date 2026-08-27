@@ -130,6 +130,21 @@ async function getMessageMediaForContact(contactId, messageId) {
   return result.rows[0] || null;
 }
 
+// Retry needs the original stored attachment bytes. This is deliberately a
+// single-message lookup and is only used by the authenticated retry route;
+// normal Inbox payloads remain lightweight and never include base64 media.
+async function getMessageForRetry(contactId, messageId) {
+  const result = await pool.query(
+    `SELECT id, contact_id, role, content, whatsapp_message_id, sent_by_username,
+            media_url, media_base64, media_mime_type, created_at,
+            delivery_status, delivery_error
+     FROM messages
+     WHERE id = $1 AND contact_id = $2`,
+    [messageId, contactId]
+  );
+  return result.rows[0] || null;
+}
+
 async function messageExistsByWhatsappId(whatsappMessageId) {
   if (!whatsappMessageId) return false;
   const result = await pool.query(
@@ -139,12 +154,29 @@ async function messageExistsByWhatsappId(whatsappMessageId) {
   return result.rows.length > 0;
 }
 
-/** Attach Meta's WAMID without returning a potentially multi-megabyte row. */
+/**
+ * Attach Meta's WAMID and mark the request as pending. "pending" means Meta
+ * accepted the request, while sent/delivered/read still come from webhooks.
+ */
 async function setWhatsappMessageId(messageId, whatsappMessageId) {
   if (!whatsappMessageId) return null;
   const result = await pool.query(
-    `UPDATE messages SET whatsapp_message_id = $2 WHERE id = $1 RETURNING id`,
+    `UPDATE messages
+     SET whatsapp_message_id = $2, delivery_status = 'pending', delivery_error = NULL
+     WHERE id = $1
+     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
     [messageId, whatsappMessageId]
+  );
+  return result.rows[0] || null;
+}
+
+async function setDeliveryStatusById(messageId, status, errorText = null) {
+  const result = await pool.query(
+    `UPDATE messages
+     SET delivery_status = $2, delivery_error = $3
+     WHERE id = $1
+     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
+    [messageId, status, errorText]
   );
   return result.rows[0] || null;
 }
@@ -159,6 +191,23 @@ async function updateDeliveryStatusByWamid(whatsappMessageId, status, errorText 
     `UPDATE messages SET delivery_status = $2, delivery_error = $3
      WHERE whatsapp_message_id = $1
        AND (delivery_status IS DISTINCT FROM $2 OR delivery_error IS DISTINCT FROM $3)
+       AND (
+         $2 = 'failed'
+         OR delivery_status IS NULL
+         OR CASE $2
+              WHEN 'sent' THEN 1
+              WHEN 'delivered' THEN 2
+              WHEN 'read' THEN 3
+              ELSE 0
+            END >= CASE delivery_status
+              WHEN 'pending' THEN 0
+              WHEN 'sent' THEN 1
+              WHEN 'delivered' THEN 2
+              WHEN 'read' THEN 3
+              WHEN 'failed' THEN 4
+              ELSE -1
+            END
+       )
      RETURNING id, contact_id, delivery_status, delivery_error`,
     [whatsappMessageId, status, errorText]
   );
@@ -170,7 +219,9 @@ module.exports = {
   getMessagesForContact,
   getMessagePageForContact,
   getMessageMediaForContact,
+  getMessageForRetry,
   messageExistsByWhatsappId,
   setWhatsappMessageId,
+  setDeliveryStatusById,
   updateDeliveryStatusByWamid,
 };

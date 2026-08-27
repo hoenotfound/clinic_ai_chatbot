@@ -105,10 +105,11 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_mime_type TEXT;
 -- value.statuses). Accepting a send request (HTTP 200 from the /messages
 -- call) only means Meta queued it — actual delivery/failure is reported
 -- separately and asynchronously. delivery_status is one of
--- 'sent' | 'delivered' | 'read' | 'failed' (or null if we never captured a
--- whatsapp_message_id for this row to match a status update against, e.g.
--- messages sent before this column existed). delivery_error holds Meta's
--- human-readable error message when delivery_status = 'failed'.
+-- 'pending' | 'sent' | 'delivered' | 'read' | 'failed' (or null if we never
+-- captured a whatsapp_message_id for this row to match a status update
+-- against, e.g. messages sent before this column existed). 'pending' means
+-- Meta accepted the request but has not reported a delivery status yet.
+-- delivery_error holds Meta's human-readable error when status = 'failed'.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivery_status TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivery_error TEXT;
 

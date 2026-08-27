@@ -21,6 +21,36 @@ const STATUS_FILTERS = [
   { key: "attention", label: "Attention" },
 ];
 
+const DELIVERY_STATUS_RANK = {
+  pending: 0,
+  sent: 1,
+  delivered: 2,
+  read: 3,
+  failed: 4,
+};
+
+function mergeMessageState(existing, incoming, { allowFailedReset = false } = {}) {
+  if (!existing) return incoming;
+  const merged = { ...existing, ...incoming };
+  const existingStatus = existing.delivery_status;
+  const incomingStatus = incoming.delivery_status;
+
+  if (allowFailedReset && existingStatus === "failed" && incomingStatus !== "failed") {
+    return merged;
+  }
+
+  if (
+    existingStatus &&
+    (!incomingStatus ||
+      (DELIVERY_STATUS_RANK[existingStatus] ?? -1) >
+        (DELIVERY_STATUS_RANK[incomingStatus] ?? -1))
+  ) {
+    merged.delivery_status = existingStatus;
+    merged.delivery_error = existing.delivery_error;
+  }
+  return merged;
+}
+
 function newestPersistedMessageId(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (Number.isInteger(messages[i]?.id)) return messages[i].id;
@@ -31,7 +61,9 @@ function newestPersistedMessageId(messages) {
 function mergeMessages(existing, incoming) {
   if (!incoming?.length) return existing;
   const byId = new Map(existing.map((message) => [message.id, message]));
-  for (const message of incoming) byId.set(message.id, message);
+  for (const message of incoming) {
+    byId.set(message.id, mergeMessageState(byId.get(message.id), message));
+  }
   return Array.from(byId.values()).sort((a, b) => {
     const aId = Number.isInteger(a.id) ? a.id : Number.MAX_SAFE_INTEGER;
     const bId = Number.isInteger(b.id) ? b.id : Number.MAX_SAFE_INTEGER;
@@ -196,6 +228,27 @@ export default function Inbox() {
     function handleConversationChanged(event) {
       try {
         const payload = JSON.parse(event.data || "{}");
+        if (
+          payload.contactId != null &&
+          Number(payload.contactId) === Number(selectedIdRef.current) &&
+          payload.messageId != null &&
+          Object.prototype.hasOwnProperty.call(payload, "deliveryStatus")
+        ) {
+          setMessages((current) =>
+            current.map((message) =>
+              Number(message.id) === Number(payload.messageId)
+                ? mergeMessageState(
+                    message,
+                    {
+                      delivery_status: payload.deliveryStatus,
+                      delivery_error: payload.deliveryError || null,
+                    },
+                    { allowFailedReset: payload.deliveryStatus === "pending" }
+                  )
+                : message
+            )
+          );
+        }
         scheduleRefresh(payload.contactId ?? null);
       } catch (err) {
         console.error("Failed to parse realtime Inbox event:", err);
@@ -346,6 +399,50 @@ export default function Inbox() {
     }
   }
 
+  async function handleRetryMessage(messageId) {
+    const contactId = selectedIdRef.current;
+    if (contactId == null) return;
+
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === messageId ? { ...message, _retrying: true } : message
+      )
+    );
+
+    try {
+      const result = await api.retryMessage(contactId, messageId);
+      if (selectedIdRef.current === contactId) {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === messageId
+              ? {
+                  ...mergeMessageState(message, result, { allowFailedReset: true }),
+                  _retrying: false,
+                }
+              : message
+          )
+        );
+      }
+      await refreshConversations();
+
+      if (result.accepted) {
+        showToast("Message queued again.", "info");
+      } else {
+        showToast(result.retry_error || "WhatsApp still couldn't accept this message.", "warning");
+      }
+    } catch (err) {
+      console.error("Failed to retry message:", err);
+      if (selectedIdRef.current === contactId) {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === messageId ? { ...message, _retrying: false } : message
+          )
+        );
+      }
+      showToast(err.message || "Couldn't retry this message.", "error");
+    }
+  }
+
   function makeOptimisticId() {
     return `optimistic-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
@@ -487,6 +584,7 @@ export default function Inbox() {
         onDismissAttention={handleDismissAttention}
         onToggleFollowUp={handleToggleFollowUp}
         onToggleUnread={handleToggleUnread}
+        onRetryMessage={handleRetryMessage}
         onSend={handleSend}
         onSendImage={handleSendImage}
         onSendVoice={handleSendVoice}
@@ -748,6 +846,7 @@ function ThreadView({
   onDismissAttention,
   onToggleFollowUp,
   onToggleUnread,
+  onRetryMessage,
   onSend,
   onSendImage,
   onSendVoice,
@@ -1141,7 +1240,13 @@ function ThreadView({
         )}
         {loading && <p className="text-sm text-[var(--color-text-muted)] text-center">Loading…</p>}
         {messages.map((m) => (
-          <MessageBubble key={m.id} contactId={contact.contact_id} message={m} onImageClick={setLightboxSrc} />
+          <MessageBubble
+            key={m.id}
+            contactId={contact.contact_id}
+            message={m}
+            onImageClick={setLightboxSrc}
+            onRetry={onRetryMessage}
+          />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -1255,10 +1360,11 @@ function Spinner({ className = "" }) {
   );
 }
 
-function MessageBubble({ contactId, message, onImageClick }) {
+function MessageBubble({ contactId, message, onImageClick, onRetry }) {
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
   const isAudio = message.media_mime_type?.startsWith("audio/");
+  const deliveryFailed = !isPatient && message.delivery_status === "failed";
   const storedMediaSrc = message.media_base64
     ? `data:${message.media_mime_type || "application/octet-stream"};base64,${message.media_base64}`
     : message.has_media_attachment
@@ -1269,7 +1375,7 @@ function MessageBubble({ contactId, message, onImageClick }) {
 
   return (
     <div className={`flex ${isPatient ? "justify-start" : "justify-end"}`}>
-      <div className={`relative max-w-[70%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${isPatient ? "bubble-in bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]" : "bubble-out bg-[var(--color-primary)] text-white"} ${message._optimistic ? "opacity-70" : ""}`}>
+      <div className={`relative max-w-[70%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${isPatient ? "bubble-in bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]" : "bubble-out bg-[var(--color-primary)] text-white"} ${message._optimistic ? "opacity-70" : ""} ${deliveryFailed ? "ring-2 ring-[var(--color-danger)] ring-offset-2" : ""}`}>
         {!isPatient && <p className="text-[10px] font-semibold uppercase tracking-wide mb-0.5 text-white/70">{sentByStaff ? message.sent_by_username : "AI"}</p>}
         {isAudio && storedMediaSrc ? (
           <audio controls preload="none" src={storedMediaSrc} className="mb-1.5 max-w-full" style={{ height: "36px" }} />
@@ -1282,12 +1388,54 @@ function MessageBubble({ contactId, message, onImageClick }) {
           )
         )}
         {message.content && <p className="whitespace-pre-wrap">{message.content}</p>}
-        <p className={`text-[10px] mt-1 flex items-center gap-1 ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/70"}`}>
+        <div className={`text-[10px] mt-1 flex items-center gap-2 ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/70"}`}>
           {message._optimistic && <Spinner className="h-2.5 w-2.5" />}
-          {formatTime(message.created_at)}
-        </p>
+          <span>{formatTime(message.created_at)}</span>
+          {!isPatient && !message._optimistic && !deliveryFailed && (
+            <DeliveryIndicator status={message.delivery_status} />
+          )}
+        </div>
+        {deliveryFailed && (
+          <div className="mt-2 rounded-lg bg-white px-2.5 py-2 text-[var(--color-danger)]">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[10px] font-semibold">Not delivered</span>
+              <button
+                type="button"
+                onClick={() => onRetry?.(message.id)}
+                disabled={message._retrying}
+                className="inline-flex items-center gap-1 text-[10px] font-semibold rounded-md border border-[var(--color-danger)]/30 px-2 py-1 hover:bg-[var(--color-danger-light)] transition-colors disabled:opacity-60"
+              >
+                {message._retrying && <Spinner className="h-2.5 w-2.5" />}
+                {message._retrying ? "Retrying…" : "Retry"}
+              </button>
+            </div>
+            {message.delivery_error && (
+              <p className="text-[10px] leading-snug mt-1 opacity-80" title={message.delivery_error}>
+                {message.delivery_error}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+function DeliveryIndicator({ status }) {
+  const indicators = {
+    pending: { icon: "◷", label: "Queued", className: "text-white/70" },
+    sent: { icon: "✓", label: "Sent", className: "text-white/70" },
+    delivered: { icon: "✓✓", label: "Delivered", className: "text-white/80" },
+    read: { icon: "✓✓", label: "Read", className: "text-cyan-100" },
+  };
+  const indicator = indicators[status];
+  if (!indicator) return null;
+
+  return (
+    <span className={`inline-flex items-center gap-1 font-medium ${indicator.className}`} title={indicator.label}>
+      <span aria-hidden="true">{indicator.icon}</span>
+      <span>{indicator.label}</span>
+    </span>
   );
 }
 
