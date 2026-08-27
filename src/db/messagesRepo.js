@@ -70,9 +70,46 @@ async function messageExistsByWhatsappId(whatsappMessageId) {
   return result.rows.length > 0;
 }
 
+/**
+ * Attaches Meta's WAMID to a staff-sent message row after the fact. Staff
+ * routes (see routes/conversations.js) save the message to the DB *before*
+ * calling WhatsApp's send API, so the WAMID Meta returns isn't known yet at
+ * saveMessage() time. Calling this right after a successful send is what
+ * lets a later delivery-status webhook (see updateDeliveryStatusByWamid)
+ * find its way back to this specific row.
+ */
+async function setWhatsappMessageId(messageId, whatsappMessageId) {
+  if (!whatsappMessageId) return null;
+  const result = await pool.query(
+    `UPDATE messages SET whatsapp_message_id = $2 WHERE id = $1 RETURNING *`,
+    [messageId, whatsappMessageId]
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Records the outcome of an async delivery-status webhook callback (see
+ * server.js POST /webhook, whatsappService.parseStatusUpdates). Returns the
+ * updated row (including contact_id) so the caller can flag the contact for
+ * attention on a 'failed' status, or null if no message with that WAMID is
+ * on file (e.g. it predates whatsapp_message_id being captured for outbound
+ * messages, or the status is for an inbound message we don't track status for).
+ */
+async function updateDeliveryStatusByWamid(whatsappMessageId, status, errorText = null) {
+  const result = await pool.query(
+    `UPDATE messages SET delivery_status = $2, delivery_error = $3
+     WHERE whatsapp_message_id = $1
+     RETURNING *`,
+    [whatsappMessageId, status, errorText]
+  );
+  return result.rows[0] || null;
+}
+
 module.exports = {
   saveMessage,
   getMessagesForContact,
   getMessageMediaForContact,
   messageExistsByWhatsappId,
+  setWhatsappMessageId,
+  updateDeliveryStatusByWamid,
 };
