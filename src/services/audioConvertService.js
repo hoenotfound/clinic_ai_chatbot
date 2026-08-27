@@ -133,7 +133,7 @@ async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
         // The Opus codec is encoded inside the OGG file itself; adding a
         // `codecs=opus` parameter to the multipart Content-Type can result in
         // an upload being accepted but the media later failing delivery.
-        mimeType: "audio/ogg",
+        mimeType: "audio/ogg; codecs=opus",
         filename: "voice.ogg",
       },
       playback: { buffer: playbackBuffer, mimeType: "audio/mpeg" },
