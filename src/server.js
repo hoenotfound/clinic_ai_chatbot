@@ -47,11 +47,25 @@ const webhookJsonParser = bodyParser.json({ verify: verifyWebhookSignature });
 
 // ── Portal API: normal JSON parsing + signed session cookie for staff login. ──
 app.use("/api", bodyParser.json());
+// Fail fast rather than silently falling back to a hardcoded secret — a
+// missing/default session secret would let anyone forge a valid staff
+// login cookie. Generate a real one with:
+//   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+const SESSION_SECRET = process.env.SESSION_SECRET;
+if (!SESSION_SECRET) {
+  console.error(
+    "❌ SESSION_SECRET is not set. Refusing to start, since a missing/default " +
+      "session secret would let anyone forge a valid staff login cookie. Set " +
+      "SESSION_SECRET (see .env.example) and restart."
+  );
+  process.exit(1);
+}
+
 app.use(
   "/api",
   cookieSession({
     name: "session",
-    secret: process.env.SESSION_SECRET || "dev-only-insecure-secret-change-me",
+    secret: SESSION_SECRET,
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     httpOnly: true,
     sameSite: "lax",

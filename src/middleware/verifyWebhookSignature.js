@@ -30,10 +30,16 @@ function verifyWebhookSignature(req, res, buf) {
   const expectedSignature =
     "sha256=" + crypto.createHmac("sha256", appSecret).update(buf).digest("hex");
 
-  const valid = crypto.timingSafeEqual(
-    Buffer.from(signatureHeader),
-    Buffer.from(expectedSignature)
-  );
+  const signatureBuffer = Buffer.from(signatureHeader);
+  const expectedBuffer = Buffer.from(expectedSignature);
+
+  // crypto.timingSafeEqual throws a RangeError (rather than returning false)
+  // if the two buffers differ in length — which almost any forged or
+  // malformed signature will. Check length first so a bad signature reliably
+  // hits the "mismatch" branch below instead of throwing past it.
+  const valid =
+    signatureBuffer.length === expectedBuffer.length &&
+    crypto.timingSafeEqual(signatureBuffer, expectedBuffer);
 
   if (!valid) {
     throw new Error("Webhook signature mismatch — request may not be from Meta");

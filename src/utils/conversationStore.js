@@ -26,27 +26,49 @@ const MAX_PHOTOS_IN_AI_CONTEXT = 1;
  *   MAX_PHOTOS_IN_AI_CONTEXT) content is instead an array of generic parts
  *   ([{type:'text',...}, {type:'image',...}]) that aiService/geminiService/
  *   claudeService already know how to read.
+ *
+ *   IMPORTANT (network transfer): the bulk history query below is fetched
+ *   with includeMedia=false — metadata only (has_media_attachment,
+ *   media_mime_type), no base64 bytes. Actual image bytes are then fetched
+ *   with a second, targeted query, and only for the specific row(s) picked
+ *   out below. Previously this was a single includeMedia=true query that
+ *   pulled every stored photo AND voice-note recording (as base64) for the
+ *   whole history window on every single inbound message — even though at
+ *   most one photo was ever actually used, and voice-note audio was never
+ *   used at all (the transcript in `content` already has that). That meant
+ *   re-transferring the same media out of Postgres on every turn of every
+ *   conversation for bytes that were immediately discarded.
  */
 async function getHistory(waId) {
   const contact = await contactsRepo.getOrCreateContact(waId);
-  const rows = await messagesRepo.getMessagesForContact(contact.id, MAX_MESSAGES_FOR_AI_CONTEXT);
+  const rows = await messagesRepo.getMessagesForContact(contact.id, MAX_MESSAGES_FOR_AI_CONTEXT, false);
 
-  const isPhotoRow = (r) => r.media_base64 && r.media_mime_type?.startsWith("image/");
+  const isPhotoRow = (r) => r.has_media_attachment && r.media_mime_type?.startsWith("image/");
 
   // Indices (within `rows`, chronological order) of the last N photo
-  // messages — only these get the actual image bytes attached below.
-  const photoIndices = new Set();
-  for (let i = rows.length - 1; i >= 0 && photoIndices.size < MAX_PHOTOS_IN_AI_CONTEXT; i--) {
-    if (isPhotoRow(rows[i])) photoIndices.add(i);
+  // messages — only these get the actual image bytes fetched/attached below.
+  const photoIndices = [];
+  for (let i = rows.length - 1; i >= 0 && photoIndices.length < MAX_PHOTOS_IN_AI_CONTEXT; i--) {
+    if (isPhotoRow(rows[i])) photoIndices.push(i);
+  }
+
+  // Only now, for those specific row(s), fetch the actual bytes — a
+  // targeted lookup by id rather than part of the bulk history query, so we
+  // transfer exactly what's about to be used and nothing else.
+  const photoMedia = new Map();
+  for (const i of photoIndices) {
+    const media = await messagesRepo.getMessageMediaForContact(contact.id, rows[i].id);
+    if (media) photoMedia.set(i, media);
   }
 
   return rows.map((r, i) => {
-    if (!photoIndices.has(i)) return { role: r.role, content: r.content };
+    const media = photoMedia.get(i);
+    if (!media) return { role: r.role, content: r.content };
     return {
       role: r.role,
       content: [
         { type: "text", text: r.content || "" },
-        { type: "image", mimeType: r.media_mime_type, data: r.media_base64 },
+        { type: "image", mimeType: media.media_mime_type, data: media.media_base64 },
       ],
     };
   });
