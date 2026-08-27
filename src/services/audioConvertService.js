@@ -49,4 +49,98 @@ async function convertToMp3(inputBuffer) {
   }
 }
 
-module.exports = { convertToMp3 };
+function extensionForMimeType(mimeType) {
+  const baseType = String(mimeType || "").split(";")[0].trim().toLowerCase();
+  const extensions = {
+    "audio/webm": ".webm",
+    "audio/ogg": ".ogg",
+    "audio/mp4": ".m4a",
+    "audio/aac": ".aac",
+    "audio/mpeg": ".mp3",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+  };
+  return extensions[baseType] || ".audio";
+}
+
+function runFfmpeg(inputPath, outputPath, configure) {
+  return new Promise((resolve, reject) => {
+    const command = ffmpeg(inputPath).noVideo();
+    configure(command)
+      .on("end", resolve)
+      .on("error", reject)
+      .save(outputPath);
+  });
+}
+
+/**
+ * Normalizes a browser microphone recording into both formats needed by the
+ * app: mono Ogg/Opus for a native WhatsApp voice note, and MP3 for reliable
+ * playback in every portal browser (especially Safari).
+ *
+ * Browsers do not agree on a recording container: Chromium usually gives us
+ * WebM/Opus while Safari commonly gives us MP4/AAC. FFmpeg detects and
+ * converts either input here, so the client does not need platform-specific
+ * upload logic.
+ *
+ * @param {Buffer} inputBuffer
+ * @param {string} inputMimeType
+ * @returns {Promise<{
+ *   whatsapp: {buffer: Buffer, mimeType: string, filename: string},
+ *   playback: {buffer: Buffer, mimeType: string}
+ * }|null>}
+ */
+async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
+  const tmpDir = os.tmpdir();
+  const id = crypto.randomUUID();
+  const inputPath = path.join(tmpDir, `${id}-voice-in${extensionForMimeType(inputMimeType)}`);
+  const oggPath = path.join(tmpDir, `${id}-voice-out.ogg`);
+  const mp3Path = path.join(tmpDir, `${id}-voice-playback.mp3`);
+
+  try {
+    await fs.writeFile(inputPath, inputBuffer);
+
+    // Meta requires native voice messages to be mono Ogg with the Opus codec.
+    await runFfmpeg(inputPath, oggPath, (command) =>
+      command
+        .audioCodec("libopus")
+        .audioChannels(1)
+        .audioFrequency(48000)
+        .audioBitrate("32k")
+        .format("ogg")
+    );
+
+    await runFfmpeg(inputPath, mp3Path, (command) =>
+      command
+        .audioCodec("libmp3lame")
+        .audioChannels(1)
+        .audioBitrate("64k")
+        .format("mp3")
+    );
+
+    const [whatsappBuffer, playbackBuffer] = await Promise.all([
+      fs.readFile(oggPath),
+      fs.readFile(mp3Path),
+    ]);
+
+    return {
+      whatsapp: {
+        buffer: whatsappBuffer,
+        mimeType: "audio/ogg; codecs=opus",
+        filename: "voice.ogg",
+      },
+      playback: { buffer: playbackBuffer, mimeType: "audio/mpeg" },
+    };
+  } catch (err) {
+    console.error("Voice-message conversion failed:", err);
+    return null;
+  } finally {
+    await Promise.all([
+      fs.unlink(inputPath).catch(() => {}),
+      fs.unlink(oggPath).catch(() => {}),
+      fs.unlink(mp3Path).catch(() => {}),
+    ]);
+  }
+}
+
+module.exports = { convertToMp3, convertToWhatsAppVoice };

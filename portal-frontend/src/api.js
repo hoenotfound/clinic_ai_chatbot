@@ -48,6 +48,25 @@ export const api = {
     }
     return res.json();
   },
+  sendVoice: async (contactId, recording, mimeType) => {
+    const form = new FormData();
+    const extension = mimeType?.includes("mp4") ? "m4a" : mimeType?.includes("ogg") ? "ogg" : "webm";
+    form.append("voice", recording, `voice-recording.${extension}`);
+
+    const res = await fetch(`${BASE}/conversations/${contactId}/voice`, {
+      method: "POST",
+      credentials: "include",
+      body: form,
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const error = new Error(body.error || `Request failed (${res.status})`);
+      error.status = res.status;
+      throw error;
+    }
+    return res.json();
+  },
   takeOver: (contactId) => request(`/conversations/${contactId}/takeover`, { method: "POST" }),
   returnToAi: (contactId) => request(`/conversations/${contactId}/return-to-ai`, { method: "POST" }),
   setAttention: (contactId, needsAttention, reason) =>

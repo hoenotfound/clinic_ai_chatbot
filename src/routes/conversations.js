@@ -4,6 +4,8 @@ const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
 const conversationStore = require("../utils/conversationStore");
 const whatsapp = require("../services/whatsappService");
+const { convertToWhatsAppVoice } = require("../services/audioConvertService");
+const { transcribeStaffAudio } = require("../services/transcriptionService");
 
 const router = express.Router();
 
@@ -16,6 +18,20 @@ const upload = multer({
   fileFilter: (req, file, cb) => {
     if (!file.mimetype.startsWith("image/")) {
       return cb(new Error("Only image files are allowed."));
+    }
+    cb(null, true);
+  },
+});
+
+// Browser microphone recordings arrive as WebM/Opus, MP4/AAC, or Ogg/Opus
+// depending on the browser. Accept any audio container here; FFmpeg validates
+// and normalizes the actual bytes before anything is sent to WhatsApp.
+const voiceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 16 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.startsWith("audio/")) {
+      return cb(new Error("Only audio recordings are allowed."));
     }
     cb(null, true);
   },
@@ -160,6 +176,17 @@ function handleImageUpload(req, res, next) {
   });
 }
 
+function handleVoiceUpload(req, res, next) {
+  voiceUpload.single("voice")(req, res, (err) => {
+    if (!err) return next();
+
+    if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({ error: "Voice recording is too large. Please keep it under 16MB." });
+    }
+    return res.status(400).json({ error: err.message || "Failed to upload voice recording." });
+  });
+}
+
 // POST /api/conversations/:contactId/media — staff uploads an image file
 // from their computer and sends it as a WhatsApp image message. Same
 // implicit-takeover behavior as the text-send route above. multipart/form-data
@@ -211,6 +238,71 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
   } catch (err) {
     console.error("Failed to send staff image:", err);
     res.status(500).json({ error: "Something went wrong sending this image." });
+  }
+});
+
+// POST /api/conversations/:contactId/voice — staff records a microphone
+// message in the Inbox. Unlike text/images, voice recording is deliberately
+// allowed only after an explicit takeover, so the microphone UI and server
+// behavior agree about who owns the conversation.
+router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
+  try {
+    const contact = await contactsRepo.getContactById(req.params.contactId);
+    if (!contact) return res.status(404).json({ error: "Contact not found." });
+
+    if (contact.mode !== "human") {
+      return res.status(409).json({ error: "Take over this conversation before sending a voice message." });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: "A voice recording is required." });
+    }
+
+    // Conversion and transcription are independent, so run them together to
+    // keep the staff member's wait short. A failed transcript does not block
+    // delivery; it only falls back to a generic history label below.
+    const [converted, transcript] = await Promise.all([
+      convertToWhatsAppVoice(req.file.buffer, req.file.mimetype),
+      transcribeStaffAudio(req.file.buffer, req.file.mimetype),
+    ]);
+
+    if (!converted) {
+      return res.status(422).json({ error: "Couldn't process that recording. Please record it again." });
+    }
+
+    const mediaId = await whatsapp.uploadMedia(
+      converted.whatsapp.buffer,
+      converted.whatsapp.mimeType,
+      converted.whatsapp.filename
+    );
+    if (!mediaId) {
+      return res.status(502).json({ error: "Failed to upload voice message to WhatsApp. Please try again." });
+    }
+
+    await contactsRepo.setAttention(contact.id, false);
+    const delivered = await whatsapp.sendVoiceById(contact.whatsapp_number, mediaId);
+
+    // Keep an MP3 copy for portal playback. The transcript also becomes the
+    // assistant-history entry, so if staff later returns the chat to AI, the
+    // model knows what staff already told the patient instead of repeating it.
+    const content = transcript ? `🎤 ${transcript}` : "🎤 Staff sent a voice message";
+    const saved = await conversationStore.appendMessage(
+      contact.whatsapp_number,
+      "assistant",
+      content,
+      null,
+      req.session.username,
+      null,
+      {
+        mimeType: converted.playback.mimeType,
+        data: converted.playback.buffer.toString("base64"),
+      }
+    );
+
+    res.status(201).json({ ...saved, delivered, transcribed: !!transcript });
+  } catch (err) {
+    console.error("Failed to send staff voice message:", err);
+    res.status(500).json({ error: "Something went wrong sending this voice message." });
   }
 });
 
