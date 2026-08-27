@@ -5,6 +5,14 @@ function normalizeWhatsappNumber(input) {
   return String(input || "").replace(/[^\d]/g, "");
 }
 
+function publishContactChange(id) {
+  if (!id) return;
+  realtimeEvents.publish("conversation_changed", {
+    contactId: id,
+    reason: "contact_state",
+  });
+}
+
 async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
   const existing = await pool.query(
     "SELECT * FROM contacts WHERE whatsapp_number = $1",
@@ -41,10 +49,11 @@ async function getContactById(id) {
 }
 
 async function updateContactName(id, name) {
-  await pool.query(
-    "UPDATE contacts SET name = $1, updated_at = now() WHERE id = $2",
+  const result = await pool.query(
+    "UPDATE contacts SET name = $1, updated_at = now() WHERE id = $2 RETURNING id",
     [name, id]
   );
+  if (result.rows[0]) publishContactChange(result.rows[0].id);
 }
 
 async function listContacts(search) {
@@ -81,7 +90,9 @@ async function updateContact(id, { name, whatsappNumber }) {
     "UPDATE contacts SET name = $1, whatsapp_number = $2, updated_at = now() WHERE id = $3 RETURNING *",
     [name || null, normalizeWhatsappNumber(whatsappNumber), id]
   );
-  return result.rows[0] || null;
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id);
+  return updated;
 }
 
 async function listConversations() {
@@ -123,12 +134,7 @@ async function takeOver(id, staffUsername) {
     [staffUsername, id]
   );
   const updated = result.rows[0] || null;
-  if (updated) {
-    realtimeEvents.publish("conversation_changed", {
-      contactId: updated.id,
-      reason: "contact_state",
-    });
-  }
+  if (updated) publishContactChange(updated.id);
   return updated;
 }
 
@@ -141,12 +147,7 @@ async function returnToAi(id) {
     [id]
   );
   const updated = result.rows[0] || null;
-  if (updated) {
-    realtimeEvents.publish("conversation_changed", {
-      contactId: updated.id,
-      reason: "contact_state",
-    });
-  }
+  if (updated) publishContactChange(updated.id);
   return updated;
 }
 
@@ -159,12 +160,7 @@ async function setAttention(id, needsAttention, reason = null) {
     [needsAttention, needsAttention ? reason : null, id]
   );
   const updated = result.rows[0] || null;
-  if (updated) {
-    realtimeEvents.publish("conversation_changed", {
-      contactId: updated.id,
-      reason: "contact_state",
-    });
-  }
+  if (updated) publishContactChange(updated.id);
   return updated;
 }
 
