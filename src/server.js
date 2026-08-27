@@ -98,6 +98,42 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   // or Meta may retry/resend the same message.
   res.sendStatus(200);
 
+  // ── Async delivery-status callbacks (sent/delivered/read/failed) ──
+  // A 200 OK from the earlier send call only meant Meta *accepted* the
+  // request — this is where the real outcome shows up, separately and
+  // later. Without this, a message that fails after being accepted (e.g. a
+  // media/format problem, or the recipient being outside the 24-hour
+  // messaging window) looks identical to a successful send anywhere else in
+  // the app: the Inbox would show it as sent forever, with no way for staff
+  // to know the patient never actually got it.
+  const statusUpdates = whatsapp.parseStatusUpdates(req.body);
+  for (const update of statusUpdates) {
+    try {
+      const updatedMessage = await messagesRepo.updateDeliveryStatusByWamid(
+        update.wamid,
+        update.status,
+        update.errorMessage || update.errorTitle || null
+      );
+
+      // No matching row means this message predates whatsapp_message_id
+      // being captured for outbound sends, or it's a status for something
+      // we don't track (e.g. a template message) — nothing more to do.
+      if (!updatedMessage) continue;
+
+      if (update.status === "failed") {
+        const reason = update.errorMessage || update.errorTitle || "WhatsApp reported delivery as failed.";
+        console.error(`Delivery failed for message ${update.wamid}:`, reason);
+        await contactsRepo.setAttention(
+          updatedMessage.contact_id,
+          true,
+          `Delivery failed: ${reason}`
+        );
+      }
+    } catch (err) {
+      console.error("Failed to process delivery-status update:", err);
+    }
+  }
+
   const incomingMessages = whatsapp.parseIncomingMessages(req.body);
 
   for (const incoming of incomingMessages) {
@@ -228,9 +264,12 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
         ? `${clinicConfig.introMessage}\n\n${aiReply}`
         : aiReply;
 
-      await conversationStore.appendMessage(from, "assistant", reply);
+      const savedReply = await conversationStore.appendMessage(from, "assistant", reply);
 
-      await whatsapp.sendMessage(from, reply);
+      const { wamid: replyWamid } = await whatsapp.sendMessage(from, reply);
+      if (replyWamid) {
+        await messagesRepo.setWhatsappMessageId(savedReply.id, replyWamid);
+      }
       console.log(`Replied to ${from}: ${reply}`);
 
       // Promo graphic — first message only, code-triggered (see comment above
@@ -240,7 +279,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
       if (isFirstMessage) {
         const promo = getActivePromotion(clinicConfig.promotions);
         if (promo) {
-          const sent = await whatsapp.sendImage(from, promo.imageUrl, promo.caption);
+          const { success: sent, wamid: promoWamid } = await whatsapp.sendImage(from, promo.imageUrl, promo.caption);
           // Never throw on a failed promo image — the text reply already
           // succeeded and that's what actually matters to the patient.
           if (!sent) {
@@ -248,7 +287,10 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
           } else {
             // Persist it so it shows up in the Inbox too, not just on the
             // patient's WhatsApp — previously this was sent but never saved.
-            await conversationStore.appendMessage(from, "assistant", promo.caption || "", null, null, promo.imageUrl);
+            const savedPromo = await conversationStore.appendMessage(from, "assistant", promo.caption || "", null, null, promo.imageUrl);
+            if (promoWamid) {
+              await messagesRepo.setWhatsappMessageId(savedPromo.id, promoWamid);
+            }
           }
         }
       }
