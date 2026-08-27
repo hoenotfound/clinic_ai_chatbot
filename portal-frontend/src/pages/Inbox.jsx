@@ -62,8 +62,6 @@ export default function Inbox() {
     }
   }
 
-  // Conversation summaries change less often than an active thread. Poll once
-  // a minute, and stop completely while the tab is hidden.
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -95,9 +93,6 @@ export default function Inbox() {
     }
   }, [conversations, selectedId]);
 
-  // Initial load is just the newest 50 messages. Subsequent checks ask only
-  // for rows with id > newestId, so an idle Inbox receives an empty JSON array
-  // instead of the entire conversation every few seconds.
   useEffect(() => {
     if (selectedId == null) return;
     let cancelled = false;
@@ -335,7 +330,7 @@ export default function Inbox() {
 
     try {
       const result = await api.sendVoice(selectedId, recording, mimeType);
-      setMessages((prev) => mergeMessages(prev, [result]));
+      setMessages((prev) => mergeMessages(prev, [{ ...result, has_media_attachment: true }]));
       await refreshConversations();
       if (result?.delivered === false) {
         showToast(
@@ -490,8 +485,10 @@ function ThreadView({
   activeContactModeRef.current = contact?.mode;
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [contact?.contact_id]);
+    if (!loading && messages.length > 0) {
+      requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ block: "end" }));
+    }
+  }, [contact?.contact_id, loading]);
 
   useEffect(() => {
     setDraft("");
@@ -730,7 +727,6 @@ function ThreadView({
       await onSendVoice(voiceBlob, voiceMimeType);
       clearVoice();
     } catch {
-      // The toast is shown by the parent. Keep the preview so staff can retry.
     } finally {
       setSending(false);
     }
@@ -760,7 +756,6 @@ function ThreadView({
       }
       setDraft("");
     } catch {
-      // error already surfaced to the user; keep draft so they can retry
     } finally {
       setSending(false);
     }
