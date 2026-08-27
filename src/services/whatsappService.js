@@ -168,7 +168,7 @@ async function sendImageById(to, mediaId, caption) {
  * message rather than a generic audio attachment.
  * @param {string} to - recipient's WhatsApp ID (phone number, no '+')
  * @param {string} mediaId - ID returned by uploadMedia()
- * @returns {Promise<boolean>} true if Meta accepted the message
+ * @returns {Promise<boolean>} true only when Meta accepts the message and returns a wamid
  */
 async function sendVoiceById(to, mediaId) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -184,17 +184,34 @@ async function sendVoiceById(to, mediaId) {
       },
       body: JSON.stringify({
         messaging_product: "whatsapp",
+        recipient_type: "individual",
         to,
         type: "audio",
         audio: { id: mediaId, voice: true },
       }),
     });
 
+    const responseText = await res.text();
     if (!res.ok) {
-      const errBody = await res.text();
-      console.error("WhatsApp voice send failed:", res.status, errBody);
+      console.error("WhatsApp voice send failed:", res.status, responseText);
       return false;
     }
+
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      console.error("WhatsApp voice send returned invalid JSON:", responseText);
+      return false;
+    }
+
+    const whatsappMessageId = data.messages?.[0]?.id;
+    if (!whatsappMessageId) {
+      console.error("WhatsApp voice send was accepted without a message id:", data);
+      return false;
+    }
+
+    console.log(`WhatsApp accepted staff voice message ${whatsappMessageId} for ${to}`);
     return true;
   } catch (err) {
     console.error("WhatsApp voice send threw an error:", err);
@@ -237,6 +254,39 @@ async function downloadMedia(mediaId) {
     console.error("WhatsApp media download threw an error:", err);
     return null;
   }
+}
+
+/**
+ * Pulls delivery status events out of a WhatsApp webhook payload. Meta sends
+ * these separately from inbound messages. A 200 response from /messages only
+ * means the request was accepted; these events tell us whether it was later
+ * sent, delivered, read, or failed.
+ */
+function parseMessageStatuses(body) {
+  const parsed = [];
+
+  try {
+    for (const entry of body.entry || []) {
+      for (const change of entry.changes || []) {
+        for (const status of change.value?.statuses || []) {
+          const error = status.errors?.[0] || null;
+          parsed.push({
+            id: status.id || null,
+            status: status.status || null,
+            recipientId: status.recipient_id || null,
+            errorCode: error?.code != null ? String(error.code) : null,
+            errorMessage:
+              error?.error_data?.details || error?.message || error?.title || null,
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Failed to parse WhatsApp message statuses:", err);
+    return [];
+  }
+
+  return parsed;
 }
 
 /**
@@ -315,5 +365,6 @@ module.exports = {
   sendImageById,
   sendVoiceById,
   downloadMedia,
+  parseMessageStatuses,
   parseIncomingMessages,
 };
