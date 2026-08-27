@@ -13,11 +13,26 @@ function verifyWebhookSignature(req, res, buf) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
 
   if (!appSecret) {
-    // Fail loud in production-like usage, but don't block local dev/testing
-    // before the secret is configured.
+    if (process.env.NODE_ENV === "production") {
+      // Fail fast, same as SESSION_SECRET — an unset app secret means the
+      // webhook accepts unsigned requests, so anyone who finds the URL
+      // could inject fake "patient" messages that the bot processes and
+      // replies to (burning WhatsApp/AI usage in the process).
+      throw new Error(
+        "❌ WHATSAPP_APP_SECRET is not set. Refusing to process webhook requests " +
+          "in production, since without it the webhook cannot verify requests " +
+          "actually came from Meta. Set WHATSAPP_APP_SECRET (see .env.example) " +
+          "and restart."
+      );
+    }
+
+    // Outside production (local dev/testing before the secret is
+    // configured), warn loudly but don't block.
     console.warn(
-      "⚠️  WHATSAPP_APP_SECRET not set — webhook signature is NOT being verified. " +
-        "Set this before exposing the server publicly."
+      "⚠️⚠️⚠️  WHATSAPP_APP_SECRET not set — webhook signature is NOT being " +
+        "verified. Anyone who finds this webhook URL can send fake messages " +
+        "the bot will process and reply to. Set WHATSAPP_APP_SECRET before " +
+        "exposing this server publicly or setting NODE_ENV=production.  ⚠️⚠️⚠️"
     );
     return;
   }
