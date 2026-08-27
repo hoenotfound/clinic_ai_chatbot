@@ -5,18 +5,13 @@ import { useToasts, ToastContainer } from "../components/Toast";
 import Lightbox from "../components/Lightbox";
 import ContactAvatar from "../components/ContactAvatar";
 
-const CONVERSATION_POLL_INTERVAL_MS = 60_000;
-const THREAD_POLL_INTERVAL_MS = 30_000;
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_INCREMENTAL_MESSAGES = 100;
+const REALTIME_DEBOUNCE_MS = 100;
 const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_SECONDS = 120;
 const VOICE_MIME_TYPES = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"];
-
-function isPageVisible() {
-  return typeof document === "undefined" || !document.hidden;
-}
 
 function newestPersistedMessageId(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -62,29 +57,33 @@ export default function Inbox() {
     }
   }
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      if (!isPageVisible()) return;
-      try {
-        const data = await api.listConversations();
-        if (!cancelled) setConversations(data);
-      } catch (err) {
-        console.error("Failed to load conversations:", err);
-      }
-    }
+  async function refreshMessagesForContact(contactId) {
+    if (contactId == null) return;
+    const afterId = latestMessageIdRef.current;
 
-    load();
-    const interval = setInterval(load, CONVERSATION_POLL_INTERVAL_MS);
-    const onVisibilityChange = () => {
-      if (!document.hidden) load();
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
+    try {
+      const data = await api.getMessages(contactId, {
+        includeMedia: false,
+        limit: afterId ? MAX_INCREMENTAL_MESSAGES : MESSAGE_PAGE_SIZE,
+        afterId,
+      });
+      if (selectedIdRef.current !== contactId) return;
+
+      if (afterId) {
+        if (data.messages?.length) {
+          setMessages((prev) => mergeMessages(prev, data.messages));
+        }
+      } else {
+        setMessages(data.messages || []);
+        setHasMoreOlderMessages(!!data.hasMore);
+      }
+    } catch (err) {
+      console.error("Failed to refresh messages:", err);
+    }
+  }
+
+  useEffect(() => {
+    refreshConversations();
   }, []);
 
   useEffect(() => {
@@ -104,8 +103,8 @@ export default function Inbox() {
           includeMedia: false,
           limit: MESSAGE_PAGE_SIZE,
         });
-        if (!cancelled) {
-          setMessages(data.messages);
+        if (!cancelled && selectedIdRef.current === selectedId) {
+          setMessages(data.messages || []);
           setHasMoreOlderMessages(!!data.hasMore);
         }
       } catch (err) {
@@ -115,78 +114,87 @@ export default function Inbox() {
       }
     }
 
-    async function incrementalLoad() {
-      if (!isPageVisible()) return;
-      const contactId = selectedId;
-      const afterId = latestMessageIdRef.current;
-      if (!afterId) return;
-      try {
-        const data = await api.getMessages(contactId, {
-          includeMedia: false,
-          limit: MAX_INCREMENTAL_MESSAGES,
-          afterId,
-        });
-        if (!cancelled && selectedIdRef.current === contactId && data.messages?.length) {
-          setMessages((prev) => mergeMessages(prev, data.messages));
-        }
-      } catch (err) {
-        console.error("Failed to check for new messages:", err);
-      }
-    }
-
     setMessages([]);
     setHasMoreOlderMessages(false);
     initialLoad();
-    const interval = setInterval(incrementalLoad, THREAD_POLL_INTERVAL_MS);
-    const onVisibilityChange = () => {
-      if (!document.hidden) incrementalLoad();
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       cancelled = true;
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [selectedId]);
 
-  async function refreshMessages() {
-    const contactId = selectedId;
-    if (contactId == null) return;
-    const afterId = latestMessageIdRef.current;
+  // Server-sent events replace continuous Inbox polling. The event contains
+  // only a contact id; the portal fetches lightweight incremental rows only
+  // when that conversation actually changes. Browser EventSource reconnects
+  // automatically, and a reconnect triggers one catch-up refresh in case an
+  // event was missed while the connection was down.
+  useEffect(() => {
+    const source = new EventSource("/api/conversations/events", { withCredentials: true });
+    const pendingContactIds = new Set();
+    let debounceTimer = null;
+    let hasOpenedOnce = false;
 
-    try {
-      const data = await api.getMessages(contactId, {
-        includeMedia: false,
-        limit: afterId ? MAX_INCREMENTAL_MESSAGES : MESSAGE_PAGE_SIZE,
-        afterId,
-      });
-      if (selectedIdRef.current === contactId) {
-        if (afterId) {
-          if (data.messages?.length) setMessages((prev) => mergeMessages(prev, data.messages));
-        } else {
-          setMessages(data.messages);
-          setHasMoreOlderMessages(!!data.hasMore);
+    function scheduleRefresh(contactId = null) {
+      if (contactId != null) pendingContactIds.add(Number(contactId));
+      if (debounceTimer) clearTimeout(debounceTimer);
+
+      debounceTimer = setTimeout(async () => {
+        const changedContacts = new Set(pendingContactIds);
+        pendingContactIds.clear();
+        debounceTimer = null;
+
+        await refreshConversations();
+
+        const currentId = selectedIdRef.current;
+        if (
+          currentId != null &&
+          (changedContacts.size === 0 || changedContacts.has(Number(currentId)))
+        ) {
+          await refreshMessagesForContact(currentId);
         }
-      }
-    } catch (err) {
-      console.error("Failed to refresh messages:", err);
+      }, REALTIME_DEBOUNCE_MS);
     }
-  }
+
+    function handleConversationChanged(event) {
+      try {
+        const payload = JSON.parse(event.data || "{}");
+        scheduleRefresh(payload.contactId ?? null);
+      } catch (err) {
+        console.error("Failed to parse realtime Inbox event:", err);
+        scheduleRefresh();
+      }
+    }
+
+    source.addEventListener("conversation_changed", handleConversationChanged);
+    source.onopen = () => {
+      if (hasOpenedOnce) scheduleRefresh();
+      hasOpenedOnce = true;
+    };
+    source.onerror = () => {
+      // EventSource reconnects automatically using the server's retry hint.
+    };
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      source.removeEventListener("conversation_changed", handleConversationChanged);
+      source.close();
+    };
+  }, []);
 
   async function loadOlderMessages() {
     if (selectedId == null || olderMessagesLoading || !hasMoreOlderMessages) return;
+    const contactId = selectedId;
     const oldestId = messages.find((message) => Number.isInteger(message.id))?.id;
     if (!oldestId) return;
 
     setOlderMessagesLoading(true);
     try {
-      const data = await api.getMessages(selectedId, {
+      const data = await api.getMessages(contactId, {
         includeMedia: false,
         limit: MESSAGE_PAGE_SIZE,
         beforeId: oldestId,
       });
-      if (selectedIdRef.current === selectedId) {
+      if (selectedIdRef.current === contactId) {
         setMessages((prev) => mergeMessages(data.messages || [], prev));
         setHasMoreOlderMessages(!!data.hasMore);
       }
@@ -194,42 +202,45 @@ export default function Inbox() {
       console.error("Failed to load older messages:", err);
       showToast("Couldn't load older messages. Please try again.", "error");
     } finally {
-      setOlderMessagesLoading(false);
+      if (selectedIdRef.current === contactId) setOlderMessagesLoading(false);
     }
   }
 
   async function handleTakeOver() {
     if (selectedId == null) return;
+    const contactId = selectedId;
     setActionPending(true);
     try {
-      await api.takeOver(selectedId);
+      await api.takeOver(contactId);
       await refreshConversations();
     } catch (err) {
       console.error("Failed to take over conversation:", err);
       showToast("Couldn't take over this conversation — please try again.", "error");
     } finally {
-      setActionPending(false);
+      if (selectedIdRef.current === contactId) setActionPending(false);
     }
   }
 
   async function handleReturnToAi() {
     if (selectedId == null) return;
+    const contactId = selectedId;
     setActionPending(true);
     try {
-      await api.returnToAi(selectedId);
+      await api.returnToAi(contactId);
       await refreshConversations();
     } catch (err) {
       console.error("Failed to return conversation to AI:", err);
       showToast("Couldn't return this conversation to the AI — please try again.", "error");
     } finally {
-      setActionPending(false);
+      if (selectedIdRef.current === contactId) setActionPending(false);
     }
   }
 
   async function handleDismissAttention() {
     if (selectedId == null) return;
+    const contactId = selectedId;
     try {
-      await api.setAttention(selectedId, false);
+      await api.setAttention(contactId, false);
       await refreshConversations();
     } catch (err) {
       console.error("Failed to dismiss attention flag:", err);
@@ -242,6 +253,7 @@ export default function Inbox() {
 
   async function handleSend(text) {
     if (selectedId == null || !text.trim()) return;
+    const contactId = selectedId;
     setActionPending(true);
 
     const optimisticId = makeOptimisticId();
@@ -261,8 +273,10 @@ export default function Inbox() {
     ]);
 
     try {
-      const result = await api.sendMessage(selectedId, text.trim());
-      setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [result]));
+      const result = await api.sendMessage(contactId, text.trim());
+      if (selectedIdRef.current === contactId) {
+        setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [result]));
+      }
       await refreshConversations();
       if (result?.delivered === false) {
         showToast(
@@ -272,16 +286,19 @@ export default function Inbox() {
       }
     } catch (err) {
       console.error("Failed to send message:", err);
-      setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+      if (selectedIdRef.current === contactId) {
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+      }
       showToast("Couldn't send that message — please try again.", "error");
       throw err;
     } finally {
-      setActionPending(false);
+      if (selectedIdRef.current === contactId) setActionPending(false);
     }
   }
 
   async function handleSendImage(file, caption) {
     if (selectedId == null || !file) return;
+    const contactId = selectedId;
     setActionPending(true);
 
     const optimisticId = makeOptimisticId();
@@ -304,8 +321,10 @@ export default function Inbox() {
     ]);
 
     try {
-      const result = await api.sendImage(selectedId, file, caption);
-      setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [result]));
+      const result = await api.sendImage(contactId, file, caption);
+      if (selectedIdRef.current === contactId) {
+        setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [result]));
+      }
       await refreshConversations();
       if (result?.delivered === false) {
         showToast(
@@ -315,22 +334,27 @@ export default function Inbox() {
       }
     } catch (err) {
       console.error("Failed to send image:", err);
-      setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+      if (selectedIdRef.current === contactId) {
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+      }
       showToast(err.message || "Couldn't send that image — please try again.", "error");
       throw err;
     } finally {
       URL.revokeObjectURL(previewUrl);
-      setActionPending(false);
+      if (selectedIdRef.current === contactId) setActionPending(false);
     }
   }
 
   async function handleSendVoice(recording, mimeType) {
     if (selectedId == null || !recording) return;
+    const contactId = selectedId;
     setActionPending(true);
 
     try {
-      const result = await api.sendVoice(selectedId, recording, mimeType);
-      setMessages((prev) => mergeMessages(prev, [{ ...result, has_media_attachment: true }]));
+      const result = await api.sendVoice(contactId, recording, mimeType);
+      if (selectedIdRef.current === contactId) {
+        setMessages((prev) => mergeMessages(prev, [{ ...result, has_media_attachment: true }]));
+      }
       await refreshConversations();
       if (result?.delivered === false) {
         showToast(
@@ -345,7 +369,7 @@ export default function Inbox() {
       showToast(err.message || "Couldn't send that voice message — please try again.", "error");
       throw err;
     } finally {
-      setActionPending(false);
+      if (selectedIdRef.current === contactId) setActionPending(false);
     }
   }
 
@@ -359,6 +383,7 @@ export default function Inbox() {
         onSelect={setSelectedId}
       />
       <ThreadView
+        key={selectedId ?? "no-conversation"}
         contact={selectedContact}
         messages={messages}
         loading={messagesLoading}
@@ -455,6 +480,8 @@ function ThreadView({
   onToast,
 }) {
   const bottomRef = useRef(null);
+  const threadScrollRef = useRef(null);
+  const shouldStickToBottomRef = useRef(true);
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
   const mediaRecorderRef = useRef(null);
@@ -485,18 +512,10 @@ function ThreadView({
   activeContactModeRef.current = contact?.mode;
 
   useEffect(() => {
-    if (!loading && messages.length > 0) {
+    if (!loading && messages.length > 0 && shouldStickToBottomRef.current) {
       requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ block: "end" }));
     }
-  }, [contact?.contact_id, loading]);
-
-  useEffect(() => {
-    setDraft("");
-    clearImage();
-    cancelRecording();
-    clearVoice();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contact?.contact_id]);
+  }, [messages, loading]);
 
   useEffect(() => {
     if (contact && contact.mode !== "human") {
@@ -538,6 +557,13 @@ function ThreadView({
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
   }, [draft]);
+
+  function handleThreadScroll() {
+    const el = threadScrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    shouldStickToBottomRef.current = distanceFromBottom < 120;
+  }
 
   function handleFilePicked(e) {
     const file = e.target.files?.[0];
@@ -665,7 +691,10 @@ function ThreadView({
 
       recorder.addEventListener("stop", () => {
         const shouldDiscard = discardRecordingRef.current;
-        const duration = Math.max(1, Math.min(MAX_VOICE_SECONDS, Math.ceil((Date.now() - recordingStartedAtRef.current) / 1000)));
+        const duration = Math.max(
+          1,
+          Math.min(MAX_VOICE_SECONDS, Math.ceil((Date.now() - recordingStartedAtRef.current) / 1000))
+        );
         const chunks = recordingChunksRef.current;
         const mimeType = recorder.mimeType || selectedMimeType || chunks[0]?.type || "audio/webm";
 
@@ -697,7 +726,10 @@ function ThreadView({
       setIsRecording(true);
       recorder.start(1000);
       recordingTimerRef.current = setInterval(() => {
-        const elapsed = Math.min(MAX_VOICE_SECONDS, Math.floor((Date.now() - recordingStartedAtRef.current) / 1000));
+        const elapsed = Math.min(
+          MAX_VOICE_SECONDS,
+          Math.floor((Date.now() - recordingStartedAtRef.current) / 1000)
+        );
         setRecordingSeconds(elapsed);
         if (elapsed >= MAX_VOICE_SECONDS) stopRecording();
       }, 250);
@@ -725,10 +757,11 @@ function ThreadView({
     setSending(true);
     try {
       await onSendVoice(voiceBlob, voiceMimeType);
-      clearVoice();
+      if (mountedRef.current) clearVoice();
     } catch {
+      // Parent shows the error toast. Keep the preview so staff can retry.
     } finally {
-      setSending(false);
+      if (mountedRef.current) setSending(false);
     }
   }
 
@@ -750,14 +783,15 @@ function ThreadView({
     try {
       if (imageFile) {
         await onSendImage(imageFile, text);
-        clearImage();
+        if (mountedRef.current) clearImage();
       } else {
         await onSend(text);
       }
-      setDraft("");
+      if (mountedRef.current) setDraft("");
     } catch {
+      // Parent shows the error toast; keep the draft/attachment for retry.
     } finally {
-      setSending(false);
+      if (mountedRef.current) setSending(false);
     }
   }
 
@@ -809,7 +843,11 @@ function ThreadView({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-6 space-y-3">
+      <div
+        ref={threadScrollRef}
+        onScroll={handleThreadScroll}
+        className="flex-1 overflow-y-auto px-6 py-6 space-y-3"
+      >
         {hasMoreOlderMessages && (
           <div className="text-center pb-2">
             <button
