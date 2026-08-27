@@ -23,7 +23,10 @@ export const api = {
   logout: () => request("/auth/logout", { method: "POST" }),
   me: () => request("/auth/me"),
   listConversations: () => request("/conversations"),
-  getMessages: (contactId) => request(`/conversations/${contactId}/messages`),
+  getMessages: (contactId, { includeMedia = true } = {}) =>
+    request(`/conversations/${contactId}/messages${includeMedia ? "" : "?includeMedia=false"}`),
+  messageMediaUrl: (contactId, messageId) =>
+    `${BASE}/conversations/${contactId}/messages/${messageId}/media`,
   sendMessage: (contactId, text) =>
     request(`/conversations/${contactId}/messages`, { method: "POST", body: JSON.stringify({ text }) }),
   // Multipart upload — bypasses the JSON `request()` helper above since a
@@ -35,6 +38,25 @@ export const api = {
     if (caption) form.append("caption", caption);
 
     const res = await fetch(`${BASE}/conversations/${contactId}/media`, {
+      method: "POST",
+      credentials: "include",
+      body: form,
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const error = new Error(body.error || `Request failed (${res.status})`);
+      error.status = res.status;
+      throw error;
+    }
+    return res.json();
+  },
+  sendVoice: async (contactId, recording, mimeType) => {
+    const form = new FormData();
+    const extension = mimeType?.includes("mp4") ? "m4a" : mimeType?.includes("ogg") ? "ogg" : "webm";
+    form.append("voice", recording, `voice-recording.${extension}`);
+
+    const res = await fetch(`${BASE}/conversations/${contactId}/voice`, {
       method: "POST",
       credentials: "include",
       body: form,

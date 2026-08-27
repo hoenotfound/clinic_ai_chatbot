@@ -1,4 +1,4 @@
-const GRAPH_API_VERSION = "v20.0";
+const GRAPH_API_VERSION = "v26.0";
 
 /**
  * Sends a plain text WhatsApp message via the Cloud API.
@@ -89,9 +89,10 @@ async function sendImage(to, imageUrl, caption) {
  * avoids having to stand up public hosting just to send one photo.
  * @param {Buffer} buffer - raw file bytes
  * @param {string} mimeType - e.g. "image/jpeg", "image/png"
+ * @param {string} [filename] - filename supplied to Meta (important for voice.ogg)
  * @returns {Promise<string|null>} the WhatsApp media ID, or null on failure
  */
-async function uploadMedia(buffer, mimeType) {
+async function uploadMedia(buffer, mimeType, filename = "upload") {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/media`;
@@ -99,7 +100,7 @@ async function uploadMedia(buffer, mimeType) {
   try {
     const form = new FormData();
     form.append("messaging_product", "whatsapp");
-    form.append("file", new Blob([buffer], { type: mimeType }), "upload");
+    form.append("file", new Blob([buffer], { type: mimeType }), filename);
 
     const res = await fetch(url, {
       method: "POST",
@@ -157,6 +158,46 @@ async function sendImageById(to, mediaId, caption) {
     return true;
   } catch (err) {
     console.error("WhatsApp image (by id) send threw an error:", err);
+    return false;
+  }
+}
+
+/**
+ * Sends an uploaded Ogg/Opus file as a native WhatsApp voice note. The
+ * `voice: true` flag is what makes WhatsApp render the recording as a voice
+ * message rather than a generic audio attachment.
+ * @param {string} to - recipient's WhatsApp ID (phone number, no '+')
+ * @param {string} mediaId - ID returned by uploadMedia()
+ * @returns {Promise<boolean>} true if Meta accepted the message
+ */
+async function sendVoiceById(to, mediaId) {
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const token = process.env.WHATSAPP_TOKEN;
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "audio",
+        audio: { id: mediaId, voice: true },
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error("WhatsApp voice send failed:", res.status, errBody);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("WhatsApp voice send threw an error:", err);
     return false;
   }
 }
@@ -267,4 +308,12 @@ function parseIncomingMessages(body) {
   }
 }
 
-module.exports = { sendMessage, sendImage, uploadMedia, sendImageById, downloadMedia, parseIncomingMessages };
+module.exports = {
+  sendMessage,
+  sendImage,
+  uploadMedia,
+  sendImageById,
+  sendVoiceById,
+  downloadMedia,
+  parseIncomingMessages,
+};

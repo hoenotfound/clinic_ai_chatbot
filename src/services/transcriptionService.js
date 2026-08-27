@@ -22,12 +22,26 @@ Rules:
 - If the audio is silent, just noise, or unintelligible, respond with exactly: [UNINTELLIGIBLE]
 - Output only the transcript text, nothing else.`;
 
+const STAFF_TRANSCRIBE_PROMPT = `Transcribe this voice message exactly as spoken.
+
+The speaker is a clinic staff member replying to a patient in Malaysia. They may
+speak English, Bahasa Malaysia, Mandarin/Cantonese, or switch between languages
+mid-sentence — this is normal, keep it as-is rather than translating or
+normalizing to one language.
+
+Rules:
+- Write Chinese speech in Chinese characters, not pinyin.
+- Do not translate anything — output the same language(s) the speaker used.
+- Do not add commentary, labels, or punctuation guesses beyond natural sentence breaks.
+- If the audio is silent, just noise, or unintelligible, respond with exactly: [UNINTELLIGIBLE]
+- Output only the transcript text, nothing else.`;
+
 /**
  * @param {Buffer} audioBuffer - raw audio bytes downloaded from WhatsApp
  * @param {string} mimeType - e.g. "audio/ogg; codecs=opus" (WhatsApp voice notes)
  * @returns {Promise<string|null>} transcribed text, or null if transcription failed/unintelligible
  */
-async function transcribeAudio(audioBuffer, mimeType) {
+async function runTranscription(audioBuffer, mimeType, prompt) {
   try {
     const response = await ai.models.generateContent({
       model: MODEL,
@@ -35,7 +49,7 @@ async function transcribeAudio(audioBuffer, mimeType) {
         {
           role: "user",
           parts: [
-            { text: TRANSCRIBE_PROMPT },
+            { text: prompt },
             {
               inlineData: {
                 // Gemini wants the base mime type without codec params.
@@ -61,4 +75,12 @@ async function transcribeAudio(audioBuffer, mimeType) {
   }
 }
 
-module.exports = { transcribeAudio };
+async function transcribeAudio(audioBuffer, mimeType) {
+  return runTranscription(audioBuffer, mimeType, TRANSCRIBE_PROMPT);
+}
+
+async function transcribeStaffAudio(audioBuffer, mimeType) {
+  return runTranscription(audioBuffer, mimeType, STAFF_TRANSCRIBE_PROMPT);
+}
+
+module.exports = { transcribeAudio, transcribeStaffAudio };

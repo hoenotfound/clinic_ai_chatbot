@@ -7,6 +7,9 @@ import ContactAvatar from "../components/ContactAvatar";
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_IMAGE_BYTES = 16 * 1024 * 1024; // matches the server's Multer limit / WhatsApp's own cap
+const MAX_VOICE_BYTES = 16 * 1024 * 1024;
+const MAX_VOICE_SECONDS = 120;
+const VOICE_MIME_TYPES = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"];
 
 export default function Inbox() {
   const { username } = useAuth();
@@ -17,6 +20,12 @@ export default function Inbox() {
   const [messages, setMessages] = useState([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [actionPending, setActionPending] = useState(false); // takeover/return/send in flight
+  const selectedIdRef = useRef(selectedId);
+
+  // Send requests can take several seconds, especially while converting and
+  // transcribing voice recordings. Keep the current selection in a ref so a
+  // late refresh for the previous contact cannot replace the new chat's messages.
+  selectedIdRef.current = selectedId;
 
   // ── Poll conversation list ──
   useEffect(() => {
@@ -52,7 +61,7 @@ export default function Inbox() {
     async function load(showLoading) {
       if (showLoading) setMessagesLoading(true);
       try {
-        const data = await api.getMessages(selectedId);
+        const data = await api.getMessages(selectedId, { includeMedia: false });
         if (!cancelled) setMessages(data.messages);
       } catch (err) {
         console.error("Failed to load messages:", err);
@@ -79,10 +88,13 @@ export default function Inbox() {
   }
 
   async function refreshMessages() {
-    if (selectedId == null) return;
+    const contactId = selectedId;
+    if (contactId == null) return;
     try {
-      const data = await api.getMessages(selectedId);
-      setMessages(data.messages);
+      const data = await api.getMessages(contactId, { includeMedia: false });
+      if (selectedIdRef.current === contactId) {
+        setMessages(data.messages);
+      }
     } catch (err) {
       console.error("Failed to refresh messages:", err);
     }
@@ -216,6 +228,30 @@ export default function Inbox() {
     }
   }
 
+  async function handleSendVoice(recording, mimeType) {
+    if (selectedId == null || !recording) return;
+    setActionPending(true);
+
+    try {
+      const result = await api.sendVoice(selectedId, recording, mimeType);
+      await Promise.all([refreshMessages(), refreshConversations()]);
+      if (result?.delivered === false) {
+        showToast(
+          "Voice message saved but WhatsApp delivery failed — the patient may not have received it. Please try recording again.",
+          "warning"
+        );
+      } else if (result?.transcribed === false) {
+        showToast("Voice message sent. Its transcript couldn't be generated, but the recording was saved.", "info");
+      }
+    } catch (err) {
+      console.error("Failed to send voice message:", err);
+      showToast(err.message || "Couldn't send that voice message — please try again.", "error");
+      throw err;
+    } finally {
+      setActionPending(false);
+    }
+  }
+
   const selectedContact = conversations?.find((c) => c.contact_id === selectedId);
 
   return (
@@ -235,6 +271,7 @@ export default function Inbox() {
         onDismissAttention={handleDismissAttention}
         onSend={handleSend}
         onSendImage={handleSendImage}
+        onSendVoice={handleSendVoice}
         onToast={showToast}
       />
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
@@ -311,16 +348,38 @@ function ThreadView({
   onDismissAttention,
   onSend,
   onSendImage,
+  onSendVoice,
   onToast,
 }) {
   const bottomRef = useRef(null);
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const recordingStreamRef = useRef(null);
+  const recordingChunksRef = useRef([]);
+  const recordingTimerRef = useRef(null);
+  const recordingStartedAtRef = useRef(0);
+  const discardRecordingRef = useRef(false);
+  const recordingStartingRef = useRef(false);
+  const recordingRequestIdRef = useRef(0);
+  const mountedRef = useRef(true);
+  const activeContactIdRef = useRef(contact?.contact_id);
+  const activeContactModeRef = useRef(contact?.mode);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [imageFile, setImageFile] = useState(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
+  const [isStartingRecording, setIsStartingRecording] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [voiceBlob, setVoiceBlob] = useState(null);
+  const [voiceMimeType, setVoiceMimeType] = useState("");
+  const [voiceDuration, setVoiceDuration] = useState(0);
+  const [voicePreviewUrl, setVoicePreviewUrl] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
+
+  activeContactIdRef.current = contact?.contact_id;
+  activeContactModeRef.current = contact?.mode;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
@@ -330,8 +389,20 @@ function ThreadView({
   useEffect(() => {
     setDraft("");
     clearImage();
+    cancelRecording();
+    clearVoice();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contact?.contact_id]);
+
+  // Voice recording is intentionally available only while staff owns the
+  // conversation. Discard any unsent recording if the chat returns to AI.
+  useEffect(() => {
+    if (contact && contact.mode !== "human") {
+      cancelRecording();
+      clearVoice();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contact?.mode]);
 
   // Revoke the object URL when it's replaced/unmounted, so we don't leak memory.
   useEffect(() => {
@@ -339,6 +410,29 @@ function ThreadView({
       if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
     };
   }, [imagePreviewUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (voicePreviewUrl) URL.revokeObjectURL(voicePreviewUrl);
+    };
+  }, [voicePreviewUrl]);
+
+  useEffect(() => {
+    // React StrictMode runs one setup/cleanup cycle twice in development.
+    // Reset this flag in setup so the simulated cleanup does not leave the
+    // real mounted component marked as unmounted.
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      recordingRequestIdRef.current += 1;
+      recordingStartingRef.current = false;
+      discardRecordingRef.current = true;
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      const recorder = mediaRecorderRef.current;
+      if (recorder?.state !== "inactive") recorder?.stop();
+      recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
 
   // Auto-grow the textarea to fit its content, up to the max-h-32 cap below.
   useEffect(() => {
@@ -371,6 +465,185 @@ function ThreadView({
     setImagePreviewUrl(null);
   }
 
+  function cleanupRecordingHardware() {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
+    recordingStreamRef.current = null;
+    mediaRecorderRef.current = null;
+    if (mountedRef.current) setIsRecording(false);
+  }
+
+  function clearVoice() {
+    if (voicePreviewUrl) URL.revokeObjectURL(voicePreviewUrl);
+    setVoiceBlob(null);
+    setVoiceMimeType("");
+    setVoiceDuration(0);
+    setVoicePreviewUrl(null);
+  }
+
+  function stopRecording() {
+    const recorder = mediaRecorderRef.current;
+    if (recorder?.state === "recording" || recorder?.state === "paused") {
+      recorder.stop();
+    }
+  }
+
+  function cancelRecording() {
+    // Invalidate a getUserMedia request that is still waiting for the browser
+    // permission prompt. The request itself cannot be aborted, but its stream
+    // will be stopped immediately if it eventually resolves.
+    recordingRequestIdRef.current += 1;
+    recordingStartingRef.current = false;
+    if (mountedRef.current) setIsStartingRecording(false);
+    discardRecordingRef.current = true;
+    const recorder = mediaRecorderRef.current;
+    if (recorder?.state === "recording" || recorder?.state === "paused") {
+      recorder.stop();
+    } else {
+      cleanupRecordingHardware();
+    }
+    recordingChunksRef.current = [];
+    setRecordingSeconds(0);
+  }
+
+  async function startRecording() {
+    if (sending || isRecording || recordingStartingRef.current) return;
+    if (contact.mode !== "human") {
+      onToast("Take over this conversation before recording a voice message.", "warning");
+      return;
+    }
+    if (imageFile) {
+      onToast("Remove the selected image before recording a voice message.", "warning");
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      onToast("Voice recording isn't supported in this browser.", "error");
+      return;
+    }
+
+    recordingStartingRef.current = true;
+    const requestId = recordingRequestIdRef.current + 1;
+    recordingRequestIdRef.current = requestId;
+    setIsStartingRecording(true);
+
+    try {
+      const recordingContactId = contact.contact_id;
+      clearVoice();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+
+      // The permission prompt can remain open while staff changes chats or
+      // returns the conversation to AI. Do not start a stale recording after
+      // they finally answer the prompt.
+      if (
+        !mountedRef.current ||
+        recordingRequestIdRef.current !== requestId ||
+        activeContactIdRef.current !== recordingContactId ||
+        activeContactModeRef.current !== "human"
+      ) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      recordingStreamRef.current = stream;
+
+      const supportsMimeType = typeof MediaRecorder.isTypeSupported === "function";
+      const selectedMimeType = supportsMimeType
+        ? VOICE_MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type))
+        : undefined;
+      const options = selectedMimeType
+        ? { mimeType: selectedMimeType, audioBitsPerSecond: 64000 }
+        : { audioBitsPerSecond: 64000 };
+      const recorder = new MediaRecorder(stream, options);
+      mediaRecorderRef.current = recorder;
+      recordingChunksRef.current = [];
+      discardRecordingRef.current = false;
+
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data?.size > 0) recordingChunksRef.current.push(event.data);
+      });
+
+      recorder.addEventListener("error", () => {
+        discardRecordingRef.current = true;
+        onToast("Recording failed. Please check your microphone and try again.", "error");
+        cleanupRecordingHardware();
+      });
+
+      recorder.addEventListener("stop", () => {
+        const shouldDiscard = discardRecordingRef.current;
+        const duration = Math.max(1, Math.min(MAX_VOICE_SECONDS, Math.ceil((Date.now() - recordingStartedAtRef.current) / 1000)));
+        const chunks = recordingChunksRef.current;
+        const mimeType = recorder.mimeType || selectedMimeType || chunks[0]?.type || "audio/webm";
+
+        cleanupRecordingHardware();
+        recordingChunksRef.current = [];
+        discardRecordingRef.current = false;
+        setRecordingSeconds(0);
+
+        if (shouldDiscard) return;
+
+        const blob = new Blob(chunks, { type: mimeType });
+        if (!blob.size) {
+          onToast("No audio was captured. Please check your microphone and try again.", "error");
+          return;
+        }
+        if (blob.size > MAX_VOICE_BYTES) {
+          onToast("That recording is larger than 16MB. Please record a shorter message.", "error");
+          return;
+        }
+
+        setVoiceBlob(blob);
+        setVoiceMimeType(mimeType);
+        setVoiceDuration(duration);
+        setVoicePreviewUrl(URL.createObjectURL(blob));
+      });
+
+      recordingStartedAtRef.current = Date.now();
+      setRecordingSeconds(0);
+      setIsRecording(true);
+      recorder.start(1000);
+      recordingTimerRef.current = setInterval(() => {
+        const elapsed = Math.min(MAX_VOICE_SECONDS, Math.floor((Date.now() - recordingStartedAtRef.current) / 1000));
+        setRecordingSeconds(elapsed);
+        if (elapsed >= MAX_VOICE_SECONDS) stopRecording();
+      }, 250);
+    } catch (err) {
+      // A newer recording request may already be active. Do not let this
+      // stale request stop its stream or overwrite its UI state.
+      if (recordingRequestIdRef.current !== requestId) return;
+      cleanupRecordingHardware();
+      if (!mountedRef.current) return;
+      const message =
+        err?.name === "NotAllowedError"
+          ? "Microphone access was blocked. Allow microphone access in your browser and try again."
+          : err?.name === "NotFoundError"
+          ? "No microphone was found on this device."
+          : "Couldn't start recording. Please check your microphone and try again.";
+      onToast(message, "error");
+    } finally {
+      if (recordingRequestIdRef.current === requestId) {
+        recordingStartingRef.current = false;
+        if (mountedRef.current) setIsStartingRecording(false);
+      }
+    }
+  }
+
+  async function sendRecordedVoice() {
+    if (!voiceBlob || sending) return;
+    setSending(true);
+    try {
+      await onSendVoice(voiceBlob, voiceMimeType);
+      clearVoice();
+    } catch {
+      // The toast is shown by the parent. Keep the preview so staff can retry.
+    } finally {
+      setSending(false);
+    }
+  }
+
   if (!contact) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -383,6 +656,7 @@ function ThreadView({
     e.preventDefault();
     const text = draft.trim();
     if (sending) return;
+    if (isStartingRecording || isRecording || voiceBlob) return;
     if (!text && !imageFile) return;
     setSending(true);
     try {
@@ -432,7 +706,8 @@ function ThreadView({
           {contact.mode === "human" ? (
             <button
               onClick={onReturnToAi}
-              disabled={actionPending}
+              disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
+              title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice recording first" : undefined}
               className="text-xs font-medium px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
             >
               Return to AI
@@ -452,12 +727,89 @@ function ThreadView({
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-3">
         {loading && <p className="text-sm text-[var(--color-text-muted)] text-center">Loading…</p>}
         {messages.map((m) => (
-          <MessageBubble key={m.id} message={m} onImageClick={setLightboxSrc} />
+          <MessageBubble
+            key={m.id}
+            contactId={contact.contact_id}
+            message={m}
+            onImageClick={setLightboxSrc}
+          />
         ))}
         <div ref={bottomRef} />
       </div>
 
       <form onSubmit={handleSubmit} className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface)]">
+        {isStartingRecording && (
+          <div className="flex items-center gap-3 mb-3 pb-3 border-b border-[var(--color-border)]">
+            <Spinner className="text-[var(--color-primary)]" />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold">Starting microphone…</p>
+              <p className="text-[11px] text-[var(--color-text-muted)]">
+                Allow microphone access if your browser asks.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={cancelRecording}
+              className="text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+        {isRecording && (
+          <div className="flex items-center gap-3 mb-3 pb-3 border-b border-[var(--color-border)]">
+            <span className="relative flex h-3 w-3 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+              <span className="relative inline-flex h-3 w-3 rounded-full bg-red-500" />
+            </span>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-red-600">Recording voice message</p>
+              <p className="text-[11px] text-[var(--color-text-muted)]">
+                {formatDuration(recordingSeconds)} / {formatDuration(MAX_VOICE_SECONDS)}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={cancelRecording}
+              className="text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={stopRecording}
+              className="text-xs font-medium px-3 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors"
+            >
+              Stop
+            </button>
+          </div>
+        )}
+        {voicePreviewUrl && !isRecording && (
+          <div className="flex items-center gap-3 mb-3 pb-3 border-b border-[var(--color-border)]">
+            <audio controls src={voicePreviewUrl} className="h-9 max-w-[260px]" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium">Voice message · {formatDuration(voiceDuration)}</p>
+              <p className="text-[11px] text-[var(--color-text-muted)]">Listen before sending to the patient</p>
+            </div>
+            <button
+              type="button"
+              onClick={clearVoice}
+              disabled={sending}
+              className="text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
+            >
+              Remove
+            </button>
+            <button
+              type="button"
+              onClick={sendRecordedVoice}
+              disabled={sending}
+              className="inline-flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
+            >
+              {sending && <Spinner />}
+              {sending ? "Sending…" : "Send voice"}
+            </button>
+          </div>
+        )}
         {imagePreviewUrl && (
           <div className="flex items-center gap-3 mb-3 pb-3 border-b border-[var(--color-border)]">
             <img src={imagePreviewUrl} alt="Selected attachment" className="w-16 h-16 rounded-lg object-cover border border-[var(--color-border)]" />
@@ -485,17 +837,30 @@ function ThreadView({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={sending}
+            disabled={sending || isStartingRecording || isRecording || !!voiceBlob}
             title="Attach an image"
             aria-label="Attach an image"
             className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
           >
             📷
           </button>
+          {contact.mode === "human" && (
+            <button
+              type="button"
+              onClick={startRecording}
+              disabled={sending || isStartingRecording || isRecording || !!voiceBlob || !!imageFile}
+              title="Record a voice message"
+              aria-label="Record a voice message"
+              className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
+            >
+              🎙️
+            </button>
+          )}
           <textarea
             ref={textareaRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            disabled={isStartingRecording || isRecording || !!voiceBlob}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -510,11 +875,17 @@ function ThreadView({
                 : "Type a message — sending will take over this conversation from the AI…"
             }
             rows={1}
-            className="flex-1 resize-none rounded-xl border border-[var(--color-border)] px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] max-h-32 overflow-y-auto"
+            className="flex-1 resize-none rounded-xl border border-[var(--color-border)] px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] max-h-32 overflow-y-auto disabled:opacity-50"
           />
           <button
             type="submit"
-            disabled={(!draft.trim() && !imageFile) || sending}
+            disabled={
+              (!draft.trim() && !imageFile) ||
+              sending ||
+              isStartingRecording ||
+              isRecording ||
+              !!voiceBlob
+            }
             className="shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
           >
             {sending && <Spinner />}
@@ -560,18 +931,22 @@ function Spinner({ className = "" }) {
   );
 }
 
-function MessageBubble({ message, onImageClick }) {
+function MessageBubble({ contactId, message, onImageClick }) {
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
+  const isAudio = message.media_mime_type?.startsWith("audio/");
+  const storedMediaSrc = message.media_base64
+    ? `data:${message.media_mime_type || "application/octet-stream"};base64,${message.media_base64}`
+    : message.has_media_attachment
+    ? api.messageMediaUrl(contactId, message.id)
+    : null;
 
   // previewUrl (a local object URL) is only present on an optimistic bubble
   // for an image still uploading; otherwise fall back to the real stored
-  // image source once it's come back from the server.
-  const imageSrc =
-    message.previewUrl ||
-    message.media_url ||
-    (message.media_base64 ? `data:${message.media_mime_type || "image/jpeg"};base64,${message.media_base64}` : null);
-  const hasImage = !!imageSrc && !message.media_mime_type?.startsWith("audio/");
+  // image source once it's come back from the server. Stored attachment
+  // bytes are loaded from an authenticated URL rather than every poll.
+  const imageSrc = message.previewUrl || message.media_url || (!isAudio ? storedMediaSrc : null);
+  const hasImage = !!imageSrc;
 
   return (
     <div className={`flex ${isPatient ? "justify-start" : "justify-end"}`}>
@@ -587,10 +962,11 @@ function MessageBubble({ message, onImageClick }) {
             {sentByStaff ? message.sent_by_username : "AI"}
           </p>
         )}
-        {message.media_base64?.length > 0 && message.media_mime_type?.startsWith("audio/") ? (
+        {isAudio && storedMediaSrc ? (
           <audio
             controls
-            src={`data:${message.media_mime_type.split(";")[0].trim()};base64,${message.media_base64}`}
+            preload="none"
+            src={storedMediaSrc}
             className="mb-1.5 max-w-full"
             style={{ height: "36px" }}
           />
@@ -627,6 +1003,13 @@ function formatPhone(number) {
 
 function displayName(contact) {
   return contact.name || contact.whatsapp_profile_name || formatPhone(contact.whatsapp_number);
+}
+
+function formatDuration(seconds) {
+  const safeSeconds = Math.max(0, Number(seconds) || 0);
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = Math.floor(safeSeconds % 60);
+  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
 }
 
 function formatTime(value) {
