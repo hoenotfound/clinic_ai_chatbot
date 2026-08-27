@@ -9,10 +9,9 @@ const { transcribeStaffAudio } = require("../services/transcriptionService");
 
 const router = express.Router();
 const STAFF_TRANSCRIPTION_TIMEOUT_MS = 15 * 1000;
+const DEFAULT_MESSAGE_PAGE_SIZE = 50;
+const MAX_INCREMENTAL_PAGE_SIZE = 100;
 
-// Staff image uploads from the Inbox — kept in memory (never written to
-// disk) since we immediately forward the bytes to WhatsApp and to Postgres.
-// 16MB matches WhatsApp Cloud API's own image size limit.
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 16 * 1024 * 1024 },
@@ -24,9 +23,6 @@ const upload = multer({
   },
 });
 
-// Browser microphone recordings arrive as WebM/Opus, MP4/AAC, or Ogg/Opus
-// depending on the browser. Accept any audio container here; FFmpeg validates
-// and normalizes the actual bytes before anything is sent to WhatsApp.
 const voiceUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 16 * 1024 * 1024 },
@@ -52,7 +48,12 @@ async function resolveWithin(promise, timeoutMs, fallbackValue) {
   }
 }
 
-// GET /api/conversations — list every conversation, most recently active first.
+function parsePositiveInt(value) {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 router.get("/", async (req, res) => {
   try {
     const conversations = await contactsRepo.listConversations();
@@ -63,28 +64,46 @@ router.get("/", async (req, res) => {
   }
 });
 
-// GET /api/conversations/:contactId/messages — full thread for one contact.
+// Portal message history is cursor-paginated. The first request returns only
+// the newest 50 messages. beforeId loads older history, while afterId is a
+// lightweight incremental check used by the visible Inbox tab.
 router.get("/:contactId/messages", async (req, res) => {
   try {
-    const contact = await contactsRepo.getContactById(req.params.contactId);
-    if (!contact) return res.status(404).json({ error: "Contact not found." });
+    const contactId = parsePositiveInt(req.params.contactId);
+    if (!contactId) return res.status(400).json({ error: "Invalid contact id." });
 
-    // The Inbox polls this route every five seconds. It opts out of embedded
-    // base64 attachments and loads each immutable attachment from the media
-    // route below instead. Other internal callers retain the old default.
-    const includeMedia = req.query.includeMedia !== "false";
-    const messages = await messagesRepo.getMessagesForContact(contact.id, 500, includeMedia);
-    res.json({ contact, messages });
+    const beforeId = parsePositiveInt(req.query.beforeId);
+    const afterId = parsePositiveInt(req.query.afterId);
+    if (beforeId && afterId) {
+      return res.status(400).json({ error: "Use beforeId or afterId, not both." });
+    }
+
+    const requestedLimit = parsePositiveInt(req.query.limit) || DEFAULT_MESSAGE_PAGE_SIZE;
+    const limit = Math.min(
+      requestedLimit,
+      afterId ? MAX_INCREMENTAL_PAGE_SIZE : DEFAULT_MESSAGE_PAGE_SIZE
+    );
+    const includeMedia = req.query.includeMedia === "true";
+
+    const page = await messagesRepo.getMessagePageForContact(contactId, {
+      limit,
+      beforeId,
+      afterId,
+      includeMedia,
+    });
+
+    res.json({
+      messages: page.rows,
+      hasMore: page.hasMore,
+      oldestId: page.rows[0]?.id || null,
+      newestId: page.rows[page.rows.length - 1]?.id || null,
+    });
   } catch (err) {
     console.error("Failed to load conversation thread:", err);
     res.status(500).json({ error: "Something went wrong loading the conversation." });
   }
 });
 
-// GET /api/conversations/:contactId/messages/:messageId/media — streams one
-// stored photo or recording on demand. This router is already protected by
-// requireAuth in server.js, and contactId is included in the lookup so a
-// message cannot be fetched through the wrong conversation.
 router.get("/:contactId/messages/:messageId/media", async (req, res) => {
   try {
     const media = await messagesRepo.getMessageMediaForContact(
@@ -150,8 +169,6 @@ router.get("/:contactId/messages/:messageId/media", async (req, res) => {
   }
 });
 
-// POST /api/conversations/:contactId/takeover — staff explicitly takes
-// ownership: AI stops auto-replying to this contact until "Return to AI".
 router.post("/:contactId/takeover", async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
@@ -165,8 +182,6 @@ router.post("/:contactId/takeover", async (req, res) => {
   }
 });
 
-// POST /api/conversations/:contactId/return-to-ai — hands the conversation
-// back to the bot for future inbound messages.
 router.post("/:contactId/return-to-ai", async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
@@ -180,8 +195,6 @@ router.post("/:contactId/return-to-ai", async (req, res) => {
   }
 });
 
-// PATCH /api/conversations/:contactId/attention — manually flag or dismiss
-// the "needs a human" indicator without necessarily taking over.
 router.patch("/:contactId/attention", async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
@@ -204,9 +217,6 @@ router.patch("/:contactId/attention", async (req, res) => {
   }
 });
 
-// POST /api/conversations/:contactId/messages — staff sends a WhatsApp
-// message directly from the Inbox. Implicitly takes over the conversation
-// (mode -> 'human') so the AI doesn't reply on top of a staff member.
 router.post("/:contactId/messages", async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
@@ -217,13 +227,9 @@ router.post("/:contactId/messages", async (req, res) => {
       return res.status(400).json({ error: "Message text is required." });
     }
 
-    // Implicit takeover — sending a message means staff now owns this
-    // conversation, whether or not they clicked "Take Over" first.
     if (contact.mode !== "human") {
       await contactsRepo.takeOver(contact.id, req.session.username);
     } else {
-      // Already staff-owned — sending a reply resolves the "needs
-      // attention" flag (they're actively handling it now).
       await contactsRepo.setAttention(contact.id, false);
     }
 
@@ -235,12 +241,6 @@ router.post("/:contactId/messages", async (req, res) => {
       req.session.username
     );
 
-    // Message is already saved (so it's never lost from the thread even if
-    // WhatsApp delivery fails), but we still tell the caller if the actual
-    // send failed so staff know to retry rather than assuming it went out.
-    // NOTE: `delivered: true` only means Meta *accepted* the send — the real
-    // delivery outcome arrives later via a status webhook (see server.js),
-    // which is why we attach the wamid now so that callback can find this row.
     const { success: delivered, wamid } = await whatsapp.sendMessage(contact.whatsapp_number, text.trim());
     if (wamid) {
       await messagesRepo.setWhatsappMessageId(saved.id, wamid);
@@ -253,10 +253,6 @@ router.post("/:contactId/messages", async (req, res) => {
   }
 });
 
-// Wraps upload.single("image") so Multer errors (file too large, wrong
-// mimetype) are turned into a JSON response instead of being passed to
-// next(err) — which would skip straight past our try/catch below and hit
-// Express's default HTML error handler.
 function handleImageUpload(req, res, next) {
   upload.single("image")(req, res, (err) => {
     if (!err) return next();
@@ -264,8 +260,6 @@ function handleImageUpload(req, res, next) {
     if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({ error: "Image is too large. Please choose a file under 16MB." });
     }
-    // Covers both other MulterErrors and the fileFilter's plain Error
-    // ("Only image files are allowed.").
     return res.status(400).json({ error: err.message || "Failed to upload image." });
   });
 }
@@ -281,10 +275,6 @@ function handleVoiceUpload(req, res, next) {
   });
 }
 
-// POST /api/conversations/:contactId/media — staff uploads an image file
-// from their computer and sends it as a WhatsApp image message. Same
-// implicit-takeover behavior as the text-send route above. multipart/form-data
-// with a single "image" file field and an optional "caption" text field.
 router.post("/:contactId/media", handleImageUpload, async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
@@ -296,17 +286,12 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
 
     const caption = (req.body?.caption || "").trim();
 
-    // Implicit takeover — same as the text-send route.
     if (contact.mode !== "human") {
       await contactsRepo.takeOver(contact.id, req.session.username);
     } else {
       await contactsRepo.setAttention(contact.id, false);
     }
 
-    // Upload the bytes to WhatsApp first to get a media ID, then send the
-    // actual message referencing it — no public hosting needed for
-    // one-off staff uploads (contrast with the promo graphic, which is
-    // sent by public link — see whatsappService.sendImage).
     const mediaId = await whatsapp.uploadMedia(req.file.buffer, req.file.mimetype);
     if (!mediaId) {
       return res.status(502).json({ error: "Failed to upload image to WhatsApp. Please try again." });
@@ -318,10 +303,6 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       caption || undefined
     );
 
-    // Persist it either way (even if delivery failed) so it's never lost
-    // from the thread, same reasoning as the text-send route. Stored as
-    // base64 — same field the Inbox already renders for patient-sent
-    // photos and for the promo graphic's media_url case.
     const saved = await conversationStore.appendMessage(
       contact.whatsapp_number,
       "assistant",
@@ -342,10 +323,6 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
   }
 });
 
-// POST /api/conversations/:contactId/voice — staff records a microphone
-// message in the Inbox. Unlike text/images, voice recording is deliberately
-// allowed only after an explicit takeover, so the microphone UI and server
-// behavior agree about who owns the conversation.
 router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
@@ -359,25 +336,18 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       return res.status(400).json({ error: "A voice recording is required." });
     }
 
-    // Conversion also enforces the server-side two-minute limit. Transcribe
-    // that normalized result, rather than the original browser file, so AI
-    // history always matches the exact audio delivered to the patient.
     const converted = await convertToWhatsAppVoice(req.file.buffer, req.file.mimetype);
 
     if (!converted) {
       return res.status(422).json({ error: "Couldn't process that recording. Please record it again." });
     }
 
-    // A failed or slow transcript does not block delivery; it only falls back
-    // to a generic history label below.
     const transcript = await resolveWithin(
       transcribeStaffAudio(converted.whatsapp.buffer, converted.whatsapp.mimeType),
       STAFF_TRANSCRIPTION_TIMEOUT_MS,
       null
     );
 
-    // Conversion/transcription can take long enough for another tab to hand
-    // the conversation back to AI. Check ownership again before uploading.
     let currentContact = await contactsRepo.getContactById(contact.id);
     if (!currentContact || currentContact.mode !== "human") {
       return res.status(409).json({ error: "This conversation is no longer in Staff mode." });
@@ -392,18 +362,11 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       return res.status(502).json({ error: "Failed to upload voice message to WhatsApp. Please try again." });
     }
 
-    // Uploading is another network operation, so close the same race once
-    // more immediately before the actual patient-facing send.
     currentContact = await contactsRepo.getContactById(contact.id);
     if (!currentContact || currentContact.mode !== "human") {
       return res.status(409).json({ error: "This conversation is no longer in Staff mode." });
     }
 
-    // Keep an MP3 copy for portal playback. The transcript also becomes the
-    // assistant-history entry, so if staff later returns the chat to AI, the
-    // model knows what staff already told the patient instead of repeating it.
-    // Save before sending so a database failure cannot produce a patient-facing
-    // delivery followed by a 500 response that encourages an accidental retry.
     const content = transcript ? `🎤 ${transcript}` : "🎤 Staff sent a voice message";
     const saved = await conversationStore.appendMessage(
       currentContact.whatsapp_number,
@@ -426,26 +389,14 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       await contactsRepo.setAttention(
         currentContact.id,
         !delivered,
-        delivered
-          ? null
-          // Meta *accepted* the request either way this branch is reached; this
-          // only fires if that initial request itself was rejected. If it later
-          // fails asynchronously after being accepted, the status webhook (see
-          // server.js) flags this same contact separately once that callback arrives.
-          : "Staff voice message failed to deliver. Please resend it."
+        delivered ? null : "Staff voice message failed to deliver. Please resend it."
       );
     } catch (attentionErr) {
-      // The message is already saved and delivery has already been attempted.
-      // Do not return a misleading send failure that could cause a duplicate.
       console.error("Failed to update attention after staff voice message:", attentionErr);
     }
 
-    // The Inbox reloads the lightweight message list after this request, so
-    // do not echo the large base64 MP3 back inside the upload response.
-    const { media_base64: _mediaBase64, ...savedWithoutMedia } = saved;
     res.status(201).json({
-      ...savedWithoutMedia,
-      has_media_attachment: !!saved.media_base64,
+      ...saved,
       delivered,
       transcribed: !!transcript,
     });
