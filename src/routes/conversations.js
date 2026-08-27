@@ -3,6 +3,7 @@ const multer = require("multer");
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
 const conversationStore = require("../utils/conversationStore");
+const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
 const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const { transcribeStaffAudio } = require("../services/transcriptionService");
@@ -11,6 +12,7 @@ const router = express.Router();
 const STAFF_TRANSCRIPTION_TIMEOUT_MS = 15 * 1000;
 const DEFAULT_MESSAGE_PAGE_SIZE = 50;
 const MAX_INCREMENTAL_PAGE_SIZE = 100;
+const SSE_HEARTBEAT_MS = 25 * 1000;
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -64,9 +66,39 @@ router.get("/", async (req, res) => {
   }
 });
 
+// Authenticated server-sent event stream for the Inbox. Events contain only
+// tiny contact/message identifiers; the browser then asks for lightweight
+// incremental data only when something actually changed. This replaces idle
+// polling without putting message or media payloads on the SSE connection.
+router.get("/events", (req, res) => {
+  res.status(200).set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.flushHeaders?.();
+  res.write("retry: 3000\n\n");
+
+  const removeClient = realtimeEvents.addClient(res);
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(": keepalive\n\n");
+    } catch {
+      clearInterval(heartbeat);
+      removeClient();
+    }
+  }, SSE_HEARTBEAT_MS);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    removeClient();
+  });
+});
+
 // Portal message history is cursor-paginated. The first request returns only
-// the newest 50 messages. beforeId loads older history, while afterId is a
-// lightweight incremental check used by the visible Inbox tab.
+// the newest 50 messages. beforeId loads older history, while afterId fetches
+// only messages newer than the browser's current cursor.
 router.get("/:contactId/messages", async (req, res) => {
   try {
     const contactId = parsePositiveInt(req.params.contactId);
