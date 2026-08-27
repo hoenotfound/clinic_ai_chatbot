@@ -122,7 +122,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
 
       if (update.status === "failed") {
         const reason = update.errorMessage || update.errorTitle || "WhatsApp reported delivery as failed.";
-        console.error(`Delivery failed for message ${update.wamid}:`, reason);
+        console.error(`Delivery failed for message ${update.wamid} (code ${update.errorCode}):`, reason);
         await contactsRepo.setAttention(
           updatedMessage.contact_id,
           true,
