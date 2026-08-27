@@ -163,9 +163,8 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
       if (update.status === "failed") {
         const reason = update.errorMessage || update.errorTitle || "WhatsApp reported delivery as failed.";
         console.error(`Delivery failed for message ${update.wamid} (code ${update.errorCode}):`, reason);
-        await contactsRepo.setAttention(
+        await contactsRepo.setDeliveryAttention(
           updatedMessage.contact_id,
-          true,
           `Delivery failed: ${reason}`
         );
       }
@@ -310,7 +309,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
       const replyResult = await whatsapp.sendMessage(from, reply);
       await persistSendOutcome(savedReply, replyResult);
       if (!replyResult.success) {
-        await contactsRepo.setAttention(contact.id, true, `Delivery failed: ${SEND_REJECTED_ERROR}`);
+        await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${SEND_REJECTED_ERROR}`);
       }
       console.log(`Replied to ${from}: ${reply}`);
 
@@ -337,7 +336,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
           // succeeded and that's what actually matters to the patient.
           if (!promoResult.success) {
             console.warn(`Promo image failed to send to ${from}, continuing without it.`);
-            await contactsRepo.setAttention(contact.id, true, `Delivery failed: ${SEND_REJECTED_ERROR}`);
+            await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${SEND_REJECTED_ERROR}`);
           }
         }
       }

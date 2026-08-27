@@ -436,7 +436,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     if (sendResult.success) {
       await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(contact.id);
     } else {
-      await contactsRepo.setAttention(contact.id, true, `Delivery failed: ${errorText}`);
+      await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${errorText}`);
     }
 
     res.json({
@@ -480,7 +480,7 @@ router.post("/:contactId/messages", async (req, res) => {
     const sendResult = await whatsapp.sendMessage(contact.whatsapp_number, text.trim());
     const finalMessage = await persistSendOutcome(saved, sendResult);
     if (!sendResult.success) {
-      await contactsRepo.setAttention(contact.id, true, `Delivery failed: ${SEND_REJECTED_ERROR}`);
+      await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${SEND_REJECTED_ERROR}`);
     }
 
     res.status(201).json({ ...finalMessage, delivered: sendResult.success });
@@ -552,7 +552,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     );
     const finalMessage = await persistSendOutcome(saved, sendResult);
     if (!sendResult.success) {
-      await contactsRepo.setAttention(contact.id, true, `Delivery failed: ${SEND_REJECTED_ERROR}`);
+      await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${SEND_REJECTED_ERROR}`);
     }
 
     res.status(201).json({ ...finalMessage, delivered: sendResult.success });
@@ -625,11 +625,14 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
     const sendResult = await whatsapp.sendVoiceById(currentContact.whatsapp_number, mediaId);
     const finalMessage = await persistSendOutcome(saved, sendResult);
     try {
-      await contactsRepo.setAttention(
-        currentContact.id,
-        !sendResult.success,
-        sendResult.success ? null : `Delivery failed: ${SEND_REJECTED_ERROR}`
-      );
+      if (sendResult.success) {
+        await contactsRepo.setAttention(currentContact.id, false);
+      } else {
+        await contactsRepo.setDeliveryAttention(
+          currentContact.id,
+          `Delivery failed: ${SEND_REJECTED_ERROR}`
+        );
+      }
     } catch (attentionErr) {
       console.error("Failed to update attention after staff voice message:", attentionErr);
     }

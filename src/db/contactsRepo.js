@@ -116,7 +116,21 @@ async function listConversations() {
       m.content AS last_message,
       m.role AS last_message_role,
       m.media_url AS last_message_media_url,
-      m.created_at AS last_message_at
+      m.created_at AS last_message_at,
+      EXISTS (
+        SELECT 1
+        FROM messages inbound
+        WHERE inbound.contact_id = c.id
+          AND inbound.role = 'user'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM messages outbound
+            WHERE outbound.contact_id = c.id
+              AND outbound.role = 'assistant'
+              AND outbound.delivery_status IS DISTINCT FROM 'failed'
+              AND (outbound.created_at, outbound.id) > (inbound.created_at, inbound.id)
+          )
+      ) AS has_unreplied
     FROM contacts c
     JOIN messages m ON m.id = (
       SELECT id FROM messages WHERE contact_id = c.id ORDER BY created_at DESC, id DESC LIMIT 1
@@ -162,6 +176,27 @@ async function setAttention(id, needsAttention, reason = null) {
      WHERE id = $3
      RETURNING *`,
     [needsAttention, needsAttention ? reason : null, id]
+  );
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id);
+  return updated;
+}
+
+// Delivery problems should not replace a more important reason that already
+// needs staff attention, such as an urgent keyword or an AI handoff. Repeated
+// delivery failures may update the existing delivery reason with newer detail.
+async function setDeliveryAttention(id, reason) {
+  const result = await pool.query(
+    `UPDATE contacts
+     SET needs_attention = true, attention_reason = $1, updated_at = now()
+     WHERE id = $2
+       AND (
+         needs_attention = false
+         OR attention_reason IS NULL
+         OR attention_reason LIKE 'Delivery failed:%'
+       )
+     RETURNING *`,
+    [reason, id]
   );
   const updated = result.rows[0] || null;
   if (updated) publishContactChange(updated.id);
@@ -231,6 +266,7 @@ module.exports = {
   takeOver,
   returnToAi,
   setAttention,
+  setDeliveryAttention,
   clearDeliveryAttentionIfNoFailedMessages,
   setUnread,
   setFollowUp,

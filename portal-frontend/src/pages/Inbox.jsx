@@ -79,6 +79,12 @@ function mergeMessages(existing, incoming) {
   });
 }
 
+function isConversationUnreplied(conversation) {
+  return typeof conversation.has_unreplied === "boolean"
+    ? conversation.has_unreplied
+    : conversation.last_message_role === "user";
+}
+
 export default function Inbox() {
   const { username } = useAuth();
   const { toasts, showToast, dismissToast } = useToasts();
@@ -666,7 +672,7 @@ function ConversationList({ conversations, selectedId, onSelect }) {
   const statusCounts = useMemo(
     () => ({
       all: conversationList.length,
-      unreplied: conversationList.filter((item) => item.last_message_role === "user").length,
+      unreplied: conversationList.filter(isConversationUnreplied).length,
       "follow-up": conversationList.filter((item) => item.needs_follow_up).length,
       unread: conversationList.filter((item) => item.is_unread).length,
       attention: conversationList.filter((item) => item.needs_attention).length,
@@ -677,7 +683,7 @@ function ConversationList({ conversations, selectedId, onSelect }) {
   const filteredConversations = useMemo(() => {
     const query = filters.query.trim().toLowerCase();
     return conversationList.filter((conversation) => {
-      if (filters.status === "unreplied" && conversation.last_message_role !== "user") return false;
+      if (filters.status === "unreplied" && !isConversationUnreplied(conversation)) return false;
       if (filters.status === "follow-up" && !conversation.needs_follow_up) return false;
       if (filters.status === "unread" && !conversation.is_unread) return false;
       if (filters.status === "attention" && !conversation.needs_attention) return false;
