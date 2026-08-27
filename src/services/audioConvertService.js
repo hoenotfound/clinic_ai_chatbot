@@ -74,6 +74,23 @@ function runFfmpeg(inputPath, outputPath, configure) {
   });
 }
 
+function sha256(buffer) {
+  return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
+function inspectOggOpus(buffer) {
+  const first4 = buffer.subarray(0, 4).toString("ascii");
+  const hasOpusHead = buffer.includes(Buffer.from("OpusHead"));
+  return {
+    bytes: buffer.length,
+    first4,
+    first16Hex: buffer.subarray(0, 16).toString("hex"),
+    hasOpusHead,
+    sha256: sha256(buffer),
+    valid: first4 === "OggS" && hasOpusHead,
+  };
+}
+
 /**
  * Normalizes a browser microphone recording into both formats needed by the
  * app: mono Ogg/Opus for a native WhatsApp voice note, and MP3 for reliable
@@ -126,14 +143,19 @@ async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
       fs.readFile(mp3Path),
     ]);
 
+    const voiceDiagnostics = inspectOggOpus(whatsappBuffer);
+    console.log("[voice-output]", voiceDiagnostics);
+    if (!voiceDiagnostics.valid) {
+      console.error("Generated WhatsApp voice file is not valid OGG/Opus; refusing to upload it.");
+      return null;
+    }
+
     return {
       whatsapp: {
         buffer: whatsappBuffer,
-        // Meta's media endpoint expects the registered MIME type here.
-        // The Opus codec is encoded inside the OGG file itself; adding a
-        // `codecs=opus` parameter to the multipart Content-Type can result in
-        // an upload being accepted but the media later failing delivery.
-        mimeType: "audio/ogg; codecs=opus",
+        // Match the exact multipart file Content-Type that succeeded in the
+        // independent Meta curl test. Opus is encoded inside the OGG bytes.
+        mimeType: "audio/ogg",
         filename: "voice.ogg",
       },
       playback: { buffer: playbackBuffer, mimeType: "audio/mpeg" },

@@ -1,3 +1,5 @@
+const crypto = require("crypto");
+
 const GRAPH_API_VERSION = "v26.0";
 
 // A 200 OK from POST .../messages only means Meta *accepted* the send
@@ -8,6 +10,10 @@ const GRAPH_API_VERSION = "v26.0";
 // that lets that later callback be matched back to this specific message.
 function extractWamid(data) {
   return data?.messages?.[0]?.id || null;
+}
+
+function sha256(buffer) {
+  return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
 /**
@@ -103,7 +109,7 @@ async function sendImage(to, imageUrl, caption) {
  * images only exist as bytes in memory — uploading them to WhatsApp first
  * avoids having to stand up public hosting just to send one photo.
  * @param {Buffer} buffer - raw file bytes
- * @param {string} mimeType - e.g. "image/jpeg", "image/png"
+ * @param {string} mimeType - e.g. "image/jpeg", "image/png", "audio/ogg"
  * @param {string} [filename] - filename supplied to Meta (important for voice.ogg)
  * @returns {Promise<string|null>} the WhatsApp media ID, or null on failure
  */
@@ -113,12 +119,21 @@ async function uploadMedia(buffer, mimeType, filename = "upload") {
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/media`;
 
   try {
-     // TEMP DIAGNOSTIC — remove once the voice-delivery mimetype issue is confirmed fixed.
-    console.log("[uploadMedia] uploading with mimeType:", JSON.stringify(mimeType), "filename:", filename, "bytes:", buffer.length);
+    console.log(
+      "[uploadMedia] uploading with mimeType:",
+      JSON.stringify(mimeType),
+      "filename:",
+      filename,
+      "bytes:",
+      buffer.length
+    );
 
+    // Keep this multipart shape aligned with the raw curl request that was
+    // independently proven to deliver a WhatsApp voice note successfully:
+    // messaging_product + one file part whose own Content-Type is audio/ogg.
+    // Do not add a separate `type` form field.
     const form = new FormData();
     form.append("messaging_product", "whatsapp");
-    form.append("type", mimeType);
     form.append("file", new Blob([buffer], { type: mimeType }), filename);
 
     const res = await fetch(url, {
@@ -132,8 +147,42 @@ async function uploadMedia(buffer, mimeType, filename = "upload") {
       console.error("WhatsApp media upload failed:", res.status, errBody);
       return null;
     }
+
     const data = await res.json();
-    return data.id || null;
+    const mediaId = data.id || null;
+    if (!mediaId) return null;
+
+    // Diagnostic only for OGG voice uploads. Download the exact media bytes
+    // Meta stored and compare them to what Node sent. This does not block the
+    // send if Meta's just-created media is not immediately downloadable.
+    const baseMimeType = String(mimeType || "").split(";")[0].trim().toLowerCase();
+    if (baseMimeType === "audio/ogg") {
+      try {
+        const downloaded = await downloadMedia(mediaId);
+        if (downloaded?.buffer) {
+          const originalSha256 = sha256(buffer);
+          const downloadedSha256 = sha256(downloaded.buffer);
+          console.log("[voice-upload-roundtrip]", {
+            mediaId,
+            requestedMimeType: mimeType,
+            metaMimeType: downloaded.mimeType,
+            originalBytes: buffer.length,
+            downloadedBytes: downloaded.buffer.length,
+            originalSha256,
+            downloadedSha256,
+            matches: originalSha256 === downloadedSha256,
+          });
+        } else {
+          console.warn(
+            `[voice-upload-roundtrip] Could not immediately download media ${mediaId} for byte comparison.`
+          );
+        }
+      } catch (verifyErr) {
+        console.warn("[voice-upload-roundtrip] Verification failed:", verifyErr);
+      }
+    }
+
+    return mediaId;
   } catch (err) {
     console.error("WhatsApp media upload threw an error:", err);
     return null;
@@ -290,8 +339,8 @@ function parseIncomingMessages(body) {
 
       if (message.type === "text") {
         return {
-          id: message.id, // used for de-duplicating retried webhooks
-          from: message.from, // patient's WhatsApp number, used as the conversation key
+          id: message.id,
+          from: message.from,
           profileName,
           text: message.text.body,
           mediaId: null,
@@ -305,7 +354,7 @@ function parseIncomingMessages(body) {
           from: message.from,
           profileName,
           text: null,
-          mediaId: message.audio.id, // resolved via downloadMedia() in server.js
+          mediaId: message.audio.id,
           mediaType: "audio",
           unsupportedType: null,
         };
@@ -315,8 +364,8 @@ function parseIncomingMessages(body) {
           id: message.id,
           from: message.from,
           profileName,
-          text: message.image.caption || null, // patients often send a photo with no caption
-          mediaId: message.image.id, // resolved via downloadMedia() in server.js
+          text: message.image.caption || null,
+          mediaId: message.image.id,
           mediaType: "image",
           unsupportedType: null,
         };
@@ -358,11 +407,9 @@ function parseStatusUpdates(body) {
       const firstError = status.errors?.[0] || null;
       return {
         wamid: status.id,
-        status: status.status, // 'sent' | 'delivered' | 'read' | 'failed'
+        status: status.status,
         errorCode: firstError?.code ?? null,
         errorTitle: firstError?.title || null,
-        // error_data.details is often the most specific human-readable reason
-        // Meta gives for a 'failed' status (e.g. media/format problems).
         errorMessage: firstError?.error_data?.details || firstError?.message || null,
       };
     });
