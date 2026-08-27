@@ -122,11 +122,7 @@ export default function Inbox() {
       } catch (err) {
         console.error("Failed to load messages:", err);
       } finally {
-        if (
-          !cancelled &&
-          selectedIdRef.current === selectedId &&
-          threadRequestVersionRef.current === requestVersion
-        ) {
+        if (!cancelled && selectedIdRef.current === selectedId) {
           setMessagesLoading(false);
         }
       }
@@ -186,7 +182,9 @@ export default function Inbox() {
       if (hasOpenedOnce) scheduleRefresh();
       hasOpenedOnce = true;
     };
-    source.onerror = () => {};
+    source.onerror = () => {
+      // EventSource reconnects automatically using the server's retry hint.
+    };
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -523,6 +521,7 @@ function ThreadView({
       cancelRecording();
       clearVoice();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contact?.mode]);
 
   useEffect(() => () => {
@@ -744,6 +743,7 @@ function ThreadView({
       await onSendVoice(voiceBlob, voiceMimeType);
       if (mountedRef.current) clearVoice();
     } catch {
+      // Parent shows the error toast. Keep the preview so staff can retry.
     } finally {
       if (mountedRef.current) setSending(false);
     }
@@ -772,6 +772,7 @@ function ThreadView({
       }
       if (mountedRef.current) setDraft("");
     } catch {
+      // Parent shows the error toast; keep the draft/attachment for retry.
     } finally {
       if (mountedRef.current) setSending(false);
     }
