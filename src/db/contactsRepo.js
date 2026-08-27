@@ -1,19 +1,10 @@
 const { pool } = require("./db");
+const realtimeEvents = require("../utils/realtimeEvents");
 
-// Matches the format WhatsApp's Cloud API sends as `message.from` — digits
-// only, country code included, no leading "+" (see
-// services/whatsappService.js parseIncomingMessages). Manually-added
-// contacts are normalized to the same shape so that if the patient later
-// messages in for real, getOrCreateContact() matches the existing row
-// instead of creating a duplicate.
 function normalizeWhatsappNumber(input) {
   return String(input || "").replace(/[^\d]/g, "");
 }
 
-/**
- * Finds a contact by WhatsApp number, creating one if it doesn't exist yet.
- * This is the natural entry point every inbound message goes through.
- */
 async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
   const existing = await pool.query(
     "SELECT * FROM contacts WHERE whatsapp_number = $1",
@@ -56,12 +47,6 @@ async function updateContactName(id, name) {
   );
 }
 
-/**
- * Full patient directory for the Contacts page — every contact (not just
- * ones with messages, unlike listConversations below, since a contact can
- * now be added manually before they've ever messaged in). `search` filters
- * by name or WhatsApp number, case-insensitive, matched anywhere in either.
- */
 async function listContacts(search) {
   const term = (search || "").trim();
   const params = term ? [`%${term}%`] : [];
@@ -83,12 +68,6 @@ async function listContacts(search) {
   return result.rows;
 }
 
-/**
- * Manually adds a contact from the Contacts page (staff entering a patient
- * who hasn't messaged in yet). Throws with `.code === "23505"` on a
- * duplicate WhatsApp number — see routes/contacts.js for how that's turned
- * into a friendly error.
- */
 async function createContact({ name, whatsappNumber }) {
   const result = await pool.query(
     "INSERT INTO contacts (name, whatsapp_number) VALUES ($1, $2) RETURNING *",
@@ -97,10 +76,6 @@ async function createContact({ name, whatsappNumber }) {
   return result.rows[0];
 }
 
-/**
- * Edits a contact's name and/or WhatsApp number from the Contacts page.
- * Same duplicate-number error shape as createContact.
- */
 async function updateContact(id, { name, whatsappNumber }) {
   const result = await pool.query(
     "UPDATE contacts SET name = $1, whatsapp_number = $2, updated_at = now() WHERE id = $3 RETURNING *",
@@ -109,10 +84,6 @@ async function updateContact(id, { name, whatsappNumber }) {
   return result.rows[0] || null;
 }
 
-/**
- * Lists every contact who has at least one message, with a preview of their
- * most recent message — this is what powers the Inbox list view.
- */
 async function listConversations() {
   const result = await pool.query(
     `
@@ -142,11 +113,6 @@ async function listConversations() {
   return result.rows;
 }
 
-/**
- * Switches a conversation to staff-owned mode: the AI stops auto-replying
- * until someone calls setModeToAi. Also clears the attention flag, since a
- * human now explicitly owns this conversation.
- */
 async function takeOver(id, staffUsername) {
   const result = await pool.query(
     `UPDATE contacts
@@ -156,13 +122,16 @@ async function takeOver(id, staffUsername) {
      RETURNING *`,
     [staffUsername, id]
   );
-  return result.rows[0] || null;
+  const updated = result.rows[0] || null;
+  if (updated) {
+    realtimeEvents.publish("conversation_changed", {
+      contactId: updated.id,
+      reason: "contact_state",
+    });
+  }
+  return updated;
 }
 
-/**
- * Hands the conversation back to the AI. Does not touch needs_attention —
- * if something is still flagged, it should stay flagged.
- */
 async function returnToAi(id) {
   const result = await pool.query(
     `UPDATE contacts
@@ -171,14 +140,16 @@ async function returnToAi(id) {
      RETURNING *`,
     [id]
   );
-  return result.rows[0] || null;
+  const updated = result.rows[0] || null;
+  if (updated) {
+    realtimeEvents.publish("conversation_changed", {
+      contactId: updated.id,
+      reason: "contact_state",
+    });
+  }
+  return updated;
 }
 
-/**
- * Flags or clears the "needs a human" indicator. reason is a short string
- * shown in the portal (e.g. "AI handed off", "Patient asked for a human").
- * Passing needsAttention=false clears the reason too.
- */
 async function setAttention(id, needsAttention, reason = null) {
   const result = await pool.query(
     `UPDATE contacts
@@ -187,7 +158,14 @@ async function setAttention(id, needsAttention, reason = null) {
      RETURNING *`,
     [needsAttention, needsAttention ? reason : null, id]
   );
-  return result.rows[0] || null;
+  const updated = result.rows[0] || null;
+  if (updated) {
+    realtimeEvents.publish("conversation_changed", {
+      contactId: updated.id,
+      reason: "contact_state",
+    });
+  }
+  return updated;
 }
 
 module.exports = {
