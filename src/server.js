@@ -92,11 +92,48 @@ app.get("/webhook", (req, res) => {
   return res.sendStatus(403);
 });
 
-// ── Incoming messages ──
+// ── Incoming messages + outbound delivery status updates ──
 app.post("/webhook", webhookJsonParser, async (req, res) => {
-  // Respond to Meta immediately — don't make them wait on the AI call,
-  // or Meta may retry/resend the same message.
+  // Respond to Meta immediately — don't make them wait on DB/AI work,
+  // or Meta may retry the same webhook.
   res.sendStatus(200);
+
+  // A successful /messages POST only means Meta accepted the request. Actual
+  // sent/delivered/read/failed results arrive here later as status webhooks.
+  // Surface failures in the Inbox instead of silently treating HTTP 200 as
+  // final delivery success.
+  const messageStatuses = whatsapp.parseMessageStatuses(req.body);
+  for (const statusEvent of messageStatuses) {
+    const { id, status, recipientId, errorCode, errorMessage } = statusEvent;
+    if (!id || !status) continue;
+
+    if (status === "failed") {
+      const detail = errorMessage || "Meta did not provide a failure description.";
+      const codeLabel = errorCode ? ` (${errorCode})` : "";
+      console.error(
+        `WhatsApp delivery failed${codeLabel} for ${recipientId || "unknown recipient"} ` +
+          `[${id}]: ${detail}`
+      );
+
+      if (recipientId) {
+        try {
+          const contact = await contactsRepo.getOrCreateContact(recipientId);
+          await contactsRepo.setAttention(
+            contact.id,
+            true,
+            `WhatsApp delivery failed${codeLabel}: ${detail}`
+          );
+        } catch (statusErr) {
+          console.error("Failed to surface WhatsApp delivery failure in Inbox:", statusErr);
+        }
+      }
+    } else {
+      console.log(
+        `WhatsApp message ${id} status: ${status}` +
+          (recipientId ? ` for ${recipientId}` : "")
+      );
+    }
+  }
 
   const incomingMessages = whatsapp.parseIncomingMessages(req.body);
 
