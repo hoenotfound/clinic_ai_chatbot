@@ -16,7 +16,6 @@ const SSE_HEARTBEAT_MS = 25 * 1000;
 const SEND_REJECTED_ERROR =
   "WhatsApp did not accept this message. Check the reply window or connection and try again.";
 const MAX_DELIVERY_STATUS_IDS = 500;
-const retryingMessageIds = new Set();
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -410,13 +409,14 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     return res.status(400).json({ error: "Invalid contact or message id." });
   }
 
-  const retryKey = `${contactId}:${messageId}`;
-  if (retryingMessageIds.has(retryKey)) {
-    return res.status(409).json({ error: "This message is already being retried." });
-  }
-  retryingMessageIds.add(retryKey);
+  let releaseRetryLock = null;
 
   try {
+    releaseRetryLock = await messagesRepo.acquireMessageRetryLock(messageId);
+    if (!releaseRetryLock) {
+      return res.status(409).json({ error: "This message is already being retried." });
+    }
+
     const contact = await contactsRepo.getContactById(contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
 
@@ -448,7 +448,13 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     console.error("Failed to retry message:", err);
     res.status(500).json({ error: "Something went wrong retrying this message." });
   } finally {
-    retryingMessageIds.delete(retryKey);
+    if (releaseRetryLock) {
+      try {
+        await releaseRetryLock();
+      } catch (lockErr) {
+        console.error("Failed to release message retry lock:", lockErr);
+      }
+    }
   }
 });
 

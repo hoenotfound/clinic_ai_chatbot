@@ -160,6 +160,50 @@ async function getDeliveryStatusesForContact(contactId, messageIds) {
   return result.rows;
 }
 
+// Uses a transaction-scoped Postgres lock so the same failed message cannot be
+// retried concurrently by different server instances. Keeping the transaction
+// on one checked-out connection also works when Neon is using a connection
+// pooler, and a dropped server process releases the lock automatically.
+async function acquireMessageRetryLock(messageId) {
+  const client = await pool.connect();
+  let transactionStarted = false;
+
+  try {
+    await client.query("BEGIN");
+    transactionStarted = true;
+    const result = await client.query(
+      "SELECT pg_try_advisory_xact_lock($1::bigint) AS acquired",
+      [messageId]
+    );
+    if (!result.rows[0]?.acquired) {
+      await client.query("ROLLBACK");
+      client.release();
+      return null;
+    }
+
+    let released = false;
+    return async function releaseMessageRetryLock() {
+      if (released) return;
+      released = true;
+
+      try {
+        await client.query("COMMIT");
+        client.release();
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        client.release(true);
+        throw err;
+      }
+    };
+  } catch (err) {
+    if (transactionStarted) {
+      await client.query("ROLLBACK").catch(() => {});
+    }
+    client.release(true);
+    throw err;
+  }
+}
+
 async function messageExistsByWhatsappId(whatsappMessageId) {
   if (!whatsappMessageId) return false;
   const result = await pool.query(
@@ -185,10 +229,13 @@ async function setWhatsappMessageId(messageId, whatsappMessageId) {
   return result.rows[0] || null;
 }
 
+// Records an outcome for a send attempt that produced no new WAMID. Clearing
+// the previous WAMID keeps a delayed webhook from an older attempt from being
+// applied to the current failure.
 async function setDeliveryStatusById(messageId, status, errorText = null) {
   const result = await pool.query(
     `UPDATE messages
-     SET delivery_status = $2, delivery_error = $3
+     SET whatsapp_message_id = NULL, delivery_status = $2, delivery_error = $3
      WHERE id = $1
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
     [messageId, status, errorText]
@@ -236,6 +283,7 @@ module.exports = {
   getMessageMediaForContact,
   getMessageForRetry,
   getDeliveryStatusesForContact,
+  acquireMessageRetryLock,
   messageExistsByWhatsappId,
   setWhatsappMessageId,
   setDeliveryStatusById,

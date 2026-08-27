@@ -304,7 +304,12 @@ export default function Inbox() {
             current.map((message) =>
               Number(message.id) === Number(payload.messageId)
                 ? mergeMessageState(message, {
-                    whatsapp_message_id: payload.whatsappMessageId ?? message.whatsapp_message_id,
+                    whatsapp_message_id: Object.prototype.hasOwnProperty.call(
+                      payload,
+                      "whatsappMessageId"
+                    )
+                      ? payload.whatsappMessageId
+                      : message.whatsapp_message_id,
                     delivery_status: payload.deliveryStatus,
                     delivery_error: payload.deliveryError || null,
                   })
