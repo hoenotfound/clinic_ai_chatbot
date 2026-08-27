@@ -55,7 +55,7 @@ export default function Inbox() {
     async function load(showLoading) {
       if (showLoading) setMessagesLoading(true);
       try {
-        const data = await api.getMessages(selectedId);
+        const data = await api.getMessages(selectedId, { includeMedia: false });
         if (!cancelled) setMessages(data.messages);
       } catch (err) {
         console.error("Failed to load messages:", err);
@@ -84,7 +84,7 @@ export default function Inbox() {
   async function refreshMessages() {
     if (selectedId == null) return;
     try {
-      const data = await api.getMessages(selectedId);
+      const data = await api.getMessages(selectedId, { includeMedia: false });
       setMessages(data.messages);
     } catch (err) {
       console.error("Failed to refresh messages:", err);
@@ -351,12 +351,15 @@ function ThreadView({
   const recordingTimerRef = useRef(null);
   const recordingStartedAtRef = useRef(0);
   const discardRecordingRef = useRef(false);
+  const recordingStartingRef = useRef(false);
+  const mountedRef = useRef(true);
   const activeContactIdRef = useRef(contact?.contact_id);
   const activeContactModeRef = useRef(contact?.mode);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [imageFile, setImageFile] = useState(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
+  const [isStartingRecording, setIsStartingRecording] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [voiceBlob, setVoiceBlob] = useState(null);
@@ -405,7 +408,12 @@ function ThreadView({
   }, [voicePreviewUrl]);
 
   useEffect(() => {
+    // React StrictMode runs one setup/cleanup cycle twice in development.
+    // Reset this flag in setup so the simulated cleanup does not leave the
+    // real mounted component marked as unmounted.
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       discardRecordingRef.current = true;
       if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
       const recorder = mediaRecorderRef.current;
@@ -453,7 +461,7 @@ function ThreadView({
     recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
     recordingStreamRef.current = null;
     mediaRecorderRef.current = null;
-    setIsRecording(false);
+    if (mountedRef.current) setIsRecording(false);
   }
 
   function clearVoice() {
@@ -484,7 +492,7 @@ function ThreadView({
   }
 
   async function startRecording() {
-    if (sending || isRecording) return;
+    if (sending || isRecording || recordingStartingRef.current) return;
     if (contact.mode !== "human") {
       onToast("Take over this conversation before recording a voice message.", "warning");
       return;
@@ -498,6 +506,9 @@ function ThreadView({
       return;
     }
 
+    recordingStartingRef.current = true;
+    setIsStartingRecording(true);
+
     try {
       const recordingContactId = contact.contact_id;
       clearVoice();
@@ -509,6 +520,7 @@ function ThreadView({
       // returns the conversation to AI. Do not start a stale recording after
       // they finally answer the prompt.
       if (
+        !mountedRef.current ||
         activeContactIdRef.current !== recordingContactId ||
         activeContactModeRef.current !== "human"
       ) {
@@ -579,6 +591,7 @@ function ThreadView({
       }, 250);
     } catch (err) {
       cleanupRecordingHardware();
+      if (!mountedRef.current) return;
       const message =
         err?.name === "NotAllowedError"
           ? "Microphone access was blocked. Allow microphone access in your browser and try again."
@@ -586,6 +599,9 @@ function ThreadView({
           ? "No microphone was found on this device."
           : "Couldn't start recording. Please check your microphone and try again.";
       onToast(message, "error");
+    } finally {
+      recordingStartingRef.current = false;
+      if (mountedRef.current) setIsStartingRecording(false);
     }
   }
 
@@ -614,7 +630,7 @@ function ThreadView({
     e.preventDefault();
     const text = draft.trim();
     if (sending) return;
-    if (isRecording || voiceBlob) return;
+    if (isStartingRecording || isRecording || voiceBlob) return;
     if (!text && !imageFile) return;
     setSending(true);
     try {
@@ -664,8 +680,8 @@ function ThreadView({
           {contact.mode === "human" ? (
             <button
               onClick={onReturnToAi}
-              disabled={actionPending || isRecording || !!voiceBlob}
-              title={isRecording || voiceBlob ? "Cancel or send the voice recording first" : undefined}
+              disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
+              title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice recording first" : undefined}
               className="text-xs font-medium px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
             >
               Return to AI
@@ -685,12 +701,28 @@ function ThreadView({
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-3">
         {loading && <p className="text-sm text-[var(--color-text-muted)] text-center">Loading…</p>}
         {messages.map((m) => (
-          <MessageBubble key={m.id} message={m} onImageClick={setLightboxSrc} />
+          <MessageBubble
+            key={m.id}
+            contactId={contact.contact_id}
+            message={m}
+            onImageClick={setLightboxSrc}
+          />
         ))}
         <div ref={bottomRef} />
       </div>
 
       <form onSubmit={handleSubmit} className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface)]">
+        {isStartingRecording && (
+          <div className="flex items-center gap-3 mb-3 pb-3 border-b border-[var(--color-border)]">
+            <Spinner className="text-[var(--color-primary)]" />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold">Starting microphone…</p>
+              <p className="text-[11px] text-[var(--color-text-muted)]">
+                Allow microphone access if your browser asks.
+              </p>
+            </div>
+          </div>
+        )}
         {isRecording && (
           <div className="flex items-center gap-3 mb-3 pb-3 border-b border-[var(--color-border)]">
             <span className="relative flex h-3 w-3 shrink-0">
@@ -772,7 +804,7 @@ function ThreadView({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={sending || isRecording || !!voiceBlob}
+            disabled={sending || isStartingRecording || isRecording || !!voiceBlob}
             title="Attach an image"
             aria-label="Attach an image"
             className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
@@ -783,7 +815,7 @@ function ThreadView({
             <button
               type="button"
               onClick={startRecording}
-              disabled={sending || isRecording || !!voiceBlob || !!imageFile}
+              disabled={sending || isStartingRecording || isRecording || !!voiceBlob || !!imageFile}
               title="Record a voice message"
               aria-label="Record a voice message"
               className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
@@ -795,7 +827,7 @@ function ThreadView({
             ref={textareaRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            disabled={isRecording || !!voiceBlob}
+            disabled={isStartingRecording || isRecording || !!voiceBlob}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -814,7 +846,13 @@ function ThreadView({
           />
           <button
             type="submit"
-            disabled={(!draft.trim() && !imageFile) || sending || isRecording || !!voiceBlob}
+            disabled={
+              (!draft.trim() && !imageFile) ||
+              sending ||
+              isStartingRecording ||
+              isRecording ||
+              !!voiceBlob
+            }
             className="shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
           >
             {sending && <Spinner />}
@@ -860,18 +898,22 @@ function Spinner({ className = "" }) {
   );
 }
 
-function MessageBubble({ message, onImageClick }) {
+function MessageBubble({ contactId, message, onImageClick }) {
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
+  const isAudio = message.media_mime_type?.startsWith("audio/");
+  const storedMediaSrc = message.media_base64
+    ? `data:${message.media_mime_type || "application/octet-stream"};base64,${message.media_base64}`
+    : message.has_media_attachment
+    ? api.messageMediaUrl(contactId, message.id)
+    : null;
 
   // previewUrl (a local object URL) is only present on an optimistic bubble
   // for an image still uploading; otherwise fall back to the real stored
-  // image source once it's come back from the server.
-  const imageSrc =
-    message.previewUrl ||
-    message.media_url ||
-    (message.media_base64 ? `data:${message.media_mime_type || "image/jpeg"};base64,${message.media_base64}` : null);
-  const hasImage = !!imageSrc && !message.media_mime_type?.startsWith("audio/");
+  // image source once it's come back from the server. Stored attachment
+  // bytes are loaded from an authenticated URL rather than every poll.
+  const imageSrc = message.previewUrl || message.media_url || (!isAudio ? storedMediaSrc : null);
+  const hasImage = !!imageSrc;
 
   return (
     <div className={`flex ${isPatient ? "justify-start" : "justify-end"}`}>
@@ -887,10 +929,11 @@ function MessageBubble({ message, onImageClick }) {
             {sentByStaff ? message.sent_by_username : "AI"}
           </p>
         )}
-        {message.media_base64?.length > 0 && message.media_mime_type?.startsWith("audio/") ? (
+        {isAudio && storedMediaSrc ? (
           <audio
             controls
-            src={`data:${message.media_mime_type.split(";")[0].trim()};base64,${message.media_base64}`}
+            preload="none"
+            src={storedMediaSrc}
             className="mb-1.5 max-w-full"
             style={{ height: "36px" }}
           />

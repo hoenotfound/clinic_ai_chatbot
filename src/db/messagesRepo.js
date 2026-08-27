@@ -34,15 +34,31 @@ async function saveMessage(
  * Full message history for one contact, oldest first — used both for
  * rendering the Inbox thread and for giving the AI conversation context.
  */
-async function getMessagesForContact(contactId, limit = 50) {
+async function getMessagesForContact(contactId, limit = 50, includeMedia = true) {
+  const mediaColumn = includeMedia
+    ? "media_base64"
+    : "(media_base64 IS NOT NULL) AS has_media_attachment";
   const result = await pool.query(
-    `SELECT id, role, content, created_at, sent_by_username, media_url, media_base64, media_mime_type FROM messages
+    `SELECT id, role, content, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type FROM messages
      WHERE contact_id = $1
      ORDER BY created_at DESC, id DESC
      LIMIT $2`,
     [contactId, limit]
   );
   return result.rows.reverse(); // back to chronological order
+}
+
+// Fetches one stored attachment only when the browser actually needs to
+// display or play it. Keeping these bytes out of the Inbox's five-second
+// polling response avoids repeatedly transferring every photo and recording.
+async function getMessageMediaForContact(contactId, messageId) {
+  const result = await pool.query(
+    `SELECT media_base64, media_mime_type
+     FROM messages
+     WHERE id = $1 AND contact_id = $2 AND media_base64 IS NOT NULL`,
+    [messageId, contactId]
+  );
+  return result.rows[0] || null;
 }
 
 async function messageExistsByWhatsappId(whatsappMessageId) {
@@ -54,4 +70,9 @@ async function messageExistsByWhatsappId(whatsappMessageId) {
   return result.rows.length > 0;
 }
 
-module.exports = { saveMessage, getMessagesForContact, messageExistsByWhatsappId };
+module.exports = {
+  saveMessage,
+  getMessagesForContact,
+  getMessageMediaForContact,
+  messageExistsByWhatsappId,
+};

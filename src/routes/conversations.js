@@ -8,6 +8,7 @@ const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const { transcribeStaffAudio } = require("../services/transcriptionService");
 
 const router = express.Router();
+const STAFF_TRANSCRIPTION_TIMEOUT_MS = 15 * 1000;
 
 // Staff image uploads from the Inbox — kept in memory (never written to
 // disk) since we immediately forward the bytes to WhatsApp and to Postgres.
@@ -37,6 +38,20 @@ const voiceUpload = multer({
   },
 });
 
+async function resolveWithin(promise, timeoutMs, fallbackValue) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise).catch(() => fallbackValue),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(fallbackValue), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // GET /api/conversations — list every conversation, most recently active first.
 router.get("/", async (req, res) => {
   try {
@@ -54,11 +69,84 @@ router.get("/:contactId/messages", async (req, res) => {
     const contact = await contactsRepo.getContactById(req.params.contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
 
-    const messages = await messagesRepo.getMessagesForContact(contact.id, 500);
+    // The Inbox polls this route every five seconds. It opts out of embedded
+    // base64 attachments and loads each immutable attachment from the media
+    // route below instead. Other internal callers retain the old default.
+    const includeMedia = req.query.includeMedia !== "false";
+    const messages = await messagesRepo.getMessagesForContact(contact.id, 500, includeMedia);
     res.json({ contact, messages });
   } catch (err) {
     console.error("Failed to load conversation thread:", err);
     res.status(500).json({ error: "Something went wrong loading the conversation." });
+  }
+});
+
+// GET /api/conversations/:contactId/messages/:messageId/media — streams one
+// stored photo or recording on demand. This router is already protected by
+// requireAuth in server.js, and contactId is included in the lookup so a
+// message cannot be fetched through the wrong conversation.
+router.get("/:contactId/messages/:messageId/media", async (req, res) => {
+  try {
+    const media = await messagesRepo.getMessageMediaForContact(
+      req.params.contactId,
+      req.params.messageId
+    );
+    if (!media) return res.status(404).json({ error: "Message attachment not found." });
+
+    const buffer = Buffer.from(media.media_base64, "base64");
+    const mimeType = media.media_mime_type || "application/octet-stream";
+    const range = req.headers.range;
+
+    res.set({
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "private, max-age=3600, immutable",
+      "Content-Type": mimeType,
+      "X-Content-Type-Options": "nosniff",
+    });
+
+    if (!range) {
+      res.set("Content-Length", String(buffer.length));
+      return res.send(buffer);
+    }
+
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (!match || (!match[1] && !match[2])) {
+      res.set("Content-Range", `bytes */${buffer.length}`);
+      return res.sendStatus(416);
+    }
+
+    let start;
+    let end;
+    if (!match[1]) {
+      const suffixLength = Number(match[2]);
+      start = Math.max(buffer.length - suffixLength, 0);
+      end = buffer.length - 1;
+    } else {
+      start = Number(match[1]);
+      end = match[2] ? Number(match[2]) : buffer.length - 1;
+    }
+
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start < 0 ||
+      end < start ||
+      start >= buffer.length
+    ) {
+      res.set("Content-Range", `bytes */${buffer.length}`);
+      return res.sendStatus(416);
+    }
+
+    end = Math.min(end, buffer.length - 1);
+    const chunk = buffer.subarray(start, end + 1);
+    res.status(206).set({
+      "Content-Length": String(chunk.length),
+      "Content-Range": `bytes ${start}-${end}/${buffer.length}`,
+    });
+    return res.send(chunk);
+  } catch (err) {
+    console.error("Failed to load message attachment:", err);
+    res.status(500).json({ error: "Something went wrong loading this attachment." });
   }
 });
 
@@ -263,11 +351,22 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
     // delivery; it only falls back to a generic history label below.
     const [converted, transcript] = await Promise.all([
       convertToWhatsAppVoice(req.file.buffer, req.file.mimetype),
-      transcribeStaffAudio(req.file.buffer, req.file.mimetype),
+      resolveWithin(
+        transcribeStaffAudio(req.file.buffer, req.file.mimetype),
+        STAFF_TRANSCRIPTION_TIMEOUT_MS,
+        null
+      ),
     ]);
 
     if (!converted) {
       return res.status(422).json({ error: "Couldn't process that recording. Please record it again." });
+    }
+
+    // Conversion/transcription can take long enough for another tab to hand
+    // the conversation back to AI. Check ownership again before uploading.
+    let currentContact = await contactsRepo.getContactById(contact.id);
+    if (!currentContact || currentContact.mode !== "human") {
+      return res.status(409).json({ error: "This conversation is no longer in Staff mode." });
     }
 
     const mediaId = await whatsapp.uploadMedia(
@@ -279,15 +378,26 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       return res.status(502).json({ error: "Failed to upload voice message to WhatsApp. Please try again." });
     }
 
-    await contactsRepo.setAttention(contact.id, false);
-    const delivered = await whatsapp.sendVoiceById(contact.whatsapp_number, mediaId);
+    // Uploading is another network operation, so close the same race once
+    // more immediately before the actual patient-facing send.
+    currentContact = await contactsRepo.getContactById(contact.id);
+    if (!currentContact || currentContact.mode !== "human") {
+      return res.status(409).json({ error: "This conversation is no longer in Staff mode." });
+    }
+
+    const delivered = await whatsapp.sendVoiceById(currentContact.whatsapp_number, mediaId);
+    await contactsRepo.setAttention(
+      currentContact.id,
+      !delivered,
+      delivered ? null : "Staff voice message failed to deliver. Please resend it."
+    );
 
     // Keep an MP3 copy for portal playback. The transcript also becomes the
     // assistant-history entry, so if staff later returns the chat to AI, the
     // model knows what staff already told the patient instead of repeating it.
     const content = transcript ? `🎤 ${transcript}` : "🎤 Staff sent a voice message";
     const saved = await conversationStore.appendMessage(
-      contact.whatsapp_number,
+      currentContact.whatsapp_number,
       "assistant",
       content,
       null,
@@ -299,7 +409,15 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       }
     );
 
-    res.status(201).json({ ...saved, delivered, transcribed: !!transcript });
+    // The Inbox reloads the lightweight message list after this request, so
+    // do not echo the large base64 MP3 back inside the upload response.
+    const { media_base64: _mediaBase64, ...savedWithoutMedia } = saved;
+    res.status(201).json({
+      ...savedWithoutMedia,
+      has_media_attachment: !!saved.media_base64,
+      delivered,
+      transcribed: !!transcript,
+    });
   } catch (err) {
     console.error("Failed to send staff voice message:", err);
     res.status(500).json({ error: "Something went wrong sending this voice message." });

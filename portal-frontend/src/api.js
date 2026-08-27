@@ -23,7 +23,10 @@ export const api = {
   logout: () => request("/auth/logout", { method: "POST" }),
   me: () => request("/auth/me"),
   listConversations: () => request("/conversations"),
-  getMessages: (contactId) => request(`/conversations/${contactId}/messages`),
+  getMessages: (contactId, { includeMedia = true } = {}) =>
+    request(`/conversations/${contactId}/messages${includeMedia ? "" : "?includeMedia=false"}`),
+  messageMediaUrl: (contactId, messageId) =>
+    `${BASE}/conversations/${contactId}/messages/${messageId}/media`,
   sendMessage: (contactId, text) =>
     request(`/conversations/${contactId}/messages`, { method: "POST", body: JSON.stringify({ text }) }),
   // Multipart upload — bypasses the JSON `request()` helper above since a
