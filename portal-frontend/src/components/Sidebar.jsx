@@ -25,9 +25,9 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="w-60 shrink-0 bg-[var(--color-sidebar)] text-[var(--color-sidebar-text)] flex flex-col h-screen">
+    <aside className="flex h-screen w-[4.25rem] shrink-0 flex-col bg-[var(--color-sidebar)] text-[var(--color-sidebar-text)] transition-[width] lg:w-60">
       {/* Logo */}
-      <div className="px-5 py-5 flex items-center gap-2.5">
+      <div className="flex items-center justify-center gap-2.5 px-3 py-5 lg:justify-start lg:px-5">
         <div className="w-8 h-8 rounded-xl bg-[var(--color-primary)] flex items-center justify-center shrink-0">
           <svg
             width="16"
@@ -45,19 +45,21 @@ export default function Sidebar() {
           </svg>
         </div>
 
-        <span className="font-display font-bold text-white text-[15px]">
+        <span className="hidden font-display text-[15px] font-bold text-white lg:inline">
           Clinic Portal
         </span>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 py-2 space-y-1">
+      <nav className="flex-1 space-y-1 px-2 py-2 lg:px-3">
         {NAV_ITEMS.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
+            title={item.label}
+            aria-label={item.label}
             className={({ isActive }) =>
-              `flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+              `flex items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors lg:justify-between lg:px-3 ${
                 isActive
                   ? item.active
                     ? "bg-[var(--color-primary)] text-white"
@@ -70,11 +72,11 @@ export default function Sidebar() {
           >
             <span className="flex items-center gap-3">
               <item.icon className="w-[18px] h-[18px] shrink-0" />
-              <span>{item.label}</span>
+              <span className="hidden lg:inline">{item.label}</span>
             </span>
       
             {!item.active && (
-              <span className="text-[10px] uppercase tracking-wide bg-white/10 px-1.5 py-0.5 rounded">
+              <span className="hidden rounded bg-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide lg:inline">
                 Soon
               </span>
             )}
@@ -83,8 +85,8 @@ export default function Sidebar() {
       </nav>
 
       {/* User and logout */}
-      <div className="px-3 py-4 border-t border-white/10">
-        <div className="px-3 py-2 mb-1">
+      <div className="border-t border-white/10 px-2 py-4 lg:px-3">
+        <div className="mb-1 hidden px-3 py-2 lg:block">
           <p className="text-xs text-[var(--color-sidebar-text-muted)]">
             Signed in as
           </p>
@@ -97,9 +99,12 @@ export default function Sidebar() {
         <button
           type="button"
           onClick={handleLogout}
-          className="w-full text-left px-3 py-2 rounded-lg text-sm text-[var(--color-sidebar-text-muted)] hover:bg-[var(--color-sidebar-hover)] hover:text-white transition-colors"
+          title="Log out"
+          aria-label="Log out"
+          className="flex w-full items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm text-[var(--color-sidebar-text-muted)] transition-colors hover:bg-[var(--color-sidebar-hover)] hover:text-white lg:justify-start lg:px-3"
         >
-          Log out
+          <LogoutIcon className="h-[18px] w-[18px] shrink-0" />
+          <span className="hidden lg:inline">Log out</span>
         </button>
       </div>
     </aside>
@@ -220,6 +225,21 @@ function SettingsIcon(props) {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+    </svg>
+  );
+}
+
+function LogoutIcon(props) {
+  return (
+    <svg
+      {...props}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="M10 17l5-5-5-5M15 12H3" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" strokeLinecap="round" />
     </svg>
   );
 }
