@@ -118,6 +118,7 @@ async function uploadMedia(buffer, mimeType, filename = "upload") {
 
     const form = new FormData();
     form.append("messaging_product", "whatsapp");
+    form.append("type", mimeType);
     form.append("file", new Blob([buffer], { type: mimeType }), filename);
 
     const res = await fetch(url, {
