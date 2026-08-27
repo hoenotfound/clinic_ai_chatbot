@@ -131,7 +131,7 @@ async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
         .audioChannels(1)
         .audioFrequency(48000)
         .audioBitrate("32k")
-        .outputOptions(["-map_metadata", "-1"])
+        .outputOptions("-map_metadata -1")
         .format("ogg")
     );
 
