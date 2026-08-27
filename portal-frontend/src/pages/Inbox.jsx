@@ -7,6 +7,7 @@ import ContactAvatar from "../components/ContactAvatar";
 
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_INCREMENTAL_MESSAGES = 100;
+const DELIVERY_STATUS_BATCH_SIZE = 500;
 const REALTIME_DEBOUNCE_MS = 100;
 const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_BYTES = 16 * 1024 * 1024;
@@ -21,6 +22,43 @@ const STATUS_FILTERS = [
   { key: "attention", label: "Attention" },
 ];
 
+const DELIVERY_STATUS_RANK = {
+  pending: 0,
+  sent: 1,
+  delivered: 2,
+  read: 3,
+  failed: 4,
+};
+
+function mergeMessageState(existing, incoming) {
+  if (!existing) return incoming;
+  const merged = { ...existing, ...incoming };
+  const existingStatus = existing.delivery_status;
+  const incomingStatus = incoming.delivery_status;
+  const incomingHasWamid = Object.prototype.hasOwnProperty.call(incoming, "whatsapp_message_id");
+  const deliveryAttemptChanged =
+    incomingHasWamid && existing.whatsapp_message_id !== incoming.whatsapp_message_id;
+
+  // A new WAMID means this is a genuinely new retry attempt, so its state may
+  // start again at pending. For the same WAMID, only move forwards. This stops
+  // a slower retry response from overwriting a failure webhook that already
+  // arrived for that same attempt.
+  if (deliveryAttemptChanged) {
+    return merged;
+  }
+
+  if (
+    existingStatus &&
+    (!incomingStatus ||
+      (DELIVERY_STATUS_RANK[existingStatus] ?? -1) >
+        (DELIVERY_STATUS_RANK[incomingStatus] ?? -1))
+  ) {
+    merged.delivery_status = existingStatus;
+    merged.delivery_error = existing.delivery_error;
+  }
+  return merged;
+}
+
 function newestPersistedMessageId(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (Number.isInteger(messages[i]?.id)) return messages[i].id;
@@ -31,12 +69,20 @@ function newestPersistedMessageId(messages) {
 function mergeMessages(existing, incoming) {
   if (!incoming?.length) return existing;
   const byId = new Map(existing.map((message) => [message.id, message]));
-  for (const message of incoming) byId.set(message.id, message);
+  for (const message of incoming) {
+    byId.set(message.id, mergeMessageState(byId.get(message.id), message));
+  }
   return Array.from(byId.values()).sort((a, b) => {
     const aId = Number.isInteger(a.id) ? a.id : Number.MAX_SAFE_INTEGER;
     const bId = Number.isInteger(b.id) ? b.id : Number.MAX_SAFE_INTEGER;
     return aId - bId;
   });
+}
+
+function isConversationUnreplied(conversation) {
+  return typeof conversation.has_unreplied === "boolean"
+    ? conversation.has_unreplied
+    : conversation.last_message_role === "user";
 }
 
 export default function Inbox() {
@@ -52,10 +98,12 @@ export default function Inbox() {
   const [actionPending, setActionPending] = useState(false);
   const [conversationStatePending, setConversationStatePending] = useState(false);
   const selectedIdRef = useRef(selectedId);
+  const messagesRef = useRef(messages);
   const latestMessageIdRef = useRef(null);
   const threadRequestVersionRef = useRef(0);
 
   selectedIdRef.current = selectedId;
+  messagesRef.current = messages;
   latestMessageIdRef.current = newestPersistedMessageId(messages);
 
   async function refreshConversations() {
@@ -95,6 +143,54 @@ export default function Inbox() {
       }
     } catch (err) {
       console.error("Failed to refresh messages:", err);
+    }
+  }
+
+  async function reconcileLoadedDeliveryStatuses(contactId) {
+    if (contactId == null) return;
+    const loadedOutboundMessages = messagesRef.current.filter(
+      (message) => message.role !== "user" && Number.isInteger(message.id)
+    );
+    const messageIds = loadedOutboundMessages.map((message) => message.id);
+    const expectedWamids = new Map(
+      loadedOutboundMessages.map((message) => [Number(message.id), message.whatsapp_message_id])
+    );
+    if (!messageIds.length) return;
+
+    try {
+      const batches = [];
+      for (let index = 0; index < messageIds.length; index += DELIVERY_STATUS_BATCH_SIZE) {
+        batches.push(
+          api.getMessageDeliveryStatuses(
+            contactId,
+            messageIds.slice(index, index + DELIVERY_STATUS_BATCH_SIZE)
+          )
+        );
+      }
+      const statuses = (await Promise.all(batches)).flat();
+      if (selectedIdRef.current !== contactId) return;
+      const byId = new Map(statuses.map((status) => [Number(status.id), status]));
+      setMessages((current) =>
+        current.map((message) => {
+          const status = byId.get(Number(message.id));
+          if (!status) return message;
+
+          // If a retry changed this message's WAMID while the reconciliation
+          // request was in flight, its response may describe the old attempt.
+          // Ignore that snapshot and let the retry response/live event win.
+          const expectedWamid = expectedWamids.get(Number(message.id));
+          if (
+            message.whatsapp_message_id !== expectedWamid &&
+            status.whatsapp_message_id !== message.whatsapp_message_id
+          ) {
+            return message;
+          }
+
+          return mergeMessageState(message, status);
+        })
+      );
+    } catch (err) {
+      console.error("Failed to reconcile delivery statuses:", err);
     }
   }
 
@@ -170,7 +266,6 @@ export default function Inbox() {
     const source = new EventSource("/api/conversations/events", { withCredentials: true });
     const pendingContactIds = new Set();
     let debounceTimer = null;
-    let hasOpenedOnce = false;
 
     function scheduleRefresh(contactId = null) {
       if (contactId != null) pendingContactIds.add(Number(contactId));
@@ -189,6 +284,9 @@ export default function Inbox() {
           (changedContacts.size === 0 || changedContacts.has(Number(currentId)))
         ) {
           await refreshMessagesForContact(currentId);
+          if (changedContacts.size === 0) {
+            await reconcileLoadedDeliveryStatuses(currentId);
+          }
         }
       }, REALTIME_DEBOUNCE_MS);
     }
@@ -196,6 +294,29 @@ export default function Inbox() {
     function handleConversationChanged(event) {
       try {
         const payload = JSON.parse(event.data || "{}");
+        if (
+          payload.contactId != null &&
+          Number(payload.contactId) === Number(selectedIdRef.current) &&
+          payload.messageId != null &&
+          Object.prototype.hasOwnProperty.call(payload, "deliveryStatus")
+        ) {
+          setMessages((current) =>
+            current.map((message) =>
+              Number(message.id) === Number(payload.messageId)
+                ? mergeMessageState(message, {
+                    whatsapp_message_id: Object.prototype.hasOwnProperty.call(
+                      payload,
+                      "whatsappMessageId"
+                    )
+                      ? payload.whatsappMessageId
+                      : message.whatsapp_message_id,
+                    delivery_status: payload.deliveryStatus,
+                    delivery_error: payload.deliveryError || null,
+                  })
+                : message
+            )
+          );
+        }
         scheduleRefresh(payload.contactId ?? null);
       } catch (err) {
         console.error("Failed to parse realtime Inbox event:", err);
@@ -205,8 +326,10 @@ export default function Inbox() {
 
     source.addEventListener("conversation_changed", handleConversationChanged);
     source.onopen = () => {
-      if (hasOpenedOnce) scheduleRefresh();
-      hasOpenedOnce = true;
+      // SSE does not replay events that happened before the connection opened.
+      // Always reconcile, including the first open, to close the gap between
+      // the initial thread request and the live stream becoming ready.
+      scheduleRefresh();
     };
     source.onerror = () => {
       // EventSource reconnects automatically using the server's retry hint.
@@ -343,6 +466,50 @@ export default function Inbox() {
       showToast("Couldn't update the read state.", "error");
     } finally {
       setConversationStatePending(false);
+    }
+  }
+
+  async function handleRetryMessage(messageId) {
+    const contactId = selectedIdRef.current;
+    if (contactId == null) return;
+
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === messageId ? { ...message, _retrying: true } : message
+      )
+    );
+
+    try {
+      const result = await api.retryMessage(contactId, messageId);
+      if (selectedIdRef.current === contactId) {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === messageId
+              ? {
+                  ...mergeMessageState(message, result),
+                  _retrying: false,
+                }
+              : message
+          )
+        );
+      }
+      await refreshConversations();
+
+      if (result.accepted) {
+        showToast("Message queued again.", "info");
+      } else {
+        showToast(result.retry_error || "WhatsApp still couldn't accept this message.", "warning");
+      }
+    } catch (err) {
+      console.error("Failed to retry message:", err);
+      if (selectedIdRef.current === contactId) {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === messageId ? { ...message, _retrying: false } : message
+          )
+        );
+      }
+      showToast(err.message || "Couldn't retry this message.", "error");
     }
   }
 
@@ -487,6 +654,7 @@ export default function Inbox() {
         onDismissAttention={handleDismissAttention}
         onToggleFollowUp={handleToggleFollowUp}
         onToggleUnread={handleToggleUnread}
+        onRetryMessage={handleRetryMessage}
         onSend={handleSend}
         onSendImage={handleSendImage}
         onSendVoice={handleSendVoice}
@@ -509,7 +677,7 @@ function ConversationList({ conversations, selectedId, onSelect }) {
   const statusCounts = useMemo(
     () => ({
       all: conversationList.length,
-      unreplied: conversationList.filter((item) => item.last_message_role === "user").length,
+      unreplied: conversationList.filter(isConversationUnreplied).length,
       "follow-up": conversationList.filter((item) => item.needs_follow_up).length,
       unread: conversationList.filter((item) => item.is_unread).length,
       attention: conversationList.filter((item) => item.needs_attention).length,
@@ -520,7 +688,7 @@ function ConversationList({ conversations, selectedId, onSelect }) {
   const filteredConversations = useMemo(() => {
     const query = filters.query.trim().toLowerCase();
     return conversationList.filter((conversation) => {
-      if (filters.status === "unreplied" && conversation.last_message_role !== "user") return false;
+      if (filters.status === "unreplied" && !isConversationUnreplied(conversation)) return false;
       if (filters.status === "follow-up" && !conversation.needs_follow_up) return false;
       if (filters.status === "unread" && !conversation.is_unread) return false;
       if (filters.status === "attention" && !conversation.needs_attention) return false;
@@ -748,6 +916,7 @@ function ThreadView({
   onDismissAttention,
   onToggleFollowUp,
   onToggleUnread,
+  onRetryMessage,
   onSend,
   onSendImage,
   onSendVoice,
@@ -1141,7 +1310,13 @@ function ThreadView({
         )}
         {loading && <p className="text-sm text-[var(--color-text-muted)] text-center">Loading…</p>}
         {messages.map((m) => (
-          <MessageBubble key={m.id} contactId={contact.contact_id} message={m} onImageClick={setLightboxSrc} />
+          <MessageBubble
+            key={m.id}
+            contactId={contact.contact_id}
+            message={m}
+            onImageClick={setLightboxSrc}
+            onRetry={onRetryMessage}
+          />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -1255,10 +1430,11 @@ function Spinner({ className = "" }) {
   );
 }
 
-function MessageBubble({ contactId, message, onImageClick }) {
+function MessageBubble({ contactId, message, onImageClick, onRetry }) {
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
   const isAudio = message.media_mime_type?.startsWith("audio/");
+  const deliveryFailed = !isPatient && message.delivery_status === "failed";
   const storedMediaSrc = message.media_base64
     ? `data:${message.media_mime_type || "application/octet-stream"};base64,${message.media_base64}`
     : message.has_media_attachment
@@ -1269,7 +1445,7 @@ function MessageBubble({ contactId, message, onImageClick }) {
 
   return (
     <div className={`flex ${isPatient ? "justify-start" : "justify-end"}`}>
-      <div className={`relative max-w-[70%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${isPatient ? "bubble-in bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]" : "bubble-out bg-[var(--color-primary)] text-white"} ${message._optimistic ? "opacity-70" : ""}`}>
+      <div className={`relative max-w-[70%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${isPatient ? "bubble-in bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]" : "bubble-out bg-[var(--color-primary)] text-white"} ${message._optimistic ? "opacity-70" : ""} ${deliveryFailed ? "ring-2 ring-[var(--color-danger)] ring-offset-2" : ""}`}>
         {!isPatient && <p className="text-[10px] font-semibold uppercase tracking-wide mb-0.5 text-white/70">{sentByStaff ? message.sent_by_username : "AI"}</p>}
         {isAudio && storedMediaSrc ? (
           <audio controls preload="none" src={storedMediaSrc} className="mb-1.5 max-w-full" style={{ height: "36px" }} />
@@ -1282,12 +1458,54 @@ function MessageBubble({ contactId, message, onImageClick }) {
           )
         )}
         {message.content && <p className="whitespace-pre-wrap">{message.content}</p>}
-        <p className={`text-[10px] mt-1 flex items-center gap-1 ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/70"}`}>
+        <div className={`text-[10px] mt-1 flex items-center gap-2 ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/70"}`}>
           {message._optimistic && <Spinner className="h-2.5 w-2.5" />}
-          {formatTime(message.created_at)}
-        </p>
+          <span>{formatTime(message.created_at)}</span>
+          {!isPatient && !message._optimistic && !deliveryFailed && (
+            <DeliveryIndicator status={message.delivery_status} />
+          )}
+        </div>
+        {deliveryFailed && (
+          <div className="mt-2 rounded-lg bg-white px-2.5 py-2 text-[var(--color-danger)]">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[10px] font-semibold">Not delivered</span>
+              <button
+                type="button"
+                onClick={() => onRetry?.(message.id)}
+                disabled={message._retrying}
+                className="inline-flex items-center gap-1 text-[10px] font-semibold rounded-md border border-[var(--color-danger)]/30 px-2 py-1 hover:bg-[var(--color-danger-light)] transition-colors disabled:opacity-60"
+              >
+                {message._retrying && <Spinner className="h-2.5 w-2.5" />}
+                {message._retrying ? "Retrying…" : "Retry"}
+              </button>
+            </div>
+            {message.delivery_error && (
+              <p className="text-[10px] leading-snug mt-1 opacity-80" title={message.delivery_error}>
+                {message.delivery_error}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+function DeliveryIndicator({ status }) {
+  const indicators = {
+    pending: { icon: "◷", label: "Queued", className: "text-white/70" },
+    sent: { icon: "✓", label: "Sent", className: "text-white/70" },
+    delivered: { icon: "✓✓", label: "Delivered", className: "text-white/80" },
+    read: { icon: "✓✓", label: "Read", className: "text-cyan-100" },
+  };
+  const indicator = indicators[status];
+  if (!indicator) return null;
+
+  return (
+    <span className={`inline-flex items-center gap-1 font-medium ${indicator.className}`} title={indicator.label}>
+      <span aria-hidden="true">{indicator.icon}</span>
+      <span>{indicator.label}</span>
+    </span>
   );
 }
 

@@ -116,7 +116,21 @@ async function listConversations() {
       m.content AS last_message,
       m.role AS last_message_role,
       m.media_url AS last_message_media_url,
-      m.created_at AS last_message_at
+      m.created_at AS last_message_at,
+      EXISTS (
+        SELECT 1
+        FROM messages inbound
+        WHERE inbound.contact_id = c.id
+          AND inbound.role = 'user'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM messages outbound
+            WHERE outbound.contact_id = c.id
+              AND outbound.role = 'assistant'
+              AND outbound.delivery_status IS DISTINCT FROM 'failed'
+              AND (outbound.created_at, outbound.id) > (inbound.created_at, inbound.id)
+          )
+      ) AS has_unreplied
     FROM contacts c
     JOIN messages m ON m.id = (
       SELECT id FROM messages WHERE contact_id = c.id ORDER BY created_at DESC, id DESC LIMIT 1
@@ -168,6 +182,52 @@ async function setAttention(id, needsAttention, reason = null) {
   return updated;
 }
 
+// Delivery problems should not replace a more important reason that already
+// needs staff attention, such as an urgent keyword or an AI handoff. Repeated
+// delivery failures may update the existing delivery reason with newer detail.
+async function setDeliveryAttention(id, reason) {
+  const result = await pool.query(
+    `UPDATE contacts
+     SET needs_attention = true, attention_reason = $1, updated_at = now()
+     WHERE id = $2
+       AND (
+         needs_attention = false
+         OR attention_reason IS NULL
+         OR attention_reason LIKE 'Delivery failed:%'
+       )
+     RETURNING *`,
+    [reason, id]
+  );
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id);
+  return updated;
+}
+
+// Clears only a delivery-failure attention flag and only when no failed
+// outbound messages remain. Keeping both conditions in the same SQL statement
+// prevents a successful retry from clearing a newer keyword, handoff, or
+// staff-owned-message warning that arrived while the retry was in progress.
+async function clearDeliveryAttentionIfNoFailedMessages(id) {
+  const result = await pool.query(
+    `UPDATE contacts c
+     SET needs_attention = false, attention_reason = NULL, updated_at = now()
+     WHERE c.id = $1
+       AND c.needs_attention = true
+       AND c.attention_reason LIKE 'Delivery failed:%'
+       AND NOT EXISTS (
+         SELECT 1 FROM messages m
+         WHERE m.contact_id = c.id
+           AND m.role = 'assistant'
+           AND m.delivery_status = 'failed'
+       )
+     RETURNING *`,
+    [id]
+  );
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id);
+  return updated;
+}
+
 async function setUnread(id, isUnread) {
   const result = await pool.query(
     `UPDATE contacts
@@ -206,6 +266,8 @@ module.exports = {
   takeOver,
   returnToAi,
   setAttention,
+  setDeliveryAttention,
+  clearDeliveryAttentionIfNoFailedMessages,
   setUnread,
   setFollowUp,
 };

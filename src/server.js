@@ -14,6 +14,7 @@ const clinicConfig = require("./config/clinicConfig");
 const messagesRepo = require("./db/messagesRepo");
 const contactsRepo = require("./db/contactsRepo");
 const { checkKeywordTriggers, extractHandoffSignal } = require("./utils/attentionTriggers");
+const realtimeEvents = require("./utils/realtimeEvents");
 const { verifyWebhookSignature } = require("./middleware/verifyWebhookSignature");
 const { requireAuth } = require("./middleware/requireAuth");
 
@@ -30,6 +31,31 @@ const { initSchema } = require("./db/db");
 // How often the backstop sweep for abandoned promo-image uploads runs —
 // see the setInterval call in start() below.
 const PROMO_IMAGE_PRUNE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+const SEND_REJECTED_ERROR =
+  "WhatsApp did not accept this message. Check the reply window or connection and try again.";
+
+function publishDeliveryStatus(message) {
+  if (!message) return;
+  realtimeEvents.publish("conversation_changed", {
+    contactId: message.contact_id,
+    messageId: message.id,
+    whatsappMessageId: message.whatsapp_message_id,
+    deliveryStatus: message.delivery_status,
+    deliveryError: message.delivery_error,
+    reason: "delivery_status",
+  });
+}
+
+async function persistSendOutcome(savedMessage, sendResult, errorText = SEND_REJECTED_ERROR) {
+  let updated = null;
+  if (sendResult.wamid) {
+    updated = await messagesRepo.setWhatsappMessageId(savedMessage.id, sendResult.wamid);
+  } else if (!sendResult.success) {
+    updated = await messagesRepo.setDeliveryStatusById(savedMessage.id, "failed", errorText);
+  }
+  publishDeliveryStatus(updated);
+  return updated || savedMessage;
+}
 
 const app = express();
 
@@ -132,12 +158,13 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
       // we don't track (e.g. a template message) — nothing more to do.
       if (!updatedMessage) continue;
 
+      publishDeliveryStatus(updatedMessage);
+
       if (update.status === "failed") {
         const reason = update.errorMessage || update.errorTitle || "WhatsApp reported delivery as failed.";
         console.error(`Delivery failed for message ${update.wamid} (code ${update.errorCode}):`, reason);
-        await contactsRepo.setAttention(
+        await contactsRepo.setDeliveryAttention(
           updatedMessage.contact_id,
-          true,
           `Delivery failed: ${reason}`
         );
       }
@@ -279,9 +306,10 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
 
       const savedReply = await conversationStore.appendMessage(from, "assistant", reply);
 
-      const { wamid: replyWamid } = await whatsapp.sendMessage(from, reply);
-      if (replyWamid) {
-        await messagesRepo.setWhatsappMessageId(savedReply.id, replyWamid);
+      const replyResult = await whatsapp.sendMessage(from, reply);
+      await persistSendOutcome(savedReply, replyResult);
+      if (!replyResult.success) {
+        await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${SEND_REJECTED_ERROR}`);
       }
       console.log(`Replied to ${from}: ${reply}`);
 
@@ -292,18 +320,23 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
       if (isFirstMessage) {
         const promo = getActivePromotion(clinicConfig.promotions);
         if (promo) {
-          const { success: sent, wamid: promoWamid } = await whatsapp.sendImage(from, promo.imageUrl, promo.caption);
+          // Save first so an immediate rejection still appears as failed in
+          // the Inbox and staff can retry the same promo message.
+          const savedPromo = await conversationStore.appendMessage(
+            from,
+            "assistant",
+            promo.caption || "",
+            null,
+            null,
+            promo.imageUrl
+          );
+          const promoResult = await whatsapp.sendImage(from, promo.imageUrl, promo.caption);
+          await persistSendOutcome(savedPromo, promoResult);
           // Never throw on a failed promo image — the text reply already
           // succeeded and that's what actually matters to the patient.
-          if (!sent) {
+          if (!promoResult.success) {
             console.warn(`Promo image failed to send to ${from}, continuing without it.`);
-          } else {
-            // Persist it so it shows up in the Inbox too, not just on the
-            // patient's WhatsApp — previously this was sent but never saved.
-            const savedPromo = await conversationStore.appendMessage(from, "assistant", promo.caption || "", null, null, promo.imageUrl);
-            if (promoWamid) {
-              await messagesRepo.setWhatsappMessageId(savedPromo.id, promoWamid);
-            }
+            await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${SEND_REJECTED_ERROR}`);
           }
         }
       }

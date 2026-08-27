@@ -59,6 +59,7 @@ async function getMessagesForContact(contactId, limit = 50, includeMedia = true)
   const result = await pool.query(
     `SELECT id, role, content, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type FROM messages
      WHERE contact_id = $1
+       AND (role <> 'assistant' OR delivery_status IS DISTINCT FROM 'failed')
      ORDER BY created_at DESC, id DESC
      LIMIT $2`,
     [contactId, safeLimit]
@@ -84,7 +85,7 @@ async function getMessagePageForContact(
 
   if (afterId != null) {
     const result = await pool.query(
-      `SELECT id, role, content, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
+      `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
               delivery_status, delivery_error
        FROM messages
        WHERE contact_id = $1 AND id > $2
@@ -103,7 +104,7 @@ async function getMessagePageForContact(
   params.push(safeLimit + 1);
 
   const result = await pool.query(
-    `SELECT id, role, content, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
+    `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
             delivery_status, delivery_error
      FROM messages
      WHERE contact_id = $1${cursorClause}
@@ -130,6 +131,79 @@ async function getMessageMediaForContact(contactId, messageId) {
   return result.rows[0] || null;
 }
 
+// Retry needs the original stored attachment bytes. This is deliberately a
+// single-message lookup and is only used by the authenticated retry route;
+// normal Inbox payloads remain lightweight and never include base64 media.
+async function getMessageForRetry(contactId, messageId) {
+  const result = await pool.query(
+    `SELECT id, contact_id, role, content, whatsapp_message_id, sent_by_username,
+            media_url, media_base64, media_mime_type, created_at,
+            delivery_status, delivery_error
+     FROM messages
+     WHERE id = $1 AND contact_id = $2`,
+    [messageId, contactId]
+  );
+  return result.rows[0] || null;
+}
+
+// Resyncs the delivery state for messages that are already visible in an
+// Inbox thread after its SSE connection reconnects. Restricting by contact id
+// prevents message ids from another conversation being exposed accidentally.
+async function getDeliveryStatusesForContact(contactId, messageIds) {
+  if (!messageIds.length) return [];
+  const result = await pool.query(
+    `SELECT id, whatsapp_message_id, delivery_status, delivery_error
+     FROM messages
+     WHERE contact_id = $1 AND id = ANY($2::int[])`,
+    [contactId, messageIds]
+  );
+  return result.rows;
+}
+
+// Uses a transaction-scoped Postgres lock so the same failed message cannot be
+// retried concurrently by different server instances. Keeping the transaction
+// on one checked-out connection also works when Neon is using a connection
+// pooler, and a dropped server process releases the lock automatically.
+async function acquireMessageRetryLock(messageId) {
+  const client = await pool.connect();
+  let transactionStarted = false;
+
+  try {
+    await client.query("BEGIN");
+    transactionStarted = true;
+    const result = await client.query(
+      "SELECT pg_try_advisory_xact_lock($1::bigint) AS acquired",
+      [messageId]
+    );
+    if (!result.rows[0]?.acquired) {
+      await client.query("ROLLBACK");
+      client.release();
+      return null;
+    }
+
+    let released = false;
+    return async function releaseMessageRetryLock() {
+      if (released) return;
+      released = true;
+
+      try {
+        await client.query("COMMIT");
+        client.release();
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+        client.release(true);
+        throw err;
+      }
+    };
+  } catch (err) {
+    if (transactionStarted) {
+      await client.query("ROLLBACK").catch(() => {});
+    }
+    client.release(true);
+    throw err;
+  }
+}
+
 async function messageExistsByWhatsappId(whatsappMessageId) {
   if (!whatsappMessageId) return false;
   const result = await pool.query(
@@ -139,12 +213,32 @@ async function messageExistsByWhatsappId(whatsappMessageId) {
   return result.rows.length > 0;
 }
 
-/** Attach Meta's WAMID without returning a potentially multi-megabyte row. */
+/**
+ * Attach Meta's WAMID and mark the request as pending. "pending" means Meta
+ * accepted the request, while sent/delivered/read still come from webhooks.
+ */
 async function setWhatsappMessageId(messageId, whatsappMessageId) {
   if (!whatsappMessageId) return null;
   const result = await pool.query(
-    `UPDATE messages SET whatsapp_message_id = $2 WHERE id = $1 RETURNING id`,
+    `UPDATE messages
+     SET whatsapp_message_id = $2, delivery_status = 'pending', delivery_error = NULL
+     WHERE id = $1
+     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
     [messageId, whatsappMessageId]
+  );
+  return result.rows[0] || null;
+}
+
+// Records an outcome for a send attempt that produced no new WAMID. Clearing
+// the previous WAMID keeps a delayed webhook from an older attempt from being
+// applied to the current failure.
+async function setDeliveryStatusById(messageId, status, errorText = null) {
+  const result = await pool.query(
+    `UPDATE messages
+     SET whatsapp_message_id = NULL, delivery_status = $2, delivery_error = $3
+     WHERE id = $1
+     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
+    [messageId, status, errorText]
   );
   return result.rows[0] || null;
 }
@@ -159,7 +253,24 @@ async function updateDeliveryStatusByWamid(whatsappMessageId, status, errorText 
     `UPDATE messages SET delivery_status = $2, delivery_error = $3
      WHERE whatsapp_message_id = $1
        AND (delivery_status IS DISTINCT FROM $2 OR delivery_error IS DISTINCT FROM $3)
-     RETURNING id, contact_id, delivery_status, delivery_error`,
+       AND (
+         $2 = 'failed'
+         OR delivery_status IS NULL
+         OR CASE $2
+              WHEN 'sent' THEN 1
+              WHEN 'delivered' THEN 2
+              WHEN 'read' THEN 3
+              ELSE 0
+            END >= CASE delivery_status
+              WHEN 'pending' THEN 0
+              WHEN 'sent' THEN 1
+              WHEN 'delivered' THEN 2
+              WHEN 'read' THEN 3
+              WHEN 'failed' THEN 4
+              ELSE -1
+            END
+       )
+     RETURNING id, contact_id, whatsapp_message_id, delivery_status, delivery_error`,
     [whatsappMessageId, status, errorText]
   );
   return result.rows[0] || null;
@@ -170,7 +281,11 @@ module.exports = {
   getMessagesForContact,
   getMessagePageForContact,
   getMessageMediaForContact,
+  getMessageForRetry,
+  getDeliveryStatusesForContact,
+  acquireMessageRetryLock,
   messageExistsByWhatsappId,
   setWhatsappMessageId,
+  setDeliveryStatusById,
   updateDeliveryStatusByWamid,
 };
