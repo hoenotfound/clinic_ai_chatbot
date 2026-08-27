@@ -434,14 +434,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     const updated = await persistSendOutcome(message, sendResult, errorText);
 
     if (sendResult.success) {
-      const hasOtherFailedMessages = await messagesRepo.hasFailedMessagesForContact(contact.id);
-      if (
-        !hasOtherFailedMessages &&
-        contact.needs_attention &&
-        contact.attention_reason?.startsWith("Delivery failed:")
-      ) {
-        await contactsRepo.setAttention(contact.id, false);
-      }
+      await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(contact.id);
     } else {
       await contactsRepo.setAttention(contact.id, true, `Delivery failed: ${errorText}`);
     }

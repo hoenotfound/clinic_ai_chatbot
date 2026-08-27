@@ -195,17 +195,6 @@ async function setDeliveryStatusById(messageId, status, errorText = null) {
   return result.rows[0] || null;
 }
 
-async function hasFailedMessagesForContact(contactId) {
-  const result = await pool.query(
-    `SELECT EXISTS (
-       SELECT 1 FROM messages
-       WHERE contact_id = $1 AND role = 'assistant' AND delivery_status = 'failed'
-     ) AS has_failed`,
-    [contactId]
-  );
-  return result.rows[0]?.has_failed === true;
-}
-
 /**
  * Delivery webhooks only need the contact id (for failures) plus status data.
  * Never return media_base64 here. Repeated identical webhook statuses are also
@@ -249,6 +238,5 @@ module.exports = {
   messageExistsByWhatsappId,
   setWhatsappMessageId,
   setDeliveryStatusById,
-  hasFailedMessagesForContact,
   updateDeliveryStatusByWamid,
 };

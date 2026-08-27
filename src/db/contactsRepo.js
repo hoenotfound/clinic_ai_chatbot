@@ -168,6 +168,31 @@ async function setAttention(id, needsAttention, reason = null) {
   return updated;
 }
 
+// Clears only a delivery-failure attention flag and only when no failed
+// outbound messages remain. Keeping both conditions in the same SQL statement
+// prevents a successful retry from clearing a newer keyword, handoff, or
+// staff-owned-message warning that arrived while the retry was in progress.
+async function clearDeliveryAttentionIfNoFailedMessages(id) {
+  const result = await pool.query(
+    `UPDATE contacts c
+     SET needs_attention = false, attention_reason = NULL, updated_at = now()
+     WHERE c.id = $1
+       AND c.needs_attention = true
+       AND c.attention_reason LIKE 'Delivery failed:%'
+       AND NOT EXISTS (
+         SELECT 1 FROM messages m
+         WHERE m.contact_id = c.id
+           AND m.role = 'assistant'
+           AND m.delivery_status = 'failed'
+       )
+     RETURNING *`,
+    [id]
+  );
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id);
+  return updated;
+}
+
 async function setUnread(id, isUnread) {
   const result = await pool.query(
     `UPDATE contacts
@@ -206,6 +231,7 @@ module.exports = {
   takeOver,
   returnToAi,
   setAttention,
+  clearDeliveryAttentionIfNoFailedMessages,
   setUnread,
   setFollowUp,
 };

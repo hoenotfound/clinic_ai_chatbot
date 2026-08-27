@@ -30,7 +30,7 @@ const DELIVERY_STATUS_RANK = {
   failed: 4,
 };
 
-function mergeMessageState(existing, incoming, { allowFailedReset = false } = {}) {
+function mergeMessageState(existing, incoming) {
   if (!existing) return incoming;
   const merged = { ...existing, ...incoming };
   const existingStatus = existing.delivery_status;
@@ -39,11 +39,11 @@ function mergeMessageState(existing, incoming, { allowFailedReset = false } = {}
   const deliveryAttemptChanged =
     incomingHasWamid && existing.whatsapp_message_id !== incoming.whatsapp_message_id;
 
-  if (
-    (allowFailedReset || deliveryAttemptChanged) &&
-    existingStatus === "failed" &&
-    incomingStatus !== "failed"
-  ) {
+  // A new WAMID means this is a genuinely new retry attempt, so its state may
+  // start again at pending. For the same WAMID, only move forwards. This stops
+  // a slower retry response from overwriting a failure webhook that already
+  // arrived for that same attempt.
+  if (deliveryAttemptChanged) {
     return merged;
   }
 
@@ -142,9 +142,13 @@ export default function Inbox() {
 
   async function reconcileLoadedDeliveryStatuses(contactId) {
     if (contactId == null) return;
-    const messageIds = messagesRef.current
-      .filter((message) => message.role !== "user" && Number.isInteger(message.id))
-      .map((message) => message.id);
+    const loadedOutboundMessages = messagesRef.current.filter(
+      (message) => message.role !== "user" && Number.isInteger(message.id)
+    );
+    const messageIds = loadedOutboundMessages.map((message) => message.id);
+    const expectedWamids = new Map(
+      loadedOutboundMessages.map((message) => [Number(message.id), message.whatsapp_message_id])
+    );
     if (!messageIds.length) return;
 
     try {
@@ -163,7 +167,20 @@ export default function Inbox() {
       setMessages((current) =>
         current.map((message) => {
           const status = byId.get(Number(message.id));
-          return status ? mergeMessageState(message, status) : message;
+          if (!status) return message;
+
+          // If a retry changed this message's WAMID while the reconciliation
+          // request was in flight, its response may describe the old attempt.
+          // Ignore that snapshot and let the retry response/live event win.
+          const expectedWamid = expectedWamids.get(Number(message.id));
+          if (
+            message.whatsapp_message_id !== expectedWamid &&
+            status.whatsapp_message_id !== message.whatsapp_message_id
+          ) {
+            return message;
+          }
+
+          return mergeMessageState(message, status);
         })
       );
     } catch (err) {
@@ -243,7 +260,6 @@ export default function Inbox() {
     const source = new EventSource("/api/conversations/events", { withCredentials: true });
     const pendingContactIds = new Set();
     let debounceTimer = null;
-    let hasOpenedOnce = false;
 
     function scheduleRefresh(contactId = null) {
       if (contactId != null) pendingContactIds.add(Number(contactId));
@@ -281,15 +297,11 @@ export default function Inbox() {
           setMessages((current) =>
             current.map((message) =>
               Number(message.id) === Number(payload.messageId)
-                ? mergeMessageState(
-                    message,
-                    {
-                      whatsapp_message_id: payload.whatsappMessageId ?? message.whatsapp_message_id,
-                      delivery_status: payload.deliveryStatus,
-                      delivery_error: payload.deliveryError || null,
-                    },
-                    { allowFailedReset: payload.deliveryStatus === "pending" }
-                  )
+                ? mergeMessageState(message, {
+                    whatsapp_message_id: payload.whatsappMessageId ?? message.whatsapp_message_id,
+                    delivery_status: payload.deliveryStatus,
+                    delivery_error: payload.deliveryError || null,
+                  })
                 : message
             )
           );
@@ -303,8 +315,10 @@ export default function Inbox() {
 
     source.addEventListener("conversation_changed", handleConversationChanged);
     source.onopen = () => {
-      if (hasOpenedOnce) scheduleRefresh();
-      hasOpenedOnce = true;
+      // SSE does not replay events that happened before the connection opened.
+      // Always reconcile, including the first open, to close the gap between
+      // the initial thread request and the live stream becoming ready.
+      scheduleRefresh();
     };
     source.onerror = () => {
       // EventSource reconnects automatically using the server's retry hint.
@@ -461,7 +475,7 @@ export default function Inbox() {
           current.map((message) =>
             message.id === messageId
               ? {
-                  ...mergeMessageState(message, result, { allowFailedReset: true }),
+                  ...mergeMessageState(message, result),
                   _retrying: false,
                 }
               : message
