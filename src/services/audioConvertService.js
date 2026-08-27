@@ -74,21 +74,11 @@ function runFfmpeg(inputPath, outputPath, configure) {
   });
 }
 
-function sha256(buffer) {
-  return crypto.createHash("sha256").update(buffer).digest("hex");
-}
-
-function inspectOggOpus(buffer) {
-  const first4 = buffer.subarray(0, 4).toString("ascii");
-  const hasOpusHead = buffer.includes(Buffer.from("OpusHead"));
-  return {
-    bytes: buffer.length,
-    first4,
-    first16Hex: buffer.subarray(0, 16).toString("hex"),
-    hasOpusHead,
-    sha256: sha256(buffer),
-    valid: first4 === "OggS" && hasOpusHead,
-  };
+function isOggOpus(buffer) {
+  return (
+    buffer.subarray(0, 4).toString("ascii") === "OggS" &&
+    buffer.includes(Buffer.from("OpusHead"))
+  );
 }
 
 /**
@@ -149,9 +139,9 @@ async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
       fs.readFile(mp3Path),
     ]);
 
-    const voiceDiagnostics = inspectOggOpus(whatsappBuffer);
-    console.log("[voice-output]", voiceDiagnostics);
-    if (!voiceDiagnostics.valid) {
+    // Keep a lightweight structural guard in production so malformed output
+    // is never uploaded as a WhatsApp voice note.
+    if (!isOggOpus(whatsappBuffer)) {
       console.error("Generated WhatsApp voice file is not valid OGG/Opus; refusing to upload it.");
       return null;
     }
@@ -159,8 +149,6 @@ async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
     return {
       whatsapp: {
         buffer: whatsappBuffer,
-        // Match the exact multipart file Content-Type that succeeded in the
-        // independent Meta curl test. Opus is encoded inside the OGG bytes.
         mimeType: "audio/ogg",
         filename: "voice.ogg",
       },
