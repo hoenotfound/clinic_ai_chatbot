@@ -91,6 +91,18 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_url TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_base64 TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_mime_type TEXT;
 
+-- Async delivery outcome for an outbound message, as reported later by
+-- Meta's status webhook callback (see server.js POST /webhook, which reads
+-- value.statuses). Accepting a send request (HTTP 200 from the /messages
+-- call) only means Meta queued it — actual delivery/failure is reported
+-- separately and asynchronously. delivery_status is one of
+-- 'sent' | 'delivered' | 'read' | 'failed' (or null if we never captured a
+-- whatsapp_message_id for this row to match a status update against, e.g.
+-- messages sent before this column existed). delivery_error holds Meta's
+-- human-readable error message when delivery_status = 'failed'.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivery_status TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivery_error TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_messages_contact_id ON messages(contact_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 
