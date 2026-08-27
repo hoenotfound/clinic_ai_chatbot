@@ -119,13 +119,19 @@ async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
     await fs.writeFile(inputPath, inputBuffer);
 
     // Meta requires native voice messages to be mono Ogg with the Opus codec.
+    // Reset timestamps from the browser recording before OGG muxing. Without
+    // this, FFmpeg can produce a small negative start time and offset granule
+    // positions; Meta accepts the upload but later rejects the voice message
+    // as application/octet-stream during delivery processing.
     await runFfmpeg(inputPath, oggPath, (command) =>
       command
         .duration(MAX_WHATSAPP_VOICE_SECONDS)
+        .audioFilters("asetpts=N/SR/TB")
         .audioCodec("libopus")
         .audioChannels(1)
         .audioFrequency(48000)
         .audioBitrate("32k")
+        .outputOptions(["-map_metadata", "-1"])
         .format("ogg")
     );
 
