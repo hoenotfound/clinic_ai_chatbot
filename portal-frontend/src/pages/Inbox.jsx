@@ -114,6 +114,11 @@ export default function Inbox() {
       }
     }
 
+    // Loading/sending state belongs to the conversation it started in. Reset
+    // it immediately when staff switch chats so a slow request from Patient A
+    // cannot leave Patient B's controls disabled.
+    setOlderMessagesLoading(false);
+    setActionPending(false);
     setMessages([]);
     setHasMoreOlderMessages(false);
     initialLoad();
@@ -123,11 +128,6 @@ export default function Inbox() {
     };
   }, [selectedId]);
 
-  // Server-sent events replace continuous Inbox polling. The event contains
-  // only a contact id; the portal fetches lightweight incremental rows only
-  // when that conversation actually changes. Browser EventSource reconnects
-  // automatically, and a reconnect triggers one catch-up refresh in case an
-  // event was missed while the connection was down.
   useEffect(() => {
     const source = new EventSource("/api/conversations/events", { withCredentials: true });
     const pendingContactIds = new Set();
