@@ -20,6 +20,12 @@ export default function Inbox() {
   const [messages, setMessages] = useState([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [actionPending, setActionPending] = useState(false); // takeover/return/send in flight
+  const selectedIdRef = useRef(selectedId);
+
+  // Send requests can take several seconds, especially while converting and
+  // transcribing voice recordings. Keep the current selection in a ref so a
+  // late refresh for the previous contact cannot replace the new chat's messages.
+  selectedIdRef.current = selectedId;
 
   // ── Poll conversation list ──
   useEffect(() => {
@@ -82,10 +88,13 @@ export default function Inbox() {
   }
 
   async function refreshMessages() {
-    if (selectedId == null) return;
+    const contactId = selectedId;
+    if (contactId == null) return;
     try {
-      const data = await api.getMessages(selectedId, { includeMedia: false });
-      setMessages(data.messages);
+      const data = await api.getMessages(contactId, { includeMedia: false });
+      if (selectedIdRef.current === contactId) {
+        setMessages(data.messages);
+      }
     } catch (err) {
       console.error("Failed to refresh messages:", err);
     }
