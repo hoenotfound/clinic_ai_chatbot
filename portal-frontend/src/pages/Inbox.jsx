@@ -18,6 +18,7 @@ const STATUS_FILTERS = [
   { key: "unreplied", label: "Unreplied" },
   { key: "follow-up", label: "Follow-up" },
   { key: "unread", label: "Unread" },
+  { key: "attention", label: "Attention" },
 ];
 
 function newestPersistedMessageId(messages) {
@@ -103,9 +104,26 @@ export default function Inbox() {
 
   useEffect(() => {
     if (conversations?.length && selectedId == null) {
-      setSelectedId(conversations[0].contact_id);
+      const firstConversation = conversations[0];
+      setSelectedId(firstConversation.contact_id);
+
+      if (firstConversation.is_unread) {
+        setConversations((current) =>
+          current?.map((conversation) =>
+            conversation.contact_id === firstConversation.contact_id
+              ? { ...conversation, is_unread: false }
+              : conversation
+          ) || current
+        );
+
+        api.setReadState(firstConversation.contact_id, false).catch(async (err) => {
+          console.error("Failed to mark the initial conversation as read:", err);
+          await refreshConversations();
+          showToast("Couldn't mark this conversation as read.", "error");
+        });
+      }
     }
-  }, [conversations, selectedId]);
+  }, [conversations, selectedId, showToast]);
 
   useEffect(() => {
     if (selectedId == null) return;
@@ -494,6 +512,7 @@ function ConversationList({ conversations, selectedId, onSelect }) {
       unreplied: conversationList.filter((item) => item.last_message_role === "user").length,
       "follow-up": conversationList.filter((item) => item.needs_follow_up).length,
       unread: conversationList.filter((item) => item.is_unread).length,
+      attention: conversationList.filter((item) => item.needs_attention).length,
     }),
     [conversationList]
   );
@@ -504,6 +523,7 @@ function ConversationList({ conversations, selectedId, onSelect }) {
       if (filters.status === "unreplied" && conversation.last_message_role !== "user") return false;
       if (filters.status === "follow-up" && !conversation.needs_follow_up) return false;
       if (filters.status === "unread" && !conversation.is_unread) return false;
+      if (filters.status === "attention" && !conversation.needs_attention) return false;
       if (filters.channel !== "all" && (conversation.channel || "whatsapp") !== filters.channel) return false;
       if (filters.owner !== "all" && conversation.mode !== filters.owner) return false;
       if (!query) return true;
@@ -581,7 +601,7 @@ function ConversationList({ conversations, selectedId, onSelect }) {
           />
         </div>
 
-        <div className="grid grid-cols-4 gap-1 mt-3" aria-label="Conversation status filters">
+        <div className="grid grid-cols-5 gap-1 mt-3" aria-label="Conversation status filters">
           {STATUS_FILTERS.map((filter) => {
             const active = filters.status === filter.key;
             return (
@@ -590,7 +610,8 @@ function ConversationList({ conversations, selectedId, onSelect }) {
                 type="button"
                 onClick={() => updateFilter("status", filter.key)}
                 aria-pressed={active}
-                className={`rounded-lg px-1.5 py-2 text-[11px] font-semibold transition-colors ${
+                title={filter.key === "attention" ? "Needs attention" : undefined}
+                className={`rounded-lg px-1 py-2 text-[10px] font-semibold transition-colors ${
                   active
                     ? "bg-[var(--color-primary)] text-white"
                     : "bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
@@ -1034,22 +1055,42 @@ function ThreadView({
 
   return (
     <div className="flex-1 flex flex-col h-full min-w-0">
-      <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3 min-w-0">
-          <ContactAvatar src={contact.photo_url} channel={contact.channel} size={40} />
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className="font-display font-bold text-base truncate">{displayName(contact)}</h2>
-              <ModeBadge mode={contact.mode} />
+      <div className="px-6 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <ContactAvatar src={contact.photo_url} channel={contact.channel} size={40} />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h2 className="font-display font-bold text-base truncate">{displayName(contact)}</h2>
+                <ModeBadge mode={contact.mode} />
+              </div>
+              <p className="text-xs text-[var(--color-text-muted)] truncate">
+                {contact.whatsapp_number}
+                {contact.mode === "human" && contact.takeover_by && ` · Taken over by ${contact.takeover_by}`}
+              </p>
             </div>
-            <p className="text-xs text-[var(--color-text-muted)]">
-              {contact.whatsapp_number}
-              {contact.mode === "human" && contact.takeover_by && ` · Taken over by ${contact.takeover_by}`}
-            </p>
           </div>
+          {contact.mode === "human" ? (
+            <button
+              onClick={onReturnToAi}
+              disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
+              title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice recording first" : undefined}
+              className="text-xs font-medium px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
+            >
+              Return to AI
+            </button>
+          ) : (
+            <button
+              onClick={onTakeOver}
+              disabled={actionPending}
+              className="text-xs font-medium px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
+            >
+              Take Over Conversation
+            </button>
+          )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 shrink-0 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap mt-3 pt-3 border-t border-[var(--color-border)]">
           <button
             type="button"
             onClick={onToggleFollowUp}
@@ -1074,29 +1115,12 @@ function ThreadView({
           </button>
           {contact.needs_attention && (
             <button
+              type="button"
               onClick={onDismissAttention}
               title={contact.attention_reason || "Needs attention"}
               className="text-xs font-medium px-3 py-1.5 rounded-lg bg-[var(--color-danger-light)] text-[var(--color-danger)] hover:brightness-95 transition-all"
             >
-              ⚠ Needs attention — dismiss
-            </button>
-          )}
-          {contact.mode === "human" ? (
-            <button
-              onClick={onReturnToAi}
-              disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
-              title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice recording first" : undefined}
-              className="text-xs font-medium px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
-            >
-              Return to AI
-            </button>
-          ) : (
-            <button
-              onClick={onTakeOver}
-              disabled={actionPending}
-              className="text-xs font-medium px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
-            >
-              Take Over Conversation
+              ⚠ Needs attention · Dismiss
             </button>
           )}
         </div>
