@@ -346,21 +346,22 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       return res.status(400).json({ error: "A voice recording is required." });
     }
 
-    // Conversion and transcription are independent, so run them together to
-    // keep the staff member's wait short. A failed transcript does not block
-    // delivery; it only falls back to a generic history label below.
-    const [converted, transcript] = await Promise.all([
-      convertToWhatsAppVoice(req.file.buffer, req.file.mimetype),
-      resolveWithin(
-        transcribeStaffAudio(req.file.buffer, req.file.mimetype),
-        STAFF_TRANSCRIPTION_TIMEOUT_MS,
-        null
-      ),
-    ]);
+    // Conversion also enforces the server-side two-minute limit. Transcribe
+    // that normalized result, rather than the original browser file, so AI
+    // history always matches the exact audio delivered to the patient.
+    const converted = await convertToWhatsAppVoice(req.file.buffer, req.file.mimetype);
 
     if (!converted) {
       return res.status(422).json({ error: "Couldn't process that recording. Please record it again." });
     }
+
+    // A failed or slow transcript does not block delivery; it only falls back
+    // to a generic history label below.
+    const transcript = await resolveWithin(
+      transcribeStaffAudio(converted.whatsapp.buffer, converted.whatsapp.mimeType),
+      STAFF_TRANSCRIPTION_TIMEOUT_MS,
+      null
+    );
 
     // Conversion/transcription can take long enough for another tab to hand
     // the conversation back to AI. Check ownership again before uploading.

@@ -6,6 +6,7 @@ const path = require("path");
 const crypto = require("crypto");
 
 ffmpeg.setFfmpegPath(ffmpegPath);
+const MAX_WHATSAPP_VOICE_SECONDS = 120;
 
 /**
  * Converts an audio buffer to MP3 — WhatsApp voice notes arrive as Ogg/Opus,
@@ -103,6 +104,7 @@ async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
     // Meta requires native voice messages to be mono Ogg with the Opus codec.
     await runFfmpeg(inputPath, oggPath, (command) =>
       command
+        .duration(MAX_WHATSAPP_VOICE_SECONDS)
         .audioCodec("libopus")
         .audioChannels(1)
         .audioFrequency(48000)
@@ -112,6 +114,7 @@ async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
 
     await runFfmpeg(inputPath, mp3Path, (command) =>
       command
+        .duration(MAX_WHATSAPP_VOICE_SECONDS)
         .audioCodec("libmp3lame")
         .audioChannels(1)
         .audioBitrate("64k")
