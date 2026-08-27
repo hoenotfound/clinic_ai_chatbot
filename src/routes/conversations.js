@@ -238,7 +238,13 @@ router.post("/:contactId/messages", async (req, res) => {
     // Message is already saved (so it's never lost from the thread even if
     // WhatsApp delivery fails), but we still tell the caller if the actual
     // send failed so staff know to retry rather than assuming it went out.
-    const delivered = await whatsapp.sendMessage(contact.whatsapp_number, text.trim());
+    // NOTE: `delivered: true` only means Meta *accepted* the send — the real
+    // delivery outcome arrives later via a status webhook (see server.js),
+    // which is why we attach the wamid now so that callback can find this row.
+    const { success: delivered, wamid } = await whatsapp.sendMessage(contact.whatsapp_number, text.trim());
+    if (wamid) {
+      await messagesRepo.setWhatsappMessageId(saved.id, wamid);
+    }
 
     res.status(201).json({ ...saved, delivered });
   } catch (err) {
@@ -306,7 +312,11 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       return res.status(502).json({ error: "Failed to upload image to WhatsApp. Please try again." });
     }
 
-    const delivered = await whatsapp.sendImageById(contact.whatsapp_number, mediaId, caption || undefined);
+    const { success: delivered, wamid } = await whatsapp.sendImageById(
+      contact.whatsapp_number,
+      mediaId,
+      caption || undefined
+    );
 
     // Persist it either way (even if delivery failed) so it's never lost
     // from the thread, same reasoning as the text-send route. Stored as
@@ -321,6 +331,9 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       null,
       { mimeType: req.file.mimetype, data: req.file.buffer.toString("base64") }
     );
+    if (wamid) {
+      await messagesRepo.setWhatsappMessageId(saved.id, wamid);
+    }
 
     res.status(201).json({ ...saved, delivered });
   } catch (err) {
@@ -405,12 +418,21 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       }
     );
 
-    const delivered = await whatsapp.sendVoiceById(currentContact.whatsapp_number, mediaId);
+    const { success: delivered, wamid } = await whatsapp.sendVoiceById(currentContact.whatsapp_number, mediaId);
+    if (wamid) {
+      await messagesRepo.setWhatsappMessageId(saved.id, wamid);
+    }
     try {
       await contactsRepo.setAttention(
         currentContact.id,
         !delivered,
-        delivered ? null : "Staff voice message failed to deliver. Please resend it."
+        delivered
+          ? null
+          // Meta *accepted* the request either way this branch is reached; this
+          // only fires if that initial request itself was rejected. If it later
+          // fails asynchronously after being accepted, the status webhook (see
+          // server.js) flags this same contact separately once that callback arrives.
+          : "Staff voice message failed to deliver. Please resend it."
       );
     } catch (attentionErr) {
       // The message is already saved and delivery has already been attempted.
