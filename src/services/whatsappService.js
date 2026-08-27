@@ -1,11 +1,23 @@
 const GRAPH_API_VERSION = "v26.0";
 
+// A 200 OK from POST .../messages only means Meta *accepted* the send
+// request for later processing — it is not proof the patient's phone ever
+// received it. Actual delivery/failure is reported asynchronously via a
+// separate status-update webhook (see parseStatusUpdates below), which is
+// why every send function here also returns the WAMID: it's the only key
+// that lets that later callback be matched back to this specific message.
+function extractWamid(data) {
+  return data?.messages?.[0]?.id || null;
+}
+
 /**
  * Sends a plain text WhatsApp message via the Cloud API.
  * @param {string} to - recipient's WhatsApp ID (phone number, no '+')
  * @param {string} text
- * @returns {Promise<boolean>} true if sent successfully, false otherwise (never throws —
- *   callers, e.g. the AI auto-reply flow, already have their own fallback logic around this)
+ * @returns {Promise<{success: boolean, wamid: string|null}>} success is true if Meta
+ *   *accepted* the send request — NOT proof of actual delivery (see note above).
+ *   Never throws — callers, e.g. the AI auto-reply flow, already have their own
+ *   fallback logic around this.
  */
 async function sendMessage(to, text) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -30,12 +42,13 @@ async function sendMessage(to, text) {
     if (!res.ok) {
       const errBody = await res.text();
       console.error("WhatsApp send failed:", res.status, errBody);
-      return false;
+      return { success: false, wamid: null };
     }
-    return true;
+    const data = await res.json();
+    return { success: true, wamid: extractWamid(data) };
   } catch (err) {
     console.error("WhatsApp send threw an error:", err);
-    return false;
+    return { success: false, wamid: null };
   }
 }
 
@@ -44,8 +57,9 @@ async function sendMessage(to, text) {
  * @param {string} to - recipient's WhatsApp ID (phone number, no '+')
  * @param {string} imageUrl - publicly accessible URL of the image
  * @param {string} [caption] - optional text shown under the image
- * @returns {Promise<boolean>} true if sent successfully, false otherwise (never throws —
- *   a failed promo image should never take down the actual text reply around it)
+ * @returns {Promise<{success: boolean, wamid: string|null}>} success is true if Meta
+ *   accepted the send request (never throws — a failed promo image should never
+ *   take down the actual text reply around it)
  */
 async function sendImage(to, imageUrl, caption) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -70,12 +84,13 @@ async function sendImage(to, imageUrl, caption) {
     if (!res.ok) {
       const errBody = await res.text();
       console.error("WhatsApp image send failed:", res.status, errBody);
-      return false;
+      return { success: false, wamid: null };
     }
-    return true;
+    const data = await res.json();
+    return { success: true, wamid: extractWamid(data) };
   } catch (err) {
     console.error("WhatsApp image send threw an error:", err);
-    return false;
+    return { success: false, wamid: null };
   }
 }
 
@@ -128,7 +143,8 @@ async function uploadMedia(buffer, mimeType, filename = "upload") {
  * @param {string} to - recipient's WhatsApp ID (phone number, no '+')
  * @param {string} mediaId
  * @param {string} [caption]
- * @returns {Promise<boolean>} true if sent successfully, false otherwise
+ * @returns {Promise<{success: boolean, wamid: string|null}>} success is true if
+ *   Meta accepted the send request
  */
 async function sendImageById(to, mediaId, caption) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -153,12 +169,13 @@ async function sendImageById(to, mediaId, caption) {
     if (!res.ok) {
       const errBody = await res.text();
       console.error("WhatsApp image (by id) send failed:", res.status, errBody);
-      return false;
+      return { success: false, wamid: null };
     }
-    return true;
+    const data = await res.json();
+    return { success: true, wamid: extractWamid(data) };
   } catch (err) {
     console.error("WhatsApp image (by id) send threw an error:", err);
-    return false;
+    return { success: false, wamid: null };
   }
 }
 
@@ -168,7 +185,11 @@ async function sendImageById(to, mediaId, caption) {
  * message rather than a generic audio attachment.
  * @param {string} to - recipient's WhatsApp ID (phone number, no '+')
  * @param {string} mediaId - ID returned by uploadMedia()
- * @returns {Promise<boolean>} true if Meta accepted the message
+ * @returns {Promise<{success: boolean, wamid: string|null}>} success is true if Meta
+ *   *accepted* the message — this is NOT proof the patient's phone actually
+ *   received it. A 200 here only means Meta queued it for delivery; the real
+ *   outcome (delivered vs. failed, and why) arrives later via the status-update
+ *   webhook (see parseStatusUpdates), matched back to this send by wamid.
  */
 async function sendVoiceById(to, mediaId) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -193,12 +214,13 @@ async function sendVoiceById(to, mediaId) {
     if (!res.ok) {
       const errBody = await res.text();
       console.error("WhatsApp voice send failed:", res.status, errBody);
-      return false;
+      return { success: false, wamid: null };
     }
-    return true;
+    const data = await res.json();
+    return { success: true, wamid: extractWamid(data) };
   } catch (err) {
     console.error("WhatsApp voice send threw an error:", err);
-    return false;
+    return { success: false, wamid: null };
   }
 }
 
@@ -243,7 +265,10 @@ async function downloadMedia(mediaId) {
  * Pulls out every inbound message from a WhatsApp webhook payload.
  * Returns an array (usually 0 or 1 entries, but Meta can batch several
  * if a patient sends multiple texts in quick succession).
- * Skips anything that isn't a genuine new message (e.g. delivery/read status updates).
+ * Skips anything that isn't a genuine new inbound message — in particular,
+ * delivery/read/failed status updates for messages *we* sent arrive as a
+ * separate payload shape (value.statuses, no value.messages); see
+ * parseStatusUpdates() below for those.
  */
 function parseIncomingMessages(body) {
   try {
@@ -308,6 +333,41 @@ function parseIncomingMessages(body) {
   }
 }
 
+/**
+ * Pulls out every delivery-status update from a WhatsApp webhook payload —
+ * the async 'sent' / 'delivered' / 'read' / 'failed' callbacks Meta sends
+ * for messages *we* sent (staff replies, AI replies, promo images). These
+ * arrive as a separate payload shape from inbound patient messages: no
+ * value.messages, just value.statuses. parseIncomingMessages() above
+ * silently skips these; this is the counterpart that actually reads them.
+ * @returns {Array<{wamid: string, status: string, errorCode: number|null,
+ *   errorTitle: string|null, errorMessage: string|null}>}
+ */
+function parseStatusUpdates(body) {
+  try {
+    const entry = body.entry?.[0];
+    const change = entry?.changes?.[0];
+    const statuses = change?.value?.statuses;
+    if (!statuses || statuses.length === 0) return [];
+
+    return statuses.map((status) => {
+      const firstError = status.errors?.[0] || null;
+      return {
+        wamid: status.id,
+        status: status.status, // 'sent' | 'delivered' | 'read' | 'failed'
+        errorCode: firstError?.code ?? null,
+        errorTitle: firstError?.title || null,
+        // error_data.details is often the most specific human-readable reason
+        // Meta gives for a 'failed' status (e.g. media/format problems).
+        errorMessage: firstError?.error_data?.details || firstError?.message || null,
+      };
+    });
+  } catch (err) {
+    console.error("Failed to parse webhook status payload:", err);
+    return [];
+  }
+}
+
 module.exports = {
   sendMessage,
   sendImage,
@@ -316,4 +376,5 @@ module.exports = {
   sendVoiceById,
   downloadMedia,
   parseIncomingMessages,
+  parseStatusUpdates,
 };
