@@ -83,6 +83,16 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ needsAttention, reason }),
     }),
+  setReadState: (contactId, unread) =>
+    request(`/conversations/${contactId}/read-state`, {
+      method: "PATCH",
+      body: JSON.stringify({ unread }),
+    }),
+  setFollowUp: (contactId, needsFollowUp) =>
+    request(`/conversations/${contactId}/follow-up`, {
+      method: "PATCH",
+      body: JSON.stringify({ needsFollowUp }),
+    }),
   getConfig: () => request("/config"),
   updateConfig: (updates) => request("/config", { method: "PATCH", body: JSON.stringify(updates) }),
   uploadPromoImage: async (file) => {

@@ -30,6 +30,15 @@ ALTER TABLE contacts ADD COLUMN IF NOT EXISTS attention_reason TEXT;          --
 
 CREATE INDEX IF NOT EXISTS idx_contacts_needs_attention ON contacts(needs_attention) WHERE needs_attention = true;
 
+-- Inbox workflow state. Unread is shared across clinic staff, so opening a
+-- conversation marks it read for the team. Follow-up is an explicit staff
+-- flag that remains set until somebody clears it.
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS is_unread BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS needs_follow_up BOOLEAN NOT NULL DEFAULT false;
+
+CREATE INDEX IF NOT EXISTS idx_contacts_is_unread ON contacts(is_unread) WHERE is_unread = true;
+CREATE INDEX IF NOT EXISTS idx_contacts_needs_follow_up ON contacts(needs_follow_up) WHERE needs_follow_up = true;
+
 -- Which inbound channel this contact came from. Everyone today is
 -- 'whatsapp' (the only channel this app talks to), but this is here so
 -- Instagram/Facebook Messenger contacts can be told apart once those
