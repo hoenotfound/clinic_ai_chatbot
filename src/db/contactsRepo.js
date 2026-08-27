@@ -62,7 +62,8 @@ async function listContacts(search) {
   const result = await pool.query(
     `
     SELECT
-      c.id, c.whatsapp_number, c.name, c.whatsapp_profile_name, c.mode, c.needs_attention, c.created_at, c.updated_at,
+      c.id, c.whatsapp_number, c.name, c.whatsapp_profile_name, c.mode, c.needs_attention,
+      c.is_unread, c.needs_follow_up, c.created_at, c.updated_at,
       c.channel, c.photo_url,
       COUNT(m.id)::int AS message_count,
       MAX(m.created_at) AS last_message_at
@@ -110,6 +111,8 @@ async function listConversations() {
       c.takeover_at,
       c.needs_attention,
       c.attention_reason,
+      c.is_unread,
+      c.needs_follow_up,
       m.content AS last_message,
       m.role AS last_message_role,
       m.media_url AS last_message_media_url,
@@ -128,7 +131,8 @@ async function takeOver(id, staffUsername) {
   const result = await pool.query(
     `UPDATE contacts
      SET mode = 'human', takeover_by = $1, takeover_at = now(),
-         needs_attention = false, attention_reason = NULL, updated_at = now()
+         needs_attention = false, attention_reason = NULL, is_unread = false,
+         updated_at = now()
      WHERE id = $2
      RETURNING *`,
     [staffUsername, id]
@@ -164,6 +168,32 @@ async function setAttention(id, needsAttention, reason = null) {
   return updated;
 }
 
+async function setUnread(id, isUnread) {
+  const result = await pool.query(
+    `UPDATE contacts
+     SET is_unread = $1, updated_at = now()
+     WHERE id = $2
+     RETURNING *`,
+    [isUnread, id]
+  );
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id);
+  return updated;
+}
+
+async function setFollowUp(id, needsFollowUp) {
+  const result = await pool.query(
+    `UPDATE contacts
+     SET needs_follow_up = $1, updated_at = now()
+     WHERE id = $2
+     RETURNING *`,
+    [needsFollowUp, id]
+  );
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id);
+  return updated;
+}
+
 module.exports = {
   getOrCreateContact,
   getContactById,
@@ -176,4 +206,6 @@ module.exports = {
   takeOver,
   returnToAi,
   setAttention,
+  setUnread,
+  setFollowUp,
 };

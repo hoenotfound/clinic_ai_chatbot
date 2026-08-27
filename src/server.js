@@ -232,6 +232,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
       // Save the patient's message first, independent of whether the AI
       // reply succeeds — so it always shows in the inbox, even on failure.
       await conversationStore.appendMessage(from, "user", text, id, null, null, mediaAttachment);
+      await contactsRepo.setUnread(contact.id, true);
 
       // Keyword safety-net — runs on every inbound message regardless of
       // mode, so urgent messages get flagged even if a human already owns

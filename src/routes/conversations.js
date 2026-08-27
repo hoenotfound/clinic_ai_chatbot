@@ -249,6 +249,48 @@ router.patch("/:contactId/attention", async (req, res) => {
   }
 });
 
+router.patch("/:contactId/read-state", async (req, res) => {
+  try {
+    const contactId = parsePositiveInt(req.params.contactId);
+    if (!contactId) return res.status(400).json({ error: "Invalid contact id." });
+
+    const contact = await contactsRepo.getContactById(contactId);
+    if (!contact) return res.status(404).json({ error: "Contact not found." });
+
+    const { unread } = req.body || {};
+    if (typeof unread !== "boolean") {
+      return res.status(400).json({ error: "unread (boolean) is required." });
+    }
+
+    const updated = await contactsRepo.setUnread(contact.id, unread);
+    res.json(updated);
+  } catch (err) {
+    console.error("Failed to update conversation read state:", err);
+    res.status(500).json({ error: "Something went wrong updating this conversation." });
+  }
+});
+
+router.patch("/:contactId/follow-up", async (req, res) => {
+  try {
+    const contactId = parsePositiveInt(req.params.contactId);
+    if (!contactId) return res.status(400).json({ error: "Invalid contact id." });
+
+    const contact = await contactsRepo.getContactById(contactId);
+    if (!contact) return res.status(404).json({ error: "Contact not found." });
+
+    const { needsFollowUp } = req.body || {};
+    if (typeof needsFollowUp !== "boolean") {
+      return res.status(400).json({ error: "needsFollowUp (boolean) is required." });
+    }
+
+    const updated = await contactsRepo.setFollowUp(contact.id, needsFollowUp);
+    res.json(updated);
+  } catch (err) {
+    console.error("Failed to update follow-up state:", err);
+    res.status(500).json({ error: "Something went wrong updating this conversation." });
+  }
+});
+
 router.post("/:contactId/messages", async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
@@ -263,6 +305,7 @@ router.post("/:contactId/messages", async (req, res) => {
       await contactsRepo.takeOver(contact.id, req.session.username);
     } else {
       await contactsRepo.setAttention(contact.id, false);
+      await contactsRepo.setUnread(contact.id, false);
     }
 
     const saved = await conversationStore.appendMessage(
@@ -322,6 +365,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       await contactsRepo.takeOver(contact.id, req.session.username);
     } else {
       await contactsRepo.setAttention(contact.id, false);
+      await contactsRepo.setUnread(contact.id, false);
     }
 
     const mediaId = await whatsapp.uploadMedia(req.file.buffer, req.file.mimetype);
@@ -367,6 +411,8 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "A voice recording is required." });
     }
+
+    await contactsRepo.setUnread(contact.id, false);
 
     const converted = await convertToWhatsAppVoice(req.file.buffer, req.file.mimetype);
 

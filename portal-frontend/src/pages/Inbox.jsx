@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { useToasts, ToastContainer } from "../components/Toast";
@@ -12,6 +12,13 @@ const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_SECONDS = 120;
 const VOICE_MIME_TYPES = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"];
+
+const STATUS_FILTERS = [
+  { key: "all", label: "All" },
+  { key: "unreplied", label: "Unreplied" },
+  { key: "follow-up", label: "Follow-up" },
+  { key: "unread", label: "Unread" },
+];
 
 function newestPersistedMessageId(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -42,6 +49,7 @@ export default function Inbox() {
   const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
   const [hasMoreOlderMessages, setHasMoreOlderMessages] = useState(false);
   const [actionPending, setActionPending] = useState(false);
+  const [conversationStatePending, setConversationStatePending] = useState(false);
   const selectedIdRef = useRef(selectedId);
   const latestMessageIdRef = useRef(null);
   const threadRequestVersionRef = useRef(0);
@@ -259,6 +267,67 @@ export default function Inbox() {
     }
   }
 
+  function updateConversationLocally(contactId, updates) {
+    setConversations((current) =>
+      current?.map((conversation) =>
+        conversation.contact_id === contactId ? { ...conversation, ...updates } : conversation
+      ) || current
+    );
+  }
+
+  async function handleSelectConversation(contactId) {
+    setSelectedId(contactId);
+    const conversation = conversations?.find((item) => item.contact_id === contactId);
+    if (!conversation?.is_unread) return;
+
+    updateConversationLocally(contactId, { is_unread: false });
+    try {
+      await api.setReadState(contactId, false);
+    } catch (err) {
+      console.error("Failed to mark conversation as read:", err);
+      await refreshConversations();
+      showToast("Couldn't mark this conversation as read.", "error");
+    }
+  }
+
+  async function handleToggleFollowUp() {
+    const conversation = conversations?.find((item) => item.contact_id === selectedId);
+    if (!conversation || conversationStatePending) return;
+
+    const needsFollowUp = !conversation.needs_follow_up;
+    setConversationStatePending(true);
+    updateConversationLocally(conversation.contact_id, { needs_follow_up: needsFollowUp });
+    try {
+      await api.setFollowUp(conversation.contact_id, needsFollowUp);
+    } catch (err) {
+      console.error("Failed to update follow-up state:", err);
+      updateConversationLocally(conversation.contact_id, {
+        needs_follow_up: conversation.needs_follow_up,
+      });
+      showToast("Couldn't update the follow-up flag.", "error");
+    } finally {
+      setConversationStatePending(false);
+    }
+  }
+
+  async function handleToggleUnread() {
+    const conversation = conversations?.find((item) => item.contact_id === selectedId);
+    if (!conversation || conversationStatePending) return;
+
+    const isUnread = !conversation.is_unread;
+    setConversationStatePending(true);
+    updateConversationLocally(conversation.contact_id, { is_unread: isUnread });
+    try {
+      await api.setReadState(conversation.contact_id, isUnread);
+    } catch (err) {
+      console.error("Failed to update read state:", err);
+      updateConversationLocally(conversation.contact_id, { is_unread: conversation.is_unread });
+      showToast("Couldn't update the read state.", "error");
+    } finally {
+      setConversationStatePending(false);
+    }
+  }
+
   function makeOptimisticId() {
     return `optimistic-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
@@ -380,7 +449,11 @@ export default function Inbox() {
 
   return (
     <div className="flex h-full">
-      <ConversationList conversations={conversations} selectedId={selectedId} onSelect={setSelectedId} />
+      <ConversationList
+        conversations={conversations}
+        selectedId={selectedId}
+        onSelect={handleSelectConversation}
+      />
       <ThreadView
         key={selectedId ?? "no-conversation"}
         contact={selectedContact}
@@ -389,10 +462,13 @@ export default function Inbox() {
         olderMessagesLoading={olderMessagesLoading}
         hasMoreOlderMessages={hasMoreOlderMessages}
         actionPending={actionPending}
+        conversationStatePending={conversationStatePending}
         onLoadOlder={loadOlderMessages}
         onTakeOver={handleTakeOver}
         onReturnToAi={handleReturnToAi}
         onDismissAttention={handleDismissAttention}
+        onToggleFollowUp={handleToggleFollowUp}
+        onToggleUnread={handleToggleUnread}
         onSend={handleSend}
         onSendImage={handleSendImage}
         onSendVoice={handleSendVoice}
@@ -404,32 +480,196 @@ export default function Inbox() {
 }
 
 function ConversationList({ conversations, selectedId, onSelect }) {
+  const [filters, setFilters] = useState({
+    status: "all",
+    channel: "all",
+    owner: "all",
+    query: "",
+  });
+
+  const conversationList = useMemo(() => conversations || [], [conversations]);
+  const statusCounts = useMemo(
+    () => ({
+      all: conversationList.length,
+      unreplied: conversationList.filter((item) => item.last_message_role === "user").length,
+      "follow-up": conversationList.filter((item) => item.needs_follow_up).length,
+      unread: conversationList.filter((item) => item.is_unread).length,
+    }),
+    [conversationList]
+  );
+
+  const filteredConversations = useMemo(() => {
+    const query = filters.query.trim().toLowerCase();
+    return conversationList.filter((conversation) => {
+      if (filters.status === "unreplied" && conversation.last_message_role !== "user") return false;
+      if (filters.status === "follow-up" && !conversation.needs_follow_up) return false;
+      if (filters.status === "unread" && !conversation.is_unread) return false;
+      if (filters.channel !== "all" && (conversation.channel || "whatsapp") !== filters.channel) return false;
+      if (filters.owner !== "all" && conversation.mode !== filters.owner) return false;
+      if (!query) return true;
+
+      const searchableText = [
+        displayName(conversation),
+        conversation.whatsapp_number,
+        conversation.last_message,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return searchableText.includes(query);
+    });
+  }, [conversationList, filters]);
+
+  const hasActiveFilters =
+    filters.status !== "all" ||
+    filters.channel !== "all" ||
+    filters.owner !== "all" ||
+    !!filters.query.trim();
+
+  function updateFilter(key, value) {
+    setFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function clearFilters() {
+    setFilters({ status: "all", channel: "all", owner: "all", query: "" });
+  }
+
   return (
-    <div className="w-80 shrink-0 border-r border-[var(--color-border)] h-full overflow-y-auto bg-[var(--color-surface)]">
-      <div className="px-5 py-4 border-b border-[var(--color-border)] sticky top-0 bg-[var(--color-surface)]">
-        <h1 className="font-display text-lg font-bold">Inbox</h1>
-        <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-          {conversations ? `${conversations.length} conversation${conversations.length === 1 ? "" : "s"}` : "Loading…"}
-        </p>
+    <div className="w-[23rem] shrink-0 border-r border-[var(--color-border)] h-full overflow-y-auto bg-[var(--color-surface)]">
+      <div className="px-4 py-4 border-b border-[var(--color-border)] sticky top-0 z-20 bg-[var(--color-surface)] shadow-[0_1px_0_rgba(0,0,0,0.02)]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="font-display text-lg font-bold">Inbox</h1>
+            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+              {!conversations
+                ? "Loading…"
+                : hasActiveFilters
+                ? `${filteredConversations.length} of ${conversationList.length} conversations`
+                : `${conversationList.length} conversation${conversationList.length === 1 ? "" : "s"}`}
+            </p>
+          </div>
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="text-[11px] font-semibold text-[var(--color-primary)] hover:underline mt-1"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+
+        <div className="relative mt-3">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            aria-hidden="true"
+            className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-muted)]"
+          >
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+          <input
+            type="search"
+            value={filters.query}
+            onChange={(event) => updateFilter("query", event.target.value)}
+            placeholder="Search name, number or message"
+            aria-label="Search conversations"
+            className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] pl-9 pr-3 py-2 text-xs outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+          />
+        </div>
+
+        <div className="grid grid-cols-4 gap-1 mt-3" aria-label="Conversation status filters">
+          {STATUS_FILTERS.map((filter) => {
+            const active = filters.status === filter.key;
+            return (
+              <button
+                key={filter.key}
+                type="button"
+                onClick={() => updateFilter("status", filter.key)}
+                aria-pressed={active}
+                className={`rounded-lg px-1.5 py-2 text-[11px] font-semibold transition-colors ${
+                  active
+                    ? "bg-[var(--color-primary)] text-white"
+                    : "bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                }`}
+              >
+                <span>{filter.label}</span>
+                <span className={`ml-1 ${active ? "text-white/70" : "text-[var(--color-text-muted)]"}`}>
+                  {statusCounts[filter.key]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 mt-2">
+          <label className="relative">
+            <span className="sr-only">Filter by channel</span>
+            <select
+              value={filters.channel}
+              onChange={(event) => updateFilter("channel", event.target.value)}
+              className="w-full appearance-none rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 pr-7 text-xs font-medium outline-none focus:border-[var(--color-primary)]"
+            >
+              <option value="all">All channels</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="facebook">Facebook</option>
+              <option value="instagram">Instagram</option>
+            </select>
+            <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-[var(--color-text-muted)]">▼</span>
+          </label>
+          <label className="relative">
+            <span className="sr-only">Filter by conversation owner</span>
+            <select
+              value={filters.owner}
+              onChange={(event) => updateFilter("owner", event.target.value)}
+              className="w-full appearance-none rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 pr-7 text-xs font-medium outline-none focus:border-[var(--color-primary)]"
+            >
+              <option value="all">Bot + human</option>
+              <option value="ai">Bot controlled</option>
+              <option value="human">Human controlled</option>
+            </select>
+            <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-[var(--color-text-muted)]">▼</span>
+          </label>
+        </div>
       </div>
 
       {conversations && conversations.length === 0 && (
         <div className="px-5 py-10 text-center">
           <p className="text-sm text-[var(--color-text-muted)]">
-            No conversations yet. Once a patient messages your WhatsApp number, they'll show up here.
+            No conversations yet. Once a customer messages you, they'll show up here.
           </p>
         </div>
       )}
 
-      {conversations?.map((c) => (
+      {conversations && conversations.length > 0 && filteredConversations.length === 0 && (
+        <div className="px-6 py-12 text-center">
+          <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-[var(--color-bg)] text-lg">⌕</div>
+          <p className="text-sm font-semibold mt-3">No matching conversations</p>
+          <p className="text-xs text-[var(--color-text-muted)] mt-1">Try changing or clearing the filters.</p>
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="mt-4 text-xs font-semibold px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)]"
+          >
+            Clear filters
+          </button>
+        </div>
+      )}
+
+      {filteredConversations.map((c) => (
         <button
           key={c.contact_id}
           onClick={() => onSelect(c.contact_id)}
-          className={`relative w-full text-left px-5 py-3.5 border-b border-[var(--color-border)] transition-colors ${
+          className={`relative w-full text-left px-4 py-3.5 border-b border-[var(--color-border)] transition-colors ${
             c.contact_id === selectedId
               ? "bg-[var(--color-primary-light)]"
               : c.needs_attention
               ? "bg-[var(--color-danger-light)] hover:brightness-95"
+              : c.is_unread
+              ? "bg-[var(--color-bg)] hover:brightness-98"
               : "hover:bg-[var(--color-bg)]"
           }`}
         >
@@ -439,21 +679,32 @@ function ConversationList({ conversations, selectedId, onSelect }) {
               title={c.attention_reason || "Needs attention"}
             />
           )}
-          <div className="flex items-center gap-3 pl-2">
+          <div className="flex items-center gap-3 pl-1.5">
             <ContactAvatar src={c.photo_url} channel={c.channel} />
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-2">
-                <span className="font-medium text-sm truncate flex items-center gap-1.5">
+                <span className={`${c.is_unread ? "font-semibold" : "font-medium"} text-sm truncate flex items-center gap-1.5`}>
                   {displayName(c)}
-                  {c.mode === "human" && <ModeBadge mode="human" compact />}
+                  {c.is_unread && <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-primary)]" title="Unread" />}
                 </span>
-                <span className="text-[11px] text-[var(--color-text-muted)] shrink-0">{formatTime(c.last_message_at)}</span>
+                <span className={`text-[11px] shrink-0 ${c.is_unread ? "font-semibold text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
+                  {formatTime(c.last_message_at)}
+                </span>
               </div>
-              <p className="text-xs text-[var(--color-text-muted)] truncate mt-0.5">
+              <p className={`text-xs truncate mt-0.5 ${c.is_unread ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                 {c.last_message_role === "assistant" ? "You: " : ""}
                 {c.last_message_media_url ? "📷 " : ""}
                 {c.last_message || (c.last_message_media_url ? "Photo" : "")}
               </p>
+              <div className="flex items-center gap-1.5 mt-1.5">
+                <ChannelBadge channel={c.channel} />
+                <ModeBadge mode={c.mode} compact />
+                {c.needs_follow_up && (
+                  <span className="inline-flex items-center rounded-full bg-[var(--color-accent-light)] text-[var(--color-accent)] text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5">
+                    Follow-up
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </button>
@@ -469,10 +720,13 @@ function ThreadView({
   olderMessagesLoading,
   hasMoreOlderMessages,
   actionPending,
+  conversationStatePending,
   onLoadOlder,
   onTakeOver,
   onReturnToAi,
   onDismissAttention,
+  onToggleFollowUp,
+  onToggleUnread,
   onSend,
   onSendImage,
   onSendVoice,
@@ -795,7 +1049,29 @@ function ThreadView({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center justify-end gap-2 shrink-0 flex-wrap">
+          <button
+            type="button"
+            onClick={onToggleFollowUp}
+            disabled={conversationStatePending}
+            aria-pressed={!!contact.needs_follow_up}
+            title={contact.needs_follow_up ? "Remove follow-up flag" : "Add to follow-up list"}
+            className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-50 ${
+              contact.needs_follow_up
+                ? "border-[var(--color-accent)] bg-[var(--color-accent-light)] text-[var(--color-accent)]"
+                : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-bg)]"
+            }`}
+          >
+            {contact.needs_follow_up ? "Follow-up saved" : "Add follow-up"}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleUnread}
+            disabled={conversationStatePending}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
+          >
+            {contact.is_unread ? "Mark as read" : "Mark unread"}
+          </button>
           {contact.needs_attention && (
             <button
               onClick={onDismissAttention}
@@ -928,6 +1204,20 @@ function ModeBadge({ mode, compact }) {
   return (
     <span className={`inline-flex items-center gap-1 shrink-0 rounded-full font-medium uppercase tracking-wide ${compact ? "text-[9px] px-1.5 py-0.5" : "text-[10px] px-2 py-0.5"} ${isHuman ? "bg-[var(--color-accent-light)] text-[var(--color-accent)]" : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"}`}>
       {isHuman ? "Staff" : "AI"}
+    </span>
+  );
+}
+
+function ChannelBadge({ channel = "whatsapp" }) {
+  const styles = {
+    whatsapp: "bg-[var(--color-primary-light)] text-[var(--color-primary)]",
+    facebook: "bg-blue-50 text-blue-700",
+    instagram: "bg-pink-50 text-pink-700",
+  };
+  const labels = { whatsapp: "WhatsApp", facebook: "Facebook", instagram: "Instagram" };
+  return (
+    <span className={`inline-flex items-center rounded-full text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 ${styles[channel] || styles.whatsapp}`}>
+      {labels[channel] || channel}
     </span>
   );
 }
