@@ -385,16 +385,11 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       return res.status(409).json({ error: "This conversation is no longer in Staff mode." });
     }
 
-    const delivered = await whatsapp.sendVoiceById(currentContact.whatsapp_number, mediaId);
-    await contactsRepo.setAttention(
-      currentContact.id,
-      !delivered,
-      delivered ? null : "Staff voice message failed to deliver. Please resend it."
-    );
-
     // Keep an MP3 copy for portal playback. The transcript also becomes the
     // assistant-history entry, so if staff later returns the chat to AI, the
     // model knows what staff already told the patient instead of repeating it.
+    // Save before sending so a database failure cannot produce a patient-facing
+    // delivery followed by a 500 response that encourages an accidental retry.
     const content = transcript ? `🎤 ${transcript}` : "🎤 Staff sent a voice message";
     const saved = await conversationStore.appendMessage(
       currentContact.whatsapp_number,
@@ -408,6 +403,19 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
         data: converted.playback.buffer.toString("base64"),
       }
     );
+
+    const delivered = await whatsapp.sendVoiceById(currentContact.whatsapp_number, mediaId);
+    try {
+      await contactsRepo.setAttention(
+        currentContact.id,
+        !delivered,
+        delivered ? null : "Staff voice message failed to deliver. Please resend it."
+      );
+    } catch (attentionErr) {
+      // The message is already saved and delivery has already been attempted.
+      // Do not return a misleading send failure that could cause a duplicate.
+      console.error("Failed to update attention after staff voice message:", attentionErr);
+    }
 
     // The Inbox reloads the lightweight message list after this request, so
     // do not echo the large base64 MP3 back inside the upload response.

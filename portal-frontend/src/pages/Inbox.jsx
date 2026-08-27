@@ -361,6 +361,7 @@ function ThreadView({
   const recordingStartedAtRef = useRef(0);
   const discardRecordingRef = useRef(false);
   const recordingStartingRef = useRef(false);
+  const recordingRequestIdRef = useRef(0);
   const mountedRef = useRef(true);
   const activeContactIdRef = useRef(contact?.contact_id);
   const activeContactModeRef = useRef(contact?.mode);
@@ -423,6 +424,8 @@ function ThreadView({
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      recordingRequestIdRef.current += 1;
+      recordingStartingRef.current = false;
       discardRecordingRef.current = true;
       if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
       const recorder = mediaRecorderRef.current;
@@ -489,6 +492,12 @@ function ThreadView({
   }
 
   function cancelRecording() {
+    // Invalidate a getUserMedia request that is still waiting for the browser
+    // permission prompt. The request itself cannot be aborted, but its stream
+    // will be stopped immediately if it eventually resolves.
+    recordingRequestIdRef.current += 1;
+    recordingStartingRef.current = false;
+    if (mountedRef.current) setIsStartingRecording(false);
     discardRecordingRef.current = true;
     const recorder = mediaRecorderRef.current;
     if (recorder?.state === "recording" || recorder?.state === "paused") {
@@ -516,6 +525,8 @@ function ThreadView({
     }
 
     recordingStartingRef.current = true;
+    const requestId = recordingRequestIdRef.current + 1;
+    recordingRequestIdRef.current = requestId;
     setIsStartingRecording(true);
 
     try {
@@ -530,6 +541,7 @@ function ThreadView({
       // they finally answer the prompt.
       if (
         !mountedRef.current ||
+        recordingRequestIdRef.current !== requestId ||
         activeContactIdRef.current !== recordingContactId ||
         activeContactModeRef.current !== "human"
       ) {
@@ -599,6 +611,9 @@ function ThreadView({
         if (elapsed >= MAX_VOICE_SECONDS) stopRecording();
       }, 250);
     } catch (err) {
+      // A newer recording request may already be active. Do not let this
+      // stale request stop its stream or overwrite its UI state.
+      if (recordingRequestIdRef.current !== requestId) return;
       cleanupRecordingHardware();
       if (!mountedRef.current) return;
       const message =
@@ -609,8 +624,10 @@ function ThreadView({
           : "Couldn't start recording. Please check your microphone and try again.";
       onToast(message, "error");
     } finally {
-      recordingStartingRef.current = false;
-      if (mountedRef.current) setIsStartingRecording(false);
+      if (recordingRequestIdRef.current === requestId) {
+        recordingStartingRef.current = false;
+        if (mountedRef.current) setIsStartingRecording(false);
+      }
     }
   }
 
@@ -724,12 +741,19 @@ function ThreadView({
         {isStartingRecording && (
           <div className="flex items-center gap-3 mb-3 pb-3 border-b border-[var(--color-border)]">
             <Spinner className="text-[var(--color-primary)]" />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold">Starting microphone…</p>
               <p className="text-[11px] text-[var(--color-text-muted)]">
                 Allow microphone access if your browser asks.
               </p>
             </div>
+            <button
+              type="button"
+              onClick={cancelRecording}
+              className="text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors"
+            >
+              Cancel
+            </button>
           </div>
         )}
         {isRecording && (
