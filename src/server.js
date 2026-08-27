@@ -43,6 +43,18 @@ const PORT = process.env.PORT || 3000;
 
 // ── WhatsApp webhook: needs the raw body for signature verification, so it
 // gets its own JSON parser instance separate from the portal API's. ──
+// Same reasoning as SESSION_SECRET below: fail fast at startup in production
+// rather than silently accepting unsigned webhook requests, which would let
+// anyone who finds the webhook URL inject fake "patient" messages that the
+// bot processes and replies to.
+if (!process.env.WHATSAPP_APP_SECRET && process.env.NODE_ENV === "production") {
+  console.error(
+    "❌ WHATSAPP_APP_SECRET is not set. Refusing to start, since without it " +
+      "the webhook cannot verify incoming requests actually came from Meta. " +
+      "Set WHATSAPP_APP_SECRET (see .env.example) and restart."
+  );
+  process.exit(1);
+}
 const webhookJsonParser = bodyParser.json({ verify: verifyWebhookSignature });
 
 // ── Portal API: normal JSON parsing + signed session cookie for staff login. ──
