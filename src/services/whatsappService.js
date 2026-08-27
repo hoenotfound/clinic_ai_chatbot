@@ -95,11 +95,16 @@ async function sendImage(to, imageUrl, caption) {
 }
 
 /**
- * Uploads local media bytes to the WhatsApp Cloud API media endpoint and
- * returns the media ID used by sendImageById() or sendVoiceById().
+ * Uploads a local file (e.g. an image a staff member picked from their
+ * computer) to the WhatsApp Cloud API's media endpoint, returning a media ID
+ * that can be passed to sendImageById(). This is the counterpart to
+ * sendImage() above: sendImage() needs a *publicly hosted* URL (fine for the
+ * promo graphic, which lives on our own server/CDN), but staff-uploaded
+ * images only exist as bytes in memory — uploading them to WhatsApp first
+ * avoids having to stand up public hosting just to send one photo.
  * @param {Buffer} buffer - raw file bytes
  * @param {string} mimeType - e.g. "image/jpeg", "image/png", "audio/ogg"
- * @param {string} [filename] - filename supplied to Meta
+ * @param {string} [filename] - filename supplied to Meta (important for voice.ogg)
  * @returns {Promise<string|null>} the WhatsApp media ID, or null on failure
  */
 async function uploadMedia(buffer, mimeType, filename = "upload") {
@@ -108,8 +113,10 @@ async function uploadMedia(buffer, mimeType, filename = "upload") {
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/media`;
 
   try {
-    // Match the multipart shape verified to work for WhatsApp voice notes:
+    // Keep this multipart shape aligned with the raw curl request that was
+    // independently proven to deliver a WhatsApp voice note successfully:
     // messaging_product + one file part whose own Content-Type is audio/ogg.
+    // Do not add a separate `type` form field.
     const form = new FormData();
     form.append("messaging_product", "whatsapp");
     form.append("file", new Blob([buffer], { type: mimeType }), filename);
@@ -184,8 +191,10 @@ async function sendImageById(to, mediaId, caption) {
  * @param {string} to - recipient's WhatsApp ID (phone number, no '+')
  * @param {string} mediaId - ID returned by uploadMedia()
  * @returns {Promise<{success: boolean, wamid: string|null}>} success is true if Meta
- *   *accepted* the message — this is NOT proof of actual delivery. The real
- *   outcome arrives later via the status-update webhook, matched by wamid.
+ *   *accepted* the message — this is NOT proof the patient's phone actually
+ *   received it. A 200 here only means Meta queued it for delivery; the real
+ *   outcome (delivered vs. failed, and why) arrives later via the status-update
+ *   webhook (see parseStatusUpdates), matched back to this send by wamid.
  */
 async function sendVoiceById(to, mediaId) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -221,7 +230,10 @@ async function sendVoiceById(to, mediaId) {
 }
 
 /**
- * Downloads a media attachment from the WhatsApp Cloud API.
+ * Downloads a media attachment (e.g. a voice note) from the WhatsApp Cloud API.
+ * This is a two-step process: first resolve the media ID to a short-lived
+ * URL, then fetch the bytes from that URL — both requests need the same
+ * bearer token, but the second one is what actually returns the audio.
  * @param {string} mediaId
  * @returns {Promise<{buffer: Buffer, mimeType: string}|null>} null on any failure
  */
@@ -258,6 +270,10 @@ async function downloadMedia(mediaId) {
  * Pulls out every inbound message from a WhatsApp webhook payload.
  * Returns an array (usually 0 or 1 entries, but Meta can batch several
  * if a patient sends multiple texts in quick succession).
+ * Skips anything that isn't a genuine new inbound message — in particular,
+ * delivery/read/failed status updates for messages *we* sent arrive as a
+ * separate payload shape (value.statuses, no value.messages); see
+ * parseStatusUpdates() below for those.
  */
 function parseIncomingMessages(body) {
   try {
@@ -267,7 +283,7 @@ function parseIncomingMessages(body) {
     const messages = value?.messages;
     const contacts = value?.contacts || [];
 
-    if (!messages || messages.length === 0) return [];
+    if (!messages || messages.length === 0) return []; // status update, not a new message
 
     return messages.map((message) => {
       const whatsappContact = contacts.find((contact) => contact.wa_id === message.from);
@@ -323,7 +339,12 @@ function parseIncomingMessages(body) {
 }
 
 /**
- * Pulls out delivery-status updates for outbound WhatsApp messages.
+ * Pulls out every delivery-status update from a WhatsApp webhook payload —
+ * the async 'sent' / 'delivered' / 'read' / 'failed' callbacks Meta sends
+ * for messages *we* sent (staff replies, AI replies, promo images). These
+ * arrive as a separate payload shape from inbound patient messages: no
+ * value.messages, just value.statuses. parseIncomingMessages() above
+ * silently skips these; this is the counterpart that actually reads them.
  * @returns {Array<{wamid: string, status: string, errorCode: number|null,
  *   errorTitle: string|null, errorMessage: string|null}>}
  */
