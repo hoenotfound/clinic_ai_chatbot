@@ -7,6 +7,7 @@ import ContactAvatar from "../components/ContactAvatar";
 
 const MESSAGE_PAGE_SIZE = 50;
 const MAX_INCREMENTAL_MESSAGES = 100;
+const DELIVERY_STATUS_BATCH_SIZE = 500;
 const REALTIME_DEBOUNCE_MS = 100;
 const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_BYTES = 16 * 1024 * 1024;
@@ -34,8 +35,15 @@ function mergeMessageState(existing, incoming, { allowFailedReset = false } = {}
   const merged = { ...existing, ...incoming };
   const existingStatus = existing.delivery_status;
   const incomingStatus = incoming.delivery_status;
+  const incomingHasWamid = Object.prototype.hasOwnProperty.call(incoming, "whatsapp_message_id");
+  const deliveryAttemptChanged =
+    incomingHasWamid && existing.whatsapp_message_id !== incoming.whatsapp_message_id;
 
-  if (allowFailedReset && existingStatus === "failed" && incomingStatus !== "failed") {
+  if (
+    (allowFailedReset || deliveryAttemptChanged) &&
+    existingStatus === "failed" &&
+    incomingStatus !== "failed"
+  ) {
     return merged;
   }
 
@@ -84,10 +92,12 @@ export default function Inbox() {
   const [actionPending, setActionPending] = useState(false);
   const [conversationStatePending, setConversationStatePending] = useState(false);
   const selectedIdRef = useRef(selectedId);
+  const messagesRef = useRef(messages);
   const latestMessageIdRef = useRef(null);
   const threadRequestVersionRef = useRef(0);
 
   selectedIdRef.current = selectedId;
+  messagesRef.current = messages;
   latestMessageIdRef.current = newestPersistedMessageId(messages);
 
   async function refreshConversations() {
@@ -127,6 +137,37 @@ export default function Inbox() {
       }
     } catch (err) {
       console.error("Failed to refresh messages:", err);
+    }
+  }
+
+  async function reconcileLoadedDeliveryStatuses(contactId) {
+    if (contactId == null) return;
+    const messageIds = messagesRef.current
+      .filter((message) => message.role !== "user" && Number.isInteger(message.id))
+      .map((message) => message.id);
+    if (!messageIds.length) return;
+
+    try {
+      const batches = [];
+      for (let index = 0; index < messageIds.length; index += DELIVERY_STATUS_BATCH_SIZE) {
+        batches.push(
+          api.getMessageDeliveryStatuses(
+            contactId,
+            messageIds.slice(index, index + DELIVERY_STATUS_BATCH_SIZE)
+          )
+        );
+      }
+      const statuses = (await Promise.all(batches)).flat();
+      if (selectedIdRef.current !== contactId) return;
+      const byId = new Map(statuses.map((status) => [Number(status.id), status]));
+      setMessages((current) =>
+        current.map((message) => {
+          const status = byId.get(Number(message.id));
+          return status ? mergeMessageState(message, status) : message;
+        })
+      );
+    } catch (err) {
+      console.error("Failed to reconcile delivery statuses:", err);
     }
   }
 
@@ -221,6 +262,9 @@ export default function Inbox() {
           (changedContacts.size === 0 || changedContacts.has(Number(currentId)))
         ) {
           await refreshMessagesForContact(currentId);
+          if (changedContacts.size === 0) {
+            await reconcileLoadedDeliveryStatuses(currentId);
+          }
         }
       }, REALTIME_DEBOUNCE_MS);
     }
@@ -240,6 +284,7 @@ export default function Inbox() {
                 ? mergeMessageState(
                     message,
                     {
+                      whatsapp_message_id: payload.whatsappMessageId ?? message.whatsapp_message_id,
                       delivery_status: payload.deliveryStatus,
                       delivery_error: payload.deliveryError || null,
                     },

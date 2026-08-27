@@ -39,6 +39,7 @@ function publishDeliveryStatus(message) {
   realtimeEvents.publish("conversation_changed", {
     contactId: message.contact_id,
     messageId: message.id,
+    whatsappMessageId: message.whatsapp_message_id,
     deliveryStatus: message.delivery_status,
     deliveryError: message.delivery_error,
     reason: "delivery_status",
@@ -320,16 +321,23 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
       if (isFirstMessage) {
         const promo = getActivePromotion(clinicConfig.promotions);
         if (promo) {
+          // Save first so an immediate rejection still appears as failed in
+          // the Inbox and staff can retry the same promo message.
+          const savedPromo = await conversationStore.appendMessage(
+            from,
+            "assistant",
+            promo.caption || "",
+            null,
+            null,
+            promo.imageUrl
+          );
           const promoResult = await whatsapp.sendImage(from, promo.imageUrl, promo.caption);
+          await persistSendOutcome(savedPromo, promoResult);
           // Never throw on a failed promo image — the text reply already
           // succeeded and that's what actually matters to the patient.
           if (!promoResult.success) {
             console.warn(`Promo image failed to send to ${from}, continuing without it.`);
-          } else {
-            // Persist it so it shows up in the Inbox too, not just on the
-            // patient's WhatsApp — previously this was sent but never saved.
-            const savedPromo = await conversationStore.appendMessage(from, "assistant", promo.caption || "", null, null, promo.imageUrl);
-            await persistSendOutcome(savedPromo, promoResult);
+            await contactsRepo.setAttention(contact.id, true, `Delivery failed: ${SEND_REJECTED_ERROR}`);
           }
         }
       }

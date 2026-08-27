@@ -84,7 +84,7 @@ async function getMessagePageForContact(
 
   if (afterId != null) {
     const result = await pool.query(
-      `SELECT id, role, content, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
+      `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
               delivery_status, delivery_error
        FROM messages
        WHERE contact_id = $1 AND id > $2
@@ -103,7 +103,7 @@ async function getMessagePageForContact(
   params.push(safeLimit + 1);
 
   const result = await pool.query(
-    `SELECT id, role, content, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
+    `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
             delivery_status, delivery_error
      FROM messages
      WHERE contact_id = $1${cursorClause}
@@ -145,6 +145,20 @@ async function getMessageForRetry(contactId, messageId) {
   return result.rows[0] || null;
 }
 
+// Resyncs the delivery state for messages that are already visible in an
+// Inbox thread after its SSE connection reconnects. Restricting by contact id
+// prevents message ids from another conversation being exposed accidentally.
+async function getDeliveryStatusesForContact(contactId, messageIds) {
+  if (!messageIds.length) return [];
+  const result = await pool.query(
+    `SELECT id, whatsapp_message_id, delivery_status, delivery_error
+     FROM messages
+     WHERE contact_id = $1 AND id = ANY($2::int[])`,
+    [contactId, messageIds]
+  );
+  return result.rows;
+}
+
 async function messageExistsByWhatsappId(whatsappMessageId) {
   if (!whatsappMessageId) return false;
   const result = await pool.query(
@@ -181,6 +195,17 @@ async function setDeliveryStatusById(messageId, status, errorText = null) {
   return result.rows[0] || null;
 }
 
+async function hasFailedMessagesForContact(contactId) {
+  const result = await pool.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM messages
+       WHERE contact_id = $1 AND role = 'assistant' AND delivery_status = 'failed'
+     ) AS has_failed`,
+    [contactId]
+  );
+  return result.rows[0]?.has_failed === true;
+}
+
 /**
  * Delivery webhooks only need the contact id (for failures) plus status data.
  * Never return media_base64 here. Repeated identical webhook statuses are also
@@ -208,7 +233,7 @@ async function updateDeliveryStatusByWamid(whatsappMessageId, status, errorText 
               ELSE -1
             END
        )
-     RETURNING id, contact_id, delivery_status, delivery_error`,
+     RETURNING id, contact_id, whatsapp_message_id, delivery_status, delivery_error`,
     [whatsappMessageId, status, errorText]
   );
   return result.rows[0] || null;
@@ -220,8 +245,10 @@ module.exports = {
   getMessagePageForContact,
   getMessageMediaForContact,
   getMessageForRetry,
+  getDeliveryStatusesForContact,
   messageExistsByWhatsappId,
   setWhatsappMessageId,
   setDeliveryStatusById,
+  hasFailedMessagesForContact,
   updateDeliveryStatusByWamid,
 };

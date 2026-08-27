@@ -15,6 +15,7 @@ const MAX_INCREMENTAL_PAGE_SIZE = 100;
 const SSE_HEARTBEAT_MS = 25 * 1000;
 const SEND_REJECTED_ERROR =
   "WhatsApp did not accept this message. Check the reply window or connection and try again.";
+const MAX_DELIVERY_STATUS_IDS = 500;
 const retryingMessageIds = new Set();
 
 const upload = multer({
@@ -64,6 +65,7 @@ function publishDeliveryStatus(message) {
   realtimeEvents.publish("conversation_changed", {
     contactId: message.contact_id,
     messageId: message.id,
+    whatsappMessageId: message.whatsapp_message_id,
     deliveryStatus: message.delivery_status,
     deliveryError: message.delivery_error,
     reason: "delivery_status",
@@ -375,6 +377,32 @@ router.patch("/:contactId/follow-up", async (req, res) => {
   }
 });
 
+router.post("/:contactId/messages/delivery-statuses", async (req, res) => {
+  try {
+    const contactId = parsePositiveInt(req.params.contactId);
+    if (!contactId) return res.status(400).json({ error: "Invalid contact id." });
+
+    const rawMessageIds = req.body?.messageIds;
+    if (!Array.isArray(rawMessageIds) || rawMessageIds.length > MAX_DELIVERY_STATUS_IDS) {
+      return res.status(400).json({
+        error: `messageIds must be an array of at most ${MAX_DELIVERY_STATUS_IDS} ids.`,
+      });
+    }
+
+    const messageIds = rawMessageIds.map(parsePositiveInt);
+    if (messageIds.some((id) => id == null)) {
+      return res.status(400).json({ error: "Every message id must be a positive integer." });
+    }
+
+    const uniqueMessageIds = [...new Set(messageIds)];
+    const statuses = await messagesRepo.getDeliveryStatusesForContact(contactId, uniqueMessageIds);
+    res.json(statuses);
+  } catch (err) {
+    console.error("Failed to resync delivery statuses:", err);
+    res.status(500).json({ error: "Something went wrong refreshing delivery statuses." });
+  }
+});
+
 router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
   const contactId = parsePositiveInt(req.params.contactId);
   const messageId = parsePositiveInt(req.params.messageId);
@@ -406,7 +434,12 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     const updated = await persistSendOutcome(message, sendResult, errorText);
 
     if (sendResult.success) {
-      if (contact.needs_attention && contact.attention_reason?.startsWith("Delivery failed:")) {
+      const hasOtherFailedMessages = await messagesRepo.hasFailedMessagesForContact(contact.id);
+      if (
+        !hasOtherFailedMessages &&
+        contact.needs_attention &&
+        contact.attention_reason?.startsWith("Delivery failed:")
+      ) {
         await contactsRepo.setAttention(contact.id, false);
       }
     } else {
