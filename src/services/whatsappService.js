@@ -113,6 +113,9 @@ async function uploadMedia(buffer, mimeType, filename = "upload") {
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/media`;
 
   try {
+     // TEMP DIAGNOSTIC — remove once the voice-delivery mimetype issue is confirmed fixed.
+    console.log("[uploadMedia] uploading with mimeType:", JSON.stringify(mimeType), "filename:", filename, "bytes:", buffer.length);
+
     const form = new FormData();
     form.append("messaging_product", "whatsapp");
     form.append("file", new Blob([buffer], { type: mimeType }), filename);
