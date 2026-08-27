@@ -15,6 +15,7 @@ import {
   ImageIcon,
   MailIcon,
   MicrophoneIcon,
+  MoreIcon,
   SearchIcon,
   SendIcon,
   UserIcon,
@@ -1061,6 +1062,7 @@ function ThreadView({
   const discardRecordingRef = useRef(false);
   const recordingStartingRef = useRef(false);
   const recordingRequestIdRef = useRef(0);
+  const actionsMenuRef = useRef(null);
   const mountedRef = useRef(true);
   const activeContactIdRef = useRef(contact?.contact_id);
   const activeContactModeRef = useRef(contact?.mode);
@@ -1076,6 +1078,7 @@ function ThreadView({
   const [voiceDuration, setVoiceDuration] = useState(0);
   const [voicePreviewUrl, setVoicePreviewUrl] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
 
   activeContactIdRef.current = contact?.contact_id;
   activeContactModeRef.current = contact?.mode;
@@ -1122,6 +1125,25 @@ function ThreadView({
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
   }, [draft]);
+
+  useEffect(() => {
+    if (!actionsOpen) return;
+
+    function handlePointerDown(event) {
+      if (!actionsMenuRef.current?.contains(event.target)) setActionsOpen(false);
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") setActionsOpen(false);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [actionsOpen]);
 
   function handleThreadScroll() {
     const el = threadScrollRef.current;
@@ -1391,63 +1413,97 @@ function ThreadView({
               </div>
             </div>
           </div>
-          {contact.mode === "human" ? (
+          <div ref={actionsMenuRef} className="relative flex shrink-0 items-center gap-2">
+            {contact.mode === "human" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setActionsOpen(false);
+                  onReturnToAi();
+                }}
+                disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
+                title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice recording first" : "Return control to AI"}
+                className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50"
+              >
+                {actionPending && <Spinner />}
+                <BotIcon className="hidden h-4 w-4 sm:block" />
+                Return to AI
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setActionsOpen(false);
+                  onTakeOver();
+                }}
+                disabled={actionPending}
+                className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-[var(--color-primary)] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50"
+              >
+                {actionPending && <Spinner />}
+                <UserIcon className="hidden h-4 w-4 sm:block" />
+                Take over
+              </button>
+            )}
             <button
               type="button"
-              onClick={onReturnToAi}
-              disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
-              title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice recording first" : "Return control to AI"}
-              className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50"
+              onClick={() => setActionsOpen((current) => !current)}
+              aria-label="Conversation actions"
+              aria-haspopup="menu"
+              aria-expanded={actionsOpen}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${
+                actionsOpen
+                  ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                  : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
+              }`}
             >
-              {actionPending && <Spinner />}
-              <BotIcon className="hidden h-4 w-4 sm:block" />
-              Return to AI
+              <MoreIcon className="h-5 w-5" />
             </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onTakeOver}
-              disabled={actionPending}
-              className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-[var(--color-primary)] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50"
-            >
-              {actionPending && <Spinner />}
-              <UserIcon className="hidden h-4 w-4 sm:block" />
-              Take over
-            </button>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 overflow-x-auto border-t border-[var(--color-border)] px-3 py-2 sm:px-5">
-          <span className="hidden shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)] lg:inline">Actions</span>
-          <button
-            type="button"
-            onClick={onToggleFollowUp}
-            disabled={conversationStatePending}
-            aria-pressed={!!contact.needs_follow_up}
-            title={contact.needs_follow_up ? "Remove follow-up flag" : "Add to follow-up list"}
-            className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${
-              contact.needs_follow_up
-                ? "border-[var(--color-accent)]/40 bg-[var(--color-accent-light)] text-[#8a5d13]"
-                : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
-            }`}
-          >
-            <FlagIcon className="h-3.5 w-3.5" />
-            {contact.needs_follow_up ? "Follow-up saved" : "Add follow-up"}
-          </button>
-          <button
-            type="button"
-            onClick={onToggleUnread}
-            disabled={conversationStatePending}
-            aria-pressed={!!contact.is_unread}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] disabled:opacity-50"
-          >
-            <MailIcon className="h-3.5 w-3.5" />
-            {contact.is_unread ? "Mark as read" : "Mark unread"}
-          </button>
+            {actionsOpen && (
+              <div role="menu" aria-label="Conversation actions" className="absolute right-0 top-full z-40 mt-2 w-64 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-white p-2 shadow-[0_18px_48px_rgba(24,39,33,0.18)]">
+                <div className="px-2.5 pb-2 pt-1.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Conversation actions</p>
+                </div>
+                <ConversationActionItem
+                  icon={FlagIcon}
+                  label={contact.needs_follow_up ? "Remove follow-up" : "Add follow-up"}
+                  description={contact.needs_follow_up ? "Remove this conversation from follow-up" : "Save this conversation for follow-up"}
+                  active={!!contact.needs_follow_up}
+                  disabled={conversationStatePending}
+                  onClick={() => {
+                    setActionsOpen(false);
+                    onToggleFollowUp();
+                  }}
+                />
+                <ConversationActionItem
+                  icon={MailIcon}
+                  label={contact.is_unread ? "Mark as read" : "Mark as unread"}
+                  description={contact.is_unread ? "Remove the unread status" : "Return this conversation to Unread"}
+                  active={!!contact.is_unread}
+                  disabled={conversationStatePending}
+                  onClick={() => {
+                    setActionsOpen(false);
+                    onToggleUnread();
+                  }}
+                />
+                {contact.needs_attention && (
+                  <ConversationActionItem
+                    icon={AlertIcon}
+                    label="Dismiss needs attention"
+                    description="Remove the attention flag"
+                    tone="danger"
+                    onClick={() => {
+                      setActionsOpen(false);
+                      onDismissAttention();
+                    }}
+                  />
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {contact.needs_attention && (
-          <div className="flex items-start justify-between gap-3 border-t border-[var(--color-danger)]/15 bg-[var(--color-danger-light)] px-4 py-2.5 text-[var(--color-danger)] sm:px-5">
+          <div className="flex items-start gap-3 border-t border-[var(--color-danger)]/15 bg-[var(--color-danger-light)] px-4 py-2.5 text-[var(--color-danger)] sm:px-5">
             <div className="flex min-w-0 items-start gap-2">
               <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
               <div className="min-w-0">
@@ -1455,9 +1511,6 @@ function ThreadView({
                 <p className="truncate text-[11px] opacity-80">{contact.attention_reason || "This conversation was flagged for staff review."}</p>
               </div>
             </div>
-            <button type="button" onClick={onDismissAttention} className="shrink-0 rounded-lg px-2 py-1 text-[11px] font-semibold hover:bg-white/60">
-              Dismiss
-            </button>
           </div>
         )}
       </header>
@@ -1587,6 +1640,41 @@ function ThreadView({
 
       <Lightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
     </section>
+  );
+}
+
+function ConversationActionItem({ icon: Icon, label, description, active, disabled, tone = "default", onClick }) {
+  const danger = tone === "danger";
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex w-full items-start gap-3 rounded-xl px-2.5 py-2.5 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${
+        danger
+          ? "text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+          : active
+          ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+          : "text-[var(--color-text)] hover:bg-[var(--color-bg)]"
+      }`}
+    >
+      <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+        danger
+          ? "bg-[var(--color-danger-light)]"
+          : active
+          ? "bg-white/70"
+          : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"
+      }`}>
+        <Icon className="h-4 w-4" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-xs font-semibold">{label}</span>
+        <span className={`mt-0.5 block text-[10px] leading-4 ${danger ? "opacity-75" : "text-[var(--color-text-muted)]"}`}>
+          {description}
+        </span>
+      </span>
+    </button>
   );
 }
 
