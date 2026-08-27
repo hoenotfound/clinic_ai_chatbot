@@ -69,7 +69,9 @@ async function getMessagesForContact(contactId, limit = 50, includeMedia = true)
 /**
  * Lightweight portal page. Initial/before pages fetch one extra row so the
  * UI knows whether a "Load older messages" button is needed without a second
- * COUNT(*) query. afterId is used for tiny incremental refreshes.
+ * COUNT(*) query. afterId returns every unseen lightweight row so an SSE
+ * reconnect can fully catch up even when more than 100 messages arrived while
+ * the browser was disconnected.
  */
 async function getMessagePageForContact(
   contactId,
@@ -86,11 +88,10 @@ async function getMessagePageForContact(
               delivery_status, delivery_error
        FROM messages
        WHERE contact_id = $1 AND id > $2
-       ORDER BY id ASC
-       LIMIT $3`,
-      [contactId, afterId, safeLimit]
+       ORDER BY id ASC`,
+      [contactId, afterId]
     );
-    return { rows: result.rows, hasMore: result.rows.length === safeLimit };
+    return { rows: result.rows, hasMore: false };
   }
 
   const params = [contactId];
