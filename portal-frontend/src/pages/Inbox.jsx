@@ -5,78 +5,53 @@ import { useToasts, ToastContainer } from "../components/Toast";
 import Lightbox from "../components/Lightbox";
 import ContactAvatar from "../components/ContactAvatar";
 
-const POLL_INTERVAL_MS = 5000;
-const MAX_IMAGE_BYTES = 16 * 1024 * 1024; // matches the server's Multer limit / WhatsApp's own cap
+const CONVERSATION_POLL_INTERVAL_MS = 60_000;
+const THREAD_POLL_INTERVAL_MS = 30_000;
+const MESSAGE_PAGE_SIZE = 50;
+const MAX_INCREMENTAL_MESSAGES = 100;
+const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_SECONDS = 120;
 const VOICE_MIME_TYPES = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"];
+
+function isPageVisible() {
+  return typeof document === "undefined" || !document.hidden;
+}
+
+function newestPersistedMessageId(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (Number.isInteger(messages[i]?.id)) return messages[i].id;
+  }
+  return null;
+}
+
+function mergeMessages(existing, incoming) {
+  if (!incoming?.length) return existing;
+  const byId = new Map(existing.map((message) => [message.id, message]));
+  for (const message of incoming) byId.set(message.id, message);
+  return Array.from(byId.values()).sort((a, b) => {
+    const aId = Number.isInteger(a.id) ? a.id : Number.MAX_SAFE_INTEGER;
+    const bId = Number.isInteger(b.id) ? b.id : Number.MAX_SAFE_INTEGER;
+    return aId - bId;
+  });
+}
 
 export default function Inbox() {
   const { username } = useAuth();
   const { toasts, showToast, dismissToast } = useToasts();
 
-  const [conversations, setConversations] = useState(null); // null = loading
+  const [conversations, setConversations] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
-  const [actionPending, setActionPending] = useState(false); // takeover/return/send in flight
+  const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
+  const [hasMoreOlderMessages, setHasMoreOlderMessages] = useState(false);
+  const [actionPending, setActionPending] = useState(false);
   const selectedIdRef = useRef(selectedId);
+  const latestMessageIdRef = useRef(null);
 
-  // Send requests can take several seconds, especially while converting and
-  // transcribing voice recordings. Keep the current selection in a ref so a
-  // late refresh for the previous contact cannot replace the new chat's messages.
   selectedIdRef.current = selectedId;
-
-  // ── Poll conversation list ──
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const data = await api.listConversations();
-        if (!cancelled) setConversations(data);
-      } catch (err) {
-        console.error("Failed to load conversations:", err);
-      }
-    }
-    load();
-    const interval = setInterval(load, POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
-
-  // Auto-select the first (most recent) conversation once loaded, if nothing's selected yet.
-  useEffect(() => {
-    if (conversations?.length && selectedId == null) {
-      setSelectedId(conversations[0].contact_id);
-    }
-  }, [conversations, selectedId]);
-
-  // ── Poll selected thread ──
-  useEffect(() => {
-    if (selectedId == null) return;
-    let cancelled = false;
-
-    async function load(showLoading) {
-      if (showLoading) setMessagesLoading(true);
-      try {
-        const data = await api.getMessages(selectedId, { includeMedia: false });
-        if (!cancelled) setMessages(data.messages);
-      } catch (err) {
-        console.error("Failed to load messages:", err);
-      } finally {
-        if (showLoading) setMessagesLoading(false);
-      }
-    }
-
-    load(true);
-    const interval = setInterval(() => load(false), POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [selectedId]);
+  latestMessageIdRef.current = newestPersistedMessageId(messages);
 
   async function refreshConversations() {
     try {
@@ -87,16 +62,144 @@ export default function Inbox() {
     }
   }
 
+  // Conversation summaries change less often than an active thread. Poll once
+  // a minute, and stop completely while the tab is hidden.
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (!isPageVisible()) return;
+      try {
+        const data = await api.listConversations();
+        if (!cancelled) setConversations(data);
+      } catch (err) {
+        console.error("Failed to load conversations:", err);
+      }
+    }
+
+    load();
+    const interval = setInterval(load, CONVERSATION_POLL_INTERVAL_MS);
+    const onVisibilityChange = () => {
+      if (!document.hidden) load();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (conversations?.length && selectedId == null) {
+      setSelectedId(conversations[0].contact_id);
+    }
+  }, [conversations, selectedId]);
+
+  // Initial load is just the newest 50 messages. Subsequent checks ask only
+  // for rows with id > newestId, so an idle Inbox receives an empty JSON array
+  // instead of the entire conversation every few seconds.
+  useEffect(() => {
+    if (selectedId == null) return;
+    let cancelled = false;
+
+    async function initialLoad() {
+      setMessagesLoading(true);
+      try {
+        const data = await api.getMessages(selectedId, {
+          includeMedia: false,
+          limit: MESSAGE_PAGE_SIZE,
+        });
+        if (!cancelled) {
+          setMessages(data.messages);
+          setHasMoreOlderMessages(!!data.hasMore);
+        }
+      } catch (err) {
+        console.error("Failed to load messages:", err);
+      } finally {
+        if (!cancelled) setMessagesLoading(false);
+      }
+    }
+
+    async function incrementalLoad() {
+      if (!isPageVisible()) return;
+      const contactId = selectedId;
+      const afterId = latestMessageIdRef.current;
+      if (!afterId) return;
+      try {
+        const data = await api.getMessages(contactId, {
+          includeMedia: false,
+          limit: MAX_INCREMENTAL_MESSAGES,
+          afterId,
+        });
+        if (!cancelled && selectedIdRef.current === contactId && data.messages?.length) {
+          setMessages((prev) => mergeMessages(prev, data.messages));
+        }
+      } catch (err) {
+        console.error("Failed to check for new messages:", err);
+      }
+    }
+
+    setMessages([]);
+    setHasMoreOlderMessages(false);
+    initialLoad();
+    const interval = setInterval(incrementalLoad, THREAD_POLL_INTERVAL_MS);
+    const onVisibilityChange = () => {
+      if (!document.hidden) incrementalLoad();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [selectedId]);
+
   async function refreshMessages() {
     const contactId = selectedId;
     if (contactId == null) return;
+    const afterId = latestMessageIdRef.current;
+
     try {
-      const data = await api.getMessages(contactId, { includeMedia: false });
+      const data = await api.getMessages(contactId, {
+        includeMedia: false,
+        limit: afterId ? MAX_INCREMENTAL_MESSAGES : MESSAGE_PAGE_SIZE,
+        afterId,
+      });
       if (selectedIdRef.current === contactId) {
-        setMessages(data.messages);
+        if (afterId) {
+          if (data.messages?.length) setMessages((prev) => mergeMessages(prev, data.messages));
+        } else {
+          setMessages(data.messages);
+          setHasMoreOlderMessages(!!data.hasMore);
+        }
       }
     } catch (err) {
       console.error("Failed to refresh messages:", err);
+    }
+  }
+
+  async function loadOlderMessages() {
+    if (selectedId == null || olderMessagesLoading || !hasMoreOlderMessages) return;
+    const oldestId = messages.find((message) => Number.isInteger(message.id))?.id;
+    if (!oldestId) return;
+
+    setOlderMessagesLoading(true);
+    try {
+      const data = await api.getMessages(selectedId, {
+        includeMedia: false,
+        limit: MESSAGE_PAGE_SIZE,
+        beforeId: oldestId,
+      });
+      if (selectedIdRef.current === selectedId) {
+        setMessages((prev) => mergeMessages(data.messages || [], prev));
+        setHasMoreOlderMessages(!!data.hasMore);
+      }
+    } catch (err) {
+      console.error("Failed to load older messages:", err);
+      showToast("Couldn't load older messages. Please try again.", "error");
+    } finally {
+      setOlderMessagesLoading(false);
     }
   }
 
@@ -138,8 +241,6 @@ export default function Inbox() {
     }
   }
 
-  // Optimistic bubbles get a locally-unique string id (never collides with a
-  // real numeric DB id) so they can be targeted for removal if the send fails.
   function makeOptimisticId() {
     return `optimistic-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
@@ -166,9 +267,8 @@ export default function Inbox() {
 
     try {
       const result = await api.sendMessage(selectedId, text.trim());
-      // Replaces the whole list from the server, so the optimistic bubble
-      // above is swapped out for the real (persisted) message in one go.
-      await Promise.all([refreshMessages(), refreshConversations()]);
+      setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [result]));
+      await refreshConversations();
       if (result?.delivered === false) {
         showToast(
           "Message saved but WhatsApp delivery failed — the patient may not have received it. Please try resending.",
@@ -210,7 +310,8 @@ export default function Inbox() {
 
     try {
       const result = await api.sendImage(selectedId, file, caption);
-      await Promise.all([refreshMessages(), refreshConversations()]);
+      setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [result]));
+      await refreshConversations();
       if (result?.delivered === false) {
         showToast(
           "Image saved but WhatsApp delivery failed — the patient may not have received it. Please try resending.",
@@ -234,7 +335,8 @@ export default function Inbox() {
 
     try {
       const result = await api.sendVoice(selectedId, recording, mimeType);
-      await Promise.all([refreshMessages(), refreshConversations()]);
+      setMessages((prev) => mergeMessages(prev, [result]));
+      await refreshConversations();
       if (result?.delivered === false) {
         showToast(
           "Voice message saved but WhatsApp delivery failed — the patient may not have received it. Please try recording again.",
@@ -265,7 +367,10 @@ export default function Inbox() {
         contact={selectedContact}
         messages={messages}
         loading={messagesLoading}
+        olderMessagesLoading={olderMessagesLoading}
+        hasMoreOlderMessages={hasMoreOlderMessages}
         actionPending={actionPending}
+        onLoadOlder={loadOlderMessages}
         onTakeOver={handleTakeOver}
         onReturnToAi={handleReturnToAi}
         onDismissAttention={handleDismissAttention}
@@ -342,7 +447,10 @@ function ThreadView({
   contact,
   messages,
   loading,
+  olderMessagesLoading,
+  hasMoreOlderMessages,
   actionPending,
+  onLoadOlder,
   onTakeOver,
   onReturnToAi,
   onDismissAttention,
@@ -383,9 +491,8 @@ function ThreadView({
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [messages]);
+  }, [contact?.contact_id]);
 
-  // Clear the draft whenever the selected conversation changes.
   useEffect(() => {
     setDraft("");
     clearImage();
@@ -394,8 +501,6 @@ function ThreadView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contact?.contact_id]);
 
-  // Voice recording is intentionally available only while staff owns the
-  // conversation. Discard any unsent recording if the chat returns to AI.
   useEffect(() => {
     if (contact && contact.mode !== "human") {
       cancelRecording();
@@ -404,7 +509,6 @@ function ThreadView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contact?.mode]);
 
-  // Revoke the object URL when it's replaced/unmounted, so we don't leak memory.
   useEffect(() => {
     return () => {
       if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
@@ -418,9 +522,6 @@ function ThreadView({
   }, [voicePreviewUrl]);
 
   useEffect(() => {
-    // React StrictMode runs one setup/cleanup cycle twice in development.
-    // Reset this flag in setup so the simulated cleanup does not leave the
-    // real mounted component marked as unmounted.
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
@@ -434,7 +535,6 @@ function ThreadView({
     };
   }, []);
 
-  // Auto-grow the textarea to fit its content, up to the max-h-32 cap below.
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -444,7 +544,7 @@ function ThreadView({
 
   function handleFilePicked(e) {
     const file = e.target.files?.[0];
-    e.target.value = ""; // allow picking the same file again later
+    e.target.value = "";
     if (!file) return;
     if (!file.type.startsWith("image/")) {
       onToast("Please choose an image file.", "error");
@@ -492,9 +592,6 @@ function ThreadView({
   }
 
   function cancelRecording() {
-    // Invalidate a getUserMedia request that is still waiting for the browser
-    // permission prompt. The request itself cannot be aborted, but its stream
-    // will be stopped immediately if it eventually resolves.
     recordingRequestIdRef.current += 1;
     recordingStartingRef.current = false;
     if (mountedRef.current) setIsStartingRecording(false);
@@ -536,9 +633,6 @@ function ThreadView({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
 
-      // The permission prompt can remain open while staff changes chats or
-      // returns the conversation to AI. Do not start a stale recording after
-      // they finally answer the prompt.
       if (
         !mountedRef.current ||
         recordingRequestIdRef.current !== requestId ||
@@ -611,8 +705,6 @@ function ThreadView({
         if (elapsed >= MAX_VOICE_SECONDS) stopRecording();
       }, 250);
     } catch (err) {
-      // A newer recording request may already be active. Do not let this
-      // stale request stop its stream or overwrite its UI state.
       if (recordingRequestIdRef.current !== requestId) return;
       cleanupRecordingHardware();
       if (!mountedRef.current) return;
@@ -661,8 +753,6 @@ function ThreadView({
     setSending(true);
     try {
       if (imageFile) {
-        // Caption travels with the image as one WhatsApp message, same as
-        // how a phone's WhatsApp app attaches a caption to a photo.
         await onSendImage(imageFile, text);
         clearImage();
       } else {
@@ -670,7 +760,7 @@ function ThreadView({
       }
       setDraft("");
     } catch {
-      // error already surfaced to the user in onSend/onSendImage; keep draft so they can retry
+      // error already surfaced to the user; keep draft so they can retry
     } finally {
       setSending(false);
     }
@@ -725,6 +815,18 @@ function ThreadView({
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-3">
+        {hasMoreOlderMessages && (
+          <div className="text-center pb-2">
+            <button
+              type="button"
+              onClick={onLoadOlder}
+              disabled={olderMessagesLoading}
+              className="text-xs font-medium px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] disabled:opacity-50"
+            >
+              {olderMessagesLoading ? "Loading older messages…" : "Load 50 older messages"}
+            </button>
+          </div>
+        )}
         {loading && <p className="text-sm text-[var(--color-text-muted)] text-center">Loading…</p>}
         {messages.map((m) => (
           <MessageBubble
@@ -941,10 +1043,6 @@ function MessageBubble({ contactId, message, onImageClick }) {
     ? api.messageMediaUrl(contactId, message.id)
     : null;
 
-  // previewUrl (a local object URL) is only present on an optimistic bubble
-  // for an image still uploading; otherwise fall back to the real stored
-  // image source once it's come back from the server. Stored attachment
-  // bytes are loaded from an authenticated URL rather than every poll.
   const imageSrc = message.previewUrl || message.media_url || (!isAudio ? storedMediaSrc : null);
   const hasImage = !!imageSrc;
 
