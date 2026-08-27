@@ -44,6 +44,7 @@ export default function Inbox() {
   const [actionPending, setActionPending] = useState(false);
   const selectedIdRef = useRef(selectedId);
   const latestMessageIdRef = useRef(null);
+  const threadRequestVersionRef = useRef(0);
 
   selectedIdRef.current = selectedId;
   latestMessageIdRef.current = newestPersistedMessageId(messages);
@@ -59,6 +60,7 @@ export default function Inbox() {
 
   async function refreshMessagesForContact(contactId) {
     if (contactId == null) return;
+    const requestVersion = ++threadRequestVersionRef.current;
     const afterId = latestMessageIdRef.current;
 
     try {
@@ -67,7 +69,12 @@ export default function Inbox() {
         limit: afterId ? MAX_INCREMENTAL_MESSAGES : MESSAGE_PAGE_SIZE,
         afterId,
       });
-      if (selectedIdRef.current !== contactId) return;
+      if (
+        selectedIdRef.current !== contactId ||
+        threadRequestVersionRef.current !== requestVersion
+      ) {
+        return;
+      }
 
       if (afterId) {
         if (data.messages?.length) {
@@ -95,6 +102,7 @@ export default function Inbox() {
   useEffect(() => {
     if (selectedId == null) return;
     let cancelled = false;
+    const requestVersion = ++threadRequestVersionRef.current;
 
     async function initialLoad() {
       setMessagesLoading(true);
@@ -103,20 +111,27 @@ export default function Inbox() {
           includeMedia: false,
           limit: MESSAGE_PAGE_SIZE,
         });
-        if (!cancelled && selectedIdRef.current === selectedId) {
+        if (
+          !cancelled &&
+          selectedIdRef.current === selectedId &&
+          threadRequestVersionRef.current === requestVersion
+        ) {
           setMessages(data.messages || []);
           setHasMoreOlderMessages(!!data.hasMore);
         }
       } catch (err) {
         console.error("Failed to load messages:", err);
       } finally {
-        if (!cancelled) setMessagesLoading(false);
+        if (
+          !cancelled &&
+          selectedIdRef.current === selectedId &&
+          threadRequestVersionRef.current === requestVersion
+        ) {
+          setMessagesLoading(false);
+        }
       }
     }
 
-    // Loading/sending state belongs to the conversation it started in. Reset
-    // it immediately when staff switch chats so a slow request from Patient A
-    // cannot leave Patient B's controls disabled.
     setOlderMessagesLoading(false);
     setActionPending(false);
     setMessages([]);
@@ -125,6 +140,7 @@ export default function Inbox() {
 
     return () => {
       cancelled = true;
+      threadRequestVersionRef.current += 1;
     };
   }, [selectedId]);
 
@@ -170,9 +186,7 @@ export default function Inbox() {
       if (hasOpenedOnce) scheduleRefresh();
       hasOpenedOnce = true;
     };
-    source.onerror = () => {
-      // EventSource reconnects automatically using the server's retry hint.
-    };
+    source.onerror = () => {};
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -279,10 +293,7 @@ export default function Inbox() {
       }
       await refreshConversations();
       if (result?.delivered === false) {
-        showToast(
-          "Message saved but WhatsApp delivery failed — the patient may not have received it. Please try resending.",
-          "warning"
-        );
+        showToast("Message saved but WhatsApp delivery failed — the patient may not have received it. Please try resending.", "warning");
       }
     } catch (err) {
       console.error("Failed to send message:", err);
@@ -327,10 +338,7 @@ export default function Inbox() {
       }
       await refreshConversations();
       if (result?.delivered === false) {
-        showToast(
-          "Image saved but WhatsApp delivery failed — the patient may not have received it. Please try resending.",
-          "warning"
-        );
+        showToast("Image saved but WhatsApp delivery failed — the patient may not have received it. Please try resending.", "warning");
       }
     } catch (err) {
       console.error("Failed to send image:", err);
@@ -357,10 +365,7 @@ export default function Inbox() {
       }
       await refreshConversations();
       if (result?.delivered === false) {
-        showToast(
-          "Voice message saved but WhatsApp delivery failed — the patient may not have received it. Please try recording again.",
-          "warning"
-        );
+        showToast("Voice message saved but WhatsApp delivery failed — the patient may not have received it. Please try recording again.", "warning");
       } else if (result?.transcribed === false) {
         showToast("Voice message sent. Its transcript couldn't be generated, but the recording was saved.", "info");
       }
@@ -377,11 +382,7 @@ export default function Inbox() {
 
   return (
     <div className="flex h-full">
-      <ConversationList
-        conversations={conversations}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-      />
+      <ConversationList conversations={conversations} selectedId={selectedId} onSelect={setSelectedId} />
       <ThreadView
         key={selectedId ?? "no-conversation"}
         contact={selectedContact}
@@ -522,19 +523,14 @@ function ThreadView({
       cancelRecording();
       clearVoice();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contact?.mode]);
 
-  useEffect(() => {
-    return () => {
-      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-    };
+  useEffect(() => () => {
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
   }, [imagePreviewUrl]);
 
-  useEffect(() => {
-    return () => {
-      if (voicePreviewUrl) URL.revokeObjectURL(voicePreviewUrl);
-    };
+  useEffect(() => () => {
+    if (voicePreviewUrl) URL.revokeObjectURL(voicePreviewUrl);
   }, [voicePreviewUrl]);
 
   useEffect(() => {
@@ -609,9 +605,7 @@ function ThreadView({
 
   function stopRecording() {
     const recorder = mediaRecorderRef.current;
-    if (recorder?.state === "recording" || recorder?.state === "paused") {
-      recorder.stop();
-    }
+    if (recorder?.state === "recording" || recorder?.state === "paused") recorder.stop();
   }
 
   function cancelRecording() {
@@ -620,11 +614,8 @@ function ThreadView({
     if (mountedRef.current) setIsStartingRecording(false);
     discardRecordingRef.current = true;
     const recorder = mediaRecorderRef.current;
-    if (recorder?.state === "recording" || recorder?.state === "paused") {
-      recorder.stop();
-    } else {
-      cleanupRecordingHardware();
-    }
+    if (recorder?.state === "recording" || recorder?.state === "paused") recorder.stop();
+    else cleanupRecordingHardware();
     recordingChunksRef.current = [];
     setRecordingSeconds(0);
   }
@@ -691,10 +682,7 @@ function ThreadView({
 
       recorder.addEventListener("stop", () => {
         const shouldDiscard = discardRecordingRef.current;
-        const duration = Math.max(
-          1,
-          Math.min(MAX_VOICE_SECONDS, Math.ceil((Date.now() - recordingStartedAtRef.current) / 1000))
-        );
+        const duration = Math.max(1, Math.min(MAX_VOICE_SECONDS, Math.ceil((Date.now() - recordingStartedAtRef.current) / 1000)));
         const chunks = recordingChunksRef.current;
         const mimeType = recorder.mimeType || selectedMimeType || chunks[0]?.type || "audio/webm";
 
@@ -726,10 +714,7 @@ function ThreadView({
       setIsRecording(true);
       recorder.start(1000);
       recordingTimerRef.current = setInterval(() => {
-        const elapsed = Math.min(
-          MAX_VOICE_SECONDS,
-          Math.floor((Date.now() - recordingStartedAtRef.current) / 1000)
-        );
+        const elapsed = Math.min(MAX_VOICE_SECONDS, Math.floor((Date.now() - recordingStartedAtRef.current) / 1000));
         setRecordingSeconds(elapsed);
         if (elapsed >= MAX_VOICE_SECONDS) stopRecording();
       }, 250);
@@ -759,7 +744,6 @@ function ThreadView({
       await onSendVoice(voiceBlob, voiceMimeType);
       if (mountedRef.current) clearVoice();
     } catch {
-      // Parent shows the error toast. Keep the preview so staff can retry.
     } finally {
       if (mountedRef.current) setSending(false);
     }
@@ -776,8 +760,7 @@ function ThreadView({
   async function handleSubmit(e) {
     e.preventDefault();
     const text = draft.trim();
-    if (sending) return;
-    if (isStartingRecording || isRecording || voiceBlob) return;
+    if (sending || isStartingRecording || isRecording || voiceBlob) return;
     if (!text && !imageFile) return;
     setSending(true);
     try {
@@ -789,7 +772,6 @@ function ThreadView({
       }
       if (mountedRef.current) setDraft("");
     } catch {
-      // Parent shows the error toast; keep the draft/attachment for retry.
     } finally {
       if (mountedRef.current) setSending(false);
     }
@@ -843,11 +825,7 @@ function ThreadView({
         </div>
       </div>
 
-      <div
-        ref={threadScrollRef}
-        onScroll={handleThreadScroll}
-        className="flex-1 overflow-y-auto px-6 py-6 space-y-3"
-      >
+      <div ref={threadScrollRef} onScroll={handleThreadScroll} className="flex-1 overflow-y-auto px-6 py-6 space-y-3">
         {hasMoreOlderMessages && (
           <div className="text-center pb-2">
             <button
@@ -862,12 +840,7 @@ function ThreadView({
         )}
         {loading && <p className="text-sm text-[var(--color-text-muted)] text-center">Loading…</p>}
         {messages.map((m) => (
-          <MessageBubble
-            key={m.id}
-            contactId={contact.contact_id}
-            message={m}
-            onImageClick={setLightboxSrc}
-          />
+          <MessageBubble key={m.id} contactId={contact.contact_id} message={m} onImageClick={setLightboxSrc} />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -878,45 +851,20 @@ function ThreadView({
             <Spinner className="text-[var(--color-primary)]" />
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold">Starting microphone…</p>
-              <p className="text-[11px] text-[var(--color-text-muted)]">
-                Allow microphone access if your browser asks.
-              </p>
+              <p className="text-[11px] text-[var(--color-text-muted)]">Allow microphone access if your browser asks.</p>
             </div>
-            <button
-              type="button"
-              onClick={cancelRecording}
-              className="text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors"
-            >
-              Cancel
-            </button>
+            <button type="button" onClick={cancelRecording} className="text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors">Cancel</button>
           </div>
         )}
         {isRecording && (
           <div className="flex items-center gap-3 mb-3 pb-3 border-b border-[var(--color-border)]">
-            <span className="relative flex h-3 w-3 shrink-0">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
-              <span className="relative inline-flex h-3 w-3 rounded-full bg-red-500" />
-            </span>
+            <span className="relative flex h-3 w-3 shrink-0"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" /><span className="relative inline-flex h-3 w-3 rounded-full bg-red-500" /></span>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold text-red-600">Recording voice message</p>
-              <p className="text-[11px] text-[var(--color-text-muted)]">
-                {formatDuration(recordingSeconds)} / {formatDuration(MAX_VOICE_SECONDS)}
-              </p>
+              <p className="text-[11px] text-[var(--color-text-muted)]">{formatDuration(recordingSeconds)} / {formatDuration(MAX_VOICE_SECONDS)}</p>
             </div>
-            <button
-              type="button"
-              onClick={cancelRecording}
-              className="text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={stopRecording}
-              className="text-xs font-medium px-3 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors"
-            >
-              Stop
-            </button>
+            <button type="button" onClick={cancelRecording} className="text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors">Cancel</button>
+            <button type="button" onClick={stopRecording} className="text-xs font-medium px-3 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors">Stop</button>
           </div>
         )}
         {voicePreviewUrl && !isRecording && (
@@ -926,22 +874,9 @@ function ThreadView({
               <p className="text-xs font-medium">Voice message · {formatDuration(voiceDuration)}</p>
               <p className="text-[11px] text-[var(--color-text-muted)]">Listen before sending to the patient</p>
             </div>
-            <button
-              type="button"
-              onClick={clearVoice}
-              disabled={sending}
-              className="text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
-            >
-              Remove
-            </button>
-            <button
-              type="button"
-              onClick={sendRecordedVoice}
-              disabled={sending}
-              className="inline-flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
-            >
-              {sending && <Spinner />}
-              {sending ? "Sending…" : "Send voice"}
+            <button type="button" onClick={clearVoice} disabled={sending} className="text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50">Remove</button>
+            <button type="button" onClick={sendRecordedVoice} disabled={sending} className="inline-flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50">
+              {sending && <Spinner />}{sending ? "Sending…" : "Send voice"}
             </button>
           </div>
         )}
@@ -952,44 +887,14 @@ function ThreadView({
               <p className="text-xs font-medium truncate">{imageFile.name}</p>
               <p className="text-[11px] text-[var(--color-text-muted)]">Add a caption below (optional) and hit Send</p>
             </div>
-            <button
-              type="button"
-              onClick={clearImage}
-              className="text-xs font-medium px-2.5 py-1 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors"
-            >
-              Remove
-            </button>
+            <button type="button" onClick={clearImage} className="text-xs font-medium px-2.5 py-1 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors">Remove</button>
           </div>
         )}
         <div className="flex items-end gap-3">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleFilePicked}
-            className="hidden"
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={sending || isStartingRecording || isRecording || !!voiceBlob}
-            title="Attach an image"
-            aria-label="Attach an image"
-            className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
-          >
-            📷
-          </button>
+          <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFilePicked} className="hidden" />
+          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={sending || isStartingRecording || isRecording || !!voiceBlob} title="Attach an image" aria-label="Attach an image" className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50">📷</button>
           {contact.mode === "human" && (
-            <button
-              type="button"
-              onClick={startRecording}
-              disabled={sending || isStartingRecording || isRecording || !!voiceBlob || !!imageFile}
-              title="Record a voice message"
-              aria-label="Record a voice message"
-              className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
-            >
-              🎙️
-            </button>
+            <button type="button" onClick={startRecording} disabled={sending || isStartingRecording || isRecording || !!voiceBlob || !!imageFile} title="Record a voice message" aria-label="Record a voice message" className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50">🎙️</button>
           )}
           <textarea
             ref={textareaRef}
@@ -1002,29 +907,12 @@ function ThreadView({
                 handleSubmit(e);
               }
             }}
-            placeholder={
-              imageFile
-                ? "Add a caption (optional)…"
-                : contact.mode === "human"
-                ? "Type a WhatsApp message to this patient…"
-                : "Type a message — sending will take over this conversation from the AI…"
-            }
+            placeholder={imageFile ? "Add a caption (optional)…" : contact.mode === "human" ? "Type a WhatsApp message to this patient…" : "Type a message — sending will take over this conversation from the AI…"}
             rows={1}
             className="flex-1 resize-none rounded-xl border border-[var(--color-border)] px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] max-h-32 overflow-y-auto disabled:opacity-50"
           />
-          <button
-            type="submit"
-            disabled={
-              (!draft.trim() && !imageFile) ||
-              sending ||
-              isStartingRecording ||
-              isRecording ||
-              !!voiceBlob
-            }
-            className="shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
-          >
-            {sending && <Spinner />}
-            {sending ? (imageFile ? "Uploading…" : "Sending…") : "Send"}
+          <button type="submit" disabled={(!draft.trim() && !imageFile) || sending || isStartingRecording || isRecording || !!voiceBlob} className="shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50">
+            {sending && <Spinner />}{sending ? (imageFile ? "Uploading…" : "Sending…") : "Send"}
           </button>
         </div>
       </form>
@@ -1037,15 +925,7 @@ function ThreadView({
 function ModeBadge({ mode, compact }) {
   const isHuman = mode === "human";
   return (
-    <span
-      className={`inline-flex items-center gap-1 shrink-0 rounded-full font-medium uppercase tracking-wide ${
-        compact ? "text-[9px] px-1.5 py-0.5" : "text-[10px] px-2 py-0.5"
-      } ${
-        isHuman
-          ? "bg-[var(--color-accent-light)] text-[var(--color-accent)]"
-          : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-      }`}
-    >
+    <span className={`inline-flex items-center gap-1 shrink-0 rounded-full font-medium uppercase tracking-wide ${compact ? "text-[9px] px-1.5 py-0.5" : "text-[10px] px-2 py-0.5"} ${isHuman ? "bg-[var(--color-accent-light)] text-[var(--color-accent)]" : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"}`}>
       {isHuman ? "Staff" : "AI"}
     </span>
   );
@@ -1053,13 +933,7 @@ function ModeBadge({ mode, compact }) {
 
 function Spinner({ className = "" }) {
   return (
-    <svg
-      className={`animate-spin h-3.5 w-3.5 ${className}`}
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
+    <svg className={`animate-spin h-3.5 w-3.5 ${className}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
     </svg>
@@ -1075,46 +949,20 @@ function MessageBubble({ contactId, message, onImageClick }) {
     : message.has_media_attachment
     ? api.messageMediaUrl(contactId, message.id)
     : null;
-
   const imageSrc = message.previewUrl || message.media_url || (!isAudio ? storedMediaSrc : null);
   const hasImage = !!imageSrc;
 
   return (
     <div className={`flex ${isPatient ? "justify-start" : "justify-end"}`}>
-      <div
-        className={`relative max-w-[70%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-          isPatient
-            ? "bubble-in bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]"
-            : "bubble-out bg-[var(--color-primary)] text-white"
-        } ${message._optimistic ? "opacity-70" : ""}`}
-      >
-        {!isPatient && (
-          <p className="text-[10px] font-semibold uppercase tracking-wide mb-0.5 text-white/70">
-            {sentByStaff ? message.sent_by_username : "AI"}
-          </p>
-        )}
+      <div className={`relative max-w-[70%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${isPatient ? "bubble-in bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]" : "bubble-out bg-[var(--color-primary)] text-white"} ${message._optimistic ? "opacity-70" : ""}`}>
+        {!isPatient && <p className="text-[10px] font-semibold uppercase tracking-wide mb-0.5 text-white/70">{sentByStaff ? message.sent_by_username : "AI"}</p>}
         {isAudio && storedMediaSrc ? (
-          <audio
-            controls
-            preload="none"
-            src={storedMediaSrc}
-            className="mb-1.5 max-w-full"
-            style={{ height: "36px" }}
-          />
+          <audio controls preload="none" src={storedMediaSrc} className="mb-1.5 max-w-full" style={{ height: "36px" }} />
         ) : (
           hasImage && (
             <div className="relative mb-1.5">
-              <img
-                src={imageSrc}
-                alt={message.content || "Sent image"}
-                onClick={() => !message._uploading && onImageClick?.(imageSrc)}
-                className={`rounded-lg max-w-full max-h-64 object-cover ${message._uploading ? "" : "cursor-zoom-in"}`}
-              />
-              {message._uploading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/30 rounded-lg">
-                  <Spinner className="text-white h-6 w-6" />
-                </div>
-              )}
+              <img src={imageSrc} alt={message.content || "Sent image"} onClick={() => !message._uploading && onImageClick?.(imageSrc)} className={`rounded-lg max-w-full max-h-64 object-cover ${message._uploading ? "" : "cursor-zoom-in"}`} />
+              {message._uploading && <div className="absolute inset-0 flex items-center justify-center bg-black/30 rounded-lg"><Spinner className="text-white h-6 w-6" /></div>}
             </div>
           )
         )}
@@ -1145,26 +993,15 @@ function formatDuration(seconds) {
 
 function formatTime(value) {
   if (!value) return "";
-
   const date = new Date(value);
-
   if (Number.isNaN(date.getTime())) {
     console.warn("Invalid date received:", value);
     return "";
   }
-
   const now = new Date();
   const sameDay = date.toDateString() === now.toDateString();
-
   if (sameDay) {
-    return date.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
-
-  return date.toLocaleDateString([], {
-    month: "short",
-    day: "numeric",
-  });
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
