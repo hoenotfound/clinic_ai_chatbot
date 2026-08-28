@@ -26,6 +26,7 @@ const ABSOLUTE_REJECTION_PATTERNS = [
 const DECLINE_PATTERNS = [
   /\b(?:i(?:'m| am)?\s+)?(?:not|no longer)\s+interested(?:\s+(?:anymore|in\s+(?:your\s+)?(?:service|services|treatment|treatments|clinic)))?(?:,?\s*(?:thanks?|thank you))?\s*[.!?]*$/,
   /\b(?:i\s+)?(?:don't|do not)\s+(?:want|need)\s+(?:this|it|that|the treatment|your services?|an?\s+appointment|to\s+(?:book|schedule|make an appointment))\b/,
+  /\b(?:i(?:'m| am)?\s+)?(?:won't|will not|am not going to|not going to)\s+(?:book|schedule|make an appointment)\b/,
   /\bno\s+thanks?(?:\s+you)?\b/,
   /\b(?:not for me|i(?:'ll| will) pass)\b/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+berminat(?:\s+(?:lagi|dengan\s+(?:servis|rawatan)(?:\s+(?:ini|anda|awak))?))?(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
@@ -41,9 +42,10 @@ const POSITIVE_CONTRAST_PATTERN =
   /(?:\b(?:but|however|instead|tapi|tetapi)\b.*\b(?:interested|want|need|book|appointment|know more|how much|price|cost|nak|mahu|berminat|berapa|harga)\b|(?:但是|可是|不过|不過).*(?:想|要|有兴趣|有興趣|了解|预约|預約|多少钱|多少錢|价格|價格|价钱|價錢))/;
 
 const UNCLEAR_BOOKING_PATTERNS = [
-  /\b(?:not ready|not yet|maybe later|still thinking|just (?:asking|checking|browsing)|(?:don't|do not) want to book (?:yet|now)|not booking (?:yet|now))\b/,
-  /\b(?:belum (?:bersedia|nak|mahu)|mungkin nanti|masih fikir|tanya sahaja|tanya saja|survey dulu|(?:tak nak|tidak mahu) book (?:dulu|lagi|sekarang))\b/,
-  /(?:还不想预约|還不想預約|暂时不预约|暫時不預約|还没决定|還沒決定|先看看|只是问问|只是問問|以后再说|以後再說)/,
+  /\b(?:maybe|perhaps|not ready|not yet|still thinking|just (?:asking|checking|browsing)|(?:don't|do not) want to book (?:yet|now)|not booking (?:yet|now))\b/,
+  /\bi\s+(?:may|might)\s+(?:want\s+to\s+)?(?:book|schedule|come|visit)\b/,
+  /\b(?:belum (?:bersedia|nak|mahu)|mungkin|masih fikir|tanya sahaja|tanya saja|survey dulu|(?:tak nak|tidak mahu) book (?:dulu|lagi|sekarang))\b/,
+  /(?:可能|也许|也許|还不想预约|還不想預約|暂时不预约|暫時不預約|还没决定|還沒決定|先看看|只是问问|只是問問|以后再说|以後再說)/,
   /\b(?:visit|check|open)\s+(?:your\s+)?(?:website|site|page|instagram|facebook)\b/,
 ];
 
@@ -93,6 +95,12 @@ const CONFIRMATION_PATTERNS = [
   /^(?:好|好的|可以|确认|確認|确定|確定|没问题|沒問題)[。.! ]*$/,
 ];
 
+const NON_CONFIRMING_SCHEDULING_PATTERNS = [
+  /\b(?:can't|cannot|can not|unable|unavailable|not available|not free|doesn't work|does not work|won't work|will not work|need to reschedule|reschedule|cancel)\b/,
+  /\b(?:tak boleh|tidak boleh|tak dapat|tidak dapat|tak free|tidak free|tak lapang|tidak lapang|tak sesuai|tidak sesuai|tukar|batal|cancel)\b/,
+  /(?:不行|不可以|不能|没空|沒空|没有空|沒有空|不方便|改天|改期|取消)/,
+];
+
 const DATE_OR_TIME_PATTERNS = [
   /\b(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|this\s+(?:week|weekend)|next\s+week|weekend)\b/,
   /\b(?:hari ini|esok|lusa|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad|minggu ini|minggu depan|hujung minggu)\b/,
@@ -125,6 +133,13 @@ function hasBookingIntent(text) {
 }
 
 function isSchedulingAnswer(text, branchNames) {
+  if (
+    matchesAny(text, UNCLEAR_BOOKING_PATTERNS) ||
+    matchesAny(text, NON_CONFIRMING_SCHEDULING_PATTERNS)
+  ) {
+    return false;
+  }
+
   if (matchesAny(text, CONFIRMATION_PATTERNS) || matchesAny(text, DATE_OR_TIME_PATTERNS)) {
     return true;
   }

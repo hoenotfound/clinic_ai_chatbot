@@ -32,6 +32,7 @@ test("explicit rejection becomes Cold in English, Bahasa Malaysia, and Chinese",
     "Please stop messaging me.",
     "Sorry, wrong number.",
     "I don't want to book.",
+    "I'm not going to book.",
     "Saya tak berminat.",
     "Saya tak nak book.",
     "Jangan hubungi saya lagi.",
@@ -56,10 +57,13 @@ test("general interest, uncertainty, cancellation, and silence remain Warm", () 
     "I want to visit your website first.",
     "I want to book, but I am not ready yet.",
     "I don't want to book yet.",
+    "Maybe I want to book next week.",
     "Berapa harga treatment ini?",
     "Saya tak nak book dulu.",
+    "Mungkin saya nak book minggu depan.",
     "这个疗程多少钱？",
     "暂时不预约。",
+    "可能想预约下周。",
     "",
   ];
 
@@ -107,6 +111,19 @@ test("a scheduling answer becomes Hot only after a clinic booking question", () 
     previousClinicMessage,
     branchNames,
   }), null);
+
+  for (const messageText of [
+    "I can't come this Saturday, maybe another time.",
+    "Friday doesn't work for me.",
+    "Saya tak boleh datang hari Sabtu.",
+    "星期六不方便。",
+  ]) {
+    assert.equal(classifyTemperatureMessage({
+      messageText,
+      previousClinicMessage,
+      branchNames,
+    }), null, messageText);
+  }
 });
 
 test("reviewer applies a direct rule without loading conversation history", async () => {
