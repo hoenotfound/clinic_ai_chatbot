@@ -38,11 +38,13 @@ function formatAppointment(value) {
   }
 }
 
-function temperatureLabel(value) {
-  const temperature = String(value || "warm").toLowerCase();
+function temperatureLabel(value, fallback = "Not captured") {
+  if (!value) return fallback;
+  const temperature = String(value).toLowerCase();
   if (temperature === "hot") return "🔥 Hot";
   if (temperature === "cold") return "❄️ Cold";
-  return "🟠 Warm";
+  if (temperature === "warm") return "🟠 Warm";
+  return fallback;
 }
 
 function buildInboxUrl(contactId, env = process.env) {
@@ -58,14 +60,17 @@ function buildConversationSummaryMessage({ lead, score, env = process.env }) {
   const branch = clean(summary.preferredBranch || lead.branch_name);
   const appointment = clean(summary.preferredAppointment, formatAppointment(lead.appointment_at));
   const inboxUrl = buildInboxUrl(lead.contact_id, env);
+  const currentTemperature = temperatureLabel(lead.current_temperature);
+  const aiTemperature = temperatureLabel(score?.temperature);
 
   const lines = [
-    `${temperatureLabel(score?.temperature)} Conversation Summary`,
+    `${currentTemperature} Conversation Summary`,
     "",
     `${name} (${formatWhatsappNumber(lead.whatsapp_number)})`,
     "",
     `Stage: ${clean(lead.stage_name)}`,
-    `AI Temperature: ${temperatureLabel(score?.temperature)} (${clean(score?.confidence, "unknown")} confidence)`,
+    `Current Temperature: ${currentTemperature}`,
+    `AI Review: ${aiTemperature} (${clean(score?.confidence, "unknown")} confidence)`,
     `Treatment: ${treatment}`,
     `Branch: ${branch}`,
     `Appointment: ${appointment}`,
@@ -178,13 +183,16 @@ function createTelegramAlertService({
       let sent = 0;
 
       for (const candidate of candidates) {
-        const claim = await repository.claimSummary(candidate.alert_id);
+        const claim = await repository.claimSummary(
+          candidate.alert_id,
+          inactivityMinutes
+        );
         if (!claim) continue;
 
         try {
           const text = buildConversationSummaryMessage({
-            lead: candidate,
-            score: candidate.score_data,
+            lead: claim,
+            score: claim.score_data,
             env,
           });
           await sendMessage({
@@ -192,12 +200,12 @@ function createTelegramAlertService({
             chatId: env.TELEGRAM_CHAT_ID,
             text,
           });
-          await repository.markSent(candidate.alert_id);
+          await repository.markSent(claim.alert_id);
           sent += 1;
         } catch (err) {
-          await repository.markFailed(candidate.alert_id, err);
+          await repository.markFailed(claim.alert_id, err);
           console.error(
-            `Telegram summary failed for lead ${candidate.lead_id}:`,
+            `Telegram summary failed for lead ${claim.lead_id}:`,
             err
           );
         }
@@ -218,6 +226,7 @@ module.exports = {
   formatWhatsappNumber,
   isTelegramEnabled,
   postTelegramMessage,
+  temperatureLabel,
   queueConversationSummary: defaultService.queueConversationSummary,
   flushConversationSummaries: defaultService.flushConversationSummaries,
 };
