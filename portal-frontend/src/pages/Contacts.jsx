@@ -184,6 +184,7 @@ function ContactProfile({ contact, onEdit, onToast }) {
   const [notes, setNotes] = useState(null); // null = loading
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  const [addingLead, setAddingLead] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -231,6 +232,19 @@ function ContactProfile({ contact, onEdit, onToast }) {
     }
   }
 
+  async function handleOpenPipeline() {
+    if (addingLead) return;
+    setAddingLead(true);
+    try {
+      const result = await api.createLead({ contactId: contact.id });
+      navigate(`/pipeline?lead=${result.lead.id}`);
+    } catch (err) {
+      onToast(err.message || "Couldn't add this contact to the pipeline.", "error");
+    } finally {
+      setAddingLead(false);
+    }
+  }
+
   return (
     <div className="max-w-2xl px-8 py-8">
       <div className="flex items-start justify-between gap-4 mb-6">
@@ -254,6 +268,15 @@ function ContactProfile({ contact, onEdit, onToast }) {
             className="text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors"
           >
             Edit
+          </button>
+          <button
+            type="button"
+            onClick={handleOpenPipeline}
+            disabled={addingLead}
+            className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
+          >
+            {addingLead && <Spinner className="h-3 w-3" />}
+            {addingLead ? "Opening…" : "Pipeline"}
           </button>
           {contact.message_count > 0 ? (
             <button

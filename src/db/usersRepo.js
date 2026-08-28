@@ -17,4 +17,9 @@ async function countUsers() {
   return parseInt(result.rows[0].count, 10);
 }
 
-module.exports = { getUserByUsername, createUser, countUsers };
+async function listUsernames() {
+  const result = await pool.query("SELECT username FROM users ORDER BY lower(username), id");
+  return result.rows.map((row) => row.username);
+}
+
+module.exports = { getUserByUsername, createUser, countUsers, listUsernames };

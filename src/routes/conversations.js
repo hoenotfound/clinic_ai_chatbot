@@ -2,6 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
+const pipelineRepo = require("../db/pipelineRepo");
 const conversationStore = require("../utils/conversationStore");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
@@ -84,6 +85,16 @@ async function persistSendOutcome(savedMessage, sendResult, errorText = SEND_REJ
   }
   publishDeliveryStatus(updated);
   return updated || savedMessage;
+}
+
+async function markLeadContacted(contactId, actor, sendResult) {
+  if (!sendResult?.success) return;
+  try {
+    await pipelineRepo.markContactedForContact(contactId, actor);
+  } catch (err) {
+    // A pipeline update must never change the result of a successful send.
+    console.error(`Failed to mark lead ${contactId} as contacted:`, err);
+  }
 }
 
 async function sendStoredMessage(contact, message) {
@@ -437,6 +448,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
 
     if (sendResult.success) {
       await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(contact.id);
+      await markLeadContacted(contact.id, req.session.username, sendResult);
     } else {
       await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${errorText}`);
     }
@@ -489,6 +501,8 @@ router.post("/:contactId/messages", async (req, res) => {
     const finalMessage = await persistSendOutcome(saved, sendResult);
     if (!sendResult.success) {
       await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${SEND_REJECTED_ERROR}`);
+    } else {
+      await markLeadContacted(contact.id, req.session.username, sendResult);
     }
 
     res.status(201).json({ ...finalMessage, delivered: sendResult.success });
@@ -564,6 +578,8 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     const finalMessage = await persistSendOutcome(saved, sendResult);
     if (!sendResult.success) {
       await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${SEND_REJECTED_ERROR}`);
+    } else {
+      await markLeadContacted(contact.id, req.session.username, sendResult);
     }
 
     res.status(201).json({ ...finalMessage, delivered: sendResult.success });
@@ -638,6 +654,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
     try {
       if (sendResult.success) {
         await contactsRepo.setAttention(currentContact.id, false);
+        await markLeadContacted(currentContact.id, req.session.username, sendResult);
       } else {
         await contactsRepo.setDeliveryAttention(
           currentContact.id,
