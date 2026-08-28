@@ -14,6 +14,7 @@ test("ready Telegram summaries require the exact latest snapshot to be inactive"
     assert.match(sql, /a\.through_message_id = latest\.id/);
     assert.match(sql, /latest\.created_at <= now\(\) - \(\$1::integer \* interval '1 minute'\)/);
     assert.match(sql, /a\.status IN \('pending', 'sending'\)/);
+    assert.match(sql, /a\.attempts < 3/);
     assert.match(sql, /ORDER BY latest\.created_at ASC/);
     assert.deepEqual(params, [10, 5]);
     return { rows: [{ alert_id: 31, lead_id: 7 }] };
@@ -62,19 +63,19 @@ test("queueing a newer scored snapshot supersedes older unsent snapshots", async
   assert.deepEqual(queued, { id: 31 });
 });
 
-test("failed Telegram sends are retryable up to the configured attempt limit", async (t) => {
+test("failed Telegram sends return to pending while attempt count limits future retries", async (t) => {
   const originalQuery = pool.query;
   t.after(() => {
     pool.query = originalQuery;
   });
 
   pool.query = async (sql, params) => {
-    assert.match(sql, /CASE WHEN attempts >= 3 THEN 'failed' ELSE 'pending' END/);
+    assert.match(sql, /SET status = 'pending'/);
     assert.match(sql, /claimed_at = NULL/);
     assert.deepEqual(params, [31, "Telegram unavailable"]);
-    return { rows: [{ id: 31, status: "pending" }] };
+    return { rows: [{ id: 31, status: "pending", attempts: 3 }] };
   };
 
   const result = await telegramAlertRepo.markFailed(31, new Error("Telegram unavailable"));
-  assert.deepEqual(result, { id: 31, status: "pending" });
+  assert.deepEqual(result, { id: 31, status: "pending", attempts: 3 });
 });
