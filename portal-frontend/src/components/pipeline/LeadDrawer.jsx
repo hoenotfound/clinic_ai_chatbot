@@ -96,12 +96,12 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, n
   }
 
   function updateAppointmentStatus(value) {
+    const stageKey = value === "set" ? "appointment_set" : value === "visited" ? "visited" : null;
+    const matchingStage = stageKey
+      ? stages.find((stage) => stage.system_key === stageKey)
+      : null;
     setForm((current) => {
       const next = { ...current, appointmentStatus: value };
-      const stageKey = value === "set" ? "appointment_set" : value === "visited" ? "visited" : null;
-      const matchingStage = stageKey
-        ? stages.find((stage) => stage.system_key === stageKey)
-        : null;
       if (matchingStage) next.stageId = String(matchingStage.id);
       return next;
     });
