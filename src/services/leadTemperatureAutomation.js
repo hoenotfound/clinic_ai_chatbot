@@ -1,6 +1,9 @@
 const pipelineRepo = require("../db/pipelineRepo");
 const messagesRepo = require("../db/messagesRepo");
 const clinicConfig = require("../config/clinicConfig");
+const {
+  isAllowedRuleTemperatureTransition,
+} = require("../utils/leadTemperatureTransitions");
 
 const CONTEXT_MESSAGE_LIMIT = 8;
 const MAX_EVIDENCE_CHARS = 200;
@@ -26,16 +29,19 @@ const ABSOLUTE_REJECTION_PATTERNS = [
 const DECLINE_PATTERNS = [
   /\b(?:i(?:'m| am)?\s+)?(?:not|no longer)\s+interested(?:\s+(?:anymore|in\s+(?:your\s+)?(?:service|services|treatment|treatments|clinic)))?(?:,?\s*(?:thanks?|thank you))?\s*[.!?]*$/,
   /\b(?:i\s+)?(?:don't|do not)\s+(?:want|need)\s+(?:this|it|that|the treatment|your services?|an?\s+appointment|to\s+(?:book|schedule|make an appointment))\b/,
+  /\b(?:i\s+)?(?:don't|do not)\s+(?:want|plan|intend)\s+to\s+(?:come|visit|reserve)\b/,
   /\b(?:i(?:'m| am)?\s+)?(?:won't|will not|am not going to|not going to)\s+(?:book|schedule|make an appointment)\b/,
+  /\b(?:i(?:'m| am)?\s+)?(?:won't|will not|am not going to|not going to)\s+(?:come|visit|reserve)\b/,
   /\bno\s+thanks?(?:\s+you)?\b/,
   /\b(?:not for me|i(?:'ll| will) pass)\b/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+berminat(?:\s+(?:lagi|dengan\s+(?:servis|rawatan)(?:\s+(?:ini|anda|awak))?))?(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
-  /\b(?:saya\s+)?(?:tak|tidak)\s+(?:nak|mahu)\s+(?:ini|itu|rawatan\s+ini|servis\s+(?:ini|anda)|book|booking|buat\s+(?:appointment|temujanji|janji temu))\b/,
+  /\b(?:saya\s+)?(?:tak|tidak)\s+(?:nak|mahu)\s+(?:ini|itu|rawatan\s+ini|servis\s+(?:ini|anda)|book|booking|reserve|datang|visit|buat\s+(?:appointment|temujanji|janji temu))\b/,
+  /\b(?:saya\s+)?(?:tak|tidak)\s+akan\s+(?:datang|visit|book|booking|reserve)\b/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+(?:perlu|payah)(?:\s+(?:ini|itu|servis|rawatan))?(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
   /^(?:terima kasih,?\s*)?(?:saya\s+)?(?:tak|tidak)\s+nak(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
   /^(?:我)?(?:不感兴趣|没兴趣|沒有興趣|没有兴趣|不要了|不需要了|不用了|谢谢不用了?|謝謝不用了?)(?:，?(?:谢谢|謝謝))?[。.!！]*$/,
   /^(?:我)?(?:对|對)(?:你们|你們|这项|這項)?(?:服务|服務|疗程|療程)(?:不感兴趣|没兴趣|沒有興趣|没有兴趣)[。.!！]*$/,
-  /^(?:我)?(?:不想|不要|不打算)(?:预约|預約|预订|預訂)[。.!！]*$/,
+  /^(?:我)?(?:不想|不要|不打算)(?:预约|預約|预订|預訂|订位|訂位|去你们|去你們|过去|過去|到店|来|來)(?:诊所|診所|门店|門店)?[。.!！]*$/,
 ];
 
 const POSITIVE_CONTRAST_PATTERN =
@@ -50,9 +56,11 @@ const UNCLEAR_BOOKING_PATTERNS = [
 ];
 
 const NEGATED_BOOKING_PATTERNS = [
-  /\b(?:don't|do not|not going to)\s+(?:want\s+to\s+)?(?:book|schedule|make an appointment)\b/,
-  /\b(?:tak nak|tidak mahu|tak mahu)\s+(?:book|booking|buat appointment|buat temujanji)\b/,
-  /(?:不想|不要|不打算)(?:预约|預約|预订|預訂)/,
+  /\b(?:don't|do not)\s+(?:(?:want|plan|intend)\s+to\s+)?(?:book|schedule|reserve|make an appointment|come|visit)\b/,
+  /\b(?:won't|will not|am not going to|not going to)\s+(?:book|schedule|reserve|make an appointment|come|visit)\b/,
+  /\b(?:tak nak|tidak mahu|tak mahu|tidak nak)\s+(?:book|booking|reserve|datang|visit|buat appointment|buat temujanji)\b/,
+  /\b(?:tak|tidak)\s+akan\s+(?:datang|visit|book|booking|reserve)\b/,
+  /(?:不想|不要|不打算)(?:预约|預約|预订|預訂|订位|訂位|去你们|去你們|过去|過去|到店|来|來)/,
 ];
 
 const BOOKING_INTENT_PATTERNS = [
@@ -111,6 +119,15 @@ const DATE_OR_TIME_PATTERNS = [
   /\d{1,2}(?:点|點|时|時)/,
 ];
 
+// A customer can reject one proposed date while still accepting another.
+// Keep that separate from a full rejection so the scheduling-context rule can
+// treat the alternative as a confirmation instead of making the lead Cold.
+const ALTERNATIVE_SCHEDULING_PATTERNS = [
+  /(?:\b(?:but|however|instead)\b|[,.;])\s*(?:on\s+)?(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|this\s+(?:week|weekend)|next\s+week|weekend|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:[01]?\d|2[0-3])[:.]\d{2}\s*(?:am|pm)?|(?:[1-9]|1[0-2])\s*(?:am|pm))\b.{0,40}\b(?:works?(?:\s+for\s+me)?|is\s+(?:okay|ok|fine|better)|would\s+work|i\s+(?:can|could|prefer)|can\s+(?:come|visit)|available|free)\b/,
+  /(?:\b(?:tapi|tetapi|sebaliknya)\b|[,.;])\s*(?:hari\s+)?(?:ini|esok|lusa|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad|minggu\s+ini|minggu\s+depan|hujung\s+minggu|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:[01]?\d|2[0-3])[:.]\d{2}\s*(?:am|pm)?|(?:[1-9]|1[0-2])\s*(?:am|pm))\b.{0,40}\b(?:boleh|sesuai|ok|okay|lapang|free|lebih\s+baik)\b/,
+  /(?:但是|可是|不过|不過|，|。)(?:今天|明天|后天|後天|星期[一二三四五六日天]|周[一二三四五六日天]|週[一二三四五六日天]|这个周末|這個週末|下周|下週|\d{1,2}(?:点|點|时|時)).{0,20}(?:可以|没问题|沒問題|方便|有空|比较好|比較好)/,
+];
+
 function matchesAny(text, patterns) {
   return patterns.some((pattern) => pattern.test(text));
 }
@@ -120,7 +137,8 @@ function isExplicitRejection(text) {
   return (
     matchesAny(text, DECLINE_PATTERNS) &&
     !POSITIVE_CONTRAST_PATTERN.test(text) &&
-    !matchesAny(text, UNCLEAR_BOOKING_PATTERNS)
+    !matchesAny(text, UNCLEAR_BOOKING_PATTERNS) &&
+    !matchesAny(text, ALTERNATIVE_SCHEDULING_PATTERNS)
   );
 }
 
@@ -158,6 +176,7 @@ function classifyTemperatureMessage({
   const text = normalizeText(messageText);
   if (!text) return null;
 
+  const absoluteRejection = matchesAny(text, ABSOLUTE_REJECTION_PATTERNS);
   const rejected = isExplicitRejection(text);
   const bookingIntent = hasBookingIntent(text);
   if (rejected && bookingIntent) return null;
@@ -167,6 +186,7 @@ function classifyTemperatureMessage({
     return {
       temperature: "cold",
       matchedRule: "explicit_rejection",
+      rejectionStrength: absoluteRejection ? "absolute" : "standard",
       reason: "The customer explicitly declined or asked not to be contacted.",
       evidence,
     };
@@ -204,9 +224,7 @@ function createLeadTemperatureReviewer({
 }) {
   return async function reviewLeadTemperatureForMessage(contactId, messageId, messageText) {
     const lead = await pipelineRepository.getActiveLeadForContact(contactId);
-    if (!lead || lead.temperature !== "warm") {
-      return { status: "skipped", reason: "not-warm" };
-    }
+    if (!lead) return { status: "skipped", reason: "no-active-lead" };
     if (lead.temperature_locked) {
       return { status: "skipped", reason: "staff-controlled" };
     }
@@ -255,9 +273,18 @@ function createLeadTemperatureReviewer({
       return { status: "unchanged" };
     }
 
+    if (!isAllowedRuleTemperatureTransition(lead.temperature, classification)) {
+      return {
+        status: "unchanged",
+        reason: "transition-not-allowed",
+        classification,
+      };
+    }
+
     const updatedLead = await pipelineRepository.applyRuleBasedTemperature(
       lead.id,
-      classification
+      classification,
+      lead.temperature
     );
     return updatedLead
       ? { status: "updated", lead: updatedLead, classification }

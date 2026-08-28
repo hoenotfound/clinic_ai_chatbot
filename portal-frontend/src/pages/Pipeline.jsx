@@ -8,7 +8,9 @@ import LeadDrawer from "../components/pipeline/LeadDrawer";
 import StageManager from "../components/pipeline/StageManager";
 import AddLeadModal from "../components/pipeline/AddLeadModal";
 import StageMoveDialog from "../components/pipeline/StageMoveDialog";
-import { formatMoney, isOverdue } from "../components/pipeline/pipelineUtils";
+import { formatMoney, isNoReply, isOverdue } from "../components/pipeline/pipelineUtils";
+
+const PIPELINE_CLOCK_INTERVAL_MS = 30 * 1000;
 
 const CATEGORY_OPTIONS = [
   ["all", "All leads"],
@@ -35,6 +37,7 @@ export default function Pipeline() {
   const [showStages, setShowStages] = useState(false);
   const [showAddLead, setShowAddLead] = useState(false);
   const [pendingMove, setPendingMove] = useState(null);
+  const [now, setNow] = useState(() => Date.now());
   const refreshTimerRef = useRef(null);
 
   const refreshPipeline = useCallback(async ({ quiet = false } = {}) => {
@@ -55,15 +58,22 @@ export default function Pipeline() {
   }, [refreshPipeline]);
 
   useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), PIPELINE_CLOCK_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     const source = new EventSource("/api/conversations/events", { withCredentials: true });
     function scheduleRefresh() {
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = setTimeout(() => refreshPipeline({ quiet: true }), 150);
     }
     source.addEventListener("pipeline_changed", scheduleRefresh);
+    source.addEventListener("conversation_changed", scheduleRefresh);
     return () => {
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       source.removeEventListener("pipeline_changed", scheduleRefresh);
+      source.removeEventListener("conversation_changed", scheduleRefresh);
       source.close();
     };
   }, [refreshPipeline]);
@@ -80,6 +90,7 @@ export default function Pipeline() {
 
   const leads = useMemo(() => data?.leads || [], [data?.leads]);
   const stages = useMemo(() => data?.stages || [], [data?.stages]);
+  const noReplyHours = Number(data?.noReplyHours) || 24;
   const selectedLead = leads.find((lead) => Number(lead.id) === Number(selectedLeadId)) || null;
 
   const filteredLeads = useMemo(() => {
@@ -87,7 +98,7 @@ export default function Pipeline() {
     return leads.filter((lead) => {
       if (branchFilter === "unassigned" && lead.branch_name) return false;
       if (branchFilter !== "all" && branchFilter !== "unassigned" && lead.branch_name !== branchFilter) return false;
-      if (!matchesCategory(lead, categoryFilter)) return false;
+      if (!matchesCategory(lead, categoryFilter, now, noReplyHours)) return false;
       if (term) {
         const haystack = [
           lead.name,
@@ -103,11 +114,14 @@ export default function Pipeline() {
       }
       return true;
     });
-  }, [branchFilter, categoryFilter, leads, search]);
+  }, [branchFilter, categoryFilter, leads, noReplyHours, now, search]);
 
   const categoryCounts = useMemo(() => Object.fromEntries(
-    CATEGORY_OPTIONS.map(([key]) => [key, leads.filter((lead) => matchesCategory(lead, key)).length])
-  ), [leads]);
+    CATEGORY_OPTIONS.map(([key]) => [
+      key,
+      leads.filter((lead) => matchesCategory(lead, key, now, noReplyHours)).length,
+    ])
+  ), [leads, noReplyHours, now]);
 
   const activeLeads = useMemo(() => leads.filter((lead) => !lead.is_closed), [leads]);
   const pipelineValue = activeLeads.reduce((sum, lead) => sum + (Number(lead.estimated_value) || 0), 0);
@@ -275,7 +289,7 @@ export default function Pipeline() {
                   <p className="mt-1.5 pl-[18px] text-[10px] text-[var(--color-text-muted)]">{formatMoney(value) || "RM 0"}</p>
                 </header>
                 <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-2.5">
-                  {stageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} onOpen={openLead} onDragStart={handleDragStart} />)}
+                  {stageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} now={now} noReplyHours={noReplyHours} onOpen={openLead} onDragStart={handleDragStart} />)}
                   {stageLeads.length === 0 && (
                     <div className="rounded-2xl border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-xs text-[var(--color-text-muted)]">Drop leads here</div>
                   )}
@@ -286,7 +300,7 @@ export default function Pipeline() {
         </div>
       </main>
 
-      {selectedLead && <LeadDrawer key={selectedLead.id} lead={selectedLead} stages={stages} branches={data.branches || []} owners={data.owners || []} services={data.services || []} onClose={closeLead} onSaved={mergeLead} onToast={showToast} />}
+      {selectedLead && <LeadDrawer key={selectedLead.id} lead={selectedLead} stages={stages} branches={data.branches || []} owners={data.owners || []} services={data.services || []} now={now} noReplyHours={noReplyHours} onClose={closeLead} onSaved={mergeLead} onToast={showToast} />}
       {showStages && <StageManager stages={stages} onClose={() => setShowStages(false)} onSaveStage={(id, patch) => api.updatePipelineStage(id, patch)} onCreateStage={(payload) => refreshAfterStageChange(() => api.createPipelineStage(payload))} onDeleteStage={(id) => refreshAfterStageChange(() => api.deletePipelineStage(id))} onReorder={(ids) => refreshAfterStageChange(() => api.reorderPipelineStages(ids))} onToast={showToast} />}
       {showAddLead && <AddLeadModal branches={data.branches || []} services={data.services || []} onClose={() => setShowAddLead(false)} onCreated={handleLeadCreated} onToast={showToast} />}
       {pendingMove && <StageMoveDialog lead={pendingMove.lead} stage={pendingMove.stage} onCancel={() => setPendingMove(null)} onConfirm={async (patch) => { const updated = await updateLead(pendingMove.lead.id, patch); if (updated) setPendingMove(null); }} />}
@@ -295,14 +309,14 @@ export default function Pipeline() {
   );
 }
 
-function matchesCategory(lead, category) {
+function matchesCategory(lead, category, now, noReplyHours) {
   if (category === "all") return true;
   if (["hot", "warm", "cold"].includes(category)) return lead.temperature === category && !lead.is_closed;
   if (category === "unassigned") return !lead.branch_name && !lead.is_closed;
-  if (category === "no_reply") return !!lead.no_reply;
+  if (category === "no_reply") return isNoReply(lead, noReplyHours, now);
   if (category === "reschedule") return lead.appointment_status === "reschedule";
   if (category === "cancelled") return lead.appointment_status === "cancelled";
-  if (category === "overdue") return isOverdue(lead);
+  if (category === "overdue") return isOverdue(lead, now);
   if (category === "attention") return !!lead.needs_attention;
   return true;
 }

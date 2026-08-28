@@ -22,4 +22,5 @@ test("schema stores and backfills a transcript boundary for every lead journey",
   assert.match(schema, /WHEN l\.created_by = 'Automation' THEN/);
   assert.match(schema, /m\.created_at >= l\.created_at/);
   assert.match(schema, /NOT IN \('Automation', 'Migration'\)/);
+  assert.match(schema, /idx_leads_contact_journey/);
 });

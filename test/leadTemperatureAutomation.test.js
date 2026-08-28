@@ -33,10 +33,17 @@ test("explicit rejection becomes Cold in English, Bahasa Malaysia, and Chinese",
     "Sorry, wrong number.",
     "I don't want to book.",
     "I'm not going to book.",
+    "I don't want to visit.",
+    "I do not want to reserve.",
+    "I am not going to come.",
     "Saya tak berminat.",
     "Saya tak nak book.",
+    "Saya tak nak datang.",
+    "Saya tidak mahu visit.",
     "Jangan hubungi saya lagi.",
     "谢谢不用了。",
+    "我不想去你们诊所。",
+    "我不要到店。",
     "不要再联系我。",
   ];
 
@@ -45,6 +52,25 @@ test("explicit rejection becomes Cold in English, Bahasa Malaysia, and Chinese",
     assert.equal(result?.temperature, "cold", messageText);
     assert.equal(result?.matchedRule, "explicit_rejection", messageText);
   }
+
+  for (const messageText of [
+    "Please stop messaging me.",
+    "Sorry, wrong number.",
+    "Jangan hubungi saya lagi.",
+    "不要再联系我。",
+  ]) {
+    assert.equal(
+      classifyTemperatureMessage({ messageText })?.rejectionStrength,
+      "absolute",
+      messageText
+    );
+  }
+
+  assert.equal(
+    classifyTemperatureMessage({ messageText: "No thanks, I am not interested." })
+      ?.rejectionStrength,
+    "standard"
+  );
 });
 
 test("general interest, uncertainty, cancellation, and silence remain Warm", () => {
@@ -70,6 +96,36 @@ test("general interest, uncertainty, cancellation, and silence remain Warm", () 
   for (const messageText of examples) {
     assert.equal(classifyTemperatureMessage({ messageText }), null, messageText);
   }
+});
+
+test("declining one date while offering another is not a Cold rejection", () => {
+  const examples = [
+    {
+      messageText: "I don't want to visit Saturday, Sunday works for me.",
+      previousClinicMessage: "Which day would you like to visit?",
+    },
+    {
+      messageText: "I won't come Saturday. Sunday is okay.",
+      previousClinicMessage: "Which day would you like to visit?",
+    },
+    {
+      messageText: "Saya tak nak datang Sabtu, Ahad boleh.",
+      previousClinicMessage: "Hari mana sesuai untuk datang?",
+    },
+  ];
+
+  for (const example of examples) {
+    const result = classifyTemperatureMessage(example);
+    assert.equal(result?.temperature, "hot", example.messageText);
+    assert.equal(result?.matchedRule, "scheduling_confirmation", example.messageText);
+  }
+
+  assert.equal(
+    classifyTemperatureMessage({
+      messageText: "I don't want to visit Saturday, Sunday works for me.",
+    }),
+    null
+  );
 });
 
 test("mixed treatment preferences do not incorrectly become Cold", () => {
@@ -132,8 +188,8 @@ test("reviewer applies a direct rule without loading conversation history", asyn
   const reviewer = createLeadTemperatureReviewer({
     pipelineRepository: {
       getActiveLeadForContact: async () => ({ id: 4, temperature: "warm", is_closed: false }),
-      applyRuleBasedTemperature: async (leadId, classification) => {
-        applied.push({ leadId, classification });
+      applyRuleBasedTemperature: async (leadId, classification, currentTemperature) => {
+        applied.push({ leadId, classification, currentTemperature });
         return { id: leadId, temperature: classification.temperature };
       },
     },
@@ -151,7 +207,43 @@ test("reviewer applies a direct rule without loading conversation history", asyn
   assert.equal(result.status, "updated");
   assert.equal(result.lead.temperature, "hot");
   assert.equal(applied[0].classification.matchedRule, "booking_intent");
+  assert.equal(applied[0].currentTemperature, "warm");
   assert.equal(historyCalls, 0);
+});
+
+test("reviewer recovers Cold leads and only cools Hot leads for absolute rejection", async () => {
+  let activeLead = { id: 12, temperature: "cold", is_closed: false };
+  const applied = [];
+  const reviewer = createLeadTemperatureReviewer({
+    pipelineRepository: {
+      getActiveLeadForContact: async () => activeLead,
+      applyRuleBasedTemperature: async (leadId, classification, currentTemperature) => {
+        applied.push({ leadId, classification, currentTemperature });
+        return { id: leadId, temperature: classification.temperature };
+      },
+    },
+    messagesRepository: {
+      getMessagesForContact: async () => [],
+    },
+    getBranchNames: () => [],
+  });
+
+  const recovered = await reviewer(17, 104, "Actually, I would like to book tomorrow.");
+  assert.equal(recovered.status, "updated");
+  assert.equal(recovered.lead.temperature, "hot");
+  assert.equal(applied[0].currentTemperature, "cold");
+
+  activeLead = { id: 13, temperature: "hot", is_closed: false };
+  const ordinaryDecline = await reviewer(18, 105, "No thanks, I am not interested.");
+  assert.equal(ordinaryDecline.status, "unchanged");
+  assert.equal(ordinaryDecline.reason, "transition-not-allowed");
+  assert.equal(applied.length, 1);
+
+  const stopContact = await reviewer(18, 106, "Please stop messaging me.");
+  assert.equal(stopContact.status, "updated");
+  assert.equal(stopContact.lead.temperature, "cold");
+  assert.equal(applied[1].currentTemperature, "hot");
+  assert.equal(applied[1].classification.rejectionStrength, "absolute");
 });
 
 test("reviewer uses recent clinic context for a short scheduling answer", async () => {
@@ -341,9 +433,8 @@ test("reviewer leaves unclear messages Warm and skips staff-set temperatures", a
     getBranchNames: () => [],
   });
 
-  assert.deepEqual(await hotReviewer(15, 102, "No thanks"), {
-    status: "skipped",
-    reason: "not-warm",
-  });
+  const hotResult = await hotReviewer(15, 102, "No thanks");
+  assert.equal(hotResult.status, "unchanged");
+  assert.equal(hotResult.reason, "transition-not-allowed");
   assert.equal(historyCalls, 0);
 });

@@ -312,6 +312,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_one_open_per_contact
   ON leads(contact_id)
   WHERE is_closed = false;
 CREATE INDEX IF NOT EXISTS idx_leads_stage ON leads(stage_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_leads_contact_journey
+  ON leads(contact_id, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_leads_branch ON leads(branch_name) WHERE branch_name IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_leads_follow_up
   ON leads(next_follow_up_at)

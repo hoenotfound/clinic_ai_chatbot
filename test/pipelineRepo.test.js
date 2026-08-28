@@ -20,6 +20,7 @@ test("creates one open lead with an atomic partial-conflict claim", async (t) =>
       queries.push({ sql, params });
       if (/SELECT l\.\*, s\.name AS stage_name/.test(sql)) return { rows: [] };
       if (/SELECT id, name FROM pipeline_stages/.test(sql)) {
+        assert.match(sql, /CASE WHEN system_key = 'new' THEN 0 ELSE 1 END/);
         return { rows: [{ id: 2, name: "New Lead" }] };
       }
       if (/INSERT INTO leads/.test(sql)) {
@@ -157,6 +158,7 @@ test("backfill ignores contacts that already have any recorded journey", async (
     backfillSql,
     /NOT EXISTS \(SELECT 1 FROM leads existing WHERE existing\.contact_id = c\.id\)/
   );
+  assert.match(backfillSql, /CASE WHEN system_key = 'new' THEN 0 ELSE 1 END/);
   assert.match(backfillSql, /SELECT MIN\(m\.id\) FROM messages m WHERE m\.contact_id = c\.id/);
 });
 
@@ -241,6 +243,7 @@ test("manual lead creation resolves a concurrent open-lead claim", async (t) => 
 
   let activeLeadQueries = 0;
   let insertSql = "";
+  let entryStageSql = "";
   realtimeEvents.publish = () => {
     throw new Error("A lead created by another request should not publish twice");
   };
@@ -253,6 +256,7 @@ test("manual lead creation resolves a concurrent open-lead claim", async (t) => 
           : { rows: [{ id: 61, contact_id: 17, stage_id: 1 }] };
       }
       if (/SELECT id, name, stage_type, system_key FROM pipeline_stages/.test(sql)) {
+        entryStageSql = sql;
         return { rows: [{ id: 1, name: "New Lead", stage_type: "open", system_key: "new" }] };
       }
       if (/INSERT INTO leads/.test(sql)) {
@@ -268,6 +272,7 @@ test("manual lead creation resolves a concurrent open-lead claim", async (t) => 
 
   assert.equal(result.created, false);
   assert.equal(result.lead.id, 61);
+  assert.match(entryStageSql, /CASE WHEN system_key = 'new' THEN 0 ELSE 1 END/);
   assert.match(insertSql, /ON CONFLICT \(contact_id\) WHERE is_closed = false DO NOTHING/);
   assert.match(insertSql, /started_message_id/);
   assert.match(insertSql, /temperature_locked, started_message_id/);
@@ -337,9 +342,13 @@ test("no-reply classification excludes failed and unconfirmed messages", async (
   assert.match(listSql, /latest\.delivery_status IN \('pending', 'sent', 'delivered', 'read'\)/);
   assert.doesNotMatch(listSql, /latest\.delivery_status IN \([^)]*'failed'/);
   assert.doesNotMatch(listSql, /latest\.delivery_status IN \([^)]*'unknown'/);
+  assert.match(listSql, /m\.id >= l\.started_message_id/);
+  assert.match(listSql, /m\.created_at >= l\.created_at/);
+  assert.match(listSql, /m\.id < next_journey\.started_message_id/);
+  assert.match(listSql, /m\.created_at < next_journey\.journey_created_at/);
 });
 
-test("rule-based temperature update is atomic and only claims a still-Warm lead", async (t) => {
+test("rule-based temperature update atomically claims the expected current temperature", async (t) => {
   const originalConnect = pool.connect;
   const originalPublish = realtimeEvents.publish;
   t.after(() => {
@@ -370,15 +379,71 @@ test("rule-based temperature update is atomic and only claims a still-Warm lead"
 
   assert.equal(updated.temperature, "hot");
   const update = queries.find(({ sql }) => /UPDATE leads/.test(sql));
-  assert.match(update.sql, /is_closed = false AND temperature = 'warm'/);
+  assert.match(update.sql, /is_closed = false AND temperature = \$3/);
   assert.match(update.sql, /temperature_locked = false/);
   assert.match(update.sql, /temperature_source = 'rule'/);
-  assert.deepEqual(update.params, [81, "hot"]);
+  assert.deepEqual(update.params, [81, "hot", "warm"]);
   const activity = queries.find(({ sql }) => /INSERT INTO lead_activities/.test(sql));
   assert.equal(activity.params[3], "Rule automation");
   assert.equal(activity.params[4].source, "conversation_rules");
   assert.equal(activity.params[4].matchedRule, "booking_intent");
   assert.deepEqual(published, [{ event: "pipeline_changed", payload: { leadId: 81 } }]);
+});
+
+test("rule transitions recover Cold leads and only cool Hot leads for absolute rejection", async (t) => {
+  const originalConnect = pool.connect;
+  const originalPublish = realtimeEvents.publish;
+  t.after(() => {
+    pool.connect = originalConnect;
+    realtimeEvents.publish = originalPublish;
+  });
+
+  const updates = [];
+  const activities = [];
+  pool.connect = async () => ({
+    query: async (sql, params) => {
+      if (/UPDATE leads/.test(sql)) {
+        updates.push({ sql, params });
+        return { rows: [{ id: params[0], temperature: params[1] }] };
+      }
+      if (/INSERT INTO lead_activities/.test(sql)) activities.push({ sql, params });
+      return { rows: [] };
+    },
+    release: () => {},
+  });
+  realtimeEvents.publish = () => {};
+
+  const recovered = await pipelineRepo.applyRuleBasedTemperature(85, {
+    temperature: "hot",
+    matchedRule: "booking_intent",
+    reason: "The customer asked to book.",
+    evidence: "Actually, please book me tomorrow.",
+  }, "cold");
+  assert.equal(recovered.temperature, "hot");
+  assert.deepEqual(updates[0].params, [85, "hot", "cold"]);
+  assert.match(activities[0].params[2], /from Cold to Hot/);
+
+  const ordinaryDecline = await pipelineRepo.applyRuleBasedTemperature(86, {
+    temperature: "cold",
+    matchedRule: "explicit_rejection",
+    rejectionStrength: "standard",
+    reason: "The customer declined.",
+    evidence: "No thanks.",
+  }, "hot");
+  assert.equal(ordinaryDecline, null);
+  assert.equal(updates.length, 1);
+
+  const stopped = await pipelineRepo.applyRuleBasedTemperature(86, {
+    temperature: "cold",
+    matchedRule: "explicit_rejection",
+    rejectionStrength: "absolute",
+    reason: "The customer asked not to be contacted.",
+    evidence: "Stop messaging me.",
+  }, "hot");
+  assert.equal(stopped.temperature, "cold");
+  assert.deepEqual(updates[1].params, [86, "cold", "hot"]);
+  assert.match(activities[1].params[2], /from Hot to Cold/);
+  assert.equal(activities[1].params[4].rejectionStrength, "absolute");
 });
 
 test("a staff temperature change locks out automatic updates", async (t) => {
@@ -419,7 +484,7 @@ test("a staff temperature change locks out automatic updates", async (t) => {
   assert.ok(update.params.includes("manual"));
 });
 
-test("rule-based temperature update cannot overwrite a lead that is no longer Warm", async (t) => {
+test("rule-based temperature update cannot overwrite a lead whose temperature changed concurrently", async (t) => {
   const originalConnect = pool.connect;
   const originalPublish = realtimeEvents.publish;
   t.after(() => {

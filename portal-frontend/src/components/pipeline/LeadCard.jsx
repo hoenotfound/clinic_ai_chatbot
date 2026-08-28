@@ -4,12 +4,14 @@ import {
   formatDateTime,
   formatMoney,
   formatRelative,
+  isNoReply,
   isOverdue,
   temperatureStyle,
 } from "./pipelineUtils";
 
-export default function LeadCard({ lead, onOpen, onDragStart }) {
-  const overdue = isOverdue(lead);
+export default function LeadCard({ lead, now, noReplyHours, onOpen, onDragStart }) {
+  const overdue = isOverdue(lead, now);
+  const noReply = isNoReply(lead, noReplyHours, now);
 
   return (
     <button
@@ -41,7 +43,7 @@ export default function LeadCard({ lead, onOpen, onDragStart }) {
         <Badge className="bg-[var(--color-primary-light)] text-[var(--color-primary)]">
           {lead.branch_name || "Unassigned"}
         </Badge>
-        {lead.no_reply && <Badge className="bg-slate-100 text-slate-600">No reply</Badge>}
+        {noReply && <Badge className="bg-slate-100 text-slate-600">No reply</Badge>}
         {lead.appointment_status === "reschedule" && (
           <Badge className="bg-[var(--color-accent-light)] text-[#8a641f]">Reschedule</Badge>
         )}
@@ -70,7 +72,7 @@ export default function LeadCard({ lead, onOpen, onDragStart }) {
 
       <div className="mt-3 flex items-center justify-between gap-2 text-[10px] text-[var(--color-text-muted)]">
         <span className="truncate">{lead.owner_username ? `Owner: ${lead.owner_username}` : "No owner"}</span>
-        <span className="shrink-0">{formatRelative(lead.last_message_at)}</span>
+        <span className="shrink-0">{formatRelative(lead.last_message_at, now)}</span>
       </div>
     </button>
   );
