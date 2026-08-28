@@ -1,8 +1,10 @@
 const express = require("express");
 const pipelineRepo = require("../db/pipelineRepo");
 const contactsRepo = require("../db/contactsRepo");
+const messagesRepo = require("../db/messagesRepo");
 const usersRepo = require("../db/usersRepo");
 const clinicConfig = require("../config/clinicConfig");
+const { suggestLeadTemperature } = require("../services/leadTemperatureService");
 const {
   PipelineValidationError,
   normalizeLeadPayload,
@@ -65,6 +67,36 @@ router.get("/leads/:leadId/activities", async (req, res) => {
     res.json(await pipelineRepo.listActivities(lead.id));
   } catch (err) {
     handlePipelineError(res, err, "Something went wrong loading lead activity.");
+  }
+});
+
+router.post("/leads/:leadId/temperature-suggestion", async (req, res) => {
+  let lead;
+  let messages;
+  try {
+    lead = await pipelineRepo.getLeadById(req.params.leadId);
+    if (!lead) return res.status(404).json({ error: "Lead not found." });
+
+    messages = await messagesRepo.getMessagesForContact(lead.contact_id, 30, false);
+    const hasCustomerMessage = messages.some(
+      (message) => message.role === "user" && String(message.content || "").trim()
+    );
+    if (!hasCustomerMessage) {
+      return res.status(422).json({
+        error: "At least one customer message is needed before suggesting a temperature.",
+      });
+    }
+  } catch (err) {
+    return handlePipelineError(res, err, "Something went wrong loading the conversation for analysis.");
+  }
+
+  try {
+    res.json(await suggestLeadTemperature({ messages, lead }));
+  } catch (err) {
+    console.error("Failed to suggest lead temperature:", err);
+    res.status(502).json({
+      error: "Couldn't analyse this conversation right now. Please try again.",
+    });
   }
 });
 

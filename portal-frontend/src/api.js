@@ -156,6 +156,8 @@ export const api = {
     request("/pipeline/leads", { method: "POST", body: JSON.stringify(data) }),
   updateLead: (leadId, data) =>
     request(`/pipeline/leads/${leadId}`, { method: "PATCH", body: JSON.stringify(data) }),
+  suggestLeadTemperature: (leadId) =>
+    request(`/pipeline/leads/${leadId}/temperature-suggestion`, { method: "POST" }),
   listLeadActivities: (leadId) => request(`/pipeline/leads/${leadId}/activities`),
   addLeadNote: (leadId, content) =>
     request(`/pipeline/leads/${leadId}/notes`, {
