@@ -69,9 +69,11 @@ export default function Pipeline() {
       refreshTimerRef.current = setTimeout(() => refreshPipeline({ quiet: true }), 150);
     }
     source.addEventListener("pipeline_changed", scheduleRefresh);
+    source.addEventListener("conversation_changed", scheduleRefresh);
     return () => {
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       source.removeEventListener("pipeline_changed", scheduleRefresh);
+      source.removeEventListener("conversation_changed", scheduleRefresh);
       source.close();
     };
   }, [refreshPipeline]);

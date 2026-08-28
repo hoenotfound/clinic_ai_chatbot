@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const form = {
   stageId: "2",
@@ -98,4 +100,27 @@ test("time-based pipeline states update from an explicit clock", async () => {
   assert.equal(isNoReply({ ...lead, last_message_at: null }, 24, now), false);
   assert.equal(isOverdue(lead, now), true);
   assert.equal(formatRelative("2026-08-28T11:30:00.000Z", now), "30m ago");
+});
+
+test("pipeline refreshes when messages and delivery states change", () => {
+  const source = fs.readFileSync(
+    path.join(
+      __dirname,
+      "..",
+      "portal-frontend",
+      "src",
+      "pages",
+      "Pipeline.jsx"
+    ),
+    "utf8"
+  );
+
+  assert.match(
+    source,
+    /addEventListener\("conversation_changed", scheduleRefresh\)/
+  );
+  assert.match(
+    source,
+    /removeEventListener\("conversation_changed", scheduleRefresh\)/
+  );
 });

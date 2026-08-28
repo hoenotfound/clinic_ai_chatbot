@@ -116,6 +116,15 @@ const DATE_OR_TIME_PATTERNS = [
   /\d{1,2}(?:点|點|时|時)/,
 ];
 
+// A customer can reject one proposed date while still accepting another.
+// Keep that separate from a full rejection so the scheduling-context rule can
+// treat the alternative as a confirmation instead of making the lead Cold.
+const ALTERNATIVE_SCHEDULING_PATTERNS = [
+  /(?:\b(?:but|however|instead)\b|[,.;])\s*(?:on\s+)?(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|this\s+(?:week|weekend)|next\s+week|weekend|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:[01]?\d|2[0-3])[:.]\d{2}\s*(?:am|pm)?|(?:[1-9]|1[0-2])\s*(?:am|pm))\b.{0,40}\b(?:works?(?:\s+for\s+me)?|is\s+(?:okay|ok|fine|better)|would\s+work|i\s+(?:can|could|prefer)|can\s+(?:come|visit)|available|free)\b/,
+  /(?:\b(?:tapi|tetapi|sebaliknya)\b|[,.;])\s*(?:hari\s+)?(?:ini|esok|lusa|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad|minggu\s+ini|minggu\s+depan|hujung\s+minggu|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:[01]?\d|2[0-3])[:.]\d{2}\s*(?:am|pm)?|(?:[1-9]|1[0-2])\s*(?:am|pm))\b.{0,40}\b(?:boleh|sesuai|ok|okay|lapang|free|lebih\s+baik)\b/,
+  /(?:但是|可是|不过|不過|，|。)(?:今天|明天|后天|後天|星期[一二三四五六日天]|周[一二三四五六日天]|週[一二三四五六日天]|这个周末|這個週末|下周|下週|\d{1,2}(?:点|點|时|時)).{0,20}(?:可以|没问题|沒問題|方便|有空|比较好|比較好)/,
+];
+
 function matchesAny(text, patterns) {
   return patterns.some((pattern) => pattern.test(text));
 }
@@ -125,7 +134,8 @@ function isExplicitRejection(text) {
   return (
     matchesAny(text, DECLINE_PATTERNS) &&
     !POSITIVE_CONTRAST_PATTERN.test(text) &&
-    !matchesAny(text, UNCLEAR_BOOKING_PATTERNS)
+    !matchesAny(text, UNCLEAR_BOOKING_PATTERNS) &&
+    !matchesAny(text, ALTERNATIVE_SCHEDULING_PATTERNS)
   );
 }
 

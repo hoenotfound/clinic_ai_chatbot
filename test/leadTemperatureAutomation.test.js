@@ -79,6 +79,36 @@ test("general interest, uncertainty, cancellation, and silence remain Warm", () 
   }
 });
 
+test("declining one date while offering another is not a Cold rejection", () => {
+  const examples = [
+    {
+      messageText: "I don't want to visit Saturday, Sunday works for me.",
+      previousClinicMessage: "Which day would you like to visit?",
+    },
+    {
+      messageText: "I won't come Saturday. Sunday is okay.",
+      previousClinicMessage: "Which day would you like to visit?",
+    },
+    {
+      messageText: "Saya tak nak datang Sabtu, Ahad boleh.",
+      previousClinicMessage: "Hari mana sesuai untuk datang?",
+    },
+  ];
+
+  for (const example of examples) {
+    const result = classifyTemperatureMessage(example);
+    assert.equal(result?.temperature, "hot", example.messageText);
+    assert.equal(result?.matchedRule, "scheduling_confirmation", example.messageText);
+  }
+
+  assert.equal(
+    classifyTemperatureMessage({
+      messageText: "I don't want to visit Saturday, Sunday works for me.",
+    }),
+    null
+  );
+});
+
 test("mixed treatment preferences do not incorrectly become Cold", () => {
   const examples = [
     "I am not interested in fillers.",
