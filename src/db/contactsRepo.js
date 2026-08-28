@@ -181,10 +181,13 @@ async function returnToAi(id) {
 
 async function setAttention(id, needsAttention, reason = null) {
   const result = await pool.query(
-    `UPDATE contacts
+    `UPDATE contacts c
      SET needs_attention = $1, attention_reason = $2, updated_at = now()
-     WHERE id = $3
-     RETURNING *`,
+     WHERE c.id = $3
+     RETURNING c.*,
+       (SELECT m.id FROM messages m
+        WHERE m.contact_id = c.id AND m.role = 'user'
+        ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS attention_message_id`,
     [needsAttention, needsAttention ? reason : null, id]
   );
   const updated = result.rows[0] || null;
@@ -194,6 +197,7 @@ async function setAttention(id, needsAttention, reason = null) {
       notifyTelegram(
         telegramImmediateAlerts.sendHumanInterventionAlert({
           contactId: updated.id,
+          messageId: updated.attention_message_id,
           reason: updated.attention_reason || reason || "Human review requested.",
         }),
         "human intervention",
