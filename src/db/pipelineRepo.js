@@ -1,5 +1,8 @@
 const { pool } = require("./db");
 const realtimeEvents = require("../utils/realtimeEvents");
+const {
+  isAllowedRuleTemperatureTransition,
+} = require("../utils/leadTemperatureTransitions");
 
 const NO_REPLY_HOURS = 24;
 
@@ -564,8 +567,12 @@ async function updateLead(id, patch, actor) {
   return updatedLead;
 }
 
-async function applyRuleBasedTemperature(id, classification) {
-  if (!classification || !["hot", "cold"].includes(classification.temperature)) {
+async function applyRuleBasedTemperature(
+  id,
+  classification,
+  currentTemperature = "warm"
+) {
+  if (!isAllowedRuleTemperatureTransition(currentTemperature, classification)) {
     return null;
   }
 
@@ -573,24 +580,29 @@ async function applyRuleBasedTemperature(id, classification) {
     const result = await client.query(
       `UPDATE leads
        SET temperature = $2, temperature_source = 'rule', updated_at = now()
-       WHERE id = $1 AND is_closed = false AND temperature = 'warm'
+       WHERE id = $1 AND is_closed = false AND temperature = $3
          AND temperature_locked = false
        RETURNING *`,
-      [id, classification.temperature]
+      [id, classification.temperature, currentTemperature]
     );
     const updated = result.rows[0];
     if (!updated) return null;
 
+    const previousTemperature =
+      currentTemperature[0].toUpperCase() + currentTemperature.slice(1);
     const nextTemperature = classification.temperature === "hot" ? "Hot" : "Cold";
     await addActivity(
       client,
       id,
       "updated",
-      `Temperature automatically changed from Warm to ${nextTemperature}. ${classification.reason}`,
+      `Temperature automatically changed from ${previousTemperature} to ${nextTemperature}. ${classification.reason}`,
       "Rule automation",
       {
         source: "conversation_rules",
         matchedRule: classification.matchedRule,
+        ...(classification.rejectionStrength
+          ? { rejectionStrength: classification.rejectionStrength }
+          : {}),
         evidence: classification.evidence,
       }
     );

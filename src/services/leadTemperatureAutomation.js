@@ -1,6 +1,9 @@
 const pipelineRepo = require("../db/pipelineRepo");
 const messagesRepo = require("../db/messagesRepo");
 const clinicConfig = require("../config/clinicConfig");
+const {
+  isAllowedRuleTemperatureTransition,
+} = require("../utils/leadTemperatureTransitions");
 
 const CONTEXT_MESSAGE_LIMIT = 8;
 const MAX_EVIDENCE_CHARS = 200;
@@ -173,6 +176,7 @@ function classifyTemperatureMessage({
   const text = normalizeText(messageText);
   if (!text) return null;
 
+  const absoluteRejection = matchesAny(text, ABSOLUTE_REJECTION_PATTERNS);
   const rejected = isExplicitRejection(text);
   const bookingIntent = hasBookingIntent(text);
   if (rejected && bookingIntent) return null;
@@ -182,6 +186,7 @@ function classifyTemperatureMessage({
     return {
       temperature: "cold",
       matchedRule: "explicit_rejection",
+      rejectionStrength: absoluteRejection ? "absolute" : "standard",
       reason: "The customer explicitly declined or asked not to be contacted.",
       evidence,
     };
@@ -219,9 +224,7 @@ function createLeadTemperatureReviewer({
 }) {
   return async function reviewLeadTemperatureForMessage(contactId, messageId, messageText) {
     const lead = await pipelineRepository.getActiveLeadForContact(contactId);
-    if (!lead || lead.temperature !== "warm") {
-      return { status: "skipped", reason: "not-warm" };
-    }
+    if (!lead) return { status: "skipped", reason: "no-active-lead" };
     if (lead.temperature_locked) {
       return { status: "skipped", reason: "staff-controlled" };
     }
@@ -270,9 +273,18 @@ function createLeadTemperatureReviewer({
       return { status: "unchanged" };
     }
 
+    if (!isAllowedRuleTemperatureTransition(lead.temperature, classification)) {
+      return {
+        status: "unchanged",
+        reason: "transition-not-allowed",
+        classification,
+      };
+    }
+
     const updatedLead = await pipelineRepository.applyRuleBasedTemperature(
       lead.id,
-      classification
+      classification,
+      lead.temperature
     );
     return updatedLead
       ? { status: "updated", lead: updatedLead, classification }
