@@ -68,6 +68,11 @@ module.exports = {
     delayMinutes: 120,
     triggerMode: "all",
     message: "Hi! Just checking in to see if you still need any help. Feel free to reply whenever you're ready 😊",
+    translations: {
+      en: "Hi! Just checking in to see if you still need any help. Feel free to reply whenever you're ready 😊",
+      ms: "Hai! Saya cuma ingin bertanya sama ada anda masih memerlukan bantuan. Balas sahaja apabila anda sudah bersedia 😊",
+      zh: "嗨！想跟进一下，看看您是否还需要任何帮助。方便时回复我们就可以了 😊",
+    },
     imageUrl: "",
     activatedAt: null,
   },

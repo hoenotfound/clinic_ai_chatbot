@@ -28,7 +28,15 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
     `SELECT
        c.id AS contact_id,
        c.whatsapp_number,
-       latest.id AS trigger_message_id
+       latest.id AS trigger_message_id,
+       ARRAY(
+         SELECT recent_inbound.content
+         FROM messages recent_inbound
+         WHERE recent_inbound.contact_id = c.id
+           AND recent_inbound.role = 'user'
+         ORDER BY recent_inbound.created_at DESC, recent_inbound.id DESC
+         LIMIT 5
+       ) AS recent_inbound_messages
      FROM contacts c
      JOIN LATERAL (
        SELECT id, role, sent_by_username, created_at, delivery_status,

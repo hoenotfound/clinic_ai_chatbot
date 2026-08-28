@@ -138,6 +138,11 @@ export const api = {
     }
     return res.json();
   },
+  translateFollowUp: (message) =>
+    request("/config/automated-follow-up/translations", {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    }),
   listContacts: (search) => request(`/contacts${search ? `?search=${encodeURIComponent(search)}` : ""}`),
   getContact: (id) => request(`/contacts/${id}`),
   createContact: (data) => request("/contacts", { method: "POST", body: JSON.stringify(data) }),

@@ -3,6 +3,7 @@ const messagesRepo = require("../db/messagesRepo");
 const followUpRepo = require("../db/followUpRepo");
 const contactsRepo = require("../db/contactsRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
+const { detectConversationLanguage } = require("../utils/chatLanguage");
 const whatsapp = require("./whatsappService");
 
 const FOLLOW_UP_CHECK_INTERVAL_MS = 60 * 1000;
@@ -23,6 +24,8 @@ function getActiveSettings() {
     !["all", "staff"].includes(settings.triggerMode) ||
     typeof settings.message !== "string" ||
     !settings.message.trim() ||
+    (settings.translations !== undefined &&
+      (typeof settings.translations !== "object" || settings.translations === null)) ||
     (settings.imageUrl !== undefined && typeof settings.imageUrl !== "string") ||
     typeof settings.activatedAt !== "string" ||
     Number.isNaN(Date.parse(settings.activatedAt))
@@ -34,6 +37,15 @@ function getActiveSettings() {
     delayMinutes: settings.delayMinutes,
     triggerMode: settings.triggerMode,
     message: settings.message.trim(),
+    translations: Object.fromEntries(
+      ["en", "ms", "zh"].map((key) => [
+        key,
+        typeof settings.translations?.[key] === "string" &&
+        settings.translations[key].trim()
+          ? settings.translations[key].trim()
+          : settings.message.trim(),
+      ])
+    ),
     imageUrl: settings.imageUrl?.trim() || "",
     activatedAt: settings.activatedAt,
   };
@@ -57,10 +69,13 @@ async function sendCandidate(candidate) {
   const settings = getActiveSettings();
   if (!settings) return;
 
+  const language = detectConversationLanguage(candidate.recent_inbound_messages);
+  const followUpMessage = settings.translations[language] || settings.message;
+
   const saved = await followUpRepo.saveIfStillEligible({
     contactId: candidate.contact_id,
     triggerMessageId: candidate.trigger_message_id,
-    content: settings.message,
+    content: followUpMessage,
     mediaUrl: settings.imageUrl || null,
     delayMinutes: settings.delayMinutes,
     triggerMode: settings.triggerMode,
@@ -79,9 +94,9 @@ async function sendCandidate(candidate) {
       ? await whatsapp.sendImage(
           candidate.whatsapp_number,
           settings.imageUrl,
-          settings.message
+          followUpMessage
         )
-      : await whatsapp.sendMessage(candidate.whatsapp_number, settings.message);
+      : await whatsapp.sendMessage(candidate.whatsapp_number, followUpMessage);
   } catch (err) {
     console.error("Automated follow-up send failed:", err);
     sendResult = { success: false, wamid: null };
