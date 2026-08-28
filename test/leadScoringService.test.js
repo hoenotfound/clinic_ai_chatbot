@@ -13,7 +13,7 @@ const settings = {
   activatedAt: "2026-08-28T00:00:00.000Z",
 };
 
-function candidate() {
+function candidate(overrides = {}) {
   return {
     lead_id: 7,
     contact_id: 12,
@@ -22,6 +22,27 @@ function candidate() {
     through_message_id: 44,
     trigger_type: "inactivity",
     temperature: "warm",
+    ...overrides,
+  };
+}
+
+function scoredLead() {
+  return {
+    temperature: "hot",
+    confidence: "high",
+    reason: "The customer asked for a booking tomorrow.",
+    evidenceMessageIds: [44],
+    summary: {
+      treatmentInterest: "HIFU",
+      preferredBranch: "Puchong",
+      preferredAppointment: "tomorrow",
+      mainConcern: "Jawline lifting",
+      chatSummary: "Customer asked about HIFU and requested a booking tomorrow.",
+      nextAction: "Confirm an available appointment time.",
+    },
+    provider: "gemini",
+    model: "test-model",
+    promptVersion: "test-v2",
   };
 }
 
@@ -41,18 +62,11 @@ test("does not query leads while AI scoring is disabled", async () => {
   assert.equal(queries, 0);
 });
 
-test("claims, scores, and completes an eligible conversation snapshot", async () => {
+test("claims, scores, completes, and sends a summary after inactivity", async () => {
   const calls = [];
   let transcriptArgs = null;
-  const score = {
-    temperature: "hot",
-    confidence: "high",
-    reason: "The customer asked for a booking tomorrow.",
-    evidenceMessageIds: [44],
-    provider: "gemini",
-    model: "test-model",
-    promptVersion: "test-v1",
-  };
+  let summaryAlert = null;
+  const score = scoredLead();
   const lead = candidate();
   const run = createLeadScoringRunner({
     settingsGetter: () => settings,
@@ -72,7 +86,10 @@ test("claims, scores, and completes an eligible conversation snapshot", async ()
           { id: 44, role: "user", content: "Yes, please book me." },
         ];
       },
-      completeScore: async (input) => calls.push(["complete", input]),
+      completeScore: async (input) => {
+        calls.push(["complete", input]);
+        return { status: "completed" };
+      },
       markScoreCancelled: async () => assert.fail("score should not be cancelled"),
       markScoreFailed: async () => assert.fail("score should not fail"),
     },
@@ -80,6 +97,10 @@ test("claims, scores, and completes an eligible conversation snapshot", async ()
       assert.equal(messages.length, 2);
       assert.equal(scoringLead.lead_id, 7);
       return score;
+    },
+    sendConversationSummary: async (input) => {
+      summaryAlert = input;
+      return { status: "sent" };
     },
   });
 
@@ -102,6 +123,83 @@ test("claims, scores, and completes an eligible conversation snapshot", async ()
     triggerType: "inactivity",
     score,
   }]);
+  assert.deepEqual(summaryAlert, { leadId: 7, score });
+});
+
+test("time and message ceilings can score temperature without sending Telegram summary", async () => {
+  for (const triggerType of ["time_ceiling", "message_ceiling"]) {
+    let summaryCalls = 0;
+    const run = createLeadScoringRunner({
+      settingsGetter: () => settings,
+      repository: {
+        findCandidates: async () => [candidate({ trigger_type: triggerType })],
+        claimCandidate: async () => ({ id: 94 }),
+        getTranscript: async () => [{ id: 44, role: "user", content: "How much is HIFU?" }],
+        completeScore: async () => ({ status: "completed" }),
+        markScoreCancelled: async () => assert.fail("score should not be cancelled"),
+        markScoreFailed: async () => assert.fail("score should not fail"),
+      },
+      scoreConversation: async () => scoredLead(),
+      sendConversationSummary: async () => {
+        summaryCalls += 1;
+      },
+    });
+
+    await run();
+    assert.equal(summaryCalls, 0, `${triggerType} should not send Telegram summary`);
+  }
+});
+
+test("superseded scoring result does not send a Telegram summary", async () => {
+  let summaryCalls = 0;
+  const run = createLeadScoringRunner({
+    settingsGetter: () => settings,
+    repository: {
+      findCandidates: async () => [candidate()],
+      claimCandidate: async () => ({ id: 95 }),
+      getTranscript: async () => [{ id: 44, role: "user", content: "Book me" }],
+      completeScore: async () => ({ status: "superseded" }),
+      markScoreCancelled: async () => assert.fail("score should not be cancelled"),
+      markScoreFailed: async () => assert.fail("score should not fail"),
+    },
+    scoreConversation: async () => scoredLead(),
+    sendConversationSummary: async () => {
+      summaryCalls += 1;
+    },
+  });
+
+  await run();
+  assert.equal(summaryCalls, 0);
+});
+
+test("Telegram failure does not convert a completed lead score into a failed score", async (t) => {
+  const originalError = console.error;
+  t.after(() => {
+    console.error = originalError;
+  });
+  console.error = () => {};
+
+  let failedScoreCalls = 0;
+  const run = createLeadScoringRunner({
+    settingsGetter: () => settings,
+    repository: {
+      findCandidates: async () => [candidate()],
+      claimCandidate: async () => ({ id: 96 }),
+      getTranscript: async () => [{ id: 44, role: "user", content: "Book me" }],
+      completeScore: async () => ({ status: "completed" }),
+      markScoreCancelled: async () => assert.fail("score should not be cancelled"),
+      markScoreFailed: async () => {
+        failedScoreCalls += 1;
+      },
+    },
+    scoreConversation: async () => scoredLead(),
+    sendConversationSummary: async () => {
+      throw new Error("Telegram unavailable");
+    },
+  });
+
+  await run();
+  assert.equal(failedScoreCalls, 0);
 });
 
 test("cancels a completed AI call when staff pauses the tool", async () => {
@@ -124,12 +222,7 @@ test("cancels a completed AI call when staff pauses the tool", async () => {
     },
     scoreConversation: async () => {
       liveSettings = null;
-      return {
-        temperature: "hot",
-        confidence: "high",
-        reason: "Booking request",
-        evidenceMessageIds: [44],
-      };
+      return scoredLead();
     },
   });
 
