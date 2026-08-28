@@ -31,6 +31,10 @@ const { pruneOrphanedPromoImages } = configRepo;
 const promoImagesRepo = require("./db/promoImagesRepo");
 const { initSchema } = require("./db/db");
 const { startAutomatedFollowUps } = require("./services/followUpService");
+const { startLeadScoring } = require("./services/leadScoringService");
+const {
+  reviewLeadTemperatureForMessage,
+} = require("./services/leadTemperatureAutomation");
 
 // How often the backstop sweep for abandoned promo-image uploads runs —
 // see the setInterval call in start() below.
@@ -120,7 +124,11 @@ async function processIncomingMessage(incoming) {
     // unique index keeps one open sales journey per contact while still
     // allowing a returning patient to start a new journey after closing one.
     try {
-      await pipelineRepo.ensureLeadForContact(contact.id, "Automation");
+      await pipelineRepo.ensureLeadForContact(
+        contact.id,
+        "Automation",
+        savedInbound.id
+      );
     } catch (pipelineErr) {
       // Pipeline bookkeeping must never prevent the chatbot from answering.
       console.error(`Failed to create or locate lead for contact ${contact.id}:`, pipelineErr);
@@ -217,6 +225,24 @@ async function processIncomingMessage(incoming) {
         text,
         mediaAttachment
       );
+    }
+
+    // Photos without captions and failed/unsupported media contain no text
+    // that can safely support a sales-temperature decision.
+    const temperatureReviewEligible = Boolean(text.trim()) && !(
+      mediaType === "image" && !incoming.text
+    );
+
+    if (temperatureReviewEligible) {
+      try {
+        await reviewLeadTemperatureForMessage(contact.id, savedInbound.id, text);
+      } catch (temperatureErr) {
+        // Lead categorization must never prevent or replace a customer reply.
+        console.error(
+          `Failed to apply lead temperature rules for contact ${contact.id}:`,
+          temperatureErr
+        );
+      }
     }
 
     const keywordReason = checkKeywordTriggers(text);
@@ -518,6 +544,11 @@ async function start() {
   // staff-configured follow-up delay without a customer reply. The service
   // is a no-op while the tool is disabled.
   startAutomatedFollowUps();
+
+  // Reviews eligible lead conversations after a quiet period or a configured
+  // ceiling. This runs outside the webhook response path, uses durable claims,
+  // and is a no-op until staff enables it in Tools.
+  startLeadScoring();
 }
 
 start().catch((err) => {

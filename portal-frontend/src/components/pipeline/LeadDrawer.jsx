@@ -8,8 +8,8 @@ import {
   CONSENT_OPTIONS,
   TEMPERATURE_OPTIONS,
   displayName,
+  buildLeadUpdatePayload,
   formatDateTime,
-  inputToIso,
   toDateTimeInput,
 } from "./pipelineUtils";
 
@@ -20,14 +20,11 @@ const labelClass = "mb-1.5 block text-[11px] font-semibold uppercase tracking-wi
 export default function LeadDrawer({ lead, stages, branches, owners, services, onClose, onSaved, onToast }) {
   const navigate = useNavigate();
   const [form, setForm] = useState(() => formFromLead(lead));
+  const [temperatureDirty, setTemperatureDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activities, setActivities] = useState(null);
   const [note, setNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
-
-  useEffect(() => {
-    setForm(formFromLead(lead));
-  }, [lead]);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,6 +42,25 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
     };
   }, [lead.id, onToast]);
 
+  useEffect(() => {
+    // Pipeline SSE updates can arrive while this drawer remains mounted. Keep
+    // the temperature current so a later full-form save cannot silently put an
+    // automatically updated lead back to the drawer's stale value.
+    if (!temperatureDirty) {
+      setForm((current) => ({
+        ...current,
+        temperature: lead.temperature || "warm",
+        temperatureLocked: lead.temperature_locked === true,
+        temperatureSource: lead.temperature_source || "system",
+      }));
+    }
+  }, [
+    lead.temperature,
+    lead.temperature_locked,
+    lead.temperature_source,
+    temperatureDirty,
+  ]);
+
   const selectedStage = useMemo(
     () => stages.find((stage) => Number(stage.id) === Number(form.stageId)),
     [form.stageId, stages]
@@ -52,6 +68,25 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
 
   function update(key, value) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function updateTemperature(value) {
+    setTemperatureDirty(true);
+    setForm((current) => ({
+      ...current,
+      temperature: value,
+      temperatureLocked: true,
+      temperatureSource: "manual",
+    }));
+  }
+
+  function updateTemperatureLock(allowAutomatic) {
+    setTemperatureDirty(true);
+    setForm((current) => ({
+      ...current,
+      temperatureLocked: !allowAutomatic,
+      temperatureSource: allowAutomatic ? current.temperatureSource : "manual",
+    }));
   }
 
   function updateAppointmentStatus(value) {
@@ -70,23 +105,13 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
     event.preventDefault();
     setSaving(true);
     try {
-      const updated = await api.updateLead(lead.id, {
-        stageId: Number(form.stageId),
-        temperature: form.temperature,
-        branchName: form.branchName || null,
-        ownerUsername: form.ownerUsername || null,
-        treatmentInterest: form.treatmentInterest || null,
-        estimatedValue: form.estimatedValue === "" ? null : Number(form.estimatedValue),
-        source: form.source || null,
-        campaignName: form.campaignName || null,
-        appointmentStatus: form.appointmentStatus,
-        appointmentAt: inputToIso(form.appointmentAt),
-        nextFollowUpAt: inputToIso(form.nextFollowUpAt),
-        lostReason: form.lostReason || null,
-        marketingConsent: form.marketingConsent,
-        notes: form.notes || null,
-      });
+      const updated = await api.updateLead(
+        lead.id,
+        buildLeadUpdatePayload(form, { includeTemperature: temperatureDirty })
+      );
       onSaved(updated);
+      setForm(formFromLead(updated));
+      setTemperatureDirty(false);
       onToast("Lead updated.", "info");
       setActivities(await api.listLeadActivities(lead.id));
     } catch (err) {
@@ -164,9 +189,25 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
                 </select>
               </Field>
               <Field label="Lead temperature">
-                <select className={inputClass} value={form.temperature} onChange={(event) => update("temperature", event.target.value)}>
+                <select className={inputClass} value={form.temperature} onChange={(event) => updateTemperature(event.target.value)}>
                   {TEMPERATURE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
+                <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg bg-[var(--color-bg)] px-2.5 py-2">
+                  <input
+                    type="checkbox"
+                    checked={!form.temperatureLocked}
+                    onChange={(event) => updateTemperatureLock(event.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]/25"
+                  />
+                  <span className="text-[11px] leading-4 text-[var(--color-text-muted)]">
+                    Allow rules and AI scoring to update this temperature
+                  </span>
+                </label>
+                <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+                  {form.temperatureLocked
+                    ? "Staff control is on. Automatic scoring cannot change it."
+                    : `Automatic updates are allowed. Current source: ${temperatureSourceLabel(form.temperatureSource)}.`}
+                </p>
               </Field>
               <Field label="Branch">
                 <select className={inputClass} value={form.branchName} onChange={(event) => update("branchName", event.target.value)}>
@@ -268,6 +309,8 @@ function formFromLead(lead) {
   return {
     stageId: String(lead.stage_id),
     temperature: lead.temperature || "warm",
+    temperatureLocked: lead.temperature_locked === true,
+    temperatureSource: lead.temperature_source || "system",
     branchName: lead.branch_name || "",
     ownerUsername: lead.owner_username || "",
     treatmentInterest: lead.treatment_interest || "",
@@ -281,6 +324,15 @@ function formFromLead(lead) {
     marketingConsent: lead.marketing_consent || "unknown",
     notes: lead.notes || "",
   };
+}
+
+function temperatureSourceLabel(source) {
+  return {
+    ai: "AI conversation score",
+    rule: "message rule",
+    manual: "staff setting",
+    system: "default",
+  }[source] || "default";
 }
 
 function Field({ label, children }) {

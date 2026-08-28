@@ -74,6 +74,30 @@ export function inputToIso(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+export function buildLeadUpdatePayload(form, { includeTemperature = false } = {}) {
+  const payload = {
+    stageId: Number(form.stageId),
+    branchName: form.branchName || null,
+    ownerUsername: form.ownerUsername || null,
+    treatmentInterest: form.treatmentInterest || null,
+    estimatedValue: form.estimatedValue === "" ? null : Number(form.estimatedValue),
+    source: form.source || null,
+    campaignName: form.campaignName || null,
+    appointmentStatus: form.appointmentStatus,
+    appointmentAt: inputToIso(form.appointmentAt),
+    nextFollowUpAt: inputToIso(form.nextFollowUpAt),
+    lostReason: form.lostReason || null,
+    marketingConsent: form.marketingConsent,
+    notes: form.notes || null,
+  };
+
+  if (includeTemperature) {
+    payload.temperature = form.temperature;
+    payload.temperatureLocked = form.temperatureLocked;
+  }
+  return payload;
+}
+
 export function isOverdue(lead) {
   return !!lead.next_follow_up_at && !lead.is_closed && new Date(lead.next_follow_up_at).getTime() < Date.now();
 }

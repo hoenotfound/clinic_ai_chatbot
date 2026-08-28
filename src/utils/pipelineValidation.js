@@ -52,6 +52,12 @@ function normalizeLeadPayload(body, { partial = false } = {}) {
     }
     normalized.temperature = source.temperature;
   }
+  if (Object.hasOwn(source, "temperatureLocked")) {
+    if (typeof source.temperatureLocked !== "boolean") {
+      throw new PipelineValidationError("Temperature automation setting is invalid.");
+    }
+    normalized.temperatureLocked = source.temperatureLocked;
+  }
   if (Object.hasOwn(source, "appointmentStatus")) {
     if (!APPOINTMENT_STATUSES.has(source.appointmentStatus)) {
       throw new PipelineValidationError("Appointment status is invalid.");

@@ -48,6 +48,7 @@ export default function AddLeadModal({ branches, services, onClose, onCreated, o
       const result = await api.createLead({
         contactId,
         temperature,
+        temperatureLocked: temperature !== "warm",
         branchName: branchName || null,
         treatmentInterest: treatmentInterest || null,
       });
@@ -95,6 +96,9 @@ export default function AddLeadModal({ branches, services, onClose, onCreated, o
               <select className={inputClass} value={temperature} onChange={(event) => setTemperature(event.target.value)}>
                 {TEMPERATURE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
+              <span className="mt-1.5 block text-[10px] leading-4 text-[var(--color-text-muted)]">
+                A staff-selected Hot or Cold value is protected from automatic updates.
+              </span>
             </label>
             <label>
               <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Branch</span>

@@ -14,6 +14,7 @@ const CATEGORY_OPTIONS = [
   ["all", "All leads"],
   ["hot", "Hot"],
   ["warm", "Warm"],
+  ["cold", "Cold"],
   ["unassigned", "Unassigned"],
   ["no_reply", "No reply"],
   ["reschedule", "Reschedule"],
@@ -285,7 +286,7 @@ export default function Pipeline() {
         </div>
       </main>
 
-      {selectedLead && <LeadDrawer lead={selectedLead} stages={stages} branches={data.branches || []} owners={data.owners || []} services={data.services || []} onClose={closeLead} onSaved={mergeLead} onToast={showToast} />}
+      {selectedLead && <LeadDrawer key={selectedLead.id} lead={selectedLead} stages={stages} branches={data.branches || []} owners={data.owners || []} services={data.services || []} onClose={closeLead} onSaved={mergeLead} onToast={showToast} />}
       {showStages && <StageManager stages={stages} onClose={() => setShowStages(false)} onSaveStage={(id, patch) => api.updatePipelineStage(id, patch)} onCreateStage={(payload) => refreshAfterStageChange(() => api.createPipelineStage(payload))} onDeleteStage={(id) => refreshAfterStageChange(() => api.deletePipelineStage(id))} onReorder={(ids) => refreshAfterStageChange(() => api.reorderPipelineStages(ids))} onToast={showToast} />}
       {showAddLead && <AddLeadModal branches={data.branches || []} services={data.services || []} onClose={() => setShowAddLead(false)} onCreated={handleLeadCreated} onToast={showToast} />}
       {pendingMove && <StageMoveDialog lead={pendingMove.lead} stage={pendingMove.stage} onCancel={() => setPendingMove(null)} onConfirm={async (patch) => { const updated = await updateLead(pendingMove.lead.id, patch); if (updated) setPendingMove(null); }} />}
@@ -296,7 +297,7 @@ export default function Pipeline() {
 
 function matchesCategory(lead, category) {
   if (category === "all") return true;
-  if (category === "hot" || category === "warm") return lead.temperature === category && !lead.is_closed;
+  if (["hot", "warm", "cold"].includes(category)) return lead.temperature === category && !lead.is_closed;
   if (category === "unassigned") return !lead.branch_name && !lead.is_closed;
   if (category === "no_reply") return !!lead.no_reply;
   if (category === "reschedule") return lead.appointment_status === "reschedule";

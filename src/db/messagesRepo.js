@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 
 const MAX_PORTAL_PAGE_SIZE = 100;
 
@@ -40,8 +41,12 @@ async function saveMessage(
   mediaMimeType = null
 ) {
   const result = await pool.query(
-    `INSERT INTO messages (contact_id, role, content, whatsapp_message_id, sent_by_username, media_url, media_base64, media_mime_type)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     )
+     INSERT INTO messages (contact_id, role, content, whatsapp_message_id, sent_by_username, media_url, media_base64, media_mime_type)
+     SELECT $1, $2, $3, $4, $5, $6, $7, $8
+     FROM conversation_lock
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
     [contactId, role, content, whatsappMessageId, sentByUsername, mediaUrl, mediaBase64, mediaMimeType]
   );
@@ -62,10 +67,14 @@ async function saveInboundMessageIfNew(
   mediaMimeType = null
 ) {
   const result = await pool.query(
-    `INSERT INTO messages (
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     )
+     INSERT INTO messages (
        contact_id, role, content, whatsapp_message_id, media_base64, media_mime_type
      )
-     VALUES ($1, 'user', $2, $3, $4, $5)
+     SELECT $1, 'user', $2, $3, $4, $5
+     FROM conversation_lock
      ON CONFLICT (whatsapp_message_id) DO NOTHING
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
     [contactId, content, whatsappMessageId, mediaBase64, mediaMimeType]
@@ -76,8 +85,12 @@ async function saveInboundMessageIfNew(
 /** Updates the placeholder saved before media download/transcription finishes. */
 async function updateInboundMessage(messageId, contactId, content, mediaBase64, mediaMimeType) {
   const result = await pool.query(
-    `UPDATE messages
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $2::integer)
+     )
+     UPDATE messages
      SET content = $3, media_base64 = $4, media_mime_type = $5
+     FROM conversation_lock
      WHERE id = $1 AND contact_id = $2 AND role = 'user'
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
     [messageId, contactId, content, mediaBase64, mediaMimeType]

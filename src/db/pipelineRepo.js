@@ -51,7 +51,9 @@ async function getStageById(id, queryable = pool) {
 
 const LEAD_SELECT = `
   SELECT
-    l.id, l.contact_id, l.stage_id, l.notes, l.temperature, l.branch_name,
+    l.id, l.contact_id, l.stage_id, l.notes, l.temperature,
+    l.temperature_source, l.temperature_locked, l.last_temperature_scored_at,
+    l.last_temperature_scored_message_id, l.started_message_id, l.branch_name,
     l.owner_username, l.treatment_interest, l.estimated_value, l.source,
     l.campaign_name, l.appointment_status, l.appointment_at,
     l.next_follow_up_at, l.lost_reason, l.marketing_consent, l.is_closed,
@@ -114,10 +116,61 @@ async function getActiveLeadForContact(contactId, queryable = pool) {
   return result.rows[0] || null;
 }
 
-async function ensureLeadForContact(contactId, actor = "Automation") {
+async function includeMessageInJourney(client, lead, requestedStart) {
+  if (
+    !lead ||
+    !Number.isSafeInteger(requestedStart) ||
+    requestedStart < 1 ||
+    (lead.started_message_id != null && Number(lead.started_message_id) <= requestedStart)
+  ) {
+    return { lead, created: false, boundaryInitialized: false };
+  }
+
+  const initialized = await client.query(
+    `UPDATE leads l
+     SET started_message_id = COALESCE(
+           (
+             SELECT MIN(m.id) FROM messages m
+             WHERE m.contact_id = l.contact_id
+               AND m.created_at >= l.created_at
+           ),
+           $2
+         ),
+         updated_at = now()
+     WHERE l.id = $1
+       AND (
+         l.started_message_id IS NULL
+         OR l.started_message_id > COALESCE(
+           (
+             SELECT MIN(m.id) FROM messages m
+             WHERE m.contact_id = l.contact_id
+               AND m.created_at >= l.created_at
+           ),
+           $2
+         )
+       )
+     RETURNING *`,
+    [lead.id, requestedStart]
+  );
+  return {
+    lead: initialized.rows[0] || lead,
+    created: false,
+    boundaryInitialized: Boolean(initialized.rows[0]),
+  };
+}
+
+async function ensureLeadForContact(
+  contactId,
+  actor = "Automation",
+  startedMessageId = null
+) {
   const outcome = await withTransaction(async (client) => {
     const existing = await getActiveLeadForContact(contactId, client);
-    if (existing) return { lead: existing, created: false };
+    const requestedStart = Number(startedMessageId);
+    const hasRequestedStart = Number.isSafeInteger(requestedStart) && requestedStart > 0;
+    if (existing) {
+      return includeMessageInJourney(client, existing, requestedStart);
+    }
 
     const stageResult = await client.query(
       `SELECT id, name FROM pipeline_stages
@@ -133,15 +186,20 @@ async function ensureLeadForContact(contactId, actor = "Automation") {
     }
 
     const inserted = await client.query(
-      `INSERT INTO leads (contact_id, stage_id, created_by)
-       VALUES ($1, $2, $3)
+      `INSERT INTO leads (contact_id, stage_id, started_message_id, created_by)
+       VALUES (
+         $1, $2,
+         COALESCE($3, (SELECT MAX(m.id) FROM messages m WHERE m.contact_id = $1)),
+         $4
+       )
        ON CONFLICT (contact_id) WHERE is_closed = false DO NOTHING
        RETURNING *`,
-      [contactId, stage.id, actor]
+      [contactId, stage.id, hasRequestedStart ? requestedStart : null, actor]
     );
 
     if (!inserted.rows[0]) {
-      return { lead: await getActiveLeadForContact(contactId, client), created: false };
+      const concurrentLead = await getActiveLeadForContact(contactId, client);
+      return includeMessageInJourney(client, concurrentLead, requestedStart);
     }
 
     const lead = inserted.rows[0];
@@ -151,10 +209,12 @@ async function ensureLeadForContact(contactId, actor = "Automation") {
       [lead.id, stage.id, actor]
     );
     await addActivity(client, lead.id, "created", `Lead created in ${stage.name}.`, actor);
-    return { lead, created: true };
+    return { lead, created: true, boundaryInitialized: false };
   });
 
-  if (outcome.created) publishPipelineChange(outcome.lead.id);
+  if (outcome.created || outcome.boundaryInitialized) {
+    publishPipelineChange(outcome.lead.id);
+  }
   return outcome;
 }
 
@@ -212,8 +272,10 @@ async function markContactedForContact(contactId, actor = "Automation") {
 async function backfillLeadsForExistingContacts() {
   const inserted = await withTransaction(async (client) => {
     const result = await client.query(
-      `INSERT INTO leads (contact_id, stage_id, created_by)
-       SELECT c.id, first_stage.id, 'Migration'
+      `INSERT INTO leads (contact_id, stage_id, started_message_id, created_by)
+       SELECT c.id, first_stage.id,
+              (SELECT MIN(m.id) FROM messages m WHERE m.contact_id = c.id),
+              'Migration'
        FROM contacts c
        CROSS JOIN LATERAL (
          SELECT id FROM pipeline_stages
@@ -268,19 +330,26 @@ async function createLead(data, actor) {
     const isClosed = stage.stage_type !== "open";
     const result = await client.query(
       `INSERT INTO leads (
-         contact_id, stage_id, temperature, branch_name, owner_username,
+         contact_id, stage_id, temperature, temperature_source,
+         temperature_locked, started_message_id, branch_name, owner_username,
          treatment_interest, estimated_value, source, campaign_name,
          appointment_status, appointment_at, next_follow_up_at,
          marketing_consent, is_closed, closed_at, created_by
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-               CASE WHEN $14 THEN now() ELSE NULL END, $15)
+       VALUES (
+         $1, $2, $3, $4, $5,
+         NULL,
+         $6, $7, $8, $9, $10, $11, $12, $13, $14,
+         $15, $16, CASE WHEN $16 THEN now() ELSE NULL END, $17
+       )
        ON CONFLICT (contact_id) WHERE is_closed = false DO NOTHING
        RETURNING *`,
       [
         data.contactId,
         stage.id,
         data.temperature || "warm",
+        data.temperatureLocked ? "manual" : "system",
+        data.temperatureLocked === true,
         data.branchName || null,
         data.ownerUsername || null,
         data.treatmentInterest || null,
@@ -334,6 +403,7 @@ const PATCH_COLUMNS = {
 function describeChanges(current, patch) {
   const descriptions = [];
   if (Object.hasOwn(patch, "temperature") && patch.temperature !== current.temperature) descriptions.push(`Temperature set to ${patch.temperature}.`);
+  if (Object.hasOwn(patch, "temperatureLocked") && patch.temperatureLocked !== current.temperature_locked) descriptions.push(patch.temperatureLocked ? "Temperature locked for staff control." : "Automatic temperature updates enabled.");
   if (Object.hasOwn(patch, "branchName") && (patch.branchName || null) !== (current.branch_name || null)) descriptions.push(patch.branchName ? `Assigned to ${patch.branchName}.` : "Branch assignment cleared.");
   if (Object.hasOwn(patch, "ownerUsername") && (patch.ownerUsername || null) !== (current.owner_username || null)) descriptions.push(patch.ownerUsername ? `Owner changed to ${patch.ownerUsername}.` : "Lead owner cleared.");
   if (Object.hasOwn(patch, "treatmentInterest") && (patch.treatmentInterest || null) !== (current.treatment_interest || null)) descriptions.push(patch.treatmentInterest ? `Treatment interest set to ${patch.treatmentInterest}.` : "Treatment interest cleared.");
@@ -367,6 +437,20 @@ async function updateLead(id, patch, actor) {
     if (!current) return null;
 
     const changes = { ...patch };
+    const temperatureChanged =
+      Object.hasOwn(changes, "temperature") &&
+      changes.temperature !== current.temperature;
+    const lockChanged =
+      Object.hasOwn(changes, "temperatureLocked") &&
+      changes.temperatureLocked !== current.temperature_locked;
+    if (temperatureChanged) {
+      if (!Object.hasOwn(changes, "temperatureLocked")) {
+        changes.temperatureLocked = true;
+      }
+      changes.temperatureSource = "manual";
+    } else if (lockChanged && changes.temperatureLocked) {
+      changes.temperatureSource = "manual";
+    }
     let nextStage = null;
     if (Object.hasOwn(changes, "stageId")) {
       nextStage = await getStageById(changes.stageId, client);
@@ -405,6 +489,12 @@ async function updateLead(id, patch, actor) {
     for (const [key, column] of Object.entries(PATCH_COLUMNS)) {
       if (Object.hasOwn(changes, key)) addSetter(column, changes[key]);
     }
+    if (Object.hasOwn(changes, "temperatureLocked")) {
+      addSetter("temperature_locked", changes.temperatureLocked);
+    }
+    if (Object.hasOwn(changes, "temperatureSource")) {
+      addSetter("temperature_source", changes.temperatureSource);
+    }
     if (Object.hasOwn(changes, "isClosed")) addSetter("is_closed", changes.isClosed);
     if (Object.hasOwn(changes, "closedAt")) addSetter("closed_at", changes.closedAt);
     if (!setters.length) return current;
@@ -435,6 +525,43 @@ async function updateLead(id, patch, actor) {
     const description = describeChanges(current, changes);
     if (description) await addActivity(client, id, "updated", description, actor);
     return result.rows[0];
+  });
+
+  if (updatedLead) publishPipelineChange(updatedLead.id);
+  return updatedLead;
+}
+
+async function applyRuleBasedTemperature(id, classification) {
+  if (!classification || !["hot", "cold"].includes(classification.temperature)) {
+    return null;
+  }
+
+  const updatedLead = await withTransaction(async (client) => {
+    const result = await client.query(
+      `UPDATE leads
+       SET temperature = $2, temperature_source = 'rule', updated_at = now()
+       WHERE id = $1 AND is_closed = false AND temperature = 'warm'
+         AND temperature_locked = false
+       RETURNING *`,
+      [id, classification.temperature]
+    );
+    const updated = result.rows[0];
+    if (!updated) return null;
+
+    const nextTemperature = classification.temperature === "hot" ? "Hot" : "Cold";
+    await addActivity(
+      client,
+      id,
+      "updated",
+      `Temperature automatically changed from Warm to ${nextTemperature}. ${classification.reason}`,
+      "Rule automation",
+      {
+        source: "conversation_rules",
+        matchedRule: classification.matchedRule,
+        evidence: classification.evidence,
+      }
+    );
+    return updated;
   });
 
   if (updatedLead) publishPipelineChange(updatedLead.id);
@@ -590,6 +717,7 @@ module.exports = {
   backfillLeadsForExistingContacts,
   createLead,
   updateLead,
+  applyRuleBasedTemperature,
   listActivities,
   addNote,
   createStage,

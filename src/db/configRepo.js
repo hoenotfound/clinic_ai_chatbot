@@ -14,6 +14,7 @@ const CONFIG_KEYS = [
   "contact",
   "introMessage",
   "automatedFollowUp",
+  "leadScoring",
   "promotions",
   "services",
   "serviceAliases",
@@ -81,7 +82,19 @@ async function loadConfig() {
     return clinicConfig;
   }
 
-  Object.assign(clinicConfig, result.rows[0].data);
+  const storedConfig = result.rows[0].data || {};
+  Object.assign(clinicConfig, {
+    ...defaultConfig,
+    ...storedConfig,
+    automatedFollowUp: {
+      ...defaultConfig.automatedFollowUp,
+      ...(storedConfig.automatedFollowUp || {}),
+    },
+    leadScoring: {
+      ...defaultConfig.leadScoring,
+      ...(storedConfig.leadScoring || {}),
+    },
+  });
   return clinicConfig;
 }
 

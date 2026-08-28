@@ -77,6 +77,17 @@ module.exports = {
     activatedAt: null,
   },
 
+  // Conversation scoring is opt-in because enabling it starts background AI
+  // calls. Once enabled, only customer activity after activatedAt is eligible,
+  // so deploying a new version cannot score every old conversation at once.
+  leadScoring: {
+    enabled: false,
+    inactivityMinutes: 10,
+    maxConversationMinutes: 60,
+    maxMessages: 40,
+    activatedAt: null,
+  },
+
   // Promo graphic sent alongside the first reply to a new conversation —
   // same reliability pattern as introMessage (code-triggered, not AI-decided).
   // See src/utils/activePromotion.js for the date-filtering logic.

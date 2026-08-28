@@ -16,6 +16,13 @@ const DEFAULT_FOLLOW_UP = {
   imageUrl: "",
 };
 
+const DEFAULT_LEAD_SCORING = {
+  enabled: false,
+  inactivityMinutes: 10,
+  maxConversationMinutes: 60,
+  maxMessages: 40,
+};
+
 const FOLLOW_UP_LANGUAGES = [
   { key: "en", label: "English" },
   { key: "ms", label: "Bahasa Malaysia" },
@@ -58,10 +65,13 @@ function normalizeFollowUpSettings(value = {}) {
 }
 
 export default function Tools() {
+  const [activeTool, setActiveTool] = useState("followUp");
   const [config, setConfig] = useState(null);
   const [form, setForm] = useState(DEFAULT_FOLLOW_UP);
+  const [scoringForm, setScoringForm] = useState(DEFAULT_LEAD_SCORING);
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [scoringSaving, setScoringSaving] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [translationLanguage, setTranslationLanguage] = useState("en");
   const [translationsSource, setTranslationsSource] = useState(DEFAULT_FOLLOW_UP.message);
@@ -85,6 +95,13 @@ export default function Tools() {
           translations: settings.translations,
           imageUrl: settings.imageUrl || "",
         });
+        const scoring = { ...DEFAULT_LEAD_SCORING, ...(data.leadScoring || {}) };
+        setScoringForm({
+          enabled: !!scoring.enabled,
+          inactivityMinutes: Number(scoring.inactivityMinutes),
+          maxConversationMinutes: Number(scoring.maxConversationMinutes),
+          maxMessages: Number(scoring.maxMessages),
+        });
         setTranslationsSource(settings.message || DEFAULT_FOLLOW_UP.message);
       })
       .catch((err) => {
@@ -104,6 +121,15 @@ export default function Tools() {
     config?.automatedFollowUp?.translations
   );
   const savedEnabled = !!savedSettings.enabled;
+  const savedScoring = {
+    ...DEFAULT_LEAD_SCORING,
+    ...(config?.leadScoring || {}),
+  };
+  const hasUnsavedScoringChanges =
+    scoringForm.enabled !== !!savedScoring.enabled ||
+    Number(scoringForm.inactivityMinutes) !== Number(savedScoring.inactivityMinutes) ||
+    Number(scoringForm.maxConversationMinutes) !== Number(savedScoring.maxConversationMinutes) ||
+    Number(scoringForm.maxMessages) !== Number(savedScoring.maxMessages);
   const hasUnsavedChanges =
     !hasStoredTranslations ||
     form.enabled !== savedEnabled ||
@@ -244,6 +270,49 @@ export default function Tools() {
     }
   }
 
+  async function handleSaveScoring() {
+    const inactivityMinutes = Number(scoringForm.inactivityMinutes);
+    const maxConversationMinutes = Number(scoringForm.maxConversationMinutes);
+    const maxMessages = Number(scoringForm.maxMessages);
+    if (!Number.isInteger(inactivityMinutes) || inactivityMinutes < 5 || inactivityMinutes > 30) {
+      showToast("Choose a quiet period between 5 and 30 minutes.", "error");
+      return;
+    }
+    if (!Number.isInteger(maxConversationMinutes) || maxConversationMinutes < 30 || maxConversationMinutes > 120) {
+      showToast("Choose a conversation limit between 30 and 120 minutes.", "error");
+      return;
+    }
+    if (!Number.isInteger(maxMessages) || maxMessages < 20 || maxMessages > 80) {
+      showToast("Choose a message limit between 20 and 80 messages.", "error");
+      return;
+    }
+
+    setScoringSaving(true);
+    try {
+      const updated = await api.updateConfig({
+        leadScoring: {
+          enabled: scoringForm.enabled,
+          inactivityMinutes,
+          maxConversationMinutes,
+          maxMessages,
+        },
+      });
+      const saved = { ...DEFAULT_LEAD_SCORING, ...updated.leadScoring };
+      setConfig(updated);
+      setScoringForm({
+        enabled: !!saved.enabled,
+        inactivityMinutes: saved.inactivityMinutes,
+        maxConversationMinutes: saved.maxConversationMinutes,
+        maxMessages: saved.maxMessages,
+      });
+      showToast(saved.enabled ? "AI lead scoring is active." : "AI lead scoring is paused.", "info");
+    } catch (err) {
+      showToast(err.message || "Couldn't save the lead scoring tool.", "error");
+    } finally {
+      setScoringSaving(false);
+    }
+  }
+
   if (loadError) {
     return (
       <div className="flex h-full items-center justify-center px-6">
@@ -260,9 +329,32 @@ export default function Tools() {
     );
   }
 
+  if (activeTool === "leadScoring") {
+    return (
+      <LeadScoringTool
+        form={scoringForm}
+        setForm={setScoringForm}
+        savedEnabled={!!savedScoring.enabled}
+        hasUnsavedChanges={hasUnsavedScoringChanges}
+        saving={scoringSaving}
+        onSave={handleSaveScoring}
+        activeTool={activeTool}
+        onSelectTool={setActiveTool}
+        followUpActive={savedEnabled}
+        toasts={toasts}
+        dismissToast={dismissToast}
+      />
+    );
+  }
+
   return (
     <div className="flex h-full flex-col bg-[var(--color-bg)] lg:flex-row">
-      <ToolsSidebar active={savedEnabled} />
+      <ToolsSidebar
+        activeTool={activeTool}
+        onSelect={setActiveTool}
+        followUpActive={savedEnabled}
+        scoringActive={!!savedScoring.enabled}
+      />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
@@ -624,7 +716,206 @@ export default function Tools() {
   );
 }
 
-function ToolsSidebar({ active }) {
+function LeadScoringTool({
+  form,
+  setForm,
+  savedEnabled,
+  hasUnsavedChanges,
+  saving,
+  onSave,
+  activeTool,
+  onSelectTool,
+  followUpActive,
+  toasts,
+  dismissToast,
+}) {
+  const enabledStateChanged = form.enabled !== savedEnabled;
+  const automationStatus = enabledStateChanged
+    ? form.enabled
+      ? "Will run after saving"
+      : "Will pause after saving"
+    : savedEnabled
+      ? "Currently active"
+      : "Currently paused";
+
+  return (
+    <div className="flex h-full flex-col bg-[var(--color-bg)] lg:flex-row">
+      <ToolsSidebar
+        activeTool={activeTool}
+        onSelect={onSelectTool}
+        followUpActive={followUpActive}
+        scoringActive={savedEnabled}
+      />
+
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
+          <div className="mx-auto max-w-6xl pb-10">
+            <header className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-primary)]">
+                  Tools
+                </p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
+                  <h1 className="font-display text-2xl font-bold sm:text-3xl">AI lead scoring</h1>
+                  <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${hasUnsavedChanges ? "bg-[var(--color-accent-light)] text-[var(--color-text)]" : savedEnabled ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)]"}`}>
+                    {hasUnsavedChanges ? "Unsaved" : savedEnabled ? "Active" : "Paused"}
+                  </span>
+                </div>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)]">
+                  Review a conversation after it quiets down and keep the lead temperature current.
+                </p>
+              </div>
+
+              <div className="flex shrink-0 items-center justify-between gap-4 rounded-2xl border border-[var(--color-border)] bg-white px-4 py-3 shadow-[0_8px_24px_rgba(24,39,33,0.04)] sm:min-w-52">
+                <div>
+                  <p className="text-xs font-semibold">Automation</p>
+                  <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">{automationStatus}</p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-label="Enable AI lead scoring"
+                  aria-checked={form.enabled}
+                  onClick={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
+                  className={`relative h-7 w-12 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${form.enabled ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`}
+                >
+                  <span aria-hidden="true" className={`absolute left-0 top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${form.enabled ? "translate-x-6" : "translate-x-1"}`} />
+                </button>
+              </div>
+            </header>
+
+            <section className="mt-7 grid overflow-hidden rounded-2xl border border-[var(--color-border)] bg-white shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:grid-cols-3 sm:divide-x sm:divide-[var(--color-border)]">
+              <OverviewItem icon={<QuietIcon className="h-4 w-4" />} label="Quiet period" value={`${form.inactivityMinutes} minutes`} />
+              <OverviewItem icon={<ClockIcon className="h-4 w-4" />} label="Time ceiling" value={`${form.maxConversationMinutes} minutes`} />
+              <OverviewItem icon={<MessageIcon className="h-4 w-4" />} label="Message ceiling" value={`${form.maxMessages} messages`} />
+            </section>
+
+            <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
+              <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:p-6">
+                <SectionHeading
+                  number="1"
+                  title="Choose when AI reviews the chat"
+                  description="The first limit reached creates one scoring pass. New messages begin the next pass."
+                />
+                <div className="mt-6 grid gap-4 md:grid-cols-3">
+                  <ScoringField
+                    id="scoring-inactivity"
+                    label="Conversation quiet for"
+                    hint="5 to 30 minutes"
+                    value={form.inactivityMinutes}
+                    min="5"
+                    max="30"
+                    suffix="minutes"
+                    onChange={(value) => setForm((current) => ({ ...current, inactivityMinutes: value }))}
+                  />
+                  <ScoringField
+                    id="scoring-duration"
+                    label="Maximum active time"
+                    hint="30 to 120 minutes"
+                    value={form.maxConversationMinutes}
+                    min="30"
+                    max="120"
+                    suffix="minutes"
+                    onChange={(value) => setForm((current) => ({ ...current, maxConversationMinutes: value }))}
+                  />
+                  <ScoringField
+                    id="scoring-messages"
+                    label="Maximum chat length"
+                    hint="20 to 80 messages"
+                    value={form.maxMessages}
+                    min="20"
+                    max="80"
+                    suffix="messages"
+                    onChange={(value) => setForm((current) => ({ ...current, maxMessages: value }))}
+                  />
+                </div>
+
+                <div className="mt-6 rounded-2xl border border-[var(--color-primary)]/15 bg-[var(--color-primary-light)]/45 p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-[var(--color-primary)] shadow-sm">
+                      <ScoreIcon className="h-5 w-5" />
+                    </span>
+                    <div>
+                      <h2 className="text-sm font-semibold">Immediate rules stay active</h2>
+                      <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                        Clear booking intent can move Warm to Hot immediately, while an explicit rejection can move it to Cold. The AI review later considers the recent conversation context and may update any automatically managed temperature.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <aside className="space-y-5">
+                <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)]">
+                  <h2 className="font-display text-sm font-bold">How a score is applied</h2>
+                  <ul className="mt-4 space-y-3">
+                    <Rule text="High-confidence scores with customer evidence update automatic temperatures." />
+                    <Rule text="Medium and low confidence scores are recorded without changing the lead." />
+                    <Rule text="A staff-controlled temperature always wins." />
+                    <Rule text="Silence alone never makes a lead Cold." />
+                  </ul>
+                </section>
+                <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5">
+                  <h2 className="font-display text-sm font-bold">Safe activation</h2>
+                  <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                    Only customer activity after you enable this tool is eligible. Old chats will not create a sudden batch of AI requests.
+                  </p>
+                </section>
+              </aside>
+            </div>
+          </div>
+        </main>
+
+        <footer className="shrink-0 border-t border-[var(--color-border)] bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(24,39,33,0.04)] backdrop-blur sm:px-6 lg:px-10">
+          <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${hasUnsavedChanges ? "bg-[var(--color-accent)]" : "bg-[var(--color-primary)]"}`} />
+              <p className="truncate text-xs font-medium text-[var(--color-text-muted)]">
+                {hasUnsavedChanges ? "You have unsaved changes" : "All changes saved"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={saving || !hasUnsavedChanges}
+              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saving && <Spinner />}
+              {saving ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        </footer>
+      </div>
+
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+    </div>
+  );
+}
+
+function ScoringField({ id, label, hint, value, min, max, suffix, onChange }) {
+  return (
+    <div>
+      <label htmlFor={id} className="text-xs font-semibold text-[var(--color-text)]">{label}</label>
+      <div className="mt-2 flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)]">
+        <input
+          id={id}
+          type="number"
+          min={min}
+          max={max}
+          step="1"
+          inputMode="numeric"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="min-w-0 flex-1 bg-transparent px-3.5 py-2.5 text-sm outline-none"
+        />
+        <span className="border-l border-[var(--color-border)] px-3 py-2.5 text-[11px] font-medium text-[var(--color-text-muted)]">{suffix}</span>
+      </div>
+      <p className="mt-1.5 text-[10px] text-[var(--color-text-muted)]">{hint}</p>
+    </div>
+  );
+}
+
+function ToolsSidebar({ activeTool, onSelect, followUpActive, scoringActive }) {
   return (
     <aside className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] p-4 lg:h-full lg:w-72 lg:border-b-0 lg:border-r lg:p-5">
       <div className="flex items-start justify-between gap-3 lg:block">
@@ -642,8 +933,9 @@ function ToolsSidebar({ active }) {
       <nav className="mt-4 flex gap-2 overflow-x-auto pb-1 lg:mt-5 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0" aria-label="Available tools">
         <button
           type="button"
-          className="flex w-full min-w-[13.5rem] items-start gap-3 rounded-2xl border border-[var(--color-primary)]/15 bg-[var(--color-primary-light)] p-3.5 text-left lg:min-w-0"
-          aria-current="page"
+          onClick={() => onSelect("followUp")}
+          className={`flex w-full min-w-[13.5rem] items-start gap-3 rounded-2xl border p-3.5 text-left transition-colors lg:min-w-0 ${activeTool === "followUp" ? "border-[var(--color-primary)]/15 bg-[var(--color-primary-light)]" : "border-[var(--color-border)] bg-white hover:bg-[var(--color-bg)]"}`}
+          aria-current={activeTool === "followUp" ? "page" : undefined}
         >
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-[var(--color-primary)] shadow-sm">
             <ClockIcon className="h-5 w-5" />
@@ -655,8 +947,29 @@ function ToolsSidebar({ active }) {
             </span>
           </span>
           <span
-            className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${active ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`}
-            title={active ? "Active" : "Paused"}
+            className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${followUpActive ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`}
+            title={followUpActive ? "Active" : "Paused"}
+          />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onSelect("leadScoring")}
+          className={`flex w-full min-w-[13.5rem] items-start gap-3 rounded-2xl border p-3.5 text-left transition-colors lg:min-w-0 ${activeTool === "leadScoring" ? "border-[var(--color-primary)]/15 bg-[var(--color-primary-light)]" : "border-[var(--color-border)] bg-white hover:bg-[var(--color-bg)]"}`}
+          aria-current={activeTool === "leadScoring" ? "page" : undefined}
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-[var(--color-primary)] shadow-sm">
+            <ScoreIcon className="h-5 w-5" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold text-[var(--color-text)]">AI lead scoring</span>
+            <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">
+              Review lead intent after chats quiet down
+            </span>
+          </span>
+          <span
+            className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${scoringActive ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`}
+            title={scoringActive ? "Active" : "Paused"}
           />
         </button>
 
@@ -786,6 +1099,23 @@ function MessageIcon(props) {
   return (
     <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
       <path d="M20 15a3 3 0 0 1-3 3H8l-4 3v-6a3 3 0 0 1-1-2.2V7a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function QuietIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M5 9v6M9 7v10M13 10v4M17 8v8M21 11v2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ScoreIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M4 19V9M10 19V5M16 19v-7M22 19V8" strokeLinecap="round" />
+      <path d="m3 7 6-4 6 7 6-4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
