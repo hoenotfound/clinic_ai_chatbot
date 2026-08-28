@@ -63,6 +63,11 @@ async function claimImmediateAlert(
   return Boolean(result.rows[0]);
 }
 
+async function releaseImmediateAlert(eventKey, query = pool.query.bind(pool)) {
+  if (!eventKey) return;
+  await query("DELETE FROM telegram_immediate_alerts WHERE event_key = $1", [eventKey]);
+}
+
 function humanInterventionEventKey(context, reason, messageId = null) {
   // A staff-created manual flag is a separate action and should always alert.
   if (String(reason || "").trim() === "Flagged by staff.") return null;
@@ -117,6 +122,7 @@ function createTelegramImmediateAlertService({
   env = process.env,
   getContext = getImmediateAlertContext,
   claimAlert = claimImmediateAlert,
+  releaseAlert = releaseImmediateAlert,
   sendMessage = postTelegramMessage,
 } = {}) {
   async function send(type, { contactId, reason, messageId = null }) {
@@ -125,19 +131,30 @@ function createTelegramImmediateAlertService({
     const context = await getContext(contactId);
     if (!context) return { status: "skipped", reason: "contact-not-found" };
 
+    let eventKey = null;
     if (type === "human_intervention") {
-      const eventKey = humanInterventionEventKey(context, reason, messageId);
+      eventKey = humanInterventionEventKey(context, reason, messageId);
       const claimed = await claimAlert({ eventKey, type, contactId });
       if (!claimed) return { status: "duplicate" };
     }
 
-    const text = buildImmediateAlertMessage({ type, context, reason, env });
-    const result = await sendMessage({
-      token: env.TELEGRAM_BOT_TOKEN,
-      chatId: env.TELEGRAM_CHAT_ID,
-      text,
-    });
-    return { status: "sent", result };
+    try {
+      const text = buildImmediateAlertMessage({ type, context, reason, env });
+      const result = await sendMessage({
+        token: env.TELEGRAM_BOT_TOKEN,
+        chatId: env.TELEGRAM_CHAT_ID,
+        text,
+      });
+      return { status: "sent", result };
+    } catch (err) {
+      // A failed keyword-path send should not permanently suppress the AI
+      // handoff path for the same inbound message. Release the idempotency key
+      // so a later duplicate path can make one more best-effort attempt.
+      if (eventKey) {
+        await releaseAlert(eventKey).catch(() => {});
+      }
+      throw err;
+    }
   }
 
   return {
@@ -158,6 +175,7 @@ module.exports = {
   createTelegramImmediateAlertService,
   getImmediateAlertContext,
   humanInterventionEventKey,
+  releaseImmediateAlert,
   sendHumanInterventionAlert: defaultService.sendHumanInterventionAlert,
   sendDeliveryFailureAlert: defaultService.sendDeliveryFailureAlert,
 };
