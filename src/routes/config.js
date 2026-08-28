@@ -8,14 +8,18 @@ const router = express.Router();
 // Staff promo-graphic uploads from Settings > Promotions — kept in memory
 // (never written to disk), then persisted to Postgres (see
 // db/promoImagesRepo.js) and served back out at a public URL WhatsApp's
-// Cloud API can fetch. Same limits as the Inbox's staff image upload
-// (routes/conversations.js) — 16MB matches WhatsApp's own image size cap.
+// Cloud API can fetch. Configured graphics are limited to WhatsApp's image
+// formats and size so an upload cannot save successfully and later fail only
+// when the automation tries to send it.
+const MAX_CONFIG_IMAGE_BYTES = 5 * 1024 * 1024;
+const CONFIG_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
+
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 16 * 1024 * 1024 },
+  limits: { fileSize: MAX_CONFIG_IMAGE_BYTES },
   fileFilter: (req, file, cb) => {
-    if (!file.mimetype.startsWith("image/")) {
-      return cb(new Error("Only image files are allowed."));
+    if (!CONFIG_IMAGE_MIME_TYPES.has(file.mimetype)) {
+      return cb(new Error("Only JPG and PNG images are allowed."));
     }
     cb(null, true);
   },
@@ -29,7 +33,7 @@ function handleImageUpload(req, res, next) {
   upload.single("image")(req, res, (err) => {
     if (!err) return next();
     if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
-      return res.status(400).json({ error: "Image is too large. Please choose a file under 16MB." });
+      return res.status(400).json({ error: "Image is too large. Please choose a file under 5MB." });
     }
     return res.status(400).json({ error: err.message || "Failed to upload image." });
   });
@@ -44,6 +48,7 @@ const VALIDATORS = {
   clinicName: isNonEmptyString,
   aiAssistantName: isNonEmptyString,
   introMessage: isNonEmptyString,
+  automatedFollowUp: isAutomatedFollowUpConfig,
   tone: isString,
   messagingStyle: isString,
   closingPlaybook: isString,
@@ -89,31 +94,88 @@ function isPlainObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-// POST /api/config/promotions/image — staff uploads a promo graphic directly
-// (instead of pasting an already-hosted URL). Stored in Postgres and handed
-// back as a public URL pointing at GET /promo-images/:id (see server.js) —
-// the Settings page drops that URL straight into the promotion's imageUrl
-// field, no separate hosting step needed.
-router.post("/promotions/image", handleImageUpload, async (req, res) => {
+function isAutomatedFollowUpConfig(value) {
+  return (
+    isPlainObject(value) &&
+    typeof value.enabled === "boolean" &&
+    Number.isInteger(value.delayMinutes) &&
+    value.delayMinutes >= 5 &&
+    value.delayMinutes <= 23 * 60 &&
+    ["all", "staff"].includes(value.triggerMode) &&
+    isNonEmptyString(value.message) &&
+    value.message.length <= 1000 &&
+    isString(value.imageUrl) &&
+    (value.activatedAt === null || !Number.isNaN(Date.parse(value.activatedAt)))
+  );
+}
+
+function prepareAutomatedFollowUpConfig(requested, current) {
+  if (!isPlainObject(requested)) return null;
+
+  const enabled = requested.enabled;
+  const delayMinutes = Number(requested.delayMinutes);
+  const triggerMode = requested.triggerMode;
+  const message = typeof requested.message === "string" ? requested.message.trim() : "";
+  const imageUrl = typeof requested.imageUrl === "string" ? requested.imageUrl.trim() : "";
+
+  if (
+    typeof enabled !== "boolean" ||
+    !Number.isInteger(delayMinutes) ||
+    delayMinutes < 5 ||
+    delayMinutes > 23 * 60 ||
+    !["all", "staff"].includes(triggerMode) ||
+    !message ||
+    message.length > 1000
+  ) {
+    return null;
+  }
+
+  const continuingCurrentActivation =
+    enabled &&
+    current?.enabled === true &&
+    typeof current.activatedAt === "string" &&
+    !Number.isNaN(Date.parse(current.activatedAt));
+
+  return {
+    enabled,
+    delayMinutes,
+    triggerMode,
+    message,
+    imageUrl,
+    activatedAt: enabled
+      ? continuingCurrentActivation
+        ? current.activatedAt
+        : new Date().toISOString()
+      : null,
+  };
+}
+
+async function saveUploadedImage(req, res) {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "An image file is required." });
     }
 
     const id = await promoImagesRepo.saveImage(req.file.mimetype, req.file.buffer.toString("base64"));
-
-    // PUBLIC_BASE_URL lets you override this for unusual setups (custom
-    // domain behind a CDN, etc.) — otherwise it's inferred from the request
-    // itself, which works fine on Render/most hosts as long as `trust
-    // proxy` is set (see server.js) so req.protocol reflects the original
-    // https scheme rather than the proxy's internal http hop.
     const baseUrl = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
     res.status(201).json({ url: `${baseUrl}/promo-images/${id}` });
   } catch (err) {
-    console.error("Failed to upload promo image:", err);
+    console.error("Failed to upload config image:", err);
     res.status(500).json({ error: "Something went wrong uploading this image." });
   }
-});
+}
+
+// POST /api/config/promotions/image — staff uploads a promo graphic directly
+// (instead of pasting an already-hosted URL). Stored in Postgres and handed
+// back as a public URL pointing at GET /promo-images/:id (see server.js) —
+// the Settings page drops that URL straight into the promotion's imageUrl
+// field, no separate hosting step needed.
+router.post("/promotions/image", handleImageUpload, saveUploadedImage);
+
+// The follow-up tool uses the same durable image store as Promotions, but
+// gets its own route so the frontend API remains clear about what is being
+// configured. Orphan cleanup protects images referenced by either feature.
+router.post("/automated-follow-up/image", handleImageUpload, saveUploadedImage);
 
 // DELETE /api/config/promotions/image/:id — cleans up a promo image row
 // once it's no longer referenced by any promotion (staff replaced it with a
@@ -164,6 +226,19 @@ router.patch("/", async (req, res) => {
     const unknownKeys = keys.filter((k) => !VALIDATORS[k]);
     if (unknownKeys.length > 0) {
       return res.status(400).json({ error: `Unknown setting(s): ${unknownKeys.join(", ")}` });
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, "automatedFollowUp")) {
+      const prepared = prepareAutomatedFollowUpConfig(
+        updates.automatedFollowUp,
+        configRepo.getConfig().automatedFollowUp
+      );
+      if (!prepared) {
+        return res.status(400).json({
+          error: "Invalid automated follow-up settings. Use a delay between 5 minutes and 23 hours.",
+        });
+      }
+      updates.automatedFollowUp = prepared;
     }
 
     const invalidKeys = keys.filter((k) => !VALIDATORS[k](updates[k]));

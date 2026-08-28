@@ -1712,6 +1712,11 @@ function Spinner({ className = "" }) {
 function MessageBubble({ contactId, message, onImageClick, onRetry }) {
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
+  const senderLabel = message.is_automated_follow_up
+    ? "Automated follow-up"
+    : sentByStaff
+    ? message.sent_by_username
+    : "AI assistant";
   const isAudio = message.media_mime_type?.startsWith("audio/");
   const deliveryFailed = !isPatient && message.delivery_status === "failed";
   const storedMediaSrc = message.media_base64
@@ -1725,7 +1730,7 @@ function MessageBubble({ contactId, message, onImageClick, onRetry }) {
   return (
     <div className={`flex ${isPatient ? "justify-start" : "justify-end"}`}>
       <div className={`relative max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryFailed ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}>
-        {!isPatient && <p className="mb-1 text-[10px] font-semibold text-white/70">{sentByStaff ? message.sent_by_username : "AI assistant"}</p>}
+        {!isPatient && <p className="mb-1 text-[10px] font-semibold text-white/70">{senderLabel}</p>}
         {isAudio && storedMediaSrc ? (
           <audio controls preload="none" src={storedMediaSrc} className="mb-1.5 max-w-full" style={{ height: "36px" }} />
         ) : (

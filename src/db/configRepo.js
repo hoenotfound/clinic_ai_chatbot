@@ -13,6 +13,7 @@ const CONFIG_KEYS = [
   "hours",
   "contact",
   "introMessage",
+  "automatedFollowUp",
   "promotions",
   "services",
   "serviceAliases",
@@ -47,9 +48,15 @@ function extractPromoImageId(url) {
  */
 async function pruneOrphanedPromoImages() {
   try {
-    const referencedIds = (clinicConfig.promotions || [])
+    const promotionIds = (clinicConfig.promotions || [])
       .map((p) => extractPromoImageId(p.imageUrl))
       .filter((id) => id !== null);
+    const followUpImageId = extractPromoImageId(
+      clinicConfig.automatedFollowUp?.imageUrl
+    );
+    const referencedIds = followUpImageId === null
+      ? promotionIds
+      : [...promotionIds, followUpImageId];
     await promoImagesRepo.pruneUnreferenced(referencedIds);
   } catch (err) {
     console.error("Failed to prune orphaned promo images:", err);
@@ -90,22 +97,31 @@ function getConfig() {
  * very next message, no restart) and the DB row (so it survives one).
  */
 async function updateConfig(updates) {
+  const nextConfig = { ...clinicConfig };
   for (const key of CONFIG_KEYS) {
     if (Object.prototype.hasOwnProperty.call(updates, key)) {
-      clinicConfig[key] = updates[key];
+      nextConfig[key] = updates[key];
     }
   }
 
   await pool.query("UPDATE clinic_config SET data = $1, updated_at = now() WHERE id = 1", [
-    clinicConfig,
+    nextConfig,
   ]);
+
+  // Apply live settings only after Postgres accepts the save. This matters
+  // most for automations: a failed browser save must never briefly enable a
+  // tool that will not survive the next restart.
+  Object.assign(clinicConfig, nextConfig);
 
   // If this update touched promotions, some image(s) may have just been
   // dropped from the config (staff removed a promotion entirely, or
   // replaced/cleared its image via an edit that bypassed the immediate
   // DELETE call in Settings.jsx). Reconcile now rather than waiting for the
   // next timed sweep.
-  if (Object.prototype.hasOwnProperty.call(updates, "promotions")) {
+  if (
+    Object.prototype.hasOwnProperty.call(updates, "promotions") ||
+    Object.prototype.hasOwnProperty.call(updates, "automatedFollowUp")
+  ) {
     await pruneOrphanedPromoImages();
   }
 

@@ -120,7 +120,24 @@ export const api = {
     }
     return res.json();
   },
-  deletePromoImage: (id) => request(`/config/promotions/image/${id}`, { method: "DELETE" }),
+  uploadFollowUpImage: async (file) => {
+    const form = new FormData();
+    form.append("image", file);
+
+    const res = await fetch(`${BASE}/config/automated-follow-up/image`, {
+      method: "POST",
+      credentials: "include",
+      body: form,
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const error = new Error(body.error || `Request failed (${res.status})`);
+      error.status = res.status;
+      throw error;
+    }
+    return res.json();
+  },
   listContacts: (search) => request(`/contacts${search ? `?search=${encodeURIComponent(search)}` : ""}`),
   getContact: (id) => request(`/contacts/${id}`),
   createContact: (data) => request("/contacts", { method: "POST", body: JSON.stringify(data) }),
@@ -130,9 +147,3 @@ export const api = {
     request(`/contacts/${id}/notes`, { method: "POST", body: JSON.stringify({ content }) }),
   deleteContactNote: (id, noteId) => request(`/contacts/${id}/notes/${noteId}`, { method: "DELETE" }),
 };
-
-export function extractPromoImageId(url) {
-  if (!url) return null;
-  const match = String(url).match(/\/promo-images\/(\d+)(?:[/?#]|$)/);
-  return match ? Number(match[1]) : null;
-}

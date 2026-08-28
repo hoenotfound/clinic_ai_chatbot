@@ -1,0 +1,153 @@
+const clinicConfig = require("../config/clinicConfig");
+const messagesRepo = require("../db/messagesRepo");
+const followUpRepo = require("../db/followUpRepo");
+const contactsRepo = require("../db/contactsRepo");
+const realtimeEvents = require("../utils/realtimeEvents");
+const whatsapp = require("./whatsappService");
+
+const FOLLOW_UP_CHECK_INTERVAL_MS = 60 * 1000;
+const FOLLOW_UP_BATCH_SIZE = 25;
+const SEND_REJECTED_ERROR =
+  "WhatsApp did not accept this automated follow-up. Check the reply window or connection and retry it from the Inbox.";
+
+let sweepRunning = false;
+
+function getActiveSettings() {
+  const settings = clinicConfig.automatedFollowUp;
+  if (
+    !settings?.enabled ||
+    !Number.isInteger(settings.delayMinutes) ||
+    settings.delayMinutes < 5 ||
+    settings.delayMinutes > 23 * 60 ||
+    !["all", "staff"].includes(settings.triggerMode) ||
+    typeof settings.message !== "string" ||
+    !settings.message.trim() ||
+    (settings.imageUrl !== undefined && typeof settings.imageUrl !== "string") ||
+    typeof settings.activatedAt !== "string" ||
+    Number.isNaN(Date.parse(settings.activatedAt))
+  ) {
+    return null;
+  }
+
+  return {
+    delayMinutes: settings.delayMinutes,
+    triggerMode: settings.triggerMode,
+    message: settings.message.trim(),
+    imageUrl: settings.imageUrl?.trim() || "",
+    activatedAt: settings.activatedAt,
+  };
+}
+
+function publishConversationChange(message, reason) {
+  if (!message) return;
+  realtimeEvents.publish("conversation_changed", {
+    contactId: message.contact_id,
+    messageId: message.id,
+    whatsappMessageId: message.whatsapp_message_id,
+    deliveryStatus: message.delivery_status,
+    deliveryError: message.delivery_error,
+    reason,
+  });
+}
+
+async function sendCandidate(candidate) {
+  // Read the live settings again for every candidate. A staff member may
+  // pause the tool or make its criteria stricter while a sweep is running.
+  const settings = getActiveSettings();
+  if (!settings) return;
+
+  const saved = await followUpRepo.saveIfStillEligible({
+    contactId: candidate.contact_id,
+    triggerMessageId: candidate.trigger_message_id,
+    content: settings.message,
+    mediaUrl: settings.imageUrl || null,
+    delayMinutes: settings.delayMinutes,
+    triggerMode: settings.triggerMode,
+    activatedAt: settings.activatedAt,
+  });
+
+  // The customer may have replied since the candidate query, or another
+  // server instance may already have claimed this exact trigger.
+  if (!saved) return;
+
+  publishConversationChange(saved, "message");
+
+  let sendResult;
+  try {
+    sendResult = settings.imageUrl
+      ? await whatsapp.sendImage(
+          candidate.whatsapp_number,
+          settings.imageUrl,
+          settings.message
+        )
+      : await whatsapp.sendMessage(candidate.whatsapp_number, settings.message);
+  } catch (err) {
+    console.error("Automated follow-up send failed:", err);
+    sendResult = { success: false, wamid: null };
+  }
+
+  let finalMessage = saved;
+  if (sendResult?.wamid) {
+    finalMessage =
+      (await messagesRepo.setWhatsappMessageId(saved.id, sendResult.wamid)) || saved;
+  } else if (!sendResult?.success) {
+    finalMessage =
+      (await messagesRepo.setDeliveryStatusById(
+        saved.id,
+        "failed",
+        SEND_REJECTED_ERROR
+      )) || saved;
+  }
+
+  publishConversationChange(finalMessage, "delivery_status");
+
+  if (!sendResult?.success) {
+    await contactsRepo.setDeliveryAttention(
+      candidate.contact_id,
+      `Delivery failed: ${SEND_REJECTED_ERROR}`
+    );
+  }
+}
+
+async function runAutomatedFollowUps() {
+  if (sweepRunning) return;
+  const settings = getActiveSettings();
+  if (!settings) return;
+
+  sweepRunning = true;
+  try {
+    const candidates = await followUpRepo.findCandidates({
+      delayMinutes: settings.delayMinutes,
+      triggerMode: settings.triggerMode,
+      activatedAt: settings.activatedAt,
+      limit: FOLLOW_UP_BATCH_SIZE,
+    });
+
+    for (const candidate of candidates) {
+      try {
+        await sendCandidate(candidate);
+      } catch (err) {
+        console.error(
+          `Failed to process automated follow-up for contact ${candidate.contact_id}:`,
+          err
+        );
+      }
+    }
+  } catch (err) {
+    console.error("Automated follow-up sweep failed:", err);
+  } finally {
+    sweepRunning = false;
+  }
+}
+
+function startAutomatedFollowUps() {
+  runAutomatedFollowUps();
+  const timer = setInterval(runAutomatedFollowUps, FOLLOW_UP_CHECK_INTERVAL_MS);
+  return () => clearInterval(timer);
+}
+
+module.exports = {
+  FOLLOW_UP_CHECK_INTERVAL_MS,
+  runAutomatedFollowUps,
+  startAutomatedFollowUps,
+};
