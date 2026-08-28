@@ -8,8 +8,8 @@ import {
   CONSENT_OPTIONS,
   TEMPERATURE_OPTIONS,
   displayName,
+  buildLeadUpdatePayload,
   formatDateTime,
-  inputToIso,
   toDateTimeInput,
 } from "./pipelineUtils";
 
@@ -20,6 +20,7 @@ const labelClass = "mb-1.5 block text-[11px] font-semibold uppercase tracking-wi
 export default function LeadDrawer({ lead, stages, branches, owners, services, onClose, onSaved, onToast }) {
   const navigate = useNavigate();
   const [form, setForm] = useState(() => formFromLead(lead));
+  const [temperatureDirty, setTemperatureDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activities, setActivities] = useState(null);
   const [note, setNote] = useState("");
@@ -45,13 +46,20 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
     // Pipeline SSE updates can arrive while this drawer remains mounted. Keep
     // the temperature current so a later full-form save cannot silently put an
     // automatically updated lead back to the drawer's stale value.
-    setForm((current) => ({
-      ...current,
-      temperature: lead.temperature || "warm",
-      temperatureLocked: lead.temperature_locked === true,
-      temperatureSource: lead.temperature_source || "system",
-    }));
-  }, [lead.temperature, lead.temperature_locked, lead.temperature_source]);
+    if (!temperatureDirty) {
+      setForm((current) => ({
+        ...current,
+        temperature: lead.temperature || "warm",
+        temperatureLocked: lead.temperature_locked === true,
+        temperatureSource: lead.temperature_source || "system",
+      }));
+    }
+  }, [
+    lead.temperature,
+    lead.temperature_locked,
+    lead.temperature_source,
+    temperatureDirty,
+  ]);
 
   const selectedStage = useMemo(
     () => stages.find((stage) => Number(stage.id) === Number(form.stageId)),
@@ -63,11 +71,21 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
   }
 
   function updateTemperature(value) {
+    setTemperatureDirty(true);
     setForm((current) => ({
       ...current,
       temperature: value,
       temperatureLocked: true,
       temperatureSource: "manual",
+    }));
+  }
+
+  function updateTemperatureLock(allowAutomatic) {
+    setTemperatureDirty(true);
+    setForm((current) => ({
+      ...current,
+      temperatureLocked: !allowAutomatic,
+      temperatureSource: allowAutomatic ? current.temperatureSource : "manual",
     }));
   }
 
@@ -87,24 +105,13 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
     event.preventDefault();
     setSaving(true);
     try {
-      const updated = await api.updateLead(lead.id, {
-        stageId: Number(form.stageId),
-        temperature: form.temperature,
-        temperatureLocked: form.temperatureLocked,
-        branchName: form.branchName || null,
-        ownerUsername: form.ownerUsername || null,
-        treatmentInterest: form.treatmentInterest || null,
-        estimatedValue: form.estimatedValue === "" ? null : Number(form.estimatedValue),
-        source: form.source || null,
-        campaignName: form.campaignName || null,
-        appointmentStatus: form.appointmentStatus,
-        appointmentAt: inputToIso(form.appointmentAt),
-        nextFollowUpAt: inputToIso(form.nextFollowUpAt),
-        lostReason: form.lostReason || null,
-        marketingConsent: form.marketingConsent,
-        notes: form.notes || null,
-      });
+      const updated = await api.updateLead(
+        lead.id,
+        buildLeadUpdatePayload(form, { includeTemperature: temperatureDirty })
+      );
       onSaved(updated);
+      setForm(formFromLead(updated));
+      setTemperatureDirty(false);
       onToast("Lead updated.", "info");
       setActivities(await api.listLeadActivities(lead.id));
     } catch (err) {
@@ -189,7 +196,7 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
                   <input
                     type="checkbox"
                     checked={!form.temperatureLocked}
-                    onChange={(event) => update("temperatureLocked", !event.target.checked)}
+                    onChange={(event) => updateTemperatureLock(event.target.checked)}
                     className="mt-0.5 h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]/25"
                   />
                   <span className="text-[11px] leading-4 text-[var(--color-text-muted)]">

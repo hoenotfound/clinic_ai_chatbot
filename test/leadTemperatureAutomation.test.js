@@ -158,7 +158,12 @@ test("reviewer uses recent clinic context for a short scheduling answer", async 
   const applied = [];
   const reviewer = createLeadTemperatureReviewer({
     pipelineRepository: {
-      getActiveLeadForContact: async () => ({ id: 5, temperature: "warm", is_closed: false }),
+      getActiveLeadForContact: async () => ({
+        id: 5,
+        temperature: "warm",
+        is_closed: false,
+        started_message_id: 99,
+      }),
       applyRuleBasedTemperature: async (leadId, classification) => {
         applied.push({ leadId, classification });
         return { id: leadId, temperature: classification.temperature };
@@ -183,7 +188,12 @@ test("reviewer does not reuse a stale clinic scheduling question", async () => {
   let applyCalls = 0;
   const reviewer = createLeadTemperatureReviewer({
     pipelineRepository: {
-      getActiveLeadForContact: async () => ({ id: 6, temperature: "warm", is_closed: false }),
+      getActiveLeadForContact: async () => ({
+        id: 6,
+        temperature: "warm",
+        is_closed: false,
+        started_message_id: 98,
+      }),
       applyRuleBasedTemperature: async () => {
         applyCalls += 1;
       },
@@ -220,6 +230,44 @@ test("reviewer does not reuse scheduling context from a previous lead journey", 
       getMessagesForContact: async () => [
         { id: 99, role: "assistant", content: "Which day would you like to visit?" },
         { id: 100, role: "user", content: "Saturday" },
+      ],
+    },
+    getBranchNames: () => [],
+  });
+
+  assert.deepEqual(await reviewer(13, 100, "Saturday"), { status: "unchanged" });
+  assert.equal(applyCalls, 0);
+});
+
+test("a staff-created journey excludes messages sent before the lead was created", async () => {
+  let applyCalls = 0;
+  const reviewer = createLeadTemperatureReviewer({
+    pipelineRepository: {
+      getActiveLeadForContact: async () => ({
+        id: 11,
+        temperature: "warm",
+        is_closed: false,
+        started_message_id: null,
+        created_at: "2026-08-28T10:00:00.000Z",
+      }),
+      applyRuleBasedTemperature: async () => {
+        applyCalls += 1;
+      },
+    },
+    messagesRepository: {
+      getMessagesForContact: async () => [
+        {
+          id: 99,
+          role: "assistant",
+          content: "Which day would you like to visit?",
+          created_at: "2026-08-28T09:50:00.000Z",
+        },
+        {
+          id: 100,
+          role: "user",
+          content: "Saturday",
+          created_at: "2026-08-28T10:05:00.000Z",
+        },
       ],
     },
     getBranchNames: () => [],

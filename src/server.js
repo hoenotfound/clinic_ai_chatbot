@@ -124,7 +124,11 @@ async function processIncomingMessage(incoming) {
     // unique index keeps one open sales journey per contact while still
     // allowing a returning patient to start a new journey after closing one.
     try {
-      await pipelineRepo.ensureLeadForContact(contact.id, "Automation");
+      await pipelineRepo.ensureLeadForContact(
+        contact.id,
+        "Automation",
+        savedInbound.id
+      );
     } catch (pipelineErr) {
       // Pipeline bookkeeping must never prevent the chatbot from answering.
       console.error(`Failed to create or locate lead for contact ${contact.id}:`, pipelineErr);

@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { pool } = require("../src/db/db");
+const { CONVERSATION_LOCK_NAMESPACE } = require("../src/db/conversationLock");
 const realtimeEvents = require("../src/utils/realtimeEvents");
 const leadScoringRepo = require("../src/db/leadScoringRepo");
 
@@ -26,7 +27,9 @@ test("candidate query applies activation, three limits, and completed-pass bound
 
   assert.match(captured.sql, /s\.status = 'completed'/);
   assert.match(captured.sql, /m\.created_at >= \$4::timestamptz/);
-  assert.match(captured.sql, /m\.id >= COALESCE\(l\.started_message_id, 0\)/);
+  assert.match(captured.sql, /l\.created_at AS journey_started_at/);
+  assert.match(captured.sql, /l\.started_message_id IS NOT NULL AND m\.id >= l\.started_message_id/);
+  assert.match(captured.sql, /l\.started_message_id IS NULL AND m\.created_at >= l\.created_at/);
   assert.match(captured.sql, /segment\.message_count >= \$3/);
   assert.match(captured.sql, /segment\.started_at <= now\(\) - \(\$2::integer/);
   assert.match(captured.sql, /latest\.created_at <= now\(\) - \(\$1::integer/);
@@ -50,11 +53,19 @@ test("transcript is limited to the current lead journey", async (t) => {
     };
   };
 
-  const transcript = await leadScoringRepo.getTranscript(14, 42, 55, 80);
+  const journeyStartedAt = "2026-08-28T01:00:00.000Z";
+  const transcript = await leadScoringRepo.getTranscript(
+    14,
+    42,
+    journeyStartedAt,
+    55,
+    80
+  );
 
-  assert.match(captured.sql, /id >= COALESCE\(\$2::integer, 0\)/);
-  assert.match(captured.sql, /id <= \$3/);
-  assert.deepEqual(captured.params, [14, 42, 55, 80]);
+  assert.match(captured.sql, /\$2::integer IS NOT NULL AND id >= \$2/);
+  assert.match(captured.sql, /\$2::integer IS NULL AND created_at >= \$3::timestamptz/);
+  assert.match(captured.sql, /id <= \$4/);
+  assert.deepEqual(captured.params, [14, 42, journeyStartedAt, 55, 80]);
   assert.deepEqual(transcript.map((message) => message.id), [42, 55]);
 });
 
@@ -94,8 +105,8 @@ test("a new message supersedes an in-flight result without changing the lead", a
   pool.connect = async () => ({
     query: async (sql, params) => {
       queries.push({ sql, params });
-      if (/SELECT id, status FROM lead_temperature_scores/.test(sql)) {
-        return { rows: [{ id: 110, status: "processing" }] };
+      if (/FROM lead_temperature_scores s/.test(sql)) {
+        return { rows: [{ id: 110, status: "processing", contact_id: 14 }] };
       }
       if (/SELECT l\.\*/.test(sql)) {
         return { rows: [{ id: 8, latest_message_id: 56, is_closed: false }] };
@@ -139,8 +150,8 @@ test("a high-confidence score updates only an unlocked lead and writes an audit 
   pool.connect = async () => ({
     query: async (sql, params) => {
       queries.push({ sql, params });
-      if (/SELECT id, status FROM lead_temperature_scores/.test(sql)) {
-        return { rows: [{ id: 111, status: "processing" }] };
+      if (/FROM lead_temperature_scores s/.test(sql)) {
+        return { rows: [{ id: 111, status: "processing", contact_id: 14 }] };
       }
       if (/SELECT l\.\*/.test(sql)) {
         return { rows: [{ id: 8, latest_message_id: 55, is_closed: false, temperature: "warm", temperature_locked: false }] };
@@ -172,6 +183,10 @@ test("a high-confidence score updates only an unlocked lead and writes an audit 
   });
 
   assert.equal(result.applied, true);
+  const lockIndex = queries.findIndex(({ sql }) => /pg_advisory_xact_lock/.test(sql));
+  const leadReadIndex = queries.findIndex(({ sql }) => /SELECT l\.\*/.test(sql));
+  assert.ok(lockIndex > -1 && lockIndex < leadReadIndex);
+  assert.deepEqual(queries[lockIndex].params, [CONVERSATION_LOCK_NAMESPACE, 14]);
   const update = queries.find(({ sql }) => /UPDATE leads/.test(sql));
   assert.match(update.sql, /temperature_locked = false/);
   assert.match(update.sql, /temperature_source = 'ai'/);

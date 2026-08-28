@@ -18,6 +18,7 @@ function candidate() {
     lead_id: 7,
     contact_id: 12,
     started_message_id: 33,
+    journey_started_at: "2026-08-28T00:05:00.000Z",
     through_message_id: 44,
     trigger_type: "inactivity",
     temperature: "warm",
@@ -87,7 +88,13 @@ test("claims, scores, and completes an eligible conversation snapshot", async ()
   assert.equal(calls[0][0], "find");
   assert.equal(calls[0][1].limit, 5);
   assert.equal(calls[1][0], "claim");
-  assert.deepEqual(transcriptArgs, [12, 33, 44, 80]);
+  assert.deepEqual(transcriptArgs, [
+    12,
+    33,
+    "2026-08-28T00:05:00.000Z",
+    44,
+    80,
+  ]);
   assert.deepEqual(calls[2], ["complete", {
     scoreId: 91,
     leadId: 7,

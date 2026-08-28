@@ -116,10 +116,61 @@ async function getActiveLeadForContact(contactId, queryable = pool) {
   return result.rows[0] || null;
 }
 
-async function ensureLeadForContact(contactId, actor = "Automation") {
+async function includeMessageInJourney(client, lead, requestedStart) {
+  if (
+    !lead ||
+    !Number.isSafeInteger(requestedStart) ||
+    requestedStart < 1 ||
+    (lead.started_message_id != null && Number(lead.started_message_id) <= requestedStart)
+  ) {
+    return { lead, created: false, boundaryInitialized: false };
+  }
+
+  const initialized = await client.query(
+    `UPDATE leads l
+     SET started_message_id = COALESCE(
+           (
+             SELECT MIN(m.id) FROM messages m
+             WHERE m.contact_id = l.contact_id
+               AND m.created_at >= l.created_at
+           ),
+           $2
+         ),
+         updated_at = now()
+     WHERE l.id = $1
+       AND (
+         l.started_message_id IS NULL
+         OR l.started_message_id > COALESCE(
+           (
+             SELECT MIN(m.id) FROM messages m
+             WHERE m.contact_id = l.contact_id
+               AND m.created_at >= l.created_at
+           ),
+           $2
+         )
+       )
+     RETURNING *`,
+    [lead.id, requestedStart]
+  );
+  return {
+    lead: initialized.rows[0] || lead,
+    created: false,
+    boundaryInitialized: Boolean(initialized.rows[0]),
+  };
+}
+
+async function ensureLeadForContact(
+  contactId,
+  actor = "Automation",
+  startedMessageId = null
+) {
   const outcome = await withTransaction(async (client) => {
     const existing = await getActiveLeadForContact(contactId, client);
-    if (existing) return { lead: existing, created: false };
+    const requestedStart = Number(startedMessageId);
+    const hasRequestedStart = Number.isSafeInteger(requestedStart) && requestedStart > 0;
+    if (existing) {
+      return includeMessageInJourney(client, existing, requestedStart);
+    }
 
     const stageResult = await client.query(
       `SELECT id, name FROM pipeline_stages
@@ -138,16 +189,17 @@ async function ensureLeadForContact(contactId, actor = "Automation") {
       `INSERT INTO leads (contact_id, stage_id, started_message_id, created_by)
        VALUES (
          $1, $2,
-         (SELECT MAX(m.id) FROM messages m WHERE m.contact_id = $1),
-         $3
+         COALESCE($3, (SELECT MAX(m.id) FROM messages m WHERE m.contact_id = $1)),
+         $4
        )
        ON CONFLICT (contact_id) WHERE is_closed = false DO NOTHING
        RETURNING *`,
-      [contactId, stage.id, actor]
+      [contactId, stage.id, hasRequestedStart ? requestedStart : null, actor]
     );
 
     if (!inserted.rows[0]) {
-      return { lead: await getActiveLeadForContact(contactId, client), created: false };
+      const concurrentLead = await getActiveLeadForContact(contactId, client);
+      return includeMessageInJourney(client, concurrentLead, requestedStart);
     }
 
     const lead = inserted.rows[0];
@@ -157,10 +209,12 @@ async function ensureLeadForContact(contactId, actor = "Automation") {
       [lead.id, stage.id, actor]
     );
     await addActivity(client, lead.id, "created", `Lead created in ${stage.name}.`, actor);
-    return { lead, created: true };
+    return { lead, created: true, boundaryInitialized: false };
   });
 
-  if (outcome.created) publishPipelineChange(outcome.lead.id);
+  if (outcome.created || outcome.boundaryInitialized) {
+    publishPipelineChange(outcome.lead.id);
+  }
   return outcome;
 }
 
@@ -284,7 +338,7 @@ async function createLead(data, actor) {
        )
        VALUES (
          $1, $2, $3, $4, $5,
-         (SELECT MAX(m.id) FROM messages m WHERE m.contact_id = $1),
+         NULL,
          $6, $7, $8, $9, $10, $11, $12, $13, $14,
          $15, $16, CASE WHEN $16 THEN now() ELSE NULL END, $17
        )

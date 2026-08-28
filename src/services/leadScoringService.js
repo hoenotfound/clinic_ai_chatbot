@@ -82,6 +82,7 @@ function createLeadScoringRunner({
             await repository.getTranscript(
               candidate.contact_id,
               candidate.started_message_id,
+              candidate.journey_started_at,
               candidate.through_message_id,
               MAX_TRANSCRIPT_MESSAGES
             )

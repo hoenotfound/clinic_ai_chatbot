@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const { lockConversation } = require("./conversationLock");
 const realtimeEvents = require("../utils/realtimeEvents");
 
 const PROCESSING_STALE_MINUTES = 10;
@@ -35,6 +36,7 @@ async function findCandidates({
        l.temperature_source,
        l.temperature_locked,
        l.started_message_id,
+       l.created_at AS journey_started_at,
        l.appointment_status,
        l.branch_name,
        l.treatment_interest,
@@ -68,7 +70,11 @@ async function findCandidates({
        FROM messages m
        WHERE m.contact_id = l.contact_id
          AND m.id > COALESCE(last_score.through_message_id, 0)
-         AND m.id >= COALESCE(l.started_message_id, 0)
+         AND (
+           (l.started_message_id IS NOT NULL AND m.id >= l.started_message_id)
+           OR
+           (l.started_message_id IS NULL AND m.created_at >= l.created_at)
+         )
          AND m.id <= latest.id
          AND m.created_at >= $4::timestamptz
      ) segment ON segment.customer_message_count > 0
@@ -156,21 +162,31 @@ async function claimCandidate(candidate) {
   return result.rows[0] || null;
 }
 
-async function getTranscript(contactId, startedMessageId, throughMessageId, limit = 80) {
+async function getTranscript(
+  contactId,
+  startedMessageId,
+  journeyStartedAt,
+  throughMessageId,
+  limit = 80
+) {
   const result = await pool.query(
     `SELECT id, role, content, sent_by_username, created_at
      FROM messages
      WHERE contact_id = $1
-       AND id >= COALESCE($2::integer, 0)
-       AND id <= $3
+       AND (
+         ($2::integer IS NOT NULL AND id >= $2)
+         OR
+         ($2::integer IS NULL AND created_at >= $3::timestamptz)
+       )
+       AND id <= $4
        AND (
          role <> 'assistant'
          OR delivery_status IS NULL
          OR delivery_status NOT IN ('failed', 'unknown')
        )
      ORDER BY id DESC
-     LIMIT $4`,
-    [contactId, startedMessageId, throughMessageId, limit]
+     LIMIT $5`,
+    [contactId, startedMessageId, journeyStartedAt, throughMessageId, limit]
   );
   return result.rows.reverse();
 }
@@ -215,14 +231,22 @@ async function saveSupersededScore(client, scoreId, score) {
 async function completeScore({ scoreId, leadId, throughMessageId, triggerType, score }) {
   const outcome = await withTransaction(async (client) => {
     const claimedResult = await client.query(
-      `SELECT id, status FROM lead_temperature_scores
-       WHERE id = $1 AND lead_id = $2 AND through_message_id = $3
-       FOR UPDATE`,
+      `SELECT s.id, s.status, l.contact_id
+       FROM lead_temperature_scores s
+       JOIN leads l ON l.id = s.lead_id
+       WHERE s.id = $1 AND s.lead_id = $2 AND s.through_message_id = $3
+       FOR UPDATE OF s`,
       [scoreId, leadId, throughMessageId]
     );
-    if (claimedResult.rows[0]?.status !== "processing") {
+    const claim = claimedResult.rows[0];
+    if (claim?.status !== "processing") {
       return { status: "ignored" };
     }
+
+    // Message inserts and transcript-changing updates take this same lock.
+    // Once acquired, no message can slip in after the final latest-message
+    // check and before this scoring transaction commits.
+    await lockConversation(client, claim.contact_id);
 
     const leadResult = await client.query(
       `SELECT l.*,

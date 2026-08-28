@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 
 const FOLLOW_UP_MESSAGE_COLUMNS = `
   id,
@@ -97,10 +98,12 @@ async function saveIfStillEligible({
   activatedAt,
 }) {
   const result = await pool.query(
-    `WITH latest AS (
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     ), latest AS (
        SELECT id, role, sent_by_username, created_at, delivery_status,
               is_automated_follow_up
-       FROM messages
+       FROM messages, conversation_lock
        WHERE contact_id = $1
        ORDER BY created_at DESC, id DESC
        LIMIT 1

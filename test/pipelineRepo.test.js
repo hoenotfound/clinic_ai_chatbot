@@ -25,7 +25,8 @@ test("creates one open lead with an atomic partial-conflict claim", async (t) =>
       if (/INSERT INTO leads/.test(sql)) {
         assert.match(sql, /ON CONFLICT \(contact_id\) WHERE is_closed = false DO NOTHING/);
         assert.match(sql, /started_message_id/);
-        assert.match(sql, /SELECT MAX\(m\.id\) FROM messages m WHERE m\.contact_id = \$1/);
+        assert.match(sql, /COALESCE\(\$3, \(SELECT MAX\(m\.id\)/);
+        assert.deepEqual(params, [7, 2, 33, "Automation"]);
         return { rows: [{ id: 41, contact_id: 7, stage_id: 2 }] };
       }
       return { rows: [] };
@@ -38,7 +39,7 @@ test("creates one open lead with an atomic partial-conflict claim", async (t) =>
   const published = [];
   realtimeEvents.publish = (event, payload) => published.push({ event, payload });
 
-  const result = await pipelineRepo.ensureLeadForContact(7, "Automation");
+  const result = await pipelineRepo.ensureLeadForContact(7, "Automation", 33);
 
   assert.equal(result.created, true);
   assert.equal(result.lead.id, 41);
@@ -46,6 +47,85 @@ test("creates one open lead with an atomic partial-conflict claim", async (t) =>
   assert.equal(queries.at(-1).sql, "COMMIT");
   assert.equal(released, true);
   assert.deepEqual(published, [{ event: "pipeline_changed", payload: { leadId: 41 } }]);
+});
+
+test("the first new message initializes a staff-created journey boundary", async (t) => {
+  const originalConnect = pool.connect;
+  const originalPublish = realtimeEvents.publish;
+  t.after(() => {
+    pool.connect = originalConnect;
+    realtimeEvents.publish = originalPublish;
+  });
+
+  const queries = [];
+  pool.connect = async () => ({
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      if (/SELECT l\.\*, s\.name AS stage_name/.test(sql)) {
+        return { rows: [{ id: 42, contact_id: 7, started_message_id: null }] };
+      }
+      if (/SET started_message_id = COALESCE/.test(sql)) {
+        return { rows: [{ id: 42, contact_id: 7, started_message_id: 77 }] };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  });
+  const published = [];
+  realtimeEvents.publish = (event, payload) => published.push({ event, payload });
+
+  const result = await pipelineRepo.ensureLeadForContact(7, "Automation", 77);
+
+  assert.equal(result.created, false);
+  assert.equal(result.boundaryInitialized, true);
+  assert.equal(result.lead.started_message_id, 77);
+  const update = queries.find(({ sql }) => /SET started_message_id = COALESCE/.test(sql));
+  assert.match(update.sql, /SELECT MIN\(m\.id\) FROM messages m/);
+  assert.match(update.sql, /m\.created_at >= l\.created_at/);
+  assert.deepEqual(update.params, [42, 77]);
+  assert.deepEqual(published, [{ event: "pipeline_changed", payload: { leadId: 42 } }]);
+});
+
+test("a concurrent lead claim still keeps the earliest inbound message", async (t) => {
+  const originalConnect = pool.connect;
+  const originalPublish = realtimeEvents.publish;
+  t.after(() => {
+    pool.connect = originalConnect;
+    realtimeEvents.publish = originalPublish;
+  });
+
+  let activeReads = 0;
+  let boundaryParams = null;
+  pool.connect = async () => ({
+    query: async (sql, params) => {
+      if (/SELECT l\.\*, s\.name AS stage_name/.test(sql)) {
+        activeReads += 1;
+        return activeReads === 1
+          ? { rows: [] }
+          : { rows: [{ id: 43, contact_id: 7, started_message_id: 102 }] };
+      }
+      if (/SELECT id, name FROM pipeline_stages/.test(sql)) {
+        return { rows: [{ id: 2, name: "New Lead" }] };
+      }
+      if (/INSERT INTO leads/.test(sql)) return { rows: [] };
+      if (/SET started_message_id = COALESCE/.test(sql)) {
+        boundaryParams = params;
+        return { rows: [{ id: 43, contact_id: 7, started_message_id: 101 }] };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  });
+  const published = [];
+  realtimeEvents.publish = (event, payload) => published.push({ event, payload });
+
+  const result = await pipelineRepo.ensureLeadForContact(7, "Automation", 101);
+
+  assert.equal(result.created, false);
+  assert.equal(result.boundaryInitialized, true);
+  assert.equal(result.lead.started_message_id, 101);
+  assert.deepEqual(boundaryParams, [43, 101]);
+  assert.deepEqual(published, [{ event: "pipeline_changed", payload: { leadId: 43 } }]);
 });
 
 test("backfill ignores contacts that already have any recorded journey", async (t) => {
@@ -190,7 +270,9 @@ test("manual lead creation resolves a concurrent open-lead claim", async (t) => 
   assert.equal(result.lead.id, 61);
   assert.match(insertSql, /ON CONFLICT \(contact_id\) WHERE is_closed = false DO NOTHING/);
   assert.match(insertSql, /started_message_id/);
-  assert.match(insertSql, /SELECT MAX\(m\.id\) FROM messages m WHERE m\.contact_id = \$1/);
+  assert.match(insertSql, /temperature_locked, started_message_id/);
+  assert.match(insertSql, /\$1, \$2, \$3, \$4, \$5,\s+NULL,/);
+  assert.doesNotMatch(insertSql, /SELECT MAX\(m\.id\)/);
 });
 
 test("saving details in the same closed stage preserves the original close time", async (t) => {

@@ -223,9 +223,15 @@ function createLeadTemperatureReviewer({
         false
       );
       const startedMessageId = Number(lead.started_message_id);
-      const journeyMessages = Number.isSafeInteger(startedMessageId) && startedMessageId > 0
-        ? messages.filter((message) => Number(message.id) >= startedMessageId)
-        : messages;
+      const hasStartedMessage = Number.isSafeInteger(startedMessageId) && startedMessageId > 0;
+      const journeyStartedAt = Date.parse(lead.created_at);
+      const journeyMessages = messages.filter((message) => {
+        if (hasStartedMessage) return Number(message.id) >= startedMessageId;
+        const messageCreatedAt = Date.parse(message.created_at);
+        return !Number.isNaN(journeyStartedAt) &&
+          !Number.isNaN(messageCreatedAt) &&
+          messageCreatedAt >= journeyStartedAt;
+      });
       const currentIndex = journeyMessages.findIndex(
         (message) => Number(message.id) === Number(messageId)
       );

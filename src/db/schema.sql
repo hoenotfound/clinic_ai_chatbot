@@ -268,15 +268,17 @@ WHERE temperature IN ('hot', 'cold')
   AND temperature_source = 'system'
   AND temperature_locked = false;
 
--- Give existing journeys a stable transcript boundary. Normal leads start at
--- the latest message present when the lead was created. Initial backfilled
--- journeys cover their existing conversation from its first message.
+-- Give existing journeys a stable transcript boundary. Automated leads start
+-- at the inbound message that created them. Initial backfilled journeys cover
+-- their existing conversation. Staff-created journeys begin with the first
+-- message sent after the lead was created, never the final message from a
+-- previously closed journey.
 UPDATE leads l
 SET started_message_id = CASE
   WHEN l.created_by = 'Migration' THEN (
     SELECT MIN(m.id) FROM messages m WHERE m.contact_id = l.contact_id
   )
-  ELSE COALESCE(
+  WHEN l.created_by = 'Automation' THEN COALESCE(
     (
       SELECT m.id FROM messages m
       WHERE m.contact_id = l.contact_id AND m.created_at <= l.created_at
@@ -284,8 +286,27 @@ SET started_message_id = CASE
     ),
     (SELECT MIN(m.id) FROM messages m WHERE m.contact_id = l.contact_id)
   )
+  ELSE (
+    SELECT MIN(m.id) FROM messages m
+    WHERE m.contact_id = l.contact_id AND m.created_at >= l.created_at
+  )
 END
 WHERE l.started_message_id IS NULL;
+
+-- Correct staff-created rows if an earlier preview of this migration used the
+-- last old message as their inclusive boundary. This remains safe on restart:
+-- it always resolves to the first message created during that staff-started
+-- journey, or NULL while the journey has no messages of its own.
+UPDATE leads l
+SET started_message_id = (
+  SELECT MIN(m.id) FROM messages m
+  WHERE m.contact_id = l.contact_id AND m.created_at >= l.created_at
+)
+WHERE COALESCE(l.created_by, '') NOT IN ('Automation', 'Migration')
+  AND l.started_message_id IS DISTINCT FROM (
+    SELECT MIN(m.id) FROM messages m
+    WHERE m.contact_id = l.contact_id AND m.created_at >= l.created_at
+  );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_one_open_per_contact
   ON leads(contact_id)
