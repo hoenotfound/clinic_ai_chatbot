@@ -46,7 +46,8 @@ async function findReadySummaries({ inactivityMinutes, limit = 5 }) {
   const result = await pool.query(
     `SELECT
        a.id AS alert_id, a.lead_id, a.through_message_id, a.score_data,
-       l.contact_id, l.branch_name, l.treatment_interest, l.appointment_at,
+       l.contact_id, l.temperature AS current_temperature,
+       l.branch_name, l.treatment_interest, l.appointment_at,
        l.appointment_status, s.name AS stage_name,
        c.whatsapp_number, c.name, c.whatsapp_profile_name,
        latest.created_at AS last_message_at
@@ -82,22 +83,48 @@ async function findReadySummaries({ inactivityMinutes, limit = 5 }) {
   return result.rows;
 }
 
-async function claimSummary(alertId) {
+async function claimSummary(alertId, inactivityMinutes) {
+  // Re-check the customer-message boundary and inactivity threshold in the
+  // same SQL statement that claims the row. A customer reply arriving after
+  // findReadySummaries() but before this claim therefore cancels the send.
   const result = await pool.query(
-    `UPDATE telegram_summary_alerts
-     SET status = 'sending', attempts = attempts + 1,
+    `UPDATE telegram_summary_alerts a
+     SET status = 'sending', attempts = a.attempts + 1,
          claimed_at = now(), error_text = NULL, updated_at = now()
-     WHERE id = $1
-       AND attempts < ${MAX_ATTEMPTS}
+     FROM leads l
+     JOIN pipeline_stages s ON s.id = l.stage_id
+     JOIN contacts c ON c.id = l.contact_id
+     WHERE a.id = $1
+       AND a.lead_id = l.id
+       AND a.attempts < ${MAX_ATTEMPTS}
        AND (
-         status = 'pending'
+         a.status = 'pending'
          OR (
-           status = 'sending'
-           AND claimed_at <= now() - (${CLAIM_STALE_MINUTES} * interval '1 minute')
+           a.status = 'sending'
+           AND a.claimed_at <= now() - (${CLAIM_STALE_MINUTES} * interval '1 minute')
          )
        )
-     RETURNING *`,
-    [alertId]
+       AND NOT EXISTS (
+         SELECT 1
+         FROM messages newer_customer
+         WHERE newer_customer.contact_id = l.contact_id
+           AND newer_customer.role = 'user'
+           AND newer_customer.id > a.through_message_id
+       )
+       AND (
+         SELECT latest.created_at
+         FROM messages latest
+         WHERE latest.contact_id = l.contact_id
+         ORDER BY latest.id DESC
+         LIMIT 1
+       ) <= now() - ($2::integer * interval '1 minute')
+     RETURNING
+       a.id AS alert_id, a.lead_id, a.through_message_id, a.score_data,
+       l.contact_id, l.temperature AS current_temperature,
+       l.branch_name, l.treatment_interest, l.appointment_at,
+       l.appointment_status, s.name AS stage_name,
+       c.whatsapp_number, c.name, c.whatsapp_profile_name`,
+    [alertId, inactivityMinutes]
   );
   return result.rows[0] || null;
 }
@@ -118,8 +145,8 @@ async function markFailed(alertId, error) {
   const message = String(error?.message || error || "Telegram send failed.").slice(0, 1000);
   const result = await pool.query(
     `UPDATE telegram_summary_alerts
-     SET status = 'pending', claimed_at = NULL,
-         error_text = $2, updated_at = now()
+     SET status = CASE WHEN attempts >= ${MAX_ATTEMPTS} THEN 'failed' ELSE 'pending' END,
+         claimed_at = NULL, error_text = $2, updated_at = now()
      WHERE id = $1 AND status = 'sending'
      RETURNING *`,
     [alertId, message]
