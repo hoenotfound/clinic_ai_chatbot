@@ -2,6 +2,7 @@ const clinicConfig = require("../config/clinicConfig");
 const messagesRepo = require("../db/messagesRepo");
 const followUpRepo = require("../db/followUpRepo");
 const contactsRepo = require("../db/contactsRepo");
+const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
 const whatsapp = require("./whatsappService");
@@ -125,6 +126,18 @@ async function sendCandidate(candidate) {
       candidate.contact_id,
       `Delivery failed: ${SEND_REJECTED_ERROR}`
     );
+  } else {
+    try {
+      await pipelineRepo.markContactedForContact(
+        candidate.contact_id,
+        "Automated follow-up"
+      );
+    } catch (err) {
+      console.error(
+        `Failed to mark lead ${candidate.contact_id} as contacted after automated follow-up:`,
+        err
+      );
+    }
   }
 }
 

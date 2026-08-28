@@ -13,6 +13,7 @@ const { getActivePromotion } = require("./utils/activePromotion");
 const clinicConfig = require("./config/clinicConfig");
 const messagesRepo = require("./db/messagesRepo");
 const contactsRepo = require("./db/contactsRepo");
+const pipelineRepo = require("./db/pipelineRepo");
 const { checkKeywordTriggers, extractHandoffSignal } = require("./utils/attentionTriggers");
 const realtimeEvents = require("./utils/realtimeEvents");
 const { enqueueConversation } = require("./utils/conversationQueue");
@@ -23,6 +24,7 @@ const authRoutes = require("./routes/auth");
 const conversationsRoutes = require("./routes/conversations");
 const configRoutes = require("./routes/config");
 const contactsRoutes = require("./routes/contacts");
+const pipelineRoutes = require("./routes/pipeline");
 const { bootstrapAdminUser } = require("./db/bootstrapAdmin");
 const configRepo = require("./db/configRepo");
 const { pruneOrphanedPromoImages } = configRepo;
@@ -113,6 +115,16 @@ async function processIncomingMessage(incoming) {
     }
 
     await contactsRepo.setUnread(contact.id, true);
+
+    // Every genuine first inbound conversation becomes a lead. The partial
+    // unique index keeps one open sales journey per contact while still
+    // allowing a returning patient to start a new journey after closing one.
+    try {
+      await pipelineRepo.ensureLeadForContact(contact.id, "Automation");
+    } catch (pipelineErr) {
+      // Pipeline bookkeeping must never prevent the chatbot from answering.
+      console.error(`Failed to create or locate lead for contact ${contact.id}:`, pipelineErr);
+    }
 
     if (unsupportedType) {
       await contactsRepo.setAttention(
@@ -453,6 +465,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/conversations", requireAuth, conversationsRoutes);
 app.use("/api/config", requireAuth, configRoutes);
 app.use("/api/contacts", requireAuth, contactsRoutes);
+app.use("/api/pipeline", requireAuth, pipelineRoutes);
 
 // ── Serve the built portal frontend in production ──
 const portalBuildPath = path.join(__dirname, "../portal-frontend/dist");
@@ -472,6 +485,14 @@ async function start() {
   // db/configRepo.js. On a brand-new database this also seeds the table
   // from config/clinicConfig.default.js.
   await configRepo.loadConfig();
+
+  // Bring existing WhatsApp conversations into the first pipeline stage on
+  // the initial deployment. Later starts are a no-op once a contact has any
+  // recorded sales journey, including a completed one.
+  const backfilledLeadCount = await pipelineRepo.backfillLeadsForExistingContacts();
+  if (backfilledLeadCount > 0) {
+    console.log(`Added ${backfilledLeadCount} existing conversation(s) to the lead pipeline.`);
+  }
 
   // Creates a first staff login from ADMIN_USERNAME/ADMIN_PASSWORD env vars,
   // but only if no staff logins exist yet. Needed for hosts without shell

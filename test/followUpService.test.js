@@ -5,6 +5,7 @@ const clinicConfig = require("../src/config/clinicConfig");
 const messagesRepo = require("../src/db/messagesRepo");
 const followUpRepo = require("../src/db/followUpRepo");
 const contactsRepo = require("../src/db/contactsRepo");
+const pipelineRepo = require("../src/db/pipelineRepo");
 const realtimeEvents = require("../src/utils/realtimeEvents");
 const whatsapp = require("../src/services/whatsappService");
 const {
@@ -14,6 +15,7 @@ const {
 
 test.beforeEach(() => {
   followUpRepo.markStaleClaimsUnconfirmed = async () => [];
+  pipelineRepo.markContactedForContact = async () => false;
 });
 
 function enableTool() {
@@ -36,6 +38,7 @@ test("sends and records one claimed automated follow-up", async () => {
   enableTool();
   const published = [];
   let sendCount = 0;
+  let contacted = null;
 
   followUpRepo.findCandidates = async () => [
     { contact_id: 7, whatsapp_number: "60123456789", trigger_message_id: 40 },
@@ -57,6 +60,10 @@ test("sends and records one claimed automated follow-up", async () => {
     assert.equal(message, "Checking in");
     return { success: true, wamid: "wamid-41" };
   };
+  pipelineRepo.markContactedForContact = async (contactId, actor) => {
+    contacted = { contactId, actor };
+    return true;
+  };
   realtimeEvents.publish = (event, payload) => published.push({ event, payload });
 
   await runAutomatedFollowUps();
@@ -65,6 +72,7 @@ test("sends and records one claimed automated follow-up", async () => {
   assert.equal(published.length, 2);
   assert.equal(published[0].payload.reason, "message");
   assert.equal(published[1].payload.deliveryStatus, "pending");
+  assert.deepEqual(contacted, { contactId: 7, actor: "Automated follow-up" });
 });
 
 test("uses the saved Bahasa Malaysia version for a Malay customer chat", async () => {

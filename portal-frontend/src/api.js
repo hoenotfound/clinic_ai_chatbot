@@ -151,4 +151,26 @@ export const api = {
   addContactNote: (id, content) =>
     request(`/contacts/${id}/notes`, { method: "POST", body: JSON.stringify({ content }) }),
   deleteContactNote: (id, noteId) => request(`/contacts/${id}/notes/${noteId}`, { method: "DELETE" }),
+  getPipeline: () => request("/pipeline"),
+  createLead: (data) =>
+    request("/pipeline/leads", { method: "POST", body: JSON.stringify(data) }),
+  updateLead: (leadId, data) =>
+    request(`/pipeline/leads/${leadId}`, { method: "PATCH", body: JSON.stringify(data) }),
+  listLeadActivities: (leadId) => request(`/pipeline/leads/${leadId}/activities`),
+  addLeadNote: (leadId, content) =>
+    request(`/pipeline/leads/${leadId}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    }),
+  createPipelineStage: (data) =>
+    request("/pipeline/stages", { method: "POST", body: JSON.stringify(data) }),
+  updatePipelineStage: (stageId, data) =>
+    request(`/pipeline/stages/${stageId}`, { method: "PATCH", body: JSON.stringify(data) }),
+  reorderPipelineStages: (stageIds) =>
+    request("/pipeline/stages/reorder", {
+      method: "POST",
+      body: JSON.stringify({ stageIds }),
+    }),
+  deletePipelineStage: (stageId) =>
+    request(`/pipeline/stages/${stageId}`, { method: "DELETE" }),
 };

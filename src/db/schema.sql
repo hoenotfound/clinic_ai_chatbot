@@ -173,22 +173,114 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- ── Placeholder tables for future phases (Pipeline / Contacts CRM fields) ──
--- Not used by any code yet. Created now so the schema is stable and the
--- portal's "Pipeline" tab has something real to attach to when it's built,
--- rather than requiring a migration + data backfill later.
+-- ── Lead pipeline ──
+-- Pipeline progress is deliberately separate from conversation state. A lead
+-- can be Hot, assigned to Puchong, waiting for a reschedule, and still sit in
+-- the Appointment Set stage at the same time.
 
 CREATE TABLE IF NOT EXISTS pipeline_stages (
   id SERIAL PRIMARY KEY,
-  name TEXT NOT NULL,          -- e.g. "New Lead", "Contacted", "Booked", "Converted"
-  sort_order INTEGER NOT NULL
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL,
+  color TEXT NOT NULL DEFAULT '#2f6f62',
+  stage_type TEXT NOT NULL DEFAULT 'open',
+  system_key TEXT
 );
+
+ALTER TABLE pipeline_stages ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '#2f6f62';
+ALTER TABLE pipeline_stages ADD COLUMN IF NOT EXISTS stage_type TEXT NOT NULL DEFAULT 'open';
+ALTER TABLE pipeline_stages ADD COLUMN IF NOT EXISTS system_key TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_stages_system_key
+  ON pipeline_stages(system_key)
+  WHERE system_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pipeline_stages_name_ci
+  ON pipeline_stages(lower(name));
+
+-- Seed the clinic-friendly defaults only when the placeholder table is empty.
+-- Staff can rename and reorder these workflow stages, and add their own later.
+INSERT INTO pipeline_stages (name, sort_order, color, stage_type, system_key)
+SELECT seed.name, seed.sort_order, seed.color, seed.stage_type, seed.system_key
+FROM (VALUES
+  ('New Lead', 10, '#397a6d', 'open', 'new'),
+  ('Contacted', 20, '#3b82a0', 'open', 'contacted'),
+  ('Appointment Set', 30, '#c58b2a', 'open', 'appointment_set'),
+  ('Visited Clinic', 40, '#7c62a3', 'open', 'visited'),
+  ('Converted / Won', 50, '#2f7d4e', 'won', 'won'),
+  ('Closed / Lost', 60, '#a94b3d', 'lost', 'lost')
+) AS seed(name, sort_order, color, stage_type, system_key)
+WHERE NOT EXISTS (SELECT 1 FROM pipeline_stages);
 
 CREATE TABLE IF NOT EXISTS leads (
   id SERIAL PRIMARY KEY,
   contact_id INTEGER NOT NULL REFERENCES contacts(id),
   stage_id INTEGER REFERENCES pipeline_stages(id),
   notes TEXT,
+  temperature TEXT NOT NULL DEFAULT 'warm',
+  branch_name TEXT,
+  owner_username TEXT,
+  treatment_interest TEXT,
+  estimated_value NUMERIC(12, 2),
+  source TEXT,
+  campaign_name TEXT,
+  appointment_status TEXT NOT NULL DEFAULT 'none',
+  appointment_at TIMESTAMPTZ,
+  next_follow_up_at TIMESTAMPTZ,
+  lost_reason TEXT,
+  marketing_consent TEXT NOT NULL DEFAULT 'unknown',
+  is_closed BOOLEAN NOT NULL DEFAULT false,
+  closed_at TIMESTAMPTZ,
+  created_by TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS temperature TEXT NOT NULL DEFAULT 'warm';
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS branch_name TEXT;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS owner_username TEXT;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS treatment_interest TEXT;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS estimated_value NUMERIC(12, 2);
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS source TEXT;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS campaign_name TEXT;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS appointment_status TEXT NOT NULL DEFAULT 'none';
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS appointment_at TIMESTAMPTZ;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS next_follow_up_at TIMESTAMPTZ;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS lost_reason TEXT;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS marketing_consent TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS is_closed BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS created_by TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_one_open_per_contact
+  ON leads(contact_id)
+  WHERE is_closed = false;
+CREATE INDEX IF NOT EXISTS idx_leads_stage ON leads(stage_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_leads_branch ON leads(branch_name) WHERE branch_name IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_leads_follow_up
+  ON leads(next_follow_up_at)
+  WHERE is_closed = false AND next_follow_up_at IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS lead_stage_history (
+  id SERIAL PRIMARY KEY,
+  lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  from_stage_id INTEGER REFERENCES pipeline_stages(id) ON DELETE SET NULL,
+  to_stage_id INTEGER REFERENCES pipeline_stages(id) ON DELETE SET NULL,
+  changed_by TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_lead_stage_history_lead
+  ON lead_stage_history(lead_id, created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS lead_activities (
+  id SERIAL PRIMARY KEY,
+  lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  activity_type TEXT NOT NULL,
+  description TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_lead_activities_lead
+  ON lead_activities(lead_id, created_at DESC, id DESC);

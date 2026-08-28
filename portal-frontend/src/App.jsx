@@ -7,6 +7,7 @@ import Contacts from "./pages/Contacts";
 import Settings from "./pages/Settings";
 import ComingSoon from "./pages/ComingSoon";
 import Tools from "./pages/Tools";
+import Pipeline from "./pages/Pipeline";
 
 function ProtectedRoute({ children }) {
   const { username, loading } = useAuth();
@@ -55,10 +56,7 @@ export default function App() {
             path="/pipeline"
             element={
               <ProtectedRoute>
-                <ComingSoon
-                  title="Pipeline"
-                  description="Track leads from their first message through to booked and converted patients. Coming in the next build phase."
-                />
+                <Pipeline />
               </ProtectedRoute>
             }
           />
