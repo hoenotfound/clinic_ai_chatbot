@@ -112,8 +112,8 @@ async function markFailed(alertId, error) {
   const message = String(error?.message || error || "Telegram send failed.").slice(0, 1000);
   const result = await pool.query(
     `UPDATE telegram_summary_alerts
-     SET status = CASE WHEN attempts >= ${MAX_ATTEMPTS} THEN 'failed' ELSE 'pending' END,
-         claimed_at = NULL, error_text = $2, updated_at = now()
+     SET status = 'pending', claimed_at = NULL,
+         error_text = $2, updated_at = now()
      WHERE id = $1 AND status = 'sending'
      RETURNING *`,
     [alertId, message]
