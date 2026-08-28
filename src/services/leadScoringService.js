@@ -1,6 +1,7 @@
 const clinicConfig = require("../config/clinicConfig");
 const leadScoringRepo = require("../db/leadScoringRepo");
 const { scoreLeadConversation } = require("./leadScoringAiService");
+const telegramAlerts = require("./telegramAlertService");
 
 const LEAD_SCORING_CHECK_INTERVAL_MS = 60 * 1000;
 const LEAD_SCORING_BATCH_SIZE = 5;
@@ -53,6 +54,7 @@ function createLeadScoringRunner({
   repository = leadScoringRepo,
   scoreConversation = scoreLeadConversation,
   settingsGetter = getActiveSettings,
+  sendConversationSummary = telegramAlerts.sendConversationSummary,
 } = {}) {
   let sweepRunning = false;
 
@@ -107,13 +109,36 @@ function createLeadScoringRunner({
             continue;
           }
 
-          await repository.completeScore({
+          const completion = await repository.completeScore({
             scoreId: claim.id,
             leadId: candidate.lead_id,
             throughMessageId: candidate.through_message_id,
             triggerType: candidate.trigger_type,
             score,
           });
+
+          // Only inactivity is treated as an ended conversation. The time and
+          // message ceilings still refresh temperature while a long chat is
+          // active, but they must not send a premature Telegram summary.
+          if (
+            candidate.trigger_type === "inactivity" &&
+            completion?.status === "completed"
+          ) {
+            try {
+              await sendConversationSummary({
+                leadId: candidate.lead_id,
+                score,
+              });
+            } catch (telegramErr) {
+              // Telegram is an external notification only. It must never turn
+              // a successfully completed lead score into a failed score or
+              // block later conversations from being reviewed.
+              console.error(
+                `Telegram summary failed for lead ${candidate.lead_id}:`,
+                telegramErr
+              );
+            }
+          }
         } catch (err) {
           await repository.markScoreFailed(claim.id, err);
           console.error(
