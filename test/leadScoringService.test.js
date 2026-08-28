@@ -46,8 +46,35 @@ function scoredLead() {
   };
 }
 
+function completedRepository(lead, calls = []) {
+  return {
+    findCandidates: async (input) => {
+      calls.push(["find", input]);
+      return [lead];
+    },
+    claimCandidate: async (input) => {
+      calls.push(["claim", input]);
+      return { id: 91 };
+    },
+    getTranscript: async (...args) => {
+      calls.push(["transcript", args]);
+      return [
+        { id: 43, role: "assistant", content: "Would tomorrow suit you?" },
+        { id: 44, role: "user", content: "Yes, please book me." },
+      ];
+    },
+    completeScore: async (input) => {
+      calls.push(["complete", input]);
+      return { status: "completed" };
+    },
+    markScoreCancelled: async () => assert.fail("score should not be cancelled"),
+    markScoreFailed: async () => assert.fail("score should not fail"),
+  };
+}
+
 test("does not query leads while AI scoring is disabled", async () => {
   let queries = 0;
+  let flushes = 0;
   const run = createLeadScoringRunner({
     settingsGetter: () => null,
     repository: {
@@ -56,51 +83,37 @@ test("does not query leads while AI scoring is disabled", async () => {
         return [];
       },
     },
+    flushConversationSummaries: async () => {
+      flushes += 1;
+    },
   });
 
   await run();
   assert.equal(queries, 0);
+  assert.equal(flushes, 0);
 });
 
-test("claims, scores, completes, and sends a summary after inactivity", async () => {
+test("completed score queues its exact snapshot and then runs the inactivity flush", async () => {
   const calls = [];
-  let transcriptArgs = null;
-  let summaryAlert = null;
+  let queued = null;
+  let flushed = null;
   const score = scoredLead();
   const lead = candidate();
   const run = createLeadScoringRunner({
     settingsGetter: () => settings,
-    repository: {
-      findCandidates: async (input) => {
-        calls.push(["find", input]);
-        return [lead];
-      },
-      claimCandidate: async (input) => {
-        calls.push(["claim", input]);
-        return { id: 91 };
-      },
-      getTranscript: async (...args) => {
-        transcriptArgs = args;
-        return [
-          { id: 43, role: "assistant", content: "Would tomorrow suit you?" },
-          { id: 44, role: "user", content: "Yes, please book me." },
-        ];
-      },
-      completeScore: async (input) => {
-        calls.push(["complete", input]);
-        return { status: "completed" };
-      },
-      markScoreCancelled: async () => assert.fail("score should not be cancelled"),
-      markScoreFailed: async () => assert.fail("score should not fail"),
-    },
+    repository: completedRepository(lead, calls),
     scoreConversation: async ({ messages, lead: scoringLead }) => {
       assert.equal(messages.length, 2);
       assert.equal(scoringLead.lead_id, 7);
       return score;
     },
-    sendConversationSummary: async (input) => {
-      summaryAlert = input;
-      return { status: "sent" };
+    queueConversationSummary: async (input) => {
+      queued = input;
+      return { status: "queued" };
+    },
+    flushConversationSummaries: async (input) => {
+      flushed = input;
+      return { status: "completed", sent: 1 };
     },
   });
 
@@ -108,50 +121,48 @@ test("claims, scores, completes, and sends a summary after inactivity", async ()
 
   assert.equal(calls[0][0], "find");
   assert.equal(calls[0][1].limit, 5);
-  assert.equal(calls[1][0], "claim");
-  assert.deepEqual(transcriptArgs, [
+  assert.deepEqual(calls[2][1], [
     12,
     33,
     "2026-08-28T00:05:00.000Z",
     44,
     80,
   ]);
-  assert.deepEqual(calls[2], ["complete", {
-    scoreId: 91,
+  assert.deepEqual(queued, {
     leadId: 7,
     throughMessageId: 44,
-    triggerType: "inactivity",
     score,
-  }]);
-  assert.deepEqual(summaryAlert, { leadId: 7, score });
+  });
+  assert.deepEqual(flushed, { inactivityMinutes: 10 });
 });
 
-test("time and message ceilings can score temperature without sending Telegram summary", async () => {
+test("time and message ceiling scores are queued so they can wait for later inactivity", async () => {
   for (const triggerType of ["time_ceiling", "message_ceiling"]) {
-    let summaryCalls = 0;
+    let queued = null;
+    let flushes = 0;
+    const lead = candidate({ trigger_type: triggerType });
     const run = createLeadScoringRunner({
       settingsGetter: () => settings,
-      repository: {
-        findCandidates: async () => [candidate({ trigger_type: triggerType })],
-        claimCandidate: async () => ({ id: 94 }),
-        getTranscript: async () => [{ id: 44, role: "user", content: "How much is HIFU?" }],
-        completeScore: async () => ({ status: "completed" }),
-        markScoreCancelled: async () => assert.fail("score should not be cancelled"),
-        markScoreFailed: async () => assert.fail("score should not fail"),
-      },
+      repository: completedRepository(lead),
       scoreConversation: async () => scoredLead(),
-      sendConversationSummary: async () => {
-        summaryCalls += 1;
+      queueConversationSummary: async (input) => {
+        queued = input;
+      },
+      flushConversationSummaries: async () => {
+        flushes += 1;
       },
     });
 
     await run();
-    assert.equal(summaryCalls, 0, `${triggerType} should not send Telegram summary`);
+    assert.equal(queued.leadId, 7);
+    assert.equal(queued.throughMessageId, 44);
+    assert.equal(flushes, 1);
   }
 });
 
-test("superseded scoring result does not send a Telegram summary", async () => {
-  let summaryCalls = 0;
+test("superseded scoring result is not queued but pending summaries still get flushed", async () => {
+  let queueCalls = 0;
+  let flushCalls = 0;
   const run = createLeadScoringRunner({
     settingsGetter: () => settings,
     repository: {
@@ -163,16 +174,20 @@ test("superseded scoring result does not send a Telegram summary", async () => {
       markScoreFailed: async () => assert.fail("score should not fail"),
     },
     scoreConversation: async () => scoredLead(),
-    sendConversationSummary: async () => {
-      summaryCalls += 1;
+    queueConversationSummary: async () => {
+      queueCalls += 1;
+    },
+    flushConversationSummaries: async () => {
+      flushCalls += 1;
     },
   });
 
   await run();
-  assert.equal(summaryCalls, 0);
+  assert.equal(queueCalls, 0);
+  assert.equal(flushCalls, 1);
 });
 
-test("Telegram failure does not convert a completed lead score into a failed score", async (t) => {
+test("Telegram queue and flush failures do not convert a completed score into a failed score", async (t) => {
   const originalError = console.error;
   t.after(() => {
     console.error = originalError;
@@ -183,17 +198,16 @@ test("Telegram failure does not convert a completed lead score into a failed sco
   const run = createLeadScoringRunner({
     settingsGetter: () => settings,
     repository: {
-      findCandidates: async () => [candidate()],
-      claimCandidate: async () => ({ id: 96 }),
-      getTranscript: async () => [{ id: 44, role: "user", content: "Book me" }],
-      completeScore: async () => ({ status: "completed" }),
-      markScoreCancelled: async () => assert.fail("score should not be cancelled"),
+      ...completedRepository(candidate()),
       markScoreFailed: async () => {
         failedScoreCalls += 1;
       },
     },
     scoreConversation: async () => scoredLead(),
-    sendConversationSummary: async () => {
+    queueConversationSummary: async () => {
+      throw new Error("queue unavailable");
+    },
+    flushConversationSummaries: async () => {
       throw new Error("Telegram unavailable");
     },
   });
@@ -206,6 +220,7 @@ test("cancels a completed AI call when staff pauses the tool", async () => {
   let liveSettings = settings;
   let cancelledId = null;
   let completed = false;
+  let flushed = false;
   const run = createLeadScoringRunner({
     settingsGetter: () => liveSettings,
     repository: {
@@ -224,11 +239,15 @@ test("cancels a completed AI call when staff pauses the tool", async () => {
       liveSettings = null;
       return scoredLead();
     },
+    flushConversationSummaries: async () => {
+      flushed = true;
+    },
   });
 
   await run();
   assert.equal(cancelledId, 92);
   assert.equal(completed, false);
+  assert.equal(flushed, false);
 });
 
 test("records a failed scoring attempt without stopping the sweep", async (t) => {
@@ -238,6 +257,7 @@ test("records a failed scoring attempt without stopping the sweep", async (t) =>
   });
   console.error = () => {};
   let failure = null;
+  let flushed = false;
   const run = createLeadScoringRunner({
     settingsGetter: () => settings,
     repository: {
@@ -251,11 +271,15 @@ test("records a failed scoring attempt without stopping the sweep", async (t) =>
     scoreConversation: async () => {
       throw new Error("provider unavailable");
     },
+    flushConversationSummaries: async () => {
+      flushed = true;
+    },
   });
 
   await run();
   assert.equal(failure.id, 93);
   assert.match(failure.error.message, /provider unavailable/);
+  assert.equal(flushed, true);
 });
 
 test("long transcripts keep the newest complete messages", () => {
