@@ -31,6 +31,9 @@ const { pruneOrphanedPromoImages } = configRepo;
 const promoImagesRepo = require("./db/promoImagesRepo");
 const { initSchema } = require("./db/db");
 const { startAutomatedFollowUps } = require("./services/followUpService");
+const {
+  reviewLeadTemperatureForContact,
+} = require("./services/leadTemperatureAutomation");
 
 // How often the backstop sweep for abandoned promo-image uploads runs —
 // see the setInterval call in start() below.
@@ -96,6 +99,7 @@ async function processIncomingMessage(incoming) {
   let contact = null;
   let savedInbound = null;
   let responseAttempted = false;
+  let temperatureReviewEligible = false;
 
   try {
     contact = await contactsRepo.getOrCreateContact(from, profileName);
@@ -219,6 +223,12 @@ async function processIncomingMessage(incoming) {
       );
     }
 
+    // Photos without captions and failed/unsupported media contain no text
+    // that can safely support a sales-temperature decision.
+    temperatureReviewEligible = Boolean(text.trim()) && !(
+      mediaType === "image" && !incoming.text
+    );
+
     const keywordReason = checkKeywordTriggers(text);
     if (keywordReason) {
       await contactsRepo.setAttention(contact.id, true, keywordReason);
@@ -308,6 +318,19 @@ async function processIncomingMessage(incoming) {
         );
       } catch (fallbackErr) {
         console.error("Failed to save or send the fallback message:", fallbackErr);
+      }
+    }
+  } finally {
+    if (contact && savedInbound && temperatureReviewEligible) {
+      try {
+        await reviewLeadTemperatureForContact(contact.id);
+      } catch (temperatureErr) {
+        // Lead scoring is useful bookkeeping, but must never block or change
+        // the customer reply flow when the provider or database is unavailable.
+        console.error(
+          `Failed to review lead temperature for contact ${contact.id}:`,
+          temperatureErr
+        );
       }
     }
   }

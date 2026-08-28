@@ -44,6 +44,16 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
     };
   }, [lead.id, onToast]);
 
+  useEffect(() => {
+    // Pipeline SSE updates can arrive while this drawer remains mounted. Keep
+    // the temperature current so a later full-form save cannot silently put an
+    // AI-updated lead back to the drawer's stale value.
+    setForm((current) => ({
+      ...current,
+      temperature: lead.temperature || "warm",
+    }));
+  }, [lead.temperature]);
+
   const selectedStage = useMemo(
     () => stages.find((stage) => Number(stage.id) === Number(form.stageId)),
     [form.stageId, stages]
@@ -251,7 +261,7 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-bold">Temperature suggestion</p>
-                  <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">AI reviews the recent chat. Staff decides whether to use it.</p>
+                  <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">AI can automatically move Warm leads when the chat has clear, high-confidence evidence. Staff can still review or override it.</p>
                 </div>
                 <button type="button" onClick={handleSuggestTemperature} disabled={suggestingTemperature} className="inline-flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs font-semibold hover:border-[var(--color-primary)]/40 disabled:opacity-50">
                   {suggestingTemperature && <Spinner className="h-3.5 w-3.5" />}
@@ -267,6 +277,9 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
                     </span>
                     <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
                       {temperatureSuggestion.confidence} confidence
+                    </span>
+                    <span className={`text-[10px] font-semibold uppercase tracking-wide ${temperatureSuggestion.enoughInformation ? "text-emerald-600" : "text-amber-600"}`}>
+                      {temperatureSuggestion.enoughInformation ? "Enough evidence" : "More information needed"}
                     </span>
                   </div>
                   <p className="mt-2 text-sm leading-relaxed">{temperatureSuggestion.reason}</p>

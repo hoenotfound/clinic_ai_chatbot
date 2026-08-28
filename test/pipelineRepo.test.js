@@ -251,3 +251,97 @@ test("no-reply classification excludes failed and unconfirmed messages", async (
   assert.doesNotMatch(listSql, /latest\.delivery_status IN \([^)]*'failed'/);
   assert.doesNotMatch(listSql, /latest\.delivery_status IN \([^)]*'unknown'/);
 });
+
+test("automatic temperature update is atomic and only claims a still-Warm lead", async (t) => {
+  const originalConnect = pool.connect;
+  const originalPublish = realtimeEvents.publish;
+  t.after(() => {
+    pool.connect = originalConnect;
+    realtimeEvents.publish = originalPublish;
+  });
+
+  const queries = [];
+  pool.connect = async () => ({
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      if (/UPDATE leads/.test(sql)) {
+        return { rows: [{ id: 81, temperature: "hot" }] };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  });
+  const published = [];
+  realtimeEvents.publish = (event, payload) => published.push({ event, payload });
+
+  const updated = await pipelineRepo.applyAutomaticTemperature(81, {
+    temperature: "hot",
+    confidence: "high",
+    enoughInformation: true,
+    reason: "The customer accepted an appointment tomorrow.",
+  });
+
+  assert.equal(updated.temperature, "hot");
+  const update = queries.find(({ sql }) => /UPDATE leads/.test(sql));
+  assert.match(update.sql, /is_closed = false AND temperature = 'warm'/);
+  assert.deepEqual(update.params, [81, "hot"]);
+  const activity = queries.find(({ sql }) => /INSERT INTO lead_activities/.test(sql));
+  assert.equal(activity.params[4].source, "conversation_temperature");
+  assert.deepEqual(published, [{ event: "pipeline_changed", payload: { leadId: 81 } }]);
+});
+
+test("automatic temperature update cannot overwrite a lead that is no longer Warm", async (t) => {
+  const originalConnect = pool.connect;
+  const originalPublish = realtimeEvents.publish;
+  t.after(() => {
+    pool.connect = originalConnect;
+    realtimeEvents.publish = originalPublish;
+  });
+
+  let activityWritten = false;
+  pool.connect = async () => ({
+    query: async (sql) => {
+      if (/UPDATE leads/.test(sql)) return { rows: [] };
+      if (/INSERT INTO lead_activities/.test(sql)) activityWritten = true;
+      return { rows: [] };
+    },
+    release: () => {},
+  });
+  realtimeEvents.publish = () => {
+    throw new Error("A skipped automatic update should not publish an event");
+  };
+
+  const updated = await pipelineRepo.applyAutomaticTemperature(82, {
+    temperature: "cold",
+    confidence: "high",
+    enoughInformation: true,
+    reason: "The customer explicitly declined.",
+  });
+
+  assert.equal(updated, null);
+  assert.equal(activityWritten, false);
+});
+
+test("repository rejects an automatic temperature result without decisive confidence", async (t) => {
+  const originalConnect = pool.connect;
+  t.after(() => {
+    pool.connect = originalConnect;
+  });
+
+  pool.connect = async () => {
+    throw new Error("An unqualified suggestion must not reach the database");
+  };
+
+  assert.equal(await pipelineRepo.applyAutomaticTemperature(83, {
+    temperature: "hot",
+    confidence: "medium",
+    enoughInformation: true,
+    reason: "The customer asked about pricing.",
+  }), null);
+  assert.equal(await pipelineRepo.applyAutomaticTemperature(83, {
+    temperature: "cold",
+    confidence: "high",
+    enoughInformation: false,
+    reason: "The available evidence is ambiguous.",
+  }), null);
+});

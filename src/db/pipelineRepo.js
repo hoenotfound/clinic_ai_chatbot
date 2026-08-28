@@ -441,6 +441,47 @@ async function updateLead(id, patch, actor) {
   return updatedLead;
 }
 
+async function applyAutomaticTemperature(id, suggestion) {
+  if (
+    !suggestion ||
+    suggestion.enoughInformation !== true ||
+    suggestion.confidence !== "high" ||
+    !["hot", "cold"].includes(suggestion.temperature)
+  ) {
+    return null;
+  }
+
+  const updatedLead = await withTransaction(async (client) => {
+    const result = await client.query(
+      `UPDATE leads
+       SET temperature = $2, updated_at = now()
+       WHERE id = $1 AND is_closed = false AND temperature = 'warm'
+       RETURNING *`,
+      [id, suggestion.temperature]
+    );
+    const updated = result.rows[0];
+    if (!updated) return null;
+
+    const nextTemperature = suggestion.temperature === "hot" ? "Hot" : "Cold";
+    await addActivity(
+      client,
+      id,
+      "updated",
+      `AI automatically changed the temperature from Warm to ${nextTemperature}. ${suggestion.reason}`,
+      "AI automation",
+      {
+        source: "conversation_temperature",
+        confidence: suggestion.confidence,
+        reason: suggestion.reason,
+      }
+    );
+    return updated;
+  });
+
+  if (updatedLead) publishPipelineChange(updatedLead.id);
+  return updatedLead;
+}
+
 async function listActivities(leadId) {
   const result = await pool.query(
     `SELECT id, activity_type, description, actor, metadata, created_at
@@ -590,6 +631,7 @@ module.exports = {
   backfillLeadsForExistingContacts,
   createLead,
   updateLead,
+  applyAutomaticTemperature,
   listActivities,
   addNote,
   createStage,
