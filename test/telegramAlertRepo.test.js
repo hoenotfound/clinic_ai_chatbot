@@ -4,17 +4,19 @@ const assert = require("node:assert/strict");
 const { pool } = require("../src/db/db");
 const telegramAlertRepo = require("../src/db/telegramAlertRepo");
 
-test("ready Telegram summaries require the exact latest snapshot to be inactive", async (t) => {
+test("ready Telegram summaries wait for inactivity and are invalidated only by a newer customer message", async (t) => {
   const originalQuery = pool.query;
   t.after(() => {
     pool.query = originalQuery;
   });
 
   pool.query = async (sql, params) => {
-    assert.match(sql, /a\.through_message_id = latest\.id/);
     assert.match(sql, /latest\.created_at <= now\(\) - \(\$1::integer \* interval '1 minute'\)/);
     assert.match(sql, /a\.status IN \('pending', 'sending'\)/);
     assert.match(sql, /a\.attempts < 3/);
+    assert.match(sql, /newer_customer\.role = 'user'/);
+    assert.match(sql, /newer_customer\.id > a\.through_message_id/);
+    assert.doesNotMatch(sql, /a\.through_message_id = latest\.id/);
     assert.match(sql, /ORDER BY latest\.created_at ASC/);
     assert.deepEqual(params, [10, 5]);
     return { rows: [{ alert_id: 31, lead_id: 7 }] };
