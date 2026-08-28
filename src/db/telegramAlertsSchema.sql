@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS telegram_summary_alerts (
   through_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   score_data JSONB NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'sending', 'sent', 'superseded', 'failed')),
+    CHECK (status IN ('pending', 'sending', 'sent', 'superseded')),
   attempts INTEGER NOT NULL DEFAULT 0,
   error_text TEXT,
   claimed_at TIMESTAMPTZ,
