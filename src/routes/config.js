@@ -2,6 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const configRepo = require("../db/configRepo");
 const promoImagesRepo = require("../db/promoImagesRepo");
+const followUpTranslationService = require("../services/followUpTranslationService");
 
 const router = express.Router();
 
@@ -104,8 +105,28 @@ function isAutomatedFollowUpConfig(value) {
     ["all", "staff"].includes(value.triggerMode) &&
     isNonEmptyString(value.message) &&
     value.message.length <= 1000 &&
+    isFollowUpTranslations(value.translations) &&
     isString(value.imageUrl) &&
     (value.activatedAt === null || !Number.isNaN(Date.parse(value.activatedAt)))
+  );
+}
+
+function isFollowUpTranslations(value) {
+  return (
+    isPlainObject(value) &&
+    ["en", "ms", "zh"].every(
+      (key) => isNonEmptyString(value[key]) && value[key].trim().length <= 1000
+    )
+  );
+}
+
+function prepareFollowUpTranslations(requested, fallbackMessage) {
+  const input = isPlainObject(requested) ? requested : {};
+  return Object.fromEntries(
+    ["en", "ms", "zh"].map((key) => {
+      const value = typeof input[key] === "string" ? input[key].trim() : "";
+      return [key, value || fallbackMessage];
+    })
   );
 }
 
@@ -116,6 +137,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   const delayMinutes = Number(requested.delayMinutes);
   const triggerMode = requested.triggerMode;
   const message = typeof requested.message === "string" ? requested.message.trim() : "";
+  const translations = prepareFollowUpTranslations(requested.translations, message);
   const imageUrl = typeof requested.imageUrl === "string" ? requested.imageUrl.trim() : "";
 
   if (
@@ -125,7 +147,8 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     delayMinutes > 23 * 60 ||
     !["all", "staff"].includes(triggerMode) ||
     !message ||
-    message.length > 1000
+    message.length > 1000 ||
+    !isFollowUpTranslations(translations)
   ) {
     return null;
   }
@@ -141,6 +164,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     delayMinutes,
     triggerMode,
     message,
+    translations,
     imageUrl,
     activatedAt: enabled
       ? continuingCurrentActivation
@@ -149,6 +173,25 @@ function prepareAutomatedFollowUpConfig(requested, current) {
       : null,
   };
 }
+
+router.post("/automated-follow-up/translations", async (req, res) => {
+  try {
+    const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    if (!message || message.length > 1000) {
+      return res.status(400).json({
+        error: "Enter a follow-up message under 1,000 characters first.",
+      });
+    }
+
+    const translations = await followUpTranslationService.translateFollowUp(message);
+    res.json({ translations });
+  } catch (err) {
+    console.error("Failed to translate automated follow-up:", err);
+    res.status(502).json({
+      error: "The translations could not be generated. Please try again.",
+    });
+  }
+});
 
 async function saveUploadedImage(req, res) {
   try {

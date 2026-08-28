@@ -22,6 +22,11 @@ function enableTool() {
     delayMinutes: 120,
     triggerMode: "all",
     message: "Checking in",
+    translations: {
+      en: "Checking in",
+      ms: "Hai, masih perlukan bantuan?",
+      zh: "您好，请问还需要帮助吗？",
+    },
     imageUrl: "",
     activatedAt: "2026-08-27T00:00:00.000Z",
   };
@@ -62,6 +67,83 @@ test("sends and records one claimed automated follow-up", async () => {
   assert.equal(published[1].payload.deliveryStatus, "pending");
 });
 
+test("uses the saved Bahasa Malaysia version for a Malay customer chat", async () => {
+  enableTool();
+  let claimedContent = null;
+  let sentMessage = null;
+
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 13,
+      whatsapp_number: "60133333333",
+      trigger_message_id: 70,
+      recent_inbound_messages: ["ok", "Saya nak tanya berapa harga rawatan ini"],
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimedContent = input.content;
+    return { id: 71, contact_id: 13, delivery_status: null };
+  };
+  whatsapp.sendMessage = async (number, message) => {
+    sentMessage = { number, message };
+    return { success: true, wamid: "wamid-71" };
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 13,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(claimedContent, "Hai, masih perlukan bantuan?");
+  assert.deepEqual(sentMessage, {
+    number: "60133333333",
+    message: "Hai, masih perlukan bantuan?",
+  });
+});
+
+test("uses the outgoing reply as a language signal when customer text is unclear", async () => {
+  enableTool();
+  let sentMessage = null;
+
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 14,
+      whatsapp_number: "60144444444",
+      trigger_message_id: 72,
+      recent_inbound_messages: ["Sungguh berbaloi ke?"],
+      trigger_message_content: "Ya, rawatan ini sesuai untuk anda.",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => ({
+    id: 73,
+    contact_id: 14,
+    content: input.content,
+    delivery_status: null,
+  });
+  whatsapp.sendMessage = async (number, message) => {
+    sentMessage = { number, message };
+    return { success: true, wamid: "wamid-73" };
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 14,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.deepEqual(sentMessage, {
+    number: "60144444444",
+    message: "Hai, masih perlukan bantuan?",
+  });
+});
+
 test("does not send when the database no longer considers the trigger eligible", async () => {
   enableTool();
   let sendCount = 0;
@@ -80,16 +162,22 @@ test("does not send when the database no longer considers the trigger eligible",
   assert.equal(sendCount, 0);
 });
 
-test("sends an optional follow-up graphic with the message as its caption", async () => {
+test("sends an optional graphic with the customer's language version as its caption", async () => {
   enableTool();
   clinicConfig.automatedFollowUp.imageUrl = "https://example.com/promo.jpg";
   let sentImage = null;
 
   followUpRepo.findCandidates = async () => [
-    { contact_id: 8, whatsapp_number: "60122222222", trigger_message_id: 45 },
+    {
+      contact_id: 8,
+      whatsapp_number: "60122222222",
+      trigger_message_id: 45,
+      recent_inbound_messages: ["请问这个疗程多少钱？"],
+    },
   ];
   followUpRepo.saveIfStillEligible = async (input) => {
     assert.equal(input.mediaUrl, "https://example.com/promo.jpg");
+    assert.equal(input.content, "您好，请问还需要帮助吗？");
     return { id: 46, contact_id: 8, delivery_status: null };
   };
   whatsapp.sendImage = async (number, imageUrl, caption) => {
@@ -109,7 +197,7 @@ test("sends an optional follow-up graphic with the message as its caption", asyn
   assert.deepEqual(sentImage, {
     number: "60122222222",
     imageUrl: "https://example.com/promo.jpg",
-    caption: "Checking in",
+    caption: "您好，请问还需要帮助吗？",
   });
 });
 
