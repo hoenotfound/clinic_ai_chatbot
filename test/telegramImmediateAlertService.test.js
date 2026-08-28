@@ -155,3 +155,33 @@ test("duplicate human intervention paths for the same customer message send only
   assert.deepEqual(second, { status: "duplicate" });
   assert.equal(sends, 1);
 });
+
+test("a failed human alert releases its dedupe key so a later path can retry", async () => {
+  const env = {
+    TELEGRAM_ALERTS_ENABLED: "true",
+    TELEGRAM_BOT_TOKEN: "bot-token",
+    TELEGRAM_CHAT_ID: "-100123",
+  };
+  let released = null;
+  const service = createTelegramImmediateAlertService({
+    env,
+    getContext: async () => context,
+    claimAlert: async () => true,
+    releaseAlert: async (eventKey) => {
+      released = eventKey;
+    },
+    sendMessage: async () => {
+      throw new Error("Telegram unavailable");
+    },
+  });
+
+  await assert.rejects(
+    () => service.sendHumanInterventionAlert({
+      contactId: 12,
+      messageId: 44,
+      reason: "AI handed off this conversation.",
+    }),
+    /Telegram unavailable/
+  );
+  assert.equal(released, "human:12:44");
+});
