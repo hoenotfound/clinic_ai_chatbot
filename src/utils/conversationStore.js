@@ -11,9 +11,20 @@ const realtimeEvents = require("./realtimeEvents");
 const MAX_MESSAGES_FOR_AI_CONTEXT = 20; // bounds prompt size/cost, not what's shown in the portal
 const MAX_PHOTOS_IN_AI_CONTEXT = 1;
 
-async function getHistory(waId) {
-  const contact = await contactsRepo.getOrCreateContact(waId);
-  const rows = await messagesRepo.getMessagesForContact(contact.id, MAX_MESSAGES_FOR_AI_CONTEXT, false);
+function publishMessageChange(contactId, messageId) {
+  realtimeEvents.publish("conversation_changed", {
+    contactId,
+    messageId,
+    reason: "message",
+  });
+}
+
+async function getHistoryForContact(contactId) {
+  const rows = await messagesRepo.getMessagesForContact(
+    contactId,
+    MAX_MESSAGES_FOR_AI_CONTEXT,
+    false
+  );
 
   const isPhotoRow = (r) => r.has_media_attachment && r.media_mime_type?.startsWith("image/");
   const photoIndices = [];
@@ -23,7 +34,7 @@ async function getHistory(waId) {
 
   const photoMedia = new Map();
   for (const i of photoIndices) {
-    const media = await messagesRepo.getMessageMediaForContact(contact.id, rows[i].id);
+    const media = await messagesRepo.getMessageMediaForContact(contactId, rows[i].id);
     if (media) photoMedia.set(i, media);
   }
 
@@ -40,6 +51,35 @@ async function getHistory(waId) {
   });
 }
 
+async function getHistory(waId) {
+  const contact = await contactsRepo.getOrCreateContact(waId);
+  return getHistoryForContact(contact.id);
+}
+
+async function appendMessageForContact(
+  contactId,
+  role,
+  content,
+  whatsappMessageId = null,
+  sentByUsername = null,
+  mediaUrl = null,
+  mediaAttachment = null
+) {
+  const saved = await messagesRepo.saveMessage(
+    contactId,
+    role,
+    content,
+    whatsappMessageId,
+    sentByUsername,
+    mediaUrl,
+    mediaAttachment?.data || null,
+    mediaAttachment?.mimeType || null
+  );
+
+  publishMessageChange(contactId, saved.id);
+  return saved;
+}
+
 async function appendMessage(
   waId,
   role,
@@ -50,24 +90,53 @@ async function appendMessage(
   mediaAttachment = null
 ) {
   const contact = await contactsRepo.getOrCreateContact(waId);
-  const saved = await messagesRepo.saveMessage(
+  return appendMessageForContact(
     contact.id,
     role,
     content,
     whatsappMessageId,
     sentByUsername,
     mediaUrl,
-    mediaAttachment?.data || null,
-    mediaAttachment?.mimeType || null
+    mediaAttachment
   );
+}
 
-  realtimeEvents.publish("conversation_changed", {
-    contactId: contact.id,
-    messageId: saved.id,
-    reason: "message",
-  });
-
+async function appendInboundMessageIfNew(contactId, content, whatsappMessageId) {
+  const saved = await messagesRepo.saveInboundMessageIfNew(
+    contactId,
+    content,
+    whatsappMessageId
+  );
+  if (saved) publishMessageChange(contactId, saved.id);
   return saved;
 }
 
-module.exports = { getHistory, appendMessage };
+async function updateInboundMessage(contactId, messageId, content, mediaAttachment = null) {
+  const updated = await messagesRepo.updateInboundMessage(
+    messageId,
+    contactId,
+    content,
+    mediaAttachment?.data || null,
+    mediaAttachment?.mimeType || null
+  );
+  if (updated) {
+    // Include the lightweight row because an incremental `id > cursor` fetch
+    // cannot see an update to a message the Inbox already loaded.
+    realtimeEvents.publish("conversation_changed", {
+      contactId,
+      messageId: updated.id,
+      message: updated,
+      reason: "message_updated",
+    });
+  }
+  return updated;
+}
+
+module.exports = {
+  getHistory,
+  getHistoryForContact,
+  appendMessage,
+  appendMessageForContact,
+  appendInboundMessageIfNew,
+  updateInboundMessage,
+};

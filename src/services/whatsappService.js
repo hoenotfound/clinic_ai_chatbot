@@ -277,61 +277,64 @@ async function downloadMedia(mediaId) {
  */
 function parseIncomingMessages(body) {
   try {
-    const entry = body.entry?.[0];
-    const change = entry?.changes?.[0];
-    const value = change?.value;
-    const messages = value?.messages;
-    const contacts = value?.contacts || [];
+    const parsed = [];
 
-    if (!messages || messages.length === 0) return []; // status update, not a new message
+    for (const entry of body?.entry || []) {
+      for (const change of entry?.changes || []) {
+        const value = change?.value;
+        const contacts = value?.contacts || [];
 
-    return messages.map((message) => {
-      const whatsappContact = contacts.find((contact) => contact.wa_id === message.from);
-      const profileName = whatsappContact?.profile?.name?.trim() || null;
+        for (const message of value?.messages || []) {
+          if (!message?.id || !message?.from) continue;
+          const whatsappContact = contacts.find((contact) => contact.wa_id === message.from);
+          const profileName = whatsappContact?.profile?.name?.trim() || null;
 
-      if (message.type === "text") {
-        return {
-          id: message.id,
-          from: message.from,
-          profileName,
-          text: message.text.body,
-          mediaId: null,
-          mediaType: null,
-          unsupportedType: null,
-        };
+          if (message.type === "text") {
+            parsed.push({
+              id: message.id,
+              from: message.from,
+              profileName,
+              text: message.text?.body || "",
+              mediaId: null,
+              mediaType: null,
+              unsupportedType: null,
+            });
+          } else if (message.type === "audio") {
+            parsed.push({
+              id: message.id,
+              from: message.from,
+              profileName,
+              text: null,
+              mediaId: message.audio?.id || null,
+              mediaType: "audio",
+              unsupportedType: null,
+            });
+          } else if (message.type === "image") {
+            parsed.push({
+              id: message.id,
+              from: message.from,
+              profileName,
+              text: message.image?.caption || null,
+              mediaId: message.image?.id || null,
+              mediaType: "image",
+              unsupportedType: null,
+            });
+          } else {
+            parsed.push({
+              id: message.id,
+              from: message.from,
+              profileName,
+              text: null,
+              mediaId: null,
+              mediaType: null,
+              unsupportedType: message.type || "unknown",
+            });
+          }
+        }
       }
-      if (message.type === "audio") {
-        return {
-          id: message.id,
-          from: message.from,
-          profileName,
-          text: null,
-          mediaId: message.audio.id,
-          mediaType: "audio",
-          unsupportedType: null,
-        };
-      }
-      if (message.type === "image") {
-        return {
-          id: message.id,
-          from: message.from,
-          profileName,
-          text: message.image.caption || null,
-          mediaId: message.image.id,
-          mediaType: "image",
-          unsupportedType: null,
-        };
-      }
-      return {
-        id: message.id,
-        from: message.from,
-        profileName,
-        text: null,
-        mediaId: null,
-        mediaType: null,
-        unsupportedType: message.type,
-      };
-    });
+    }
+
+    return parsed;
   } catch (err) {
     console.error("Failed to parse webhook payload:", err);
     return [];
@@ -350,21 +353,25 @@ function parseIncomingMessages(body) {
  */
 function parseStatusUpdates(body) {
   try {
-    const entry = body.entry?.[0];
-    const change = entry?.changes?.[0];
-    const statuses = change?.value?.statuses;
-    if (!statuses || statuses.length === 0) return [];
+    const parsed = [];
 
-    return statuses.map((status) => {
-      const firstError = status.errors?.[0] || null;
-      return {
-        wamid: status.id,
-        status: status.status,
-        errorCode: firstError?.code ?? null,
-        errorTitle: firstError?.title || null,
-        errorMessage: firstError?.error_data?.details || firstError?.message || null,
-      };
-    });
+    for (const entry of body?.entry || []) {
+      for (const change of entry?.changes || []) {
+        for (const status of change?.value?.statuses || []) {
+          if (!status?.id || !status?.status) continue;
+          const firstError = status.errors?.[0] || null;
+          parsed.push({
+            wamid: status.id,
+            status: status.status,
+            errorCode: firstError?.code ?? null,
+            errorTitle: firstError?.title || null,
+            errorMessage: firstError?.error_data?.details || firstError?.message || null,
+          });
+        }
+      }
+    }
+
+    return parsed;
   } catch (err) {
     console.error("Failed to parse webhook status payload:", err);
     return [];

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { useToasts, ToastContainer } from "../components/Toast";
@@ -105,6 +106,10 @@ function isConversationUnreplied(conversation) {
 export default function Inbox() {
   const { username } = useAuth();
   const { toasts, showToast, dismissToast } = useToasts();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedContactId = /^\d+$/.test(searchParams.get("contact") || "")
+    ? Number(searchParams.get("contact"))
+    : null;
 
   const [conversations, setConversations] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
@@ -218,8 +223,14 @@ export default function Inbox() {
 
   useEffect(() => {
     if (conversations?.length && selectedId == null) {
-      const firstConversation = conversations[0];
+      const requestedConversation = requestedContactId
+        ? conversations.find(
+            (conversation) => Number(conversation.contact_id) === requestedContactId
+          )
+        : null;
+      const firstConversation = requestedConversation || conversations[0];
       setSelectedId(firstConversation.contact_id);
+      if (requestedConversation) setMobileThreadOpen(true);
 
       const threadIsVisible = window.matchMedia("(min-width: 768px)").matches;
       if (firstConversation.is_unread && threadIsVisible) {
@@ -238,7 +249,7 @@ export default function Inbox() {
         });
       }
     }
-  }, [conversations, selectedId, showToast]);
+  }, [conversations, requestedContactId, selectedId, showToast]);
 
   useEffect(() => {
     if (selectedId == null) return;
@@ -313,6 +324,17 @@ export default function Inbox() {
     function handleConversationChanged(event) {
       try {
         const payload = JSON.parse(event.data || "{}");
+        if (
+          payload.message &&
+          payload.contactId != null &&
+          Number(payload.contactId) === Number(selectedIdRef.current)
+        ) {
+          setMessages((current) =>
+            current.some((message) => Number(message.id) === Number(payload.message.id))
+              ? mergeMessages(current, [payload.message])
+              : current
+          );
+        }
         if (
           payload.contactId != null &&
           Number(payload.contactId) === Number(selectedIdRef.current) &&
@@ -437,6 +459,7 @@ export default function Inbox() {
 
   async function handleSelectConversation(contactId) {
     setSelectedId(contactId);
+    setSearchParams({ contact: String(contactId) }, { replace: true });
     setMobileThreadOpen(true);
     const conversation = conversations?.find((item) => item.contact_id === contactId);
     if (!conversation?.is_unread) return;
