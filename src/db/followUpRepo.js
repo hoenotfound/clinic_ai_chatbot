@@ -136,4 +136,36 @@ async function saveIfStillEligible({
   return result.rows[0] || null;
 }
 
-module.exports = { findCandidates, saveIfStillEligible };
+/**
+ * A process can stop after claiming a follow-up but before it records the
+ * result returned by WhatsApp. Once the grace period has passed, surface
+ * those rows as unconfirmed instead of leaving them silently stuck forever.
+ * SKIP LOCKED keeps multiple app instances from reporting the same recovery.
+ */
+async function markStaleClaimsUnconfirmed({ olderThanMinutes, limit = 25 }) {
+  const result = await pool.query(
+    `UPDATE messages
+     SET delivery_status = 'unknown',
+         delivery_error = 'Delivery could not be confirmed because the server restarted during this automated follow-up. Check the WhatsApp chat before retrying to avoid sending it twice.'
+     WHERE id IN (
+       SELECT id
+       FROM messages
+       WHERE is_automated_follow_up = true
+         AND whatsapp_message_id IS NULL
+         AND delivery_status IS NULL
+         AND created_at <= now() - ($1::integer * interval '1 minute')
+       ORDER BY created_at ASC, id ASC
+       LIMIT $2
+       FOR UPDATE SKIP LOCKED
+     )
+     RETURNING ${FOLLOW_UP_MESSAGE_COLUMNS}`,
+    [olderThanMinutes, limit]
+  );
+  return result.rows;
+}
+
+module.exports = {
+  findCandidates,
+  saveIfStillEligible,
+  markStaleClaimsUnconfirmed,
+};

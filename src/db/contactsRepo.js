@@ -127,7 +127,10 @@ async function listConversations() {
             FROM messages outbound
             WHERE outbound.contact_id = c.id
               AND outbound.role = 'assistant'
-              AND outbound.delivery_status IS DISTINCT FROM 'failed'
+              AND (
+                outbound.delivery_status IS NULL
+                OR outbound.delivery_status NOT IN ('failed', 'unknown')
+              )
               AND (outbound.created_at, outbound.id) > (inbound.created_at, inbound.id)
           )
       ) AS has_unreplied
@@ -194,6 +197,7 @@ async function setDeliveryAttention(id, reason) {
          needs_attention = false
          OR attention_reason IS NULL
          OR attention_reason LIKE 'Delivery failed:%'
+         OR attention_reason LIKE 'Delivery unconfirmed:%'
        )
      RETURNING *`,
     [reason, id]
@@ -203,7 +207,7 @@ async function setDeliveryAttention(id, reason) {
   return updated;
 }
 
-// Clears only a delivery-failure attention flag and only when no failed
+// Clears only a delivery attention flag and only when no failed or unconfirmed
 // outbound messages remain. Keeping both conditions in the same SQL statement
 // prevents a successful retry from clearing a newer keyword, handoff, or
 // staff-owned-message warning that arrived while the retry was in progress.
@@ -213,12 +217,15 @@ async function clearDeliveryAttentionIfNoFailedMessages(id) {
      SET needs_attention = false, attention_reason = NULL, updated_at = now()
      WHERE c.id = $1
        AND c.needs_attention = true
-       AND c.attention_reason LIKE 'Delivery failed:%'
+       AND (
+         c.attention_reason LIKE 'Delivery failed:%'
+         OR c.attention_reason LIKE 'Delivery unconfirmed:%'
+       )
        AND NOT EXISTS (
          SELECT 1 FROM messages m
          WHERE m.contact_id = c.id
            AND m.role = 'assistant'
-           AND m.delivery_status = 'failed'
+           AND m.delivery_status IN ('failed', 'unknown')
        )
      RETURNING *`,
     [id]

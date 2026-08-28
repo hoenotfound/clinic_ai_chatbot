@@ -7,6 +7,7 @@ const whatsapp = require("./whatsappService");
 
 const FOLLOW_UP_CHECK_INTERVAL_MS = 60 * 1000;
 const FOLLOW_UP_BATCH_SIZE = 25;
+const STALE_CLAIM_GRACE_MINUTES = 10;
 const SEND_REJECTED_ERROR =
   "WhatsApp did not accept this automated follow-up. Check the reply window or connection and retry it from the Inbox.";
 
@@ -109,13 +110,41 @@ async function sendCandidate(candidate) {
   }
 }
 
+async function recoverInterruptedFollowUps() {
+  const recovered = await followUpRepo.markStaleClaimsUnconfirmed({
+    olderThanMinutes: STALE_CLAIM_GRACE_MINUTES,
+    limit: FOLLOW_UP_BATCH_SIZE,
+  });
+
+  for (const message of recovered) {
+    publishConversationChange(message, "delivery_status");
+    try {
+      await contactsRepo.setDeliveryAttention(
+        message.contact_id,
+        `Delivery unconfirmed: ${message.delivery_error}`
+      );
+    } catch (err) {
+      console.error(
+        `Failed to flag interrupted automated follow-up ${message.id} for attention:`,
+        err
+      );
+    }
+  }
+}
+
 async function runAutomatedFollowUps() {
   if (sweepRunning) return;
-  const settings = getActiveSettings();
-  if (!settings) return;
 
   sweepRunning = true;
   try {
+    // Recovery is independent of the current tool setting. A staff member
+    // may disable the tool after a restart, but an already-claimed message
+    // must still become visible and retryable in the Inbox.
+    await recoverInterruptedFollowUps();
+
+    const settings = getActiveSettings();
+    if (!settings) return;
+
     const candidates = await followUpRepo.findCandidates({
       delayMinutes: settings.delayMinutes,
       triggerMode: settings.triggerMode,
@@ -148,6 +177,7 @@ function startAutomatedFollowUps() {
 
 module.exports = {
   FOLLOW_UP_CHECK_INTERVAL_MS,
+  STALE_CLAIM_GRACE_MINUTES,
   runAutomatedFollowUps,
   startAutomatedFollowUps,
 };

@@ -7,7 +7,14 @@ const followUpRepo = require("../src/db/followUpRepo");
 const contactsRepo = require("../src/db/contactsRepo");
 const realtimeEvents = require("../src/utils/realtimeEvents");
 const whatsapp = require("../src/services/whatsappService");
-const { runAutomatedFollowUps } = require("../src/services/followUpService");
+const {
+  STALE_CLAIM_GRACE_MINUTES,
+  runAutomatedFollowUps,
+} = require("../src/services/followUpService");
+
+test.beforeEach(() => {
+  followUpRepo.markStaleClaimsUnconfirmed = async () => [];
+});
 
 function enableTool() {
   clinicConfig.automatedFollowUp = {
@@ -152,4 +159,52 @@ test("does not query conversations while the tool is disabled", async () => {
   await runAutomatedFollowUps();
 
   assert.equal(queryCount, 0);
+});
+
+test("recovers an interrupted follow-up even while the tool is disabled", async () => {
+  clinicConfig.automatedFollowUp = {
+    ...clinicConfig.automatedFollowUp,
+    enabled: false,
+    activatedAt: null,
+  };
+  const published = [];
+  let recoveryInput = null;
+  let attention = null;
+  let candidateQueries = 0;
+
+  followUpRepo.markStaleClaimsUnconfirmed = async (input) => {
+    recoveryInput = input;
+    return [
+      {
+        id: 61,
+        contact_id: 12,
+        whatsapp_message_id: null,
+        delivery_status: "unknown",
+        delivery_error: "Check WhatsApp before retrying.",
+      },
+    ];
+  };
+  followUpRepo.findCandidates = async () => {
+    candidateQueries += 1;
+    return [];
+  };
+  contactsRepo.setDeliveryAttention = async (contactId, reason) => {
+    attention = { contactId, reason };
+  };
+  realtimeEvents.publish = (event, payload) => published.push({ event, payload });
+
+  await runAutomatedFollowUps();
+
+  assert.deepEqual(recoveryInput, {
+    olderThanMinutes: STALE_CLAIM_GRACE_MINUTES,
+    limit: 25,
+  });
+  assert.equal(candidateQueries, 0);
+  assert.deepEqual(attention, {
+    contactId: 12,
+    reason: "Delivery unconfirmed: Check WhatsApp before retrying.",
+  });
+  assert.equal(published.length, 1);
+  assert.equal(published[0].payload.deliveryStatus, "unknown");
+  assert.equal(published[0].payload.reason, "delivery_status");
 });

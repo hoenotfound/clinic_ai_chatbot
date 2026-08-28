@@ -60,7 +60,11 @@ async function getMessagesForContact(contactId, limit = 50, includeMedia = true)
   const result = await pool.query(
     `SELECT id, role, content, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type FROM messages
      WHERE contact_id = $1
-       AND (role <> 'assistant' OR delivery_status IS DISTINCT FROM 'failed')
+       AND (
+         role <> 'assistant'
+         OR delivery_status IS NULL
+         OR delivery_status NOT IN ('failed', 'unknown')
+       )
      ORDER BY created_at DESC, id DESC
      LIMIT $2`,
     [contactId, safeLimit]
