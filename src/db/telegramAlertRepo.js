@@ -67,7 +67,13 @@ async function findReadySummaries({ inactivityMinutes, limit = 5 }) {
          a.status = 'pending'
          OR a.claimed_at <= now() - (${CLAIM_STALE_MINUTES} * interval '1 minute')
        )
-       AND a.through_message_id = latest.id
+       AND NOT EXISTS (
+         SELECT 1
+         FROM messages newer_customer
+         WHERE newer_customer.contact_id = l.contact_id
+           AND newer_customer.role = 'user'
+           AND newer_customer.id > a.through_message_id
+       )
        AND latest.created_at <= now() - ($1::integer * interval '1 minute')
      ORDER BY latest.created_at ASC, a.id ASC
      LIMIT $2`,
