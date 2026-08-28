@@ -63,14 +63,12 @@ async function claimImmediateAlert(
   return Boolean(result.rows[0]);
 }
 
-function humanInterventionEventKey(context, reason) {
+function humanInterventionEventKey(context, reason, messageId = null) {
   // A staff-created manual flag is a separate action and should always alert.
-  // Automated keyword, media, processing, staff-owned, and AI handoff paths all
-  // refer to the latest inbound customer message, so they share one event key.
   if (String(reason || "").trim() === "Flagged by staff.") return null;
-  const messageId = Number(context.latest_customer_message_id);
-  if (!Number.isSafeInteger(messageId) || messageId < 1) return null;
-  return `human:${context.contact_id}:${messageId}`;
+  const capturedMessageId = Number(messageId || context.latest_customer_message_id);
+  if (!Number.isSafeInteger(capturedMessageId) || capturedMessageId < 1) return null;
+  return `human:${context.contact_id}:${capturedMessageId}`;
 }
 
 function buildImmediateAlertMessage({ type, context, reason, env = process.env }) {
@@ -121,14 +119,14 @@ function createTelegramImmediateAlertService({
   claimAlert = claimImmediateAlert,
   sendMessage = postTelegramMessage,
 } = {}) {
-  async function send(type, { contactId, reason }) {
+  async function send(type, { contactId, reason, messageId = null }) {
     if (!isTelegramEnabled(env)) return { status: "disabled" };
 
     const context = await getContext(contactId);
     if (!context) return { status: "skipped", reason: "contact-not-found" };
 
     if (type === "human_intervention") {
-      const eventKey = humanInterventionEventKey(context, reason);
+      const eventKey = humanInterventionEventKey(context, reason, messageId);
       const claimed = await claimAlert({ eventKey, type, contactId });
       if (!claimed) return { status: "duplicate" };
     }
