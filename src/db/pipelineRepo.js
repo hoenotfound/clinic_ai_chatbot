@@ -53,7 +53,7 @@ const LEAD_SELECT = `
   SELECT
     l.id, l.contact_id, l.stage_id, l.notes, l.temperature,
     l.temperature_source, l.temperature_locked, l.last_temperature_scored_at,
-    l.last_temperature_scored_message_id, l.branch_name,
+    l.last_temperature_scored_message_id, l.started_message_id, l.branch_name,
     l.owner_username, l.treatment_interest, l.estimated_value, l.source,
     l.campaign_name, l.appointment_status, l.appointment_at,
     l.next_follow_up_at, l.lost_reason, l.marketing_consent, l.is_closed,
@@ -135,8 +135,12 @@ async function ensureLeadForContact(contactId, actor = "Automation") {
     }
 
     const inserted = await client.query(
-      `INSERT INTO leads (contact_id, stage_id, created_by)
-       VALUES ($1, $2, $3)
+      `INSERT INTO leads (contact_id, stage_id, started_message_id, created_by)
+       VALUES (
+         $1, $2,
+         (SELECT MAX(m.id) FROM messages m WHERE m.contact_id = $1),
+         $3
+       )
        ON CONFLICT (contact_id) WHERE is_closed = false DO NOTHING
        RETURNING *`,
       [contactId, stage.id, actor]
@@ -214,8 +218,10 @@ async function markContactedForContact(contactId, actor = "Automation") {
 async function backfillLeadsForExistingContacts() {
   const inserted = await withTransaction(async (client) => {
     const result = await client.query(
-      `INSERT INTO leads (contact_id, stage_id, created_by)
-       SELECT c.id, first_stage.id, 'Migration'
+      `INSERT INTO leads (contact_id, stage_id, started_message_id, created_by)
+       SELECT c.id, first_stage.id,
+              (SELECT MIN(m.id) FROM messages m WHERE m.contact_id = c.id),
+              'Migration'
        FROM contacts c
        CROSS JOIN LATERAL (
          SELECT id FROM pipeline_stages
@@ -271,13 +277,17 @@ async function createLead(data, actor) {
     const result = await client.query(
       `INSERT INTO leads (
          contact_id, stage_id, temperature, temperature_source,
-         temperature_locked, branch_name, owner_username,
+         temperature_locked, started_message_id, branch_name, owner_username,
          treatment_interest, estimated_value, source, campaign_name,
          appointment_status, appointment_at, next_follow_up_at,
          marketing_consent, is_closed, closed_at, created_by
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-               $15, $16, CASE WHEN $16 THEN now() ELSE NULL END, $17)
+       VALUES (
+         $1, $2, $3, $4, $5,
+         (SELECT MAX(m.id) FROM messages m WHERE m.contact_id = $1),
+         $6, $7, $8, $9, $10, $11, $12, $13, $14,
+         $15, $16, CASE WHEN $16 THEN now() ELSE NULL END, $17
+       )
        ON CONFLICT (contact_id) WHERE is_closed = false DO NOTHING
        RETURNING *`,
       [

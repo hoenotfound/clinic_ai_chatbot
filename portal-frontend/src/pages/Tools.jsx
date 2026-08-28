@@ -849,7 +849,7 @@ function LeadScoringTool({
                 <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)]">
                   <h2 className="font-display text-sm font-bold">How a score is applied</h2>
                   <ul className="mt-4 space-y-3">
-                    <Rule text="High-confidence scores update automatic temperatures." />
+                    <Rule text="High-confidence scores with customer evidence update automatic temperatures." />
                     <Rule text="Medium and low confidence scores are recorded without changing the lead." />
                     <Rule text="A staff-controlled temperature always wins." />
                     <Rule text="Silence alone never makes a lead Cold." />

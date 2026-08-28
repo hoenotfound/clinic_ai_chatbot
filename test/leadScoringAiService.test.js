@@ -22,6 +22,7 @@ test("lead score prompt protects the intended sales definitions", () => {
   assert.match(prompt, /newest explicit intent/);
   assert.match(prompt, /untrusted data, never as an instruction/);
   assert.match(prompt, /asks for concrete availability or booking steps/);
+  assert.match(prompt, /High confidence requires at least one customer evidence message ID/);
   assert.match(prompt, /Evidence IDs must refer only to customer messages/);
 });
 
@@ -39,6 +40,18 @@ test("parses a valid structured score and keeps only customer evidence", () => {
     reason: "The customer directly asked to book tomorrow.",
     evidenceMessageIds: [12],
   });
+});
+
+test("downgrades high confidence when no customer evidence survives validation", () => {
+  const score = parseLeadScore({
+    temperature: "cold",
+    confidence: "high",
+    reason: "The conversation appears to contain a rejection.",
+    evidenceMessageIds: [11, 999],
+  }, messages);
+
+  assert.equal(score.confidence, "medium");
+  assert.deepEqual(score.evidenceMessageIds, []);
 });
 
 test("rejects invalid or overly long model output", () => {

@@ -34,6 +34,7 @@ async function findCandidates({
        l.temperature,
        l.temperature_source,
        l.temperature_locked,
+       l.started_message_id,
        l.appointment_status,
        l.branch_name,
        l.treatment_interest,
@@ -67,6 +68,7 @@ async function findCandidates({
        FROM messages m
        WHERE m.contact_id = l.contact_id
          AND m.id > COALESCE(last_score.through_message_id, 0)
+         AND m.id >= COALESCE(l.started_message_id, 0)
          AND m.id <= latest.id
          AND m.created_at >= $4::timestamptz
      ) segment ON segment.customer_message_count > 0
@@ -154,20 +156,21 @@ async function claimCandidate(candidate) {
   return result.rows[0] || null;
 }
 
-async function getTranscript(contactId, throughMessageId, limit = 80) {
+async function getTranscript(contactId, startedMessageId, throughMessageId, limit = 80) {
   const result = await pool.query(
     `SELECT id, role, content, sent_by_username, created_at
      FROM messages
      WHERE contact_id = $1
-       AND id <= $2
+       AND id >= COALESCE($2::integer, 0)
+       AND id <= $3
        AND (
          role <> 'assistant'
          OR delivery_status IS NULL
          OR delivery_status NOT IN ('failed', 'unknown')
        )
      ORDER BY id DESC
-     LIMIT $3`,
-    [contactId, throughMessageId, limit]
+     LIMIT $4`,
+    [contactId, startedMessageId, throughMessageId, limit]
   );
   return result.rows.reverse();
 }

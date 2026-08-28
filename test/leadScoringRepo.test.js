@@ -26,11 +26,36 @@ test("candidate query applies activation, three limits, and completed-pass bound
 
   assert.match(captured.sql, /s\.status = 'completed'/);
   assert.match(captured.sql, /m\.created_at >= \$4::timestamptz/);
+  assert.match(captured.sql, /m\.id >= COALESCE\(l\.started_message_id, 0\)/);
   assert.match(captured.sql, /segment\.message_count >= \$3/);
   assert.match(captured.sql, /segment\.started_at <= now\(\) - \(\$2::integer/);
   assert.match(captured.sql, /latest\.created_at <= now\(\) - \(\$1::integer/);
   assert.match(captured.sql, /existing\.attempts >= 3/);
   assert.deepEqual(captured.params, [10, 60, 40, "2026-08-28T00:00:00.000Z", 5]);
+});
+
+test("transcript is limited to the current lead journey", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+  let captured = null;
+  pool.query = async (sql, params) => {
+    captured = { sql, params };
+    return {
+      rows: [
+        { id: 55, role: "user", content: "Newest" },
+        { id: 42, role: "assistant", content: "Journey start" },
+      ],
+    };
+  };
+
+  const transcript = await leadScoringRepo.getTranscript(14, 42, 55, 80);
+
+  assert.match(captured.sql, /id >= COALESCE\(\$2::integer, 0\)/);
+  assert.match(captured.sql, /id <= \$3/);
+  assert.deepEqual(captured.params, [14, 42, 55, 80]);
+  assert.deepEqual(transcript.map((message) => message.id), [42, 55]);
 });
 
 test("claim is atomic, idempotent, and checks the latest message again", async (t) => {
@@ -150,6 +175,7 @@ test("a high-confidence score updates only an unlocked lead and writes an audit 
   const update = queries.find(({ sql }) => /UPDATE leads/.test(sql));
   assert.match(update.sql, /temperature_locked = false/);
   assert.match(update.sql, /temperature_source = 'ai'/);
+  assert.doesNotMatch(update.sql, /stage_id/);
   const activity = queries.find(({ sql }) => /INSERT INTO lead_activities/.test(sql));
   assert.match(activity.sql, /'AI scoring'/);
   assert.equal(activity.params[2].applied, true);

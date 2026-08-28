@@ -24,6 +24,8 @@ test("creates one open lead with an atomic partial-conflict claim", async (t) =>
       }
       if (/INSERT INTO leads/.test(sql)) {
         assert.match(sql, /ON CONFLICT \(contact_id\) WHERE is_closed = false DO NOTHING/);
+        assert.match(sql, /started_message_id/);
+        assert.match(sql, /SELECT MAX\(m\.id\) FROM messages m WHERE m\.contact_id = \$1/);
         return { rows: [{ id: 41, contact_id: 7, stage_id: 2 }] };
       }
       return { rows: [] };
@@ -75,6 +77,7 @@ test("backfill ignores contacts that already have any recorded journey", async (
     backfillSql,
     /NOT EXISTS \(SELECT 1 FROM leads existing WHERE existing\.contact_id = c\.id\)/
   );
+  assert.match(backfillSql, /SELECT MIN\(m\.id\) FROM messages m WHERE m\.contact_id = c\.id/);
 });
 
 test("a successful first outbound message moves a new lead to contacted", async (t) => {
@@ -186,6 +189,8 @@ test("manual lead creation resolves a concurrent open-lead claim", async (t) => 
   assert.equal(result.created, false);
   assert.equal(result.lead.id, 61);
   assert.match(insertSql, /ON CONFLICT \(contact_id\) WHERE is_closed = false DO NOTHING/);
+  assert.match(insertSql, /started_message_id/);
+  assert.match(insertSql, /SELECT MAX\(m\.id\) FROM messages m WHERE m\.contact_id = \$1/);
 });
 
 test("saving details in the same closed stage preserves the original close time", async (t) => {

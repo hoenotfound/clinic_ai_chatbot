@@ -254,8 +254,38 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS created_by TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS temperature_source TEXT NOT NULL DEFAULT 'system'
   CHECK (temperature_source IN ('system', 'rule', 'ai', 'manual'));
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS temperature_locked BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS started_message_id INTEGER
+  REFERENCES messages(id) ON DELETE SET NULL;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_temperature_scored_at TIMESTAMPTZ;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_temperature_scored_message_id INTEGER REFERENCES messages(id);
+
+-- Hot and Cold values that predate temperature_source/temperature_locked were
+-- staff choices. Mark only legacy system rows, so future rule/AI rows remain
+-- automatic and this stays safe to run on every startup.
+UPDATE leads
+SET temperature_source = 'manual', temperature_locked = true
+WHERE temperature IN ('hot', 'cold')
+  AND temperature_source = 'system'
+  AND temperature_locked = false;
+
+-- Give existing journeys a stable transcript boundary. Normal leads start at
+-- the latest message present when the lead was created. Initial backfilled
+-- journeys cover their existing conversation from its first message.
+UPDATE leads l
+SET started_message_id = CASE
+  WHEN l.created_by = 'Migration' THEN (
+    SELECT MIN(m.id) FROM messages m WHERE m.contact_id = l.contact_id
+  )
+  ELSE COALESCE(
+    (
+      SELECT m.id FROM messages m
+      WHERE m.contact_id = l.contact_id AND m.created_at <= l.created_at
+      ORDER BY m.created_at DESC, m.id DESC LIMIT 1
+    ),
+    (SELECT MIN(m.id) FROM messages m WHERE m.contact_id = l.contact_id)
+  )
+END
+WHERE l.started_message_id IS NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_one_open_per_contact
   ON leads(contact_id)

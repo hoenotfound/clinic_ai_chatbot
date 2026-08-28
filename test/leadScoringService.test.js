@@ -17,6 +17,7 @@ function candidate() {
   return {
     lead_id: 7,
     contact_id: 12,
+    started_message_id: 33,
     through_message_id: 44,
     trigger_type: "inactivity",
     temperature: "warm",
@@ -41,6 +42,7 @@ test("does not query leads while AI scoring is disabled", async () => {
 
 test("claims, scores, and completes an eligible conversation snapshot", async () => {
   const calls = [];
+  let transcriptArgs = null;
   const score = {
     temperature: "hot",
     confidence: "high",
@@ -62,10 +64,13 @@ test("claims, scores, and completes an eligible conversation snapshot", async ()
         calls.push(["claim", input]);
         return { id: 91 };
       },
-      getTranscript: async () => [
-        { id: 43, role: "assistant", content: "Would tomorrow suit you?" },
-        { id: 44, role: "user", content: "Yes, please book me." },
-      ],
+      getTranscript: async (...args) => {
+        transcriptArgs = args;
+        return [
+          { id: 43, role: "assistant", content: "Would tomorrow suit you?" },
+          { id: 44, role: "user", content: "Yes, please book me." },
+        ];
+      },
       completeScore: async (input) => calls.push(["complete", input]),
       markScoreCancelled: async () => assert.fail("score should not be cancelled"),
       markScoreFailed: async () => assert.fail("score should not fail"),
@@ -82,6 +87,7 @@ test("claims, scores, and completes an eligible conversation snapshot", async ()
   assert.equal(calls[0][0], "find");
   assert.equal(calls[0][1].limit, 5);
   assert.equal(calls[1][0], "claim");
+  assert.deepEqual(transcriptArgs, [12, 33, 44, 80]);
   assert.deepEqual(calls[2], ["complete", {
     scoreId: 91,
     leadId: 7,
