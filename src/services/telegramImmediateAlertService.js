@@ -3,6 +3,7 @@ const {
   formatWhatsappNumber,
   isTelegramEnabled,
   postTelegramMessage,
+  temperatureLabel,
 } = require("./telegramAlertService");
 
 const IMMEDIATE_MESSAGE_LIMIT = 4000;
@@ -11,13 +12,6 @@ const LATEST_MESSAGE_LIMIT = 600;
 function clean(value, fallback = "Not captured") {
   const text = String(value || "").trim();
   return text || fallback;
-}
-
-function temperatureLabel(value) {
-  const temperature = String(value || "warm").toLowerCase();
-  if (temperature === "hot") return "🔥 Hot";
-  if (temperature === "cold") return "❄️ Cold";
-  return "🟠 Warm";
 }
 
 function buildInboxUrl(contactId, env = process.env) {
@@ -32,6 +26,7 @@ async function getImmediateAlertContext(contactId, query = pool.query.bind(pool)
        c.id AS contact_id, c.whatsapp_number, c.name, c.whatsapp_profile_name,
        l.id AS lead_id, l.temperature, l.treatment_interest, l.branch_name,
        s.name AS stage_name,
+       latest.id AS latest_customer_message_id,
        latest.content AS latest_customer_message
      FROM contacts c
      LEFT JOIN LATERAL (
@@ -42,7 +37,7 @@ async function getImmediateAlertContext(contactId, query = pool.query.bind(pool)
      ) l ON true
      LEFT JOIN pipeline_stages s ON s.id = l.stage_id
      LEFT JOIN LATERAL (
-       SELECT content FROM messages
+       SELECT id, content FROM messages
        WHERE contact_id = c.id AND role = 'user'
        ORDER BY created_at DESC, id DESC
        LIMIT 1
@@ -51,6 +46,31 @@ async function getImmediateAlertContext(contactId, query = pool.query.bind(pool)
     [contactId]
   );
   return result.rows[0] || null;
+}
+
+async function claimImmediateAlert(
+  { eventKey, type, contactId },
+  query = pool.query.bind(pool)
+) {
+  if (!eventKey) return true;
+  const result = await query(
+    `INSERT INTO telegram_immediate_alerts (event_key, alert_type, contact_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (event_key) DO NOTHING
+     RETURNING id`,
+    [eventKey, type, contactId]
+  );
+  return Boolean(result.rows[0]);
+}
+
+function humanInterventionEventKey(context, reason) {
+  // A staff-created manual flag is a separate action and should always alert.
+  // Automated keyword, media, processing, staff-owned, and AI handoff paths all
+  // refer to the latest inbound customer message, so they share one event key.
+  if (String(reason || "").trim() === "Flagged by staff.") return null;
+  const messageId = Number(context.latest_customer_message_id);
+  if (!Number.isSafeInteger(messageId) || messageId < 1) return null;
+  return `human:${context.contact_id}:${messageId}`;
 }
 
 function buildImmediateAlertMessage({ type, context, reason, env = process.env }) {
@@ -98,6 +118,7 @@ function buildImmediateAlertMessage({ type, context, reason, env = process.env }
 function createTelegramImmediateAlertService({
   env = process.env,
   getContext = getImmediateAlertContext,
+  claimAlert = claimImmediateAlert,
   sendMessage = postTelegramMessage,
 } = {}) {
   async function send(type, { contactId, reason }) {
@@ -105,6 +126,12 @@ function createTelegramImmediateAlertService({
 
     const context = await getContext(contactId);
     if (!context) return { status: "skipped", reason: "contact-not-found" };
+
+    if (type === "human_intervention") {
+      const eventKey = humanInterventionEventKey(context, reason);
+      const claimed = await claimAlert({ eventKey, type, contactId });
+      if (!claimed) return { status: "duplicate" };
+    }
 
     const text = buildImmediateAlertMessage({ type, context, reason, env });
     const result = await sendMessage({
@@ -129,8 +156,10 @@ const defaultService = createTelegramImmediateAlertService();
 
 module.exports = {
   buildImmediateAlertMessage,
+  claimImmediateAlert,
   createTelegramImmediateAlertService,
   getImmediateAlertContext,
+  humanInterventionEventKey,
   sendHumanInterventionAlert: defaultService.sendHumanInterventionAlert,
   sendDeliveryFailureAlert: defaultService.sendDeliveryFailureAlert,
 };
