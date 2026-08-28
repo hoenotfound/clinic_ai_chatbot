@@ -69,7 +69,10 @@ async function sendCandidate(candidate) {
   const settings = getActiveSettings();
   if (!settings) return;
 
-  const language = detectConversationLanguage(candidate.recent_inbound_messages);
+  const language = detectConversationLanguage([
+    ...(candidate.recent_inbound_messages || []),
+    candidate.trigger_message_content,
+  ]);
   const followUpMessage = settings.translations[language] || settings.message;
 
   const saved = await followUpRepo.saveIfStillEligible({

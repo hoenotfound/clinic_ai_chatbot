@@ -10,6 +10,7 @@ test("detects English, Bahasa Malaysia, and Chinese customer messages", () => {
   assert.equal(detectMessageLanguage("How much is this treatment?"), "en");
   assert.equal(detectMessageLanguage("Boleh tahu berapa harga rawatan ini?"), "ms");
   assert.equal(detectMessageLanguage("Price berapa?"), "ms");
+  assert.equal(detectMessageLanguage("Berkesan ke?"), "ms");
   assert.equal(detectMessageLanguage("请问这个疗程多少钱？"), "zh");
 });
 

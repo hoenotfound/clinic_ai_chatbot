@@ -105,6 +105,45 @@ test("uses the saved Bahasa Malaysia version for a Malay customer chat", async (
   });
 });
 
+test("uses the outgoing reply as a language signal when customer text is unclear", async () => {
+  enableTool();
+  let sentMessage = null;
+
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 14,
+      whatsapp_number: "60144444444",
+      trigger_message_id: 72,
+      recent_inbound_messages: ["Sungguh berbaloi ke?"],
+      trigger_message_content: "Ya, rawatan ini sesuai untuk anda.",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => ({
+    id: 73,
+    contact_id: 14,
+    content: input.content,
+    delivery_status: null,
+  });
+  whatsapp.sendMessage = async (number, message) => {
+    sentMessage = { number, message };
+    return { success: true, wamid: "wamid-73" };
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 14,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.deepEqual(sentMessage, {
+    number: "60144444444",
+    message: "Hai, masih perlukan bantuan?",
+  });
+});
+
 test("does not send when the database no longer considers the trigger eligible", async () => {
   enableTool();
   let sendCount = 0;

@@ -178,6 +178,10 @@ export default function Tools() {
       showToast("Keep the follow-up message under 1,000 characters.", "error");
       return;
     }
+    if (message !== translationsSource) {
+      showToast("Regenerate the language versions after changing the main message.", "error");
+      return;
+    }
     const translations = Object.fromEntries(
       FOLLOW_UP_LANGUAGES.map(({ key }) => [key, form.translations[key].trim()])
     );
@@ -385,7 +389,9 @@ export default function Tools() {
 
                 {translationsNeedReview && (
                   <p className="mt-3 rounded-lg bg-[var(--color-accent-light)] px-3 py-2 text-[11px] leading-5 text-[var(--color-accent)]">
-                    The main message changed. Review or regenerate the translations before saving.
+                    {form.message.trim() !== translationsSource
+                      ? "The main message changed. Regenerate the language versions before saving."
+                      : "Generate or complete all three language versions before saving."}
                   </p>
                 )}
 
@@ -478,7 +484,7 @@ export default function Tools() {
                 <button
                   type="button"
                   onClick={handleSave}
-                  disabled={saving || translating || uploadingImage || !hasUnsavedChanges}
+                  disabled={saving || translating || uploadingImage || translationsNeedReview || !hasUnsavedChanges}
                   className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
                 >
                   {saving && <Spinner />}

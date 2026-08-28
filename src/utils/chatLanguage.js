@@ -4,28 +4,40 @@ const CHINESE_CHARACTERS = /[\u3400-\u4dbf\u4e00-\u9fff]/u;
 // shared words such as "clinic" and "appointment" are deliberately omitted.
 const MALAY_WORDS = new Set([
   "ada",
+  "adakah",
+  "apa",
   "anda",
   "awak",
   "bagaimana",
   "belum",
   "berapa",
+  "berkesan",
+  "berminat",
   "bila",
   "boleh",
   "dekat",
+  "dengan",
+  "dah",
   "harga",
+  "juga",
   "ini",
   "jerawat",
   "kulit",
+  "kesan",
   "mahu",
   "malam",
   "macam",
   "mana",
+  "masih",
   "muka",
   "nak",
   "pagi",
   "petang",
   "rawatan",
+  "sesuai",
+  "sesi",
   "sakit",
+  "sampingan",
   "saya",
   "selamat",
   "tak",
@@ -34,6 +46,8 @@ const MALAY_WORDS = new Set([
   "tidak",
   "tolong",
   "untuk",
+  "ubat",
+  "ya",
   "yang",
 ]);
 
@@ -43,13 +57,19 @@ const ENGLISH_WORDS = new Set([
   "can",
   "cost",
   "do",
+  "good",
   "help",
   "how",
   "interested",
   "is",
   "much",
+  "morning",
   "need",
+  "offer",
   "price",
+  "promo",
+  "promotion",
+  "location",
   "treatment",
   "want",
   "what",
@@ -79,10 +99,11 @@ function detectMessageLanguage(input) {
   if (malayScore > 0 && malayScore >= englishScore) return "ms";
   if (englishScore > 0) return "en";
 
-  // A longer Latin-script sentence without Malay signals is most likely
-  // English. Very short replies such as "ok" are intentionally ambiguous,
-  // allowing an earlier meaningful customer message to decide the language.
-  return tokens.length >= 3 ? "en" : null;
+  // Do not guess from Latin characters alone. An unrecognized Malay phrase
+  // can look identical to English at this level. Leaving it ambiguous lets
+  // earlier customer messages or the matching outgoing reply decide, with
+  // English used only as the final conversation fallback.
+  return null;
 }
 
 function detectConversationLanguage(recentMessages, fallback = "en") {
