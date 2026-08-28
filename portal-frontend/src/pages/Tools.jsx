@@ -117,6 +117,27 @@ export default function Tools() {
   const translationsNeedReview =
     form.message.trim() !== translationsSource ||
     FOLLOW_UP_LANGUAGES.some(({ key }) => !form.translations[key].trim());
+  const sourceMessageChanged = form.message.trim() !== translationsSource;
+  const translationReadyCount = FOLLOW_UP_LANGUAGES.filter(({ key }) =>
+    form.translations[key].trim()
+  ).length;
+  const activeLanguage = FOLLOW_UP_LANGUAGES.find(
+    ({ key }) => key === translationLanguage
+  );
+  const triggerLabel =
+    form.triggerMode === "staff" ? "Staff messages only" : "AI or staff messages";
+  const saveStatus = translationsNeedReview
+    ? "Update the language versions to save"
+    : hasUnsavedChanges
+      ? "You have unsaved changes"
+      : "All changes saved";
+  const automationStatus = form.enabled
+    ? hasUnsavedChanges
+      ? "Will run after saving"
+      : "Currently active"
+    : savedEnabled && hasUnsavedChanges
+      ? "Will pause after saving"
+      : "Currently paused";
 
   async function handleGenerateTranslations() {
     const message = form.message.trim();
@@ -239,226 +260,239 @@ export default function Tools() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-[var(--color-bg)] lg:flex-row">
-      <aside className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] p-4 lg:h-full lg:w-72 lg:border-b-0 lg:border-r lg:p-5">
-        <h1 className="font-display text-xl font-bold">Tools</h1>
-        <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-          Simple automations for daily customer follow-up.
-        </p>
-
-        <nav className="mt-5" aria-label="Available tools">
-          <button
-            type="button"
-            className="flex w-full items-start gap-3 rounded-2xl border border-[var(--color-primary)]/15 bg-[var(--color-primary-light)] p-3.5 text-left"
-            aria-current="page"
-          >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-[var(--color-primary)] shadow-sm">
-              <ClockIcon className="h-5 w-5" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-[var(--color-text)]">Automated follow-up</span>
-              <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">
-                Follow up when a customer goes quiet
-              </span>
-            </span>
-            <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${savedEnabled ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`} title={savedEnabled ? "Active" : "Paused"} />
-          </button>
-        </nav>
-      </aside>
-
-      <main className="min-w-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
-        <div className="mx-auto max-w-4xl pb-10">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+    <div className="flex h-full flex-col bg-[var(--color-bg)]">
+      <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
+        <div className="mx-auto max-w-6xl pb-10">
+          <header className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="font-display text-xl font-bold sm:text-2xl">Automated follow-up</h2>
-                <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${hasUnsavedChanges ? "bg-[var(--color-accent-light)] text-[var(--color-accent)]" : savedEnabled ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-white text-[var(--color-text-muted)]"}`}>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-primary)]">
+                Tools
+              </p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
+                <h1 className="font-display text-2xl font-bold sm:text-3xl">Automated follow-up</h1>
+                <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${hasUnsavedChanges ? "bg-[var(--color-accent-light)] text-[var(--color-accent)]" : savedEnabled ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)]"}`}>
                   {hasUnsavedChanges ? "Unsaved" : savedEnabled ? "Active" : "Paused"}
                 </span>
               </div>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)]">
-                Send one gentle reminder when your last message has not received a customer reply.
+                Send one helpful reminder when a customer has not replied to your last message.
               </p>
             </div>
 
-            <label className="flex shrink-0 cursor-pointer items-center gap-3 rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5">
-              <span className="text-xs font-semibold">{form.enabled ? "Enabled" : "Disabled"}</span>
+            <div className="flex shrink-0 items-center justify-between gap-4 rounded-2xl border border-[var(--color-border)] bg-white px-4 py-3 shadow-[0_8px_24px_rgba(24,39,33,0.04)] sm:min-w-52">
+              <div>
+                <p className="text-xs font-semibold">Automation</p>
+                <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
+                  {automationStatus}
+                </p>
+              </div>
               <button
                 type="button"
                 role="switch"
+                aria-label="Enable automated follow-up"
                 aria-checked={form.enabled}
                 onClick={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
-                className={`relative h-6 w-11 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${form.enabled ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`}
+                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${form.enabled ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`}
               >
-                <span aria-hidden="true" className={`absolute left-0 top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${form.enabled ? "translate-x-6" : "translate-x-1"}`} />
+                <span aria-hidden="true" className={`absolute left-0 top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${form.enabled ? "translate-x-6" : "translate-x-1"}`} />
               </button>
-            </label>
-          </div>
+            </div>
+          </header>
 
-          <div className="mt-7 grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
-            <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.04)] sm:p-6">
-              <h3 className="font-display text-base font-bold">Follow-up settings</h3>
+          <section className="mt-7 grid overflow-hidden rounded-2xl border border-[var(--color-border)] bg-white shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:grid-cols-3 sm:divide-x sm:divide-[var(--color-border)]">
+            <OverviewItem
+              icon={<ClockIcon className="h-4 w-4" />}
+              label="Wait time"
+              value={delayDescription}
+            />
+            <OverviewItem
+              icon={<MessageIcon className="h-4 w-4" />}
+              label="Timer starts after"
+              value={triggerLabel}
+            />
+            <OverviewItem
+              icon={<LanguageIcon className="h-4 w-4" />}
+              label="Message language"
+              value="Matches the customer"
+            />
+          </section>
 
-              <div className="mt-6">
-                <label htmlFor="follow-up-delay" className="text-xs font-semibold text-[var(--color-text)]">
-                  Wait before following up
-                </label>
-                <div className="mt-2 flex max-w-sm items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)]">
-                  <input
-                    id="follow-up-delay"
-                    type="number"
-                    min="5"
-                    max="1380"
-                    step="1"
-                    value={form.delayMinutes}
-                    onChange={(event) => setForm((current) => ({ ...current, delayMinutes: event.target.value }))}
-                    className="min-w-0 flex-1 bg-transparent px-3.5 py-2.5 text-sm outline-none"
-                  />
-                  <span className="border-l border-[var(--color-border)] px-3 py-2.5 text-xs font-medium text-[var(--color-text-muted)]">minutes</span>
-                </div>
-                <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">
-                  Current wait: {delayDescription}. The scheduler checks once per minute.
-                </p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {DELAY_PRESETS.map((preset) => (
-                    <button
-                      key={preset.minutes}
-                      type="button"
-                      onClick={() => setForm((current) => ({ ...current, delayMinutes: preset.minutes }))}
-                      className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${Number(form.delayMinutes) === preset.minutes ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-6">
-                <label htmlFor="follow-up-trigger" className="text-xs font-semibold text-[var(--color-text)]">
-                  Start the timer after
-                </label>
-                <select
-                  id="follow-up-trigger"
-                  value={form.triggerMode}
-                  onChange={(event) => setForm((current) => ({ ...current, triggerMode: event.target.value }))}
-                  className="mt-2 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-2.5 text-sm outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
-                >
-                  <option value="all">Any outgoing message (AI or staff)</option>
-                  <option value="staff">Staff messages only</option>
-                </select>
-              </div>
-
-              <div className="mt-6">
-                <div className="flex items-center justify-between gap-3">
-                  <label htmlFor="follow-up-message" className="text-xs font-semibold text-[var(--color-text)]">
-                    Main follow-up message
-                  </label>
-                  <span className="text-[10px] text-[var(--color-text-muted)]">{form.message.length}/1000</span>
-                </div>
-                <textarea
-                  id="follow-up-message"
-                  rows="5"
-                  maxLength="1000"
-                  value={form.message}
-                  onChange={(event) => setForm((current) => ({ ...current, message: event.target.value }))}
-                  className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+          <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
+            <div className="space-y-5">
+              <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:p-6">
+                <SectionHeading
+                  number="1"
+                  title="Choose when it sends"
+                  description="Set the wait time and which outgoing messages should start the timer."
                 />
-                <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">
-                  Write the intended message once, then generate the customer language versions below.
-                </p>
-              </div>
 
-              <div className="mt-6 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
                   <div>
-                    <p className="text-xs font-semibold text-[var(--color-text)]">Customer language versions</p>
-                    <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                      The customer's recent messages decide which saved version is sent. You can edit every version.
+                    <label htmlFor="follow-up-delay" className="text-xs font-semibold text-[var(--color-text)]">
+                      Wait before following up
+                    </label>
+                    <div className="mt-2 flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)]">
+                      <input
+                        id="follow-up-delay"
+                        type="number"
+                        min="5"
+                        max="1380"
+                        step="1"
+                        inputMode="numeric"
+                        value={form.delayMinutes}
+                        onChange={(event) => setForm((current) => ({ ...current, delayMinutes: event.target.value }))}
+                        className="min-w-0 flex-1 bg-transparent px-3.5 py-2.5 text-sm outline-none"
+                      />
+                      <span className="border-l border-[var(--color-border)] px-3 py-2.5 text-xs font-medium text-[var(--color-text-muted)]">minutes</span>
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">
+                      5 minutes to 23 hours. Current wait: {delayDescription}.
                     </p>
+                    <div className="mt-3 flex flex-wrap gap-2" aria-label="Wait time presets">
+                      {DELAY_PRESETS.map((preset) => (
+                        <button
+                          key={preset.minutes}
+                          type="button"
+                          onClick={() => setForm((current) => ({ ...current, delayMinutes: preset.minutes }))}
+                          className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${Number(form.delayMinutes) === preset.minutes ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"}`}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleGenerateTranslations}
-                    disabled={translating || !form.message.trim()}
-                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[var(--color-primary)]/25 bg-white px-3.5 py-2 text-xs font-semibold text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-light)] disabled:opacity-50"
-                  >
-                    {translating && <Spinner className="h-3.5 w-3.5" />}
-                    {translating ? "Translating…" : "Generate translations"}
-                  </button>
+
+                  <fieldset>
+                    <legend className="text-xs font-semibold text-[var(--color-text)]">Start the timer after</legend>
+                    <div className="mt-2 space-y-2">
+                      <TriggerChoice
+                        checked={form.triggerMode === "all"}
+                        label="Any outgoing message"
+                        description="Includes messages sent by the AI and clinic staff."
+                        onChange={() => setForm((current) => ({ ...current, triggerMode: "all" }))}
+                      />
+                      <TriggerChoice
+                        checked={form.triggerMode === "staff"}
+                        label="Staff messages only"
+                        description="AI replies will not start a follow-up timer."
+                        onChange={() => setForm((current) => ({ ...current, triggerMode: "staff" }))}
+                      />
+                    </div>
+                  </fieldset>
                 </div>
+              </section>
 
-                {translationsNeedReview && (
-                  <p className="mt-3 rounded-lg bg-[var(--color-accent-light)] px-3 py-2 text-[11px] leading-5 text-[var(--color-accent)]">
-                    {form.message.trim() !== translationsSource
-                      ? "The main message changed. Regenerate the language versions before saving."
-                      : "Generate or complete all three language versions before saving."}
-                  </p>
-                )}
-
-                <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="Follow-up language">
-                  {FOLLOW_UP_LANGUAGES.map((language) => (
-                    <button
-                      key={language.key}
-                      type="button"
-                      role="tab"
-                      aria-selected={translationLanguage === language.key}
-                      onClick={() => setTranslationLanguage(language.key)}
-                      className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold transition-colors ${translationLanguage === language.key ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
-                    >
-                      {language.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="mt-3 flex items-center justify-between gap-3">
-                  <label htmlFor={`follow-up-${translationLanguage}`} className="text-[11px] font-semibold text-[var(--color-text)]">
-                    {FOLLOW_UP_LANGUAGES.find(({ key }) => key === translationLanguage)?.label}
-                  </label>
-                  <span className="text-[10px] text-[var(--color-text-muted)]">
-                    {form.translations[translationLanguage].length}/1000
+              <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:p-6">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <SectionHeading
+                    number="2"
+                    title="Write the message"
+                    description="Create one source message, then review the versions customers may receive."
+                  />
+                  <span className={`inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ${translationsNeedReview ? "bg-[var(--color-accent-light)] text-[var(--color-accent)]" : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"}`}>
+                    {!translationsNeedReview && <CheckIcon className="h-3 w-3" />}
+                    {sourceMessageChanged
+                      ? "Needs regeneration"
+                      : `${translationReadyCount} of ${FOLLOW_UP_LANGUAGES.length} ready`}
                   </span>
                 </div>
-                <textarea
-                  id={`follow-up-${translationLanguage}`}
-                  rows="4"
-                  maxLength="1000"
-                  value={form.translations[translationLanguage]}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      translations: {
-                        ...current.translations,
-                        [translationLanguage]: event.target.value,
-                      },
-                    }))
-                  }
-                  className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
-                />
-              </div>
 
-              <div className="mt-6">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold text-[var(--color-text)]">Promotional graphic</p>
-                    <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">Optional. The customer's language version becomes the image caption.</p>
+                <div className="mt-6">
+                  <div className="flex items-center justify-between gap-3">
+                    <label htmlFor="follow-up-message" className="text-xs font-semibold text-[var(--color-text)]">
+                      Source message
+                    </label>
+                    <span className="text-[10px] text-[var(--color-text-muted)]">{form.message.length}/1000</span>
                   </div>
-                  {form.imageUrl && !uploadingImage && (
+                  <textarea
+                    id="follow-up-message"
+                    rows="4"
+                    maxLength="1000"
+                    value={form.message}
+                    onChange={(event) => setForm((current) => ({ ...current, message: event.target.value }))}
+                    className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+                  />
+                </div>
+
+                <div className="mt-5 border-t border-[var(--color-border)] pt-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold text-[var(--color-text)]">Customer language versions</p>
+                      <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                        Recent customer messages decide which version is sent.
+                      </p>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => setForm((current) => ({ ...current, imageUrl: "" }))}
-                      className="text-xs font-medium text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-danger)]"
+                      onClick={handleGenerateTranslations}
+                      disabled={translating || !form.message.trim()}
+                      className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[var(--color-primary)]/25 bg-white px-3.5 py-2 text-xs font-semibold text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-light)] disabled:opacity-50"
                     >
-                      Remove
+                      {translating && <Spinner className="h-3.5 w-3.5" />}
+                      {translating ? "Generating…" : translationsNeedReview ? "Generate versions" : "Regenerate versions"}
                     </button>
+                  </div>
+
+                  {translationsNeedReview && (
+                    <div className="mt-3 flex items-start gap-2 rounded-xl bg-[var(--color-accent-light)] px-3 py-2.5 text-[11px] leading-5 text-[var(--color-accent)]">
+                      <AlertIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <p>
+                        {sourceMessageChanged
+                          ? "The source message changed. Generate fresh language versions before saving."
+                          : "Generate or complete all three language versions before saving."}
+                      </p>
+                    </div>
                   )}
-                </div>
-                {form.imageUrl && (
-                  <img
-                    src={form.imageUrl}
-                    alt="Follow-up graphic preview"
-                    className="mt-3 max-h-56 w-full rounded-xl border border-[var(--color-border)] object-cover"
+
+                  <div className="mt-4 flex gap-1 overflow-x-auto border-b border-[var(--color-border)]" role="tablist" aria-label="Follow-up language">
+                    {FOLLOW_UP_LANGUAGES.map((language) => (
+                      <button
+                        key={language.key}
+                        type="button"
+                        role="tab"
+                        aria-selected={translationLanguage === language.key}
+                        onClick={() => setTranslationLanguage(language.key)}
+                        className={`inline-flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-[11px] font-semibold transition-colors ${translationLanguage === language.key ? "border-[var(--color-primary)] text-[var(--color-primary)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
+                      >
+                        {language.label}
+                        {form.translations[language.key].trim() && <CheckIcon className="h-3 w-3" />}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-between gap-3">
+                    <label htmlFor={`follow-up-${translationLanguage}`} className="text-[11px] font-semibold text-[var(--color-text)]">
+                      {activeLanguage?.label} message
+                    </label>
+                    <span className="text-[10px] text-[var(--color-text-muted)]">
+                      {form.translations[translationLanguage].length}/1000
+                    </span>
+                  </div>
+                  <textarea
+                    id={`follow-up-${translationLanguage}`}
+                    rows="4"
+                    maxLength="1000"
+                    value={form.translations[translationLanguage]}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        translations: {
+                          ...current.translations,
+                          [translationLanguage]: event.target.value,
+                        },
+                      }))
+                    }
+                    className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
                   />
-                )}
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:p-6">
+                <SectionHeading
+                  number="3"
+                  title="Add a graphic"
+                  description="Optional. The selected language version is used as the image caption."
+                />
                 <input
                   ref={imageInputRef}
                   type="file"
@@ -466,45 +500,73 @@ export default function Tools() {
                   onChange={handleImagePicked}
                   className="hidden"
                 />
-                <button
-                  type="button"
-                  onClick={() => imageInputRef.current?.click()}
-                  disabled={uploadingImage}
-                  className="mt-3 inline-flex items-center gap-2 rounded-xl border border-[var(--color-border)] px-3.5 py-2.5 text-xs font-semibold transition-colors hover:bg-[var(--color-bg)] disabled:opacity-50"
-                >
-                  {uploadingImage && <Spinner className="h-3.5 w-3.5" />}
-                  {uploadingImage ? "Uploading…" : form.imageUrl ? "Replace graphic" : "Upload graphic"}
-                </button>
-              </div>
 
-              <div className="mt-6 flex flex-col-reverse gap-3 border-t border-[var(--color-border)] pt-5 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  Enabling starts with messages sent after you save. Older chats are not backfilled.
-                </p>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  disabled={saving || translating || uploadingImage || translationsNeedReview || !hasUnsavedChanges}
-                  className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
-                >
-                  {saving && <Spinner />}
-                  {saving ? "Saving…" : "Save tool"}
-                </button>
-              </div>
-            </section>
+                {form.imageUrl ? (
+                  <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]">
+                    <img
+                      src={form.imageUrl}
+                      alt="Follow-up graphic preview"
+                      className="max-h-72 w-full object-contain"
+                    />
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] bg-white px-4 py-3">
+                      <span className="inline-flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+                        <CheckIcon className="h-3.5 w-3.5 text-[var(--color-primary)]" />
+                        Graphic attached
+                      </span>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => imageInputRef.current?.click()}
+                          disabled={uploadingImage}
+                          className="text-xs font-semibold text-[var(--color-primary)] disabled:opacity-50"
+                        >
+                          {uploadingImage ? "Uploading…" : "Replace"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setForm((current) => ({ ...current, imageUrl: "" }))}
+                          disabled={uploadingImage}
+                          className="text-xs font-semibold text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-danger)] disabled:opacity-50"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => imageInputRef.current?.click()}
+                    disabled={uploadingImage}
+                    className="mt-5 flex w-full flex-col items-center justify-center rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-8 text-center transition-colors hover:border-[var(--color-primary)]/40 hover:bg-[var(--color-primary-light)]/30 disabled:opacity-50"
+                  >
+                    <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-[var(--color-primary)] shadow-sm">
+                      {uploadingImage ? <Spinner className="h-4 w-4" /> : <ImageIcon className="h-5 w-5" />}
+                    </span>
+                    <span className="mt-3 text-xs font-semibold">
+                      {uploadingImage ? "Uploading graphic…" : "Choose a graphic"}
+                    </span>
+                    <span className="mt-1 text-[11px] text-[var(--color-text-muted)]">JPG or PNG, up to 5MB</span>
+                  </button>
+                )}
+              </section>
+            </div>
 
-            <div className="space-y-5">
-              <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5">
+            <aside className="space-y-5 xl:sticky xl:top-6 xl:self-start">
+              <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)]">
                 <div className="flex items-center justify-between gap-3">
-                  <h3 className="font-display text-sm font-bold">Message preview</h3>
-                  <span className="rounded-full bg-[var(--color-primary-light)] px-2 py-1 text-[10px] font-semibold text-[var(--color-primary)]">
-                    {FOLLOW_UP_LANGUAGES.find(({ key }) => key === translationLanguage)?.label}
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Preview</p>
+                    <h2 className="mt-1 font-display text-sm font-bold">Customer message</h2>
+                  </div>
+                  <span className="rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-[10px] font-semibold text-[var(--color-primary)]">
+                    {activeLanguage?.label}
                   </span>
                 </div>
-                <div className="mt-4 rounded-2xl bg-[#f5f7f5] p-4">
-                  <div className="ml-auto max-w-[92%] overflow-hidden rounded-2xl rounded-br-md bg-[var(--color-primary)] text-white shadow-sm">
+                <div className="inbox-thread-bg mt-4 min-h-48 rounded-2xl border border-[var(--color-border)] p-4">
+                  <div className="ml-auto max-w-[94%] overflow-hidden rounded-2xl rounded-br-md bg-[var(--color-primary)] text-white shadow-sm">
                     {form.imageUrl && (
-                      <img src={form.imageUrl} alt="" className="max-h-52 w-full object-cover" />
+                      <img src={form.imageUrl} alt="" className="max-h-56 w-full object-cover" />
                     )}
                     <div className="px-3.5 py-2.5">
                       <p className="mb-1 text-[10px] font-semibold text-white/70">Automated follow-up</p>
@@ -514,34 +576,105 @@ export default function Tools() {
                     </div>
                   </div>
                 </div>
+                <p className="mt-3 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  Select a language tab in the message section to preview each version.
+                </p>
               </section>
 
               <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5">
-                <h3 className="font-display text-sm font-bold">How it works</h3>
-                <ol className="mt-4 space-y-4">
-                  <Step number="1" text="A successful outgoing message starts the timer." />
-                  <Step number="2" text="A customer reply cancels that timer immediately." />
-                  <Step number="3" text="If they stay quiet, one follow-up is sent and shown in the Inbox." />
-                </ol>
+                <h2 className="font-display text-sm font-bold">Before it sends</h2>
+                <ul className="mt-4 space-y-3">
+                  <Rule text="A customer reply cancels the timer immediately." />
+                  <Rule text="Each timer sends only one automated follow-up." />
+                  <Rule text="Saving does not add timers to older conversations." />
+                </ul>
               </section>
-
-            </div>
+            </aside>
           </div>
         </div>
       </main>
+
+      <footer className="shrink-0 border-t border-[var(--color-border)] bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(24,39,33,0.04)] backdrop-blur sm:px-6 lg:px-10">
+        <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${translationsNeedReview || hasUnsavedChanges ? "bg-[var(--color-accent)]" : "bg-[var(--color-primary)]"}`} />
+            <p className={`truncate text-xs font-medium ${translationsNeedReview ? "text-[var(--color-accent)]" : "text-[var(--color-text-muted)]"}`}>
+              {saveStatus}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || translating || uploadingImage || translationsNeedReview || !hasUnsavedChanges}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving && <Spinner />}
+            {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </footer>
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
 
-function Step({ number, text }) {
+function SectionHeading({ number, title, description }) {
   return (
-    <li className="flex items-start gap-3">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-[10px] font-bold text-[var(--color-primary)]">
+    <div className="flex items-start gap-3">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-[11px] font-bold text-[var(--color-primary)]">
         {number}
       </span>
-      <p className="pt-0.5 text-[11px] leading-5 text-[var(--color-text-muted)]">{text}</p>
+      <div>
+        <h2 className="font-display text-base font-bold">{title}</h2>
+        <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">{description}</p>
+      </div>
+    </div>
+  );
+}
+
+function OverviewItem({ icon, label, value }) {
+  return (
+    <div className="flex items-center gap-3 border-b border-[var(--color-border)] px-4 py-3.5 last:border-b-0 sm:border-b-0 sm:px-5">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--color-primary-light)] text-[var(--color-primary)]">
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <p className="text-[10px] font-medium text-[var(--color-text-muted)]">{label}</p>
+        <p className="mt-0.5 truncate text-xs font-semibold text-[var(--color-text)]">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function TriggerChoice({ checked, label, description, onChange }) {
+  return (
+    <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors focus-within:ring-2 focus-within:ring-[var(--color-primary)]/25 ${checked ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/55" : "border-[var(--color-border)] hover:bg-[var(--color-bg)]"}`}>
+      <input
+        type="radio"
+        name="follow-up-trigger"
+        checked={checked}
+        onChange={onChange}
+        className="sr-only"
+      />
+      <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${checked ? "border-[var(--color-primary)]" : "border-[var(--color-border)]"}`}>
+        {checked && <span className="h-2 w-2 rounded-full bg-[var(--color-primary)]" />}
+      </span>
+      <span>
+        <span className="block text-xs font-semibold text-[var(--color-text)]">{label}</span>
+        <span className="mt-1 block text-[10px] leading-4 text-[var(--color-text-muted)]">{description}</span>
+      </span>
+    </label>
+  );
+}
+
+function Rule({ text }) {
+  return (
+    <li className="flex items-start gap-2.5">
+      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-[var(--color-primary)]">
+        <CheckIcon className="h-2.5 w-2.5" />
+      </span>
+      <p className="text-[11px] leading-5 text-[var(--color-text-muted)]">{text}</p>
     </li>
   );
 }
@@ -559,6 +692,50 @@ function ClockIcon(props) {
     <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
       <circle cx="12" cy="12" r="9" />
       <path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function MessageIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M20 15a3 3 0 0 1-3 3H8l-4 3v-6a3 3 0 0 1-1-2.2V7a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function LanguageIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ImageIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <circle cx="8.5" cy="9" r="1.5" />
+      <path d="m4 17 4.5-4.5 3.5 3 2.5-2.5 5.5 5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function CheckIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.25" aria-hidden="true">
+      <path d="m4 10 3.5 3.5L16 5.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function AlertIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M8.4 3.2 2.3 14a1.8 1.8 0 0 0 1.6 2.7h12.2a1.8 1.8 0 0 0 1.6-2.7L11.6 3.2a1.8 1.8 0 0 0-3.2 0Z" strokeLinejoin="round" />
+      <path d="M10 7v3.5M10 13.5h.01" strokeLinecap="round" />
     </svg>
   );
 }
