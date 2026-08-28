@@ -1,10 +1,11 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const usersRepo = require("../db/usersRepo");
+const { loginRateLimit, recordFailedAttempt, clearAttempts } = require("../middleware/loginRateLimit");
 
 const router = express.Router();
 
-router.post("/login", async (req, res) => {
+router.post("/login", loginRateLimit, async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) {
     return res.status(400).json({ error: "Username and password are required." });
@@ -13,9 +14,11 @@ router.post("/login", async (req, res) => {
   try {
     const user = await usersRepo.getUserByUsername(username);
     if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+      recordFailedAttempt(req);
       return res.status(401).json({ error: "Invalid username or password." });
     }
 
+    clearAttempts(req);
     req.session.userId = user.id;
     req.session.username = user.username;
     return res.json({ username: user.username });

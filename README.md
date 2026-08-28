@@ -1,6 +1,6 @@
 # WhatsApp AI Clinic Bot + Management Portal
 
-AI receptionist for aesthetics clinics that replies to patients on WhatsApp, plus a management portal for staff to view conversations. Chat history is now saved permanently (SQLite) — no longer wiped on restart.
+AI receptionist for aesthetics clinics that replies to patients on WhatsApp, plus a management portal for staff to view conversations. Chat history is saved permanently to Postgres — no longer wiped on restart.
 
 ## How it works
 
@@ -10,7 +10,7 @@ Patient WhatsApp message
    → your server (src/server.js)
    → AI reply (Claude or Gemini — src/services/aiService.js), using clinic info from src/config/clinicConfig.js
    → reply sent back via WhatsApp Cloud API
-   → everything saved to SQLite (src/db/) — visible in the portal, in real time
+   → everything saved to Postgres (src/db/) — visible in the portal, in real time
 ```
 
 **Management portal** (`portal-frontend/`): a staff-only web dashboard.
@@ -49,7 +49,7 @@ Fill in:
   ```bash
   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
   ```
-- `DATABASE_PATH` — leave as default unless you have a reason to change it
+- `DATABASE_URL` — Postgres connection string (e.g. from Neon: Dashboard > Connection Details). Use the pooled connection string if offered — safer under concurrent webhook traffic. Tables are created automatically on first startup (see `src/db/schema.sql`).
 
 ## 4. Install and create a staff login
 
