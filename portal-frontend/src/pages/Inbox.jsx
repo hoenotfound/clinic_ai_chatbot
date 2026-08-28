@@ -43,7 +43,8 @@ const DELIVERY_STATUS_RANK = {
   sent: 1,
   delivered: 2,
   read: 3,
-  failed: 4,
+  unknown: 4,
+  failed: 5,
 };
 
 function mergeMessageState(existing, incoming) {
@@ -1712,8 +1713,15 @@ function Spinner({ className = "" }) {
 function MessageBubble({ contactId, message, onImageClick, onRetry }) {
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
+  const senderLabel = message.is_automated_follow_up
+    ? "Automated follow-up"
+    : sentByStaff
+    ? message.sent_by_username
+    : "AI assistant";
   const isAudio = message.media_mime_type?.startsWith("audio/");
   const deliveryFailed = !isPatient && message.delivery_status === "failed";
+  const deliveryUnconfirmed = !isPatient && message.delivery_status === "unknown";
+  const deliveryNeedsAction = deliveryFailed || deliveryUnconfirmed;
   const storedMediaSrc = message.media_base64
     ? `data:${message.media_mime_type || "application/octet-stream"};base64,${message.media_base64}`
     : message.has_media_attachment
@@ -1724,8 +1732,8 @@ function MessageBubble({ contactId, message, onImageClick, onRetry }) {
 
   return (
     <div className={`flex ${isPatient ? "justify-start" : "justify-end"}`}>
-      <div className={`relative max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryFailed ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}>
-        {!isPatient && <p className="mb-1 text-[10px] font-semibold text-white/70">{sentByStaff ? message.sent_by_username : "AI assistant"}</p>}
+        <div className={`relative max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryNeedsAction ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}>
+        {!isPatient && <p className="mb-1 text-[10px] font-semibold text-white/70">{senderLabel}</p>}
         {isAudio && storedMediaSrc ? (
           <audio controls preload="none" src={storedMediaSrc} className="mb-1.5 max-w-full" style={{ height: "36px" }} />
         ) : (
@@ -1740,14 +1748,16 @@ function MessageBubble({ contactId, message, onImageClick, onRetry }) {
         <div className={`mt-1.5 flex items-center gap-2 text-[10px] ${isPatient ? "text-[var(--color-text-muted)]" : "justify-end text-white/70"}`}>
           {message._optimistic && <Spinner className="h-2.5 w-2.5" />}
           <span>{formatTime(message.created_at)}</span>
-          {!isPatient && !message._optimistic && !deliveryFailed && (
+          {!isPatient && !message._optimistic && !deliveryNeedsAction && (
             <DeliveryIndicator status={message.delivery_status} />
           )}
         </div>
-        {deliveryFailed && (
+        {deliveryNeedsAction && (
           <div className="mt-2 rounded-lg bg-white px-2.5 py-2 text-[var(--color-danger)]">
             <div className="flex items-center justify-between gap-3">
-              <span className="text-[10px] font-semibold">Not delivered</span>
+              <span className="text-[10px] font-semibold">
+                {deliveryUnconfirmed ? "Delivery unconfirmed" : "Not delivered"}
+              </span>
               <button
                 type="button"
                 onClick={() => onRetry?.(message.id)}

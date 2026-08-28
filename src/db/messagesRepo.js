@@ -20,7 +20,8 @@ const LIGHTWEIGHT_MESSAGE_COLUMNS = `
   media_mime_type,
   created_at,
   delivery_status,
-  delivery_error
+  delivery_error,
+  is_automated_follow_up
 `;
 
 /**
@@ -59,7 +60,11 @@ async function getMessagesForContact(contactId, limit = 50, includeMedia = true)
   const result = await pool.query(
     `SELECT id, role, content, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type FROM messages
      WHERE contact_id = $1
-       AND (role <> 'assistant' OR delivery_status IS DISTINCT FROM 'failed')
+       AND (
+         role <> 'assistant'
+         OR delivery_status IS NULL
+         OR delivery_status NOT IN ('failed', 'unknown')
+       )
      ORDER BY created_at DESC, id DESC
      LIMIT $2`,
     [contactId, safeLimit]
@@ -86,7 +91,7 @@ async function getMessagePageForContact(
   if (afterId != null) {
     const result = await pool.query(
       `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
-              delivery_status, delivery_error
+              delivery_status, delivery_error, is_automated_follow_up
        FROM messages
        WHERE contact_id = $1 AND id > $2
        ORDER BY id ASC`,
@@ -105,7 +110,7 @@ async function getMessagePageForContact(
 
   const result = await pool.query(
     `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
-            delivery_status, delivery_error
+            delivery_status, delivery_error, is_automated_follow_up
      FROM messages
      WHERE contact_id = $1${cursorClause}
      ORDER BY id DESC
@@ -138,7 +143,7 @@ async function getMessageForRetry(contactId, messageId) {
   const result = await pool.query(
     `SELECT id, contact_id, role, content, whatsapp_message_id, sent_by_username,
             media_url, media_base64, media_mime_type, created_at,
-            delivery_status, delivery_error
+            delivery_status, delivery_error, is_automated_follow_up
      FROM messages
      WHERE id = $1 AND contact_id = $2`,
     [messageId, contactId]

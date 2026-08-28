@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, extractPromoImageId } from "../api";
+import { api } from "../api";
 import { useToasts, ToastContainer } from "../components/Toast";
 import Spinner from "../components/Spinner";
 
@@ -220,7 +220,8 @@ function RepeatableListEditor({ items, fields, onChange, emptyItem, addLabel, on
   );
 }
 
-const MAX_PROMO_IMAGE_BYTES = 16 * 1024 * 1024; // matches the server's Multer limit
+const MAX_PROMO_IMAGE_BYTES = 5 * 1024 * 1024;
+const PROMO_IMAGE_TYPES = new Set(["image/jpeg", "image/png"]);
 
 // Upload-a-file control for the promotion image field — staff pick a photo
 // straight from their computer instead of needing to host it somewhere and
@@ -232,48 +233,27 @@ function ImageFieldEditor({ value, onChange, onError }) {
   const fileInputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
 
-  // Best-effort cleanup of a promo image row we previously uploaded and no
-  // longer need (superseded by a replace, or cleared via Remove). Only
-  // fires for URLs that are actually one of our own /promo-images/:id links
-  // — a staff-pasted external URL has nothing in Postgres to clean up.
-  // Failures are logged, not surfaced: worst case is one orphaned row,
-  // which shouldn't block the staff member from continuing to edit.
-  function cleanupOldImage(oldUrl) {
-    const id = extractPromoImageId(oldUrl);
-    if (id === null) return;
-    api.deletePromoImage(id).catch((err) => {
-      console.error("Failed to clean up old promo image:", err);
-    });
-  }
-
   async function handleFilePicked(e) {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow picking the same file again later
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      onError("Please choose an image file.");
+    if (!PROMO_IMAGE_TYPES.has(file.type)) {
+      onError("Please choose a JPG or PNG image.");
       return;
     }
     if (file.size > MAX_PROMO_IMAGE_BYTES) {
-      onError("That image is larger than 16MB — please choose a smaller file.");
+      onError("That image is larger than 5MB. Please choose a smaller file.");
       return;
     }
-    const previousValue = value;
     setUploading(true);
     try {
       const { url } = await api.uploadPromoImage(file);
       onChange(url);
-      cleanupOldImage(previousValue);
     } catch (err) {
       onError(err.message || "Couldn't upload that image.");
     } finally {
       setUploading(false);
     }
-  }
-
-  function handleRemove() {
-    cleanupOldImage(value);
-    onChange("");
   }
 
   return (
@@ -286,7 +266,7 @@ function ImageFieldEditor({ value, onChange, onError }) {
         />
       )}
       <div className="flex items-center gap-2 mb-2">
-        <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFilePicked} className="hidden" />
+        <input ref={fileInputRef} type="file" accept="image/jpeg,image/png" onChange={handleFilePicked} className="hidden" />
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
@@ -299,7 +279,7 @@ function ImageFieldEditor({ value, onChange, onError }) {
         {value && !uploading && (
           <button
             type="button"
-            onClick={handleRemove}
+            onClick={() => onChange("")}
             className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors"
           >
             Remove

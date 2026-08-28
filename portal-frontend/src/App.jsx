@@ -6,6 +6,7 @@ import Inbox from "./pages/Inbox";
 import Contacts from "./pages/Contacts";
 import Settings from "./pages/Settings";
 import ComingSoon from "./pages/ComingSoon";
+import Tools from "./pages/Tools";
 
 function ProtectedRoute({ children }) {
   const { username, loading } = useAuth();
@@ -78,10 +79,7 @@ export default function App() {
             path="/tools"
             element={
               <ProtectedRoute>
-                <ComingSoon
-                  title="Tools"
-                  description="Access helpful tools for managing conversations, customers, and daily sales activities. Coming soon."
-                />
+                <Tools />
               </ProtectedRoute>
             }
           />

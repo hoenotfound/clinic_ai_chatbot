@@ -425,8 +425,10 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     if (message.role !== "assistant") {
       return res.status(400).json({ error: "Only outbound messages can be retried." });
     }
-    if (message.delivery_status !== "failed") {
-      return res.status(409).json({ error: "Only failed messages can be retried." });
+    if (!["failed", "unknown"].includes(message.delivery_status)) {
+      return res.status(409).json({
+        error: "Only failed or unconfirmed messages can be retried.",
+      });
     }
 
     const sendResult = await sendStoredMessage(contact, message);

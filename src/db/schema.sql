@@ -105,16 +105,35 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_mime_type TEXT;
 -- value.statuses). Accepting a send request (HTTP 200 from the /messages
 -- call) only means Meta queued it — actual delivery/failure is reported
 -- separately and asynchronously. delivery_status is one of
--- 'pending' | 'sent' | 'delivered' | 'read' | 'failed' (or null if we never
--- captured a whatsapp_message_id for this row to match a status update
--- against, e.g. messages sent before this column existed). 'pending' means
--- Meta accepted the request but has not reported a delivery status yet.
--- delivery_error holds Meta's human-readable error when status = 'failed'.
+-- 'pending' | 'sent' | 'delivered' | 'read' | 'failed' | 'unknown' (or null
+-- if we never captured a whatsapp_message_id for this row to match a status
+-- update against, e.g. messages sent before this column existed). 'pending'
+-- means Meta accepted the request but has not reported a delivery status yet.
+-- 'unknown' means the app restarted after claiming an automated follow-up but
+-- before it could record WhatsApp's response. delivery_error holds Meta's
+-- human-readable error or the reason delivery could not be confirmed.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivery_status TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivery_error TEXT;
 
+-- Automated follow-ups are normal outbound messages, but they need two
+-- extra pieces of bookkeeping: a marker so an automated follow-up never
+-- schedules another follow-up, and the exact outbound message that started
+-- its timer. The partial unique index makes the scheduler safe when more
+-- than one server instance checks the same conversation at once.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_automated_follow_up BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS automated_follow_up_for_message_id INTEGER REFERENCES messages(id);
+
 CREATE INDEX IF NOT EXISTS idx_messages_contact_id ON messages(contact_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_contact_created_at_id ON messages(contact_id, created_at DESC, id DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_one_automated_follow_up_per_trigger
+  ON messages(automated_follow_up_for_message_id)
+  WHERE automated_follow_up_for_message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_messages_unconfirmed_automated_followups
+  ON messages(created_at, id)
+  WHERE is_automated_follow_up = true
+    AND whatsapp_message_id IS NULL
+    AND delivery_status IS NULL;
 
 -- Promo graphics uploaded directly from the Settings > Promotions page.
 -- Stored as base64 bytes (same pattern as patient-sent photos in messages)

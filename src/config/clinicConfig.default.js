@@ -60,6 +60,18 @@ module.exports = {
   // chance of the model skipping it, mixing it up, or leaving a placeholder in.
   introMessage: "Hi, I'm Deon from Beleco Clinic! 😊",
 
+  // Disabled until staff deliberately turns it on from Tools. Enabling it
+  // records a fresh activation time, so old conversations are not suddenly
+  // sent follow-ups when this feature is first deployed.
+  automatedFollowUp: {
+    enabled: false,
+    delayMinutes: 120,
+    triggerMode: "all",
+    message: "Hi! Just checking in to see if you still need any help. Feel free to reply whenever you're ready 😊",
+    imageUrl: "",
+    activatedAt: null,
+  },
+
   // Promo graphic sent alongside the first reply to a new conversation —
   // same reliability pattern as introMessage (code-triggered, not AI-decided).
   // See src/utils/activePromotion.js for the date-filtering logic.

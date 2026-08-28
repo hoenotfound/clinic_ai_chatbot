@@ -41,17 +41,24 @@ async function deleteImage(id) {
  *
  * Called from configRepo.js after every successful config save, and on a
  * timer from server.js, to delete any promo_images row that isn't
- * referenced by `referencedIds` (the ids currently used in
- * config.promotions[].imageUrl) — but only once it's older than
- * `olderThanMinutes`, so an image uploaded seconds ago while staff are
- * still filling out the rest of the form is never at risk of being swept
- * out from under them before they get a chance to save.
+ * referenced by `referencedIds` or a saved Inbox message. Keeping message
+ * references matters for history and failed-message retry. Unused uploads
+ * are only removed once they are older than `olderThanMinutes`, so an image
+ * uploaded seconds ago while staff are still editing is never swept away
+ * before they get a chance to save.
  */
 async function pruneUnreferenced(referencedIds, olderThanMinutes = 60) {
   const result = await pool.query(
     `DELETE FROM promo_images
      WHERE created_at < now() - ($2 || ' minutes')::interval
        AND NOT (id = ANY($1::int[]))
+       AND NOT EXISTS (
+         SELECT 1
+         FROM messages
+         WHERE media_url IS NOT NULL
+           AND split_part(split_part(media_url, '?', 1), '#', 1)
+               LIKE '%/promo-images/' || promo_images.id::text
+       )
      RETURNING id`,
     [referencedIds, olderThanMinutes]
   );

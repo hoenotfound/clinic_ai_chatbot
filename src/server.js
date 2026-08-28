@@ -27,6 +27,7 @@ const configRepo = require("./db/configRepo");
 const { pruneOrphanedPromoImages } = configRepo;
 const promoImagesRepo = require("./db/promoImagesRepo");
 const { initSchema } = require("./db/db");
+const { startAutomatedFollowUps } = require("./services/followUpService");
 
 // How often the backstop sweep for abandoned promo-image uploads runs —
 // see the setInterval call in start() below.
@@ -417,6 +418,11 @@ async function start() {
   // was down when an abandoned upload's grace period elapsed.
   pruneOrphanedPromoImages();
   setInterval(pruneOrphanedPromoImages, PROMO_IMAGE_PRUNE_INTERVAL_MS);
+
+  // Checks once a minute for outbound messages that have reached the
+  // staff-configured follow-up delay without a customer reply. The service
+  // is a no-op while the tool is disabled.
+  startAutomatedFollowUps();
 }
 
 start().catch((err) => {
