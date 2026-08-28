@@ -252,7 +252,7 @@ test("no-reply classification excludes failed and unconfirmed messages", async (
   assert.doesNotMatch(listSql, /latest\.delivery_status IN \([^)]*'unknown'/);
 });
 
-test("automatic temperature update is atomic and only claims a still-Warm lead", async (t) => {
+test("rule-based temperature update is atomic and only claims a still-Warm lead", async (t) => {
   const originalConnect = pool.connect;
   const originalPublish = realtimeEvents.publish;
   t.after(() => {
@@ -274,11 +274,11 @@ test("automatic temperature update is atomic and only claims a still-Warm lead",
   const published = [];
   realtimeEvents.publish = (event, payload) => published.push({ event, payload });
 
-  const updated = await pipelineRepo.applyAutomaticTemperature(81, {
+  const updated = await pipelineRepo.applyRuleBasedTemperature(81, {
     temperature: "hot",
-    confidence: "high",
-    enoughInformation: true,
+    matchedRule: "booking_intent",
     reason: "The customer accepted an appointment tomorrow.",
+    evidence: "Please book me for tomorrow.",
   });
 
   assert.equal(updated.temperature, "hot");
@@ -286,11 +286,13 @@ test("automatic temperature update is atomic and only claims a still-Warm lead",
   assert.match(update.sql, /is_closed = false AND temperature = 'warm'/);
   assert.deepEqual(update.params, [81, "hot"]);
   const activity = queries.find(({ sql }) => /INSERT INTO lead_activities/.test(sql));
-  assert.equal(activity.params[4].source, "conversation_temperature");
+  assert.equal(activity.params[3], "Rule automation");
+  assert.equal(activity.params[4].source, "conversation_rules");
+  assert.equal(activity.params[4].matchedRule, "booking_intent");
   assert.deepEqual(published, [{ event: "pipeline_changed", payload: { leadId: 81 } }]);
 });
 
-test("automatic temperature update cannot overwrite a lead that is no longer Warm", async (t) => {
+test("rule-based temperature update cannot overwrite a lead that is no longer Warm", async (t) => {
   const originalConnect = pool.connect;
   const originalPublish = realtimeEvents.publish;
   t.after(() => {
@@ -311,18 +313,18 @@ test("automatic temperature update cannot overwrite a lead that is no longer War
     throw new Error("A skipped automatic update should not publish an event");
   };
 
-  const updated = await pipelineRepo.applyAutomaticTemperature(82, {
+  const updated = await pipelineRepo.applyRuleBasedTemperature(82, {
     temperature: "cold",
-    confidence: "high",
-    enoughInformation: true,
+    matchedRule: "explicit_rejection",
     reason: "The customer explicitly declined.",
+    evidence: "No thanks, I am not interested.",
   });
 
   assert.equal(updated, null);
   assert.equal(activityWritten, false);
 });
 
-test("repository rejects an automatic temperature result without decisive confidence", async (t) => {
+test("repository rejects a rule result that is not Hot or Cold", async (t) => {
   const originalConnect = pool.connect;
   t.after(() => {
     pool.connect = originalConnect;
@@ -332,16 +334,10 @@ test("repository rejects an automatic temperature result without decisive confid
     throw new Error("An unqualified suggestion must not reach the database");
   };
 
-  assert.equal(await pipelineRepo.applyAutomaticTemperature(83, {
-    temperature: "hot",
-    confidence: "medium",
-    enoughInformation: true,
+  assert.equal(await pipelineRepo.applyRuleBasedTemperature(83, {
+    temperature: "warm",
+    matchedRule: "general_interest",
     reason: "The customer asked about pricing.",
-  }), null);
-  assert.equal(await pipelineRepo.applyAutomaticTemperature(83, {
-    temperature: "cold",
-    confidence: "high",
-    enoughInformation: false,
-    reason: "The available evidence is ambiguous.",
+    evidence: "How much is it?",
   }), null);
 });

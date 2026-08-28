@@ -32,7 +32,7 @@ const promoImagesRepo = require("./db/promoImagesRepo");
 const { initSchema } = require("./db/db");
 const { startAutomatedFollowUps } = require("./services/followUpService");
 const {
-  reviewLeadTemperatureForContact,
+  reviewLeadTemperatureForMessage,
 } = require("./services/leadTemperatureAutomation");
 
 // How often the backstop sweep for abandoned promo-image uploads runs —
@@ -99,7 +99,6 @@ async function processIncomingMessage(incoming) {
   let contact = null;
   let savedInbound = null;
   let responseAttempted = false;
-  let temperatureReviewEligible = false;
 
   try {
     contact = await contactsRepo.getOrCreateContact(from, profileName);
@@ -225,9 +224,21 @@ async function processIncomingMessage(incoming) {
 
     // Photos without captions and failed/unsupported media contain no text
     // that can safely support a sales-temperature decision.
-    temperatureReviewEligible = Boolean(text.trim()) && !(
+    const temperatureReviewEligible = Boolean(text.trim()) && !(
       mediaType === "image" && !incoming.text
     );
+
+    if (temperatureReviewEligible) {
+      try {
+        await reviewLeadTemperatureForMessage(contact.id, savedInbound.id, text);
+      } catch (temperatureErr) {
+        // Lead categorization must never prevent or replace a customer reply.
+        console.error(
+          `Failed to apply lead temperature rules for contact ${contact.id}:`,
+          temperatureErr
+        );
+      }
+    }
 
     const keywordReason = checkKeywordTriggers(text);
     if (keywordReason) {
@@ -318,19 +329,6 @@ async function processIncomingMessage(incoming) {
         );
       } catch (fallbackErr) {
         console.error("Failed to save or send the fallback message:", fallbackErr);
-      }
-    }
-  } finally {
-    if (contact && savedInbound && temperatureReviewEligible) {
-      try {
-        await reviewLeadTemperatureForContact(contact.id);
-      } catch (temperatureErr) {
-        // Lead scoring is useful bookkeeping, but must never block or change
-        // the customer reply flow when the provider or database is unavailable.
-        console.error(
-          `Failed to review lead temperature for contact ${contact.id}:`,
-          temperatureErr
-        );
       }
     }
   }

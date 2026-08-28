@@ -441,13 +441,8 @@ async function updateLead(id, patch, actor) {
   return updatedLead;
 }
 
-async function applyAutomaticTemperature(id, suggestion) {
-  if (
-    !suggestion ||
-    suggestion.enoughInformation !== true ||
-    suggestion.confidence !== "high" ||
-    !["hot", "cold"].includes(suggestion.temperature)
-  ) {
+async function applyRuleBasedTemperature(id, classification) {
+  if (!classification || !["hot", "cold"].includes(classification.temperature)) {
     return null;
   }
 
@@ -457,22 +452,22 @@ async function applyAutomaticTemperature(id, suggestion) {
        SET temperature = $2, updated_at = now()
        WHERE id = $1 AND is_closed = false AND temperature = 'warm'
        RETURNING *`,
-      [id, suggestion.temperature]
+      [id, classification.temperature]
     );
     const updated = result.rows[0];
     if (!updated) return null;
 
-    const nextTemperature = suggestion.temperature === "hot" ? "Hot" : "Cold";
+    const nextTemperature = classification.temperature === "hot" ? "Hot" : "Cold";
     await addActivity(
       client,
       id,
       "updated",
-      `AI automatically changed the temperature from Warm to ${nextTemperature}. ${suggestion.reason}`,
-      "AI automation",
+      `Temperature automatically changed from Warm to ${nextTemperature}. ${classification.reason}`,
+      "Rule automation",
       {
-        source: "conversation_temperature",
-        confidence: suggestion.confidence,
-        reason: suggestion.reason,
+        source: "conversation_rules",
+        matchedRule: classification.matchedRule,
+        evidence: classification.evidence,
       }
     );
     return updated;
@@ -631,7 +626,7 @@ module.exports = {
   backfillLeadsForExistingContacts,
   createLead,
   updateLead,
-  applyAutomaticTemperature,
+  applyRuleBasedTemperature,
   listActivities,
   addNote,
   createStage,
