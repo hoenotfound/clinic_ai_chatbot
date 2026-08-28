@@ -45,11 +45,11 @@ export function formatDateTime(value, options = {}) {
   });
 }
 
-export function formatRelative(value) {
+export function formatRelative(value, now = Date.now()) {
   if (!value) return "No messages";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  const seconds = Math.floor((now - date.getTime()) / 1000);
   if (seconds < 60) return "Just now";
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
@@ -74,9 +74,14 @@ export function inputToIso(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-export function buildLeadUpdatePayload(form, { includeTemperature = false } = {}) {
+export function buildLeadUpdatePayload(
+  form,
+  { includeTemperature = false, dirtyFields = null } = {}
+) {
   const payload = {
     stageId: Number(form.stageId),
+    temperature: form.temperature,
+    temperatureLocked: form.temperatureLocked,
     branchName: form.branchName || null,
     ownerUsername: form.ownerUsername || null,
     treatmentInterest: form.treatmentInterest || null,
@@ -91,15 +96,98 @@ export function buildLeadUpdatePayload(form, { includeTemperature = false } = {}
     notes: form.notes || null,
   };
 
-  if (includeTemperature) {
-    payload.temperature = form.temperature;
-    payload.temperatureLocked = form.temperatureLocked;
+  if (dirtyFields != null) {
+    const selected = dirtyFields instanceof Set
+      ? dirtyFields
+      : new Set(dirtyFields);
+    return Object.fromEntries(
+      Object.entries(payload).filter(([key]) => selected.has(key))
+    );
+  }
+
+  if (!includeTemperature) {
+    delete payload.temperature;
+    delete payload.temperatureLocked;
   }
   return payload;
 }
 
-export function isOverdue(lead) {
-  return !!lead.next_follow_up_at && !lead.is_closed && new Date(lead.next_follow_up_at).getTime() < Date.now();
+export function isNoReply(lead, noReplyHours = 24, now = Date.now()) {
+  if (
+    !lead ||
+    lead.is_closed ||
+    lead.last_message_role !== "assistant" ||
+    !lead.last_message_at
+  ) {
+    return false;
+  }
+  if (
+    lead.last_message_delivery_status != null &&
+    !["pending", "sent", "delivered", "read"].includes(
+      lead.last_message_delivery_status
+    )
+  ) {
+    return false;
+  }
+  const sentAt = new Date(lead.last_message_at).getTime();
+  const hours = Number(noReplyHours);
+  return (
+    Number.isFinite(sentAt) &&
+    Number.isFinite(hours) &&
+    hours > 0 &&
+    sentAt <= now - hours * 60 * 60 * 1000
+  );
+}
+
+export function isOverdue(lead, now = Date.now()) {
+  return !!lead.next_follow_up_at && !lead.is_closed && new Date(lead.next_follow_up_at).getTime() < now;
+}
+
+export function toStageDraft(stage) {
+  return {
+    id: Number(stage.id),
+    name: stage.name,
+    color: stage.color,
+    stageType: stage.stage_type,
+    leadCount: Number(stage.lead_count || 0),
+    systemKey: stage.system_key,
+  };
+}
+
+export function mergeStageDrafts(
+  stages,
+  currentDrafts = [],
+  dirtyFieldsById = {},
+  orderDirty = false
+) {
+  const currentById = new Map(
+    currentDrafts.map((draft) => [Number(draft.id), draft])
+  );
+  const mergedById = new Map(
+    stages.map((stage) => {
+      const serverDraft = toStageDraft(stage);
+      const localDraft = currentById.get(serverDraft.id);
+      const dirtyFields = dirtyFieldsById[serverDraft.id] || [];
+      if (!localDraft || dirtyFields.length === 0) {
+        return [serverDraft.id, serverDraft];
+      }
+      const merged = { ...serverDraft };
+      for (const field of dirtyFields) merged[field] = localDraft[field];
+      return [serverDraft.id, merged];
+    })
+  );
+
+  if (!orderDirty) return [...mergedById.values()];
+
+  const ordered = [];
+  for (const draft of currentDrafts) {
+    const merged = mergedById.get(Number(draft.id));
+    if (merged) {
+      ordered.push(merged);
+      mergedById.delete(Number(draft.id));
+    }
+  }
+  return [...ordered, ...mergedById.values()];
 }
 
 export function temperatureStyle(temperature) {

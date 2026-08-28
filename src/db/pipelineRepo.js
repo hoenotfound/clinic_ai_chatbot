@@ -78,9 +78,37 @@ const LEAD_SELECT = `
   JOIN pipeline_stages s ON s.id = l.stage_id
   JOIN contacts c ON c.id = l.contact_id
   LEFT JOIN LATERAL (
+    SELECT later.started_message_id,
+           later.created_at AS journey_created_at
+    FROM leads later
+    WHERE later.contact_id = l.contact_id
+      AND (later.created_at, later.id) > (l.created_at, l.id)
+    ORDER BY later.created_at ASC, later.id ASC
+    LIMIT 1
+  ) next_journey ON true
+  LEFT JOIN LATERAL (
     SELECT m.content, m.role, m.created_at, m.delivery_status
     FROM messages m
     WHERE m.contact_id = l.contact_id
+      AND (
+        (l.started_message_id IS NOT NULL AND m.id >= l.started_message_id)
+        OR
+        (l.started_message_id IS NULL AND m.created_at >= l.created_at)
+      )
+      AND (
+        (
+          next_journey.started_message_id IS NOT NULL
+          AND m.id < next_journey.started_message_id
+        )
+        OR
+        (
+          next_journey.started_message_id IS NULL
+          AND (
+            next_journey.journey_created_at IS NULL
+            OR m.created_at < next_journey.journey_created_at
+          )
+        )
+      )
     ORDER BY m.created_at DESC, m.id DESC
     LIMIT 1
   ) latest ON true
@@ -175,7 +203,8 @@ async function ensureLeadForContact(
     const stageResult = await client.query(
       `SELECT id, name FROM pipeline_stages
        WHERE stage_type = 'open'
-       ORDER BY sort_order ASC, id ASC
+       ORDER BY CASE WHEN system_key = 'new' THEN 0 ELSE 1 END,
+                sort_order ASC, id ASC
        LIMIT 1`
     );
     const stage = stageResult.rows[0];
@@ -280,7 +309,8 @@ async function backfillLeadsForExistingContacts() {
        CROSS JOIN LATERAL (
          SELECT id FROM pipeline_stages
          WHERE stage_type = 'open'
-         ORDER BY sort_order ASC, id ASC
+         ORDER BY CASE WHEN system_key = 'new' THEN 0 ELSE 1 END,
+                  sort_order ASC, id ASC
          LIMIT 1
        ) first_stage
        WHERE EXISTS (SELECT 1 FROM messages m WHERE m.contact_id = c.id)
@@ -319,7 +349,10 @@ async function createLead(data, actor) {
       ? await getStageById(data.stageId, client)
       : (await client.query(
           `SELECT id, name, stage_type, system_key FROM pipeline_stages
-           WHERE stage_type = 'open' ORDER BY sort_order ASC, id ASC LIMIT 1`
+           WHERE stage_type = 'open'
+           ORDER BY CASE WHEN system_key = 'new' THEN 0 ELSE 1 END,
+                    sort_order ASC, id ASC
+           LIMIT 1`
         )).rows[0];
     if (!stage) {
       const err = new Error("Pipeline stage not found.");

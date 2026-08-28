@@ -1,21 +1,30 @@
 import { useEffect, useState } from "react";
 import Spinner from "../Spinner";
+import { mergeStageDrafts, toStageDraft } from "./pipelineUtils";
 
 const inputClass =
   "rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15";
 
 export default function StageManager({ stages, onClose, onSaveStage, onCreateStage, onDeleteStage, onReorder, onToast }) {
-  const [drafts, setDrafts] = useState(stages.map(toDraft));
+  const [drafts, setDrafts] = useState(stages.map(toStageDraft));
+  const [dirtyFieldsById, setDirtyFieldsById] = useState({});
+  const [orderDirty, setOrderDirty] = useState(false);
   const [newStage, setNewStage] = useState({ name: "", color: "#2f6f62", stageType: "open" });
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    setDrafts(stages.map(toDraft));
-  }, [stages]);
+    setDrafts((current) =>
+      mergeStageDrafts(stages, current, dirtyFieldsById, orderDirty)
+    );
+  }, [stages, dirtyFieldsById, orderDirty]);
 
   function updateDraft(id, key, value) {
     setDrafts((current) => current.map((stage) => stage.id === id ? { ...stage, [key]: value } : stage));
+    setDirtyFieldsById((current) => ({
+      ...current,
+      [id]: [...new Set([...(current[id] || []), key])],
+    }));
   }
 
   function move(index, direction) {
@@ -26,6 +35,7 @@ export default function StageManager({ stages, onClose, onSaveStage, onCreateSta
       [next[index], next[target]] = [next[target], next[index]];
       return next;
     });
+    setOrderDirty(true);
   }
 
   async function handleSave() {
@@ -151,17 +161,6 @@ export default function StageManager({ stages, onClose, onSaveStage, onCreateSta
       </div>
     </div>
   );
-}
-
-function toDraft(stage) {
-  return {
-    id: Number(stage.id),
-    name: stage.name,
-    color: stage.color,
-    stageType: stage.stage_type,
-    leadCount: Number(stage.lead_count || 0),
-    systemKey: stage.system_key,
-  };
 }
 
 function MoveButton({ children, label, disabled, onClick }) {

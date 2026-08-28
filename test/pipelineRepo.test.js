@@ -20,6 +20,7 @@ test("creates one open lead with an atomic partial-conflict claim", async (t) =>
       queries.push({ sql, params });
       if (/SELECT l\.\*, s\.name AS stage_name/.test(sql)) return { rows: [] };
       if (/SELECT id, name FROM pipeline_stages/.test(sql)) {
+        assert.match(sql, /CASE WHEN system_key = 'new' THEN 0 ELSE 1 END/);
         return { rows: [{ id: 2, name: "New Lead" }] };
       }
       if (/INSERT INTO leads/.test(sql)) {
@@ -157,6 +158,7 @@ test("backfill ignores contacts that already have any recorded journey", async (
     backfillSql,
     /NOT EXISTS \(SELECT 1 FROM leads existing WHERE existing\.contact_id = c\.id\)/
   );
+  assert.match(backfillSql, /CASE WHEN system_key = 'new' THEN 0 ELSE 1 END/);
   assert.match(backfillSql, /SELECT MIN\(m\.id\) FROM messages m WHERE m\.contact_id = c\.id/);
 });
 
@@ -241,6 +243,7 @@ test("manual lead creation resolves a concurrent open-lead claim", async (t) => 
 
   let activeLeadQueries = 0;
   let insertSql = "";
+  let entryStageSql = "";
   realtimeEvents.publish = () => {
     throw new Error("A lead created by another request should not publish twice");
   };
@@ -253,6 +256,7 @@ test("manual lead creation resolves a concurrent open-lead claim", async (t) => 
           : { rows: [{ id: 61, contact_id: 17, stage_id: 1 }] };
       }
       if (/SELECT id, name, stage_type, system_key FROM pipeline_stages/.test(sql)) {
+        entryStageSql = sql;
         return { rows: [{ id: 1, name: "New Lead", stage_type: "open", system_key: "new" }] };
       }
       if (/INSERT INTO leads/.test(sql)) {
@@ -268,6 +272,7 @@ test("manual lead creation resolves a concurrent open-lead claim", async (t) => 
 
   assert.equal(result.created, false);
   assert.equal(result.lead.id, 61);
+  assert.match(entryStageSql, /CASE WHEN system_key = 'new' THEN 0 ELSE 1 END/);
   assert.match(insertSql, /ON CONFLICT \(contact_id\) WHERE is_closed = false DO NOTHING/);
   assert.match(insertSql, /started_message_id/);
   assert.match(insertSql, /temperature_locked, started_message_id/);
@@ -337,6 +342,10 @@ test("no-reply classification excludes failed and unconfirmed messages", async (
   assert.match(listSql, /latest\.delivery_status IN \('pending', 'sent', 'delivered', 'read'\)/);
   assert.doesNotMatch(listSql, /latest\.delivery_status IN \([^)]*'failed'/);
   assert.doesNotMatch(listSql, /latest\.delivery_status IN \([^)]*'unknown'/);
+  assert.match(listSql, /m\.id >= l\.started_message_id/);
+  assert.match(listSql, /m\.created_at >= l\.created_at/);
+  assert.match(listSql, /m\.id < next_journey\.started_message_id/);
+  assert.match(listSql, /m\.created_at < next_journey\.journey_created_at/);
 });
 
 test("rule-based temperature update is atomic and only claims a still-Warm lead", async (t) => {

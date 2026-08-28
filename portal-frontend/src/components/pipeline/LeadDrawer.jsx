@@ -10,6 +10,7 @@ import {
   displayName,
   buildLeadUpdatePayload,
   formatDateTime,
+  isNoReply,
   toDateTimeInput,
 } from "./pipelineUtils";
 
@@ -17,10 +18,10 @@ const inputClass =
   "w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15";
 const labelClass = "mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]";
 
-export default function LeadDrawer({ lead, stages, branches, owners, services, onClose, onSaved, onToast }) {
+export default function LeadDrawer({ lead, stages, branches, owners, services, now, noReplyHours, onClose, onSaved, onToast }) {
   const navigate = useNavigate();
   const [form, setForm] = useState(() => formFromLead(lead));
-  const [temperatureDirty, setTemperatureDirty] = useState(false);
+  const [dirtyFields, setDirtyFields] = useState(() => new Set());
   const [saving, setSaving] = useState(false);
   const [activities, setActivities] = useState(null);
   const [note, setNote] = useState("");
@@ -43,50 +44,55 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
   }, [lead.id, onToast]);
 
   useEffect(() => {
-    // Pipeline SSE updates can arrive while this drawer remains mounted. Keep
-    // the temperature current so a later full-form save cannot silently put an
-    // automatically updated lead back to the drawer's stale value.
-    if (!temperatureDirty) {
-      setForm((current) => ({
-        ...current,
-        temperature: lead.temperature || "warm",
-        temperatureLocked: lead.temperature_locked === true,
-        temperatureSource: lead.temperature_source || "system",
-      }));
-    }
-  }, [
-    lead.temperature,
-    lead.temperature_locked,
-    lead.temperature_source,
-    temperatureDirty,
-  ]);
+    // Keep untouched controls current when another staff member or automation
+    // changes the lead. Locally edited fields stay intact until they are saved.
+    const latest = formFromLead(lead);
+    setForm((current) => {
+      const merged = { ...current };
+      for (const [key, value] of Object.entries(latest)) {
+        if (!dirtyFields.has(key)) merged[key] = value;
+      }
+      if (
+        dirtyFields.has("temperature") ||
+        dirtyFields.has("temperatureLocked")
+      ) {
+        merged.temperatureSource = current.temperatureSource;
+      }
+      return merged;
+    });
+  }, [lead, dirtyFields]);
 
   const selectedStage = useMemo(
     () => stages.find((stage) => Number(stage.id) === Number(form.stageId)),
     [form.stageId, stages]
   );
 
+  function markDirty(...keys) {
+    setDirtyFields((current) => new Set([...current, ...keys]));
+  }
+
   function update(key, value) {
     setForm((current) => ({ ...current, [key]: value }));
+    markDirty(key);
   }
 
   function updateTemperature(value) {
-    setTemperatureDirty(true);
     setForm((current) => ({
       ...current,
       temperature: value,
       temperatureLocked: true,
       temperatureSource: "manual",
     }));
+    markDirty("temperature", "temperatureLocked");
   }
 
   function updateTemperatureLock(allowAutomatic) {
-    setTemperatureDirty(true);
     setForm((current) => ({
       ...current,
       temperatureLocked: !allowAutomatic,
       temperatureSource: allowAutomatic ? current.temperatureSource : "manual",
     }));
+    markDirty("temperatureLocked");
   }
 
   function updateAppointmentStatus(value) {
@@ -99,6 +105,10 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
       if (matchingStage) next.stageId = String(matchingStage.id);
       return next;
     });
+    markDirty("appointmentStatus");
+    if (matchingStage && String(matchingStage.id) !== form.stageId) {
+      markDirty("stageId");
+    }
   }
 
   async function handleSave(event) {
@@ -107,11 +117,11 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
     try {
       const updated = await api.updateLead(
         lead.id,
-        buildLeadUpdatePayload(form, { includeTemperature: temperatureDirty })
+        buildLeadUpdatePayload(form, { dirtyFields })
       );
       onSaved(updated);
       setForm(formFromLead(updated));
-      setTemperatureDirty(false);
+      setDirtyFields(new Set());
       onToast("Lead updated.", "info");
       setActivities(await api.listLeadActivities(lead.id));
     } catch (err) {
@@ -166,7 +176,7 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
             >
               View conversation
             </button>
-            {lead.no_reply && <StatusPill tone="neutral">No customer reply</StatusPill>}
+            {isNoReply(lead, noReplyHours, now) && <StatusPill tone="neutral">No customer reply</StatusPill>}
             {lead.needs_attention && <StatusPill tone="danger">Needs attention</StatusPill>}
             {lead.is_unread && <StatusPill tone="primary">Unread</StatusPill>}
           </div>
@@ -267,7 +277,7 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, o
             </div>
 
             <div className="mt-5 flex justify-end">
-              <button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50">
+              <button type="submit" disabled={saving || dirtyFields.size === 0} className="inline-flex items-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50">
                 {saving && <Spinner className="h-4 w-4" />}
                 {saving ? "Saving…" : "Save changes"}
               </button>
