@@ -1,8 +1,9 @@
 const https = require("https");
-const { pool } = require("../db/db");
+const telegramAlertRepo = require("../db/telegramAlertRepo");
 
 const TELEGRAM_MESSAGE_LIMIT = 4000;
 const TELEGRAM_TIMEOUT_MS = 8000;
+const TELEGRAM_FLUSH_BATCH_SIZE = 5;
 
 function isTelegramEnabled(env = process.env) {
   return (
@@ -142,45 +143,67 @@ function postTelegramMessage({ token, chatId, text }) {
   });
 }
 
-async function getLeadAlertContext(leadId, query = pool.query.bind(pool)) {
-  const result = await query(
-    `SELECT
-       l.id, l.contact_id, l.temperature, l.branch_name, l.treatment_interest,
-       l.appointment_at, l.appointment_status,
-       s.name AS stage_name,
-       c.whatsapp_number, c.name, c.whatsapp_profile_name
-     FROM leads l
-     JOIN pipeline_stages s ON s.id = l.stage_id
-     JOIN contacts c ON c.id = l.contact_id
-     WHERE l.id = $1`,
-    [leadId]
-  );
-  return result.rows[0] || null;
-}
-
 function createTelegramAlertService({
   env = process.env,
-  getLeadContext = getLeadAlertContext,
+  repository = telegramAlertRepo,
   sendMessage = postTelegramMessage,
 } = {}) {
   return {
-    async sendConversationSummary({ leadId, score }) {
+    async queueConversationSummary({ leadId, throughMessageId, score }) {
       if (!isTelegramEnabled(env)) {
         return { status: "disabled" };
       }
+      const queued = await repository.queueSummary({
+        leadId,
+        throughMessageId,
+        score,
+      });
+      return queued
+        ? { status: "queued", alertId: queued.id }
+        : { status: "already-queued" };
+    },
 
-      const lead = await getLeadContext(leadId);
-      if (!lead) {
-        return { status: "skipped", reason: "lead-not-found" };
+    async flushConversationSummaries({
+      inactivityMinutes,
+      limit = TELEGRAM_FLUSH_BATCH_SIZE,
+    }) {
+      if (!isTelegramEnabled(env)) {
+        return { status: "disabled", sent: 0 };
       }
 
-      const text = buildConversationSummaryMessage({ lead, score, env });
-      const result = await sendMessage({
-        token: env.TELEGRAM_BOT_TOKEN,
-        chatId: env.TELEGRAM_CHAT_ID,
-        text,
+      const candidates = await repository.findReadySummaries({
+        inactivityMinutes,
+        limit,
       });
-      return { status: "sent", result };
+      let sent = 0;
+
+      for (const candidate of candidates) {
+        const claim = await repository.claimSummary(candidate.alert_id);
+        if (!claim) continue;
+
+        try {
+          const text = buildConversationSummaryMessage({
+            lead: candidate,
+            score: candidate.score_data,
+            env,
+          });
+          await sendMessage({
+            token: env.TELEGRAM_BOT_TOKEN,
+            chatId: env.TELEGRAM_CHAT_ID,
+            text,
+          });
+          await repository.markSent(candidate.alert_id);
+          sent += 1;
+        } catch (err) {
+          await repository.markFailed(candidate.alert_id, err);
+          console.error(
+            `Telegram summary failed for lead ${candidate.lead_id}:`,
+            err
+          );
+        }
+      }
+
+      return { status: "completed", sent };
     },
   };
 }
@@ -188,12 +211,13 @@ function createTelegramAlertService({
 const defaultService = createTelegramAlertService();
 
 module.exports = {
+  TELEGRAM_FLUSH_BATCH_SIZE,
   TELEGRAM_MESSAGE_LIMIT,
   buildConversationSummaryMessage,
   createTelegramAlertService,
   formatWhatsappNumber,
-  getLeadAlertContext,
   isTelegramEnabled,
   postTelegramMessage,
-  sendConversationSummary: defaultService.sendConversationSummary,
+  queueConversationSummary: defaultService.queueConversationSummary,
+  flushConversationSummaries: defaultService.flushConversationSummaries,
 };
