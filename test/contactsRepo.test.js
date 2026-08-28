@@ -37,8 +37,15 @@ test("human attention state triggers an immediate Telegram alert without blockin
 
   pool.query = async (sql, params) => {
     assert.match(sql, /SET needs_attention = \$1/);
+    assert.match(sql, /AS attention_message_id/);
     assert.deepEqual(params, [true, "AI handed off this conversation.", 12]);
-    return { rows: [{ id: 12, attention_reason: "AI handed off this conversation." }] };
+    return {
+      rows: [{
+        id: 12,
+        attention_reason: "AI handed off this conversation.",
+        attention_message_id: 44,
+      }],
+    };
   };
 
   let alert = null;
@@ -53,6 +60,7 @@ test("human attention state triggers an immediate Telegram alert without blockin
   assert.equal(updated.id, 12);
   assert.deepEqual(alert, {
     contactId: 12,
+    messageId: 44,
     reason: "AI handed off this conversation.",
   });
 });
