@@ -202,6 +202,33 @@ test("reviewer does not reuse a stale clinic scheduling question", async () => {
   assert.equal(applyCalls, 0);
 });
 
+test("reviewer does not reuse scheduling context from a previous lead journey", async () => {
+  let applyCalls = 0;
+  const reviewer = createLeadTemperatureReviewer({
+    pipelineRepository: {
+      getActiveLeadForContact: async () => ({
+        id: 7,
+        temperature: "warm",
+        is_closed: false,
+        started_message_id: 100,
+      }),
+      applyRuleBasedTemperature: async () => {
+        applyCalls += 1;
+      },
+    },
+    messagesRepository: {
+      getMessagesForContact: async () => [
+        { id: 99, role: "assistant", content: "Which day would you like to visit?" },
+        { id: 100, role: "user", content: "Saturday" },
+      ],
+    },
+    getBranchNames: () => [],
+  });
+
+  assert.deepEqual(await reviewer(13, 100, "Saturday"), { status: "unchanged" });
+  assert.equal(applyCalls, 0);
+});
+
 test("reviewer leaves unclear messages Warm and skips staff-set temperatures", async () => {
   let applyCalls = 0;
   let historyCalls = 0;
