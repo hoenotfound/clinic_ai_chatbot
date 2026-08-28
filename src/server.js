@@ -31,6 +31,7 @@ const { pruneOrphanedPromoImages } = configRepo;
 const promoImagesRepo = require("./db/promoImagesRepo");
 const { initSchema } = require("./db/db");
 const { startAutomatedFollowUps } = require("./services/followUpService");
+const { startLeadScoring } = require("./services/leadScoringService");
 const {
   reviewLeadTemperatureForMessage,
 } = require("./services/leadTemperatureAutomation");
@@ -539,6 +540,11 @@ async function start() {
   // staff-configured follow-up delay without a customer reply. The service
   // is a no-op while the tool is disabled.
   startAutomatedFollowUps();
+
+  // Reviews eligible lead conversations after a quiet period or a configured
+  // ceiling. This runs outside the webhook response path, uses durable claims,
+  // and is a no-op until staff enables it in Tools.
+  startLeadScoring();
 }
 
 start().catch((err) => {

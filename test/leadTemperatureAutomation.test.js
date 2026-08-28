@@ -225,6 +225,34 @@ test("reviewer leaves unclear messages Warm and skips staff-set temperatures", a
   assert.equal(applyCalls, 0);
   assert.equal(historyCalls, 0);
 
+  const lockedReviewer = createLeadTemperatureReviewer({
+    pipelineRepository: {
+      getActiveLeadForContact: async () => ({
+        id: 10,
+        temperature: "warm",
+        temperature_locked: true,
+        is_closed: false,
+      }),
+      applyRuleBasedTemperature: async () => {
+        applyCalls += 1;
+      },
+    },
+    messagesRepository: {
+      getMessagesForContact: async () => {
+        historyCalls += 1;
+        return [];
+      },
+    },
+    getBranchNames: () => [],
+  });
+
+  assert.deepEqual(await lockedReviewer(16, 103, "Please book me tomorrow"), {
+    status: "skipped",
+    reason: "staff-controlled",
+  });
+  assert.equal(applyCalls, 0);
+  assert.equal(historyCalls, 0);
+
   const hotReviewer = createLeadTemperatureReviewer({
     pipelineRepository: {
       getActiveLeadForContact: async () => ({ id: 9, temperature: "hot", is_closed: false }),

@@ -284,12 +284,52 @@ test("rule-based temperature update is atomic and only claims a still-Warm lead"
   assert.equal(updated.temperature, "hot");
   const update = queries.find(({ sql }) => /UPDATE leads/.test(sql));
   assert.match(update.sql, /is_closed = false AND temperature = 'warm'/);
+  assert.match(update.sql, /temperature_locked = false/);
+  assert.match(update.sql, /temperature_source = 'rule'/);
   assert.deepEqual(update.params, [81, "hot"]);
   const activity = queries.find(({ sql }) => /INSERT INTO lead_activities/.test(sql));
   assert.equal(activity.params[3], "Rule automation");
   assert.equal(activity.params[4].source, "conversation_rules");
   assert.equal(activity.params[4].matchedRule, "booking_intent");
   assert.deepEqual(published, [{ event: "pipeline_changed", payload: { leadId: 81 } }]);
+});
+
+test("a staff temperature change locks out automatic updates", async (t) => {
+  const originalConnect = pool.connect;
+  const originalPublish = realtimeEvents.publish;
+  t.after(() => {
+    pool.connect = originalConnect;
+    realtimeEvents.publish = originalPublish;
+  });
+  let update = null;
+  const current = {
+    id: 84,
+    temperature: "warm",
+    temperature_locked: false,
+    stage_id: 1,
+    stage_name: "New Lead",
+    stage_type: "open",
+    is_closed: false,
+  };
+  pool.connect = async () => ({
+    query: async (sql, params) => {
+      if (/SELECT l\.\*, s\.name AS stage_name/.test(sql)) return { rows: [current] };
+      if (/UPDATE leads SET/.test(sql)) {
+        update = { sql, params };
+        return { rows: [{ ...current, temperature: "hot", temperature_locked: true }] };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  });
+  realtimeEvents.publish = () => {};
+
+  await pipelineRepo.updateLead(84, { temperature: "hot" }, "staff@example.com");
+
+  assert.match(update.sql, /temperature_locked/);
+  assert.match(update.sql, /temperature_source/);
+  assert.ok(update.params.includes(true));
+  assert.ok(update.params.includes("manual"));
 });
 
 test("rule-based temperature update cannot overwrite a lead that is no longer Warm", async (t) => {

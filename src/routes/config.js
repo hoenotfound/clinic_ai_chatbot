@@ -50,6 +50,7 @@ const VALIDATORS = {
   aiAssistantName: isNonEmptyString,
   introMessage: isNonEmptyString,
   automatedFollowUp: isAutomatedFollowUpConfig,
+  leadScoring: isLeadScoringConfig,
   tone: isString,
   messagingStyle: isString,
   closingPlaybook: isString,
@@ -120,6 +121,23 @@ function isFollowUpTranslations(value) {
   );
 }
 
+function isLeadScoringConfig(value) {
+  return (
+    isPlainObject(value) &&
+    typeof value.enabled === "boolean" &&
+    Number.isInteger(value.inactivityMinutes) &&
+    value.inactivityMinutes >= 5 &&
+    value.inactivityMinutes <= 30 &&
+    Number.isInteger(value.maxConversationMinutes) &&
+    value.maxConversationMinutes >= 30 &&
+    value.maxConversationMinutes <= 120 &&
+    Number.isInteger(value.maxMessages) &&
+    value.maxMessages >= 20 &&
+    value.maxMessages <= 80 &&
+    (value.activatedAt === null || !Number.isNaN(Date.parse(value.activatedAt)))
+  );
+}
+
 function prepareFollowUpTranslations(requested, fallbackMessage) {
   const input = isPlainObject(requested) ? requested : {};
   return Object.fromEntries(
@@ -172,6 +190,32 @@ function prepareAutomatedFollowUpConfig(requested, current) {
         : new Date().toISOString()
       : null,
   };
+}
+
+function prepareLeadScoringConfig(requested, current) {
+  if (!isPlainObject(requested)) return null;
+
+  const prepared = {
+    enabled: requested.enabled,
+    inactivityMinutes: Number(requested.inactivityMinutes),
+    maxConversationMinutes: Number(requested.maxConversationMinutes),
+    maxMessages: Number(requested.maxMessages),
+    activatedAt: null,
+  };
+  if (!isLeadScoringConfig(prepared)) return null;
+
+  const continuingCurrentActivation =
+    prepared.enabled &&
+    current?.enabled === true &&
+    typeof current.activatedAt === "string" &&
+    !Number.isNaN(Date.parse(current.activatedAt));
+
+  prepared.activatedAt = prepared.enabled
+    ? continuingCurrentActivation
+      ? current.activatedAt
+      : new Date().toISOString()
+    : null;
+  return prepared;
 }
 
 router.post("/automated-follow-up/translations", async (req, res) => {
@@ -282,6 +326,19 @@ router.patch("/", async (req, res) => {
         });
       }
       updates.automatedFollowUp = prepared;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, "leadScoring")) {
+      const prepared = prepareLeadScoringConfig(
+        updates.leadScoring,
+        configRepo.getConfig().leadScoring
+      );
+      if (!prepared) {
+        return res.status(400).json({
+          error: "Invalid lead scoring settings. Check the inactivity, duration, and message limits.",
+        });
+      }
+      updates.leadScoring = prepared;
     }
 
     const invalidKeys = keys.filter((k) => !VALIDATORS[k](updates[k]));

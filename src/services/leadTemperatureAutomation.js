@@ -207,6 +207,9 @@ function createLeadTemperatureReviewer({
     if (!lead || lead.temperature !== "warm") {
       return { status: "skipped", reason: "not-warm" };
     }
+    if (lead.temperature_locked) {
+      return { status: "skipped", reason: "staff-controlled" };
+    }
 
     const branchNames = getBranchNames();
     let classification = classifyTemperatureMessage({ messageText, branchNames });

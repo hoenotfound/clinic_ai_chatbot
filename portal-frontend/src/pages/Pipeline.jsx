@@ -14,6 +14,7 @@ const CATEGORY_OPTIONS = [
   ["all", "All leads"],
   ["hot", "Hot"],
   ["warm", "Warm"],
+  ["cold", "Cold"],
   ["unassigned", "Unassigned"],
   ["no_reply", "No reply"],
   ["reschedule", "Reschedule"],
@@ -296,7 +297,7 @@ export default function Pipeline() {
 
 function matchesCategory(lead, category) {
   if (category === "all") return true;
-  if (category === "hot" || category === "warm") return lead.temperature === category && !lead.is_closed;
+  if (["hot", "warm", "cold"].includes(category)) return lead.temperature === category && !lead.is_closed;
   if (category === "unassigned") return !lead.branch_name && !lead.is_closed;
   if (category === "no_reply") return !!lead.no_reply;
   if (category === "reschedule") return lead.appointment_status === "reschedule";

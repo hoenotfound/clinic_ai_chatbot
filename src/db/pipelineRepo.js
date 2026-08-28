@@ -51,7 +51,9 @@ async function getStageById(id, queryable = pool) {
 
 const LEAD_SELECT = `
   SELECT
-    l.id, l.contact_id, l.stage_id, l.notes, l.temperature, l.branch_name,
+    l.id, l.contact_id, l.stage_id, l.notes, l.temperature,
+    l.temperature_source, l.temperature_locked, l.last_temperature_scored_at,
+    l.last_temperature_scored_message_id, l.branch_name,
     l.owner_username, l.treatment_interest, l.estimated_value, l.source,
     l.campaign_name, l.appointment_status, l.appointment_at,
     l.next_follow_up_at, l.lost_reason, l.marketing_consent, l.is_closed,
@@ -268,19 +270,22 @@ async function createLead(data, actor) {
     const isClosed = stage.stage_type !== "open";
     const result = await client.query(
       `INSERT INTO leads (
-         contact_id, stage_id, temperature, branch_name, owner_username,
+         contact_id, stage_id, temperature, temperature_source,
+         temperature_locked, branch_name, owner_username,
          treatment_interest, estimated_value, source, campaign_name,
          appointment_status, appointment_at, next_follow_up_at,
          marketing_consent, is_closed, closed_at, created_by
        )
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-               CASE WHEN $14 THEN now() ELSE NULL END, $15)
+               $15, $16, CASE WHEN $16 THEN now() ELSE NULL END, $17)
        ON CONFLICT (contact_id) WHERE is_closed = false DO NOTHING
        RETURNING *`,
       [
         data.contactId,
         stage.id,
         data.temperature || "warm",
+        data.temperatureLocked ? "manual" : "system",
+        data.temperatureLocked === true,
         data.branchName || null,
         data.ownerUsername || null,
         data.treatmentInterest || null,
@@ -334,6 +339,7 @@ const PATCH_COLUMNS = {
 function describeChanges(current, patch) {
   const descriptions = [];
   if (Object.hasOwn(patch, "temperature") && patch.temperature !== current.temperature) descriptions.push(`Temperature set to ${patch.temperature}.`);
+  if (Object.hasOwn(patch, "temperatureLocked") && patch.temperatureLocked !== current.temperature_locked) descriptions.push(patch.temperatureLocked ? "Temperature locked for staff control." : "Automatic temperature updates enabled.");
   if (Object.hasOwn(patch, "branchName") && (patch.branchName || null) !== (current.branch_name || null)) descriptions.push(patch.branchName ? `Assigned to ${patch.branchName}.` : "Branch assignment cleared.");
   if (Object.hasOwn(patch, "ownerUsername") && (patch.ownerUsername || null) !== (current.owner_username || null)) descriptions.push(patch.ownerUsername ? `Owner changed to ${patch.ownerUsername}.` : "Lead owner cleared.");
   if (Object.hasOwn(patch, "treatmentInterest") && (patch.treatmentInterest || null) !== (current.treatment_interest || null)) descriptions.push(patch.treatmentInterest ? `Treatment interest set to ${patch.treatmentInterest}.` : "Treatment interest cleared.");
@@ -367,6 +373,20 @@ async function updateLead(id, patch, actor) {
     if (!current) return null;
 
     const changes = { ...patch };
+    const temperatureChanged =
+      Object.hasOwn(changes, "temperature") &&
+      changes.temperature !== current.temperature;
+    const lockChanged =
+      Object.hasOwn(changes, "temperatureLocked") &&
+      changes.temperatureLocked !== current.temperature_locked;
+    if (temperatureChanged) {
+      if (!Object.hasOwn(changes, "temperatureLocked")) {
+        changes.temperatureLocked = true;
+      }
+      changes.temperatureSource = "manual";
+    } else if (lockChanged && changes.temperatureLocked) {
+      changes.temperatureSource = "manual";
+    }
     let nextStage = null;
     if (Object.hasOwn(changes, "stageId")) {
       nextStage = await getStageById(changes.stageId, client);
@@ -404,6 +424,12 @@ async function updateLead(id, patch, actor) {
     if (Object.hasOwn(changes, "stageId")) addSetter("stage_id", changes.stageId);
     for (const [key, column] of Object.entries(PATCH_COLUMNS)) {
       if (Object.hasOwn(changes, key)) addSetter(column, changes[key]);
+    }
+    if (Object.hasOwn(changes, "temperatureLocked")) {
+      addSetter("temperature_locked", changes.temperatureLocked);
+    }
+    if (Object.hasOwn(changes, "temperatureSource")) {
+      addSetter("temperature_source", changes.temperatureSource);
     }
     if (Object.hasOwn(changes, "isClosed")) addSetter("is_closed", changes.isClosed);
     if (Object.hasOwn(changes, "closedAt")) addSetter("closed_at", changes.closedAt);
@@ -449,8 +475,9 @@ async function applyRuleBasedTemperature(id, classification) {
   const updatedLead = await withTransaction(async (client) => {
     const result = await client.query(
       `UPDATE leads
-       SET temperature = $2, updated_at = now()
+       SET temperature = $2, temperature_source = 'rule', updated_at = now()
        WHERE id = $1 AND is_closed = false AND temperature = 'warm'
+         AND temperature_locked = false
        RETURNING *`,
       [id, classification.temperature]
     );

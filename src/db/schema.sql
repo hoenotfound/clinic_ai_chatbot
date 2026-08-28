@@ -126,6 +126,7 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS automated_follow_up_for_message_id
 CREATE INDEX IF NOT EXISTS idx_messages_contact_id ON messages(contact_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_contact_created_at_id ON messages(contact_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_contact_id_desc ON messages(contact_id, id DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_one_automated_follow_up_per_trigger
   ON messages(automated_follow_up_for_message_id)
   WHERE automated_follow_up_for_message_id IS NOT NULL;
@@ -250,6 +251,11 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS marketing_consent TEXT NOT NULL DEFAU
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS is_closed BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS created_by TEXT;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS temperature_source TEXT NOT NULL DEFAULT 'system'
+  CHECK (temperature_source IN ('system', 'rule', 'ai', 'manual'));
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS temperature_locked BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_temperature_scored_at TIMESTAMPTZ;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_temperature_scored_message_id INTEGER REFERENCES messages(id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_one_open_per_contact
   ON leads(contact_id)
@@ -259,6 +265,37 @@ CREATE INDEX IF NOT EXISTS idx_leads_branch ON leads(branch_name) WHERE branch_n
 CREATE INDEX IF NOT EXISTS idx_leads_follow_up
   ON leads(next_follow_up_at)
   WHERE is_closed = false AND next_follow_up_at IS NOT NULL;
+
+-- Durable queue and audit history for end-of-conversation AI scoring. The
+-- unique lead/message pair is the idempotency key, so webhook retries or two
+-- Render instances cannot score the same transcript snapshot twice.
+CREATE TABLE IF NOT EXISTS lead_temperature_scores (
+  id SERIAL PRIMARY KEY,
+  lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  through_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('inactivity', 'time_ceiling', 'message_ceiling')),
+  status TEXT NOT NULL DEFAULT 'processing'
+    CHECK (status IN ('processing', 'completed', 'superseded', 'failed', 'cancelled')),
+  temperature TEXT CHECK (temperature IN ('hot', 'warm', 'cold')),
+  confidence TEXT CHECK (confidence IN ('high', 'medium', 'low')),
+  reason TEXT,
+  evidence_message_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  provider TEXT,
+  model TEXT,
+  prompt_version TEXT,
+  applied BOOLEAN NOT NULL DEFAULT false,
+  attempts INTEGER NOT NULL DEFAULT 1,
+  error_text TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (lead_id, through_message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lead_temperature_scores_latest
+  ON lead_temperature_scores(lead_id, through_message_id DESC);
+CREATE INDEX IF NOT EXISTS idx_lead_temperature_scores_recovery
+  ON lead_temperature_scores(status, updated_at)
+  WHERE status IN ('processing', 'failed');
 
 CREATE TABLE IF NOT EXISTS lead_stage_history (
   id SERIAL PRIMARY KEY,

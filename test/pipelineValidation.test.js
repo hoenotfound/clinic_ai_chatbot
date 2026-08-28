@@ -13,6 +13,7 @@ test("normalizes a complete lead payload", () => {
     contactId: "7",
     stageId: "3",
     temperature: "hot",
+    temperatureLocked: true,
     branchName: "  Puchong  ",
     estimatedValue: "1288.50",
     appointmentStatus: "set",
@@ -22,6 +23,7 @@ test("normalizes a complete lead payload", () => {
 
   assert.equal(result.contactId, 7);
   assert.equal(result.stageId, 3);
+  assert.equal(result.temperatureLocked, true);
   assert.equal(result.branchName, "Puchong");
   assert.equal(result.estimatedValue, 1288.5);
   assert.equal(result.appointmentAt, "2026-09-02T03:00:00.000Z");
@@ -45,6 +47,10 @@ test("rejects invalid lead states and empty updates", () => {
   assert.throws(
     () => normalizeLeadPayload({ contactId: 7, appointmentAt: "not-a-date" }),
     /Appointment date is invalid/
+  );
+  assert.throws(
+    () => normalizeLeadPayload({ contactId: 7, temperatureLocked: "yes" }),
+    /Temperature automation setting is invalid/
   );
   assert.throws(
     () => normalizeLeadPayload({}, { partial: true }),
