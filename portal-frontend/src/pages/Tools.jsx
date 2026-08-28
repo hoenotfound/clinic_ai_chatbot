@@ -131,12 +131,13 @@ export default function Tools() {
     : hasUnsavedChanges
       ? "You have unsaved changes"
       : "All changes saved";
-  const automationStatus = form.enabled
-    ? hasUnsavedChanges
+  const enabledStateChanged = form.enabled !== savedEnabled;
+  const automationStatus = enabledStateChanged
+    ? form.enabled
       ? "Will run after saving"
-      : "Currently active"
-    : savedEnabled && hasUnsavedChanges
-      ? "Will pause after saving"
+      : "Will pause after saving"
+    : savedEnabled
+      ? "Currently active"
       : "Currently paused";
 
   async function handleGenerateTranslations() {
@@ -260,7 +261,10 @@ export default function Tools() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-[var(--color-bg)]">
+    <div className="flex h-full flex-col bg-[var(--color-bg)] lg:flex-row">
+      <ToolsSidebar active={savedEnabled} />
+
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
         <div className="mx-auto max-w-6xl pb-10">
           <header className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
@@ -270,7 +274,7 @@ export default function Tools() {
               </p>
               <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
                 <h1 className="font-display text-2xl font-bold sm:text-3xl">Automated follow-up</h1>
-                <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${hasUnsavedChanges ? "bg-[var(--color-accent-light)] text-[var(--color-accent)]" : savedEnabled ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)]"}`}>
+                <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${hasUnsavedChanges ? "bg-[var(--color-accent-light)] text-[var(--color-text)]" : savedEnabled ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)]"}`}>
                   {hasUnsavedChanges ? "Unsaved" : savedEnabled ? "Active" : "Paused"}
                 </span>
               </div>
@@ -317,7 +321,7 @@ export default function Tools() {
             />
           </section>
 
-          <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
+          <div className="mt-5 grid gap-5 2xl:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
             <div className="space-y-5">
               <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:p-6">
                 <SectionHeading
@@ -389,7 +393,7 @@ export default function Tools() {
                     title="Write the message"
                     description="Create one source message, then review the versions customers may receive."
                   />
-                  <span className={`inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ${translationsNeedReview ? "bg-[var(--color-accent-light)] text-[var(--color-accent)]" : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"}`}>
+                  <span className={`inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ${translationsNeedReview ? "bg-[var(--color-accent-light)] text-[var(--color-text)]" : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"}`}>
                     {!translationsNeedReview && <CheckIcon className="h-3 w-3" />}
                     {sourceMessageChanged
                       ? "Needs regeneration"
@@ -434,8 +438,8 @@ export default function Tools() {
                   </div>
 
                   {translationsNeedReview && (
-                    <div className="mt-3 flex items-start gap-2 rounded-xl bg-[var(--color-accent-light)] px-3 py-2.5 text-[11px] leading-5 text-[var(--color-accent)]">
-                      <AlertIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <div className="mt-3 flex items-start gap-2 rounded-xl bg-[var(--color-accent-light)] px-3 py-2.5 text-[11px] leading-5 text-[var(--color-text)]">
+                      <AlertIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-accent)]" />
                       <p>
                         {sourceMessageChanged
                           ? "The source message changed. Generate fresh language versions before saving."
@@ -552,7 +556,7 @@ export default function Tools() {
               </section>
             </div>
 
-            <aside className="space-y-5 xl:sticky xl:top-6 xl:self-start">
+            <aside className="space-y-5 2xl:sticky 2xl:top-6 2xl:self-start">
               <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)]">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -598,7 +602,7 @@ export default function Tools() {
         <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-2.5">
             <span className={`h-2 w-2 shrink-0 rounded-full ${translationsNeedReview || hasUnsavedChanges ? "bg-[var(--color-accent)]" : "bg-[var(--color-primary)]"}`} />
-            <p className={`truncate text-xs font-medium ${translationsNeedReview ? "text-[var(--color-accent)]" : "text-[var(--color-text-muted)]"}`}>
+            <p className={`truncate text-xs font-medium ${translationsNeedReview ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
               {saveStatus}
             </p>
           </div>
@@ -613,8 +617,90 @@ export default function Tools() {
           </button>
         </div>
       </footer>
+      </div>
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+    </div>
+  );
+}
+
+function ToolsSidebar({ active }) {
+  return (
+    <aside className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] p-4 lg:h-full lg:w-72 lg:border-b-0 lg:border-r lg:p-5">
+      <div className="flex items-start justify-between gap-3 lg:block">
+        <div>
+          <p className="font-display text-xl font-bold">Tools</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+            Automations that help your team follow up and convert more customers.
+          </p>
+        </div>
+        <span className="mt-0.5 shrink-0 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-[10px] font-semibold text-[var(--color-primary)] lg:hidden">
+          More coming
+        </span>
+      </div>
+
+      <nav className="mt-4 flex gap-2 overflow-x-auto pb-1 lg:mt-5 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0" aria-label="Available tools">
+        <button
+          type="button"
+          className="flex w-full min-w-[13.5rem] items-start gap-3 rounded-2xl border border-[var(--color-primary)]/15 bg-[var(--color-primary-light)] p-3.5 text-left lg:min-w-0"
+          aria-current="page"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-[var(--color-primary)] shadow-sm">
+            <ClockIcon className="h-5 w-5" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold text-[var(--color-text)]">Automated follow-up</span>
+            <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">
+              Follow up when a customer goes quiet
+            </span>
+          </span>
+          <span
+            className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${active ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`}
+            title={active ? "Active" : "Paused"}
+          />
+        </button>
+
+        <p className="hidden px-1 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)] lg:block">
+          Coming soon
+        </p>
+        <ComingSoonTool
+          icon={<CalendarIcon className="h-5 w-5" />}
+          title="Appointment reminders"
+          description="Reduce missed bookings automatically"
+        />
+        <ComingSoonTool
+          icon={<MegaphoneIcon className="h-5 w-5" />}
+          title="Promotional campaigns"
+          description="Send offers to selected customers"
+        />
+        <ComingSoonTool
+          icon={<StarIcon className="h-5 w-5" />}
+          title="Review requests"
+          description="Ask happy customers for a review"
+        />
+      </nav>
+    </aside>
+  );
+}
+
+function ComingSoonTool({ icon, title, description }) {
+  return (
+    <div
+      className="flex w-full min-w-[13.5rem] items-start gap-3 rounded-2xl border border-[var(--color-border)] bg-white p-3.5 lg:min-w-0"
+      aria-disabled="true"
+    >
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--color-bg)] text-[var(--color-text-muted)]">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs font-semibold text-[var(--color-text)]">{title}</span>
+          <span className="rounded bg-[var(--color-bg)] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+            Soon
+          </span>
+        </span>
+        <span className="mt-1 block text-[10px] leading-4 text-[var(--color-text-muted)]">{description}</span>
+      </span>
     </div>
   );
 }
@@ -709,6 +795,31 @@ function LanguageIcon(props) {
     <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
       <circle cx="12" cy="12" r="9" />
       <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function CalendarIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M8 3v4M16 3v4M3 10h18" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function MegaphoneIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="m3 11 14-6v14L3 13zM17 9a4 4 0 0 1 0 6M6 14l1.5 6h3L9 13" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function StarIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" strokeLinejoin="round" />
     </svg>
   );
 }
