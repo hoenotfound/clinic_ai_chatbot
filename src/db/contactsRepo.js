@@ -14,33 +14,33 @@ function publishContactChange(id) {
 }
 
 async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
+  const profileName = whatsappProfileName?.trim() || null;
+  const inserted = await pool.query(
+    `INSERT INTO contacts (whatsapp_number, whatsapp_profile_name)
+     VALUES ($1, $2)
+     ON CONFLICT (whatsapp_number) DO NOTHING
+     RETURNING *`,
+    [whatsappNumber, profileName]
+  );
+  if (inserted.rows[0]) return inserted.rows[0];
+
+  if (profileName) {
+    const updated = await pool.query(
+      `UPDATE contacts
+       SET whatsapp_profile_name = $2, updated_at = now()
+       WHERE whatsapp_number = $1
+         AND whatsapp_profile_name IS DISTINCT FROM $2
+       RETURNING *`,
+      [whatsappNumber, profileName]
+    );
+    if (updated.rows[0]) return updated.rows[0];
+  }
+
   const existing = await pool.query(
     "SELECT * FROM contacts WHERE whatsapp_number = $1",
     [whatsappNumber]
   );
-  if (existing.rows[0]) {
-    const contact = existing.rows[0];
-    const profileName = whatsappProfileName?.trim() || null;
-
-    if (profileName && profileName !== contact.whatsapp_profile_name) {
-      const updated = await pool.query(
-        `UPDATE contacts
-         SET whatsapp_profile_name = $1, updated_at = now()
-         WHERE id = $2
-         RETURNING *`,
-        [profileName, contact.id]
-      );
-      return updated.rows[0];
-    }
-
-    return contact;
-  }
-
-  const inserted = await pool.query(
-    "INSERT INTO contacts (whatsapp_number, whatsapp_profile_name) VALUES ($1, $2) RETURNING *",
-    [whatsappNumber, whatsappProfileName?.trim() || null]
-  );
-  return inserted.rows[0];
+  return existing.rows[0];
 }
 
 async function getContactById(id) {

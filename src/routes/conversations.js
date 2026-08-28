@@ -543,12 +543,9 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       return res.status(502).json({ error: "Failed to upload image to WhatsApp. Please try again." });
     }
 
-    const sendResult = await whatsapp.sendImageById(
-      contact.whatsapp_number,
-      mediaId,
-      caption || undefined
-    );
-
+    // Save before asking WhatsApp to deliver it. If Postgres fails, the
+    // customer must not receive an image that the Inbox cannot show, track,
+    // or retry.
     const saved = await conversationStore.appendMessage(
       contact.whatsapp_number,
       "assistant",
@@ -557,6 +554,12 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       req.session.username,
       null,
       { mimeType: req.file.mimetype, data: req.file.buffer.toString("base64") }
+    );
+
+    const sendResult = await whatsapp.sendImageById(
+      contact.whatsapp_number,
+      mediaId,
+      caption || undefined
     );
     const finalMessage = await persistSendOutcome(saved, sendResult);
     if (!sendResult.success) {

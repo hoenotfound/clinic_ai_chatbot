@@ -15,6 +15,7 @@ const messagesRepo = require("./db/messagesRepo");
 const contactsRepo = require("./db/contactsRepo");
 const { checkKeywordTriggers, extractHandoffSignal } = require("./utils/attentionTriggers");
 const realtimeEvents = require("./utils/realtimeEvents");
+const { enqueueConversation } = require("./utils/conversationQueue");
 const { verifyWebhookSignature } = require("./middleware/verifyWebhookSignature");
 const { requireAuth } = require("./middleware/requireAuth");
 
@@ -56,6 +57,248 @@ async function persistSendOutcome(savedMessage, sendResult, errorText = SEND_REJ
   }
   publishDeliveryStatus(updated);
   return updated || savedMessage;
+}
+
+async function sendTrackedText(contact, text) {
+  const saved = await conversationStore.appendMessageForContact(
+    contact.id,
+    "assistant",
+    text
+  );
+  const sendResult = await whatsapp.sendMessage(contact.whatsapp_number, text);
+  const finalMessage = await persistSendOutcome(saved, sendResult);
+
+  if (!sendResult.success) {
+    await contactsRepo.setDeliveryAttention(
+      contact.id,
+      `Delivery failed: ${SEND_REJECTED_ERROR}`
+    );
+  }
+
+  return { finalMessage, sendResult };
+}
+
+function initialInboundText(incoming) {
+  if (incoming.unsupportedType) {
+    return `📎 [Patient sent an unsupported ${incoming.unsupportedType} message]`;
+  }
+  if (incoming.mediaType === "audio") return "🎤 [Patient sent a voice message]";
+  if (incoming.mediaType === "image") {
+    return incoming.text ? `📷 ${incoming.text}` : "📷 [Patient sent a photo]";
+  }
+  return incoming.text || "[Patient sent an empty message]";
+}
+
+async function processIncomingMessage(incoming) {
+  const { id, from, profileName, mediaId, mediaType, unsupportedType } = incoming;
+  let contact = null;
+  let savedInbound = null;
+  let responseAttempted = false;
+
+  try {
+    contact = await contactsRepo.getOrCreateContact(from, profileName);
+
+    // This INSERT is the durable webhook claim. It happens before media or AI
+    // work and uses ON CONFLICT, so simultaneous Meta retries cannot both send
+    // a response. The placeholder also makes a failed media operation visible
+    // in the Inbox instead of silently dropping the patient's message.
+    savedInbound = await conversationStore.appendInboundMessageIfNew(
+      contact.id,
+      initialInboundText(incoming),
+      id
+    );
+    if (!savedInbound) {
+      console.log(`Skipping duplicate/retried message ${id}`);
+      return;
+    }
+
+    await contactsRepo.setUnread(contact.id, true);
+
+    if (unsupportedType) {
+      await contactsRepo.setAttention(
+        contact.id,
+        true,
+        `Unsupported WhatsApp message (${unsupportedType}) needs staff review.`
+      );
+      responseAttempted = true;
+      await sendTrackedText(
+        contact,
+        "Sorry, I can only read text, voice, or photo messages for now — could you type that out for me? 🙂"
+      );
+      return;
+    }
+
+    let text = incoming.text || "";
+    let mediaAttachment = null;
+
+    if (mediaType === "audio") {
+      const media = mediaId ? await whatsapp.downloadMedia(mediaId) : null;
+      const [transcript, mp3] = media
+        ? await Promise.all([
+            transcribeAudio(media.buffer, media.mimeType),
+            convertToMp3(media.buffer),
+          ])
+        : [null, null];
+
+      if (media) {
+        mediaAttachment = mp3
+          ? { mimeType: mp3.mimeType, data: mp3.buffer.toString("base64") }
+          : {
+              mimeType: media.mimeType.split(";")[0].trim(),
+              data: media.buffer.toString("base64"),
+            };
+      }
+
+      if (!transcript) {
+        await conversationStore.updateInboundMessage(
+          contact.id,
+          savedInbound.id,
+          "🎤 [Voice message could not be transcribed]",
+          mediaAttachment
+        );
+        await contactsRepo.setAttention(
+          contact.id,
+          true,
+          "A patient voice message could not be transcribed."
+        );
+        responseAttempted = true;
+        await sendTrackedText(
+          contact,
+          "Sorry, I couldn't quite catch that voice message — mind typing it out, or sending the voice note again? 🙂"
+        );
+        return;
+      }
+
+      text = `🎤 ${transcript}`;
+      await conversationStore.updateInboundMessage(
+        contact.id,
+        savedInbound.id,
+        text,
+        mediaAttachment
+      );
+    }
+
+    if (mediaType === "image") {
+      const media = mediaId ? await whatsapp.downloadMedia(mediaId) : null;
+      if (!media) {
+        await contactsRepo.setAttention(
+          contact.id,
+          true,
+          "A patient photo could not be downloaded."
+        );
+        responseAttempted = true;
+        await sendTrackedText(
+          contact,
+          "Sorry, I couldn't load that photo — mind sending it again? 🙂"
+        );
+        return;
+      }
+
+      mediaAttachment = {
+        mimeType: media.mimeType,
+        data: media.buffer.toString("base64"),
+      };
+      text = incoming.text ? `📷 ${incoming.text}` : "📷 [Patient sent a photo]";
+      await conversationStore.updateInboundMessage(
+        contact.id,
+        savedInbound.id,
+        text,
+        mediaAttachment
+      );
+    }
+
+    const keywordReason = checkKeywordTriggers(text);
+    if (keywordReason) {
+      await contactsRepo.setAttention(contact.id, true, keywordReason);
+    }
+
+    // Re-read ownership after media processing. Staff may have taken over
+    // while a download or transcription was running.
+    const currentContact = await contactsRepo.getContactById(contact.id);
+    if (!currentContact) throw new Error(`Contact ${contact.id} disappeared during processing.`);
+    contact = currentContact;
+
+    if (contact.mode === "human") {
+      if (!keywordReason) {
+        await contactsRepo.setAttention(
+          contact.id,
+          true,
+          "New message — conversation is staff-owned."
+        );
+      }
+      console.log(`Skipping AI reply for ${from} — conversation is in human mode.`);
+      return;
+    }
+
+    const history = await conversationStore.getHistoryForContact(contact.id);
+    const isFirstMessage = history.length === 1;
+    const rawAiReply = await ai.getReply(history, isFirstMessage);
+    const { text: aiReply, flagged } = extractHandoffSignal(rawAiReply);
+
+    if (flagged) {
+      await contactsRepo.setAttention(
+        contact.id,
+        true,
+        "AI handed off this conversation."
+      );
+    }
+
+    const reply = isFirstMessage
+      ? `${clinicConfig.introMessage}\n\n${aiReply}`
+      : aiReply;
+
+    responseAttempted = true;
+    await sendTrackedText(contact, reply);
+
+    if (isFirstMessage) {
+      const promo = getActivePromotion(clinicConfig.promotions);
+      if (promo) {
+        const savedPromo = await conversationStore.appendMessageForContact(
+          contact.id,
+          "assistant",
+          promo.caption || "",
+          null,
+          null,
+          promo.imageUrl
+        );
+        const promoResult = await whatsapp.sendImage(from, promo.imageUrl, promo.caption);
+        await persistSendOutcome(savedPromo, promoResult);
+        if (!promoResult.success) {
+          console.warn(`Promo image failed to send to ${from}, continuing without it.`);
+          await contactsRepo.setDeliveryAttention(
+            contact.id,
+            `Delivery failed: ${SEND_REJECTED_ERROR}`
+          );
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`Error handling incoming message ${id || "without id"}:`, err);
+
+    if (contact && savedInbound) {
+      try {
+        await contactsRepo.setAttention(
+          contact.id,
+          true,
+          "Message processing failed. A staff reply is needed."
+        );
+      } catch (attentionErr) {
+        console.error("Failed to flag the conversation after a processing error:", attentionErr);
+      }
+    }
+
+    if (contact && savedInbound && !responseAttempted) {
+      try {
+        responseAttempted = true;
+        await sendTrackedText(
+          contact,
+          "Sorry, something went wrong on our end — a team member will follow up with you shortly!"
+        );
+      } catch (fallbackErr) {
+        console.error("Failed to save or send the fallback message:", fallbackErr);
+      }
+    }
+  }
 }
 
 const app = express();
@@ -137,6 +380,15 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   // or Meta may retry/resend the same message.
   res.sendStatus(200);
 
+  // Put inbound messages in their per-customer queue before awaiting any
+  // delivery-status database work. This preserves request arrival order even
+  // when Meta sends messages and status callbacks in the same webhook batch.
+  const incomingWork = Promise.all(
+    whatsapp.parseIncomingMessages(req.body).map((incoming) =>
+      enqueueConversation(incoming.from, () => processIncomingMessage(incoming))
+    )
+  );
+
   // ── Async delivery-status callbacks (sent/delivered/read/failed) ──
   // A 200 OK from the earlier send call only meant Meta *accepted* the
   // request — this is where the real outcome shows up, separately and
@@ -174,185 +426,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
     }
   }
 
-  const incomingMessages = whatsapp.parseIncomingMessages(req.body);
-
-  for (const incoming of incomingMessages) {
-    const { id, from, profileName, mediaId, mediaType, unsupportedType } = incoming;
-    let text = incoming.text;
-    let mediaAttachment = null; // patient photo or voice note audio, persisted via appendMessage below
-
-    // Persisted dedup check (survives restarts) — the messages table has a
-    // unique constraint on whatsapp_message_id, this is just a friendlier
-    // early-exit than catching that constraint error.
-    if (await messagesRepo.messageExistsByWhatsappId(id)) {
-      console.log(`Skipping duplicate/retried message ${id}`);
-      continue;
-    }
-
-    try {
-      if (unsupportedType) {
-        await whatsapp.sendMessage(
-          from,
-          "Sorry, I can only read text, voice, or photo messages for now — could you type that out for me? 🙂"
-        );
-        continue;
-      }
-
-      // Voice note: download from WhatsApp and transcribe (English / Bahasa
-      // Malaysia / Chinese, incl. mixed-language "Manglish" speech), then
-      // treat it exactly like a text message from here on. Also persist a
-      // playable copy of the audio (base64, in Postgres — see schema.sql) so
-      // staff can play the original recording in the Inbox — useful since
-      // transcription isn't perfect, especially with mixed languages or
-      // medical/treatment names, and tone/urgency don't come through in
-      // text. WhatsApp voice notes are Ogg/Opus, which Safari can't play at
-      // all, so we transcode to MP3 for storage/playback; transcription
-      // itself uses the original audio, since that format is irrelevant to Gemini.
-      if (mediaType === "audio") {
-        const media = await whatsapp.downloadMedia(mediaId);
-        const transcript = media ? await transcribeAudio(media.buffer, media.mimeType) : null;
-
-        if (!transcript) {
-          await whatsapp.sendMessage(
-            from,
-            "Sorry, I couldn't quite catch that voice message — mind typing it out, or sending the voice note again? 🙂"
-          );
-          continue;
-        }
-        text = `🎤 ${transcript}`;
-
-        const mp3 = await convertToMp3(media.buffer);
-        mediaAttachment = mp3
-          ? { mimeType: mp3.mimeType, data: mp3.buffer.toString("base64") }
-          // Conversion failing shouldn't block the reply — fall back to the
-          // original audio (playable in Chrome/Firefox/Edge, just not
-          // Safari) rather than losing playback entirely. Mime type is
-          // sanitized (no "; codecs=opus" param) so it's still a valid data URI.
-          : { mimeType: media.mimeType.split(";")[0].trim(), data: media.buffer.toString("base64") };
-      }
-
-      // Photo: download and persist it (base64, in Postgres — see schema.sql)
-      // so it shows in the Inbox and so the AI can still look at it in later
-      // turns, not just the turn it arrived on. The AI already has a
-      // guardrail (clinicConfig guardrails) against assessing treatment
-      // suitability from a photo — it can comment on/discuss it, but hands
-      // off medical judgment calls to a doctor same as it would for a text
-      // question.
-      if (mediaType === "image") {
-        const media = await whatsapp.downloadMedia(mediaId);
-        if (!media) {
-          await whatsapp.sendMessage(
-            from,
-            "Sorry, I couldn't load that photo — mind sending it again? 🙂"
-          );
-          continue;
-        }
-        mediaAttachment = { mimeType: media.mimeType, data: media.buffer.toString("base64") };
-        text = text ? `📷 ${text}` : "📷 [Patient sent a photo]";
-      }
-
-      console.log(`Incoming from ${from}: ${text}`);
-
-      // Fetch (or create) the contact first — we need its current mode
-      // before deciding whether the AI should even respond.
-      const contact = await contactsRepo.getOrCreateContact(from, profileName);
-
-      // Save the patient's message first, independent of whether the AI
-      // reply succeeds — so it always shows in the inbox, even on failure.
-      await conversationStore.appendMessage(from, "user", text, id, null, null, mediaAttachment);
-      await contactsRepo.setUnread(contact.id, true);
-
-      // Keyword safety-net — runs on every inbound message regardless of
-      // mode, so urgent messages get flagged even if a human already owns
-      // the conversation. See utils/attentionTriggers.js.
-      const keywordReason = checkKeywordTriggers(text);
-      if (keywordReason) {
-        await contactsRepo.setAttention(contact.id, true, keywordReason);
-      }
-
-      // ── Human takeover: a staff member owns this conversation ──
-      // The AI stays completely silent — no auto-reply, no promo. Staff
-      // reply manually from the portal until they hit "Return to AI".
-      // We still flag needs_attention (above, if triggered, or here
-      // unconditionally) so staff know there's a new unread message.
-      if (contact.mode === "human") {
-        if (!keywordReason) {
-          await contactsRepo.setAttention(contact.id, true, "New message — conversation is staff-owned.");
-        }
-        console.log(`Skipping AI reply for ${from} — conversation is in human mode.`);
-        continue;
-      }
-
-      const history = await conversationStore.getHistory(from); // now includes the message just saved
-
-      // history.length === 1 means this save was the very first message this
-      // patient has ever sent — a reliable, code-level check (not something
-      // left to the AI to remember). This guarantees the intro is correct
-      // and present 100% of the time, with zero chance of the model skipping
-      // it, leaving a placeholder in, or getting the clinic name wrong.
-      const isFirstMessage = history.length === 1;
-
-      const rawAiReply = await ai.getReply(history, isFirstMessage);
-
-      // Strip the internal [[NEEDS_HUMAN]] marker (see systemPrompt.js) —
-      // the patient never sees it, but it tells us to flag this chat.
-      const { text: aiReply, flagged } = extractHandoffSignal(rawAiReply);
-      if (flagged) {
-        await contactsRepo.setAttention(contact.id, true, "AI handed off this conversation.");
-      }
-
-      const reply = isFirstMessage
-        ? `${clinicConfig.introMessage}\n\n${aiReply}`
-        : aiReply;
-
-      const savedReply = await conversationStore.appendMessage(from, "assistant", reply);
-
-      const replyResult = await whatsapp.sendMessage(from, reply);
-      await persistSendOutcome(savedReply, replyResult);
-      if (!replyResult.success) {
-        await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${SEND_REJECTED_ERROR}`);
-      }
-      console.log(`Replied to ${from}: ${reply}`);
-
-      // Promo graphic — first message only, code-triggered (see comment above
-      // for why this can't be left to the AI to decide). Sent AFTER the text
-      // reply so the patient's actual question gets answered first and the
-      // image reinforces it, not the other way round.
-      if (isFirstMessage) {
-        const promo = getActivePromotion(clinicConfig.promotions);
-        if (promo) {
-          // Save first so an immediate rejection still appears as failed in
-          // the Inbox and staff can retry the same promo message.
-          const savedPromo = await conversationStore.appendMessage(
-            from,
-            "assistant",
-            promo.caption || "",
-            null,
-            null,
-            promo.imageUrl
-          );
-          const promoResult = await whatsapp.sendImage(from, promo.imageUrl, promo.caption);
-          await persistSendOutcome(savedPromo, promoResult);
-          // Never throw on a failed promo image — the text reply already
-          // succeeded and that's what actually matters to the patient.
-          if (!promoResult.success) {
-            console.warn(`Promo image failed to send to ${from}, continuing without it.`);
-            await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${SEND_REJECTED_ERROR}`);
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Error handling incoming message:", err);
-      try {
-        await whatsapp.sendMessage(
-          from,
-          "Sorry, something went wrong on our end — a team member will follow up with you shortly!"
-        );
-      } catch (sendErr) {
-        console.error("Also failed to send fallback message:", sendErr);
-      }
-    }
-  }
+  await incomingWork;
 });
 
 // ── Promo graphics uploaded from Settings > Promotions — served publicly,

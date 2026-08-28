@@ -49,6 +49,43 @@ async function saveMessage(
 }
 
 /**
+ * Atomically stores a newly received WhatsApp message. Meta can retry the same
+ * webhook while an earlier request is still running, so a separate SELECT then
+ * INSERT is not safe. The unique whatsapp_message_id constraint and
+ * ON CONFLICT make exactly one request the owner of the message.
+ */
+async function saveInboundMessageIfNew(
+  contactId,
+  content,
+  whatsappMessageId,
+  mediaBase64 = null,
+  mediaMimeType = null
+) {
+  const result = await pool.query(
+    `INSERT INTO messages (
+       contact_id, role, content, whatsapp_message_id, media_base64, media_mime_type
+     )
+     VALUES ($1, 'user', $2, $3, $4, $5)
+     ON CONFLICT (whatsapp_message_id) DO NOTHING
+     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
+    [contactId, content, whatsappMessageId, mediaBase64, mediaMimeType]
+  );
+  return result.rows[0] || null;
+}
+
+/** Updates the placeholder saved before media download/transcription finishes. */
+async function updateInboundMessage(messageId, contactId, content, mediaBase64, mediaMimeType) {
+  const result = await pool.query(
+    `UPDATE messages
+     SET content = $3, media_base64 = $4, media_mime_type = $5
+     WHERE id = $1 AND contact_id = $2 AND role = 'user'
+     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
+    [messageId, contactId, content, mediaBase64, mediaMimeType]
+  );
+  return result.rows[0] || null;
+}
+
+/**
  * Recent history used internally by the AI. This stays array-based so the AI
  * path is independent from portal pagination.
  */
@@ -209,15 +246,6 @@ async function acquireMessageRetryLock(messageId) {
   }
 }
 
-async function messageExistsByWhatsappId(whatsappMessageId) {
-  if (!whatsappMessageId) return false;
-  const result = await pool.query(
-    "SELECT 1 FROM messages WHERE whatsapp_message_id = $1",
-    [whatsappMessageId]
-  );
-  return result.rows.length > 0;
-}
-
 /**
  * Attach Meta's WAMID and mark the request as pending. "pending" means Meta
  * accepted the request, while sent/delivered/read still come from webhooks.
@@ -283,13 +311,14 @@ async function updateDeliveryStatusByWamid(whatsappMessageId, status, errorText 
 
 module.exports = {
   saveMessage,
+  saveInboundMessageIfNew,
+  updateInboundMessage,
   getMessagesForContact,
   getMessagePageForContact,
   getMessageMediaForContact,
   getMessageForRetry,
   getDeliveryStatusesForContact,
   acquireMessageRetryLock,
-  messageExistsByWhatsappId,
   setWhatsappMessageId,
   setDeliveryStatusById,
   updateDeliveryStatusByWamid,
