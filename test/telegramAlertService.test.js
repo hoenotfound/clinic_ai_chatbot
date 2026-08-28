@@ -17,6 +17,7 @@ const lead = {
   name: null,
   whatsapp_profile_name: "Kit Leong",
   stage_name: "Contacted",
+  current_temperature: "warm",
   treatment_interest: null,
   branch_name: null,
   appointment_at: null,
@@ -24,15 +25,15 @@ const lead = {
 
 const score = {
   temperature: "hot",
-  confidence: "high",
-  reason: "Customer asked to book tomorrow.",
+  confidence: "medium",
+  reason: "Customer asked about booking but intent is not fully confirmed.",
   summary: {
     treatmentInterest: "HIFU",
     preferredBranch: "Puchong",
     preferredAppointment: "tomorrow afternoon",
     mainConcern: "Jawline sagging",
-    chatSummary: "Customer asked about HIFU pricing and then requested a booking tomorrow.",
-    nextAction: "Confirm the available appointment time.",
+    chatSummary: "Customer asked about HIFU pricing and then asked about a possible booking tomorrow.",
+    nextAction: "Confirm whether the customer wants an available appointment time.",
   },
 };
 
@@ -50,15 +51,17 @@ test("formats Malaysian WhatsApp number for Telegram display", () => {
   assert.equal(formatWhatsappNumber("+60 12-345 6789"), "+60123456789");
 });
 
-test("builds a concise summary with a direct Inbox link", () => {
+test("shows pipeline temperature separately from the AI review", () => {
   const text = buildConversationSummaryMessage({
     lead,
     score,
     env: { PUBLIC_BASE_URL: "https://clinic.example.com/" },
   });
 
-  assert.match(text, /🔥 Hot Conversation Summary/);
+  assert.match(text, /🟠 Warm Conversation Summary/);
   assert.match(text, /Kit Leong \(\+60123456789\)/);
+  assert.match(text, /Current Temperature: 🟠 Warm/);
+  assert.match(text, /AI Review: 🔥 Hot \(medium confidence\)/);
   assert.match(text, /Treatment: HIFU/);
   assert.match(text, /Branch: Puchong/);
   assert.match(text, /Appointment: tomorrow afternoon/);
@@ -121,9 +124,9 @@ test("enabled service stores the completed score snapshot in the durable queue",
   assert.deepEqual(result, { status: "queued", alertId: 31 });
 });
 
-test("flush sends only repository-approved inactive snapshots and marks them sent", async () => {
+test("flush rechecks inactivity at claim time and formats from the claimed snapshot", async () => {
   let findArgs = null;
-  let claimedId = null;
+  let claimArgs = null;
   let markedSentId = null;
   let sent = null;
   const env = {
@@ -137,11 +140,11 @@ test("flush sends only repository-approved inactive snapshots and marks them sen
     repository: {
       findReadySummaries: async (input) => {
         findArgs = input;
-        return [{ ...lead, score_data: score }];
+        return [{ alert_id: 31, lead_id: 7 }];
       },
-      claimSummary: async (id) => {
-        claimedId = id;
-        return { id };
+      claimSummary: async (...args) => {
+        claimArgs = args;
+        return { ...lead, score_data: score };
       },
       markSent: async (id) => {
         markedSentId = id;
@@ -156,12 +159,34 @@ test("flush sends only repository-approved inactive snapshots and marks them sen
 
   const result = await service.flushConversationSummaries({ inactivityMinutes: 10 });
   assert.deepEqual(findArgs, { inactivityMinutes: 10, limit: 5 });
-  assert.equal(claimedId, 31);
+  assert.deepEqual(claimArgs, [31, 10]);
   assert.equal(markedSentId, 31);
   assert.equal(sent.token, "bot-token");
   assert.equal(sent.chatId, "-100123");
-  assert.match(sent.text, /Customer asked about HIFU pricing/);
+  assert.match(sent.text, /Current Temperature: 🟠 Warm/);
   assert.deepEqual(result, { status: "completed", sent: 1 });
+});
+
+test("a candidate invalidated before claim is not sent", async () => {
+  let sends = 0;
+  const service = createTelegramAlertService({
+    env: {
+      TELEGRAM_ALERTS_ENABLED: "true",
+      TELEGRAM_BOT_TOKEN: "bot-token",
+      TELEGRAM_CHAT_ID: "-100123",
+    },
+    repository: {
+      findReadySummaries: async () => [{ alert_id: 31, lead_id: 7 }],
+      claimSummary: async () => null,
+    },
+    sendMessage: async () => {
+      sends += 1;
+    },
+  });
+
+  const result = await service.flushConversationSummaries({ inactivityMinutes: 10 });
+  assert.equal(sends, 0);
+  assert.deepEqual(result, { status: "completed", sent: 0 });
 });
 
 test("Telegram send failure is recorded for retry without aborting the flush", async (t) => {
@@ -179,8 +204,8 @@ test("Telegram send failure is recorded for retry without aborting the flush", a
       TELEGRAM_CHAT_ID: "-100123",
     },
     repository: {
-      findReadySummaries: async () => [{ ...lead, score_data: score }],
-      claimSummary: async () => ({ id: 31 }),
+      findReadySummaries: async () => [{ alert_id: 31, lead_id: 7 }],
+      claimSummary: async () => ({ ...lead, score_data: score }),
       markSent: async () => assert.fail("failed send should not be marked sent"),
       markFailed: async (id, error) => {
         failure = { id, error };
