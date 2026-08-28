@@ -222,12 +222,16 @@ function createLeadTemperatureReviewer({
         CONTEXT_MESSAGE_LIMIT,
         false
       );
-      const currentIndex = messages.findIndex(
+      const startedMessageId = Number(lead.started_message_id);
+      const journeyMessages = Number.isSafeInteger(startedMessageId) && startedMessageId > 0
+        ? messages.filter((message) => Number(message.id) >= startedMessageId)
+        : messages;
+      const currentIndex = journeyMessages.findIndex(
         (message) => Number(message.id) === Number(messageId)
       );
-      const messagesBeforeCurrent = messages.slice(
+      const messagesBeforeCurrent = journeyMessages.slice(
         0,
-        currentIndex < 0 ? messages.length : currentIndex
+        currentIndex < 0 ? journeyMessages.length : currentIndex
       );
       const previousMessage = messagesBeforeCurrent.at(-1);
       const previousClinicMessage = previousMessage?.role === "assistant"
