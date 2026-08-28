@@ -2,7 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { pool } = require("../src/db/db");
+const telegramImmediateAlerts = require("../src/services/telegramImmediateAlertService");
 const contactsRepo = require("../src/db/contactsRepo");
+
+function nextTick() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
 
 test("creates a contact with a race-safe insert", async (t) => {
   const originalQuery = pool.query;
@@ -20,4 +25,67 @@ test("creates a contact with a race-safe insert", async (t) => {
 
   const contact = await contactsRepo.getOrCreateContact("60123456789", " Patient ");
   assert.equal(contact.id, 8);
+});
+
+test("human attention state triggers an immediate Telegram alert without blocking the database update", async (t) => {
+  const originalQuery = pool.query;
+  const originalAlert = telegramImmediateAlerts.sendHumanInterventionAlert;
+  t.after(() => {
+    pool.query = originalQuery;
+    telegramImmediateAlerts.sendHumanInterventionAlert = originalAlert;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /SET needs_attention = \$1/);
+    assert.deepEqual(params, [true, "AI handed off this conversation.", 12]);
+    return { rows: [{ id: 12, attention_reason: "AI handed off this conversation." }] };
+  };
+
+  let alert = null;
+  telegramImmediateAlerts.sendHumanInterventionAlert = async (input) => {
+    alert = input;
+    return { status: "sent" };
+  };
+
+  const updated = await contactsRepo.setAttention(12, true, "AI handed off this conversation.");
+  await nextTick();
+
+  assert.equal(updated.id, 12);
+  assert.deepEqual(alert, {
+    contactId: 12,
+    reason: "AI handed off this conversation.",
+  });
+});
+
+test("delivery failures alert Telegram even when a higher-priority attention reason prevents replacing the contact flag", async (t) => {
+  const originalQuery = pool.query;
+  const originalAlert = telegramImmediateAlerts.sendDeliveryFailureAlert;
+  t.after(() => {
+    pool.query = originalQuery;
+    telegramImmediateAlerts.sendDeliveryFailureAlert = originalAlert;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /attention_reason LIKE 'Delivery failed:%'/);
+    assert.deepEqual(params, ["Delivery failed: Meta rejected the message.", 12]);
+    return { rows: [] };
+  };
+
+  let alert = null;
+  telegramImmediateAlerts.sendDeliveryFailureAlert = async (input) => {
+    alert = input;
+    return { status: "sent" };
+  };
+
+  const updated = await contactsRepo.setDeliveryAttention(
+    12,
+    "Delivery failed: Meta rejected the message."
+  );
+  await nextTick();
+
+  assert.equal(updated, null);
+  assert.deepEqual(alert, {
+    contactId: 12,
+    reason: "Delivery failed: Meta rejected the message.",
+  });
 });
