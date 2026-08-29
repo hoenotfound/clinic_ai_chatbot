@@ -195,7 +195,7 @@ export default function ContactInsights({ contactId, className = "" }) {
                   <div className="mt-2 flex flex-wrap gap-2">
                     <TemperatureBadge temperature={insights.temperature} />
                     {insights.confidence && <MiniBadge>{`${insights.confidence} confidence`}</MiniBadge>}
-                    <MiniBadge>{insights.applied ? "Applied to lead" : "Suggestion only"}</MiniBadge>
+                    <MiniBadge>{insights.applied ? "Applied when scored" : "Suggestion only"}</MiniBadge>
                   </div>
                 </div>
               </div>
