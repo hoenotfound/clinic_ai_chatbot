@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const { pool } = require("../db/db");
 const {
   formatWhatsappNumber,
@@ -128,8 +129,8 @@ async function resetHumanInterventionCooldown(
 }
 
 function humanInterventionEventKey(context, reason, messageId = null) {
-  // A staff-created manual flag is a deliberate action, so keep it outside
-  // the automatic cooldown. Automated attention paths are rate-limited below.
+  // Automated paths tied to an inbound message use a stable key, preserving
+  // exact-message dedupe in addition to the wider per-conversation cooldown.
   if (String(reason || "").trim() === "Flagged by staff.") return null;
   const capturedMessageId = Number(messageId || context.latest_customer_message_id);
   if (!Number.isSafeInteger(capturedMessageId) || capturedMessageId < 1) return null;
@@ -194,6 +195,12 @@ function createTelegramImmediateAlertService({
     let eventKey = null;
     if (type === "human_intervention") {
       eventKey = humanInterventionEventKey(context, reason, messageId);
+      // Manual flags and rare attention paths without an inbound message still
+      // participate in the same conversation cooldown. They just need a unique
+      // event key because there is no stable inbound message id to use.
+      if (!eventKey) {
+        eventKey = `human:${contactId}:event:${crypto.randomUUID()}`;
+      }
       const claimed = await claimAlert({
         eventKey,
         type,
