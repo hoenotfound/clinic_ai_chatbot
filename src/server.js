@@ -32,6 +32,7 @@ const promoImagesRepo = require("./db/promoImagesRepo");
 const { initSchema } = require("./db/db");
 const { startAutomatedFollowUps } = require("./services/followUpService");
 const { startLeadScoring } = require("./services/leadScoringService");
+const { startStaffWaitingAlerts } = require("./services/staffWaitingAlertService");
 const {
   reviewLeadTemperatureForMessage,
 } = require("./services/leadTemperatureAutomation");
@@ -544,6 +545,11 @@ async function start() {
   // staff-configured follow-up delay without a customer reply. The service
   // is a no-op while the tool is disabled.
   startAutomatedFollowUps();
+
+  // If staff owns a conversation and a customer has been waiting without a
+  // successful outbound reply for 10 minutes, send one separate Telegram
+  // reminder for that unanswered episode. Returning to AI cancels eligibility.
+  startStaffWaitingAlerts();
 
   // Reviews eligible lead conversations after a quiet period or a configured
   // ceiling. This runs outside the webhook response path, uses durable claims,
