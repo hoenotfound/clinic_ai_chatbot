@@ -211,12 +211,21 @@ function serializeEvidenceMessageIds(score) {
   return JSON.stringify(Array.isArray(score?.evidenceMessageIds) ? score.evidenceMessageIds : []);
 }
 
+function serializeSummaryData(score) {
+  const summary =
+    score?.summary && typeof score.summary === "object" && !Array.isArray(score.summary)
+      ? score.summary
+      : {};
+  return JSON.stringify(summary);
+}
+
 async function saveSupersededScore(client, scoreId, score) {
   await client.query(
     `UPDATE lead_temperature_scores
      SET status = 'superseded', temperature = $2, confidence = $3,
-         reason = $4, evidence_message_ids = $5::jsonb, provider = $6,
-         model = $7, prompt_version = $8, applied = false,
+         reason = $4, evidence_message_ids = $5::jsonb,
+         summary_data = $6::jsonb, provider = $7,
+         model = $8, prompt_version = $9, applied = false,
          error_text = NULL, updated_at = now()
      WHERE id = $1`,
     [
@@ -225,6 +234,7 @@ async function saveSupersededScore(client, scoreId, score) {
       score.confidence,
       score.reason,
       serializeEvidenceMessageIds(score),
+      serializeSummaryData(score),
       score.provider,
       score.model,
       score.promptVersion,
@@ -320,8 +330,9 @@ async function completeScore({ scoreId, leadId, throughMessageId, triggerType, s
     await client.query(
       `UPDATE lead_temperature_scores
        SET status = 'completed', temperature = $2, confidence = $3,
-           reason = $4, evidence_message_ids = $5::jsonb, provider = $6,
-           model = $7, prompt_version = $8, applied = $9,
+           reason = $4, evidence_message_ids = $5::jsonb,
+           summary_data = $6::jsonb, provider = $7,
+           model = $8, prompt_version = $9, applied = $10,
            error_text = NULL, updated_at = now()
        WHERE id = $1`,
       [
@@ -330,6 +341,7 @@ async function completeScore({ scoreId, leadId, throughMessageId, triggerType, s
         score.confidence,
         score.reason,
         serializeEvidenceMessageIds(score),
+        serializeSummaryData(score),
         score.provider,
         score.model,
         score.promptVersion,
@@ -352,6 +364,7 @@ async function completeScore({ scoreId, leadId, throughMessageId, triggerType, s
           temperature: score.temperature,
           confidence: score.confidence,
           evidenceMessageIds: score.evidenceMessageIds,
+          summary: score.summary,
           provider: score.provider,
           model: score.model,
           promptVersion: score.promptVersion,
