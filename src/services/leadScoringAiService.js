@@ -204,8 +204,10 @@ function getErrorStatus(error) {
     error?.statusCode,
     error?.response?.status,
     error?.error?.code,
+    error?.code,
   ];
   for (const candidate of candidates) {
+    if (candidate == null || candidate === "") continue;
     const status = Number(candidate);
     if (Number.isInteger(status)) return status;
   }
