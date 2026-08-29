@@ -29,6 +29,19 @@ CREATE INDEX IF NOT EXISTS idx_telegram_summary_alerts_pending
   ON telegram_summary_alerts(updated_at, id)
   WHERE status IN ('pending', 'sending');
 
+-- Scores created before lead_temperature_scores.summary_data existed may still
+-- have their full structured summary in the Telegram queue. Copy those facts
+-- into the canonical score row so the management portal can show old summaries
+-- without needing Telegram to stay enabled.
+UPDATE lead_temperature_scores s
+SET summary_data = a.score_data->'summary'
+FROM telegram_summary_alerts a
+WHERE a.lead_id = s.lead_id
+  AND a.through_message_id = s.through_message_id
+  AND s.status = 'completed'
+  AND s.summary_data = '{}'::jsonb
+  AND jsonb_typeof(a.score_data->'summary') = 'object';
+
 -- Durable claims for immediate Telegram notifications. Human intervention uses
 -- this table for exact-message idempotency plus a 30-minute per-contact
 -- cooldown. Staff-waiting reminders use a stable event key for the first
