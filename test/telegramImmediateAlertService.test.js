@@ -2,9 +2,13 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  HUMAN_ALERT_COOLDOWN_MINUTES,
+  HUMAN_ALERT_LOCK_NAMESPACE,
   buildImmediateAlertMessage,
+  claimImmediateAlert,
   createTelegramImmediateAlertService,
   humanInterventionEventKey,
+  resetHumanInterventionCooldown,
 } = require("../src/services/telegramImmediateAlertService");
 
 const context = {
@@ -66,6 +70,50 @@ test("automated human alerts for the same inbound customer message share one eve
   assert.equal(humanInterventionEventKey(context, "Flagged by staff."), null);
 });
 
+test("human alert claim enforces a 30-minute per-contact cooldown atomically", async () => {
+  let capturedSql = null;
+  let capturedParams = null;
+  const claimed = await claimImmediateAlert(
+    {
+      eventKey: "human:12:45",
+      type: "human_intervention",
+      contactId: 12,
+    },
+    async (sql, params) => {
+      capturedSql = sql;
+      capturedParams = params;
+      return { rows: [] };
+    }
+  );
+
+  assert.equal(claimed, false);
+  assert.equal(HUMAN_ALERT_COOLDOWN_MINUTES, 30);
+  assert.match(capturedSql, /pg_advisory_xact_lock/);
+  assert.match(capturedSql, /recent\.contact_id = \$3/);
+  assert.match(capturedSql, /recent\.created_at > now\(\) - \(\$4::integer \* interval '1 minute'\)/);
+  assert.deepEqual(capturedParams, [
+    "human:12:45",
+    "human_intervention",
+    12,
+    30,
+    HUMAN_ALERT_LOCK_NAMESPACE,
+  ]);
+});
+
+test("reset removes the contact human-intervention cooldown", async () => {
+  let capturedSql = null;
+  let capturedParams = null;
+  await resetHumanInterventionCooldown(12, async (sql, params) => {
+    capturedSql = sql;
+    capturedParams = params;
+    return { rows: [] };
+  });
+
+  assert.match(capturedSql, /DELETE FROM telegram_immediate_alerts/);
+  assert.match(capturedSql, /alert_type = 'human_intervention'/);
+  assert.deepEqual(capturedParams, [12]);
+});
+
 test("disabled immediate alerts do not load context or send", async () => {
   let contextCalls = 0;
   let sends = 0;
@@ -120,21 +168,20 @@ test("enabled immediate alerts send to the configured Telegram group", async () 
   assert.deepEqual(result, { status: "sent", result: { message_id: 88 } });
 });
 
-test("duplicate human intervention paths for the same customer message send only once", async () => {
+test("different human intervention triggers inside the cooldown send only once", async () => {
   const env = {
     TELEGRAM_ALERTS_ENABLED: "true",
     TELEGRAM_BOT_TOKEN: "bot-token",
     TELEGRAM_CHAT_ID: "-100123",
   };
-  const claimedKeys = new Set();
+  let claims = 0;
   let sends = 0;
   const service = createTelegramImmediateAlertService({
     env,
     getContext: async () => context,
-    claimAlert: async ({ eventKey }) => {
-      if (claimedKeys.has(eventKey)) return false;
-      claimedKeys.add(eventKey);
-      return true;
+    claimAlert: async () => {
+      claims += 1;
+      return claims === 1;
     },
     sendMessage: async () => {
       sends += 1;
@@ -144,19 +191,21 @@ test("duplicate human intervention paths for the same customer message send only
 
   const first = await service.sendHumanInterventionAlert({
     contactId: 12,
+    messageId: 44,
     reason: "Message may need human attention (auto-detected keyword).",
   });
   const second = await service.sendHumanInterventionAlert({
     contactId: 12,
-    reason: "AI handed off this conversation.",
+    messageId: 45,
+    reason: "New message — conversation is staff-owned.",
   });
 
   assert.equal(first.status, "sent");
-  assert.deepEqual(second, { status: "duplicate" });
+  assert.deepEqual(second, { status: "suppressed" });
   assert.equal(sends, 1);
 });
 
-test("a failed human alert releases its dedupe key so a later path can retry", async () => {
+test("a failed human alert releases its cooldown claim so a later path can retry", async () => {
   const env = {
     TELEGRAM_ALERTS_ENABLED: "true",
     TELEGRAM_BOT_TOKEN: "bot-token",
