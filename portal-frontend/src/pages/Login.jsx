@@ -167,7 +167,7 @@ export default function Login() {
           </form>
 
           <p className="mt-6 text-center text-xs text-[var(--color-sidebar-text-muted)]">
-            Staff accounts are created by an admin. See the README for the command.
+            Staff accounts are created by an admin. Contact the admin if you forgot the password or need more account.
           </p>
 
           {/* Agency credit */}
