@@ -115,40 +115,6 @@ async function releaseImmediateAlert(eventKey, query = pool.query.bind(pool)) {
   await query("DELETE FROM telegram_immediate_alerts WHERE event_key = $1", [eventKey]);
 }
 
-async function resetHumanInterventionCooldown(contactId, resolvedAt, database = pool) {
-  if (!contactId) return;
-  const cutoff = resolvedAt ? new Date(resolvedAt) : new Date();
-  if (Number.isNaN(cutoff.getTime())) {
-    throw new Error("Invalid human-intervention cooldown reset timestamp");
-  }
-
-  const client = await database.connect();
-  try {
-    await client.query("BEGIN");
-    // Use the same per-contact lock as alert claims. The timestamp cutoff is
-    // equally important: if a genuinely new incident starts just after staff
-    // resolved the old one but before this cleanup gets the lock, its newer
-    // cooldown row must survive this reset.
-    await client.query(
-      "SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
-      [HUMAN_ALERT_LOCK_NAMESPACE, contactId]
-    );
-    await client.query(
-      `DELETE FROM telegram_immediate_alerts
-       WHERE contact_id = $1
-         AND alert_type = 'human_intervention'
-         AND created_at <= $2::timestamptz`,
-      [contactId, cutoff.toISOString()]
-    );
-    await client.query("COMMIT");
-  } catch (err) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw err;
-  } finally {
-    client.release();
-  }
-}
-
 function humanInterventionEventKey(context, reason, messageId = null) {
   // Automated paths tied to an inbound message use a stable key, preserving
   // exact-message dedupe in addition to the wider per-conversation cooldown.
@@ -270,7 +236,6 @@ module.exports = {
   getImmediateAlertContext,
   humanInterventionEventKey,
   releaseImmediateAlert,
-  resetHumanInterventionCooldown,
   sendHumanInterventionAlert: defaultService.sendHumanInterventionAlert,
   sendDeliveryFailureAlert: defaultService.sendDeliveryFailureAlert,
 };

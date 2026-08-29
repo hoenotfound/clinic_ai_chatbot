@@ -20,19 +20,6 @@ function notifyTelegram(promise, label, contactId) {
   });
 }
 
-async function resetHumanAlertCooldown(contactId, resolvedAt) {
-  try {
-    await telegramImmediateAlerts.resetHumanInterventionCooldown(contactId, resolvedAt);
-  } catch (err) {
-    // Cooldown bookkeeping must never make a staff action fail. Worst case,
-    // the old cooldown expires naturally after 30 minutes.
-    console.error(
-      `Failed to reset Telegram human-intervention cooldown for contact ${contactId}:`,
-      err
-    );
-  }
-}
-
 async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
   const profileName = whatsappProfileName?.trim() || null;
   const inserted = await pool.query(
@@ -191,13 +178,9 @@ async function returnToAi(id) {
     [id]
   );
   const updated = result.rows[0] || null;
-  if (updated) {
-    // Returning the chat to AI marks the human-handled incident as resolved.
-    // Bound cleanup to this exact resolution timestamp so a genuinely new
-    // incident that races in afterward keeps its own cooldown row.
-    await resetHumanAlertCooldown(updated.id, updated.updated_at);
-    publishContactChange(updated.id);
-  }
+  // Human-intervention Telegram alerts use a strict rolling 30-minute
+  // per-contact cooldown. Returning to AI must not reopen that window early.
+  if (updated) publishContactChange(updated.id);
   return updated;
 }
 
@@ -214,11 +197,8 @@ async function setAttention(id, needsAttention, reason = null) {
   );
   const updated = result.rows[0] || null;
   if (updated) {
-    if (!needsAttention) {
-      // Same timestamp-bound reset as returnToAi: don't erase a new incident
-      // that starts after the operator cleared the old attention state.
-      await resetHumanAlertCooldown(updated.id, updated.updated_at);
-    }
+    // Clearing an Inbox attention flag is operational state only. It must not
+    // reset the Telegram anti-spam window for this contact.
     publishContactChange(updated.id);
     if (needsAttention) {
       notifyTelegram(
