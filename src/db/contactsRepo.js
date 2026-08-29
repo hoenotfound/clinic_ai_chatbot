@@ -20,6 +20,19 @@ function notifyTelegram(promise, label, contactId) {
   });
 }
 
+async function resetHumanAlertCooldown(contactId) {
+  try {
+    await telegramImmediateAlerts.resetHumanInterventionCooldown(contactId);
+  } catch (err) {
+    // Cooldown bookkeeping must never make a staff takeover or attention
+    // resolution fail. Worst case, the old cooldown expires naturally.
+    console.error(
+      `Failed to reset Telegram human-intervention cooldown for contact ${contactId}:`,
+      err
+    );
+  }
+}
+
 async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
   const profileName = whatsappProfileName?.trim() || null;
   const inserted = await pool.query(
@@ -162,7 +175,10 @@ async function takeOver(id, staffUsername) {
     [staffUsername, id]
   );
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id);
+  if (updated) {
+    await resetHumanAlertCooldown(updated.id);
+    publishContactChange(updated.id);
+  }
   return updated;
 }
 
@@ -192,6 +208,9 @@ async function setAttention(id, needsAttention, reason = null) {
   );
   const updated = result.rows[0] || null;
   if (updated) {
+    if (!needsAttention) {
+      await resetHumanAlertCooldown(updated.id);
+    }
     publishContactChange(updated.id);
     if (needsAttention) {
       notifyTelegram(
