@@ -115,17 +115,32 @@ async function releaseImmediateAlert(eventKey, query = pool.query.bind(pool)) {
   await query("DELETE FROM telegram_immediate_alerts WHERE event_key = $1", [eventKey]);
 }
 
-async function resetHumanInterventionCooldown(
-  contactId,
-  query = pool.query.bind(pool)
-) {
+async function resetHumanInterventionCooldown(contactId, database = pool) {
   if (!contactId) return;
-  await query(
-    `DELETE FROM telegram_immediate_alerts
-     WHERE contact_id = $1
-       AND alert_type = 'human_intervention'`,
-    [contactId]
-  );
+
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    // Use the same per-contact lock as alert claims. Without this, a reset and
+    // a simultaneous claim could cross and leave a fresh cooldown row behind
+    // after staff had already resolved the conversation.
+    await client.query(
+      "SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
+      [HUMAN_ALERT_LOCK_NAMESPACE, contactId]
+    );
+    await client.query(
+      `DELETE FROM telegram_immediate_alerts
+       WHERE contact_id = $1
+         AND alert_type = 'human_intervention'`,
+      [contactId]
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 function humanInterventionEventKey(context, reason, messageId = null) {
