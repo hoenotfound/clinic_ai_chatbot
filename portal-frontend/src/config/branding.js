@@ -5,8 +5,8 @@
 // portal for a new customer. Update the values below and every screen
 // (login, sidebar, browser tab) picks them up automatically.
 // ---------------------------------------------------------------------------
-import clientLogoPlaceholder from "../assets/BElogo.jpeg";
-import agencyLogo from "../assets/DAlogo.jpg";
+import clientLogoPlaceholder from "../assets/BElogo.png";
+import agencyLogo from "../assets/DAlogo.png";
 
 export const branding = {
   // The clinic / customer this instance is deployed for.
