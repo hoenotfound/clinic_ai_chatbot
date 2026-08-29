@@ -4,6 +4,7 @@ import { api } from "../api";
 import { useToasts, ToastContainer } from "../components/Toast";
 import Spinner from "../components/Spinner";
 import ContactAvatar from "../components/ContactAvatar";
+import ContactInsights from "../components/ContactInsights";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -296,6 +297,8 @@ function ContactProfile({ contact, onEdit, onToast }) {
           )}
         </div>
       </div>
+
+      <ContactInsights contactId={contact.id} className="mb-8" />
 
       <div>
         <h3 className="text-sm font-semibold mb-3">Notes</h3>
