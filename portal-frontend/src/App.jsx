@@ -1,8 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Layout from "./components/Layout";
-import InboxWithContactDetails from "./components/InboxWithContactDetails";
 import Login from "./pages/Login";
+import Inbox from "./pages/Inbox";
 import Contacts from "./pages/Contacts";
 import Settings from "./pages/Settings";
 import ComingSoon from "./pages/ComingSoon";
@@ -38,7 +38,7 @@ export default function App() {
             path="/inbox"
             element={
               <ProtectedRoute>
-                <InboxWithContactDetails />
+                <Inbox />
               </ProtectedRoute>
             }
           />
