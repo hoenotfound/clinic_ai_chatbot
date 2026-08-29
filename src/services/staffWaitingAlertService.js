@@ -84,7 +84,7 @@ async function findWaitingStaffOwnedConversations(
        ORDER BY m.created_at DESC, m.id DESC
        LIMIT 1
      ) latest_waiting ON true
-     WHERE c.needs_attention = true
+     WHERE (c.mode = 'human' OR c.needs_attention = true)
        AND first_waiting.created_at <=
            now() - ($1::integer * interval '1 minute')
        AND NOT EXISTS (
@@ -114,7 +114,7 @@ async function isStillWaitingForStaff(
         AND first_waiting.contact_id = c.id
         AND first_waiting.role = 'user'
        WHERE c.id = $1
-         AND c.needs_attention = true
+         AND (c.mode = 'human' OR c.needs_attention = true)
          AND NOT EXISTS (
            SELECT 1
            FROM messages outbound
@@ -201,9 +201,8 @@ function createStaffWaitingAlertService({
       }
 
       // Re-check immediately before building/sending the alert. A successful
-      // staff reply or an explicit attention dismissal during the sweep should
-      // cancel the reminder. Returning to AI alone deliberately does not count
-      // as a reply to a customer message that was already skipped in Staff mode.
+      // outbound reply resolves the episode. Keeping Staff mode active, or an
+      // outstanding attention flag after Return to AI, keeps it eligible.
       if (!await stillWaiting(contactId, waitingSinceMessageId)) {
         await releaseAlert(eventKey).catch(() => {});
         return { status: "resolved" };
