@@ -65,7 +65,7 @@ test("human attention state triggers an immediate Telegram alert without blockin
   });
 });
 
-test("staff takeover resets the human-intervention Telegram cooldown", async (t) => {
+test("staff takeover keeps the existing human-intervention Telegram cooldown", async (t) => {
   const originalQuery = pool.query;
   const originalReset = telegramImmediateAlerts.resetHumanInterventionCooldown;
   t.after(() => {
@@ -79,13 +79,37 @@ test("staff takeover resets the human-intervention Telegram cooldown", async (t)
     return { rows: [{ id: 12, mode: "human" }] };
   };
 
+  let resetCalls = 0;
+  telegramImmediateAlerts.resetHumanInterventionCooldown = async () => {
+    resetCalls += 1;
+  };
+
+  const updated = await contactsRepo.takeOver(12, "staff1");
+  assert.equal(updated.mode, "human");
+  assert.equal(resetCalls, 0);
+});
+
+test("returning a handled conversation to AI resets the human-intervention Telegram cooldown", async (t) => {
+  const originalQuery = pool.query;
+  const originalReset = telegramImmediateAlerts.resetHumanInterventionCooldown;
+  t.after(() => {
+    pool.query = originalQuery;
+    telegramImmediateAlerts.resetHumanInterventionCooldown = originalReset;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /SET mode = 'ai'/);
+    assert.deepEqual(params, [12]);
+    return { rows: [{ id: 12, mode: "ai" }] };
+  };
+
   let resetContactId = null;
   telegramImmediateAlerts.resetHumanInterventionCooldown = async (contactId) => {
     resetContactId = contactId;
   };
 
-  const updated = await contactsRepo.takeOver(12, "staff1");
-  assert.equal(updated.mode, "human");
+  const updated = await contactsRepo.returnToAi(12);
+  assert.equal(updated.mode, "ai");
   assert.equal(resetContactId, 12);
 });
 
@@ -120,7 +144,7 @@ test("clearing attention resets the human-intervention Telegram cooldown", async
   assert.equal(alertCalls, 0);
 });
 
-test("cooldown reset failure does not block staff takeover", async (t) => {
+test("cooldown reset failure does not block returning a conversation to AI", async (t) => {
   const originalQuery = pool.query;
   const originalReset = telegramImmediateAlerts.resetHumanInterventionCooldown;
   const originalConsoleError = console.error;
@@ -130,14 +154,14 @@ test("cooldown reset failure does not block staff takeover", async (t) => {
     console.error = originalConsoleError;
   });
 
-  pool.query = async () => ({ rows: [{ id: 12, mode: "human" }] });
+  pool.query = async () => ({ rows: [{ id: 12, mode: "ai" }] });
   telegramImmediateAlerts.resetHumanInterventionCooldown = async () => {
     throw new Error("database unavailable");
   };
   console.error = () => {};
 
-  const updated = await contactsRepo.takeOver(12, "staff1");
-  assert.equal(updated.mode, "human");
+  const updated = await contactsRepo.returnToAi(12);
+  assert.equal(updated.mode, "ai");
 });
 
 test("delivery failures alert Telegram even when a higher-priority attention reason prevents replacing the contact flag", async (t) => {
