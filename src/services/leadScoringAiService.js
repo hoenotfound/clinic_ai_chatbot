@@ -7,6 +7,16 @@ const CLAUDE_MODEL = process.env.LEAD_SCORING_CLAUDE_MODEL || "claude-sonnet-5";
 const PROMPT_VERSION = "lead-temperature-v2";
 const MAX_REASON_CHARS = 240;
 const MAX_EVIDENCE_MESSAGES = 5;
+const GEMINI_TRANSIENT_RETRY_DELAYS_MS = [2000, 5000, 10000];
+const TRANSIENT_HTTP_STATUSES = new Set([429, 500, 502, 503, 504]);
+const TRANSIENT_NETWORK_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "EAI_AGAIN",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
 
 const SUMMARY_LIMITS = {
   treatmentInterest: 160,
@@ -188,9 +198,65 @@ function parseLeadScore(rawValue, messages = []) {
   };
 }
 
+function getErrorStatus(error) {
+  const candidates = [
+    error?.status,
+    error?.statusCode,
+    error?.response?.status,
+    error?.error?.code,
+  ];
+  for (const candidate of candidates) {
+    const status = Number(candidate);
+    if (Number.isInteger(status)) return status;
+  }
+  return null;
+}
+
+function isTransientAiError(error) {
+  const status = getErrorStatus(error);
+  if (status && TRANSIENT_HTTP_STATUSES.has(status)) return true;
+
+  const code = String(error?.code || error?.cause?.code || "").toUpperCase();
+  return TRANSIENT_NETWORK_CODES.has(code);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTransientRetries(
+  operation,
+  {
+    delaysMs = GEMINI_TRANSIENT_RETRY_DELAYS_MS,
+    sleepFn = sleep,
+    onRetry = null,
+  } = {}
+) {
+  let retryIndex = 0;
+  while (true) {
+    try {
+      return await operation();
+    } catch (error) {
+      const delayMs = delaysMs[retryIndex];
+      if (!isTransientAiError(error) || delayMs == null) throw error;
+
+      retryIndex += 1;
+      if (onRetry) {
+        onRetry({
+          error,
+          delayMs,
+          retryNumber: retryIndex,
+          maxRetries: delaysMs.length,
+        });
+      }
+      await sleepFn(delayMs);
+    }
+  }
+}
+
 async function scoreWithGemini(input) {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const response = await ai.models.generateContent({
+  const request = {
     model: GEMINI_MODEL,
     contents: buildLeadScorePrompt(input),
     config: {
@@ -199,7 +265,19 @@ async function scoreWithGemini(input) {
       responseJsonSchema: SCORE_JSON_SCHEMA,
       thinkingConfig: { thinkingBudget: 0 },
     },
-  });
+  };
+  const response = await withTransientRetries(
+    () => ai.models.generateContent(request),
+    {
+      onRetry: ({ error, delayMs, retryNumber, maxRetries }) => {
+        const status = getErrorStatus(error) || error?.code || "unknown";
+        console.warn(
+          `Gemini lead scoring transient error (${status}); ` +
+          `retry ${retryNumber}/${maxRetries} in ${delayMs}ms.`
+        );
+      },
+    }
+  );
   return {
     ...parseLeadScore(response.text, input.messages),
     provider: "gemini",
@@ -240,9 +318,12 @@ async function scoreLeadConversation(input) {
 }
 
 module.exports = {
+  GEMINI_TRANSIENT_RETRY_DELAYS_MS,
   PROMPT_VERSION,
   buildLeadScorePrompt,
+  isTransientAiError,
   parseConversationSummary,
   parseLeadScore,
   scoreLeadConversation,
+  withTransientRetries,
 };
