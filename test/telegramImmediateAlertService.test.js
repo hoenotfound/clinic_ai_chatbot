@@ -24,6 +24,8 @@ const context = {
   latest_customer_message: "Can someone help me book for Saturday?",
 };
 
+const RESOLVED_AT = "2026-08-29T07:15:00.000Z";
+
 test("formats human intervention and delivery failure alerts", () => {
   const human = buildImmediateAlertMessage({
     type: "human_intervention",
@@ -140,7 +142,7 @@ test("a new inbound event can claim after the cooldown has expired", async () =>
   assert.equal(calls.at(-1).sql, "COMMIT");
 });
 
-test("reset serializes with claims and removes the contact human-intervention cooldown", async () => {
+test("reset serializes with claims and removes only cooldowns at or before resolution", async () => {
   const calls = [];
   const client = {
     async query(sql, params = []) {
@@ -152,14 +154,19 @@ test("reset serializes with claims and removes the contact human-intervention co
     },
   };
 
-  await resetHumanInterventionCooldown(12, { connect: async () => client });
+  await resetHumanInterventionCooldown(
+    12,
+    RESOLVED_AT,
+    { connect: async () => client }
+  );
 
   assert.equal(calls[0].sql, "BEGIN");
   assert.match(calls[1].sql, /pg_advisory_xact_lock/);
   assert.deepEqual(calls[1].params, [HUMAN_ALERT_LOCK_NAMESPACE, 12]);
   assert.match(calls[2].sql, /DELETE FROM telegram_immediate_alerts/);
   assert.match(calls[2].sql, /alert_type = 'human_intervention'/);
-  assert.deepEqual(calls[2].params, [12]);
+  assert.match(calls[2].sql, /created_at <= \$2::timestamptz/);
+  assert.deepEqual(calls[2].params, [12, RESOLVED_AT]);
   assert.equal(calls[3].sql, "COMMIT");
   assert.equal(calls[4].sql, "RELEASE");
 });
