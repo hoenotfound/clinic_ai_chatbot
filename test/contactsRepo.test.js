@@ -9,7 +9,7 @@ function nextTick() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-const RESOLVED_AT = "2026-08-29T07:15:00.000Z";
+const UPDATED_AT = "2026-08-29T07:15:00.000Z";
 
 test("creates a contact with a race-safe insert", async (t) => {
   const originalQuery = pool.query;
@@ -78,7 +78,7 @@ test("staff takeover keeps the existing human-intervention Telegram cooldown", a
   pool.query = async (sql, params) => {
     assert.match(sql, /SET mode = 'human'/);
     assert.deepEqual(params, ["staff1", 12]);
-    return { rows: [{ id: 12, mode: "human", updated_at: RESOLVED_AT }] };
+    return { rows: [{ id: 12, mode: "human", updated_at: UPDATED_AT }] };
   };
 
   let resetCalls = 0;
@@ -91,7 +91,7 @@ test("staff takeover keeps the existing human-intervention Telegram cooldown", a
   assert.equal(resetCalls, 0);
 });
 
-test("returning a handled conversation to AI resets only the resolved incident cooldown", async (t) => {
+test("returning a conversation to AI does not reset the strict 30-minute cooldown", async (t) => {
   const originalQuery = pool.query;
   const originalReset = telegramImmediateAlerts.resetHumanInterventionCooldown;
   t.after(() => {
@@ -102,20 +102,20 @@ test("returning a handled conversation to AI resets only the resolved incident c
   pool.query = async (sql, params) => {
     assert.match(sql, /SET mode = 'ai'/);
     assert.deepEqual(params, [12]);
-    return { rows: [{ id: 12, mode: "ai", updated_at: RESOLVED_AT }] };
+    return { rows: [{ id: 12, mode: "ai", updated_at: UPDATED_AT }] };
   };
 
-  let resetArgs = null;
-  telegramImmediateAlerts.resetHumanInterventionCooldown = async (contactId, resolvedAt) => {
-    resetArgs = { contactId, resolvedAt };
+  let resetCalls = 0;
+  telegramImmediateAlerts.resetHumanInterventionCooldown = async () => {
+    resetCalls += 1;
   };
 
   const updated = await contactsRepo.returnToAi(12);
   assert.equal(updated.mode, "ai");
-  assert.deepEqual(resetArgs, { contactId: 12, resolvedAt: RESOLVED_AT });
+  assert.equal(resetCalls, 0);
 });
 
-test("clearing attention resets only cooldown state from before the clear", async (t) => {
+test("clearing attention does not reset the strict 30-minute cooldown", async (t) => {
   const originalQuery = pool.query;
   const originalReset = telegramImmediateAlerts.resetHumanInterventionCooldown;
   const originalAlert = telegramImmediateAlerts.sendHumanInterventionAlert;
@@ -128,13 +128,13 @@ test("clearing attention resets only cooldown state from before the clear", asyn
   pool.query = async (sql, params) => {
     assert.match(sql, /SET needs_attention = \$1/);
     assert.deepEqual(params, [false, null, 12]);
-    return { rows: [{ id: 12, needs_attention: false, updated_at: RESOLVED_AT }] };
+    return { rows: [{ id: 12, needs_attention: false, updated_at: UPDATED_AT }] };
   };
 
-  let resetArgs = null;
+  let resetCalls = 0;
   let alertCalls = 0;
-  telegramImmediateAlerts.resetHumanInterventionCooldown = async (contactId, resolvedAt) => {
-    resetArgs = { contactId, resolvedAt };
+  telegramImmediateAlerts.resetHumanInterventionCooldown = async () => {
+    resetCalls += 1;
   };
   telegramImmediateAlerts.sendHumanInterventionAlert = async () => {
     alertCalls += 1;
@@ -142,28 +142,8 @@ test("clearing attention resets only cooldown state from before the clear", asyn
 
   const updated = await contactsRepo.setAttention(12, false);
   assert.equal(updated.needs_attention, false);
-  assert.deepEqual(resetArgs, { contactId: 12, resolvedAt: RESOLVED_AT });
+  assert.equal(resetCalls, 0);
   assert.equal(alertCalls, 0);
-});
-
-test("cooldown reset failure does not block returning a conversation to AI", async (t) => {
-  const originalQuery = pool.query;
-  const originalReset = telegramImmediateAlerts.resetHumanInterventionCooldown;
-  const originalConsoleError = console.error;
-  t.after(() => {
-    pool.query = originalQuery;
-    telegramImmediateAlerts.resetHumanInterventionCooldown = originalReset;
-    console.error = originalConsoleError;
-  });
-
-  pool.query = async () => ({ rows: [{ id: 12, mode: "ai", updated_at: RESOLVED_AT }] });
-  telegramImmediateAlerts.resetHumanInterventionCooldown = async () => {
-    throw new Error("database unavailable");
-  };
-  console.error = () => {};
-
-  const updated = await contactsRepo.returnToAi(12);
-  assert.equal(updated.mode, "ai");
 });
 
 test("delivery failures alert Telegram even when a higher-priority attention reason prevents replacing the contact flag", async (t) => {
