@@ -8,6 +8,8 @@ const {
 
 const IMMEDIATE_MESSAGE_LIMIT = 4000;
 const LATEST_MESSAGE_LIMIT = 600;
+const HUMAN_ALERT_COOLDOWN_MINUTES = 30;
+const HUMAN_ALERT_LOCK_NAMESPACE = 24682;
 
 function clean(value, fallback = "Not captured") {
   const text = String(value || "").trim();
@@ -49,16 +51,36 @@ async function getImmediateAlertContext(contactId, query = pool.query.bind(pool)
 }
 
 async function claimImmediateAlert(
-  { eventKey, type, contactId },
+  {
+    eventKey,
+    type,
+    contactId,
+    cooldownMinutes = HUMAN_ALERT_COOLDOWN_MINUTES,
+  },
   query = pool.query.bind(pool)
 ) {
   if (!eventKey) return true;
+
+  // Serialize human-alert claims per contact inside this one statement. That
+  // prevents two app instances from both seeing an empty cooldown window and
+  // sending two Telegram alerts for different inbound messages at the same time.
   const result = await query(
-    `INSERT INTO telegram_immediate_alerts (event_key, alert_type, contact_id)
-     VALUES ($1, $2, $3)
+    `WITH locked AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock($5::integer, $3::integer)
+     )
+     INSERT INTO telegram_immediate_alerts (event_key, alert_type, contact_id)
+     SELECT $1, $2, $3
+     FROM locked
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM telegram_immediate_alerts recent
+       WHERE recent.contact_id = $3
+         AND recent.alert_type = 'human_intervention'
+         AND recent.created_at > now() - ($4::integer * interval '1 minute')
+     )
      ON CONFLICT (event_key) DO NOTHING
      RETURNING id`,
-    [eventKey, type, contactId]
+    [eventKey, type, contactId, cooldownMinutes, HUMAN_ALERT_LOCK_NAMESPACE]
   );
   return Boolean(result.rows[0]);
 }
@@ -68,8 +90,22 @@ async function releaseImmediateAlert(eventKey, query = pool.query.bind(pool)) {
   await query("DELETE FROM telegram_immediate_alerts WHERE event_key = $1", [eventKey]);
 }
 
+async function resetHumanInterventionCooldown(
+  contactId,
+  query = pool.query.bind(pool)
+) {
+  if (!contactId) return;
+  await query(
+    `DELETE FROM telegram_immediate_alerts
+     WHERE contact_id = $1
+       AND alert_type = 'human_intervention'`,
+    [contactId]
+  );
+}
+
 function humanInterventionEventKey(context, reason, messageId = null) {
-  // A staff-created manual flag is a separate action and should always alert.
+  // A staff-created manual flag is a deliberate action, so keep it outside
+  // the automatic cooldown. Automated attention paths are rate-limited below.
   if (String(reason || "").trim() === "Flagged by staff.") return null;
   const capturedMessageId = Number(messageId || context.latest_customer_message_id);
   if (!Number.isSafeInteger(capturedMessageId) || capturedMessageId < 1) return null;
@@ -134,8 +170,13 @@ function createTelegramImmediateAlertService({
     let eventKey = null;
     if (type === "human_intervention") {
       eventKey = humanInterventionEventKey(context, reason, messageId);
-      const claimed = await claimAlert({ eventKey, type, contactId });
-      if (!claimed) return { status: "duplicate" };
+      const claimed = await claimAlert({
+        eventKey,
+        type,
+        contactId,
+        cooldownMinutes: HUMAN_ALERT_COOLDOWN_MINUTES,
+      });
+      if (!claimed) return { status: "suppressed" };
     }
 
     try {
@@ -147,9 +188,8 @@ function createTelegramImmediateAlertService({
       });
       return { status: "sent", result };
     } catch (err) {
-      // A failed keyword-path send should not permanently suppress the AI
-      // handoff path for the same inbound message. Release the idempotency key
-      // so a later duplicate path can make one more best-effort attempt.
+      // A failed send must not consume the cooldown. Release this event so a
+      // later attention path can retry instead of being muted for 30 minutes.
       if (eventKey) {
         await releaseAlert(eventKey).catch(() => {});
       }
@@ -170,12 +210,15 @@ function createTelegramImmediateAlertService({
 const defaultService = createTelegramImmediateAlertService();
 
 module.exports = {
+  HUMAN_ALERT_COOLDOWN_MINUTES,
+  HUMAN_ALERT_LOCK_NAMESPACE,
   buildImmediateAlertMessage,
   claimImmediateAlert,
   createTelegramImmediateAlertService,
   getImmediateAlertContext,
   humanInterventionEventKey,
   releaseImmediateAlert,
+  resetHumanInterventionCooldown,
   sendHumanInterventionAlert: defaultService.sendHumanInterventionAlert,
   sendDeliveryFailureAlert: defaultService.sendDeliveryFailureAlert,
 };
