@@ -1,5 +1,6 @@
 const { pool } = require("./db");
 const realtimeEvents = require("../utils/realtimeEvents");
+const telegramImmediateAlerts = require("../services/telegramImmediateAlertService");
 
 function normalizeWhatsappNumber(input) {
   return String(input || "").replace(/[^\d]/g, "");
@@ -10,6 +11,12 @@ function publishContactChange(id) {
   realtimeEvents.publish("conversation_changed", {
     contactId: id,
     reason: "contact_state",
+  });
+}
+
+function notifyTelegram(promise, label, contactId) {
+  Promise.resolve(promise).catch((err) => {
+    console.error(`Telegram ${label} alert failed for contact ${contactId}:`, err);
   });
 }
 
@@ -174,14 +181,30 @@ async function returnToAi(id) {
 
 async function setAttention(id, needsAttention, reason = null) {
   const result = await pool.query(
-    `UPDATE contacts
+    `UPDATE contacts c
      SET needs_attention = $1, attention_reason = $2, updated_at = now()
-     WHERE id = $3
-     RETURNING *`,
+     WHERE c.id = $3
+     RETURNING c.*,
+       (SELECT m.id FROM messages m
+        WHERE m.contact_id = c.id AND m.role = 'user'
+        ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS attention_message_id`,
     [needsAttention, needsAttention ? reason : null, id]
   );
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id);
+  if (updated) {
+    publishContactChange(updated.id);
+    if (needsAttention) {
+      notifyTelegram(
+        telegramImmediateAlerts.sendHumanInterventionAlert({
+          contactId: updated.id,
+          messageId: updated.attention_message_id,
+          reason: updated.attention_reason || reason || "Human review requested.",
+        }),
+        "human intervention",
+        updated.id
+      );
+    }
+  }
   return updated;
 }
 
@@ -204,6 +227,15 @@ async function setDeliveryAttention(id, reason) {
   );
   const updated = result.rows[0] || null;
   if (updated) publishContactChange(updated.id);
+
+  // A delivery failure is worth surfacing even when a more important human
+  // attention reason is already protecting the contact row from being replaced.
+  notifyTelegram(
+    telegramImmediateAlerts.sendDeliveryFailureAlert({ contactId: id, reason }),
+    "delivery failure",
+    id
+  );
+
   return updated;
 }
 

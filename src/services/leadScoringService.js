@@ -1,6 +1,7 @@
 const clinicConfig = require("../config/clinicConfig");
 const leadScoringRepo = require("../db/leadScoringRepo");
 const { scoreLeadConversation } = require("./leadScoringAiService");
+const telegramAlerts = require("./telegramAlertService");
 
 const LEAD_SCORING_CHECK_INTERVAL_MS = 60 * 1000;
 const LEAD_SCORING_BATCH_SIZE = 5;
@@ -53,6 +54,8 @@ function createLeadScoringRunner({
   repository = leadScoringRepo,
   scoreConversation = scoreLeadConversation,
   settingsGetter = getActiveSettings,
+  queueConversationSummary = telegramAlerts.queueConversationSummary,
+  flushConversationSummaries = telegramAlerts.flushConversationSummaries,
 } = {}) {
   let sweepRunning = false;
 
@@ -107,19 +110,52 @@ function createLeadScoringRunner({
             continue;
           }
 
-          await repository.completeScore({
+          const completion = await repository.completeScore({
             scoreId: claim.id,
             leadId: candidate.lead_id,
             throughMessageId: candidate.through_message_id,
             triggerType: candidate.trigger_type,
             score,
           });
+
+          if (completion?.status === "completed") {
+            try {
+              // Queue every completed score snapshot. The Telegram queue checks
+              // the current latest message and the inactivity threshold before
+              // sending, so a time/message ceiling score can safely wait until
+              // the conversation actually ends without another AI call.
+              await queueConversationSummary({
+                leadId: candidate.lead_id,
+                throughMessageId: candidate.through_message_id,
+                score,
+              });
+            } catch (telegramQueueErr) {
+              console.error(
+                `Failed to queue Telegram summary for lead ${candidate.lead_id}:`,
+                telegramQueueErr
+              );
+            }
+          }
         } catch (err) {
           await repository.markScoreFailed(claim.id, err);
           console.error(
             `Lead scoring failed for lead ${candidate.lead_id}:`,
             err
           );
+        }
+      }
+
+      // This runs even when there were no new scoring candidates. That is
+      // important for a conversation that hit a time/message ceiling while
+      // still active and only became inactive several minutes later.
+      const liveSettings = settingsGetter();
+      if (liveSettings?.activatedAt === settings.activatedAt) {
+        try {
+          await flushConversationSummaries({
+            inactivityMinutes: liveSettings.inactivityMinutes,
+          });
+        } catch (telegramFlushErr) {
+          console.error("Telegram summary sweep failed:", telegramFlushErr);
         }
       }
     } catch (err) {

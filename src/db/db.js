@@ -18,12 +18,17 @@ pool.on("error", (err) => {
 
 /**
  * Runs schema.sql against the database. Safe to call on every startup —
- * every statement is CREATE TABLE/INDEX IF NOT EXISTS, so this is a no-op
+ * every statement is CREATE/ALTER/INDEX IF NOT EXISTS, so this is a no-op
  * once the schema already exists.
  */
 async function initSchema() {
   const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
+  const telegramAlertsSchema = fs.readFileSync(
+    path.join(__dirname, "telegramAlertsSchema.sql"),
+    "utf8"
+  );
   await pool.query(schema);
+  await pool.query(telegramAlertsSchema);
 }
 
 module.exports = { pool, initSchema };
