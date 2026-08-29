@@ -207,11 +207,15 @@ function scoreDescription(lead, score, applied) {
   return `AI conversation score suggested ${label} (${confidence}); temperature unchanged. ${score.reason}`;
 }
 
+function serializeEvidenceMessageIds(score) {
+  return JSON.stringify(Array.isArray(score?.evidenceMessageIds) ? score.evidenceMessageIds : []);
+}
+
 async function saveSupersededScore(client, scoreId, score) {
   await client.query(
     `UPDATE lead_temperature_scores
      SET status = 'superseded', temperature = $2, confidence = $3,
-         reason = $4, evidence_message_ids = $5, provider = $6,
+         reason = $4, evidence_message_ids = $5::jsonb, provider = $6,
          model = $7, prompt_version = $8, applied = false,
          error_text = NULL, updated_at = now()
      WHERE id = $1`,
@@ -220,7 +224,7 @@ async function saveSupersededScore(client, scoreId, score) {
       score.temperature,
       score.confidence,
       score.reason,
-      score.evidenceMessageIds,
+      serializeEvidenceMessageIds(score),
       score.provider,
       score.model,
       score.promptVersion,
@@ -316,7 +320,7 @@ async function completeScore({ scoreId, leadId, throughMessageId, triggerType, s
     await client.query(
       `UPDATE lead_temperature_scores
        SET status = 'completed', temperature = $2, confidence = $3,
-           reason = $4, evidence_message_ids = $5, provider = $6,
+           reason = $4, evidence_message_ids = $5::jsonb, provider = $6,
            model = $7, prompt_version = $8, applied = $9,
            error_text = NULL, updated_at = now()
        WHERE id = $1`,
@@ -325,7 +329,7 @@ async function completeScore({ scoreId, leadId, throughMessageId, triggerType, s
         score.temperature,
         score.confidence,
         score.reason,
-        score.evidenceMessageIds,
+        serializeEvidenceMessageIds(score),
         score.provider,
         score.model,
         score.promptVersion,
