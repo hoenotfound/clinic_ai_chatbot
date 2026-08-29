@@ -31,7 +31,7 @@ function toNumberOrNull(value) {
 function mapContactInsights(row) {
   if (!row) return null;
 
-  const latestMessageId = toNumberOrNull(row.latest_message_id);
+  const latestCustomerMessageId = toNumberOrNull(row.latest_customer_message_id);
   const throughMessageId = toNumberOrNull(row.score_through_message_id);
 
   return {
@@ -74,15 +74,16 @@ function mapContactInsights(row) {
           temperature: row.scored_temperature,
           confidence: row.confidence,
           reason: row.reason,
+          applied: row.applied === true,
           summary: cleanSummary(row.summary_data),
           provider: row.provider,
           model: row.model,
           throughMessageId,
           updatedAt: row.score_updated_at,
           isStale:
-            latestMessageId != null &&
+            latestCustomerMessageId != null &&
             throughMessageId != null &&
-            latestMessageId > throughMessageId,
+            latestCustomerMessageId > throughMessageId,
         }
       : null,
   };
@@ -122,6 +123,7 @@ async function getContactInsights(contactId, query = pool.query.bind(pool)) {
        score.temperature AS scored_temperature,
        score.confidence,
        score.reason,
+       score.applied,
        COALESCE(
          NULLIF(score.summary_data, '{}'::jsonb),
          telegram_score.summary_data,
@@ -131,7 +133,7 @@ async function getContactInsights(contactId, query = pool.query.bind(pool)) {
        score.model,
        score.through_message_id AS score_through_message_id,
        score.updated_at AS score_updated_at,
-       latest.id AS latest_message_id
+       latest_customer.id AS latest_customer_message_id
      FROM contacts c
      LEFT JOIN LATERAL (
        SELECT lead_choice.*
@@ -165,9 +167,10 @@ async function getContactInsights(contactId, query = pool.query.bind(pool)) {
        SELECT message.id
        FROM messages message
        WHERE message.contact_id = c.id
+         AND message.role = 'user'
        ORDER BY message.id DESC
        LIMIT 1
-     ) latest ON true
+     ) latest_customer ON true
      WHERE c.id = $1`,
     [contactId]
   );
