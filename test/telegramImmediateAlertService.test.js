@@ -107,7 +107,7 @@ test("human alert claim serializes per contact and suppresses alerts inside 30 m
   assert.equal(calls[4].sql, "RELEASE");
 });
 
-test("human alert claim inserts after the cooldown has expired", async () => {
+test("a new inbound event can claim after the cooldown has expired", async () => {
   const calls = [];
   const client = {
     async query(sql, params = []) {
@@ -125,7 +125,9 @@ test("human alert claim inserts after the cooldown has expired", async () => {
 
   const claimed = await claimImmediateAlert(
     {
-      eventKey: "human:12:45",
+      // This represents a later customer message. Reusing an old event key
+      // would correctly remain blocked by the table's UNIQUE(event_key).
+      eventKey: "human:12:46",
       type: "human_intervention",
       contactId: 12,
     },
@@ -134,22 +136,32 @@ test("human alert claim inserts after the cooldown has expired", async () => {
 
   assert.equal(claimed, true);
   const insert = calls.find((call) => /INSERT INTO telegram_immediate_alerts/.test(call.sql));
-  assert.deepEqual(insert.params, ["human:12:45", "human_intervention", 12]);
+  assert.deepEqual(insert.params, ["human:12:46", "human_intervention", 12]);
   assert.equal(calls.at(-1).sql, "COMMIT");
 });
 
-test("reset removes the contact human-intervention cooldown", async () => {
-  let capturedSql = null;
-  let capturedParams = null;
-  await resetHumanInterventionCooldown(12, async (sql, params) => {
-    capturedSql = sql;
-    capturedParams = params;
-    return { rows: [] };
-  });
+test("reset serializes with claims and removes the contact human-intervention cooldown", async () => {
+  const calls = [];
+  const client = {
+    async query(sql, params = []) {
+      calls.push({ sql, params });
+      return { rows: [] };
+    },
+    release() {
+      calls.push({ sql: "RELEASE", params: [] });
+    },
+  };
 
-  assert.match(capturedSql, /DELETE FROM telegram_immediate_alerts/);
-  assert.match(capturedSql, /alert_type = 'human_intervention'/);
-  assert.deepEqual(capturedParams, [12]);
+  await resetHumanInterventionCooldown(12, { connect: async () => client });
+
+  assert.equal(calls[0].sql, "BEGIN");
+  assert.match(calls[1].sql, /pg_advisory_xact_lock/);
+  assert.deepEqual(calls[1].params, [HUMAN_ALERT_LOCK_NAMESPACE, 12]);
+  assert.match(calls[2].sql, /DELETE FROM telegram_immediate_alerts/);
+  assert.match(calls[2].sql, /alert_type = 'human_intervention'/);
+  assert.deepEqual(calls[2].params, [12]);
+  assert.equal(calls[3].sql, "COMMIT");
+  assert.equal(calls[4].sql, "RELEASE");
 });
 
 test("disabled immediate alerts do not load context or send", async () => {
