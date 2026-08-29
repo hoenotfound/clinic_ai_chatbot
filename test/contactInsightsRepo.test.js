@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   cleanSummary,
   getContactInsights,
+  mapContactInsights,
 } = require("../src/db/contactInsightsRepo");
 
 test("contact insights select the current journey and latest completed AI summary", async () => {
@@ -40,9 +41,10 @@ test("contact insights select the current journey and latest completed AI summar
         is_closed: false,
         lead_created_at: "2026-08-29T01:00:00.000Z",
         score_id: 99,
-        scored_temperature: "hot",
-        confidence: "high",
+        scored_temperature: "warm",
+        confidence: "medium",
         reason: "Customer proposed an appointment time.",
+        applied: false,
         summary_data: {
           treatmentInterest: "HIFU",
           preferredBranch: "Puchong",
@@ -55,7 +57,7 @@ test("contact insights select the current journey and latest completed AI summar
         model: "gemini-2.5-flash",
         score_through_message_id: 55,
         score_updated_at: "2026-08-29T02:00:00.000Z",
-        latest_message_id: 56,
+        latest_customer_message_id: 56,
       }],
     };
   });
@@ -63,13 +65,35 @@ test("contact insights select the current journey and latest completed AI summar
   assert.deepEqual(captured.params, [12]);
   assert.match(captured.sql, /lead_choice\.is_closed = false/);
   assert.match(captured.sql, /score_choice\.status = 'completed'/);
+  assert.match(captured.sql, /score\.applied/);
+  assert.match(captured.sql, /message\.role = 'user'/);
   assert.match(captured.sql, /telegram_summary_alerts/);
   assert.match(captured.sql, /NULLIF\(score\.summary_data, '\{\}'::jsonb\)/);
   assert.equal(result.contact.id, 12);
   assert.equal(result.lead.stageName, "Contacted");
   assert.equal(result.lead.temperature, "hot");
+  assert.equal(result.aiInsights.temperature, "warm");
+  assert.equal(result.aiInsights.confidence, "medium");
+  assert.equal(result.aiInsights.applied, false);
   assert.equal(result.aiInsights.summary.preferredAppointment, "Tomorrow at 12pm");
   assert.equal(result.aiInsights.isStale, true);
+});
+
+test("assistant or staff messages after a score do not make the saved summary stale", () => {
+  const result = mapContactInsights({
+    contact_id: 12,
+    whatsapp_number: "60123456789",
+    score_id: 99,
+    scored_temperature: "hot",
+    confidence: "high",
+    applied: true,
+    summary_data: {},
+    score_through_message_id: 55,
+    latest_customer_message_id: 55,
+  });
+
+  assert.equal(result.aiInsights.applied, true);
+  assert.equal(result.aiInsights.isStale, false);
 });
 
 test("contact insights do not reuse an old closed journey when an open journey exists", async () => {
@@ -106,7 +130,7 @@ test("contact insights do not reuse an old closed journey when an open journey e
         is_closed: false,
         lead_created_at: "2026-08-29T04:00:00.000Z",
         score_id: null,
-        latest_message_id: 80,
+        latest_customer_message_id: 80,
       }],
     };
   });
