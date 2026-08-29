@@ -31,6 +31,21 @@ function formatDateTime(value) {
   });
 }
 
+function appointmentDisplay(summaryPreferred, lead) {
+  const status = lead?.appointmentStatus || "none";
+  const formalAppointment = lead?.appointmentAt ? formatDateTime(lead.appointmentAt) : "";
+
+  if (status === "cancelled") return "Cancelled";
+  if (status === "reschedule") return "Rescheduling";
+  if (status === "visited") {
+    return formalAppointment ? `Visited · ${formalAppointment}` : "Visited";
+  }
+  if (status === "set") {
+    return formalAppointment || summaryPreferred || "Appointment set";
+  }
+  return summaryPreferred || "";
+}
+
 function TemperatureBadge({ temperature }) {
   const normalized = String(temperature || "").toLowerCase();
   if (!TEMPERATURE_LABELS[normalized]) return null;
@@ -118,8 +133,7 @@ export default function ContactInsights({ contactId, className = "" }) {
   const summary = insights?.summary || {};
   const treatment = summary.treatmentInterest || lead?.treatmentInterest;
   const branch = summary.preferredBranch || lead?.branchName;
-  const appointment = summary.preferredAppointment ||
-    (lead?.appointmentAt ? formatDateTime(lead.appointmentAt) : "");
+  const appointment = appointmentDisplay(summary.preferredAppointment, lead);
 
   return (
     <section className={`overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] ${className}`}>
@@ -129,7 +143,7 @@ export default function ContactInsights({ contactId, className = "" }) {
             <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[var(--color-primary-light)] text-base" aria-hidden="true">✨</span>
             <div>
               <h3 className="text-sm font-bold">AI Conversation Insights</h3>
-              <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">Latest saved handoff summary and lead details</p>
+              <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">Latest saved conversation summary and lead details</p>
             </div>
           </div>
         </div>
@@ -144,11 +158,13 @@ export default function ContactInsights({ contactId, className = "" }) {
 
       <div className="space-y-5 p-5">
         {lead && (
-          <div className="flex flex-wrap gap-2">
-            <TemperatureBadge temperature={lead.temperature} />
-            <MiniBadge>{lead.stageName || "No stage"}</MiniBadge>
-            {insights?.confidence && <MiniBadge>{`${insights.confidence} confidence`}</MiniBadge>}
-            {lead.isClosed && <MiniBadge>Closed journey</MiniBadge>}
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--color-text-muted)]">Current lead status</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <TemperatureBadge temperature={lead.temperature} />
+              <MiniBadge>{lead.stageName || "No stage"}</MiniBadge>
+              {lead.isClosed && <MiniBadge>Closed journey</MiniBadge>}
+            </div>
           </div>
         )}
 
@@ -172,11 +188,24 @@ export default function ContactInsights({ contactId, className = "" }) {
 
         {insights && (
           <>
+            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]/60 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--color-text-muted)]">AI assessment</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <TemperatureBadge temperature={insights.temperature} />
+                    {insights.confidence && <MiniBadge>{`${insights.confidence} confidence`}</MiniBadge>}
+                    <MiniBadge>{insights.applied ? "Applied to lead" : "Suggestion only"}</MiniBadge>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {insights.isStale && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
-                <p className="text-xs font-semibold">New messages since this summary</p>
+                <p className="text-xs font-semibold">New customer messages since this summary</p>
                 <p className="mt-1 text-[11px] leading-4">
-                  This snapshot does not include the newest chat messages yet. It will refresh after the next scoring pass.
+                  This snapshot does not include the newest customer messages yet. It will refresh after the next scoring pass.
                 </p>
               </div>
             )}
@@ -191,7 +220,7 @@ export default function ContactInsights({ contactId, className = "" }) {
             <div className="grid gap-3 sm:grid-cols-2">
               <DetailItem label="Treatment / Interest" value={treatment} />
               <DetailItem label="Preferred Branch" value={branch} />
-              <DetailItem label="Preferred Appointment" value={appointment} />
+              <DetailItem label="Appointment" value={appointment} />
               <DetailItem label="Main Concern / Goal" value={summary.mainConcern} />
             </div>
 
@@ -204,16 +233,13 @@ export default function ContactInsights({ contactId, className = "" }) {
 
             {insights.reason && (
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--color-text-muted)]">Why this temperature</p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--color-text-muted)]">Why the AI scored it this way</p>
                 <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">{insights.reason}</p>
               </div>
             )}
 
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] pt-3 text-[10px] text-[var(--color-text-muted)]">
-              <span>{insights.updatedAt ? `Updated ${formatDateTime(insights.updatedAt)}` : "Saved AI summary"}</span>
-              {insights.temperature && insights.temperature !== lead?.temperature && (
-                <span>AI scored {TEMPERATURE_LABELS[insights.temperature] || insights.temperature}</span>
-              )}
+            <div className="border-t border-[var(--color-border)] pt-3 text-[10px] text-[var(--color-text-muted)]">
+              {insights.updatedAt ? `Updated ${formatDateTime(insights.updatedAt)}` : "Saved AI summary"}
             </div>
           </>
         )}
