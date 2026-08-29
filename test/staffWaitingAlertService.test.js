@@ -24,7 +24,7 @@ const context = {
   latest_customer_message: "Tomorrow 12pm can?",
 };
 
-test("waiting candidate query finds unanswered staff-attention episodes after 10 minutes", async () => {
+test("waiting candidate query finds unresolved episodes after 10 minutes", async () => {
   let captured = null;
   const rows = [{
     contact_id: 12,
@@ -43,14 +43,13 @@ test("waiting candidate query finds unanswered staff-attention episodes after 10
 
   assert.deepEqual(result, rows);
   assert.deepEqual(captured.params, [STAFF_WAITING_MINUTES, STAFF_WAITING_BATCH_SIZE]);
-  assert.match(captured.sql, /c\.needs_attention = true/);
-  assert.doesNotMatch(captured.sql, /c\.mode = 'human'/);
+  assert.match(captured.sql, /c\.mode = 'human' OR c\.needs_attention = true/);
   assert.match(captured.sql, /first_waiting\.created_at <=/);
   assert.match(captured.sql, /delivery_status NOT IN \('failed', 'unknown'\)/);
   assert.match(captured.sql, /staff_waiting:/);
 });
 
-test("revalidation keeps an unanswered message eligible after Return to AI until staff actually resolves it", async () => {
+test("revalidation keeps Staff mode or an outstanding attention flag eligible until a valid reply exists", async () => {
   let captured = null;
   const waiting = await isStillWaitingForStaff(
     12,
@@ -63,8 +62,7 @@ test("revalidation keeps an unanswered message eligible after Return to AI until
 
   assert.equal(waiting, true);
   assert.deepEqual(captured.params, [12, 45]);
-  assert.match(captured.sql, /c\.needs_attention = true/);
-  assert.doesNotMatch(captured.sql, /c\.mode = 'human'/);
+  assert.match(captured.sql, /c\.mode = 'human' OR c\.needs_attention = true/);
   assert.match(captured.sql, /outbound\.role = 'assistant'/);
   assert.match(captured.sql, /outbound\.delivery_status NOT IN \('failed', 'unknown'\)/);
 });
