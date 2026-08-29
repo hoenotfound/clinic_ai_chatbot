@@ -27,7 +27,7 @@ export default function ContactAvatar({ src, channel = "whatsapp", size = 40 }) 
   const badge = CHANNEL_BADGES[channel];
 
   return (
-    <div data-contact-avatar="true" className="relative shrink-0" style={{ width: size, height: size }}>
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
       <div className="w-full h-full rounded-full bg-[var(--color-border)] flex items-center justify-center overflow-hidden">
         {src ? (
           <img src={src} alt="" className="w-full h-full object-cover" />
