@@ -24,8 +24,8 @@ async function resetHumanAlertCooldown(contactId) {
   try {
     await telegramImmediateAlerts.resetHumanInterventionCooldown(contactId);
   } catch (err) {
-    // Cooldown bookkeeping must never make a staff takeover or attention
-    // resolution fail. Worst case, the old cooldown expires naturally.
+    // Cooldown bookkeeping must never make a staff action fail. Worst case,
+    // the old cooldown expires naturally after 30 minutes.
     console.error(
       `Failed to reset Telegram human-intervention cooldown for contact ${contactId}:`,
       err
@@ -175,10 +175,10 @@ async function takeOver(id, staffUsername) {
     [staffUsername, id]
   );
   const updated = result.rows[0] || null;
-  if (updated) {
-    await resetHumanAlertCooldown(updated.id);
-    publishContactChange(updated.id);
-  }
+  // Keep the existing Telegram cooldown while staff owns the chat. Otherwise
+  // the very next customer message in human mode could immediately generate a
+  // second intervention alert for the same unresolved conversation.
+  if (updated) publishContactChange(updated.id);
   return updated;
 }
 
@@ -191,7 +191,12 @@ async function returnToAi(id) {
     [id]
   );
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id);
+  if (updated) {
+    // Returning the chat to AI marks the human-handled incident as resolved,
+    // so a later genuinely new intervention should be allowed immediately.
+    await resetHumanAlertCooldown(updated.id);
+    publishContactChange(updated.id);
+  }
   return updated;
 }
 
