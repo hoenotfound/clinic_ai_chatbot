@@ -2,9 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  GEMINI_TRANSIENT_RETRY_DELAYS_MS,
   buildLeadScorePrompt,
+  isTransientAiError,
   parseConversationSummary,
   parseLeadScore,
+  withTransientRetries,
 } = require("../src/services/leadScoringAiService");
 
 const messages = [
@@ -106,4 +109,93 @@ test("rejects invalid or overly long scoring output", () => {
     }, messages),
     /overly long/
   );
+});
+
+test("classifies temporary provider and network failures as retryable", () => {
+  assert.equal(isTransientAiError({ status: 503 }), true);
+  assert.equal(isTransientAiError({ status: 429 }), true);
+  assert.equal(isTransientAiError({ error: { code: 502 } }), true);
+  assert.equal(isTransientAiError({ code: "ETIMEDOUT" }), true);
+  assert.equal(isTransientAiError({ cause: { code: "ECONNRESET" } }), true);
+
+  assert.equal(isTransientAiError({ status: 400 }), false);
+  assert.equal(isTransientAiError({ status: 401 }), false);
+  assert.equal(isTransientAiError(new Error("invalid structured output")), false);
+});
+
+test("transient errors retry at 2s, 5s, and 10s before succeeding", async () => {
+  const sleeps = [];
+  const retries = [];
+  let attempts = 0;
+
+  const result = await withTransientRetries(
+    async () => {
+      attempts += 1;
+      if (attempts <= 3) {
+        const error = new Error("model overloaded");
+        error.status = 503;
+        throw error;
+      }
+      return "scored";
+    },
+    {
+      sleepFn: async (ms) => sleeps.push(ms),
+      onRetry: (retry) => retries.push({
+        delayMs: retry.delayMs,
+        retryNumber: retry.retryNumber,
+        maxRetries: retry.maxRetries,
+      }),
+    }
+  );
+
+  assert.equal(result, "scored");
+  assert.equal(attempts, 4);
+  assert.deepEqual(sleeps, GEMINI_TRANSIENT_RETRY_DELAYS_MS);
+  assert.deepEqual(retries, [
+    { delayMs: 2000, retryNumber: 1, maxRetries: 3 },
+    { delayMs: 5000, retryNumber: 2, maxRetries: 3 },
+    { delayMs: 10000, retryNumber: 3, maxRetries: 3 },
+  ]);
+});
+
+test("non-transient errors fail immediately without sleeping", async () => {
+  let attempts = 0;
+  let sleeps = 0;
+  const error = new Error("bad request");
+  error.status = 400;
+
+  await assert.rejects(
+    () => withTransientRetries(
+      async () => {
+        attempts += 1;
+        throw error;
+      },
+      { sleepFn: async () => { sleeps += 1; } }
+    ),
+    /bad request/
+  );
+
+  assert.equal(attempts, 1);
+  assert.equal(sleeps, 0);
+});
+
+test("persistent transient errors stop after the configured retries", async () => {
+  let attempts = 0;
+  const sleeps = [];
+
+  await assert.rejects(
+    () => withTransientRetries(
+      async () => {
+        attempts += 1;
+        const error = new Error("still overloaded");
+        error.status = 503;
+        throw error;
+      },
+      { sleepFn: async (ms) => sleeps.push(ms) }
+    ),
+    /still overloaded/
+  );
+
+  assert.equal(attempts, 4);
+  assert.deepEqual(sleeps, GEMINI_TRANSIENT_RETRY_DELAYS_MS);
 });
