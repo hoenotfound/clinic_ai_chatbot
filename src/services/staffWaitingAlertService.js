@@ -84,7 +84,7 @@ async function findWaitingStaffOwnedConversations(
        ORDER BY m.created_at DESC, m.id DESC
        LIMIT 1
      ) latest_waiting ON true
-     WHERE c.mode = 'human'
+     WHERE c.needs_attention = true
        AND first_waiting.created_at <=
            now() - ($1::integer * interval '1 minute')
        AND NOT EXISTS (
@@ -114,7 +114,7 @@ async function isStillWaitingForStaff(
         AND first_waiting.contact_id = c.id
         AND first_waiting.role = 'user'
        WHERE c.id = $1
-         AND c.mode = 'human'
+         AND c.needs_attention = true
          AND NOT EXISTS (
            SELECT 1
            FROM messages outbound
@@ -140,7 +140,7 @@ function buildStaffWaitingAlertMessage({ context, waitingMinutes, env = process.
     "",
     `${name} (${formatWhatsappNumber(context.whatsapp_number)})`,
     "",
-    "Conversation is still assigned to staff.",
+    "Customer still has an unanswered message that needs staff attention.",
     `Waiting: ${Math.max(1, Number(waitingMinutes) || 1)} minutes`,
     `Temperature: ${temperatureLabel(context.temperature)}`,
     `Stage: ${clean(context.stage_name)}`,
@@ -158,7 +158,7 @@ function buildStaffWaitingAlertMessage({ context, waitingMinutes, env = process.
 
   lines.push(
     "",
-    "Action: Reply to the customer or Return to AI."
+    "Action: Reply to the customer. If you want AI to handle future messages, Return to AI after replying."
   );
 
   const inboxUrl = buildInboxUrl(context.contact_id, env);
@@ -194,18 +194,19 @@ function createStaffWaitingAlertService({
     if (!claimed) return { status: "suppressed" };
 
     try {
-      // Candidate discovery and Telegram delivery are separate operations.
-      // Re-check immediately before sending so a staff reply or Return to AI
-      // that happened during the sweep does not produce a stale reminder.
-      if (!await stillWaiting(contactId, waitingSinceMessageId)) {
-        await releaseAlert(eventKey).catch(() => {});
-        return { status: "resolved" };
-      }
-
       const context = await getContext(contactId);
       if (!context) {
         await releaseAlert(eventKey).catch(() => {});
         return { status: "skipped", reason: "contact-not-found" };
+      }
+
+      // Re-check immediately before building/sending the alert. A successful
+      // staff reply or an explicit attention dismissal during the sweep should
+      // cancel the reminder. Returning to AI alone deliberately does not count
+      // as a reply to a customer message that was already skipped in Staff mode.
+      if (!await stillWaiting(contactId, waitingSinceMessageId)) {
+        await releaseAlert(eventKey).catch(() => {});
+        return { status: "resolved" };
       }
 
       const text = buildStaffWaitingAlertMessage({ context, waitingMinutes, env });
