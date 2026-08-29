@@ -67,12 +67,14 @@ test("human attention state triggers an immediate Telegram alert without blockin
   });
 });
 
+test("strict cooldown has no application reset helper", () => {
+  assert.equal(telegramImmediateAlerts.resetHumanInterventionCooldown, undefined);
+});
+
 test("staff takeover keeps the existing human-intervention Telegram cooldown", async (t) => {
   const originalQuery = pool.query;
-  const originalReset = telegramImmediateAlerts.resetHumanInterventionCooldown;
   t.after(() => {
     pool.query = originalQuery;
-    telegramImmediateAlerts.resetHumanInterventionCooldown = originalReset;
   });
 
   pool.query = async (sql, params) => {
@@ -81,22 +83,14 @@ test("staff takeover keeps the existing human-intervention Telegram cooldown", a
     return { rows: [{ id: 12, mode: "human", updated_at: UPDATED_AT }] };
   };
 
-  let resetCalls = 0;
-  telegramImmediateAlerts.resetHumanInterventionCooldown = async () => {
-    resetCalls += 1;
-  };
-
   const updated = await contactsRepo.takeOver(12, "staff1");
   assert.equal(updated.mode, "human");
-  assert.equal(resetCalls, 0);
 });
 
-test("returning a conversation to AI does not reset the strict 30-minute cooldown", async (t) => {
+test("returning a conversation to AI does not reopen the strict cooldown", async (t) => {
   const originalQuery = pool.query;
-  const originalReset = telegramImmediateAlerts.resetHumanInterventionCooldown;
   t.after(() => {
     pool.query = originalQuery;
-    telegramImmediateAlerts.resetHumanInterventionCooldown = originalReset;
   });
 
   pool.query = async (sql, params) => {
@@ -105,23 +99,15 @@ test("returning a conversation to AI does not reset the strict 30-minute cooldow
     return { rows: [{ id: 12, mode: "ai", updated_at: UPDATED_AT }] };
   };
 
-  let resetCalls = 0;
-  telegramImmediateAlerts.resetHumanInterventionCooldown = async () => {
-    resetCalls += 1;
-  };
-
   const updated = await contactsRepo.returnToAi(12);
   assert.equal(updated.mode, "ai");
-  assert.equal(resetCalls, 0);
 });
 
-test("clearing attention does not reset the strict 30-minute cooldown", async (t) => {
+test("clearing attention does not reopen the strict cooldown or send a new alert", async (t) => {
   const originalQuery = pool.query;
-  const originalReset = telegramImmediateAlerts.resetHumanInterventionCooldown;
   const originalAlert = telegramImmediateAlerts.sendHumanInterventionAlert;
   t.after(() => {
     pool.query = originalQuery;
-    telegramImmediateAlerts.resetHumanInterventionCooldown = originalReset;
     telegramImmediateAlerts.sendHumanInterventionAlert = originalAlert;
   });
 
@@ -131,18 +117,13 @@ test("clearing attention does not reset the strict 30-minute cooldown", async (t
     return { rows: [{ id: 12, needs_attention: false, updated_at: UPDATED_AT }] };
   };
 
-  let resetCalls = 0;
   let alertCalls = 0;
-  telegramImmediateAlerts.resetHumanInterventionCooldown = async () => {
-    resetCalls += 1;
-  };
   telegramImmediateAlerts.sendHumanInterventionAlert = async () => {
     alertCalls += 1;
   };
 
   const updated = await contactsRepo.setAttention(12, false);
   assert.equal(updated.needs_attention, false);
-  assert.equal(resetCalls, 0);
   assert.equal(alertCalls, 0);
 });
 
