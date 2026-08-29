@@ -29,10 +29,11 @@ CREATE INDEX IF NOT EXISTS idx_telegram_summary_alerts_pending
   ON telegram_summary_alerts(updated_at, id)
   WHERE status IN ('pending', 'sending');
 
--- Human-intervention alerts can be raised by both the keyword safety net and
--- the AI handoff marker for the same inbound customer message. This small
--- durable idempotency table prevents those two paths from notifying Telegram
--- twice, including when more than one app instance is running.
+-- Durable claims for immediate Telegram notifications. Human intervention uses
+-- this table for exact-message idempotency plus a 30-minute per-contact
+-- cooldown. Staff-waiting reminders use a stable event key for the first
+-- unanswered customer message in an episode so only one reminder is sent even
+-- when the customer sends more messages before staff replies.
 CREATE TABLE IF NOT EXISTS telegram_immediate_alerts (
   id SERIAL PRIMARY KEY,
   event_key TEXT NOT NULL UNIQUE,
