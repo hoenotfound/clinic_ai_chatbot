@@ -20,9 +20,9 @@ function notifyTelegram(promise, label, contactId) {
   });
 }
 
-async function resetHumanAlertCooldown(contactId) {
+async function resetHumanAlertCooldown(contactId, resolvedAt) {
   try {
-    await telegramImmediateAlerts.resetHumanInterventionCooldown(contactId);
+    await telegramImmediateAlerts.resetHumanInterventionCooldown(contactId, resolvedAt);
   } catch (err) {
     // Cooldown bookkeeping must never make a staff action fail. Worst case,
     // the old cooldown expires naturally after 30 minutes.
@@ -192,9 +192,10 @@ async function returnToAi(id) {
   );
   const updated = result.rows[0] || null;
   if (updated) {
-    // Returning the chat to AI marks the human-handled incident as resolved,
-    // so a later genuinely new intervention should be allowed immediately.
-    await resetHumanAlertCooldown(updated.id);
+    // Returning the chat to AI marks the human-handled incident as resolved.
+    // Bound cleanup to this exact resolution timestamp so a genuinely new
+    // incident that races in afterward keeps its own cooldown row.
+    await resetHumanAlertCooldown(updated.id, updated.updated_at);
     publishContactChange(updated.id);
   }
   return updated;
@@ -214,7 +215,9 @@ async function setAttention(id, needsAttention, reason = null) {
   const updated = result.rows[0] || null;
   if (updated) {
     if (!needsAttention) {
-      await resetHumanAlertCooldown(updated.id);
+      // Same timestamp-bound reset as returnToAi: don't erase a new incident
+      // that starts after the operator cleared the old attention state.
+      await resetHumanAlertCooldown(updated.id, updated.updated_at);
     }
     publishContactChange(updated.id);
     if (needsAttention) {
