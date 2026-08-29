@@ -333,6 +333,7 @@ CREATE TABLE IF NOT EXISTS lead_temperature_scores (
   confidence TEXT CHECK (confidence IN ('high', 'medium', 'low')),
   reason TEXT,
   evidence_message_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  summary_data JSONB NOT NULL DEFAULT '{}'::jsonb,
   provider TEXT,
   model TEXT,
   prompt_version TEXT,
@@ -343,6 +344,11 @@ CREATE TABLE IF NOT EXISTS lead_temperature_scores (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (lead_id, through_message_id)
 );
+
+-- Persist the structured handoff summary independently from Telegram so the
+-- management portal can show it even when Telegram alerts are disabled.
+ALTER TABLE lead_temperature_scores
+  ADD COLUMN IF NOT EXISTS summary_data JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_lead_temperature_scores_latest
   ON lead_temperature_scores(lead_id, through_message_id DESC);
