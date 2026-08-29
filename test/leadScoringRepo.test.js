@@ -134,7 +134,10 @@ test("a new message supersedes an in-flight result without changing the lead", a
   });
 
   assert.equal(result.status, "superseded");
-  assert.ok(queries.some(({ sql }) => /SET status = 'superseded'/.test(sql)));
+  const scoreUpdate = queries.find(({ sql }) => /SET status = 'superseded'/.test(sql));
+  assert.ok(scoreUpdate);
+  assert.match(scoreUpdate.sql, /evidence_message_ids = \$5::jsonb/);
+  assert.equal(scoreUpdate.params[4], "[55]");
   assert.equal(queries.some(({ sql }) => /UPDATE leads/.test(sql)), false);
   assert.equal(queries.some(({ sql }) => /INSERT INTO lead_activities/.test(sql)), false);
 });
@@ -191,6 +194,10 @@ test("a high-confidence score updates only an unlocked lead and writes an audit 
   assert.match(update.sql, /temperature_locked = false/);
   assert.match(update.sql, /temperature_source = 'ai'/);
   assert.doesNotMatch(update.sql, /stage_id/);
+  const scoreUpdate = queries.find(({ sql }) => /SET status = 'completed'/.test(sql));
+  assert.ok(scoreUpdate);
+  assert.match(scoreUpdate.sql, /evidence_message_ids = \$5::jsonb/);
+  assert.equal(scoreUpdate.params[4], "[55]");
   const activity = queries.find(({ sql }) => /INSERT INTO lead_activities/.test(sql));
   assert.match(activity.sql, /'AI scoring'/);
   assert.equal(activity.params[2].applied, true);
