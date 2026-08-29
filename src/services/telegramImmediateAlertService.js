@@ -57,32 +57,56 @@ async function claimImmediateAlert(
     contactId,
     cooldownMinutes = HUMAN_ALERT_COOLDOWN_MINUTES,
   },
-  query = pool.query.bind(pool)
+  database = pool
 ) {
   if (!eventKey) return true;
 
-  // Serialize human-alert claims per contact inside this one statement. That
-  // prevents two app instances from both seeing an empty cooldown window and
-  // sending two Telegram alerts for different inbound messages at the same time.
-  const result = await query(
-    `WITH locked AS MATERIALIZED (
-       SELECT pg_advisory_xact_lock($5::integer, $3::integer)
-     )
-     INSERT INTO telegram_immediate_alerts (event_key, alert_type, contact_id)
-     SELECT $1, $2, $3
-     FROM locked
-     WHERE NOT EXISTS (
-       SELECT 1
-       FROM telegram_immediate_alerts recent
-       WHERE recent.contact_id = $3
-         AND recent.alert_type = 'human_intervention'
-         AND recent.created_at > now() - ($4::integer * interval '1 minute')
-     )
-     ON CONFLICT (event_key) DO NOTHING
-     RETURNING id`,
-    [eventKey, type, contactId, cooldownMinutes, HUMAN_ALERT_LOCK_NAMESPACE]
-  );
-  return Boolean(result.rows[0]);
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+
+    if (type === "human_intervention") {
+      // Serialize claims for this contact. The cooldown SELECT runs only after
+      // the lock is acquired, so under READ COMMITTED it sees any alert that a
+      // competing app instance committed while this claim was waiting.
+      await client.query(
+        "SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
+        [HUMAN_ALERT_LOCK_NAMESPACE, contactId]
+      );
+
+      const recent = await client.query(
+        `SELECT id
+         FROM telegram_immediate_alerts
+         WHERE contact_id = $1
+           AND alert_type = 'human_intervention'
+           AND created_at > now() - ($2::integer * interval '1 minute')
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [contactId, cooldownMinutes]
+      );
+
+      if (recent.rows[0]) {
+        await client.query("COMMIT");
+        return false;
+      }
+    }
+
+    const result = await client.query(
+      `INSERT INTO telegram_immediate_alerts (event_key, alert_type, contact_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (event_key) DO NOTHING
+       RETURNING id`,
+      [eventKey, type, contactId]
+    );
+
+    await client.query("COMMIT");
+    return Boolean(result.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function releaseImmediateAlert(eventKey, query = pool.query.bind(pool)) {
