@@ -1,6 +1,7 @@
 const express = require("express");
 const contactsRepo = require("../db/contactsRepo");
 const contactNotesRepo = require("../db/contactNotesRepo");
+const contactInsightsRepo = require("../db/contactInsightsRepo");
 
 const router = express.Router();
 
@@ -28,6 +29,20 @@ router.get("/", async (req, res) => {
   } catch (err) {
     console.error("Failed to list contacts:", err);
     res.status(500).json({ error: "Something went wrong loading contacts." });
+  }
+});
+
+// GET /api/contacts/:id/insights — the latest lead state plus the structured
+// AI conversation summary. This is read on demand so Inbox/contact list calls
+// stay lightweight and opening the panel never triggers another AI request.
+router.get("/:id/insights", async (req, res) => {
+  try {
+    const insights = await contactInsightsRepo.getContactInsights(req.params.id);
+    if (!insights) return res.status(404).json({ error: "Contact not found." });
+    res.json(insights);
+  } catch (err) {
+    console.error("Failed to load contact insights:", err);
+    res.status(500).json({ error: "Something went wrong loading contact insights." });
   }
 });
 
