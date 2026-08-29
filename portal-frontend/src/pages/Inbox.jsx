@@ -1053,6 +1053,7 @@ function DateSeparator({ value }) {
       <span className="rounded-full border border-[var(--color-border)] bg-white/90 px-3 py-1 text-[10px] font-semibold text-[var(--color-text-muted)] shadow-sm">
         {label}
       </span>
+      <span className="h-px flex-1 bg-[var(--color-border)]/80" />
     </div>
   );
 }
