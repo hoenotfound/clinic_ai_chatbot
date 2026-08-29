@@ -24,7 +24,7 @@ const context = {
   latest_customer_message: "Tomorrow 12pm can?",
 };
 
-test("waiting candidate query finds human-owned unanswered episodes after 10 minutes", async () => {
+test("waiting candidate query finds unanswered staff-attention episodes after 10 minutes", async () => {
   let captured = null;
   const rows = [{
     contact_id: 12,
@@ -43,13 +43,14 @@ test("waiting candidate query finds human-owned unanswered episodes after 10 min
 
   assert.deepEqual(result, rows);
   assert.deepEqual(captured.params, [STAFF_WAITING_MINUTES, STAFF_WAITING_BATCH_SIZE]);
-  assert.match(captured.sql, /c\.mode = 'human'/);
+  assert.match(captured.sql, /c\.needs_attention = true/);
+  assert.doesNotMatch(captured.sql, /c\.mode = 'human'/);
   assert.match(captured.sql, /first_waiting\.created_at <=/);
   assert.match(captured.sql, /delivery_status NOT IN \('failed', 'unknown'\)/);
   assert.match(captured.sql, /staff_waiting:/);
 });
 
-test("revalidation requires the contact to remain human-owned with no valid outbound reply", async () => {
+test("revalidation keeps an unanswered message eligible after Return to AI until staff actually resolves it", async () => {
   let captured = null;
   const waiting = await isStillWaitingForStaff(
     12,
@@ -62,12 +63,13 @@ test("revalidation requires the contact to remain human-owned with no valid outb
 
   assert.equal(waiting, true);
   assert.deepEqual(captured.params, [12, 45]);
-  assert.match(captured.sql, /c\.mode = 'human'/);
+  assert.match(captured.sql, /c\.needs_attention = true/);
+  assert.doesNotMatch(captured.sql, /c\.mode = 'human'/);
   assert.match(captured.sql, /outbound\.role = 'assistant'/);
   assert.match(captured.sql, /outbound\.delivery_status NOT IN \('failed', 'unknown'\)/);
 });
 
-test("formats a separate customer-waiting reminder", () => {
+test("formats a separate customer-waiting reminder without implying Return to AI answers the pending message", () => {
   const text = buildStaffWaitingAlertMessage({
     context,
     waitingMinutes: 11,
@@ -75,11 +77,12 @@ test("formats a separate customer-waiting reminder", () => {
   });
 
   assert.match(text, /⏰ Customer Waiting for Staff/);
-  assert.match(text, /Conversation is still assigned to staff/);
+  assert.match(text, /unanswered message that needs staff attention/);
   assert.match(text, /Waiting: 11 minutes/);
   assert.match(text, /🔥 Hot/);
   assert.match(text, /Tomorrow 12pm can\?/);
-  assert.match(text, /Reply to the customer or Return to AI/);
+  assert.match(text, /Reply to the customer/);
+  assert.match(text, /Return to AI after replying/);
   assert.match(text, /inbox\?contact=12/);
 });
 
@@ -121,9 +124,10 @@ test("staff-waiting alert uses one durable event key per unanswered episode", as
   assert.deepEqual(result, { status: "sent", result: { message_id: 90 } });
 });
 
-test("resolved conversation is rechecked and does not send a stale reminder", async () => {
+test("resolved conversation is rechecked immediately before send and does not send a stale reminder", async () => {
   let released = null;
   let sends = 0;
+  let contextLoaded = false;
   const service = createStaffWaitingAlertService({
     env: {
       TELEGRAM_ALERTS_ENABLED: "true",
@@ -131,11 +135,17 @@ test("resolved conversation is rechecked and does not send a stale reminder", as
       TELEGRAM_CHAT_ID: "-100123",
     },
     claimAlert: async () => true,
-    stillWaiting: async () => false,
+    getContext: async () => {
+      contextLoaded = true;
+      return context;
+    },
+    stillWaiting: async () => {
+      assert.equal(contextLoaded, true);
+      return false;
+    },
     releaseAlert: async (eventKey) => {
       released = eventKey;
     },
-    getContext: async () => context,
     sendMessage: async () => {
       sends += 1;
     },
