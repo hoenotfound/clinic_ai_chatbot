@@ -6,9 +6,7 @@ const {
   temperatureLabel,
 } = require("./telegramAlertService");
 const {
-  claimImmediateAlert,
   getImmediateAlertContext,
-  releaseImmediateAlert,
 } = require("./telegramImmediateAlertService");
 
 const STAFF_WAITING_MINUTES = 10;
@@ -16,6 +14,7 @@ const STAFF_WAITING_CHECK_INTERVAL_MS = 60 * 1000;
 const STAFF_WAITING_BATCH_SIZE = 10;
 const STAFF_WAITING_MESSAGE_LIMIT = 4000;
 const LATEST_MESSAGE_LIMIT = 600;
+const STAFF_WAITING_LOCK_NAMESPACE = 24683;
 
 function clean(value, fallback = "Not captured") {
   const text = String(value || "").trim();
@@ -26,6 +25,10 @@ function buildInboxUrl(contactId, env = process.env) {
   const baseUrl = String(env.PUBLIC_BASE_URL || "").trim().replace(/\/$/, "");
   if (!baseUrl || !contactId) return null;
   return `${baseUrl}/inbox?contact=${encodeURIComponent(contactId)}`;
+}
+
+function staffWaitingEventKey(contactId, waitingSinceMessageId) {
+  return `staff_waiting:${contactId}:${waitingSinceMessageId}`;
 }
 
 async function findWaitingStaffOwnedConversations(
@@ -172,9 +175,8 @@ function buildStaffWaitingAlertMessage({ context, waitingMinutes, env = process.
 
 function createStaffWaitingAlertService({
   env = process.env,
+  database = pool,
   getContext = getImmediateAlertContext,
-  claimAlert = claimImmediateAlert,
-  releaseAlert = releaseImmediateAlert,
   stillWaiting = isStillWaitingForStaff,
   sendMessage = postTelegramMessage,
 } = {}) {
@@ -185,26 +187,47 @@ function createStaffWaitingAlertService({
   }) {
     if (!isTelegramEnabled(env)) return { status: "disabled" };
 
-    const eventKey = `staff_waiting:${contactId}:${waitingSinceMessageId}`;
-    const claimed = await claimAlert({
-      eventKey,
-      type: "staff_waiting",
-      contactId,
-    });
-    if (!claimed) return { status: "suppressed" };
+    const eventKey = staffWaitingEventKey(contactId, waitingSinceMessageId);
+    const client = await database.connect();
+    let transactionStarted = false;
 
     try {
-      const context = await getContext(contactId);
+      await client.query("BEGIN");
+      transactionStarted = true;
+
+      // Keep the durable sent marker out of the database until Telegram has
+      // actually accepted the reminder. The transaction-scoped lock serializes
+      // competing app instances for this episode, while a process crash rolls
+      // the transaction back automatically instead of muting the reminder forever.
+      await client.query(
+        "SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
+        [STAFF_WAITING_LOCK_NAMESPACE, waitingSinceMessageId]
+      );
+
+      const existing = await client.query(
+        "SELECT id FROM telegram_immediate_alerts WHERE event_key = $1 LIMIT 1",
+        [eventKey]
+      );
+      if (existing.rows[0]) {
+        await client.query("COMMIT");
+        transactionStarted = false;
+        return { status: "suppressed" };
+      }
+
+      const query = client.query.bind(client);
+      const context = await getContext(contactId, query);
       if (!context) {
-        await releaseAlert(eventKey).catch(() => {});
+        await client.query("COMMIT");
+        transactionStarted = false;
         return { status: "skipped", reason: "contact-not-found" };
       }
 
       // Re-check immediately before building/sending the alert. A successful
       // outbound reply resolves the episode. Keeping Staff mode active, or an
       // outstanding attention flag after Return to AI, keeps it eligible.
-      if (!await stillWaiting(contactId, waitingSinceMessageId)) {
-        await releaseAlert(eventKey).catch(() => {});
+      if (!await stillWaiting(contactId, waitingSinceMessageId, query)) {
+        await client.query("COMMIT");
+        transactionStarted = false;
         return { status: "resolved" };
       }
 
@@ -214,11 +237,26 @@ function createStaffWaitingAlertService({
         chatId: env.TELEGRAM_CHAT_ID,
         text,
       });
+
+      // Only a successful Telegram send becomes the permanent one-per-episode
+      // marker. If sendMessage throws, ROLLBACK leaves no marker and a later
+      // sweep can retry the reminder.
+      await client.query(
+        `INSERT INTO telegram_immediate_alerts (event_key, alert_type, contact_id)
+         VALUES ($1, 'staff_waiting', $2)
+         ON CONFLICT (event_key) DO NOTHING`,
+        [eventKey, contactId]
+      );
+      await client.query("COMMIT");
+      transactionStarted = false;
       return { status: "sent", result };
     } catch (err) {
-      // Do not permanently consume the reminder if Telegram was unavailable.
-      await releaseAlert(eventKey).catch(() => {});
+      if (transactionStarted) {
+        await client.query("ROLLBACK").catch(() => {});
+      }
       throw err;
+    } finally {
+      client.release();
     }
   };
 }
@@ -276,6 +314,7 @@ function startStaffWaitingAlerts() {
 module.exports = {
   STAFF_WAITING_BATCH_SIZE,
   STAFF_WAITING_CHECK_INTERVAL_MS,
+  STAFF_WAITING_LOCK_NAMESPACE,
   STAFF_WAITING_MINUTES,
   buildStaffWaitingAlertMessage,
   createStaffWaitingAlertRunner,
@@ -283,5 +322,6 @@ module.exports = {
   findWaitingStaffOwnedConversations,
   isStillWaitingForStaff,
   runStaffWaitingAlerts,
+  staffWaitingEventKey,
   startStaffWaitingAlerts,
 };
