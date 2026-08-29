@@ -3,7 +3,7 @@ const { GoogleGenAI } = require("@google/genai");
 
 const provider = (process.env.AI_PROVIDER || "gemini").toLowerCase();
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-const CLAUDE_MODEL = "claude-sonnet-5";
+const CLAUDE_MODEL = "claude-3-5-sonnet-latest";
 const LANGUAGE_KEYS = ["en", "ms", "zh"];
 
 function buildPrompt(message) {

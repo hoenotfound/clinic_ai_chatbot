@@ -5,7 +5,7 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // Use Sonnet for reply quality. Once volume is high, consider routing
 // simple FAQ-style messages to Haiku instead to cut cost — same prompt works on both.
-const MODEL = "claude-sonnet-5";
+const MODEL = "claude-3-5-sonnet-latest";
 
 /**
  * @param {Array<{role: 'user'|'assistant', content: string|Array<object>}>} messages - full conversation, ending in the latest user message

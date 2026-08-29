@@ -3,7 +3,7 @@ const { GoogleGenAI } = require("@google/genai");
 
 const PROVIDER = (process.env.AI_PROVIDER || "gemini").toLowerCase();
 const GEMINI_MODEL = process.env.LEAD_SCORING_GEMINI_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash";
-const CLAUDE_MODEL = process.env.LEAD_SCORING_CLAUDE_MODEL || "claude-sonnet-5";
+const CLAUDE_MODEL = process.env.LEAD_SCORING_CLAUDE_MODEL || "claude-3-5-sonnet-latest";
 const PROMPT_VERSION = "lead-temperature-v2";
 const MAX_REASON_CHARS = 240;
 const MAX_EVIDENCE_MESSAGES = 5;
