@@ -70,34 +70,72 @@ test("automated human alerts for the same inbound customer message share one eve
   assert.equal(humanInterventionEventKey(context, "Flagged by staff."), null);
 });
 
-test("human alert claim enforces a 30-minute per-contact cooldown atomically", async () => {
-  let capturedSql = null;
-  let capturedParams = null;
+test("human alert claim serializes per contact and suppresses alerts inside 30 minutes", async () => {
+  const calls = [];
+  const client = {
+    async query(sql, params = []) {
+      calls.push({ sql, params });
+      if (/FROM telegram_immediate_alerts/.test(sql) && /created_at > now\(\)/.test(sql)) {
+        return { rows: [{ id: 99 }] };
+      }
+      return { rows: [] };
+    },
+    release() {
+      calls.push({ sql: "RELEASE", params: [] });
+    },
+  };
+  const database = { connect: async () => client };
+
   const claimed = await claimImmediateAlert(
     {
       eventKey: "human:12:45",
       type: "human_intervention",
       contactId: 12,
     },
-    async (sql, params) => {
-      capturedSql = sql;
-      capturedParams = params;
-      return { rows: [] };
-    }
+    database
   );
 
   assert.equal(claimed, false);
   assert.equal(HUMAN_ALERT_COOLDOWN_MINUTES, 30);
-  assert.match(capturedSql, /pg_advisory_xact_lock/);
-  assert.match(capturedSql, /recent\.contact_id = \$3/);
-  assert.match(capturedSql, /recent\.created_at > now\(\) - \(\$4::integer \* interval '1 minute'\)/);
-  assert.deepEqual(capturedParams, [
-    "human:12:45",
-    "human_intervention",
-    12,
-    30,
-    HUMAN_ALERT_LOCK_NAMESPACE,
-  ]);
+  assert.equal(calls[0].sql, "BEGIN");
+  assert.match(calls[1].sql, /pg_advisory_xact_lock/);
+  assert.deepEqual(calls[1].params, [HUMAN_ALERT_LOCK_NAMESPACE, 12]);
+  assert.match(calls[2].sql, /contact_id = \$1/);
+  assert.match(calls[2].sql, /created_at > now\(\) - \(\$2::integer \* interval '1 minute'\)/);
+  assert.deepEqual(calls[2].params, [12, 30]);
+  assert.equal(calls[3].sql, "COMMIT");
+  assert.equal(calls[4].sql, "RELEASE");
+});
+
+test("human alert claim inserts after the cooldown has expired", async () => {
+  const calls = [];
+  const client = {
+    async query(sql, params = []) {
+      calls.push({ sql, params });
+      if (/FROM telegram_immediate_alerts/.test(sql) && /created_at > now\(\)/.test(sql)) {
+        return { rows: [] };
+      }
+      if (/INSERT INTO telegram_immediate_alerts/.test(sql)) {
+        return { rows: [{ id: 100 }] };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+
+  const claimed = await claimImmediateAlert(
+    {
+      eventKey: "human:12:45",
+      type: "human_intervention",
+      contactId: 12,
+    },
+    { connect: async () => client }
+  );
+
+  assert.equal(claimed, true);
+  const insert = calls.find((call) => /INSERT INTO telegram_immediate_alerts/.test(call.sql));
+  assert.deepEqual(insert.params, ["human:12:45", "human_intervention", 12]);
+  assert.equal(calls.at(-1).sql, "COMMIT");
 });
 
 test("reset removes the contact human-intervention cooldown", async () => {
