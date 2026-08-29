@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const { pool } = require("../db/db");
 const {
   formatWhatsappNumber,
@@ -8,6 +9,8 @@ const {
 
 const IMMEDIATE_MESSAGE_LIMIT = 4000;
 const LATEST_MESSAGE_LIMIT = 600;
+const HUMAN_ALERT_COOLDOWN_MINUTES = 30;
+const HUMAN_ALERT_LOCK_NAMESPACE = 24682;
 
 function clean(value, fallback = "Not captured") {
   const text = String(value || "").trim();
@@ -49,18 +52,62 @@ async function getImmediateAlertContext(contactId, query = pool.query.bind(pool)
 }
 
 async function claimImmediateAlert(
-  { eventKey, type, contactId },
-  query = pool.query.bind(pool)
+  {
+    eventKey,
+    type,
+    contactId,
+    cooldownMinutes = HUMAN_ALERT_COOLDOWN_MINUTES,
+  },
+  database = pool
 ) {
   if (!eventKey) return true;
-  const result = await query(
-    `INSERT INTO telegram_immediate_alerts (event_key, alert_type, contact_id)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (event_key) DO NOTHING
-     RETURNING id`,
-    [eventKey, type, contactId]
-  );
-  return Boolean(result.rows[0]);
+
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+
+    if (type === "human_intervention") {
+      // Serialize claims for this contact. The cooldown SELECT runs only after
+      // the lock is acquired, so under READ COMMITTED it sees any alert that a
+      // competing app instance committed while this claim was waiting.
+      await client.query(
+        "SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
+        [HUMAN_ALERT_LOCK_NAMESPACE, contactId]
+      );
+
+      const recent = await client.query(
+        `SELECT id
+         FROM telegram_immediate_alerts
+         WHERE contact_id = $1
+           AND alert_type = 'human_intervention'
+           AND created_at > now() - ($2::integer * interval '1 minute')
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [contactId, cooldownMinutes]
+      );
+
+      if (recent.rows[0]) {
+        await client.query("COMMIT");
+        return false;
+      }
+    }
+
+    const result = await client.query(
+      `INSERT INTO telegram_immediate_alerts (event_key, alert_type, contact_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (event_key) DO NOTHING
+       RETURNING id`,
+      [eventKey, type, contactId]
+    );
+
+    await client.query("COMMIT");
+    return Boolean(result.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function releaseImmediateAlert(eventKey, query = pool.query.bind(pool)) {
@@ -68,8 +115,43 @@ async function releaseImmediateAlert(eventKey, query = pool.query.bind(pool)) {
   await query("DELETE FROM telegram_immediate_alerts WHERE event_key = $1", [eventKey]);
 }
 
+async function resetHumanInterventionCooldown(contactId, resolvedAt, database = pool) {
+  if (!contactId) return;
+  const cutoff = resolvedAt ? new Date(resolvedAt) : new Date();
+  if (Number.isNaN(cutoff.getTime())) {
+    throw new Error("Invalid human-intervention cooldown reset timestamp");
+  }
+
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    // Use the same per-contact lock as alert claims. The timestamp cutoff is
+    // equally important: if a genuinely new incident starts just after staff
+    // resolved the old one but before this cleanup gets the lock, its newer
+    // cooldown row must survive this reset.
+    await client.query(
+      "SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
+      [HUMAN_ALERT_LOCK_NAMESPACE, contactId]
+    );
+    await client.query(
+      `DELETE FROM telegram_immediate_alerts
+       WHERE contact_id = $1
+         AND alert_type = 'human_intervention'
+         AND created_at <= $2::timestamptz`,
+      [contactId, cutoff.toISOString()]
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 function humanInterventionEventKey(context, reason, messageId = null) {
-  // A staff-created manual flag is a separate action and should always alert.
+  // Automated paths tied to an inbound message use a stable key, preserving
+  // exact-message dedupe in addition to the wider per-conversation cooldown.
   if (String(reason || "").trim() === "Flagged by staff.") return null;
   const capturedMessageId = Number(messageId || context.latest_customer_message_id);
   if (!Number.isSafeInteger(capturedMessageId) || capturedMessageId < 1) return null;
@@ -134,8 +216,19 @@ function createTelegramImmediateAlertService({
     let eventKey = null;
     if (type === "human_intervention") {
       eventKey = humanInterventionEventKey(context, reason, messageId);
-      const claimed = await claimAlert({ eventKey, type, contactId });
-      if (!claimed) return { status: "duplicate" };
+      // Manual flags and rare attention paths without an inbound message still
+      // participate in the same conversation cooldown. They just need a unique
+      // event key because there is no stable inbound message id to use.
+      if (!eventKey) {
+        eventKey = `human:${contactId}:event:${crypto.randomUUID()}`;
+      }
+      const claimed = await claimAlert({
+        eventKey,
+        type,
+        contactId,
+        cooldownMinutes: HUMAN_ALERT_COOLDOWN_MINUTES,
+      });
+      if (!claimed) return { status: "suppressed" };
     }
 
     try {
@@ -147,9 +240,8 @@ function createTelegramImmediateAlertService({
       });
       return { status: "sent", result };
     } catch (err) {
-      // A failed keyword-path send should not permanently suppress the AI
-      // handoff path for the same inbound message. Release the idempotency key
-      // so a later duplicate path can make one more best-effort attempt.
+      // A failed send must not consume the cooldown. Release this event so a
+      // later attention path can retry instead of being muted for 30 minutes.
       if (eventKey) {
         await releaseAlert(eventKey).catch(() => {});
       }
@@ -170,12 +262,15 @@ function createTelegramImmediateAlertService({
 const defaultService = createTelegramImmediateAlertService();
 
 module.exports = {
+  HUMAN_ALERT_COOLDOWN_MINUTES,
+  HUMAN_ALERT_LOCK_NAMESPACE,
   buildImmediateAlertMessage,
   claimImmediateAlert,
   createTelegramImmediateAlertService,
   getImmediateAlertContext,
   humanInterventionEventKey,
   releaseImmediateAlert,
+  resetHumanInterventionCooldown,
   sendHumanInterventionAlert: defaultService.sendHumanInterventionAlert,
   sendDeliveryFailureAlert: defaultService.sendDeliveryFailureAlert,
 };

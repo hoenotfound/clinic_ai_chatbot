@@ -20,6 +20,19 @@ function notifyTelegram(promise, label, contactId) {
   });
 }
 
+async function resetHumanAlertCooldown(contactId, resolvedAt) {
+  try {
+    await telegramImmediateAlerts.resetHumanInterventionCooldown(contactId, resolvedAt);
+  } catch (err) {
+    // Cooldown bookkeeping must never make a staff action fail. Worst case,
+    // the old cooldown expires naturally after 30 minutes.
+    console.error(
+      `Failed to reset Telegram human-intervention cooldown for contact ${contactId}:`,
+      err
+    );
+  }
+}
+
 async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
   const profileName = whatsappProfileName?.trim() || null;
   const inserted = await pool.query(
@@ -162,6 +175,9 @@ async function takeOver(id, staffUsername) {
     [staffUsername, id]
   );
   const updated = result.rows[0] || null;
+  // Keep the existing Telegram cooldown while staff owns the chat. Otherwise
+  // the very next customer message in human mode could immediately generate a
+  // second intervention alert for the same unresolved conversation.
   if (updated) publishContactChange(updated.id);
   return updated;
 }
@@ -175,7 +191,13 @@ async function returnToAi(id) {
     [id]
   );
   const updated = result.rows[0] || null;
-  if (updated) publishContactChange(updated.id);
+  if (updated) {
+    // Returning the chat to AI marks the human-handled incident as resolved.
+    // Bound cleanup to this exact resolution timestamp so a genuinely new
+    // incident that races in afterward keeps its own cooldown row.
+    await resetHumanAlertCooldown(updated.id, updated.updated_at);
+    publishContactChange(updated.id);
+  }
   return updated;
 }
 
@@ -192,6 +214,11 @@ async function setAttention(id, needsAttention, reason = null) {
   );
   const updated = result.rows[0] || null;
   if (updated) {
+    if (!needsAttention) {
+      // Same timestamp-bound reset as returnToAi: don't erase a new incident
+      // that starts after the operator cleared the old attention state.
+      await resetHumanAlertCooldown(updated.id, updated.updated_at);
+    }
     publishContactChange(updated.id);
     if (needsAttention) {
       notifyTelegram(
