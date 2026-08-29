@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { branding } from "../config/branding";
 
 const NAV_ITEMS = [
   { to: "/inbox", label: "Inbox", icon: ChatIcon, active: true },
@@ -28,25 +29,14 @@ export default function Sidebar() {
     <aside className="flex h-screen w-[4.25rem] shrink-0 flex-col bg-[var(--color-sidebar)] text-[var(--color-sidebar-text)] transition-[width] lg:w-60">
       {/* Logo */}
       <div className="flex items-center justify-center gap-2.5 px-3 py-5 lg:justify-start lg:px-5">
-        <div className="w-8 h-8 rounded-xl bg-[var(--color-primary)] flex items-center justify-center shrink-0">
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="white"
-            strokeWidth="2.2"
-          >
-            <path
-              d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </div>
+        <img
+          src={branding.clientLogo}
+          alt={`${branding.clientName} logo`}
+          className="h-8 w-8 shrink-0 rounded-lg object-contain"
+        />
 
-        <span className="hidden font-display text-[15px] font-bold text-white lg:inline">
-          Clinic Portal
+        <span className="hidden truncate font-display text-[15px] font-bold text-white lg:inline">
+          {branding.clientName}
         </span>
       </div>
 
