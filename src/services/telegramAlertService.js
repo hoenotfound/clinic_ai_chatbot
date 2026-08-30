@@ -38,6 +38,19 @@ function formatAppointment(value) {
   }
 }
 
+function formatAppointmentForLead(lead, preferredAppointment = null) {
+  const status = String(lead?.appointment_status || "").toLowerCase();
+  if (status === "cancelled") return "Cancelled";
+  if (status === "reschedule") return "Rescheduling";
+  if (status === "visited") {
+    return lead?.appointment_at
+      ? `Visited (${formatAppointment(lead.appointment_at)})`
+      : "Visited";
+  }
+  if (status === "set") return formatAppointment(lead?.appointment_at);
+  return clean(preferredAppointment);
+}
+
 function temperatureLabel(value, fallback = "Not captured") {
   if (!value) return fallback;
   const temperature = String(value).toLowerCase();
@@ -75,7 +88,7 @@ function buildConversationSummaryMessage({ lead, score, env = process.env }) {
       `Current Temperature: ${currentTemperature}`,
       `Treatment: ${clean(lead.treatment_interest)}`,
       `Branch: ${clean(lead.branch_name)}`,
-      `Appointment: ${formatAppointment(lead.appointment_at)}`,
+      `Appointment: ${formatAppointmentForLead(lead)}`,
       "",
       "AI Summary: Unavailable",
       "",
@@ -92,7 +105,7 @@ function buildConversationSummaryMessage({ lead, score, env = process.env }) {
   const summary = score?.summary || {};
   const treatment = clean(summary.treatmentInterest || lead.treatment_interest);
   const branch = clean(summary.preferredBranch || lead.branch_name);
-  const appointment = clean(summary.preferredAppointment, formatAppointment(lead.appointment_at));
+  const appointment = formatAppointmentForLead(lead, summary.preferredAppointment);
   const aiTemperature = temperatureLabel(score?.temperature);
 
   const lines = [
@@ -252,6 +265,7 @@ module.exports = {
   TELEGRAM_MESSAGE_LIMIT,
   buildConversationSummaryMessage,
   createTelegramAlertService,
+  formatAppointmentForLead,
   formatWhatsappNumber,
   isTelegramEnabled,
   postTelegramMessage,
