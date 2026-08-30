@@ -66,10 +66,6 @@ function buildConversationSummaryMessage({ lead, score, env = process.env }) {
   const currentTemperature = temperatureLabel(lead.current_temperature);
 
   if (score?.summaryUnavailable === true || score?.alertType === "ai_scoring_failed") {
-    const attempts = Number(score?.attempts);
-    const attemptText = Number.isInteger(attempts) && attempts > 0
-      ? ` after ${attempts} attempts`
-      : "";
     const lines = [
       "⚠️ Conversation Needs Manual Review",
       "",
@@ -82,7 +78,6 @@ function buildConversationSummaryMessage({ lead, score, env = process.env }) {
       `Appointment: ${formatAppointment(lead.appointment_at)}`,
       "",
       "AI Summary: Unavailable",
-      `AI lead scoring failed${attemptText}. The conversation was not dropped from Telegram.`,
       "",
       "Recommended Action:",
       "Open the Inbox, review the conversation manually, and follow up with the customer.",
