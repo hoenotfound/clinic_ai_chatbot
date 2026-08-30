@@ -26,6 +26,8 @@ INSTAGRAM_ACCESS_TOKEN=your_instagram_access_token
 
 You can enable only Facebook or only Instagram. The unused channel variables may stay empty.
 
+If you enable both Facebook and Instagram, configure them in the same Meta developer app. This implementation intentionally uses one `META_APP_SECRET` for the shared `/meta-webhook`, so both social webhook subscriptions must be signed by that same app secret.
+
 ## Facebook Messenger
 
 1. Add Messenger to the Meta developer app that will manage the Facebook Page.
