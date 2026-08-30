@@ -163,10 +163,10 @@ async function processIncomingMessage(incoming) {
 
       if (media) {
         mediaAttachment = mp3
-          ? { mimeType: mp3.mimeType, data: mp3.buffer.toString("base64") }
+          ? { mimeType: mp3.mimeType, buffer: mp3.buffer }
           : {
               mimeType: media.mimeType.split(";")[0].trim(),
-              data: media.buffer.toString("base64"),
+              buffer: media.buffer,
             };
       }
 
@@ -217,7 +217,7 @@ async function processIncomingMessage(incoming) {
 
       mediaAttachment = {
         mimeType: media.mimeType,
-        data: media.buffer.toString("base64"),
+        buffer: media.buffer,
       };
       text = incoming.text ? `📷 ${incoming.text}` : "📷 [Patient sent a photo]";
       await conversationStore.updateInboundMessage(

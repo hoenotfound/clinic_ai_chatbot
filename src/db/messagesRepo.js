@@ -10,20 +10,31 @@ function clampPageSize(limit, fallback = 50) {
   return Math.min(parsed, MAX_PORTAL_PAGE_SIZE);
 }
 
-// Every write path in this file still accepts a base64 string for media
-// (same shape callers always used) but now uploads it to R2 and stores only
-// the returned key in Postgres. Centralizing this here means server.js,
-// conversationStore.js, and the routes never had to change.
-async function persistMediaIfPresent(mediaBase64, mediaMimeType, contactId) {
-  if (!mediaBase64) return null;
-  const buffer = Buffer.from(mediaBase64, "base64");
+// Media write paths now pass Buffer objects straight through to R2 so an
+// upload does not allocate a ~33% larger base64 string and then decode it back
+// into another Buffer. Base64 strings remain accepted only as a compatibility
+// fallback for any older internal caller while the active paths use Buffers.
+async function persistMediaIfPresent(mediaData, mediaMimeType, contactId) {
+  if (!mediaData) return null;
+
+  let buffer;
+  if (Buffer.isBuffer(mediaData)) {
+    buffer = mediaData;
+  } else if (typeof mediaData === "string") {
+    buffer = Buffer.from(mediaData, "base64");
+  } else if (ArrayBuffer.isView(mediaData)) {
+    buffer = Buffer.from(mediaData.buffer, mediaData.byteOffset, mediaData.byteLength);
+  } else {
+    throw new TypeError("Media attachment must be a Buffer, typed array, or base64 string.");
+  }
+
   return mediaStorage.uploadMedia(buffer, mediaMimeType, { contactId });
 }
 
 // Mirrors persistMediaIfPresent's contract in reverse: resolves a stored key
 // back into the {media_base64, media_mime_type} shape every caller already
-// expects, so routes/conversations.js and conversationStore.js need zero
-// changes even though the bytes now live in R2.
+// expects. Full buffering is intentionally reserved for callers that really
+// need the bytes (AI image context and message retry), not browser playback.
 async function resolveMediaBase64(mediaKey, mediaMimeType) {
   if (!mediaKey) return null;
   const buffer = await mediaStorage.downloadMedia(mediaKey);
@@ -221,17 +232,24 @@ async function getMessagePageForContact(
   return { rows: await resolveMediaKeysInRows(page.reverse(), includeMedia), hasMore };
 }
 
-// Fetches one stored attachment only when the browser actually needs to
-// display or play it. Keeping these bytes out of polling responses avoids
-// repeatedly transferring every photo and recording.
-async function getMessageMediaForContact(contactId, messageId) {
+// Returns only the R2 reference and MIME metadata for one authenticated
+// message lookup. The browser streaming route uses this instead of loading
+// the whole object through Postgres/base64 before it can start responding.
+async function getMessageMediaReferenceForContact(contactId, messageId) {
   const result = await pool.query(
     `SELECT media_key, media_mime_type
      FROM messages
      WHERE id = $1 AND contact_id = $2 AND media_key IS NOT NULL`,
     [messageId, contactId]
   );
-  const row = result.rows[0];
+  return result.rows[0] || null;
+}
+
+// Full-byte lookup used only where the application genuinely needs the entire
+// attachment (for example the newest photo sent to the AI). Browser playback
+// should use getMessageMediaReferenceForContact + R2 streaming instead.
+async function getMessageMediaForContact(contactId, messageId) {
+  const row = await getMessageMediaReferenceForContact(contactId, messageId);
   if (!row) return null;
   return resolveMediaBase64(row.media_key, row.media_mime_type);
 }
@@ -384,6 +402,7 @@ module.exports = {
   updateInboundMessage,
   getMessagesForContact,
   getMessagePageForContact,
+  getMessageMediaReferenceForContact,
   getMessageMediaForContact,
   getMessageForRetry,
   getDeliveryStatusesForContact,
