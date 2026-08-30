@@ -1,5 +1,6 @@
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
+const mediaStorage = require("../services/mediaStorageService");
 
 const MAX_PORTAL_PAGE_SIZE = 100;
 
@@ -7,6 +8,40 @@ function clampPageSize(limit, fallback = 50) {
   const parsed = Number(limit);
   if (!Number.isInteger(parsed) || parsed < 1) return fallback;
   return Math.min(parsed, MAX_PORTAL_PAGE_SIZE);
+}
+
+// Every write path in this file still accepts a base64 string for media
+// (same shape callers always used) but now uploads it to R2 and stores only
+// the returned key in Postgres. Centralizing this here means server.js,
+// conversationStore.js, and the routes never had to change.
+async function persistMediaIfPresent(mediaBase64, mediaMimeType, contactId) {
+  if (!mediaBase64) return null;
+  const buffer = Buffer.from(mediaBase64, "base64");
+  return mediaStorage.uploadMedia(buffer, mediaMimeType, { contactId });
+}
+
+// Mirrors persistMediaIfPresent's contract in reverse: resolves a stored key
+// back into the {media_base64, media_mime_type} shape every caller already
+// expects, so routes/conversations.js and conversationStore.js need zero
+// changes even though the bytes now live in R2.
+async function resolveMediaBase64(mediaKey, mediaMimeType) {
+  if (!mediaKey) return null;
+  const buffer = await mediaStorage.downloadMedia(mediaKey);
+  return { media_base64: buffer.toString("base64"), media_mime_type: mediaMimeType };
+}
+
+// Shared by the includeMedia=true paths in getMessagePageForContact (the
+// getMessagesForContact one resolves inline since it always needs the full
+// row shape). Renames media_key -> media_base64 in place to match what
+// callers historically received.
+async function resolveMediaKeysInRows(rows, includeMedia) {
+  if (!includeMedia) return rows;
+  for (const row of rows) {
+    const key = row.media_key;
+    delete row.media_key;
+    row.media_base64 = key ? (await mediaStorage.downloadMedia(key)).toString("base64") : null;
+  }
+  return rows;
 }
 
 const LIGHTWEIGHT_MESSAGE_COLUMNS = `
@@ -17,7 +52,7 @@ const LIGHTWEIGHT_MESSAGE_COLUMNS = `
   whatsapp_message_id,
   sent_by_username,
   media_url,
-  (media_base64 IS NOT NULL) AS has_media_attachment,
+  (media_key IS NOT NULL) AS has_media_attachment,
   media_mime_type,
   created_at,
   delivery_status,
@@ -40,15 +75,16 @@ async function saveMessage(
   mediaBase64 = null,
   mediaMimeType = null
 ) {
+  const mediaKey = await persistMediaIfPresent(mediaBase64, mediaMimeType, contactId);
   const result = await pool.query(
     `WITH conversation_lock AS MATERIALIZED (
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
      )
-     INSERT INTO messages (contact_id, role, content, whatsapp_message_id, sent_by_username, media_url, media_base64, media_mime_type)
+     INSERT INTO messages (contact_id, role, content, whatsapp_message_id, sent_by_username, media_url, media_key, media_mime_type)
      SELECT $1, $2, $3, $4, $5, $6, $7, $8
      FROM conversation_lock
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
-    [contactId, role, content, whatsappMessageId, sentByUsername, mediaUrl, mediaBase64, mediaMimeType]
+    [contactId, role, content, whatsappMessageId, sentByUsername, mediaUrl, mediaKey, mediaMimeType]
   );
   return result.rows[0];
 }
@@ -66,34 +102,36 @@ async function saveInboundMessageIfNew(
   mediaBase64 = null,
   mediaMimeType = null
 ) {
+  const mediaKey = await persistMediaIfPresent(mediaBase64, mediaMimeType, contactId);
   const result = await pool.query(
     `WITH conversation_lock AS MATERIALIZED (
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
      )
      INSERT INTO messages (
-       contact_id, role, content, whatsapp_message_id, media_base64, media_mime_type
+       contact_id, role, content, whatsapp_message_id, media_key, media_mime_type
      )
      SELECT $1, 'user', $2, $3, $4, $5
      FROM conversation_lock
      ON CONFLICT (whatsapp_message_id) DO NOTHING
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
-    [contactId, content, whatsappMessageId, mediaBase64, mediaMimeType]
+    [contactId, content, whatsappMessageId, mediaKey, mediaMimeType]
   );
   return result.rows[0] || null;
 }
 
 /** Updates the placeholder saved before media download/transcription finishes. */
 async function updateInboundMessage(messageId, contactId, content, mediaBase64, mediaMimeType) {
+  const mediaKey = await persistMediaIfPresent(mediaBase64, mediaMimeType, contactId);
   const result = await pool.query(
     `WITH conversation_lock AS MATERIALIZED (
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $2::integer)
      )
      UPDATE messages
-     SET content = $3, media_base64 = $4, media_mime_type = $5
+     SET content = $3, media_key = $4, media_mime_type = $5
      FROM conversation_lock
      WHERE id = $1 AND contact_id = $2 AND role = 'user'
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
-    [messageId, contactId, content, mediaBase64, mediaMimeType]
+    [messageId, contactId, content, mediaKey, mediaMimeType]
   );
   return result.rows[0] || null;
 }
@@ -105,8 +143,8 @@ async function updateInboundMessage(messageId, contactId, content, mediaBase64, 
 async function getMessagesForContact(contactId, limit = 50, includeMedia = true) {
   const safeLimit = clampPageSize(limit);
   const mediaColumn = includeMedia
-    ? "media_base64"
-    : "(media_base64 IS NOT NULL) AS has_media_attachment";
+    ? "media_key"
+    : "(media_key IS NOT NULL) AS has_media_attachment";
   const result = await pool.query(
     `SELECT id, role, content, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type FROM messages
      WHERE contact_id = $1
@@ -119,7 +157,17 @@ async function getMessagesForContact(contactId, limit = 50, includeMedia = true)
      LIMIT $2`,
     [contactId, safeLimit]
   );
-  return result.rows.reverse();
+  const rows = result.rows.reverse();
+  if (!includeMedia) return rows;
+
+  // Resolve each row's R2 key back into media_base64 so this keeps the same
+  // shape callers already relied on (see getHistoryForContact/AI context).
+  for (const row of rows) {
+    const key = row.media_key;
+    delete row.media_key;
+    row.media_base64 = key ? (await mediaStorage.downloadMedia(key)).toString("base64") : null;
+  }
+  return rows;
 }
 
 /**
@@ -135,8 +183,8 @@ async function getMessagePageForContact(
 ) {
   const safeLimit = clampPageSize(limit);
   const mediaColumn = includeMedia
-    ? "media_base64"
-    : "(media_base64 IS NOT NULL) AS has_media_attachment";
+    ? "media_key"
+    : "(media_key IS NOT NULL) AS has_media_attachment";
 
   if (afterId != null) {
     const result = await pool.query(
@@ -147,7 +195,7 @@ async function getMessagePageForContact(
        ORDER BY id ASC`,
       [contactId, afterId]
     );
-    return { rows: result.rows, hasMore: false };
+    return { rows: await resolveMediaKeysInRows(result.rows, includeMedia), hasMore: false };
   }
 
   const params = [contactId];
@@ -170,7 +218,7 @@ async function getMessagePageForContact(
 
   const hasMore = result.rows.length > safeLimit;
   const page = hasMore ? result.rows.slice(0, safeLimit) : result.rows;
-  return { rows: page.reverse(), hasMore };
+  return { rows: await resolveMediaKeysInRows(page.reverse(), includeMedia), hasMore };
 }
 
 // Fetches one stored attachment only when the browser actually needs to
@@ -178,12 +226,14 @@ async function getMessagePageForContact(
 // repeatedly transferring every photo and recording.
 async function getMessageMediaForContact(contactId, messageId) {
   const result = await pool.query(
-    `SELECT media_base64, media_mime_type
+    `SELECT media_key, media_mime_type
      FROM messages
-     WHERE id = $1 AND contact_id = $2 AND media_base64 IS NOT NULL`,
+     WHERE id = $1 AND contact_id = $2 AND media_key IS NOT NULL`,
     [messageId, contactId]
   );
-  return result.rows[0] || null;
+  const row = result.rows[0];
+  if (!row) return null;
+  return resolveMediaBase64(row.media_key, row.media_mime_type);
 }
 
 // Retry needs the original stored attachment bytes. This is deliberately a
@@ -192,13 +242,19 @@ async function getMessageMediaForContact(contactId, messageId) {
 async function getMessageForRetry(contactId, messageId) {
   const result = await pool.query(
     `SELECT id, contact_id, role, content, whatsapp_message_id, sent_by_username,
-            media_url, media_base64, media_mime_type, created_at,
+            media_url, media_key, media_mime_type, created_at,
             delivery_status, delivery_error, is_automated_follow_up
      FROM messages
      WHERE id = $1 AND contact_id = $2`,
     [messageId, contactId]
   );
-  return result.rows[0] || null;
+  const row = result.rows[0];
+  if (!row) return null;
+
+  const key = row.media_key;
+  delete row.media_key;
+  row.media_base64 = key ? (await mediaStorage.downloadMedia(key)).toString("base64") : null;
+  return row;
 }
 
 // Resyncs the delivery state for messages that are already visible in an
