@@ -1,5 +1,6 @@
 const clinicConfig = require("../config/clinicConfig");
 const leadScoringRepo = require("../db/leadScoringRepo");
+const leadScoringFailureRecoveryRepo = require("../db/leadScoringFailureRecoveryRepo");
 const { scoreLeadConversation } = require("./leadScoringAiService");
 const telegramAlerts = require("./telegramAlertService");
 
@@ -77,6 +78,9 @@ function createLeadScoringRunner({
   settingsGetter = getActiveSettings,
   queueConversationSummary = telegramAlerts.queueConversationSummary,
   flushConversationSummaries = telegramAlerts.flushConversationSummaries,
+  recoverStaleTerminalFailures = repository === leadScoringRepo
+    ? leadScoringFailureRecoveryRepo.recoverStaleTerminalProcessingFailures
+    : null,
 } = {}) {
   let sweepRunning = false;
 
@@ -187,11 +191,26 @@ function createLeadScoringRunner({
         }
       }
 
+      // If Render died while the final scoring attempt was still marked
+      // processing, convert it to failed only after the existing stale timeout.
+      // Any late AI completion then sees a non-processing score and is ignored.
+      if (typeof recoverStaleTerminalFailures === "function") {
+        try {
+          await recoverStaleTerminalFailures();
+        } catch (staleRecoveryErr) {
+          console.error(
+            "Failed to recover stale terminal lead-scoring attempts:",
+            staleRecoveryErr
+          );
+        }
+      }
+
       // Recover any terminal scoring failure that was committed before its
       // Telegram fallback could be queued (for example a Render restart between
       // those two operations). This also picks up eligible historical terminal
-      // failures that pre-date the fallback behavior. The queue's unique
-      // lead/message key keeps this idempotent across repeated sweeps/instances.
+      // failures that pre-date the fallback behavior. The Telegram queue keeps
+      // snapshot ordering monotonic, so an old recovery cannot replace a newer
+      // queued summary.
       if (typeof repository.findTerminalFailuresNeedingAlert === "function") {
         try {
           const failures = await repository.findTerminalFailuresNeedingAlert({
