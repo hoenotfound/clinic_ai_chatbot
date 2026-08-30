@@ -2,6 +2,7 @@ const { pool } = require("./db");
 
 const CLAIM_STALE_MINUTES = 10;
 const MAX_ATTEMPTS = 3;
+const QUEUE_LOCK_NAMESPACE = 24684;
 
 async function withTransaction(work) {
   const client = await pool.connect();
@@ -20,12 +21,21 @@ async function withTransaction(work) {
 
 async function queueSummary({ leadId, throughMessageId, score }) {
   return withTransaction(async (client) => {
-    // A newer scored snapshot makes any older unsent summary obsolete.
+    // Serialize queue changes for one lead so an older recovery racing with a
+    // newer completed score can never replace the newer Telegram snapshot.
+    await client.query(
+      "SELECT pg_advisory_xact_lock($1, $2)",
+      [QUEUE_LOCK_NAMESPACE, leadId]
+    );
+
+    // Snapshot ordering is monotonic: only a newer message boundary can
+    // supersede older unsent rows. An older recovered fallback must never
+    // supersede a newer summary that has already been queued.
     await client.query(
       `UPDATE telegram_summary_alerts
        SET status = 'superseded', updated_at = now()
        WHERE lead_id = $1
-         AND through_message_id <> $2
+         AND through_message_id < $2
          AND status IN ('pending', 'sending')`,
       [leadId, throughMessageId]
     );
@@ -33,7 +43,14 @@ async function queueSummary({ leadId, throughMessageId, score }) {
     const result = await client.query(
       `INSERT INTO telegram_summary_alerts (
          lead_id, through_message_id, score_data
-       ) VALUES ($1, $2, $3)
+       )
+       SELECT $1, $2, $3
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM telegram_summary_alerts newer
+         WHERE newer.lead_id = $1
+           AND newer.through_message_id > $2
+       )
        ON CONFLICT (lead_id, through_message_id) DO NOTHING
        RETURNING *`,
       [leadId, throughMessageId, score]
@@ -157,6 +174,7 @@ async function markFailed(alertId, error) {
 module.exports = {
   CLAIM_STALE_MINUTES,
   MAX_ATTEMPTS,
+  QUEUE_LOCK_NAMESPACE,
   claimSummary,
   findReadySummaries,
   markFailed,
