@@ -34,6 +34,11 @@ function normalizeWhatsappNumber(input) {
   return digits;
 }
 
+function legacyMalaysianLocalNumber(normalizedNumber) {
+  const match = /^60(1\d{8,9})$/.exec(normalizedNumber);
+  return match ? `0${match[1]}` : null;
+}
+
 function publishContactChange(id) {
   if (!id) return;
   realtimeEvents.publish("conversation_changed", {
@@ -48,9 +53,47 @@ function notifyTelegram(promise, label, contactId) {
   });
 }
 
+async function reconcileLegacyWhatsappContact(normalizedNumber, profileName) {
+  const legacyNumber = legacyMalaysianLocalNumber(normalizedNumber);
+  if (!legacyNumber) return null;
+
+  try {
+    const result = await pool.query(
+      `UPDATE contacts AS legacy
+       SET whatsapp_number = $1,
+           whatsapp_profile_name = COALESCE($3, legacy.whatsapp_profile_name),
+           updated_at = now()
+       WHERE legacy.whatsapp_number = $2
+         AND NOT EXISTS (
+           SELECT 1
+           FROM contacts AS canonical
+           WHERE canonical.whatsapp_number = $1
+         )
+       RETURNING legacy.*`,
+      [normalizedNumber, legacyNumber, profileName]
+    );
+    const reconciled = result.rows[0] || null;
+    if (reconciled) publishContactChange(reconciled.id);
+    return reconciled;
+  } catch (err) {
+    // Another request may have inserted the canonical number after the
+    // NOT EXISTS check. The unique constraint is the final arbiter; fall
+    // through to the normal canonical lookup instead of failing the webhook.
+    if (err.code === "23505") return null;
+    throw err;
+  }
+}
+
 async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
   const normalizedNumber = normalizeWhatsappNumber(whatsappNumber);
   const profileName = whatsappProfileName?.trim() || null;
+
+  // Older portal versions allowed Malaysian local numbers such as 012... to
+  // be stored verbatim. Reuse that same contact before inserting the canonical
+  // WhatsApp 6012... form, otherwise the next inbound message creates a duplicate.
+  const reconciled = await reconcileLegacyWhatsappContact(normalizedNumber, profileName);
+  if (reconciled) return reconciled;
+
   const inserted = await pool.query(
     `INSERT INTO contacts (whatsapp_number, whatsapp_profile_name)
      VALUES ($1, $2)
