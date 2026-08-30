@@ -203,3 +203,49 @@ test("a high-confidence score updates only an unlocked lead and writes an audit 
   assert.equal(activity.params[2].applied, true);
   assert.deepEqual(published, [{ event: "pipeline_changed", payload: { leadId: 8 } }]);
 });
+
+test("marking a score failed reports when the third attempt is terminal", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+  let captured = null;
+  pool.query = async (sql, params) => {
+    captured = { sql, params };
+    return {
+      rows: [{ id: 120, lead_id: 8, through_message_id: 55, attempts: 3 }],
+    };
+  };
+
+  const failure = await leadScoringRepo.markScoreFailed(120, new Error("provider unavailable"));
+
+  assert.match(captured.sql, /RETURNING id, lead_id, through_message_id, attempts/);
+  assert.deepEqual(captured.params, [120, "provider unavailable"]);
+  assert.equal(failure.terminal, true);
+  assert.equal(failure.attempts, 3);
+});
+
+test("terminal failure recovery only selects current open unanswered snapshots with no Telegram row", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+  let captured = null;
+  pool.query = async (sql, params) => {
+    captured = { sql, params };
+    return {
+      rows: [{ lead_id: 8, through_message_id: 55, attempts: 3 }],
+    };
+  };
+
+  const failures = await leadScoringRepo.findTerminalFailuresNeedingAlert({ limit: 5 });
+
+  assert.equal(failures.length, 1);
+  assert.match(captured.sql, /failed\.status = 'failed'/);
+  assert.match(captured.sql, /failed\.attempts >= 3/);
+  assert.match(captured.sql, /l\.is_closed = false/);
+  assert.match(captured.sql, /FROM telegram_summary_alerts alert/);
+  assert.match(captured.sql, /newer_customer\.role = 'user'/);
+  assert.match(captured.sql, /newer_score\.through_message_id > failed\.through_message_id/);
+  assert.deepEqual(captured.params, [5]);
+});
