@@ -130,6 +130,77 @@ function firstAttachment(message) {
  * the same shape consumed by the existing AI pipeline. Echoes are skipped so
  * replies sent by this app never re-enter the AI as customer messages.
  */
+async function fetchMessageById(channel, mid) {
+  const config = getChannelConfig(channel);
+  if (!config.token || !mid) return null;
+
+  const url = `${config.baseUrl}/${GRAPH_API_VERSION}/${encodeURIComponent(mid)}?fields=from,message&access_token=${encodeURIComponent(config.token)}`;
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    if (!response.ok) {
+      console.error(
+        `[${channelLabel(channel)}] Failed to fetch message ${mid}: ${extractErrorText(data, response.statusText)}`
+      );
+      return null;
+    }
+    return data;
+  } catch (err) {
+    console.error(`[${channelLabel(channel)}] Error fetching message ${mid}:`, err);
+    return null;
+  }
+}
+
+// Instagram (and possibly Messenger) can deliver a message via a
+// "message_edit" event instead of a plain "message" event — this includes
+// genuine edits, but on some accounts/app configurations has also been
+// observed for brand-new messages. Either way, the event payload itself
+// only contains { mid, num_edit } with no text/sender, so the actual
+// content has to be fetched separately via the Graph API before it can be
+// processed like a normal incoming message.
+async function resolveMessageEditEvents(body) {
+  const channel = body?.object === "page"
+    ? "facebook"
+    : body?.object === "instagram"
+      ? "instagram"
+      : null;
+  if (!channel) return [];
+
+  const edits = [];
+  for (const entry of body?.entry || []) {
+    for (const event of entry?.messaging || []) {
+      const mid = event?.message_edit?.mid;
+      if (!mid) continue;
+      edits.push({ mid, entryId: entry?.id });
+    }
+  }
+  if (edits.length === 0) return [];
+
+  const resolved = await Promise.all(
+    edits.map(async ({ mid, entryId }) => {
+      const data = await fetchMessageById(channel, mid);
+      const senderId = data?.from?.id;
+      const text = data?.message;
+      if (!senderId || typeof text !== "string") return null;
+      // Same self-echo guard as parseIncomingMessages.
+      if (String(senderId) === String(entryId)) return null;
+      return {
+        id: mid,
+        from: String(senderId),
+        channel,
+        profileName: null,
+        text,
+        mediaId: null,
+        mediaUrl: null,
+        mediaType: null,
+        unsupportedType: null,
+      };
+    })
+  );
+
+  return resolved.filter(Boolean);
+}
+
 function parseIncomingMessages(body) {
   const channel = body?.object === "page"
     ? "facebook"
@@ -258,5 +329,6 @@ module.exports = {
   sendText,
   sendImage,
   parseIncomingMessages,
+  resolveMessageEditEvents,
   downloadMedia,
 };
