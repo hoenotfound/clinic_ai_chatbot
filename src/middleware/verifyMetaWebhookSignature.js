@@ -26,6 +26,13 @@ function signatureMatches(secret, signatureHeader, buf) {
 /** Verifies Facebook/Instagram webhook POSTs with the Meta app secret(s). */
 function verifyMetaWebhookSignature(req, res, buf) {
   const secrets = candidateSecrets();
+  // TEMPORARY DIAGNOSTIC — remove once Instagram signature verification is
+  // confirmed working. Logs counts/lengths only, never the secret values.
+  console.log(
+    `[meta-webhook debug] candidate secrets available: ${secrets.length} ` +
+      `(META_APP_SECRET len=${process.env.META_APP_SECRET?.length || 0}, ` +
+      `INSTAGRAM_APP_SECRET len=${process.env.INSTAGRAM_APP_SECRET?.length || 0})`
+  );
 
   if (secrets.length === 0) {
     if (process.env.NODE_ENV === "production") {
