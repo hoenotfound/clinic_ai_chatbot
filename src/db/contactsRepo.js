@@ -2,6 +2,8 @@ const { pool } = require("./db");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("../services/telegramImmediateAlertService");
 
+const SOCIAL_CHANNELS = new Set(["facebook", "instagram"]);
+
 function normalizeWhatsappNumber(input) {
   let digits = String(input || "").replace(/[^\d]/g, "");
   if (!digits) return "";
@@ -122,6 +124,56 @@ async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
   return existing.rows[0];
 }
 
+/**
+ * Creates or refreshes a Facebook/Instagram contact without changing the
+ * existing WhatsApp identity path. whatsapp_number stays NOT NULL for legacy
+ * code by holding a namespaced internal key; channel_user_id is the actual
+ * PSID/IGSID used by the social messaging APIs.
+ */
+async function getOrCreateChannelContact(
+  channel,
+  channelUserId,
+  channelProfileName = null,
+  photoUrl = null
+) {
+  if (!SOCIAL_CHANNELS.has(channel)) {
+    throw new Error(`Unsupported social channel: ${channel}`);
+  }
+
+  const externalId = String(channelUserId || "").trim();
+  if (!externalId) throw new Error(`${channel} contact id is required.`);
+
+  const storageKey = `${channel}:${externalId}`;
+  const profileName = channelProfileName?.trim() || null;
+  const profilePhoto = photoUrl?.trim() || null;
+
+  const result = await pool.query(
+    `INSERT INTO contacts (
+       whatsapp_number, whatsapp_profile_name, channel, channel_user_id, photo_url
+     )
+     VALUES ($1, $4, $2, $3, $5)
+     ON CONFLICT (whatsapp_number) DO UPDATE
+     SET channel = EXCLUDED.channel,
+         channel_user_id = EXCLUDED.channel_user_id,
+         whatsapp_profile_name = COALESCE(EXCLUDED.whatsapp_profile_name, contacts.whatsapp_profile_name),
+         photo_url = COALESCE(EXCLUDED.photo_url, contacts.photo_url),
+         updated_at = CASE
+           WHEN contacts.channel IS DISTINCT FROM EXCLUDED.channel
+             OR contacts.channel_user_id IS DISTINCT FROM EXCLUDED.channel_user_id
+             OR (EXCLUDED.whatsapp_profile_name IS NOT NULL
+                 AND contacts.whatsapp_profile_name IS DISTINCT FROM EXCLUDED.whatsapp_profile_name)
+             OR (EXCLUDED.photo_url IS NOT NULL
+                 AND contacts.photo_url IS DISTINCT FROM EXCLUDED.photo_url)
+           THEN now()
+           ELSE contacts.updated_at
+         END
+     RETURNING *`,
+    [storageKey, channel, externalId, profileName, profilePhoto]
+  );
+
+  return result.rows[0];
+}
+
 async function getContactById(id) {
   const result = await pool.query("SELECT * FROM contacts WHERE id = $1", [id]);
   return result.rows[0] || null;
@@ -143,12 +195,12 @@ async function listContacts(search) {
     SELECT
       c.id, c.whatsapp_number, c.name, c.whatsapp_profile_name, c.mode, c.needs_attention,
       c.is_unread, c.needs_follow_up, c.created_at, c.updated_at,
-      c.channel, c.photo_url,
+      c.channel, c.channel_user_id, c.photo_url,
       COUNT(m.id)::int AS message_count,
       MAX(m.created_at) AS last_message_at
     FROM contacts c
     LEFT JOIN messages m ON m.contact_id = c.id
-    ${term ? "WHERE c.name ILIKE $1 OR c.whatsapp_profile_name ILIKE $1 OR c.whatsapp_number ILIKE $1" : ""}
+    ${term ? "WHERE c.name ILIKE $1 OR c.whatsapp_profile_name ILIKE $1 OR c.whatsapp_number ILIKE $1 OR c.channel_user_id ILIKE $1" : ""}
     GROUP BY c.id
     ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
     `,
@@ -184,6 +236,7 @@ async function listConversations() {
       c.name,
       c.whatsapp_profile_name,
       c.channel,
+      c.channel_user_id,
       c.photo_url,
       c.mode,
       c.takeover_by,
@@ -374,6 +427,7 @@ async function setFollowUp(id, needsFollowUp) {
 
 module.exports = {
   getOrCreateContact,
+  getOrCreateChannelContact,
   getContactById,
   updateContactName,
   listConversations,
