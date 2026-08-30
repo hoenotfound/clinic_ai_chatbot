@@ -1,0 +1,213 @@
+name: Apply direct Buffer uploads to R2
+
+on:
+  push:
+    branches: [improve/r2-media-streaming]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-buffer-uploads:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Patch media upload paths
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"Expected exactly one match in {path}, found {count}: {old[:80]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          # Repository layer: accept Buffer directly and keep legacy base64 support
+          # only for any older caller that has not yet been migrated.
+          replace_once(
+              "src/db/messagesRepo.js",
+              '''// Every write path in this file still accepts a base64 string for media
+// (same shape callers always used) but now uploads it to R2 and stores only
+// the returned key in Postgres. Centralizing this here means server.js,
+// conversationStore.js, and the routes never had to change.
+async function persistMediaIfPresent(mediaBase64, mediaMimeType, contactId) {
+  if (!mediaBase64) return null;
+  const buffer = Buffer.from(mediaBase64, "base64");
+  return mediaStorage.uploadMedia(buffer, mediaMimeType, { contactId });
+}
+''',
+              '''// Media write paths now pass Buffer objects straight through to R2 so an
+// upload does not allocate a ~33% larger base64 string and then decode it back
+// into another Buffer. Base64 strings remain accepted only as a compatibility
+// fallback for any older internal caller while the active paths use Buffers.
+async function persistMediaIfPresent(mediaData, mediaMimeType, contactId) {
+  if (!mediaData) return null;
+
+  let buffer;
+  if (Buffer.isBuffer(mediaData)) {
+    buffer = mediaData;
+  } else if (typeof mediaData === "string") {
+    buffer = Buffer.from(mediaData, "base64");
+  } else if (ArrayBuffer.isView(mediaData)) {
+    buffer = Buffer.from(mediaData.buffer, mediaData.byteOffset, mediaData.byteLength);
+  } else {
+    throw new TypeError("Media attachment must be a Buffer, typed array, or base64 string.");
+  }
+
+  return mediaStorage.uploadMedia(buffer, mediaMimeType, { contactId });
+}
+'''
+          )
+
+          # Conversation store: prefer the new Buffer shape but retain `data`
+          # as a compatibility fallback for older callers.
+          p = Path("src/utils/conversationStore.js")
+          text = p.read_text()
+          old = "mediaAttachment?.data || null"
+          count = text.count(old)
+          if count != 2:
+              raise SystemExit(f"Expected two media attachment forwarding sites, found {count}")
+          p.write_text(text.replace(old, "mediaAttachment?.buffer || mediaAttachment?.data || null"))
+
+          # Inbound WhatsApp media: keep the downloaded/converted Buffer as-is.
+          replace_once(
+              "src/server.js",
+              '''        mediaAttachment = mp3
+          ? { mimeType: mp3.mimeType, data: mp3.buffer.toString("base64") }
+          : {
+              mimeType: media.mimeType.split(";")[0].trim(),
+              data: media.buffer.toString("base64"),
+            };
+''',
+              '''        mediaAttachment = mp3
+          ? { mimeType: mp3.mimeType, buffer: mp3.buffer }
+          : {
+              mimeType: media.mimeType.split(";")[0].trim(),
+              buffer: media.buffer,
+            };
+'''
+          )
+          replace_once(
+              "src/server.js",
+              '''      mediaAttachment = {
+        mimeType: media.mimeType,
+        data: media.buffer.toString("base64"),
+      };
+''',
+              '''      mediaAttachment = {
+        mimeType: media.mimeType,
+        buffer: media.buffer,
+      };
+'''
+          )
+
+          # Staff image and voice sends: hand the existing Multer/FFmpeg Buffer
+          # directly to the repository/R2 write path.
+          replace_once(
+              "src/routes/conversations.js",
+              '''      { mimeType: req.file.mimetype, data: req.file.buffer.toString("base64") }
+''',
+              '''      { mimeType: req.file.mimetype, buffer: req.file.buffer }
+'''
+          )
+          replace_once(
+              "src/routes/conversations.js",
+              '''      {
+        mimeType: converted.playback.mimeType,
+        data: converted.playback.buffer.toString("base64"),
+      }
+''',
+              '''      {
+        mimeType: converted.playback.mimeType,
+        buffer: converted.playback.buffer,
+      }
+'''
+          )
+
+          # Regression test proves the exact Buffer instance reaches R2 rather
+          # than being converted to base64 and decoded into another allocation.
+          p = Path("test/messagesRepo.test.js")
+          text = p.read_text()
+          import_old = 'const messagesRepo = require("../src/db/messagesRepo");\n'
+          import_new = import_old + 'const mediaStorage = require("../src/services/mediaStorageService");\n'
+          if text.count(import_old) != 1:
+              raise SystemExit("Could not find messagesRepo test import")
+          text = text.replace(import_old, import_new, 1)
+
+          anchor = '''test("inbound transcript updates take the conversation scoring lock", async (t) => {
+'''
+          test_block = '''test("uploads Buffer attachments to R2 without a base64 round-trip", async (t) => {
+  const originalQuery = pool.query;
+  const originalUploadMedia = mediaStorage.uploadMedia;
+  t.after(() => {
+    pool.query = originalQuery;
+    mediaStorage.uploadMedia = originalUploadMedia;
+  });
+
+  const attachment = Buffer.from([0, 1, 2, 3, 254, 255]);
+  mediaStorage.uploadMedia = async (buffer, mimeType, options) => {
+    assert.strictEqual(buffer, attachment);
+    assert.equal(mimeType, "image/jpeg");
+    assert.deepEqual(options, { contactId: 7 });
+    return "messages/7/direct-buffer.jpg";
+  };
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /INSERT INTO messages/);
+    assert.deepEqual(params, [
+      7,
+      "assistant",
+      "Photo",
+      null,
+      "staff",
+      null,
+      "messages/7/direct-buffer.jpg",
+      "image/jpeg",
+    ]);
+    return { rows: [{ id: 43, contact_id: 7, content: "Photo" }] };
+  };
+
+  const saved = await messagesRepo.saveMessage(
+    7,
+    "assistant",
+    "Photo",
+    null,
+    "staff",
+    null,
+    attachment,
+    "image/jpeg"
+  );
+  assert.equal(saved.id, 43);
+});
+
+'''
+          if text.count(anchor) != 1:
+              raise SystemExit("Could not find test insertion anchor")
+          p.write_text(text.replace(anchor, test_block + anchor, 1))
+          PY
+
+      - name: Verify no active upload path base64 round-trip remains
+        run: |
+          if grep -n 'toString("base64")' src/server.js src/routes/conversations.js | grep -E 'mediaAttachment|req\.file|playback\.buffer|media\.buffer'; then
+            echo "Found an active media-upload base64 conversion"
+            exit 1
+          fi
+          npm ci
+          npm test
+
+      - name: Commit changes and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/patch-r2-buffer-uploads.yml
+          git add src/db/messagesRepo.js src/utils/conversationStore.js src/server.js src/routes/conversations.js test/messagesRepo.test.js
+          git commit -m "Pass media Buffers directly to R2 uploads"
+          git push
