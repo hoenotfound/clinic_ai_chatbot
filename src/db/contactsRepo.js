@@ -3,7 +3,35 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("../services/telegramImmediateAlertService");
 
 function normalizeWhatsappNumber(input) {
-  return String(input || "").replace(/[^\d]/g, "");
+  let digits = String(input || "").replace(/[^\d]/g, "");
+  if (!digits) return "";
+
+  // Accept the common international dialing prefix form (e.g. 0060...)
+  // without accidentally treating it as a Malaysian local number.
+  if (digits.startsWith("00")) {
+    digits = digits.slice(2);
+  }
+
+  // Staff sometimes paste "+60 012..." with both the country code and the
+  // Malaysian trunk zero. WhatsApp identifies the same number as 6012....
+  if (digits.startsWith("600")) {
+    digits = `60${digits.slice(3)}`;
+  }
+
+  // Malaysian local format: 012-345 6789 -> 60123456789.
+  if (digits.startsWith("0")) {
+    return `60${digits.slice(1)}`;
+  }
+
+  // Also accept a mobile number pasted without either the trunk zero or +60.
+  // Malaysian mobile subscriber numbers are 9 or 10 digits and start with 1.
+  if (/^1\d{8,9}$/.test(digits)) {
+    return `60${digits}`;
+  }
+
+  // Already-canonical Malaysian numbers and explicit international numbers
+  // are left untouched after punctuation/spacing is removed.
+  return digits;
 }
 
 function publishContactChange(id) {
@@ -21,13 +49,14 @@ function notifyTelegram(promise, label, contactId) {
 }
 
 async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
+  const normalizedNumber = normalizeWhatsappNumber(whatsappNumber);
   const profileName = whatsappProfileName?.trim() || null;
   const inserted = await pool.query(
     `INSERT INTO contacts (whatsapp_number, whatsapp_profile_name)
      VALUES ($1, $2)
      ON CONFLICT (whatsapp_number) DO NOTHING
      RETURNING *`,
-    [whatsappNumber, profileName]
+    [normalizedNumber, profileName]
   );
   if (inserted.rows[0]) return inserted.rows[0];
 
@@ -38,14 +67,14 @@ async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
        WHERE whatsapp_number = $1
          AND whatsapp_profile_name IS DISTINCT FROM $2
        RETURNING *`,
-      [whatsappNumber, profileName]
+      [normalizedNumber, profileName]
     );
     if (updated.rows[0]) return updated.rows[0];
   }
 
   const existing = await pool.query(
     "SELECT * FROM contacts WHERE whatsapp_number = $1",
-    [whatsappNumber]
+    [normalizedNumber]
   );
   return existing.rows[0];
 }
