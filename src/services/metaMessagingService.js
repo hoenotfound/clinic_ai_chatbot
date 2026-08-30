@@ -130,6 +130,35 @@ function firstAttachment(message) {
  * the same shape consumed by the existing AI pipeline. Echoes are skipped so
  * replies sent by this app never re-enter the AI as customer messages.
  */
+async function fetchLatestConversationMessage(channel) {
+  const config = getChannelConfig(channel);
+  if (!config.token || !config.senderId) return null;
+
+  const url =
+    `${config.baseUrl}/${GRAPH_API_VERSION}/${config.senderId}/conversations` +
+    `?platform=instagram&fields=${encodeURIComponent("messages.limit(1){message,from,created_time}")}` +
+    `&access_token=${encodeURIComponent(config.token)}`;
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    console.log(`[meta-webhook debug] fetchLatestConversationMessage HTTP ${response.status}, ok=${response.ok}`);
+    console.log(`[meta-webhook debug] fetchLatestConversationMessage raw response:`, JSON.stringify(data));
+    if (!response.ok) {
+      console.error(
+        `[${channelLabel(channel)}] Failed to fetch conversations: ${extractErrorText(data, response.statusText)}`
+      );
+      return null;
+    }
+    // Conversations are typically returned most-recently-updated first.
+    const latestConvo = data?.data?.[0];
+    const latestMessage = latestConvo?.messages?.data?.[0];
+    return latestMessage || null;
+  } catch (err) {
+    console.error(`[${channelLabel(channel)}] Error fetching conversations:`, err);
+    return null;
+  }
+}
+
 async function fetchMessageById(channel, mid) {
   const config = getChannelConfig(channel);
   if (!config.token || !mid) return null;
@@ -179,10 +208,20 @@ async function resolveMessageEditEvents(body) {
 
   const resolved = await Promise.all(
     edits.map(async ({ mid, entryId }) => {
-      const data = await fetchMessageById(channel, mid);
+      let data = await fetchMessageById(channel, mid);
       // TEMPORARY DIAGNOSTIC — logs the raw Graph API response for a
       // fetched message_edit event so we can see its actual field names.
       console.log(`[meta-webhook debug] fetchMessageById(${mid}) raw response:`, JSON.stringify(data));
+
+      // The direct by-ID fetch has been observed to return an empty object
+      // for some message_edit events even on a 200 response. Fall back to
+      // pulling the most recent message from the conversations list.
+      if (!data?.from?.id || typeof data?.message !== "string") {
+        console.log(`[meta-webhook debug] falling back to conversations lookup for ${mid}`);
+        data = await fetchLatestConversationMessage(channel);
+        console.log(`[meta-webhook debug] conversations fallback result:`, JSON.stringify(data));
+      }
+
       const senderId = data?.from?.id;
       const text = data?.message;
       if (!senderId || typeof text !== "string") return null;
