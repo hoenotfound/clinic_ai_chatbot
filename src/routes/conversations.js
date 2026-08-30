@@ -1,11 +1,13 @@
 const express = require("express");
 const multer = require("multer");
+const { pipeline } = require("node:stream/promises");
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const conversationStore = require("../utils/conversationStore");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
+const mediaStorage = require("../services/mediaStorageService");
 const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const { transcribeStaffAudio } = require("../services/transcriptionService");
 
@@ -58,6 +60,29 @@ function parsePositiveInt(value) {
   if (value == null || value === "") return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeSingleByteRange(value) {
+  if (!value) return { valid: true, range: null };
+
+  const range = String(value).trim();
+  const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+  if (!match || (!match[1] && !match[2])) {
+    return { valid: false, range: null };
+  }
+
+  const start = match[1] ? Number(match[1]) : null;
+  const end = match[2] ? Number(match[2]) : null;
+  if (
+    (start !== null && (!Number.isSafeInteger(start) || start < 0)) ||
+    (end !== null && (!Number.isSafeInteger(end) || end < 0)) ||
+    (start !== null && end !== null && end < start) ||
+    (start === null && end === 0)
+  ) {
+    return { valid: false, range: null };
+  }
+
+  return { valid: true, range };
 }
 
 function publishDeliveryStatus(message) {
@@ -234,66 +259,72 @@ router.get("/:contactId/messages", async (req, res) => {
 
 router.get("/:contactId/messages/:messageId/media", async (req, res) => {
   try {
-    const media = await messagesRepo.getMessageMediaForContact(
-      req.params.contactId,
-      req.params.messageId
-    );
-    if (!media) return res.status(404).json({ error: "Message attachment not found." });
+    const contactId = parsePositiveInt(req.params.contactId);
+    const messageId = parsePositiveInt(req.params.messageId);
+    if (!contactId || !messageId) {
+      return res.status(400).json({ error: "Invalid contact or message id." });
+    }
 
-    const buffer = Buffer.from(media.media_base64, "base64");
-    const mimeType = media.media_mime_type || "application/octet-stream";
-    const range = req.headers.range;
+    const mediaRef = await messagesRepo.getMessageMediaReferenceForContact(
+      contactId,
+      messageId
+    );
+    if (!mediaRef) {
+      return res.status(404).json({ error: "Message attachment not found." });
+    }
+
+    const requestedRange = normalizeSingleByteRange(req.headers.range);
+    if (!requestedRange.valid) {
+      return res.sendStatus(416);
+    }
+
+    const media = await mediaStorage.openMediaStream(mediaRef.media_key, {
+      range: requestedRange.range,
+    });
+    const mimeType =
+      mediaRef.media_mime_type || media.contentType || "application/octet-stream";
 
     res.set({
-      "Accept-Ranges": "bytes",
+      "Accept-Ranges": media.acceptRanges || "bytes",
       "Cache-Control": "private, max-age=3600, immutable",
       "Content-Type": mimeType,
       "X-Content-Type-Options": "nosniff",
     });
-
-    if (!range) {
-      res.set("Content-Length", String(buffer.length));
-      return res.send(buffer);
+    if (media.contentLength !== null) {
+      res.set("Content-Length", String(media.contentLength));
+    }
+    if (media.contentRange) {
+      res.set("Content-Range", media.contentRange);
+    }
+    if (media.etag) {
+      res.set("ETag", media.etag);
+    }
+    if (media.lastModified instanceof Date && !Number.isNaN(media.lastModified.getTime())) {
+      res.set("Last-Modified", media.lastModified.toUTCString());
     }
 
-    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-    if (!match || (!match[1] && !match[2])) {
-      res.set("Content-Range", `bytes */${buffer.length}`);
-      return res.sendStatus(416);
-    }
-
-    let start;
-    let end;
-    if (!match[1]) {
-      const suffixLength = Number(match[2]);
-      start = Math.max(buffer.length - suffixLength, 0);
-      end = buffer.length - 1;
-    } else {
-      start = Number(match[1]);
-      end = match[2] ? Number(match[2]) : buffer.length - 1;
+    res.status(media.contentRange ? 206 : 200);
+    await pipeline(media.body, res);
+  } catch (err) {
+    if (mediaStorage.isRangeNotSatisfiableError(err)) {
+      if (!res.headersSent) return res.sendStatus(416);
+      return;
     }
 
     if (
-      !Number.isSafeInteger(start) ||
-      !Number.isSafeInteger(end) ||
-      start < 0 ||
-      end < start ||
-      start >= buffer.length
+      req.aborted ||
+      res.destroyed ||
+      err?.code === "ERR_STREAM_PREMATURE_CLOSE" ||
+      err?.code === "ECONNRESET"
     ) {
-      res.set("Content-Range", `bytes */${buffer.length}`);
-      return res.sendStatus(416);
+      return;
     }
 
-    end = Math.min(end, buffer.length - 1);
-    const chunk = buffer.subarray(start, end + 1);
-    res.status(206).set({
-      "Content-Length": String(chunk.length),
-      "Content-Range": `bytes ${start}-${end}/${buffer.length}`,
-    });
-    return res.send(chunk);
-  } catch (err) {
-    console.error("Failed to load message attachment:", err);
-    res.status(500).json({ error: "Something went wrong loading this attachment." });
+    console.error("Failed to stream message attachment:", err);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: "Something went wrong loading this attachment." });
+    }
+    res.destroy(err);
   }
 });
 
