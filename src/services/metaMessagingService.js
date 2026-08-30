@@ -134,6 +134,10 @@ async function fetchLatestConversationMessage(channel) {
   const config = getChannelConfig(channel);
   if (!config.token || !config.senderId) return null;
 
+  // TEMPORARY DIAGNOSTIC — confirms which ID is actually being used, to
+  // rule out stale env vars / deploy lag. Not a secret, safe to log.
+  console.log(`[meta-webhook debug] fetchLatestConversationMessage using senderId=${config.senderId}`);
+
   const url =
     `${config.baseUrl}/${GRAPH_API_VERSION}/${config.senderId}/conversations` +
     `?platform=instagram&fields=${encodeURIComponent("messages.limit(1){message,from,created_time}")}` +
