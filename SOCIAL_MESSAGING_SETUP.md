@@ -30,13 +30,13 @@ You can enable only Facebook or only Instagram. The unused channel variables may
 
 1. Add Messenger to the Meta developer app that will manage the Facebook Page.
 2. Generate a Page access token for the Page.
-3. Make sure the app has the permissions Meta requires for Messenger, including `pages_messaging`.
+3. Make sure the app has the permissions Meta requires for Messenger. Sending needs `pages_messaging`; connecting the Page to webhook subscriptions also needs `pages_manage_metadata`.
 4. Set the webhook callback URL to:
 
    `https://YOUR-DOMAIN/meta-webhook`
 
 5. Use the same value as `META_VERIFY_TOKEN` for the webhook verify token.
-6. Subscribe the Page to the `messages` webhook field.
+6. Subscribe the Page to the `messages` webhook field and make sure the app is installed/subscribed on that Page.
 7. Put the Page ID and Page access token into `FACEBOOK_PAGE_ID` and `FACEBOOK_PAGE_ACCESS_TOKEN`.
 
 Messenger replies are customer-initiated. The customer must have messaged the Page and Meta's messaging-window rules still apply.
@@ -44,8 +44,8 @@ Messenger replies are customer-initiated. The customer must have messaged the Pa
 ## Instagram
 
 1. Use an Instagram Professional account, meaning Business or Creator.
-2. Configure the Instagram API for the account in Meta's developer dashboard.
-3. Generate an Instagram access token that can manage messages for that account. The messaging permission is `instagram_business_manage_messages`.
+2. Configure Instagram API with Instagram Login for the account in Meta's developer dashboard.
+3. Generate an Instagram access token with `instagram_business_basic` and `instagram_business_manage_messages` for that account.
 4. Set the webhook callback URL to:
 
    `https://YOUR-DOMAIN/meta-webhook`
