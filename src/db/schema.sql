@@ -97,8 +97,18 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_url TEXT;
 -- purely so staff can play the original recording in the Inbox (the AI
 -- already has the transcript in `content`, so audio bytes are never
 -- re-sent to it — see transcriptionService.js).
+-- media_base64 is deprecated in favor of media_key (below), which stores an
+-- R2 object key instead of the bytes themselves. Kept nullable so existing
+-- rows and any in-flight code during migration keep working; run
+-- scripts/migrateMediaToR2.js to backfill old rows, then this column can be
+-- dropped once verified.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_base64 TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_mime_type TEXT;
+
+-- R2 object key for patient-sent photos/voice notes (replaces media_base64).
+-- See services/mediaStorageService.js for upload/download and
+-- db/messagesRepo.js for how reads/writes resolve this to actual bytes.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_key TEXT;
 
 -- Async delivery outcome for an outbound message, as reported later by
 -- Meta's status webhook callback (see server.js POST /webhook, which reads
