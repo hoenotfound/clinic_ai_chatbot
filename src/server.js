@@ -532,7 +532,13 @@ app.get("/meta-webhook", (req, res) => {
 // META_VERIFY_TOKEN as a crude shared-secret check since it's exposed on a
 // public Render URL.
 app.get("/debug-instagram-token", (req, res) => {
-  if (req.query.key !== process.env.META_VERIFY_TOKEN) {
+  const providedKey = req.query.key || "";
+  const expectedKey = process.env.META_VERIFY_TOKEN || "";
+  console.log(
+    `[debug-instagram-token] provided key length=${providedKey.length}, ` +
+      `expected key length=${expectedKey.length}, match=${providedKey === expectedKey}`
+  );
+  if (providedKey !== expectedKey) {
     return res.sendStatus(404);
   }
   const token = process.env.INSTAGRAM_ACCESS_TOKEN || "";
