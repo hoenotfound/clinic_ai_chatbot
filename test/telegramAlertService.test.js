@@ -69,6 +69,36 @@ test("shows pipeline temperature separately from the AI review", () => {
   assert.match(text, /Inbox: https:\/\/clinic\.example\.com\/inbox\?contact=12/);
 });
 
+test("AI scoring failure sends customer details and a manual-review alert without an AI summary", () => {
+  const text = buildConversationSummaryMessage({
+    lead: {
+      ...lead,
+      treatment_interest: "HIFU",
+      branch_name: "Puchong",
+    },
+    score: {
+      alertType: "ai_scoring_failed",
+      summaryUnavailable: true,
+      attempts: 3,
+      summary: {},
+    },
+    env: { PUBLIC_BASE_URL: "https://clinic.example.com/" },
+  });
+
+  assert.match(text, /⚠️ Conversation Needs Manual Review/);
+  assert.match(text, /Kit Leong \(\+60123456789\)/);
+  assert.match(text, /Current Temperature: 🟠 Warm/);
+  assert.match(text, /Treatment: HIFU/);
+  assert.match(text, /Branch: Puchong/);
+  assert.match(text, /AI Summary: Unavailable/);
+  assert.match(text, /AI lead scoring failed after 3 attempts/);
+  assert.match(text, /Open the Inbox, review the conversation manually/);
+  assert.match(text, /Inbox: https:\/\/clinic\.example\.com\/inbox\?contact=12/);
+  assert.doesNotMatch(text, /AI Review:/);
+  assert.doesNotMatch(text, /Chat Summary:/);
+  assert.doesNotMatch(text, /Temperature reason:/);
+});
+
 test("disabled service neither queues nor flushes Telegram summaries", async () => {
   let repositoryCalls = 0;
   let sends = 0;
