@@ -50,6 +50,27 @@ function trimTranscript(messages) {
   return kept.reverse();
 }
 
+function buildScoringFailureFallback(failure = {}) {
+  const attempts = Number(failure.attempts);
+  return {
+    alertType: "ai_scoring_failed",
+    summaryUnavailable: true,
+    attempts: Number.isInteger(attempts) && attempts > 0 ? attempts : leadScoringRepo.MAX_ATTEMPTS,
+    summary: {},
+  };
+}
+
+async function queueScoringFailureFallback({
+  failure,
+  queueConversationSummary,
+}) {
+  return queueConversationSummary({
+    leadId: failure.lead_id,
+    throughMessageId: failure.through_message_id,
+    score: buildScoringFailureFallback(failure),
+  });
+}
+
 function createLeadScoringRunner({
   repository = leadScoringRepo,
   scoreConversation = scoreLeadConversation,
@@ -137,10 +158,62 @@ function createLeadScoringRunner({
             }
           }
         } catch (err) {
-          await repository.markScoreFailed(claim.id, err);
+          const failure = await repository.markScoreFailed(claim.id, err);
           console.error(
             `Lead scoring failed for lead ${candidate.lead_id}:`,
             err
+          );
+
+          // A permanently failed AI score must not make the lead disappear from
+          // the sales group's Telegram workflow. Queue a durable manual-review
+          // alert for the same transcript boundary. It uses the normal inactivity
+          // and newer-customer-message checks, but deliberately contains no AI
+          // summary or AI temperature assessment.
+          if (failure?.terminal) {
+            try {
+              await queueScoringFailureFallback({
+                failure,
+                queueConversationSummary,
+              });
+            } catch (telegramQueueErr) {
+              // The recovery sweep below retries terminal scoring failures that
+              // still have no Telegram queue row, including after a process crash.
+              console.error(
+                `Failed to queue Telegram fallback for lead ${candidate.lead_id}:`,
+                telegramQueueErr
+              );
+            }
+          }
+        }
+      }
+
+      // Recover any terminal scoring failure that was committed before its
+      // Telegram fallback could be queued (for example a Render restart between
+      // those two operations). This also picks up eligible historical terminal
+      // failures that pre-date the fallback behavior. The queue's unique
+      // lead/message key keeps this idempotent across repeated sweeps/instances.
+      if (typeof repository.findTerminalFailuresNeedingAlert === "function") {
+        try {
+          const failures = await repository.findTerminalFailuresNeedingAlert({
+            limit: LEAD_SCORING_BATCH_SIZE,
+          });
+          for (const failure of failures) {
+            try {
+              await queueScoringFailureFallback({
+                failure,
+                queueConversationSummary,
+              });
+            } catch (telegramQueueErr) {
+              console.error(
+                `Failed to recover Telegram fallback for lead ${failure.lead_id}:`,
+                telegramQueueErr
+              );
+            }
+          }
+        } catch (fallbackRecoveryErr) {
+          console.error(
+            "Failed to recover terminal lead-scoring Telegram fallbacks:",
+            fallbackRecoveryErr
           );
         }
       }
@@ -179,6 +252,7 @@ module.exports = {
   LEAD_SCORING_CHECK_INTERVAL_MS,
   MAX_TRANSCRIPT_CHARS,
   MAX_TRANSCRIPT_MESSAGES,
+  buildScoringFailureFallback,
   createLeadScoringRunner,
   getActiveSettings,
   runLeadScoring,
