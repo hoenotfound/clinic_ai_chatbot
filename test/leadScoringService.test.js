@@ -282,6 +282,89 @@ test("records a failed scoring attempt without stopping the sweep", async (t) =>
   assert.equal(flushed, true);
 });
 
+test("terminal AI scoring failure queues a manual-review Telegram fallback without an AI summary", async (t) => {
+  const originalError = console.error;
+  t.after(() => {
+    console.error = originalError;
+  });
+  console.error = () => {};
+
+  let queued = null;
+  let flushed = null;
+  const run = createLeadScoringRunner({
+    settingsGetter: () => settings,
+    repository: {
+      findCandidates: async () => [candidate()],
+      claimCandidate: async () => ({ id: 96, attempts: 3 }),
+      getTranscript: async () => [{ id: 44, role: "user", content: "Can I book tomorrow?" }],
+      markScoreFailed: async () => ({
+        id: 96,
+        lead_id: 7,
+        through_message_id: 44,
+        attempts: 3,
+        terminal: true,
+      }),
+      findTerminalFailuresNeedingAlert: async () => [],
+    },
+    scoreConversation: async () => {
+      throw new Error("Gemini unavailable");
+    },
+    queueConversationSummary: async (input) => {
+      queued = input;
+      return { status: "queued", alertId: 41 };
+    },
+    flushConversationSummaries: async (input) => {
+      flushed = input;
+      return { status: "completed", sent: 1 };
+    },
+  });
+
+  await run();
+
+  assert.equal(queued.leadId, 7);
+  assert.equal(queued.throughMessageId, 44);
+  assert.equal(queued.score.alertType, "ai_scoring_failed");
+  assert.equal(queued.score.summaryUnavailable, true);
+  assert.equal(queued.score.attempts, 3);
+  assert.deepEqual(queued.score.summary, {});
+  assert.deepEqual(flushed, { inactivityMinutes: 10 });
+});
+
+test("recovery sweep queues a fallback if the process died after the terminal score failure", async () => {
+  const queued = [];
+  const run = createLeadScoringRunner({
+    settingsGetter: () => settings,
+    repository: {
+      findCandidates: async () => [],
+      findTerminalFailuresNeedingAlert: async ({ limit }) => {
+        assert.equal(limit, 5);
+        return [
+          {
+            id: 97,
+            lead_id: 8,
+            through_message_id: 55,
+            attempts: 3,
+            error_text: "provider unavailable",
+          },
+        ];
+      },
+    },
+    queueConversationSummary: async (input) => {
+      queued.push(input);
+      return { status: "queued", alertId: 42 };
+    },
+    flushConversationSummaries: async () => ({ status: "completed", sent: 1 }),
+  });
+
+  await run();
+
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].leadId, 8);
+  assert.equal(queued[0].throughMessageId, 55);
+  assert.equal(queued[0].score.summaryUnavailable, true);
+  assert.equal(queued[0].score.attempts, 3);
+});
+
 test("long transcripts keep the newest complete messages", () => {
   const messages = [
     { id: 1, content: "a".repeat(20_000) },

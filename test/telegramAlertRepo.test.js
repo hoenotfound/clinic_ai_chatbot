@@ -59,7 +59,7 @@ test("claim rechecks inactivity and newer customer messages atomically", async (
   assert.equal(claim.current_temperature, "warm");
 });
 
-test("queueing a newer scored snapshot supersedes older unsent snapshots", async (t) => {
+test("queueing a newer scored snapshot supersedes only older unsent snapshots under a per-lead lock", async (t) => {
   const originalConnect = pool.connect;
   t.after(() => {
     pool.connect = originalConnect;
@@ -86,13 +86,48 @@ test("queueing a newer scored snapshot supersedes older unsent snapshots", async
   });
 
   assert.equal(calls[0].sql, "BEGIN");
-  assert.match(calls[1].sql, /SET status = 'superseded'/);
-  assert.deepEqual(calls[1].params, [7, 44]);
-  assert.match(calls[2].sql, /ON CONFLICT \(lead_id, through_message_id\) DO NOTHING/);
-  assert.deepEqual(calls[2].params, [7, 44, score]);
-  assert.equal(calls[3].sql, "COMMIT");
-  assert.equal(calls[4].sql, "RELEASE");
+  assert.match(calls[1].sql, /pg_advisory_xact_lock/);
+  assert.deepEqual(calls[1].params, [telegramAlertRepo.QUEUE_LOCK_NAMESPACE, 7]);
+  assert.match(calls[2].sql, /SET status = 'superseded'/);
+  assert.match(calls[2].sql, /through_message_id < \$2/);
+  assert.deepEqual(calls[2].params, [7, 44]);
+  assert.match(calls[3].sql, /ON CONFLICT \(lead_id, through_message_id\) DO NOTHING/);
+  assert.match(calls[3].sql, /newer\.through_message_id > \$2/);
+  assert.deepEqual(calls[3].params, [7, 44, score]);
+  assert.equal(calls[4].sql, "COMMIT");
+  assert.equal(calls[5].sql, "RELEASE");
   assert.deepEqual(queued, { id: 31 });
+});
+
+test("an older recovered snapshot is not inserted when a newer Telegram snapshot already exists", async (t) => {
+  const originalConnect = pool.connect;
+  t.after(() => {
+    pool.connect = originalConnect;
+  });
+
+  const calls = [];
+  const client = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/INSERT INTO telegram_summary_alerts/.test(sql)) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    release: () => calls.push({ sql: "RELEASE" }),
+  };
+  pool.connect = async () => client;
+
+  const queued = await telegramAlertRepo.queueSummary({
+    leadId: 7,
+    throughMessageId: 40,
+    score: { alertType: "ai_scoring_failed", summaryUnavailable: true },
+  });
+
+  assert.equal(queued, null);
+  assert.match(calls[2].sql, /through_message_id < \$2/);
+  assert.match(calls[3].sql, /WHERE NOT EXISTS/);
+  assert.match(calls[3].sql, /newer\.through_message_id > \$2/);
 });
 
 test("failed Telegram sends become terminal after the final attempt", async (t) => {

@@ -38,6 +38,19 @@ function formatAppointment(value) {
   }
 }
 
+function formatAppointmentForLead(lead, preferredAppointment = null) {
+  const status = String(lead?.appointment_status || "").toLowerCase();
+  if (status === "cancelled") return "Cancelled";
+  if (status === "reschedule") return "Rescheduling";
+  if (status === "visited") {
+    return lead?.appointment_at
+      ? `Visited (${formatAppointment(lead.appointment_at)})`
+      : "Visited";
+  }
+  if (status === "set") return formatAppointment(lead?.appointment_at);
+  return clean(preferredAppointment);
+}
+
 function temperatureLabel(value, fallback = "Not captured") {
   if (!value) return fallback;
   const temperature = String(value).toLowerCase();
@@ -53,14 +66,46 @@ function buildInboxUrl(contactId, env = process.env) {
   return `${baseUrl}/inbox?contact=${encodeURIComponent(contactId)}`;
 }
 
+function limitTelegramMessage(lines) {
+  const message = lines.join("\n");
+  return message.length <= TELEGRAM_MESSAGE_LIMIT
+    ? message
+    : `${message.slice(0, TELEGRAM_MESSAGE_LIMIT - 3)}...`;
+}
+
 function buildConversationSummaryMessage({ lead, score, env = process.env }) {
-  const summary = score?.summary || {};
   const name = clean(lead.name || lead.whatsapp_profile_name, "Unknown contact");
-  const treatment = clean(summary.treatmentInterest || lead.treatment_interest);
-  const branch = clean(summary.preferredBranch || lead.branch_name);
-  const appointment = clean(summary.preferredAppointment, formatAppointment(lead.appointment_at));
   const inboxUrl = buildInboxUrl(lead.contact_id, env);
   const currentTemperature = temperatureLabel(lead.current_temperature);
+
+  if (score?.summaryUnavailable === true || score?.alertType === "ai_scoring_failed") {
+    const lines = [
+      "⚠️ Conversation Needs Manual Review",
+      "",
+      `${name} (${formatWhatsappNumber(lead.whatsapp_number)})`,
+      "",
+      `Stage: ${clean(lead.stage_name)}`,
+      `Current Temperature: ${currentTemperature}`,
+      `Treatment: ${clean(lead.treatment_interest)}`,
+      `Branch: ${clean(lead.branch_name)}`,
+      `Appointment: ${formatAppointmentForLead(lead)}`,
+      "",
+      "AI Summary: Unavailable",
+      "",
+      "Recommended Action:",
+      "Open the Inbox, review the conversation manually, and follow up with the customer.",
+    ];
+
+    if (inboxUrl) {
+      lines.push("", `Inbox: ${inboxUrl}`);
+    }
+    return limitTelegramMessage(lines);
+  }
+
+  const summary = score?.summary || {};
+  const treatment = clean(summary.treatmentInterest || lead.treatment_interest);
+  const branch = clean(summary.preferredBranch || lead.branch_name);
+  const appointment = formatAppointmentForLead(lead, summary.preferredAppointment);
   const aiTemperature = temperatureLabel(score?.temperature);
 
   const lines = [
@@ -89,10 +134,7 @@ function buildConversationSummaryMessage({ lead, score, env = process.env }) {
     lines.push("", `Inbox: ${inboxUrl}`);
   }
 
-  const message = lines.join("\n");
-  return message.length <= TELEGRAM_MESSAGE_LIMIT
-    ? message
-    : `${message.slice(0, TELEGRAM_MESSAGE_LIMIT - 3)}...`;
+  return limitTelegramMessage(lines);
 }
 
 function postTelegramMessage({ token, chatId, text }) {
@@ -223,6 +265,7 @@ module.exports = {
   TELEGRAM_MESSAGE_LIMIT,
   buildConversationSummaryMessage,
   createTelegramAlertService,
+  formatAppointmentForLead,
   formatWhatsappNumber,
   isTelegramEnabled,
   postTelegramMessage,
