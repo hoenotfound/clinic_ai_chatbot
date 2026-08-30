@@ -3,7 +3,40 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("../services/telegramImmediateAlertService");
 
 function normalizeWhatsappNumber(input) {
-  return String(input || "").replace(/[^\d]/g, "");
+  let digits = String(input || "").replace(/[^\d]/g, "");
+  if (!digits) return "";
+
+  // Accept the common international dialing prefix form (e.g. 0060...)
+  // without accidentally treating it as a Malaysian local number.
+  if (digits.startsWith("00")) {
+    digits = digits.slice(2);
+  }
+
+  // Staff sometimes paste "+60 012..." with both the country code and the
+  // Malaysian trunk zero. WhatsApp identifies the same number as 6012....
+  if (digits.startsWith("600")) {
+    digits = `60${digits.slice(3)}`;
+  }
+
+  // Malaysian local format: 012-345 6789 -> 60123456789.
+  if (digits.startsWith("0")) {
+    return `60${digits.slice(1)}`;
+  }
+
+  // Also accept a mobile number pasted without either the trunk zero or +60.
+  // Malaysian mobile subscriber numbers are 9 or 10 digits and start with 1.
+  if (/^1\d{8,9}$/.test(digits)) {
+    return `60${digits}`;
+  }
+
+  // Already-canonical Malaysian numbers and explicit international numbers
+  // are left untouched after punctuation/spacing is removed.
+  return digits;
+}
+
+function legacyMalaysianLocalNumber(normalizedNumber) {
+  const match = /^60(1\d{8,9})$/.exec(normalizedNumber);
+  return match ? `0${match[1]}` : null;
 }
 
 function publishContactChange(id) {
@@ -20,14 +53,53 @@ function notifyTelegram(promise, label, contactId) {
   });
 }
 
+async function reconcileLegacyWhatsappContact(normalizedNumber, profileName) {
+  const legacyNumber = legacyMalaysianLocalNumber(normalizedNumber);
+  if (!legacyNumber) return null;
+
+  try {
+    const result = await pool.query(
+      `UPDATE contacts AS legacy
+       SET whatsapp_number = $1,
+           whatsapp_profile_name = COALESCE($3, legacy.whatsapp_profile_name),
+           updated_at = now()
+       WHERE legacy.whatsapp_number = $2
+         AND NOT EXISTS (
+           SELECT 1
+           FROM contacts AS canonical
+           WHERE canonical.whatsapp_number = $1
+         )
+       RETURNING legacy.*`,
+      [normalizedNumber, legacyNumber, profileName]
+    );
+    const reconciled = result.rows[0] || null;
+    if (reconciled) publishContactChange(reconciled.id);
+    return reconciled;
+  } catch (err) {
+    // Another request may have inserted the canonical number after the
+    // NOT EXISTS check. The unique constraint is the final arbiter; fall
+    // through to the normal canonical lookup instead of failing the webhook.
+    if (err.code === "23505") return null;
+    throw err;
+  }
+}
+
 async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
+  const normalizedNumber = normalizeWhatsappNumber(whatsappNumber);
   const profileName = whatsappProfileName?.trim() || null;
+
+  // Older portal versions allowed Malaysian local numbers such as 012... to
+  // be stored verbatim. Reuse that same contact before inserting the canonical
+  // WhatsApp 6012... form, otherwise the next inbound message creates a duplicate.
+  const reconciled = await reconcileLegacyWhatsappContact(normalizedNumber, profileName);
+  if (reconciled) return reconciled;
+
   const inserted = await pool.query(
     `INSERT INTO contacts (whatsapp_number, whatsapp_profile_name)
      VALUES ($1, $2)
      ON CONFLICT (whatsapp_number) DO NOTHING
      RETURNING *`,
-    [whatsappNumber, profileName]
+    [normalizedNumber, profileName]
   );
   if (inserted.rows[0]) return inserted.rows[0];
 
@@ -38,14 +110,14 @@ async function getOrCreateContact(whatsappNumber, whatsappProfileName = null) {
        WHERE whatsapp_number = $1
          AND whatsapp_profile_name IS DISTINCT FROM $2
        RETURNING *`,
-      [whatsappNumber, profileName]
+      [normalizedNumber, profileName]
     );
     if (updated.rows[0]) return updated.rows[0];
   }
 
   const existing = await pool.query(
     "SELECT * FROM contacts WHERE whatsapp_number = $1",
-    [whatsappNumber]
+    [normalizedNumber]
   );
   return existing.rows[0];
 }
