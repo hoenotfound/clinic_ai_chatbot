@@ -305,9 +305,14 @@ export default function Tools() {
         maxConversationMinutes: saved.maxConversationMinutes,
         maxMessages: saved.maxMessages,
       });
-      showToast(saved.enabled ? "AI lead scoring is active." : "AI lead scoring is paused.", "info");
+      showToast(
+        saved.enabled
+          ? "Automatic lead temperature is active."
+          : "Automatic lead temperature is paused.",
+        "info"
+      );
     } catch (err) {
-      showToast(err.message || "Couldn't save the lead scoring tool.", "error");
+      showToast(err.message || "Couldn't save automatic lead temperature.", "error");
     } finally {
       setScoringSaving(false);
     }
@@ -756,13 +761,13 @@ function LeadScoringTool({
                   Tools
                 </p>
                 <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
-                  <h1 className="font-display text-2xl font-bold sm:text-3xl">AI lead scoring</h1>
+                  <h1 className="font-display text-2xl font-bold sm:text-3xl">Automatic Lead Temperature</h1>
                   <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${hasUnsavedChanges ? "bg-[var(--color-accent-light)] text-[var(--color-text)]" : savedEnabled ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)]"}`}>
                     {hasUnsavedChanges ? "Unsaved" : savedEnabled ? "Active" : "Paused"}
                   </span>
                 </div>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)]">
-                  Review a conversation after it quiets down and keep the lead temperature current.
+                  Automatically update Hot / Warm / Cold from clear customer intent and end-of-chat AI review. Telegram AI summaries still run when this is off.
                 </p>
               </div>
 
@@ -774,7 +779,7 @@ function LeadScoringTool({
                 <button
                   type="button"
                   role="switch"
-                  aria-label="Enable AI lead scoring"
+                  aria-label="Enable automatic lead temperature"
                   aria-checked={form.enabled}
                   onClick={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
                   className={`relative h-7 w-12 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${form.enabled ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`}
@@ -795,7 +800,7 @@ function LeadScoringTool({
                 <SectionHeading
                   number="1"
                   title="Choose when AI reviews the chat"
-                  description="The first limit reached creates one scoring pass. New messages begin the next pass."
+                  description="These limits control conversation analysis. With automatic temperature on, the review may update the lead; with it off, the review is summary-only for Telegram."
                 />
                 <div className="mt-6 grid gap-4 md:grid-cols-3">
                   <ScoringField
@@ -836,9 +841,9 @@ function LeadScoringTool({
                       <ScoreIcon className="h-5 w-5" />
                     </span>
                     <div>
-                      <h2 className="text-sm font-semibold">Immediate rules stay active</h2>
+                      <h2 className="text-sm font-semibold">One switch controls automatic temperature changes</h2>
                       <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                        Clear booking intent can move Warm to Hot immediately, while an explicit rejection can move it to Cold. The AI review later considers the recent conversation context and may update any automatically managed temperature.
+                        When enabled, clear booking intent can move Warm to Hot immediately, explicit rejection can move it to Cold, and later AI review can update automatically managed temperatures. When disabled, Hot / Warm / Cold stays manual while Telegram can still receive AI conversation summaries.
                       </p>
                     </div>
                   </div>
@@ -847,9 +852,10 @@ function LeadScoringTool({
 
               <aside className="space-y-5">
                 <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)]">
-                  <h2 className="font-display text-sm font-bold">How a score is applied</h2>
+                  <h2 className="font-display text-sm font-bold">How automatic temperature works</h2>
                   <ul className="mt-4 space-y-3">
-                    <Rule text="High-confidence scores with customer evidence update automatic temperatures." />
+                    <Rule text="Clear booking or rejection intent can update temperature immediately while automation is on." />
+                    <Rule text="High-confidence AI scores with customer evidence may update automatically managed temperatures." />
                     <Rule text="Medium and low confidence scores are recorded without changing the lead." />
                     <Rule text="A staff-controlled temperature always wins." />
                     <Rule text="Silence alone never makes a lead Cold." />
@@ -858,7 +864,7 @@ function LeadScoringTool({
                 <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5">
                   <h2 className="font-display text-sm font-bold">Safe activation</h2>
                   <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                    Only customer activity after you enable this tool is eligible. Old chats will not create a sudden batch of AI requests.
+                    Only eligible customer activity after automatic temperature is enabled can change Hot / Warm / Cold. Telegram summaries keep their own activation history and remain independent of this switch.
                   </p>
                 </section>
               </aside>
@@ -962,9 +968,9 @@ function ToolsSidebar({ activeTool, onSelect, followUpActive, scoringActive }) {
             <ScoreIcon className="h-5 w-5" />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold text-[var(--color-text)]">AI lead scoring</span>
+            <span className="block text-sm font-semibold text-[var(--color-text)]">Automatic Lead Temperature</span>
             <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">
-              Review lead intent after chats quiet down
+              Control automatic Hot / Warm / Cold updates
             </span>
           </span>
           <span
