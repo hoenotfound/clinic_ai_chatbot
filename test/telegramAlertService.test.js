@@ -91,9 +91,10 @@ test("AI scoring failure sends customer details and a manual-review alert withou
   assert.match(text, /Treatment: HIFU/);
   assert.match(text, /Branch: Puchong/);
   assert.match(text, /AI Summary: Unavailable/);
-  assert.match(text, /AI lead scoring failed after 3 attempts/);
   assert.match(text, /Open the Inbox, review the conversation manually/);
   assert.match(text, /Inbox: https:\/\/clinic\.example\.com\/inbox\?contact=12/);
+  assert.doesNotMatch(text, /AI lead scoring failed/);
+  assert.doesNotMatch(text, /conversation was not dropped from Telegram/i);
   assert.doesNotMatch(text, /AI Review:/);
   assert.doesNotMatch(text, /Chat Summary:/);
   assert.doesNotMatch(text, /Temperature reason:/);
