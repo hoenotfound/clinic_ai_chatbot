@@ -221,8 +221,13 @@ function createLeadTemperatureReviewer({
   pipelineRepository,
   messagesRepository,
   getBranchNames,
+  isAutoTemperatureEnabled = () => true,
 }) {
   return async function reviewLeadTemperatureForMessage(contactId, messageId, messageText) {
+    if (!isAutoTemperatureEnabled()) {
+      return { status: "skipped", reason: "auto-temperature-disabled" };
+    }
+
     const lead = await pipelineRepository.getActiveLeadForContact(contactId);
     if (!lead) return { status: "skipped", reason: "no-active-lead" };
     if (lead.temperature_locked) {
@@ -273,6 +278,16 @@ function createLeadTemperatureReviewer({
       return { status: "unchanged" };
     }
 
+    // Re-check immediately before the write so disabling automatic temperature
+    // while a context lookup is in flight cannot still apply a rule result.
+    if (!isAutoTemperatureEnabled()) {
+      return {
+        status: "skipped",
+        reason: "auto-temperature-disabled",
+        classification,
+      };
+    }
+
     if (!isAllowedRuleTemperatureTransition(lead.temperature, classification)) {
       return {
         status: "unchanged",
@@ -296,6 +311,7 @@ const reviewLeadTemperatureForMessage = createLeadTemperatureReviewer({
   pipelineRepository: pipelineRepo,
   messagesRepository: messagesRepo,
   getBranchNames: () => (clinicConfig.branches || []).map((branch) => branch.name),
+  isAutoTemperatureEnabled: () => clinicConfig.leadScoring?.enabled === true,
 });
 
 module.exports = {
