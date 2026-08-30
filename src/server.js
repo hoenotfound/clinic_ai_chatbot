@@ -531,6 +531,36 @@ app.get("/meta-webhook", (req, res) => {
 // credential even if someone else hits this URL. Gated behind
 // META_VERIFY_TOKEN as a crude shared-secret check since it's exposed on a
 // public Render URL.
+// TEMPORARY DIAGNOSTIC ROUTE — remove once the Instagram conversations
+// issue is resolved. Tries a few variations of the conversations GET call
+// to isolate which query shape (if any) actually returns data. Gated
+// behind META_VERIFY_TOKEN like the token debug route above.
+app.get("/debug-instagram-conversations", async (req, res) => {
+  if (req.query.key !== process.env.META_VERIFY_TOKEN) {
+    return res.sendStatus(404);
+  }
+  const token = process.env.INSTAGRAM_ACCESS_TOKEN;
+  const igId = process.env.INSTAGRAM_ACCOUNT_ID;
+  const variants = {
+    bare: `https://graph.instagram.com/v21.0/${igId}/conversations?access_token=${token}`,
+    withPlatform: `https://graph.instagram.com/v21.0/${igId}/conversations?platform=instagram&access_token=${token}`,
+    withFieldsNoPlatform: `https://graph.instagram.com/v21.0/${igId}/conversations?fields=participants&access_token=${token}`,
+    meConversations: `https://graph.instagram.com/v21.0/me/conversations?platform=instagram&access_token=${token}`,
+  };
+
+  const results = {};
+  for (const [name, url] of Object.entries(variants)) {
+    try {
+      const response = await fetch(url);
+      const data = await response.json();
+      results[name] = { status: response.status, data };
+    } catch (err) {
+      results[name] = { error: String(err) };
+    }
+  }
+  res.json(results);
+});
+
 app.get("/debug-instagram-token", (req, res) => {
   const providedKey = req.query.key || "";
   const expectedKey = process.env.META_VERIFY_TOKEN || "";
