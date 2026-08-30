@@ -145,6 +145,7 @@ export const api = {
     }),
   listContacts: (search) => request(`/contacts${search ? `?search=${encodeURIComponent(search)}` : ""}`),
   getContact: (id) => request(`/contacts/${id}`),
+  getContactInsights: (id) => request(`/contacts/${id}/insights`),
   createContact: (data) => request("/contacts", { method: "POST", body: JSON.stringify(data) }),
   updateContact: (id, data) => request(`/contacts/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   listContactNotes: (id) => request(`/contacts/${id}/notes`),

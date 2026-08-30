@@ -5,6 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { useToasts, ToastContainer } from "../components/Toast";
 import Lightbox from "../components/Lightbox";
 import ContactAvatar from "../components/ContactAvatar";
+import ContactDetailsDrawer from "../components/ContactDetailsDrawer";
 import {
   AlertIcon,
   ArrowLeftIcon,
@@ -120,6 +121,7 @@ export default function Inbox() {
   const [actionPending, setActionPending] = useState(false);
   const [conversationStatePending, setConversationStatePending] = useState(false);
   const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
+  const [contactDetailsOpen, setContactDetailsOpen] = useState(false);
   const selectedIdRef = useRef(selectedId);
   const messagesRef = useRef(messages);
   const latestMessageIdRef = useRef(null);
@@ -702,9 +704,15 @@ export default function Inbox() {
         onSend={handleSend}
         onSendImage={handleSendImage}
         onSendVoice={handleSendVoice}
+        onOpenContactDetails={() => setContactDetailsOpen(true)}
         onToast={showToast}
         mobileThreadOpen={mobileThreadOpen}
         onBack={() => setMobileThreadOpen(false)}
+      />
+      <ContactDetailsDrawer
+        open={contactDetailsOpen}
+        contact={selectedContact}
+        onClose={() => setContactDetailsOpen(false)}
       />
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
@@ -1068,6 +1076,7 @@ function ThreadView({
   onSend,
   onSendImage,
   onSendVoice,
+  onOpenContactDetails,
   onToast,
   mobileThreadOpen,
   onBack,
@@ -1423,7 +1432,15 @@ function ThreadView({
             >
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
-            <ContactAvatar src={contact.photo_url} channel={contact.channel} size={44} />
+            <button
+              type="button"
+              onClick={onOpenContactDetails}
+              aria-label={`Open details for ${displayName(contact)}`}
+              title="View contact details"
+              className="shrink-0 rounded-full outline-none transition focus:ring-2 focus:ring-[var(--color-primary)]/40 focus:ring-offset-2"
+            >
+              <ContactAvatar src={contact.photo_url} channel={contact.channel} size={44} />
+            </button>
             <div className="min-w-0">
               <h2 className="truncate font-display text-[15px] font-bold sm:text-base">{displayName(contact)}</h2>
               <div className="mt-1 flex items-center gap-1.5 overflow-hidden">

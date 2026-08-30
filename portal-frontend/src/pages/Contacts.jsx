@@ -4,6 +4,7 @@ import { api } from "../api";
 import { useToasts, ToastContainer } from "../components/Toast";
 import Spinner from "../components/Spinner";
 import ContactAvatar from "../components/ContactAvatar";
+import ContactInsights from "../components/ContactInsights";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -54,6 +55,11 @@ export default function Contacts() {
     setPanelMode("create");
   }
 
+  function handleBackToList() {
+    setSelectedId(null);
+    setPanelMode("view");
+  }
+
   async function handleSaved(savedContact, isNew) {
     await refreshContacts(searchInput);
     setSelectedId(savedContact.id);
@@ -62,9 +68,10 @@ export default function Contacts() {
   }
 
   const selectedContact = contacts?.find((c) => c.id === selectedId) || null;
+  const mobilePanelOpen = panelMode !== "view" || Boolean(selectedContact);
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full min-w-0">
       <ContactList
         contacts={contacts}
         selectedId={selectedId}
@@ -72,15 +79,24 @@ export default function Contacts() {
         onAddNew={handleAddNew}
         searchInput={searchInput}
         onSearchChange={setSearchInput}
+        hiddenOnMobile={mobilePanelOpen}
       />
-      <div className="flex-1 min-w-0 overflow-y-auto">
+      <div
+        className={`${mobilePanelOpen ? "block" : "hidden"} min-w-0 flex-1 overflow-y-auto md:block`}
+      >
         {panelMode === "create" && (
-          <div className="max-w-lg px-8 py-8">
-            <ContactForm onSaved={(c) => handleSaved(c, true)} onCancel={() => setPanelMode("view")} onError={(m) => showToast(m, "error")} />
+          <div className="mx-auto w-full max-w-lg px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+            <MobileBackButton onClick={handleBackToList} label="Back to contacts" />
+            <ContactForm
+              onSaved={(c) => handleSaved(c, true)}
+              onCancel={handleBackToList}
+              onError={(m) => showToast(m, "error")}
+            />
           </div>
         )}
         {panelMode === "edit" && selectedContact && (
-          <div className="max-w-lg px-8 py-8">
+          <div className="mx-auto w-full max-w-lg px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+            <MobileBackButton onClick={() => setPanelMode("view")} label="Back to contact" />
             <ContactForm
               contact={selectedContact}
               onSaved={(c) => handleSaved(c, false)}
@@ -95,10 +111,11 @@ export default function Contacts() {
               key={selectedContact.id}
               contact={selectedContact}
               onEdit={() => setPanelMode("edit")}
+              onBack={handleBackToList}
               onToast={showToast}
             />
           ) : (
-            <div className="h-full flex items-center justify-center">
+            <div className="hidden h-full items-center justify-center px-6 text-center md:flex">
               <p className="text-sm text-[var(--color-text-muted)]">
                 {contacts?.length === 0 ? "No contacts yet — add one to get started." : "Select a contact to view their profile."}
               </p>
@@ -110,21 +127,31 @@ export default function Contacts() {
   );
 }
 
-function ContactList({ contacts, selectedId, onSelect, onAddNew, searchInput, onSearchChange }) {
+function ContactList({
+  contacts,
+  selectedId,
+  onSelect,
+  onAddNew,
+  searchInput,
+  onSearchChange,
+  hiddenOnMobile,
+}) {
   return (
-    <div className="w-80 shrink-0 border-r border-[var(--color-border)] h-full overflow-y-auto bg-[var(--color-surface)] flex flex-col">
-      <div className="px-5 py-4 border-b border-[var(--color-border)] sticky top-0 bg-[var(--color-surface)] z-10">
+    <div
+      className={`${hiddenOnMobile ? "hidden md:flex" : "flex"} h-full w-full min-w-0 shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-surface)] md:w-80`}
+    >
+      <div className="sticky top-0 z-10 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4 sm:px-5">
         <div className="flex items-center justify-between gap-2">
-          <div>
+          <div className="min-w-0">
             <h1 className="font-display text-lg font-bold">Contacts</h1>
-            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+            <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
               {contacts ? `${contacts.length} contact${contacts.length === 1 ? "" : "s"}` : "Loading…"}
             </p>
           </div>
           <button
             type="button"
             onClick={onAddNew}
-            className="shrink-0 inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] transition-colors"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)]"
           >
             + Add
           </button>
@@ -138,7 +165,7 @@ function ContactList({ contacts, selectedId, onSelect, onAddNew, searchInput, on
       </div>
 
       {contacts && contacts.length === 0 && (
-        <div className="px-5 py-10 text-center">
+        <div className="px-4 py-10 text-center sm:px-5">
           <p className="text-sm text-[var(--color-text-muted)]">
             {searchInput ? "No contacts match that search." : "No contacts yet."}
           </p>
@@ -149,7 +176,7 @@ function ContactList({ contacts, selectedId, onSelect, onAddNew, searchInput, on
         <button
           key={c.id}
           onClick={() => onSelect(c.id)}
-          className={`relative w-full text-left px-5 py-3.5 border-b border-[var(--color-border)] transition-colors ${
+          className={`relative w-full border-b border-[var(--color-border)] px-4 py-3.5 text-left transition-colors sm:px-5 ${
             c.id === selectedId
               ? "bg-[var(--color-primary-light)]"
               : c.needs_attention
@@ -161,13 +188,13 @@ function ContactList({ contacts, selectedId, onSelect, onAddNew, searchInput, on
             <ContactAvatar src={c.photo_url} channel={c.channel} />
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-2">
-                <span className="font-medium text-sm truncate flex items-center gap-1.5">
-                  {displayName(c)}
+                <span className="flex min-w-0 items-center gap-1.5 truncate text-sm font-medium">
+                  <span className="truncate">{displayName(c)}</span>
                   {c.mode === "human" && <ModeBadge mode="human" />}
                 </span>
-                <span className="text-[11px] text-[var(--color-text-muted)] shrink-0">{formatTime(c.last_message_at)}</span>
+                <span className="shrink-0 text-[11px] text-[var(--color-text-muted)]">{formatTime(c.last_message_at)}</span>
               </div>
-              <p className="text-xs text-[var(--color-text-muted)] truncate mt-0.5">
+              <p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">
                 {formatPhone(c.whatsapp_number)}
                 {c.message_count === 0 && " · No conversation yet"}
               </p>
@@ -179,7 +206,7 @@ function ContactList({ contacts, selectedId, onSelect, onAddNew, searchInput, on
   );
 }
 
-function ContactProfile({ contact, onEdit, onToast }) {
+function ContactProfile({ contact, onEdit, onBack, onToast }) {
   const navigate = useNavigate();
   const [notes, setNotes] = useState(null); // null = loading
   const [draft, setDraft] = useState("");
@@ -246,26 +273,28 @@ function ContactProfile({ contact, onEdit, onToast }) {
   }
 
   return (
-    <div className="max-w-2xl px-8 py-8">
-      <div className="flex items-start justify-between gap-4 mb-6">
-        <div className="flex items-center gap-3 min-w-0">
+    <div className="mx-auto w-full max-w-2xl px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+      <MobileBackButton onClick={onBack} label="Back to contacts" />
+
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
           <ContactAvatar src={contact.photo_url} channel={contact.channel} size={48} />
           <div className="min-w-0">
-            <h2 className="font-display text-xl font-bold flex items-center gap-2">
+            <h2 className="flex min-w-0 items-center gap-2 font-display text-xl font-bold">
               <span className="truncate">{displayName(contact)}</span>
               {contact.mode === "human" && <ModeBadge mode="human" />}
             </h2>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1">{formatPhone(contact.whatsapp_number)}</p>
-            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+            <p className="mt-1 break-all text-sm text-[var(--color-text-muted)]">{formatPhone(contact.whatsapp_number)}</p>
+            <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
               Added {new Date(contact.created_at).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
           <button
             type="button"
             onClick={onEdit}
-            className="text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors"
+            className="flex-1 rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-medium transition-colors hover:bg-[var(--color-bg)] sm:flex-none"
           >
             Edit
           </button>
@@ -273,7 +302,7 @@ function ContactProfile({ contact, onEdit, onToast }) {
             type="button"
             onClick={handleOpenPipeline}
             disabled={addingLead}
-            className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
+            className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-medium transition-colors hover:bg-[var(--color-bg)] disabled:opacity-50 sm:flex-none"
           >
             {addingLead && <Spinner className="h-3 w-3" />}
             {addingLead ? "Opening…" : "Pipeline"}
@@ -282,13 +311,13 @@ function ContactProfile({ contact, onEdit, onToast }) {
             <button
               type="button"
               onClick={() => navigate(`/inbox?contact=${contact.id}`)}
-              className="text-xs font-medium px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] transition-colors"
+              className="w-full rounded-lg bg-[var(--color-primary)] px-3 py-2 text-center text-xs font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)] sm:w-auto"
             >
               View conversation
             </button>
           ) : (
             <span
-              className="text-xs font-medium px-3 py-2 rounded-lg bg-[var(--color-bg)] text-[var(--color-text-muted)] cursor-not-allowed"
+              className="w-full cursor-not-allowed rounded-lg bg-[var(--color-bg)] px-3 py-2 text-center text-xs font-medium text-[var(--color-text-muted)] sm:w-auto"
               title="This contact hasn't messaged in yet."
             >
               No conversation yet
@@ -297,8 +326,10 @@ function ContactProfile({ contact, onEdit, onToast }) {
         </div>
       </div>
 
+      <ContactInsights contactId={contact.id} className="mb-8" />
+
       <div>
-        <h3 className="text-sm font-semibold mb-3">Notes</h3>
+        <h3 className="mb-3 text-sm font-semibold">Notes</h3>
         <div className="mb-4">
           <textarea
             className={`${inputClass} resize-y`}
@@ -312,7 +343,7 @@ function ContactProfile({ contact, onEdit, onToast }) {
               type="button"
               onClick={handleAddNote}
               disabled={saving || !draft.trim()}
-              className="inline-flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
             >
               {saving && <Spinner className="h-3 w-3" />}
               {saving ? "Saving…" : "Add note"}
@@ -331,17 +362,17 @@ function ContactProfile({ contact, onEdit, onToast }) {
             {notes.map((n) => (
               <div key={n.id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
                 <div className="flex items-start justify-between gap-2">
-                  <p className="text-sm whitespace-pre-wrap flex-1">{n.content}</p>
+                  <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm">{n.content}</p>
                   <button
                     type="button"
                     onClick={() => handleDeleteNote(n.id)}
                     aria-label="Delete note"
-                    className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors text-xs"
+                    className="shrink-0 text-xs text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-danger)]"
                   >
                     ✕
                   </button>
                 </div>
-                <p className="text-[11px] text-[var(--color-text-muted)] mt-2">
+                <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
                   {n.author} · {formatTime(n.created_at)}
                 </p>
               </div>
@@ -350,6 +381,19 @@ function ContactProfile({ contact, onEdit, onToast }) {
         )}
       </div>
     </div>
+  );
+}
+
+function MobileBackButton({ onClick, label }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="mb-4 inline-flex min-h-10 items-center gap-2 rounded-lg px-1 text-sm font-medium text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)] md:hidden"
+    >
+      <span aria-hidden="true">←</span>
+      {label}
+    </button>
   );
 }
 
@@ -382,8 +426,8 @@ function ContactForm({ contact, onSaved, onCancel, onError }) {
 
   return (
     <form onSubmit={handleSubmit}>
-      <h2 className="font-display text-lg font-bold mb-1">{isNew ? "Add contact" : "Edit contact"}</h2>
-      <p className="text-sm text-[var(--color-text-muted)] mb-6">
+      <h2 className="mb-1 font-display text-lg font-bold">{isNew ? "Add contact" : "Edit contact"}</h2>
+      <p className="mb-6 text-sm text-[var(--color-text-muted)]">
         {isNew
           ? "Manually add a patient who hasn't messaged in yet. If they message this WhatsApp number later, it'll link to this same contact."
           : "Update this patient's name or WhatsApp number."}
@@ -402,16 +446,16 @@ function ContactForm({ contact, onSaved, onCancel, onError }) {
           onChange={(e) => setWhatsappNumber(e.target.value)}
           placeholder="e.g. +60 12-345 6789"
         />
-        <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
+        <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
           Any format works — it's normalized to match how WhatsApp identifies the patient.
         </p>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button
           type="submit"
           disabled={saving}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
+          className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-50 sm:flex-none"
         >
           {saving && <Spinner />}
           {saving ? "Saving…" : isNew ? "Add contact" : "Save changes"}
@@ -419,7 +463,7 @@ function ContactForm({ contact, onSaved, onCancel, onError }) {
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-2.5 rounded-xl text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] transition-colors"
+          className="min-h-10 flex-1 rounded-xl px-4 py-2.5 text-sm font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] sm:flex-none"
         >
           Cancel
         </button>
@@ -432,7 +476,7 @@ function ModeBadge({ mode }) {
   const isHuman = mode === "human";
   return (
     <span
-      className={`inline-flex items-center gap-1 shrink-0 rounded-full font-medium uppercase tracking-wide text-[9px] px-1.5 py-0.5 ${
+      className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide ${
         isHuman ? "bg-[var(--color-accent-light)] text-[var(--color-accent)]" : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
       }`}
     >
