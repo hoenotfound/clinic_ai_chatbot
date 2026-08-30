@@ -562,11 +562,13 @@ app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
   console.log("[meta-webhook debug] raw body:", JSON.stringify(req.body));
 
   const incomingMessages = metaMessaging.parseIncomingMessages(req.body);
-  console.log(`[meta-webhook debug] parsed ${incomingMessages.length} message(s):`, JSON.stringify(incomingMessages));
+  const resolvedEditMessages = await metaMessaging.resolveMessageEditEvents(req.body);
+  const allIncoming = [...incomingMessages, ...resolvedEditMessages];
+  console.log(`[meta-webhook debug] parsed ${incomingMessages.length} message(s), resolved ${resolvedEditMessages.length} message_edit event(s):`, JSON.stringify(allIncoming));
 
   try {
     await Promise.all(
-      incomingMessages.map((incoming) =>
+      allIncoming.map((incoming) =>
         enqueueConversation(
           `${incoming.channel}:${incoming.from}`,
           () => processIncomingMessage(incoming)
