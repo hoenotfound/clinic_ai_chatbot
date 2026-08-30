@@ -27,6 +27,11 @@ const CONFIG_KEYS = [
   "guardrails",
 ];
 
+// Internal runtime state that must survive restarts but must not become a
+// staff-editable Settings API field. Telegram conversation summaries keep a
+// separate activation boundary from the Auto AI Lead Temperature toggle.
+const INTERNAL_CONFIG_KEYS = ["telegramConversationSummary"];
+
 /**
  * Pulls the numeric row id out of one of our own hosted promo-image URLs
  * (e.g. ".../promo-images/42" -> 42). Returns null for anything else — a
@@ -111,7 +116,7 @@ function getConfig() {
  */
 async function updateConfig(updates) {
   const nextConfig = { ...clinicConfig };
-  for (const key of CONFIG_KEYS) {
+  for (const key of [...CONFIG_KEYS, ...INTERNAL_CONFIG_KEYS]) {
     if (Object.prototype.hasOwnProperty.call(updates, key)) {
       nextConfig[key] = updates[key];
     }
