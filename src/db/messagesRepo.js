@@ -10,13 +10,24 @@ function clampPageSize(limit, fallback = 50) {
   return Math.min(parsed, MAX_PORTAL_PAGE_SIZE);
 }
 
-// Every write path in this file still accepts a base64 string for media
-// (same shape callers always used) but now uploads it to R2 and stores only
-// the returned key in Postgres. Centralizing this here means server.js,
-// conversationStore.js, and the routes never had to change.
-async function persistMediaIfPresent(mediaBase64, mediaMimeType, contactId) {
-  if (!mediaBase64) return null;
-  const buffer = Buffer.from(mediaBase64, "base64");
+// Media write paths now pass Buffer objects straight through to R2 so an
+// upload does not allocate a ~33% larger base64 string and then decode it back
+// into another Buffer. Base64 strings remain accepted only as a compatibility
+// fallback for any older internal caller while the active paths use Buffers.
+async function persistMediaIfPresent(mediaData, mediaMimeType, contactId) {
+  if (!mediaData) return null;
+
+  let buffer;
+  if (Buffer.isBuffer(mediaData)) {
+    buffer = mediaData;
+  } else if (typeof mediaData === "string") {
+    buffer = Buffer.from(mediaData, "base64");
+  } else if (ArrayBuffer.isView(mediaData)) {
+    buffer = Buffer.from(mediaData.buffer, mediaData.byteOffset, mediaData.byteLength);
+  } else {
+    throw new TypeError("Media attachment must be a Buffer, typed array, or base64 string.");
+  }
+
   return mediaStorage.uploadMedia(buffer, mediaMimeType, { contactId });
 }
 

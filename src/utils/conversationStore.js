@@ -72,7 +72,7 @@ async function appendMessageForContact(
     whatsappMessageId,
     sentByUsername,
     mediaUrl,
-    mediaAttachment?.data || null,
+    mediaAttachment?.buffer || mediaAttachment?.data || null,
     mediaAttachment?.mimeType || null
   );
 
@@ -116,7 +116,7 @@ async function updateInboundMessage(contactId, messageId, content, mediaAttachme
     messageId,
     contactId,
     content,
-    mediaAttachment?.data || null,
+    mediaAttachment?.buffer || mediaAttachment?.data || null,
     mediaAttachment?.mimeType || null
   );
   if (updated) {

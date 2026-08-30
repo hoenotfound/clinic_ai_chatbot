@@ -598,7 +598,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       null,
       req.session.username,
       null,
-      { mimeType: req.file.mimetype, data: req.file.buffer.toString("base64") }
+      { mimeType: req.file.mimetype, buffer: req.file.buffer }
     );
 
     const sendResult = await whatsapp.sendImageById(
@@ -676,7 +676,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       null,
       {
         mimeType: converted.playback.mimeType,
-        data: converted.playback.buffer.toString("base64"),
+        buffer: converted.playback.buffer,
       }
     );
 
