@@ -1,0 +1,262 @@
+const GRAPH_API_VERSION = "v26.0";
+const MAX_REMOTE_MEDIA_BYTES = 16 * 1024 * 1024;
+
+function channelLabel(channel) {
+  if (channel === "facebook") return "Facebook Messenger";
+  if (channel === "instagram") return "Instagram";
+  return channel || "Meta";
+}
+
+function getChannelConfig(channel) {
+  if (channel === "facebook") {
+    return {
+      token: process.env.FACEBOOK_PAGE_ACCESS_TOKEN,
+      senderId: process.env.FACEBOOK_PAGE_ID,
+      baseUrl: "https://graph.facebook.com",
+    };
+  }
+  if (channel === "instagram") {
+    return {
+      token: process.env.INSTAGRAM_ACCESS_TOKEN,
+      senderId: process.env.INSTAGRAM_ACCOUNT_ID,
+      baseUrl: "https://graph.instagram.com",
+    };
+  }
+  return { token: null, senderId: null, baseUrl: null };
+}
+
+function configured(channel) {
+  const config = getChannelConfig(channel);
+  return Boolean(config.token && config.senderId);
+}
+
+function extractErrorText(data, fallback) {
+  return (
+    data?.error?.error_user_msg ||
+    data?.error?.message ||
+    data?.message ||
+    fallback
+  );
+}
+
+async function postMessage(channel, recipientId, message) {
+  const config = getChannelConfig(channel);
+  const label = channelLabel(channel);
+  if (!config.token || !config.senderId) {
+    return {
+      success: false,
+      wamid: null,
+      externalMessageId: null,
+      error: `${label} is not configured on this server.`,
+    };
+  }
+
+  const url = `${config.baseUrl}/${GRAPH_API_VERSION}/${config.senderId}/messages`;
+  const body = {
+    recipient: { id: String(recipientId) },
+    message,
+  };
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    const raw = await res.text();
+    let data = null;
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = {};
+    }
+
+    if (!res.ok) {
+      const error = extractErrorText(data, raw || `${label} returned HTTP ${res.status}.`);
+      console.error(`${label} send failed:`, res.status, error);
+      return { success: false, wamid: null, externalMessageId: null, error };
+    }
+
+    return {
+      success: true,
+      // Only WhatsApp WAMIDs should enter the WhatsApp delivery-status path.
+      wamid: null,
+      externalMessageId: data?.message_id || data?.id || null,
+      error: null,
+    };
+  } catch (err) {
+    console.error(`${label} send threw an error:`, err);
+    return {
+      success: false,
+      wamid: null,
+      externalMessageId: null,
+      error: err?.message || `${label} send failed.`,
+    };
+  }
+}
+
+async function sendText(channel, recipientId, text) {
+  return postMessage(channel, recipientId, { text });
+}
+
+async function sendImage(channel, recipientId, imageUrl, caption) {
+  // Messenger and Instagram send the image attachment and caption as separate
+  // messages. Keep the caption first so the customer has context even if the
+  // media CDN later rejects the image request.
+  if (caption?.trim()) {
+    const captionResult = await sendText(channel, recipientId, caption.trim());
+    if (!captionResult.success) return captionResult;
+  }
+
+  return postMessage(channel, recipientId, {
+    attachment: {
+      type: "image",
+      payload: { url: imageUrl },
+    },
+  });
+}
+
+function firstAttachment(message) {
+  return Array.isArray(message?.attachments) && message.attachments.length
+    ? message.attachments[0]
+    : null;
+}
+
+/**
+ * Normalizes Facebook Messenger and Instagram messaging webhook events into
+ * the same shape consumed by the existing AI pipeline. Echoes are skipped so
+ * replies sent by this app never re-enter the AI as customer messages.
+ */
+function parseIncomingMessages(body) {
+  const channel = body?.object === "page"
+    ? "facebook"
+    : body?.object === "instagram"
+      ? "instagram"
+      : null;
+  if (!channel) return [];
+
+  const parsed = [];
+  for (const entry of body?.entry || []) {
+    for (const event of entry?.messaging || []) {
+      const message = event?.message;
+      const senderId = event?.sender?.id;
+      if (!message?.mid || !senderId) continue;
+
+      // Instagram includes outgoing echoes in the messages subscription.
+      // Messenger may also deliver echoes depending on subscribed fields.
+      if (message.is_echo || message.is_self || String(senderId) === String(entry?.id)) {
+        continue;
+      }
+      if (message.is_deleted) continue;
+
+      const attachment = firstAttachment(message);
+      const attachmentType = attachment?.type || null;
+      const mediaUrl = attachment?.payload?.url || null;
+
+      if (attachmentType === "image") {
+        parsed.push({
+          id: message.mid,
+          from: String(senderId),
+          channel,
+          profileName: null,
+          text: message.text || null,
+          mediaId: null,
+          mediaUrl,
+          mediaType: "image",
+          unsupportedType: mediaUrl ? null : "image-without-url",
+        });
+      } else if (attachmentType === "audio") {
+        parsed.push({
+          id: message.mid,
+          from: String(senderId),
+          channel,
+          profileName: null,
+          text: message.text || null,
+          mediaId: null,
+          mediaUrl,
+          mediaType: "audio",
+          unsupportedType: mediaUrl ? null : "audio-without-url",
+        });
+      } else if (attachmentType) {
+        parsed.push({
+          id: message.mid,
+          from: String(senderId),
+          channel,
+          profileName: null,
+          text: message.text || null,
+          mediaId: null,
+          mediaUrl,
+          mediaType: null,
+          unsupportedType: attachmentType,
+        });
+      } else if (typeof message.text === "string") {
+        parsed.push({
+          id: message.mid,
+          from: String(senderId),
+          channel,
+          profileName: null,
+          text: message.text,
+          mediaId: null,
+          mediaUrl: null,
+          mediaType: null,
+          unsupportedType: null,
+        });
+      }
+    }
+  }
+  return parsed;
+}
+
+async function downloadMedia(url) {
+  if (!url) return null;
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return null;
+  }
+  if (!["https:", "http:"].includes(parsedUrl.protocol)) return null;
+
+  try {
+    const res = await fetch(parsedUrl, { redirect: "follow" });
+    if (!res.ok) {
+      console.error("Meta attachment download failed:", res.status);
+      return null;
+    }
+
+    const advertisedLength = Number(res.headers.get("content-length"));
+    if (Number.isFinite(advertisedLength) && advertisedLength > MAX_REMOTE_MEDIA_BYTES) {
+      console.error("Meta attachment download rejected: file exceeds 16MB.");
+      return null;
+    }
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (buffer.length > MAX_REMOTE_MEDIA_BYTES) {
+      console.error("Meta attachment download rejected after download: file exceeds 16MB.");
+      return null;
+    }
+
+    return {
+      buffer,
+      mimeType: (res.headers.get("content-type") || "application/octet-stream")
+        .split(";")[0]
+        .trim(),
+    };
+  } catch (err) {
+    console.error("Meta attachment download threw an error:", err);
+    return null;
+  }
+}
+
+module.exports = {
+  GRAPH_API_VERSION,
+  configured,
+  sendText,
+  sendImage,
+  parseIncomingMessages,
+  downloadMedia,
+};
