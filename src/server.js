@@ -525,6 +525,26 @@ app.get("/meta-webhook", (req, res) => {
   return res.sendStatus(403);
 });
 
+// TEMPORARY DIAGNOSTIC ROUTE — remove once the Instagram token issue is
+// resolved. Never returns the token itself, only safe metadata (length,
+// first/last few chars, whitespace/quote detection) so it can't leak the
+// credential even if someone else hits this URL. Gated behind
+// META_VERIFY_TOKEN as a crude shared-secret check since it's exposed on a
+// public Render URL.
+app.get("/debug-instagram-token", (req, res) => {
+  if (req.query.key !== process.env.META_VERIFY_TOKEN) {
+    return res.sendStatus(404);
+  }
+  const token = process.env.INSTAGRAM_ACCESS_TOKEN || "";
+  res.json({
+    length: token.length,
+    first8: token.slice(0, 8),
+    last4: token.slice(-4),
+    hasWhitespace: /\s/.test(token),
+    hasQuoteChars: /["']/.test(token),
+  });
+});
+
 app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
   // Acknowledge Meta before AI/network work for the same retry protection used
   // by the existing WhatsApp webhook.
