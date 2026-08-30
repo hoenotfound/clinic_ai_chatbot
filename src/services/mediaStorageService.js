@@ -4,14 +4,18 @@
  * client pointed at R2's endpoint — no Cloudflare-specific SDK needed.
  *
  * The bucket is kept PRIVATE. Patient photos/recordings are sensitive, so
- * bytes are only ever fetched server-side (via getMediaBuffer) by routes
- * that already enforce staff authentication — never exposed as a public
- * URL. This mirrors the access model the app already had when bytes lived
- * in Postgres (see routes/conversations.js media route).
+ * bytes are only ever fetched server-side by authenticated routes. Browser
+ * playback is streamed through the backend instead of exposing a public R2
+ * URL or buffering an entire object in memory first.
  */
 
 const crypto = require("crypto");
-const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
+const {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+} = require("@aws-sdk/client-s3");
 
 let cachedClient = null;
 
@@ -73,25 +77,66 @@ async function uploadMedia(buffer, mimeType, { contactId = "misc" } = {}) {
   return key;
 }
 
-/** Downloads a media object from R2 and returns it as a Buffer. */
+/**
+ * Opens an R2 object as a Node readable stream. When a single HTTP byte range
+ * is supplied, that range is forwarded directly to R2 so voice playback and
+ * seeking transfer only the requested bytes instead of downloading the whole
+ * recording into application memory.
+ */
+async function openMediaStream(key, { range = null } = {}) {
+  const input = {
+    Bucket: getBucketName(),
+    Key: key,
+  };
+  if (range) input.Range = range;
+
+  const result = await getClient().send(new GetObjectCommand(input));
+  if (!result.Body || typeof result.Body.pipe !== "function") {
+    throw new Error("R2 returned a media object without a readable body.");
+  }
+
+  return {
+    body: result.Body,
+    contentLength:
+      Number.isFinite(result.ContentLength) && result.ContentLength >= 0
+        ? result.ContentLength
+        : null,
+    contentRange: result.ContentRange || null,
+    contentType: result.ContentType || null,
+    acceptRanges: result.AcceptRanges || "bytes",
+    etag: result.ETag || null,
+    lastModified: result.LastModified || null,
+  };
+}
+
+/** Downloads a media object fully. Keep this for AI image context and retries. */
 async function downloadMedia(key) {
-  const result = await getClient().send(
-    new GetObjectCommand({ Bucket: getBucketName(), Key: key })
-  );
+  const media = await openMediaStream(key);
   const chunks = [];
-  for await (const chunk of result.Body) {
+  for await (const chunk of media.body) {
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
 }
 
-/** Deletes a media object from R2 (e.g. once a migrated row is verified). */
+function isRangeNotSatisfiableError(err) {
+  return (
+    err?.$metadata?.httpStatusCode === 416 ||
+    err?.name === "InvalidRange" ||
+    err?.Code === "InvalidRange" ||
+    err?.code === "InvalidRange"
+  );
+}
+
+/** Deletes a media object from R2. */
 async function deleteMedia(key) {
   await getClient().send(new DeleteObjectCommand({ Bucket: getBucketName(), Key: key }));
 }
 
 module.exports = {
   uploadMedia,
+  openMediaStream,
   downloadMedia,
+  isRangeNotSatisfiableError,
   deleteMedia,
 };
