@@ -23,6 +23,20 @@ function formatWhatsappNumber(value) {
   return digits ? `+${digits}` : "Not captured";
 }
 
+function channelLabel(channel) {
+  if (channel === "facebook") return "Facebook Messenger";
+  if (channel === "instagram") return "Instagram";
+  return "WhatsApp";
+}
+
+function formatContactIdentifier(contact) {
+  const channel = contact?.channel || "whatsapp";
+  if (channel === "whatsapp") {
+    return formatWhatsappNumber(contact?.whatsapp_number);
+  }
+  return `${channelLabel(channel)}: ${clean(contact?.channel_user_id)}`;
+}
+
 function formatAppointment(value) {
   if (!value) return "Not captured";
   const date = new Date(value);
@@ -77,12 +91,13 @@ function buildConversationSummaryMessage({ lead, score, env = process.env }) {
   const name = clean(lead.name || lead.whatsapp_profile_name, "Unknown contact");
   const inboxUrl = buildInboxUrl(lead.contact_id, env);
   const currentTemperature = temperatureLabel(lead.current_temperature);
+  const contactIdentifier = formatContactIdentifier(lead);
 
   if (score?.summaryUnavailable === true || score?.alertType === "ai_scoring_failed") {
     const lines = [
       "⚠️ Conversation Needs Manual Review",
       "",
-      `${name} (${formatWhatsappNumber(lead.whatsapp_number)})`,
+      `${name} (${contactIdentifier})`,
       "",
       `Stage: ${clean(lead.stage_name)}`,
       `Current Temperature: ${currentTemperature}`,
@@ -111,7 +126,7 @@ function buildConversationSummaryMessage({ lead, score, env = process.env }) {
   const lines = [
     `${currentTemperature} Conversation Summary`,
     "",
-    `${name} (${formatWhatsappNumber(lead.whatsapp_number)})`,
+    `${name} (${contactIdentifier})`,
     "",
     `Stage: ${clean(lead.stage_name)}`,
     `Current Temperature: ${currentTemperature}`,
@@ -264,8 +279,10 @@ module.exports = {
   TELEGRAM_FLUSH_BATCH_SIZE,
   TELEGRAM_MESSAGE_LIMIT,
   buildConversationSummaryMessage,
+  channelLabel,
   createTelegramAlertService,
   formatAppointmentForLead,
+  formatContactIdentifier,
   formatWhatsappNumber,
   isTelegramEnabled,
   postTelegramMessage,

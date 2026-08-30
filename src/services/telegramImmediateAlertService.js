@@ -1,7 +1,8 @@
 const crypto = require("crypto");
 const { pool } = require("../db/db");
 const {
-  formatWhatsappNumber,
+  channelLabel,
+  formatContactIdentifier,
   isTelegramEnabled,
   postTelegramMessage,
   temperatureLabel,
@@ -27,6 +28,7 @@ async function getImmediateAlertContext(contactId, query = pool.query.bind(pool)
   const result = await query(
     `SELECT
        c.id AS contact_id, c.whatsapp_number, c.name, c.whatsapp_profile_name,
+       c.channel, c.channel_user_id,
        l.id AS lead_id, l.temperature, l.treatment_interest, l.branch_name,
        s.name AS stage_name,
        latest.id AS latest_customer_message_id,
@@ -126,14 +128,15 @@ function humanInterventionEventKey(context, reason, messageId = null) {
 
 function buildImmediateAlertMessage({ type, context, reason, env = process.env }) {
   const isDelivery = type === "delivery_failure";
+  const platform = channelLabel(context.channel || "whatsapp");
   const title = isDelivery
-    ? "⚠️ WhatsApp Delivery Failed"
+    ? `⚠️ ${platform} Delivery Failed`
     : "🚨 Human Intervention Required";
   const name = clean(context.name || context.whatsapp_profile_name, "Unknown contact");
   const lines = [
     title,
     "",
-    `${name} (${formatWhatsappNumber(context.whatsapp_number)})`,
+    `${name} (${formatContactIdentifier(context)})`,
     "",
     `Reason: ${clean(reason)}`,
     `Temperature: ${temperatureLabel(context.temperature)}`,

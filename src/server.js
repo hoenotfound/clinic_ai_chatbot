@@ -5,6 +5,8 @@ const bodyParser = require("body-parser");
 const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
+const metaMessaging = require("./services/metaMessagingService");
+const channelMessaging = require("./services/channelMessagingService");
 const ai = require("./services/aiService");
 const { transcribeAudio } = require("./services/transcriptionService");
 const { convertToMp3 } = require("./services/audioConvertService");
@@ -18,6 +20,7 @@ const { checkKeywordTriggers, extractHandoffSignal } = require("./utils/attentio
 const realtimeEvents = require("./utils/realtimeEvents");
 const { enqueueConversation } = require("./utils/conversationQueue");
 const { verifyWebhookSignature } = require("./middleware/verifyWebhookSignature");
+const { verifyMetaWebhookSignature } = require("./middleware/verifyMetaWebhookSignature");
 const { requireAuth } = require("./middleware/requireAuth");
 
 const authRoutes = require("./routes/auth");
@@ -40,7 +43,7 @@ const {
 // How often the backstop sweep for abandoned promo-image uploads runs —
 // see the setInterval call in start() below.
 const PROMO_IMAGE_PRUNE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
-const SEND_REJECTED_ERROR =
+const WHATSAPP_SEND_REJECTED_ERROR =
   "WhatsApp did not accept this message. Check the reply window or connection and try again.";
 
 function publishDeliveryStatus(message) {
@@ -55,7 +58,11 @@ function publishDeliveryStatus(message) {
   });
 }
 
-async function persistSendOutcome(savedMessage, sendResult, errorText = SEND_REJECTED_ERROR) {
+async function persistSendOutcome(
+  savedMessage,
+  sendResult,
+  errorText = WHATSAPP_SEND_REJECTED_ERROR
+) {
   let updated = null;
   if (sendResult.wamid) {
     updated = await messagesRepo.setWhatsappMessageId(savedMessage.id, sendResult.wamid);
@@ -72,13 +79,14 @@ async function sendTrackedText(contact, text) {
     "assistant",
     text
   );
-  const sendResult = await whatsapp.sendMessage(contact.whatsapp_number, text);
-  const finalMessage = await persistSendOutcome(saved, sendResult);
+  const sendResult = await channelMessaging.sendText(contact, text);
+  const errorText = sendResult.error || channelMessaging.rejectedError(contact.channel);
+  const finalMessage = await persistSendOutcome(saved, sendResult, errorText);
 
   if (!sendResult.success) {
     await contactsRepo.setDeliveryAttention(
       contact.id,
-      `Delivery failed: ${SEND_REJECTED_ERROR}`
+      `Delivery failed: ${errorText}`
     );
   }
 
@@ -97,25 +105,40 @@ function initialInboundText(incoming) {
 }
 
 async function processIncomingMessage(incoming) {
-  const { id, from, profileName, mediaId, mediaType, unsupportedType } = incoming;
+  const {
+    id,
+    from,
+    profileName,
+    mediaType,
+    unsupportedType,
+  } = incoming;
+  const channel = incoming.channel || "whatsapp";
   let contact = null;
   let savedInbound = null;
   let responseAttempted = false;
 
   try {
-    contact = await contactsRepo.getOrCreateContact(from, profileName);
+    contact = channel === "whatsapp"
+      ? await contactsRepo.getOrCreateContact(from, profileName)
+      : await contactsRepo.getOrCreateChannelContact(
+          channel,
+          from,
+          profileName,
+          incoming.photoUrl || null
+        );
 
     // This INSERT is the durable webhook claim. It happens before media or AI
     // work and uses ON CONFLICT, so simultaneous Meta retries cannot both send
-    // a response. The placeholder also makes a failed media operation visible
-    // in the Inbox instead of silently dropping the patient's message.
+    // a response. Prefix social message ids with their channel so they can
+    // never collide with WhatsApp WAMIDs or another social network's ids.
+    const storedInboundId = channel === "whatsapp" ? id : `${channel}:${id}`;
     savedInbound = await conversationStore.appendInboundMessageIfNew(
       contact.id,
       initialInboundText(incoming),
-      id
+      storedInboundId
     );
     if (!savedInbound) {
-      console.log(`Skipping duplicate/retried message ${id}`);
+      console.log(`Skipping duplicate/retried ${channel} message ${id}`);
       return;
     }
 
@@ -136,10 +159,11 @@ async function processIncomingMessage(incoming) {
     }
 
     if (unsupportedType) {
+      const label = channelMessaging.labelForChannel(channel);
       await contactsRepo.setAttention(
         contact.id,
         true,
-        `Unsupported WhatsApp message (${unsupportedType}) needs staff review.`
+        `Unsupported ${label} message (${unsupportedType}) needs staff review.`
       );
       responseAttempted = true;
       await sendTrackedText(
@@ -153,7 +177,7 @@ async function processIncomingMessage(incoming) {
     let mediaAttachment = null;
 
     if (mediaType === "audio") {
-      const media = mediaId ? await whatsapp.downloadMedia(mediaId) : null;
+      const media = await channelMessaging.downloadIncomingMedia(incoming);
       const [transcript, mp3] = media
         ? await Promise.all([
             transcribeAudio(media.buffer, media.mimeType),
@@ -200,7 +224,7 @@ async function processIncomingMessage(incoming) {
     }
 
     if (mediaType === "image") {
-      const media = mediaId ? await whatsapp.downloadMedia(mediaId) : null;
+      const media = await channelMessaging.downloadIncomingMedia(incoming);
       if (!media) {
         await contactsRepo.setAttention(
           contact.id,
@@ -265,7 +289,7 @@ async function processIncomingMessage(incoming) {
           "New message — conversation is staff-owned."
         );
       }
-      console.log(`Skipping AI reply for ${from} — conversation is in human mode.`);
+      console.log(`Skipping AI reply for ${channel}:${from} — conversation is in human mode.`);
       return;
     }
 
@@ -300,19 +324,24 @@ async function processIncomingMessage(incoming) {
           null,
           promo.imageUrl
         );
-        const promoResult = await whatsapp.sendImage(from, promo.imageUrl, promo.caption);
-        await persistSendOutcome(savedPromo, promoResult);
+        const promoResult = await channelMessaging.sendImageByUrl(
+          contact,
+          promo.imageUrl,
+          promo.caption
+        );
+        const promoError = promoResult.error || channelMessaging.rejectedError(contact.channel);
+        await persistSendOutcome(savedPromo, promoResult, promoError);
         if (!promoResult.success) {
-          console.warn(`Promo image failed to send to ${from}, continuing without it.`);
+          console.warn(`Promo image failed to send to ${channel}:${from}, continuing without it.`);
           await contactsRepo.setDeliveryAttention(
             contact.id,
-            `Delivery failed: ${SEND_REJECTED_ERROR}`
+            `Delivery failed: ${promoError}`
           );
         }
       }
     }
   } catch (err) {
-    console.error(`Error handling incoming message ${id || "without id"}:`, err);
+    console.error(`Error handling incoming ${channel} message ${id || "without id"}:`, err);
 
     if (contact && savedInbound) {
       try {
@@ -366,6 +395,24 @@ if (!process.env.WHATSAPP_APP_SECRET && process.env.NODE_ENV === "production") {
 }
 const webhookJsonParser = bodyParser.json({ verify: verifyWebhookSignature });
 
+// Facebook and Instagram use a separate callback and app secret. Keeping this
+// parser separate means enabling social channels cannot change how WhatsApp's
+// existing webhook signature verification behaves.
+const socialMessagingConfigured =
+  metaMessaging.configured("facebook") || metaMessaging.configured("instagram");
+if (
+  socialMessagingConfigured &&
+  !process.env.META_APP_SECRET &&
+  process.env.NODE_ENV === "production"
+) {
+  console.error(
+    "❌ META_APP_SECRET is not set. Refusing to start with Facebook/Instagram messaging enabled, " +
+      "since the social webhook cannot verify requests from Meta."
+  );
+  process.exit(1);
+}
+const metaWebhookJsonParser = bodyParser.json({ verify: verifyMetaWebhookSignature });
+
 // ── Portal API: normal JSON parsing + signed session cookie for staff login. ──
 app.use("/api", bodyParser.json());
 // Fail fast rather than silently falling back to a hardcoded secret — a
@@ -395,25 +442,25 @@ app.use(
 
 // ── Health check ──
 app.get("/", (req, res) => {
-  res.send("WhatsApp AI Clinic Bot is running.");
+  res.send("Clinic AI messaging bot is running.");
 });
 
-// ── Webhook verification (Meta calls this once when you set up the webhook) ──
+// ── WhatsApp webhook verification (unchanged callback) ──
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
   if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
-    console.log("Webhook verified successfully.");
+    console.log("WhatsApp webhook verified successfully.");
     return res.status(200).send(challenge);
   }
 
-  console.warn("Webhook verification failed — token mismatch.");
+  console.warn("WhatsApp webhook verification failed — token mismatch.");
   return res.sendStatus(403);
 });
 
-// ── Incoming messages ──
+// ── Incoming WhatsApp messages and delivery statuses ──
 app.post("/webhook", webhookJsonParser, async (req, res) => {
   // Respond to Meta immediately — don't make them wait on the AI call,
   // or Meta may retry/resend the same message.
@@ -428,14 +475,9 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
     )
   );
 
-  // ── Async delivery-status callbacks (sent/delivered/read/failed) ──
+  // ── Async WhatsApp delivery-status callbacks (sent/delivered/read/failed) ──
   // A 200 OK from the earlier send call only meant Meta *accepted* the
-  // request — this is where the real outcome shows up, separately and
-  // later. Without this, a message that fails after being accepted (e.g. a
-  // media/format problem, or the recipient being outside the 24-hour
-  // messaging window) looks identical to a successful send anywhere else in
-  // the app: the Inbox would show it as sent forever, with no way for staff
-  // to know the patient never actually got it.
+  // request — this is where the real outcome shows up, separately and later.
   const statusUpdates = whatsapp.parseStatusUpdates(req.body);
   for (const update of statusUpdates) {
     try {
@@ -468,11 +510,40 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   await incomingWork;
 });
 
-// ── Promo graphics uploaded from Settings > Promotions — served publicly,
-// deliberately with NO auth, since WhatsApp's Cloud API has to fetch this
-// URL directly (by link, see services/whatsappService.js sendImage()) to
-// actually send the image, and Meta's servers obviously can't log in as
-// staff first. Nothing sensitive lives here — just clinic promo graphics. ──
+// ── Facebook Messenger + Instagram Messaging webhook verification ──
+app.get("/meta-webhook", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode === "subscribe" && token === process.env.META_VERIFY_TOKEN) {
+    console.log("Facebook/Instagram webhook verified successfully.");
+    return res.status(200).send(challenge);
+  }
+
+  console.warn("Facebook/Instagram webhook verification failed — token mismatch.");
+  return res.sendStatus(403);
+});
+
+app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
+  // Acknowledge Meta before AI/network work for the same retry protection used
+  // by the existing WhatsApp webhook.
+  res.sendStatus(200);
+
+  const incomingMessages = metaMessaging.parseIncomingMessages(req.body);
+  await Promise.all(
+    incomingMessages.map((incoming) =>
+      enqueueConversation(
+        `${incoming.channel}:${incoming.from}`,
+        () => processIncomingMessage(incoming)
+      )
+    )
+  );
+});
+
+// ── Promo graphics uploaded from Settings > Promotions — served publicly.
+// WhatsApp, Messenger and Instagram need a publicly fetchable URL when an
+// outbound promo image is sent by link.
 app.get("/promo-images/:id", async (req, res) => {
   try {
     const image = await promoImagesRepo.getImage(req.params.id);
@@ -497,7 +568,7 @@ app.use("/api/pipeline", requireAuth, pipelineRoutes);
 // ── Serve the built portal frontend in production ──
 const portalBuildPath = path.join(__dirname, "../portal-frontend/dist");
 app.use(express.static(portalBuildPath));
-app.get(/^(?!\/(webhook|api)).*/, (req, res) => {
+app.get(/^(?!\/(webhook|meta-webhook|api)).*/, (req, res) => {
   res.sendFile(path.join(portalBuildPath, "index.html"), (err) => {
     if (err) res.status(404).send("Portal not built yet — run `npm run build` in portal-frontend/, or use `npm run dev` there for local development.");
   });
@@ -513,8 +584,8 @@ async function start() {
   // from config/clinicConfig.default.js.
   await configRepo.loadConfig();
 
-  // Bring existing WhatsApp conversations into the first pipeline stage on
-  // the initial deployment. Later starts are a no-op once a contact has any
+  // Bring existing conversations into the first pipeline stage on the
+  // initial deployment. Later starts are a no-op once a contact has any
   // recorded sales journey, including a completed one.
   const backfilledLeadCount = await pipelineRepo.backfillLeadsForExistingContacts();
   if (backfilledLeadCount > 0) {
@@ -531,19 +602,13 @@ async function start() {
   });
 
   // Catches promo images that were uploaded (writing a row immediately —
-  // see promoImagesRepo.saveImage) but never made it into a saved config:
-  // staff picked a file then closed the tab, switched away, or the browser
-  // crashed before hitting Save. The explicit deletes in
-  // routes/config.js/Settings.jsx and the post-save reconcile in
-  // configRepo.updateConfig() cover the normal flows; this timer is the
-  // backstop for everything else. Runs on startup too, in case the server
-  // was down when an abandoned upload's grace period elapsed.
+  // see promoImagesRepo.saveImage) but never made it into a saved config.
   pruneOrphanedPromoImages();
   setInterval(pruneOrphanedPromoImages, PROMO_IMAGE_PRUNE_INTERVAL_MS);
 
-  // Checks once a minute for outbound messages that have reached the
-  // staff-configured follow-up delay without a customer reply. The service
-  // is a no-op while the tool is disabled.
+  // Automated follow-ups deliberately remain WhatsApp-only. The query in
+  // followUpRepo.js already filters c.channel = 'whatsapp', so adding social
+  // auto replies cannot change that existing behavior.
   startAutomatedFollowUps();
 
   // If staff owns a conversation and a customer has been waiting without a

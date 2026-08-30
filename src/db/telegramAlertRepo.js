@@ -67,6 +67,7 @@ async function findReadySummaries({ inactivityMinutes, limit = 5 }) {
        l.branch_name, l.treatment_interest, l.appointment_at,
        l.appointment_status, s.name AS stage_name,
        c.whatsapp_number, c.name, c.whatsapp_profile_name,
+       c.channel, c.channel_user_id,
        latest.created_at AS last_message_at
      FROM telegram_summary_alerts a
      JOIN leads l ON l.id = a.lead_id
@@ -140,7 +141,8 @@ async function claimSummary(alertId, inactivityMinutes) {
        l.contact_id, l.temperature AS current_temperature,
        l.branch_name, l.treatment_interest, l.appointment_at,
        l.appointment_status, s.name AS stage_name,
-       c.whatsapp_number, c.name, c.whatsapp_profile_name`,
+       c.whatsapp_number, c.name, c.whatsapp_profile_name,
+       c.channel, c.channel_user_id`,
     [alertId, inactivityMinutes]
   );
   return result.rows[0] || null;

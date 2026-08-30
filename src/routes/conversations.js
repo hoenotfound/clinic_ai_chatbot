@@ -7,6 +7,7 @@ const pipelineRepo = require("../db/pipelineRepo");
 const conversationStore = require("../utils/conversationStore");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
+const channelMessaging = require("../services/channelMessagingService");
 const mediaStorage = require("../services/mediaStorageService");
 const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const { transcribeStaffAudio } = require("../services/transcriptionService");
@@ -97,6 +98,10 @@ function publishDeliveryStatus(message) {
   });
 }
 
+function rejectedErrorFor(contact) {
+  return channelMessaging.rejectedError(contact?.channel || "whatsapp");
+}
+
 async function persistSendOutcome(savedMessage, sendResult, errorText = SEND_REJECTED_ERROR) {
   let updated = null;
   if (sendResult.wamid) {
@@ -104,8 +109,9 @@ async function persistSendOutcome(savedMessage, sendResult, errorText = SEND_REJ
   } else if (!sendResult.success) {
     updated = await messagesRepo.setDeliveryStatusById(savedMessage.id, "failed", errorText);
   } else {
-    // Extremely defensive: Meta normally returns a WAMID for every accepted
-    // request. Keep the row lightweight even if an accepted response omits it.
+    // Facebook/Instagram accepted sends intentionally have no WhatsApp WAMID.
+    // Keep their delivery state neutral instead of entering WhatsApp's async
+    // sent/delivered/read status pipeline.
     updated = await messagesRepo.setDeliveryStatusById(savedMessage.id, null, null);
   }
   publishDeliveryStatus(updated);
@@ -124,6 +130,31 @@ async function markLeadContacted(contactId, actor, sendResult) {
 
 async function sendStoredMessage(contact, message) {
   const mimeType = String(message.media_mime_type || "").toLowerCase();
+  const channel = contact.channel || "whatsapp";
+
+  if (channel !== "whatsapp") {
+    if (message.media_url) {
+      return channelMessaging.sendImageByUrl(
+        contact,
+        message.media_url,
+        message.content || undefined
+      );
+    }
+
+    if (mimeType.startsWith("audio/") || (mimeType.startsWith("image/") && message.media_base64)) {
+      return {
+        success: false,
+        wamid: null,
+        error: `Retrying stored ${mimeType.startsWith("audio/") ? "voice" : "image"} uploads is currently WhatsApp-only.`,
+      };
+    }
+
+    if (message.content?.trim()) {
+      return channelMessaging.sendText(contact, message.content.trim());
+    }
+
+    return { success: false, wamid: null, error: "This message has no retryable content." };
+  }
 
   if (mimeType.startsWith("audio/")) {
     if (!message.media_base64) {
@@ -474,7 +505,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     }
 
     const sendResult = await sendStoredMessage(contact, message);
-    const errorText = sendResult.error || SEND_REJECTED_ERROR;
+    const errorText = sendResult.error || rejectedErrorFor(contact);
     const updated = await persistSendOutcome(message, sendResult, errorText);
 
     if (sendResult.success) {
@@ -520,18 +551,19 @@ router.post("/:contactId/messages", async (req, res) => {
       await contactsRepo.setUnread(contact.id, false);
     }
 
-    const saved = await conversationStore.appendMessage(
-      contact.whatsapp_number,
+    const saved = await conversationStore.appendMessageForContact(
+      contact.id,
       "assistant",
       text.trim(),
       null,
       req.session.username
     );
 
-    const sendResult = await whatsapp.sendMessage(contact.whatsapp_number, text.trim());
-    const finalMessage = await persistSendOutcome(saved, sendResult);
+    const sendResult = await channelMessaging.sendText(contact, text.trim());
+    const errorText = sendResult.error || rejectedErrorFor(contact);
+    const finalMessage = await persistSendOutcome(saved, sendResult, errorText);
     if (!sendResult.success) {
-      await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${SEND_REJECTED_ERROR}`);
+      await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${errorText}`);
     } else {
       await markLeadContacted(contact.id, req.session.username, sendResult);
     }
@@ -569,6 +601,12 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
+
+    if ((contact.channel || "whatsapp") !== "whatsapp") {
+      return res.status(400).json({
+        error: "Sending new image uploads from the Inbox is currently WhatsApp-only. Text replies work on Facebook and Instagram.",
+      });
+    }
 
     if (!req.file) {
       return res.status(400).json({ error: "An image file is required." });
@@ -624,6 +662,12 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
+
+    if ((contact.channel || "whatsapp") !== "whatsapp") {
+      return res.status(400).json({
+        error: "Sending voice messages from the Inbox is currently WhatsApp-only. Text replies work on Facebook and Instagram.",
+      });
+    }
 
     if (contact.mode !== "human") {
       return res.status(409).json({ error: "Take over this conversation before sending a voice message." });
