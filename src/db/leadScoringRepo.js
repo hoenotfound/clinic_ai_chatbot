@@ -191,6 +191,45 @@ async function getTranscript(
   return result.rows.reverse();
 }
 
+async function findTerminalFailuresNeedingAlert({ limit = 5 } = {}) {
+  const result = await pool.query(
+    `SELECT
+       failed.id AS score_id,
+       failed.lead_id,
+       failed.through_message_id,
+       failed.attempts,
+       failed.error_text
+     FROM lead_temperature_scores failed
+     JOIN leads l ON l.id = failed.lead_id
+     WHERE failed.status = 'failed'
+       AND failed.attempts >= ${MAX_ATTEMPTS}
+       AND l.is_closed = false
+       AND NOT EXISTS (
+         SELECT 1
+         FROM telegram_summary_alerts alert
+         WHERE alert.lead_id = failed.lead_id
+           AND alert.through_message_id = failed.through_message_id
+       )
+       AND NOT EXISTS (
+         SELECT 1
+         FROM messages newer_customer
+         WHERE newer_customer.contact_id = l.contact_id
+           AND newer_customer.role = 'user'
+           AND newer_customer.id > failed.through_message_id
+       )
+       AND NOT EXISTS (
+         SELECT 1
+         FROM lead_temperature_scores newer_score
+         WHERE newer_score.lead_id = failed.lead_id
+           AND newer_score.through_message_id > failed.through_message_id
+       )
+     ORDER BY failed.updated_at ASC, failed.id ASC
+     LIMIT $1`,
+    [limit]
+  );
+  return result.rows;
+}
+
 function scoreDescription(lead, score, applied) {
   const label = score.temperature[0].toUpperCase() + score.temperature.slice(1);
   const confidence = `${score.confidence} confidence`;
@@ -383,12 +422,19 @@ async function completeScore({ scoreId, leadId, throughMessageId, triggerType, s
 }
 
 async function markScoreFailed(scoreId, error) {
-  await pool.query(
+  const result = await pool.query(
     `UPDATE lead_temperature_scores
      SET status = 'failed', error_text = $2, updated_at = now()
-     WHERE id = $1 AND status = 'processing'`,
+     WHERE id = $1 AND status = 'processing'
+     RETURNING id, lead_id, through_message_id, attempts`,
     [scoreId, String(error?.message || error || "Lead scoring failed.").slice(0, 1000)]
   );
+  const row = result.rows[0] || null;
+  if (!row) return null;
+  return {
+    ...row,
+    terminal: Number(row.attempts) >= MAX_ATTEMPTS,
+  };
 }
 
 async function markScoreCancelled(scoreId) {
@@ -407,6 +453,7 @@ module.exports = {
   claimCandidate,
   completeScore,
   findCandidates,
+  findTerminalFailuresNeedingAlert,
   getTranscript,
   markScoreCancelled,
   markScoreFailed,
