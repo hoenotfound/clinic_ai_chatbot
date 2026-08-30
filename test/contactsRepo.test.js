@@ -11,13 +11,23 @@ function nextTick() {
 
 const UPDATED_AT = "2026-08-29T07:15:00.000Z";
 
-test("creates a contact with a race-safe insert", async (t) => {
+test("creates a canonical contact with a race-safe insert", async (t) => {
   const originalQuery = pool.query;
   t.after(() => {
     pool.query = originalQuery;
   });
 
+  let queryCount = 0;
   pool.query = async (sql, params) => {
+    queryCount += 1;
+    if (queryCount === 1) {
+      assert.match(sql, /UPDATE contacts AS legacy/);
+      assert.match(sql, /NOT EXISTS/);
+      assert.deepEqual(params, ["60123456789", "0123456789", "Patient"]);
+      return { rows: [] };
+    }
+
+    assert.equal(queryCount, 2);
     assert.match(sql, /ON CONFLICT \(whatsapp_number\) DO NOTHING/);
     assert.deepEqual(params, ["60123456789", "Patient"]);
     return {
@@ -27,6 +37,62 @@ test("creates a contact with a race-safe insert", async (t) => {
 
   const contact = await contactsRepo.getOrCreateContact("60123456789", " Patient ");
   assert.equal(contact.id, 8);
+  assert.equal(queryCount, 2);
+});
+
+test("reconciles a legacy Malaysian local-format contact before inserting a duplicate", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  let queryCount = 0;
+  pool.query = async (sql, params) => {
+    queryCount += 1;
+    assert.equal(queryCount, 1);
+    assert.match(sql, /UPDATE contacts AS legacy/);
+    assert.match(sql, /SET whatsapp_number = \$1/);
+    assert.match(sql, /canonical\.whatsapp_number = \$1/);
+    assert.deepEqual(params, ["60123456789", "0123456789", "Patient"]);
+    return {
+      rows: [{ id: 22, whatsapp_number: "60123456789", whatsapp_profile_name: "Patient" }],
+    };
+  };
+
+  const contact = await contactsRepo.getOrCreateContact("+60 12-345 6789", "Patient");
+  assert.equal(contact.id, 22);
+  assert.equal(contact.whatsapp_number, "60123456789");
+  assert.equal(queryCount, 1);
+});
+
+test("keeps an existing canonical contact instead of destructively merging a legacy duplicate", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  let queryCount = 0;
+  pool.query = async (sql, params) => {
+    queryCount += 1;
+    if (queryCount === 1) {
+      assert.match(sql, /UPDATE contacts AS legacy/);
+      return { rows: [] };
+    }
+    if (queryCount === 2) {
+      assert.match(sql, /ON CONFLICT \(whatsapp_number\) DO NOTHING/);
+      return { rows: [] };
+    }
+    assert.equal(queryCount, 3);
+    assert.match(sql, /SET whatsapp_profile_name = \$2/);
+    assert.deepEqual(params, ["60123456789", "Current Patient"]);
+    return {
+      rows: [{ id: 31, whatsapp_number: "60123456789", whatsapp_profile_name: "Current Patient" }],
+    };
+  };
+
+  const contact = await contactsRepo.getOrCreateContact("60123456789", "Current Patient");
+  assert.equal(contact.id, 31);
+  assert.equal(queryCount, 3);
 });
 
 test("human attention state triggers an immediate Telegram alert without blocking the database update", async (t) => {
