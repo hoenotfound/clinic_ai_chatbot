@@ -51,6 +51,22 @@ function verifyMetaWebhookSignature(req, res, buf) {
     throw new Error("Missing X-Hub-Signature-256 header");
   }
 
+  // TEMPORARY DIAGNOSTIC — these are one-way SHA256 digests, not the secrets
+  // themselves, so they're safe to share/log. This tells us whether the raw
+  // body being hashed even looks right, and shows exactly what's being
+  // compared against what Meta sent.
+  console.log(`[meta-webhook debug] object=${(() => {
+    try { return JSON.parse(buf.toString("utf8")).object; } catch { return "<unparsable>"; }
+  })()}`);
+  console.log(`[meta-webhook debug] content-type=${req.headers["content-type"]}`);
+  console.log(`[meta-webhook debug] raw body length=${buf.length}`);
+  console.log(`[meta-webhook debug] received signature header=${signatureHeader}`);
+  secrets.forEach((secret, i) => {
+    const computed =
+      "sha256=" + crypto.createHmac("sha256", secret).update(buf).digest("hex");
+    console.log(`[meta-webhook debug] secret[${i}] (len=${secret.length}) computed=${computed}`);
+  });
+
   const valid = secrets.some((secret) => signatureMatches(secret, signatureHeader, buf));
 
   if (!valid) {
