@@ -138,6 +138,7 @@ async function fetchMessageById(channel, mid) {
   try {
     const response = await fetch(url);
     const data = await response.json();
+    console.log(`[meta-webhook debug] fetchMessageById(${mid}) HTTP ${response.status}, ok=${response.ok}`);
     if (!response.ok) {
       console.error(
         `[${channelLabel(channel)}] Failed to fetch message ${mid}: ${extractErrorText(data, response.statusText)}`
@@ -179,6 +180,9 @@ async function resolveMessageEditEvents(body) {
   const resolved = await Promise.all(
     edits.map(async ({ mid, entryId }) => {
       const data = await fetchMessageById(channel, mid);
+      // TEMPORARY DIAGNOSTIC — logs the raw Graph API response for a
+      // fetched message_edit event so we can see its actual field names.
+      console.log(`[meta-webhook debug] fetchMessageById(${mid}) raw response:`, JSON.stringify(data));
       const senderId = data?.from?.id;
       const text = data?.message;
       if (!senderId || typeof text !== "string") return null;
