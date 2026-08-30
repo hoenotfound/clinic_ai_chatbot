@@ -21,6 +21,7 @@ const lead = {
   treatment_interest: null,
   branch_name: null,
   appointment_at: null,
+  appointment_status: "none",
 };
 
 const score = {
@@ -69,6 +70,29 @@ test("shows pipeline temperature separately from the AI review", () => {
   assert.match(text, /Inbox: https:\/\/clinic\.example\.com\/inbox\?contact=12/);
 });
 
+test("current appointment workflow state overrides stale AI appointment preference", () => {
+  const cancelled = buildConversationSummaryMessage({
+    lead: {
+      ...lead,
+      appointment_status: "cancelled",
+      appointment_at: "2026-09-03T06:00:00.000Z",
+    },
+    score,
+  });
+  assert.match(cancelled, /Appointment: Cancelled/);
+  assert.doesNotMatch(cancelled, /Appointment: tomorrow afternoon/);
+
+  const rescheduling = buildConversationSummaryMessage({
+    lead: {
+      ...lead,
+      appointment_status: "reschedule",
+      appointment_at: "2026-09-03T06:00:00.000Z",
+    },
+    score,
+  });
+  assert.match(rescheduling, /Appointment: Rescheduling/);
+});
+
 test("AI scoring failure sends customer details and a manual-review alert without an AI summary", () => {
   const text = buildConversationSummaryMessage({
     lead: {
@@ -98,6 +122,35 @@ test("AI scoring failure sends customer details and a manual-review alert withou
   assert.doesNotMatch(text, /AI Review:/);
   assert.doesNotMatch(text, /Chat Summary:/);
   assert.doesNotMatch(text, /Temperature reason:/);
+});
+
+test("manual-review fallback respects cancelled and rescheduling appointment states", () => {
+  const fallbackScore = {
+    alertType: "ai_scoring_failed",
+    summaryUnavailable: true,
+    summary: {},
+  };
+
+  const cancelled = buildConversationSummaryMessage({
+    lead: {
+      ...lead,
+      appointment_status: "cancelled",
+      appointment_at: "2026-09-03T06:00:00.000Z",
+    },
+    score: fallbackScore,
+  });
+  assert.match(cancelled, /Appointment: Cancelled/);
+  assert.doesNotMatch(cancelled, /3 Sep 2026/);
+
+  const rescheduling = buildConversationSummaryMessage({
+    lead: {
+      ...lead,
+      appointment_status: "reschedule",
+      appointment_at: "2026-09-03T06:00:00.000Z",
+    },
+    score: fallbackScore,
+  });
+  assert.match(rescheduling, /Appointment: Rescheduling/);
 });
 
 test("disabled service neither queues nor flushes Telegram summaries", async () => {
