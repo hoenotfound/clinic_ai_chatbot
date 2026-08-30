@@ -41,6 +41,7 @@ async function findCandidates({
        l.branch_name,
        l.treatment_interest,
        latest.id AS through_message_id,
+       segment.latest_customer_at,
        CASE
          WHEN segment.message_count >= $3 THEN 'message_ceiling'
          WHEN segment.started_at <= now() - ($2::integer * interval '1 minute')
@@ -66,7 +67,8 @@ async function findCandidates({
        SELECT
          COUNT(*)::integer AS message_count,
          COUNT(*) FILTER (WHERE m.role = 'user')::integer AS customer_message_count,
-         MIN(m.created_at) AS started_at
+         MIN(m.created_at) AS started_at,
+         MAX(m.created_at) FILTER (WHERE m.role = 'user') AS latest_customer_at
        FROM messages m
        WHERE m.contact_id = l.contact_id
          AND m.id > COALESCE(last_score.through_message_id, 0)
@@ -281,7 +283,14 @@ async function saveSupersededScore(client, scoreId, score) {
   );
 }
 
-async function completeScore({ scoreId, leadId, throughMessageId, triggerType, score }) {
+async function completeScore({
+  scoreId,
+  leadId,
+  throughMessageId,
+  triggerType,
+  score,
+  allowTemperatureUpdate = true,
+}) {
   const outcome = await withTransaction(async (client) => {
     const claimedResult = await client.query(
       `SELECT s.id, s.status, l.contact_id
@@ -321,7 +330,10 @@ async function completeScore({ scoreId, leadId, throughMessageId, triggerType, s
       return { status: "superseded" };
     }
 
-    const shouldApply = score.confidence === "high" && !lead.temperature_locked;
+    const shouldApply =
+      allowTemperatureUpdate === true &&
+      score.confidence === "high" &&
+      !lead.temperature_locked;
     let updatedLead = null;
     if (shouldApply) {
       const updated = await client.query(

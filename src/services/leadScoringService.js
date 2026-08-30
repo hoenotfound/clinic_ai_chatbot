@@ -1,4 +1,5 @@
 const clinicConfig = require("../config/clinicConfig");
+const configRepo = require("../db/configRepo");
 const leadScoringRepo = require("../db/leadScoringRepo");
 const leadScoringFailureRecoveryRepo = require("../db/leadScoringFailureRecoveryRepo");
 const { scoreLeadConversation } = require("./leadScoringAiService");
@@ -9,11 +10,55 @@ const LEAD_SCORING_BATCH_SIZE = 5;
 const MAX_TRANSCRIPT_MESSAGES = 80;
 const MAX_TRANSCRIPT_CHARS = 30_000;
 
+function isValidTimestamp(value) {
+  return typeof value === "string" && !Number.isNaN(Date.parse(value));
+}
+
+function getTelegramSummaryActivatedAt() {
+  const value = clinicConfig.telegramConversationSummary?.activatedAt;
+  return isValidTimestamp(value) ? value : null;
+}
+
+async function ensureConversationAnalysisActivation() {
+  if (!telegramAlerts.isTelegramEnabled()) return null;
+
+  const existing = getTelegramSummaryActivatedAt();
+  if (existing) return existing;
+
+  // When Telegram summaries are introduced while automatic scoring is already
+  // active, inherit that existing boundary instead of reprocessing old chats.
+  // Otherwise start from now so enabling summary-only mode never causes a
+  // historical conversation flood.
+  const automaticActivatedAt = clinicConfig.leadScoring?.activatedAt;
+  const activatedAt = isValidTimestamp(automaticActivatedAt)
+    ? automaticActivatedAt
+    : new Date().toISOString();
+
+  await configRepo.updateConfig({
+    telegramConversationSummary: { activatedAt },
+  });
+  return activatedAt;
+}
+
 function getActiveSettings() {
   const settings = clinicConfig.leadScoring;
+  const automaticTemperatureEnabled = settings?.enabled === true;
+  const telegramSummaryEnabled = telegramAlerts.isTelegramEnabled();
+
+  if (!automaticTemperatureEnabled && !telegramSummaryEnabled) {
+    return null;
+  }
+
+  const automaticActivatedAt = isValidTimestamp(settings?.activatedAt)
+    ? settings.activatedAt
+    : null;
+  const summaryActivatedAt = getTelegramSummaryActivatedAt();
+  const analysisActivatedAt = telegramSummaryEnabled
+    ? summaryActivatedAt
+    : automaticActivatedAt;
+
   if (
-    !settings?.enabled ||
-    !Number.isInteger(settings.inactivityMinutes) ||
+    !Number.isInteger(settings?.inactivityMinutes) ||
     settings.inactivityMinutes < 5 ||
     settings.inactivityMinutes > 30 ||
     !Number.isInteger(settings.maxConversationMinutes) ||
@@ -22,8 +67,7 @@ function getActiveSettings() {
     !Number.isInteger(settings.maxMessages) ||
     settings.maxMessages < 20 ||
     settings.maxMessages > 80 ||
-    typeof settings.activatedAt !== "string" ||
-    Number.isNaN(Date.parse(settings.activatedAt))
+    !analysisActivatedAt
   ) {
     return null;
   }
@@ -32,8 +76,31 @@ function getActiveSettings() {
     inactivityMinutes: settings.inactivityMinutes,
     maxConversationMinutes: settings.maxConversationMinutes,
     maxMessages: settings.maxMessages,
-    activatedAt: settings.activatedAt,
+    activatedAt: analysisActivatedAt,
+    autoTemperatureEnabled:
+      automaticTemperatureEnabled && automaticActivatedAt !== null,
+    temperatureActivatedAt: automaticActivatedAt,
   };
+}
+
+function shouldApplyAutomaticTemperature(initialSettings, liveSettings, candidate) {
+  // Custom test/injected settings from older callers omit these fields. Treat
+  // omission as the historical enabled behavior, while the real settings
+  // getter always returns explicit booleans.
+  if (initialSettings.autoTemperatureEnabled === false) return false;
+  if (liveSettings.autoTemperatureEnabled === false) return false;
+
+  const initialActivation = initialSettings.temperatureActivatedAt || null;
+  const liveActivation = liveSettings.temperatureActivatedAt || null;
+  if (initialActivation && liveActivation && initialActivation !== liveActivation) {
+    return false;
+  }
+
+  const activation = liveActivation || initialActivation;
+  if (!activation) return true;
+  if (!isValidTimestamp(candidate.latest_customer_at)) return false;
+
+  return Date.parse(candidate.latest_customer_at) >= Date.parse(activation);
 }
 
 // Keep the newest context if a long conversation exceeds the prompt budget.
@@ -78,6 +145,9 @@ function createLeadScoringRunner({
   settingsGetter = getActiveSettings,
   queueConversationSummary = telegramAlerts.queueConversationSummary,
   flushConversationSummaries = telegramAlerts.flushConversationSummaries,
+  ensureAnalysisActivation = repository === leadScoringRepo
+    ? ensureConversationAnalysisActivation
+    : null,
   recoverStaleTerminalFailures = repository === leadScoringRepo
     ? leadScoringFailureRecoveryRepo.recoverStaleTerminalProcessingFailures
     : null,
@@ -86,6 +156,17 @@ function createLeadScoringRunner({
 
   return async function runLeadScoring() {
     if (sweepRunning) return;
+
+    if (typeof ensureAnalysisActivation === "function") {
+      try {
+        await ensureAnalysisActivation();
+      } catch (activationErr) {
+        console.error(
+          "Failed to initialize Telegram conversation-summary analysis:",
+          activationErr
+        );
+      }
+    }
 
     const settings = settingsGetter();
     if (!settings) return;
@@ -124,8 +205,10 @@ function createLeadScoringRunner({
             lead: candidate,
           });
 
-          // A pause or fresh activation while the AI call was running must
-          // prevent the old result from changing a lead.
+          // If all conversation analysis was paused, or its durable activation
+          // boundary changed while the AI call was running, discard this result.
+          // Toggling only automatic temperature is handled separately below so
+          // the AI summary can still complete for Telegram.
           const settingsAfterScore = settingsGetter();
           if (
             !settingsAfterScore ||
@@ -141,6 +224,11 @@ function createLeadScoringRunner({
             throughMessageId: candidate.through_message_id,
             triggerType: candidate.trigger_type,
             score,
+            allowTemperatureUpdate: shouldApplyAutomaticTemperature(
+              settings,
+              settingsAfterScore,
+              candidate
+            ),
           });
 
           if (completion?.status === "completed") {
@@ -237,9 +325,9 @@ function createLeadScoringRunner({
         }
       }
 
-      // This runs even when there were no new scoring candidates. That is
-      // important for a conversation that hit a time/message ceiling while
-      // still active and only became inactive several minutes later.
+      // This runs even when automatic temperature updates are disabled. It is
+      // important both for summary-only mode and for a queued conversation that
+      // only became inactive several minutes after its AI analysis completed.
       const liveSettings = settingsGetter();
       if (liveSettings?.activatedAt === settings.activatedAt) {
         try {
@@ -273,8 +361,10 @@ module.exports = {
   MAX_TRANSCRIPT_MESSAGES,
   buildScoringFailureFallback,
   createLeadScoringRunner,
+  ensureConversationAnalysisActivation,
   getActiveSettings,
   runLeadScoring,
+  shouldApplyAutomaticTemperature,
   startLeadScoring,
   trimTranscript,
 };
