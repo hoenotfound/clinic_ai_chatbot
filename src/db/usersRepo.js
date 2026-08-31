@@ -51,7 +51,7 @@ async function listUsernames(queryable = pool) {
 async function listUsers(queryable = pool) {
   const result = await queryable.query(
     `SELECT id, username, password_hash, display_name, role, permissions,
-            is_active, credentials_changed_at, created_at
+            is_active, auth_version, created_at
      FROM users
      ORDER BY is_active DESC, lower(display_name), lower(username), id`
   );
@@ -80,7 +80,7 @@ async function updateUser(id, updates, queryable = pool) {
   }
   if (Object.prototype.hasOwnProperty.call(updates, "passwordHash")) {
     push("password_hash", updates.passwordHash);
-    fields.push("credentials_changed_at = now()");
+    fields.push("auth_version = auth_version + 1");
   }
 
   if (fields.length === 0) return getUserById(id, queryable);
