@@ -79,7 +79,7 @@ router.post("/login", loginRateLimit, async (req, res) => {
     clearAttempts(req);
     req.session.userId = user.id;
     req.session.username = user.username;
-    req.session.authenticatedAt = Date.now();
+    req.session.authVersion = Number(user.auth_version) || 0;
     return res.json({ username: user.username, user: presentUser(user) });
   } catch (err) {
     console.error("Login failed:", err);
@@ -214,12 +214,11 @@ router.patch("/users/:userId", requireAuth, requireCapability("manage_users"), a
 
     if (
       userId === Number(req.user.id) &&
-      Object.prototype.hasOwnProperty.call(updates, "passwordHash") &&
-      updated?.credentials_changed_at
+      Object.prototype.hasOwnProperty.call(updates, "passwordHash")
     ) {
-      // Keep the password-resetting browser signed in while invalidating every
-      // other session that authenticated before this credential change.
-      req.session.authenticatedAt = new Date(updated.credentials_changed_at).getTime();
+      // Keep the password-resetting browser signed in while every other session
+      // still carries the previous version and is rejected on its next request.
+      req.session.authVersion = Number(updated?.auth_version) || 0;
     }
 
     if (
