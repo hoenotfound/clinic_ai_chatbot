@@ -268,6 +268,20 @@ async function requireAuth(req, res, next) {
       return res.status(401).json({ error: "This account is no longer active." });
     }
 
+    if (user.credentials_changed_at) {
+      const credentialsChangedAt = new Date(user.credentials_changed_at).getTime();
+      const authenticatedAt = Number(req.session.authenticatedAt);
+      if (
+        Number.isFinite(credentialsChangedAt) &&
+        (!Number.isFinite(authenticatedAt) || authenticatedAt < credentialsChangedAt)
+      ) {
+        req.session = null;
+        return res.status(401).json({
+          error: "Your password was changed. Please log in again.",
+        });
+      }
+    }
+
     req.session.username = user.username;
     req.user = {
       ...user,
