@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import { useAuth } from "../context/AuthContext";
 import { ToastContainer, useToasts } from "../components/Toast";
 import Spinner from "../components/Spinner";
 import LeadCard from "../components/pipeline/LeadCard";
@@ -48,6 +49,7 @@ function localDate(value) {
 }
 
 export default function Pipeline() {
+  const { permissions } = useAuth();
   const { toasts, showToast, dismissToast } = useToasts();
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState(null);
@@ -65,6 +67,10 @@ export default function Pipeline() {
   const [pendingMove, setPendingMove] = useState(null);
   const [now, setNow] = useState(() => Date.now());
   const refreshTimerRef = useRef(null);
+
+  const canManageLeads = permissions.manage_assigned_leads === true;
+  const canCreateLeads = permissions.create_leads === true;
+  const canManageStages = permissions.manage_pipeline_stages === true;
 
   const analyticsFilters = useMemo(() => ({
     from: parameterOrNull(searchParams, "from"),
@@ -147,9 +153,12 @@ export default function Pipeline() {
     ));
   }, [stages]);
 
-  // Analytics date/source/etc. filters are applied first without the branch.
-  // Branch cards can then show accurate counts inside the Analytics cohort,
-  // while selecting a branch narrows that same cohort instead of mixing scopes.
+  useEffect(() => {
+    if (!canManageStages) setShowStages(false);
+    if (!canCreateLeads) setShowAddLead(false);
+    if (!canManageLeads) setPendingMove(null);
+  }, [canCreateLeads, canManageLeads, canManageStages]);
+
   const analyticsBaseLeads = useMemo(() => {
     if (!hasAnalyticsDrilldown) return leads;
     return leads.filter((lead) => {
@@ -282,6 +291,10 @@ export default function Pipeline() {
   }
 
   async function updateLead(leadId, patch) {
+    if (!canManageLeads) {
+      showToast("Lead management is disabled for this account.", "warning");
+      return null;
+    }
     try {
       const updated = await api.updateLead(leadId, patch);
       mergeLead(updated);
@@ -294,7 +307,7 @@ export default function Pipeline() {
   }
 
   async function requestStageMove(lead, stage) {
-    if (Number(lead.stage_id) === Number(stage.id)) return;
+    if (!canManageLeads || Number(lead.stage_id) === Number(stage.id)) return;
     if (stage.stage_type === "won" || stage.stage_type === "lost") {
       setPendingMove({ lead, stage });
       return;
@@ -303,11 +316,13 @@ export default function Pipeline() {
   }
 
   function handleDragStart(event, lead) {
+    if (!canManageLeads) return;
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/lead-id", String(lead.id));
   }
 
   function handleDrop(event, stage) {
+    if (!canManageLeads) return;
     event.preventDefault();
     const leadId = Number(event.dataTransfer.getData("text/lead-id"));
     const lead = leads.find((item) => Number(item.id) === leadId);
@@ -352,15 +367,22 @@ export default function Pipeline() {
             <div className="flex items-center gap-2.5">
               <h1 className="truncate font-display text-xl font-bold">Lead Pipeline</h1>
               <span className="shrink-0 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--color-primary)]">Live</span>
+              {!canManageLeads && <span className="shrink-0 rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">View only</span>}
             </div>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[var(--color-text-muted)] sm:text-sm">Track every enquiry, next action and sales outcome in one place.</p>
           </div>
-          <div className="flex shrink-0 gap-2">
-            <button type="button" onClick={() => setShowStages(true)} className="h-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold transition hover:bg-[var(--color-bg)] sm:px-3.5 sm:text-sm">
-              <span className="sm:hidden">Stages</span><span className="hidden sm:inline">Manage stages</span>
-            </button>
-            <button type="button" onClick={() => setShowAddLead(true)} className="h-11 rounded-xl bg-[var(--color-primary)] px-3.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[var(--color-primary-hover)] sm:px-4 sm:text-sm">+ Add lead</button>
-          </div>
+          {(canManageStages || canCreateLeads) && (
+            <div className="flex shrink-0 gap-2">
+              {canManageStages && (
+                <button type="button" onClick={() => setShowStages(true)} className="h-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold transition hover:bg-[var(--color-bg)] sm:px-3.5 sm:text-sm">
+                  <span className="sm:hidden">Stages</span><span className="hidden sm:inline">Manage stages</span>
+                </button>
+              )}
+              {canCreateLeads && (
+                <button type="button" onClick={() => setShowAddLead(true)} className="h-11 rounded-xl bg-[var(--color-primary)] px-3.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[var(--color-primary-hover)] sm:px-4 sm:text-sm">+ Add lead</button>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3">
@@ -454,7 +476,7 @@ export default function Pipeline() {
               </div>
 
               <div className="space-y-2.5">
-                {mobileStageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} now={now} noReplyHours={noReplyHours} onOpen={openLead} onDragStart={handleDragStart} />)}
+                {mobileStageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} now={now} noReplyHours={noReplyHours} onOpen={openLead} onDragStart={canManageLeads ? handleDragStart : undefined} />)}
                 {mobileStageLeads.length === 0 && (
                   <div className="rounded-2xl border border-dashed border-[var(--color-border)] bg-white/60 px-4 py-10 text-center">
                     <p className="text-sm font-semibold">No leads here</p>
@@ -475,7 +497,12 @@ export default function Pipeline() {
             const stageLeads = filteredLeads.filter((lead) => Number(lead.stage_id) === Number(stage.id));
             const value = stageLeads.reduce((sum, lead) => sum + (Number(lead.estimated_value) || 0), 0);
             return (
-              <section key={stage.id} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={(event) => handleDrop(event, stage)} className="flex h-full w-[19rem] flex-col rounded-2xl bg-[#f1f2ee]">
+              <section
+                key={stage.id}
+                onDragOver={canManageLeads ? (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } : undefined}
+                onDrop={canManageLeads ? (event) => handleDrop(event, stage) : undefined}
+                className="flex h-full w-[19rem] flex-col rounded-2xl bg-[#f1f2ee]"
+              >
                 <header className="border-b border-black/5 px-3.5 py-3">
                   <div className="flex items-center gap-2">
                     <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: stage.color }} />
@@ -485,9 +512,9 @@ export default function Pipeline() {
                   <p className="mt-1.5 pl-[18px] text-[10px] text-[var(--color-text-muted)]">{formatMoney(value) || "RM 0"}</p>
                 </header>
                 <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-2.5">
-                  {stageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} now={now} noReplyHours={noReplyHours} onOpen={openLead} onDragStart={handleDragStart} />)}
+                  {stageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} now={now} noReplyHours={noReplyHours} onOpen={openLead} onDragStart={canManageLeads ? handleDragStart : undefined} />)}
                   {stageLeads.length === 0 && (
-                    <div className="rounded-2xl border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-xs text-[var(--color-text-muted)]">Drop leads here</div>
+                    <div className="rounded-2xl border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-xs text-[var(--color-text-muted)]">{canManageLeads ? "Drop leads here" : "No leads here"}</div>
                   )}
                 </div>
               </section>
@@ -497,9 +524,9 @@ export default function Pipeline() {
       </main>
 
       {selectedLead && <LeadDrawer key={selectedLead.id} lead={selectedLead} stages={stages} branches={data.branches || []} owners={data.owners || []} services={data.services || []} now={now} noReplyHours={noReplyHours} onClose={closeLead} onSaved={mergeLead} onToast={showToast} />}
-      {showStages && <StageManager stages={stages} onClose={() => setShowStages(false)} onSaveStage={(id, patch) => api.updatePipelineStage(id, patch)} onCreateStage={(payload) => refreshAfterStageChange(() => api.createPipelineStage(payload))} onDeleteStage={(id) => refreshAfterStageChange(() => api.deletePipelineStage(id))} onReorder={(ids) => refreshAfterStageChange(() => api.reorderPipelineStages(ids))} onToast={showToast} />}
-      {showAddLead && <AddLeadModal branches={data.branches || []} services={data.services || []} onClose={() => setShowAddLead(false)} onCreated={handleLeadCreated} onToast={showToast} />}
-      {pendingMove && <StageMoveDialog lead={pendingMove.lead} stage={pendingMove.stage} onCancel={() => setPendingMove(null)} onConfirm={async (patch) => { const updated = await updateLead(pendingMove.lead.id, patch); if (updated) setPendingMove(null); }} />}
+      {canManageStages && showStages && <StageManager stages={stages} onClose={() => setShowStages(false)} onSaveStage={(id, patch) => api.updatePipelineStage(id, patch)} onCreateStage={(payload) => refreshAfterStageChange(() => api.createPipelineStage(payload))} onDeleteStage={(id) => refreshAfterStageChange(() => api.deletePipelineStage(id))} onReorder={(ids) => refreshAfterStageChange(() => api.reorderPipelineStages(ids))} onToast={showToast} />}
+      {canCreateLeads && showAddLead && <AddLeadModal branches={data.branches || []} services={data.services || []} onClose={() => setShowAddLead(false)} onCreated={handleLeadCreated} onToast={showToast} />}
+      {canManageLeads && pendingMove && <StageMoveDialog lead={pendingMove.lead} stage={pendingMove.stage} onCancel={() => setPendingMove(null)} onConfirm={async (patch) => { const updated = await updateLead(pendingMove.lead.id, patch); if (updated) setPendingMove(null); }} />}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
