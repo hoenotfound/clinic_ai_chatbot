@@ -5,6 +5,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS credentials_changed_at TIMESTAMPTZ;
 
 UPDATE users SET role = 'admin' WHERE role IS NULL;
 UPDATE users SET display_name = username WHERE display_name IS NULL OR btrim(display_name) = '';
