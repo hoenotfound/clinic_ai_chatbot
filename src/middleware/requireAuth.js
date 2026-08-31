@@ -50,8 +50,6 @@ async function enforceConversationsPolicy(req, res, user) {
 
   if (parts[0] === "events") {
     if (!hasAnyLeadView(user)) return forbidden(res);
-    // realtimeEvents reads this snapshot to avoid broadcasting other staff's
-    // contact/lead identifiers to a restricted SSE connection.
     req.user.realtimeAccess = {
       contactIds: await getAccessibleContactIds(user),
       leadIds: await getAccessibleLeadIds(user),
@@ -84,14 +82,16 @@ async function enforceConversationsPolicy(req, res, user) {
 
   const isConversationManagement =
     (req.method === "POST" && ["takeover", "return-to-ai"].includes(action)) ||
-    (req.method === "PATCH" && ["attention", "read-state", "follow-up"].includes(action));
+    (req.method === "PATCH" && ["attention", "follow-up"].includes(action));
 
   if (isConversationManagement && !hasCapability(user, "manage_assigned_leads")) {
     return forbidden(res, "Managing assigned leads is disabled for this account.");
   }
 
-  // POST /messages/delivery-statuses is a read-style request and intentionally
-  // only needs view access. Other GET/media/message history requests do too.
+  // Read-state is deliberately view-level metadata. Inbox marks an assigned
+  // conversation read when it is opened, so a view-only user must be able to
+  // acknowledge that state without gaining permission to edit the lead itself.
+  // POST /messages/delivery-statuses is also a read-style request.
   void subAction;
   return true;
 }
