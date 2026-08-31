@@ -13,22 +13,36 @@ function createConcurrencyLimiter(limit) {
   let active = 0;
   const queue = [];
 
+  async function acquire() {
+    if (active < limit) {
+      active += 1;
+      return;
+    }
+    await new Promise((resolve) => queue.push(resolve));
+  }
+
+  function release() {
+    const next = queue.shift();
+    if (next) {
+      // Transfer the occupied slot directly to the queued waiter. Keeping
+      // active unchanged prevents a newly arriving task from stealing the
+      // slot before the waiter resumes.
+      next();
+      return;
+    }
+    active -= 1;
+  }
+
   return async function run(work) {
     if (typeof work !== "function") {
       throw new TypeError("Concurrency-limited work must be a function.");
     }
 
-    if (active >= limit) {
-      await new Promise((resolve) => queue.push(resolve));
-    }
-
-    active += 1;
+    await acquire();
     try {
       return await work();
     } finally {
-      active -= 1;
-      const next = queue.shift();
-      if (next) next();
+      release();
     }
   };
 }
