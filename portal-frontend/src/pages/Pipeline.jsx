@@ -11,6 +11,7 @@ import StageMoveDialog from "../components/pipeline/StageMoveDialog";
 import { formatMoney, isNoReply, isOverdue } from "../components/pipeline/pipelineUtils";
 
 const PIPELINE_CLOCK_INTERVAL_MS = 30 * 1000;
+const TIME_ZONE = "Asia/Kuala_Lumpur";
 
 const CATEGORY_OPTIONS = [
   ["all", "All leads"],
@@ -24,6 +25,27 @@ const CATEGORY_OPTIONS = [
   ["overdue", "Follow-up overdue"],
   ["attention", "Needs attention"],
 ];
+const CATEGORY_KEYS = new Set(CATEGORY_OPTIONS.map(([key]) => key));
+const ANALYTICS_PARAM_KEYS = ["from", "to", "channel", "source", "campaign", "treatment", "owner"];
+
+function parameterOrNull(searchParams, key) {
+  const value = searchParams.get(key);
+  return value && value !== "all" ? value : null;
+}
+
+function localDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
 
 export default function Pipeline() {
   const { toasts, showToast, dismissToast } = useToasts();
@@ -31,14 +53,28 @@ export default function Pipeline() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [branchFilter, setBranchFilter] = useState("all");
-  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [branchFilter, setBranchFilter] = useState(() => parameterOrNull(searchParams, "branch") || "all");
+  const [categoryFilter, setCategoryFilter] = useState(() => {
+    const requested = searchParams.get("category") || "all";
+    return CATEGORY_KEYS.has(requested) ? requested : "all";
+  });
   const [selectedLeadId, setSelectedLeadId] = useState(null);
   const [showStages, setShowStages] = useState(false);
   const [showAddLead, setShowAddLead] = useState(false);
   const [pendingMove, setPendingMove] = useState(null);
   const [now, setNow] = useState(() => Date.now());
   const refreshTimerRef = useRef(null);
+
+  const analyticsFilters = useMemo(() => ({
+    from: parameterOrNull(searchParams, "from"),
+    to: parameterOrNull(searchParams, "to"),
+    channel: parameterOrNull(searchParams, "channel"),
+    source: parameterOrNull(searchParams, "source"),
+    campaign: parameterOrNull(searchParams, "campaign"),
+    treatment: parameterOrNull(searchParams, "treatment"),
+    owner: parameterOrNull(searchParams, "owner"),
+  }), [searchParams]);
+  const hasAnalyticsDrilldown = Object.values(analyticsFilters).some(Boolean);
 
   const refreshPipeline = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true);
@@ -56,6 +92,13 @@ export default function Pipeline() {
   useEffect(() => {
     refreshPipeline();
   }, [refreshPipeline]);
+
+  useEffect(() => {
+    const requestedBranch = parameterOrNull(searchParams, "branch") || "all";
+    const requestedCategory = searchParams.get("category") || "all";
+    setBranchFilter(requestedBranch);
+    setCategoryFilter(CATEGORY_KEYS.has(requestedCategory) ? requestedCategory : "all");
+  }, [searchParams]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), PIPELINE_CLOCK_INTERVAL_MS);
@@ -93,11 +136,28 @@ export default function Pipeline() {
   const noReplyHours = Number(data?.noReplyHours) || 24;
   const selectedLead = leads.find((lead) => Number(lead.id) === Number(selectedLeadId)) || null;
 
-  const filteredLeads = useMemo(() => {
-    const term = search.trim().toLowerCase();
+  const drilldownLeads = useMemo(() => {
     return leads.filter((lead) => {
       if (branchFilter === "unassigned" && lead.branch_name) return false;
       if (branchFilter !== "all" && branchFilter !== "unassigned" && lead.branch_name !== branchFilter) return false;
+      if (analyticsFilters.channel && lead.channel !== analyticsFilters.channel) return false;
+      if (analyticsFilters.source && lead.source !== analyticsFilters.source) return false;
+      if (analyticsFilters.campaign && lead.campaign_name !== analyticsFilters.campaign) return false;
+      if (analyticsFilters.treatment && lead.treatment_interest !== analyticsFilters.treatment) return false;
+      if (analyticsFilters.owner && lead.owner_username !== analyticsFilters.owner) return false;
+      if (analyticsFilters.from || analyticsFilters.to) {
+        const journeyDate = localDate(lead.created_at);
+        if (!journeyDate) return false;
+        if (analyticsFilters.from && journeyDate < analyticsFilters.from) return false;
+        if (analyticsFilters.to && journeyDate > analyticsFilters.to) return false;
+      }
+      return true;
+    });
+  }, [analyticsFilters, branchFilter, leads]);
+
+  const filteredLeads = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return drilldownLeads.filter((lead) => {
       if (!matchesCategory(lead, categoryFilter, now, noReplyHours)) return false;
       if (term) {
         const haystack = [
@@ -114,17 +174,19 @@ export default function Pipeline() {
       }
       return true;
     });
-  }, [branchFilter, categoryFilter, leads, noReplyHours, now, search]);
+  }, [categoryFilter, drilldownLeads, noReplyHours, now, search]);
 
   const categoryCounts = useMemo(() => Object.fromEntries(
     CATEGORY_OPTIONS.map(([key]) => [
       key,
-      leads.filter((lead) => matchesCategory(lead, key, now, noReplyHours)).length,
+      drilldownLeads.filter((lead) => matchesCategory(lead, key, now, noReplyHours)).length,
     ])
-  ), [leads, noReplyHours, now]);
+  ), [drilldownLeads, noReplyHours, now]);
 
   const activeLeads = useMemo(() => leads.filter((lead) => !lead.is_closed), [leads]);
-  const pipelineValue = activeLeads.reduce((sum, lead) => sum + (Number(lead.estimated_value) || 0), 0);
+  const metricLeads = hasAnalyticsDrilldown ? drilldownLeads : leads;
+  const metricActiveLeads = metricLeads.filter((lead) => !lead.is_closed);
+  const pipelineValue = metricActiveLeads.reduce((sum, lead) => sum + (Number(lead.estimated_value) || 0), 0);
   const branchCards = useMemo(() => [
     { key: "all", label: "All branches", leads: activeLeads },
     ...(data?.branches || []).map((branch) => ({
@@ -135,9 +197,38 @@ export default function Pipeline() {
     { key: "unassigned", label: "Unassigned", leads: activeLeads.filter((lead) => !lead.branch_name) },
   ], [activeLeads, data?.branches]);
 
+  function updateParam(key, value) {
+    const next = new URLSearchParams(searchParams);
+    if (!value || value === "all") next.delete(key);
+    else next.set(key, value);
+    next.delete("lead");
+    setSearchParams(next, { replace: true });
+  }
+
+  function selectBranch(value) {
+    setBranchFilter(value);
+    updateParam("branch", value);
+  }
+
+  function selectCategory(value) {
+    setCategoryFilter(value);
+    updateParam("category", value);
+  }
+
+  function clearAnalyticsDrilldown() {
+    const next = new URLSearchParams(searchParams);
+    for (const key of [...ANALYTICS_PARAM_KEYS, "branch", "category"]) next.delete(key);
+    next.delete("lead");
+    setBranchFilter("all");
+    setCategoryFilter("all");
+    setSearchParams(next, { replace: true });
+  }
+
   function openLead(leadId) {
     setSelectedLeadId(Number(leadId));
-    setSearchParams({ lead: String(leadId) }, { replace: true });
+    const next = new URLSearchParams(searchParams);
+    next.set("lead", String(leadId));
+    setSearchParams(next, { replace: true });
   }
 
   function closeLead() {
@@ -235,11 +326,24 @@ export default function Pipeline() {
         </div>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <Metric label="Active leads" value={activeLeads.length} detail={`${leads.length} total journeys`} />
+          <Metric label="Active leads" value={metricActiveLeads.length} detail={`${metricLeads.length} total journeys`} />
           <Metric label="Hot leads" value={categoryCounts.hot || 0} detail="Require priority follow-up" tone="danger" />
           <Metric label="Pipeline value" value={formatMoney(pipelineValue) || "RM 0"} detail="Estimated open value" />
         </div>
       </header>
+
+      {hasAnalyticsDrilldown && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-primary-light)] px-5 py-2.5 text-xs lg:px-7">
+          <span className="font-bold text-[var(--color-primary)]">Analytics drill-down</span>
+          {analyticsFilters.from && analyticsFilters.to && <FilterPill>{analyticsFilters.from} → {analyticsFilters.to}</FilterPill>}
+          {analyticsFilters.channel && <FilterPill>{analyticsFilters.channel}</FilterPill>}
+          {analyticsFilters.source && <FilterPill>Source: {analyticsFilters.source}</FilterPill>}
+          {analyticsFilters.campaign && <FilterPill>Campaign: {analyticsFilters.campaign}</FilterPill>}
+          {analyticsFilters.treatment && <FilterPill>Treatment: {analyticsFilters.treatment}</FilterPill>}
+          {analyticsFilters.owner && <FilterPill>Owner: {analyticsFilters.owner}</FilterPill>}
+          <button type="button" onClick={clearAnalyticsDrilldown} className="ml-auto rounded-lg px-2.5 py-1.5 font-semibold text-[var(--color-primary)] hover:bg-white/70">Clear drill-down</button>
+        </div>
+      )}
 
       <div className="border-b border-[var(--color-border)] px-5 py-4 lg:px-7">
         <div className="flex gap-3 overflow-x-auto pb-1">
@@ -247,7 +351,7 @@ export default function Pipeline() {
             const hotCount = branch.leads.filter((lead) => lead.temperature === "hot").length;
             const appointmentCount = branch.leads.filter((lead) => lead.appointment_status === "set").length;
             return (
-              <button key={branch.key} type="button" onClick={() => setBranchFilter(branch.key)} className={`min-w-44 rounded-2xl border p-3 text-left transition ${branchFilter === branch.key ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] shadow-sm" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-primary)]/40"}`}>
+              <button key={branch.key} type="button" onClick={() => selectBranch(branch.key)} className={`min-w-44 rounded-2xl border p-3 text-left transition ${branchFilter === branch.key ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] shadow-sm" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-primary)]/40"}`}>
                 <div className="flex items-center justify-between gap-2">
                   <p className="truncate text-xs font-bold">{branch.label}</p>
                   <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-bold text-[var(--color-primary)]">{branch.leads.length}</span>
@@ -266,7 +370,7 @@ export default function Pipeline() {
         </div>
         <div className="flex gap-1.5 overflow-x-auto">
           {CATEGORY_OPTIONS.map(([key, label]) => (
-            <button key={key} type="button" onClick={() => setCategoryFilter(key)} className={`whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold transition ${categoryFilter === key ? "bg-[var(--color-primary)] text-white" : "border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}>
+            <button key={key} type="button" onClick={() => selectCategory(key)} className={`whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold transition ${categoryFilter === key ? "bg-[var(--color-primary)] text-white" : "border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}>
               {label} <span className="ml-1 opacity-70">{categoryCounts[key] || 0}</span>
             </button>
           ))}
@@ -331,6 +435,10 @@ function Metric({ label, value, detail, tone }) {
       </div>
     </div>
   );
+}
+
+function FilterPill({ children }) {
+  return <span className="rounded-full bg-white/70 px-2.5 py-1 text-[10px] font-semibold text-[var(--color-text-muted)]">{children}</span>;
 }
 
 function SearchIcon() {
