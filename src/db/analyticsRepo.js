@@ -2,6 +2,45 @@ const { pool } = require("./db");
 
 const TIME_ZONE = "Asia/Kuala_Lumpur";
 const FILTER_CACHE_MS = 5 * 60 * 1000;
+const ANALYTICS_QUERY_CONCURRENCY = 3;
+const FOLLOW_UP_OUTCOME_WINDOW_DAYS = 14;
+
+function createConcurrencyLimiter(limit) {
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new TypeError("Concurrency limit must be a positive integer.");
+  }
+
+  let active = 0;
+  const queue = [];
+
+  return async function run(work) {
+    if (typeof work !== "function") {
+      throw new TypeError("Concurrency-limited work must be a function.");
+    }
+
+    if (active >= limit) {
+      await new Promise((resolve) => queue.push(resolve));
+    }
+
+    active += 1;
+    try {
+      return await work();
+    } finally {
+      active -= 1;
+      const next = queue.shift();
+      if (next) next();
+    }
+  };
+}
+
+// Analytics shares the same pg Pool as live messaging. Keep a global cap across
+// every Analytics request so reporting cannot consume the whole pool when
+// several staff members open the dashboard at the same time.
+const runAnalyticsQuery = createConcurrencyLimiter(ANALYTICS_QUERY_CONCURRENCY);
+
+function analyticsQuery(text, params) {
+  return runAnalyticsQuery(() => pool.query(text, params));
+}
 
 const JOURNEY_BASE_CTE = `
 WITH journey_window AS (
@@ -172,7 +211,7 @@ function activityRow(row = {}) {
 }
 
 async function getActivitySummary(filters) {
-  const result = await pool.query(
+  const result = await analyticsQuery(
     `${JOURNEY_BASE_CTE}
      ${MILESTONE_TIMES_CTE},
      matching_journeys AS (
@@ -251,7 +290,7 @@ function buildFunnel(cohort) {
 }
 
 async function getCohortAnalytics(filters) {
-  const result = await pool.query(
+  const result = await analyticsQuery(
     `${JOURNEY_BASE_CTE}
      ${MILESTONE_TIMES_CTE},
      matching_journeys AS (
@@ -360,7 +399,7 @@ async function getCohortAnalytics(filters) {
 }
 
 async function getActivityTrend(filters) {
-  const result = await pool.query(
+  const result = await analyticsQuery(
     `${JOURNEY_BASE_CTE}
      ${MILESTONE_TIMES_CTE},
      matching_journeys AS (
@@ -420,7 +459,7 @@ async function getActivityTrend(filters) {
 }
 
 async function getResponseTimes(filters) {
-  const result = await pool.query(
+  const result = await analyticsQuery(
     `${JOURNEY_BASE_CTE},
      matching_journeys AS (
        SELECT j.* FROM journeys j WHERE ${FILTER_SQL}
@@ -520,7 +559,7 @@ async function getResponseTimes(filters) {
 }
 
 async function getFollowUps(filters) {
-  const result = await pool.query(
+  const result = await analyticsQuery(
     `${JOURNEY_BASE_CTE},
      matching_journeys AS (
        SELECT j.* FROM journeys j WHERE ${FILTER_SQL}
@@ -560,8 +599,17 @@ async function getFollowUps(filters) {
              AND customer_reply.id > f.message_id
              AND customer_reply.created_at <= f.created_at + interval '72 hours'
              AND (
-               reply_journey.next_started_message_id IS NULL
-               OR customer_reply.id < reply_journey.next_started_message_id
+               (
+                 reply_journey.next_started_message_id IS NOT NULL
+                 AND customer_reply.id < reply_journey.next_started_message_id
+               )
+               OR (
+                 reply_journey.next_started_message_id IS NULL
+                 AND (
+                   reply_journey.next_journey_created_at IS NULL
+                   OR customer_reply.created_at < reply_journey.next_journey_created_at
+                 )
+               )
              )
          ) AS replied_72h,
          EXISTS (
@@ -569,8 +617,9 @@ async function getFollowUps(filters) {
            FROM lead_stage_history history
            JOIN pipeline_stages stage ON stage.id = history.to_stage_id
            WHERE history.lead_id = f.lead_id
-             AND stage.system_key IN ('appointment_set', 'visited')
+             AND stage.system_key = 'appointment_set'
              AND history.created_at > f.created_at
+             AND history.created_at <= f.created_at + (${FOLLOW_UP_OUTCOME_WINDOW_DAYS} * interval '1 day')
          ) AS appointment_after,
          EXISTS (
            SELECT 1
@@ -579,6 +628,7 @@ async function getFollowUps(filters) {
            WHERE history.lead_id = f.lead_id
              AND stage.stage_type = 'won'
              AND history.created_at > f.created_at
+             AND history.created_at <= f.created_at + (${FOLLOW_UP_OUTCOME_WINDOW_DAYS} * interval '1 day')
          ) AS won_after
        FROM followups f
      )
@@ -601,13 +651,14 @@ async function getFollowUps(filters) {
     replyRate72h: percent(leadsReplied72h, leadsFollowedUp),
     leadsWithAppointmentAfter: number(row.leads_with_appointment_after),
     leadsWonAfter: number(row.leads_won_after),
+    outcomeWindowDays: FOLLOW_UP_OUTCOME_WINDOW_DAYS,
   };
 }
 
 const PERFORMANCE_DIMENSIONS = ["source", "campaign", "treatment", "branch", "channel", "owner"];
 
 async function getPerformance(filters) {
-  const result = await pool.query(
+  const result = await analyticsQuery(
     `${JOURNEY_BASE_CTE}
      ${MILESTONE_TIMES_CTE},
      cohort AS (
@@ -673,7 +724,7 @@ async function getPerformance(filters) {
 }
 
 async function getSystemHealth(filters) {
-  const result = await pool.query(
+  const result = await analyticsQuery(
     `${JOURNEY_BASE_CTE},
      matching_journeys AS (
        SELECT j.* FROM journeys j WHERE ${FILTER_SQL}
@@ -748,7 +799,7 @@ async function getFilterOptions() {
   if (filterOptionsCache.value && Date.now() < filterOptionsCache.expiresAt) {
     return filterOptionsCache.value;
   }
-  const result = await pool.query(
+  const result = await analyticsQuery(
     `SELECT
        ARRAY(SELECT DISTINCT branch_name FROM leads WHERE branch_name IS NOT NULL AND TRIM(branch_name) <> '' ORDER BY branch_name) AS branches,
        ARRAY(SELECT DISTINCT channel FROM contacts WHERE channel IS NOT NULL ORDER BY channel) AS channels,
@@ -831,9 +882,11 @@ async function getAnalytics(filters) {
 }
 
 module.exports = {
+  ANALYTICS_QUERY_CONCURRENCY,
   PERFORMANCE_DIMENSIONS,
   buildComparison,
   buildFunnel,
+  createConcurrencyLimiter,
   getAnalytics,
   metricDelta,
   percent,
