@@ -150,10 +150,12 @@ export default function Analytics() {
   }
 
   function applyFilters() {
+    if (loading) return;
     setAppliedFilters({ ...draftFilters });
   }
 
   function clearFilters() {
+    if (loading) return;
     const next = {
       ...draftFilters,
       branch: "all",
@@ -225,10 +227,10 @@ export default function Analytics() {
           <button
             type="button"
             onClick={applyFilters}
-            disabled={loading && !hasPendingChanges}
+            disabled={loading}
             className="mb-px rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-bold text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-60"
           >
-            {loading && !hasPendingChanges ? "Loading…" : hasPendingChanges ? "Apply filters" : "Apply"}
+            {loading ? "Loading…" : hasPendingChanges ? "Apply filters" : "Apply"}
           </button>
           <button
             type="button"
@@ -241,7 +243,7 @@ export default function Analytics() {
             ↻
           </button>
           {hasFilters && (
-            <button type="button" onClick={clearFilters} className="mb-px rounded-xl px-3 py-2.5 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]">Clear</button>
+            <button type="button" onClick={clearFilters} disabled={loading} className="mb-px rounded-xl px-3 py-2.5 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] disabled:opacity-50">Clear</button>
           )}
         </div>
 
@@ -295,7 +297,7 @@ export default function Analytics() {
                 onViewHot={() => navigate(pipelineUrl({ category: "hot" }))}
               />
             </Panel>
-            <Panel title="Response Performance" subtitle="Customer waiting episodes that received a completed response during the selected period.">
+            <Panel title="Response Performance" subtitle="Customer waiting episodes that started during the selected period and received a completed reply.">
               <ResponsePerformance stats={data.responseTimes} />
             </Panel>
           </section>
@@ -315,10 +317,10 @@ export default function Analytics() {
                 <SmallStat label="Leads Followed Up" value={data.followUps.leadsFollowedUp} />
                 <SmallStat label="Replied Within 72h" value={data.followUps.leadsReplied72h} />
                 <SmallStat label="Reply Rate" value={`${data.followUps.replyRate72h.toFixed(1)}%`} />
-                <SmallStat label="Appointments Recovered" value={data.followUps.leadsWithAppointmentAfter} />
-                <SmallStat label="Wins Recovered" value={data.followUps.leadsWonAfter} />
+                <SmallStat label={`Appointments Within ${data.followUps.outcomeWindowDays}d`} value={data.followUps.leadsWithAppointmentAfter} />
+                <SmallStat label={`Wins Within ${data.followUps.outcomeWindowDays}d`} value={data.followUps.leadsWonAfter} />
               </div>
-              <p className="mt-3 text-[11px] leading-relaxed text-[var(--color-text-muted)]">Reply rate is based on unique lead journeys, so several scheduled messages to the same lead do not inflate the percentage.</p>
+              <p className="mt-3 text-[11px] leading-relaxed text-[var(--color-text-muted)]">Reply rate uses unique lead journeys. Appointment and win outcomes are counted only when they happen in the same journey within {data.followUps.outcomeWindowDays} days after a follow-up; this shows association, not guaranteed causation.</p>
             </Panel>
             <Panel title="Lost Reasons" subtitle="Why leads in this cohort were closed as lost.">
               <LostReasons rows={data.lostReasons} />
@@ -544,17 +546,20 @@ function ResponsePerformance({ stats }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map(([label, row]) => (
-            <tr key={label} className="border-b border-[var(--color-border)]/70 last:border-0">
-              <td className="py-4 font-semibold">{label}</td>
-              <td className="px-2 py-4 text-right font-display text-base font-bold">{formatDuration(row.medianSeconds)}</td>
-              <td className="px-2 py-4 text-right">{formatDuration(row.p90Seconds)}</td>
-              <td className="py-4 pl-2 text-right text-[var(--color-text-muted)]">{row.samples}</td>
-            </tr>
-          ))}
+          {rows.map(([label, row]) => {
+            const hasSamples = row.samples > 0;
+            return (
+              <tr key={label} className="border-b border-[var(--color-border)]/70 last:border-0">
+                <td className="py-4 font-semibold">{label}</td>
+                <td className="px-2 py-4 text-right font-display text-base font-bold">{hasSamples ? formatDuration(row.medianSeconds) : "—"}</td>
+                <td className="px-2 py-4 text-right">{hasSamples ? formatDuration(row.p90Seconds) : "—"}</td>
+                <td className="py-4 pl-2 text-right text-[var(--color-text-muted)]">{row.samples}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
-      <p className="mt-3 text-[11px] leading-relaxed text-[var(--color-text-muted)]">“Typical” is the median wait. “90% within” means nine out of ten measured replies were at or below that time.</p>
+      <p className="mt-3 text-[11px] leading-relaxed text-[var(--color-text-muted)]">“Typical” is the median wait. “90% within” means nine out of ten measured replies were at or below that time. A dash means there were no measured reply episodes.</p>
     </div>
   );
 }
@@ -638,25 +643,31 @@ function LostReasons({ rows }) {
 function SystemStatus({ health }) {
   const scoring = health.aiScoring;
   const delivery = health.delivery;
-  const scoringIssue = scoring.failed > 0;
-  const deliveryIssue = delivery.failed > 0;
+  const scoringState = scoring.attempts === 0 ? "neutral" : scoring.failed > 0 ? "issue" : "healthy";
+  const deliveryState = delivery.tracked === 0 ? "neutral" : delivery.failed > 0 ? "issue" : "healthy";
   return (
     <section className="flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--color-border)] bg-white px-4 py-3 text-xs shadow-sm">
       <span className="mr-1 font-display font-bold">System status</span>
       <StatusChip
-        issue={deliveryIssue}
-        text={delivery.tracked === 0 ? "Delivery: no tracked messages" : deliveryIssue ? `${delivery.failed} delivery failure${delivery.failed === 1 ? "" : "s"} (${delivery.failureRate.toFixed(1)}%)` : "Messaging healthy"}
+        state={deliveryState}
+        text={delivery.tracked === 0 ? "Delivery: no tracked messages" : delivery.failed > 0 ? `${delivery.failed} delivery failure${delivery.failed === 1 ? "" : "s"} (${delivery.failureRate.toFixed(1)}%)` : "Messaging healthy"}
       />
       <StatusChip
-        issue={scoringIssue}
-        text={scoring.attempts === 0 ? "AI scoring: no attempts" : scoringIssue ? `${scoring.failed} AI scoring failure${scoring.failed === 1 ? "" : "s"}` : "AI scoring healthy"}
+        state={scoringState}
+        text={scoring.attempts === 0 ? "AI scoring: no attempts" : scoring.failed > 0 ? `${scoring.failed} AI scoring failure${scoring.failed === 1 ? "" : "s"}` : "AI scoring healthy"}
       />
     </section>
   );
 }
 
-function StatusChip({ issue, text }) {
-  return <span className={`rounded-full px-2.5 py-1 font-semibold ${issue ? "bg-[var(--color-danger-light)] text-[var(--color-danger)]" : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"}`}>{issue ? "⚠" : "✓"} {text}</span>;
+function StatusChip({ state, text }) {
+  const tone = state === "issue"
+    ? "bg-[var(--color-danger-light)] text-[var(--color-danger)]"
+    : state === "healthy"
+      ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+      : "bg-[var(--color-bg)] text-[var(--color-text-muted)]";
+  const icon = state === "issue" ? "⚠" : state === "healthy" ? "✓" : "•";
+  return <span className={`rounded-full px-2.5 py-1 font-semibold ${tone}`}>{icon} {text}</span>;
 }
 
 function EmptyState({ text }) {
