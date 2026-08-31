@@ -84,3 +84,46 @@ h1, h2, h3, .font-display {
     radial-gradient(circle at 1px 1px, rgba(47, 111, 98, 0.055) 1px, transparent 0);
   background-size: 22px 22px;
 }
+
+/* Analytics trend charts intentionally keep a small minimum plotting width on
+   phones so date labels and data points remain legible instead of shrinking
+   to a few pixels. Very narrow screens can swipe the chart a short distance. */
+@media (max-width: 639px) {
+  div:has(> svg[aria-label$="over time"]) {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  div:has(> svg[aria-label$="over time"])::-webkit-scrollbar {
+    display: none;
+  }
+
+  svg[aria-label$="over time"] {
+    width: 360px;
+    min-width: 360px;
+    max-width: none;
+  }
+
+  svg[aria-label$="over time"] text {
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  svg[aria-label$="over time"] line,
+  svg[aria-label$="over time"] polyline {
+    vector-effect: non-scaling-stroke;
+  }
+
+  svg[aria-label$="over time"] polyline {
+    stroke-width: 3px;
+  }
+
+  svg[aria-label$="over time"] circle {
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(1.45);
+  }
+}
