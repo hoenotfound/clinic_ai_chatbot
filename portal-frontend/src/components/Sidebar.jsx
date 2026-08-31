@@ -10,7 +10,7 @@ const NAV_ITEMS = [
     to: "/analytics",
     label: "Analytics",
     icon: AnalyticsIcon,
-    active: false,
+    active: true,
   },
   { to: "/tools", label: "Tools", icon: ToolsIcon, active: true },
   { to: "/settings", label: "Settings", icon: SettingsIcon, active: true },

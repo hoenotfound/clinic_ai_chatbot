@@ -153,6 +153,14 @@ export const api = {
     request(`/contacts/${id}/notes`, { method: "POST", body: JSON.stringify({ content }) }),
   deleteContactNote: (id, noteId) => request(`/contacts/${id}/notes/${noteId}`, { method: "DELETE" }),
   getPipeline: () => request("/pipeline"),
+  getAnalytics: (filters = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (value != null && value !== "" && value !== "all") params.set(key, String(value));
+    }
+    const query = params.toString();
+    return request(`/pipeline/analytics${query ? `?${query}` : ""}`);
+  },
   createLead: (data) =>
     request("/pipeline/leads", { method: "POST", body: JSON.stringify(data) }),
   updateLead: (leadId, data) =>
