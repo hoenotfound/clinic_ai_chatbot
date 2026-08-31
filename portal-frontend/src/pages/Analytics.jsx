@@ -1,9 +1,24 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import Spinner from "../components/Spinner";
 
 const TIME_ZONE = "Asia/Kuala_Lumpur";
-const PRESETS = [7, 30, 90];
+const PRESET_OPTIONS = [
+  ["7", "Last 7 days"],
+  ["30", "Last 30 days"],
+  ["90", "Last 90 days"],
+  ["custom", "Custom range"],
+];
+const ADVANCED_FILTERS = ["source", "campaign", "treatment", "owner"];
+const PERFORMANCE_TABS = [
+  ["source", "Source"],
+  ["campaign", "Campaign"],
+  ["treatment", "Treatment"],
+  ["branch", "Branch"],
+  ["channel", "Channel"],
+  ["owner", "Owner"],
+];
 
 function dateInMalaysia(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -28,6 +43,18 @@ function rangeForDays(days) {
   return { from: shiftDate(to, -(days - 1)), to };
 }
 
+function initialFilters() {
+  return {
+    ...rangeForDays(30),
+    branch: "all",
+    channel: "all",
+    source: "all",
+    campaign: "all",
+    treatment: "all",
+    owner: "all",
+  };
+}
+
 function money(value) {
   return new Intl.NumberFormat("en-MY", {
     style: "currency",
@@ -37,7 +64,10 @@ function money(value) {
 }
 
 function compactNumber(value) {
-  return new Intl.NumberFormat("en-MY", { notation: "compact", maximumFractionDigits: 1 }).format(Number(value) || 0);
+  return new Intl.NumberFormat("en-MY", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(Number(value) || 0);
 }
 
 function formatDuration(seconds) {
@@ -53,12 +83,9 @@ function formatDuration(seconds) {
   return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
-function formatDay(day, dayCount) {
+function formatDay(day) {
   const date = new Date(`${day}T00:00:00Z`);
-  return new Intl.DateTimeFormat("en-MY", {
-    day: "numeric",
-    month: dayCount > 31 ? "short" : "short",
-  }).format(date);
+  return new Intl.DateTimeFormat("en-MY", { day: "numeric", month: "short" }).format(date);
 }
 
 function deltaLabel(delta, type = "percent") {
@@ -73,116 +100,159 @@ function deltaTone(delta) {
   return Number(delta) > 0 ? "text-[var(--color-primary)]" : "text-[var(--color-danger)]";
 }
 
+function filtersEqual(left, right) {
+  return ["from", "to", "branch", "channel", "source", "campaign", "treatment", "owner"]
+    .every((key) => left[key] === right[key]);
+}
+
 export default function Analytics() {
-  const initialRange = useMemo(() => rangeForDays(30), []);
-  const [from, setFrom] = useState(initialRange.from);
-  const [to, setTo] = useState(initialRange.to);
-  const [branch, setBranch] = useState("all");
-  const [channel, setChannel] = useState("all");
-  const [source, setSource] = useState("all");
-  const [campaign, setCampaign] = useState("all");
-  const [treatment, setTreatment] = useState("all");
-  const [owner, setOwner] = useState("all");
+  const navigate = useNavigate();
+  const initial = useMemo(() => initialFilters(), []);
+  const [draftFilters, setDraftFilters] = useState(initial);
+  const [appliedFilters, setAppliedFilters] = useState(initial);
+  const [preset, setPreset] = useState("30");
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
+  const [performanceTab, setPerformanceTab] = useState("source");
+  const [refreshToken, setRefreshToken] = useState(0);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
-  const loadAnalytics = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const payload = await api.getAnalytics({
-        from,
-        to,
-        branch,
-        channel,
-        source,
-        campaign,
-        treatment,
-        owner,
-      });
-      setData(payload);
-    } catch (err) {
-      console.error("Failed to load analytics:", err);
-      setError(err.message || "Couldn't load analytics.");
-    } finally {
-      setLoading(false);
-    }
-  }, [branch, campaign, channel, from, owner, source, to, treatment]);
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
-    loadAnalytics();
-  }, [loadAnalytics]);
+    const requestId = ++requestIdRef.current;
+    setLoading(true);
+    setError("");
+    api.getAnalytics(appliedFilters)
+      .then((payload) => {
+        if (requestId === requestIdRef.current) setData(payload);
+      })
+      .catch((err) => {
+        console.error("Failed to load analytics:", err);
+        if (requestId === requestIdRef.current) {
+          setError(err.message || "Couldn't load analytics.");
+        }
+      })
+      .finally(() => {
+        if (requestId === requestIdRef.current) setLoading(false);
+      });
+  }, [appliedFilters, refreshToken]);
 
-  function applyPreset(days) {
-    const range = rangeForDays(days);
-    setFrom(range.from);
-    setTo(range.to);
+  function updateDraft(key, value) {
+    setDraftFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function applyPreset(value) {
+    setPreset(value);
+    if (value === "custom") return;
+    const range = rangeForDays(Number(value));
+    setDraftFilters((current) => ({ ...current, ...range }));
+  }
+
+  function applyFilters() {
+    setAppliedFilters({ ...draftFilters });
   }
 
   function clearFilters() {
-    setBranch("all");
-    setChannel("all");
-    setSource("all");
-    setCampaign("all");
-    setTreatment("all");
-    setOwner("all");
+    const next = {
+      ...draftFilters,
+      branch: "all",
+      channel: "all",
+      source: "all",
+      campaign: "all",
+      treatment: "all",
+      owner: "all",
+    };
+    setDraftFilters(next);
+    setAppliedFilters(next);
+    setShowMoreFilters(false);
+  }
+
+  function pipelineUrl(extra = {}) {
+    const params = new URLSearchParams();
+    params.set("from", appliedFilters.from);
+    params.set("to", appliedFilters.to);
+    for (const key of ["branch", "channel", "source", "campaign", "treatment", "owner"]) {
+      const value = appliedFilters[key];
+      if (value && value !== "all") params.set(key, value);
+    }
+    for (const [key, value] of Object.entries(extra)) {
+      if (value != null && value !== "" && value !== "all") params.set(key, String(value));
+    }
+    return `/pipeline?${params.toString()}`;
   }
 
   const filterOptions = data?.filterOptions || {};
-  const hasFilters = [branch, channel, source, campaign, treatment, owner].some((value) => value !== "all");
+  const hasFilters = ["branch", "channel", ...ADVANCED_FILTERS]
+    .some((key) => draftFilters[key] !== "all");
+  const hasAdvancedFilters = ADVANCED_FILTERS.some((key) => draftFilters[key] !== "all");
+  const hasPendingChanges = !filtersEqual(draftFilters, appliedFilters);
 
   return (
     <div className="min-h-full bg-[var(--color-bg)]">
       <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-5 lg:px-7">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2.5">
-              <h1 className="font-display text-xl font-bold">Analytics</h1>
-              <span className="rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--color-primary)]">Sales & conversations</span>
-            </div>
-            <p className="mt-1 text-sm text-[var(--color-text-muted)]">Track how enquiries move from first message to appointment, clinic visit, and conversion.</p>
+        <div>
+          <div className="flex items-center gap-2.5">
+            <h1 className="font-display text-xl font-bold">Analytics</h1>
+            <span className="rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--color-primary)]">Sales</span>
           </div>
-          <button
-            type="button"
-            onClick={loadAnalytics}
-            disabled={loading}
-            className="rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-sm font-semibold hover:bg-[var(--color-bg)] disabled:opacity-60"
-          >
-            {loading ? "Refreshing…" : "Refresh"}
-          </button>
+          <p className="mt-1 text-sm text-[var(--color-text-muted)]">See what happened this period, where leads drop off, and which enquiries turn into clinic visits and wins.</p>
         </div>
 
         <div className="mt-5 flex flex-wrap items-end gap-2.5">
-          <div className="flex gap-1 rounded-xl bg-[var(--color-bg)] p-1">
-            {PRESETS.map((days) => (
-              <button
-                key={days}
-                type="button"
-                onClick={() => applyPreset(days)}
-                className="rounded-lg px-3 py-2 text-xs font-semibold text-[var(--color-text-muted)] hover:bg-white hover:text-[var(--color-text)]"
-              >
-                {days} days
-              </button>
-            ))}
-          </div>
-          <DateField label="From" value={from} onChange={setFrom} />
-          <DateField label="To" value={to} onChange={setTo} />
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-end gap-2.5">
-          <FilterSelect label="Branch" value={branch} onChange={setBranch} options={filterOptions.branches} />
-          <FilterSelect label="Channel" value={channel} onChange={setChannel} options={filterOptions.channels} format={formatChannel} />
-          <FilterSelect label="Source" value={source} onChange={setSource} options={filterOptions.sources} />
-          <FilterSelect label="Campaign" value={campaign} onChange={setCampaign} options={filterOptions.campaigns} />
-          <FilterSelect label="Treatment" value={treatment} onChange={setTreatment} options={filterOptions.treatments} />
-          <FilterSelect label="Owner" value={owner} onChange={setOwner} options={filterOptions.owners} />
+          <FilterSelect
+            label="Date range"
+            value={preset}
+            onChange={applyPreset}
+            options={PRESET_OPTIONS.map(([value, label]) => ({ value, label }))}
+            includeAll={false}
+          />
+          {preset === "custom" && (
+            <>
+              <DateField label="From" value={draftFilters.from} onChange={(value) => updateDraft("from", value)} />
+              <DateField label="To" value={draftFilters.to} onChange={(value) => updateDraft("to", value)} />
+            </>
+          )}
+          <FilterSelect label="Branch" value={draftFilters.branch} onChange={(value) => updateDraft("branch", value)} options={filterOptions.branches} />
+          <FilterSelect label="Channel" value={draftFilters.channel} onChange={(value) => updateDraft("channel", value)} options={filterOptions.channels} format={formatChannel} />
+          <button
+            type="button"
+            onClick={() => setShowMoreFilters((current) => !current)}
+            className={`mb-px rounded-xl border px-3.5 py-2.5 text-xs font-semibold ${showMoreFilters || hasAdvancedFilters ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)]"}`}
+          >
+            More filters {hasAdvancedFilters ? "•" : ""}
+          </button>
+          <button
+            type="button"
+            onClick={applyFilters}
+            disabled={loading && !hasPendingChanges}
+            className="mb-px rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-bold text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-60"
+          >
+            {loading && !hasPendingChanges ? "Loading…" : hasPendingChanges ? "Apply filters" : "Apply"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setRefreshToken((value) => value + 1)}
+            disabled={loading}
+            title="Refresh analytics"
+            aria-label="Refresh analytics"
+            className="mb-px rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-50"
+          >
+            ↻
+          </button>
           {hasFilters && (
-            <button type="button" onClick={clearFilters} className="mb-px rounded-xl px-3 py-2.5 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]">
-              Clear filters
-            </button>
+            <button type="button" onClick={clearFilters} className="mb-px rounded-xl px-3 py-2.5 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]">Clear</button>
           )}
         </div>
+
+        {showMoreFilters && (
+          <div className="mt-3 flex flex-wrap items-end gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+            <FilterSelect label="Source" value={draftFilters.source} onChange={(value) => updateDraft("source", value)} options={filterOptions.sources} />
+            <FilterSelect label="Campaign" value={draftFilters.campaign} onChange={(value) => updateDraft("campaign", value)} options={filterOptions.campaigns} />
+            <FilterSelect label="Treatment" value={draftFilters.treatment} onChange={(value) => updateDraft("treatment", value)} options={filterOptions.treatments} />
+            <FilterSelect label="Owner" value={draftFilters.owner} onChange={(value) => updateDraft("owner", value)} options={filterOptions.owners} />
+          </div>
+        )}
       </header>
 
       {loading && !data ? (
@@ -192,90 +262,70 @@ export default function Analytics() {
           <div className="rounded-3xl border border-[var(--color-border)] bg-white p-8 shadow-sm">
             <h2 className="font-display text-lg font-bold">Couldn't load analytics</h2>
             <p className="mt-2 text-sm text-[var(--color-text-muted)]">{error}</p>
-            <button type="button" onClick={loadAnalytics} className="mt-5 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white">Try again</button>
+            <button type="button" onClick={() => setRefreshToken((value) => value + 1)} className="mt-5 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white">Try again</button>
           </div>
         </div>
       ) : data ? (
         <main className="space-y-5 px-5 py-5 lg:px-7 lg:py-6">
           {error && <div className="rounded-xl border border-[var(--color-danger)]/20 bg-[var(--color-danger-light)] px-4 py-3 text-sm text-[var(--color-danger)]">{error}</div>}
 
-          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-            <MetricCard label="New Leads" value={data.summary.newLeads} delta={data.comparison.deltas.newLeads} detail="Started in selected period" />
-            <MetricCard label="Appointments" value={data.summary.appointments} delta={data.comparison.deltas.appointments} detail="Cohort reached appointment" />
-            <MetricCard label="Visited" value={data.summary.visits} delta={data.comparison.deltas.visits} detail="Cohort reached clinic visit" />
-            <MetricCard label="Won" value={data.summary.won} delta={data.comparison.deltas.won} detail="Converted journeys" />
-            <MetricCard label="Conversion" value={`${data.summary.conversionRate.toFixed(1)}%`} delta={data.comparison.deltas.conversionRate} deltaType="points" detail="Lead → Won" />
-            <MetricCard label="Est. Won Value" value={money(data.summary.estimatedWonValue)} delta={data.comparison.deltas.estimatedWonValue} detail="Based on estimated lead value" />
+          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <MetricCard label="New Leads" value={data.summary.newLeads} delta={data.comparison.deltas.newLeads} detail="Lead journeys started in this period" />
+            <MetricCard label="Appointments" value={data.summary.appointments} delta={data.comparison.deltas.appointments} detail="First appointment stage entered in this period" />
+            <MetricCard label="Clinic Visits" value={data.summary.visits} delta={data.comparison.deltas.visits} detail="First visit stage entered in this period" />
+            <MetricCard label="Won" value={data.summary.won} delta={data.comparison.deltas.won} detail={`Estimated value ${money(data.summary.estimatedWonValue)}`} />
+            <MetricCard label="Cohort Conversion" value={`${data.summary.conversionRate.toFixed(1)}%`} delta={data.comparison.deltas.conversionRate} deltaType="points" detail="Leads started in period → Won" />
           </section>
 
-          <section className="grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
-            <Panel title="Lead Funnel" subtitle="Leads that started during this period and the furthest milestones they eventually reached.">
+          <RateStrip cohort={data.cohort} />
+
+          <section className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
+            <Panel title="Conversion Funnel" subtitle="For leads that started in this period. Later-stage outcomes stay attached to the original lead cohort.">
               <FunnelChart stages={data.funnel} />
             </Panel>
-            <Panel title="Cohort Trend" subtitle="Daily lead cohorts, with eventual appointment and win outcomes.">
-              <TrendChart data={data.trend} dayCount={data.range.dayCount} />
-            </Panel>
-          </section>
-
-          <section className="grid gap-5 xl:grid-cols-3">
-            <Panel title="Lead Quality" subtitle="Current Hot / Warm / Cold status for leads in this period.">
-              <TemperatureBreakdown rows={data.temperature} />
-            </Panel>
-            <ResponseCard title="Automated Response" stats={data.responseTimes.automated} description="First automated response after a customer waiting episode." />
-            <ResponseCard title="Staff Response" stats={data.responseTimes.staff} description="First staff response after a customer waiting episode." />
-          </section>
-
-          <section className="grid gap-5 xl:grid-cols-3">
-            <Panel title="Automated Follow-ups" subtitle="Recovery after scheduled follow-up messages.">
-              <div className="grid grid-cols-2 gap-3">
-                <SmallStat label="Sent" value={data.followUps.sent} />
-                <SmallStat label="72h Reply Rate" value={`${data.followUps.replyRate72h.toFixed(1)}%`} />
-                <SmallStat label="Appointments After" value={data.followUps.leadsWithAppointmentAfter} />
-                <SmallStat label="Won After" value={data.followUps.leadsWonAfter} />
-              </div>
-              <p className="mt-3 text-[11px] leading-relaxed text-[var(--color-text-muted)]">Reply rate counts a customer response within 72 hours of the automated follow-up. Appointment and win counts are unique leads that progressed after a follow-up.</p>
-            </Panel>
-            <Panel title="AI Lead Scoring" subtitle="Health of end-of-conversation lead scoring during this period.">
-              <div className="grid grid-cols-2 gap-3">
-                <SmallStat label="Completed" value={data.aiScoring.completed} />
-                <SmallStat label="Completion Rate" value={`${data.aiScoring.completionRate.toFixed(1)}%`} />
-                <SmallStat label="High Confidence" value={data.aiScoring.highConfidence} />
-                <SmallStat label="Applied" value={`${data.aiScoring.appliedRate.toFixed(1)}%`} />
-              </div>
-            </Panel>
-            <Panel title="Message Delivery" subtitle="Tracked WhatsApp outbound delivery results during this period.">
-              <div className="grid grid-cols-2 gap-3">
-                <SmallStat label="Tracked" value={data.deliveryHealth.tracked} />
-                <SmallStat label="Failed" value={data.deliveryHealth.failed} tone={data.deliveryHealth.failed ? "danger" : "default"} />
-              </div>
-              <div className="mt-3 rounded-2xl bg-[var(--color-bg)] px-4 py-3">
-                <p className="text-xs text-[var(--color-text-muted)]">Failure rate</p>
-                <p className="mt-1 font-display text-2xl font-bold">{data.deliveryHealth.failureRate.toFixed(1)}%</p>
-              </div>
+            <Panel title="Activity Over Time" subtitle="Events are plotted on the day they actually happened, not the day the lead first arrived.">
+              <ActivityTrendChart data={data.trend} />
             </Panel>
           </section>
 
           <section className="grid gap-5 xl:grid-cols-2">
-            <PerformanceTable title="Branch Performance" rows={data.performance.branches} />
-            <PerformanceTable title="Treatment Performance" rows={data.performance.treatments} />
-            <PerformanceTable title="Source Performance" rows={data.performance.sources} />
-            <PerformanceTable title="Channel Performance" rows={data.performance.channels} formatLabel={formatChannel} />
-            {data.performance.campaigns.length > 0 && <PerformanceTable title="Campaign Performance" rows={data.performance.campaigns} />}
-            {data.performance.owners.some((row) => row.label !== "Unspecified") && <PerformanceTable title="Owner Performance" rows={data.performance.owners} />}
+            <Panel title="Lead Quality" subtitle="Current Hot / Warm / Cold status for leads that started in this period.">
+              <TemperatureBreakdown
+                rows={data.temperature}
+                onViewHot={() => navigate(pipelineUrl({ category: "hot" }))}
+              />
+            </Panel>
+            <Panel title="Response Performance" subtitle="Customer waiting episodes that received a completed response during the selected period.">
+              <ResponsePerformance stats={data.responseTimes} />
+            </Panel>
           </section>
 
+          <Panel title="Performance Breakdown" subtitle="Compare the selected lead cohort by acquisition, treatment, location or owner.">
+            <PerformanceBreakdown
+              performance={data.performance}
+              activeTab={performanceTab}
+              onTabChange={setPerformanceTab}
+              onOpen={(dimension, label) => navigate(pipelineUrl({ [dimension]: label }))}
+            />
+          </Panel>
+
           <section className="grid gap-5 xl:grid-cols-2">
+            <Panel title="Follow-up Performance" subtitle="Leads contacted by scheduled automated follow-up messages during this period.">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <SmallStat label="Leads Followed Up" value={data.followUps.leadsFollowedUp} />
+                <SmallStat label="Replied Within 72h" value={data.followUps.leadsReplied72h} />
+                <SmallStat label="Reply Rate" value={`${data.followUps.replyRate72h.toFixed(1)}%`} />
+                <SmallStat label="Appointments Recovered" value={data.followUps.leadsWithAppointmentAfter} />
+                <SmallStat label="Wins Recovered" value={data.followUps.leadsWonAfter} />
+              </div>
+              <p className="mt-3 text-[11px] leading-relaxed text-[var(--color-text-muted)]">Reply rate is based on unique lead journeys, so several scheduled messages to the same lead do not inflate the percentage.</p>
+            </Panel>
             <Panel title="Lost Reasons" subtitle="Why leads in this cohort were closed as lost.">
               <LostReasons rows={data.lostReasons} />
             </Panel>
-            <Panel title="Value Snapshot" subtitle="Estimated values currently stored in the lead pipeline.">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <SmallStat label="Estimated Won Value" value={money(data.summary.estimatedWonValue)} />
-                <SmallStat label="Open Pipeline Value" value={money(data.summary.openPipelineValue)} />
-              </div>
-              <p className="mt-3 text-[11px] leading-relaxed text-[var(--color-text-muted)]">These are estimated lead values, not confirmed revenue. Actual collected revenue is not stored in the current lead schema.</p>
-            </Panel>
           </section>
+
+          <SystemStatus health={data.systemHealth} />
         </main>
       ) : null}
     </div>
@@ -291,13 +341,14 @@ function DateField({ label, value, onChange }) {
   );
 }
 
-function FilterSelect({ label, value, onChange, options = [], format = (item) => item }) {
+function FilterSelect({ label, value, onChange, options = [], format = (item) => item, includeAll = true }) {
+  const normalizedOptions = options.map((option) => typeof option === "string" ? { value: option, label: format(option) } : option);
   return (
     <label className="min-w-36 max-w-56 flex-1 sm:flex-none">
       <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">{label}</span>
       <select value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15">
-        <option value="all">All {label.toLowerCase()}s</option>
-        {options.map((option) => <option key={option} value={option}>{format(option)}</option>)}
+        {includeAll && <option value="all">All</option>}
+        {normalizedOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
     </label>
   );
@@ -314,6 +365,30 @@ function MetricCard({ label, value, delta, deltaType = "percent", detail }) {
       </div>
       <p className="mt-2 text-[10px] leading-relaxed text-[var(--color-text-muted)]">{detail}</p>
     </div>
+  );
+}
+
+function RateStrip({ cohort }) {
+  const rates = [
+    ["Appointment Rate", cohort.appointmentRate, "Lead → Appointment"],
+    ["Show Rate", cohort.showRate, "Appointment → Visit"],
+    ["Visit → Won", cohort.closeRate, "Visit → Conversion"],
+  ];
+  return (
+    <section className="rounded-2xl border border-[var(--color-border)] bg-white px-4 py-3 shadow-sm">
+      <div className="grid gap-3 sm:grid-cols-3">
+        {rates.map(([label, value, detail]) => (
+          <div key={label} className="flex items-end justify-between gap-3 rounded-xl bg-[var(--color-bg)] px-4 py-3">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">{label}</p>
+              <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">{detail}</p>
+            </div>
+            <p className="font-display text-xl font-bold">{value.toFixed(1)}%</p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-[10px] text-[var(--color-text-muted)]">These rates use leads that started in the selected period, so they describe conversion quality rather than event volume.</p>
+    </section>
   );
 }
 
@@ -340,7 +415,11 @@ function FunnelChart({ stages }) {
             <div className="mb-1.5 flex items-end justify-between gap-3">
               <div>
                 <p className="text-xs font-bold">{stage.label}</p>
-                {index > 0 && <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{stage.fromPreviousRate.toFixed(1)}% from previous stage</p>}
+                {index > 0 && (
+                  <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
+                    {stage.fromPreviousRate.toFixed(1)}% reached this stage · {stage.dropOff} not progressed yet
+                  </p>
+                )}
               </div>
               <div className="text-right">
                 <p className="font-display text-lg font-bold">{stage.count}</p>
@@ -359,38 +438,43 @@ function FunnelChart({ stages }) {
   );
 }
 
-function TrendChart({ data, dayCount }) {
+function ActivityTrendChart({ data }) {
+  const metrics = {
+    newLeads: { label: "New leads", stroke: "var(--color-primary)" },
+    appointments: { label: "Appointments", stroke: "var(--color-accent)" },
+    visits: { label: "Visits", stroke: "#6a8293" },
+    won: { label: "Won", stroke: "#2f7d4e" },
+  };
+  const [metric, setMetric] = useState("newLeads");
   const width = 900;
   const height = 250;
   const padX = 30;
   const padTop = 20;
   const padBottom = 40;
-  const maxValue = Math.max(1, ...data.flatMap((row) => [row.newLeads, row.appointments, row.won]));
+  const maxValue = Math.max(1, ...data.map((row) => row[metric]));
   const x = (index) => data.length <= 1 ? width / 2 : padX + (index / (data.length - 1)) * (width - padX * 2);
   const y = (value) => padTop + (1 - value / maxValue) * (height - padTop - padBottom);
-  const points = (key) => data.map((row, index) => `${x(index)},${y(row[key])}`).join(" ");
+  const points = data.map((row, index) => `${x(index)},${y(row[metric])}`).join(" ");
   const labelStep = Math.max(1, Math.ceil(data.length / 6));
 
-  if (!data.length) return <EmptyState text="No lead activity in this period." />;
+  if (!data.length) return <EmptyState text="No activity in this period." />;
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap gap-4 text-[11px] font-semibold">
-        <LegendDot className="bg-[var(--color-primary)]" label="New leads" />
-        <LegendDot className="bg-[var(--color-accent)]" label="Appointments" />
-        <LegendDot className="bg-[#2f7d4e]" label="Won" />
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {Object.entries(metrics).map(([key, item]) => (
+          <button key={key} type="button" onClick={() => setMetric(key)} className={`rounded-lg px-2.5 py-1.5 text-[10px] font-bold ${metric === key ? "bg-[var(--color-primary)] text-white" : "bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{item.label}</button>
+        ))}
       </div>
       <div className="overflow-x-auto">
-        <svg viewBox={`0 0 ${width} ${height}`} className="h-64 min-w-[38rem] w-full" role="img" aria-label="Lead cohort trend">
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-64 min-w-[38rem] w-full" role="img" aria-label={`${metrics[metric].label} over time`}>
           {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
             const lineY = padTop + ratio * (height - padTop - padBottom);
             return <line key={ratio} x1={padX} x2={width - padX} y1={lineY} y2={lineY} stroke="var(--color-border)" strokeWidth="1" />;
           })}
-          <polyline points={points("newLeads")} fill="none" stroke="var(--color-primary)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-          <polyline points={points("appointments")} fill="none" stroke="var(--color-accent)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-          <polyline points={points("won")} fill="none" stroke="#2f7d4e" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={points} fill="none" stroke={metrics[metric].stroke} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
           {data.map((row, index) => index % labelStep === 0 || index === data.length - 1 ? (
-            <text key={row.day} x={x(index)} y={height - 12} textAnchor="middle" fontSize="11" fill="var(--color-text-muted)">{formatDay(row.day, dayCount)}</text>
+            <text key={row.day} x={x(index)} y={height - 12} textAnchor="middle" fontSize="11" fill="var(--color-text-muted)">{formatDay(row.day)}</text>
           ) : null)}
         </svg>
       </div>
@@ -398,11 +482,7 @@ function TrendChart({ data, dayCount }) {
   );
 }
 
-function LegendDot({ className, label }) {
-  return <span className="inline-flex items-center gap-1.5"><span className={`h-2.5 w-2.5 rounded-full ${className}`} />{label}</span>;
-}
-
-function TemperatureBreakdown({ rows }) {
+function TemperatureBreakdown({ rows, onViewHot }) {
   const order = ["hot", "warm", "cold"];
   const byTemperature = Object.fromEntries(rows.map((row) => [row.temperature, row]));
   const tones = {
@@ -410,8 +490,9 @@ function TemperatureBreakdown({ rows }) {
     warm: "bg-[var(--color-accent)]",
     cold: "bg-[#6a8293]",
   };
-  const normalized = order.map((temperature) => byTemperature[temperature] || { temperature, leads: 0, share: 0, won: 0, conversionRate: 0 });
+  const normalized = order.map((temperature) => byTemperature[temperature] || { temperature, leads: 0, share: 0, won: 0, openLeads: 0, conversionRate: 0 });
   const total = normalized.reduce((sum, row) => sum + row.leads, 0);
+  const hotOpen = normalized.find((row) => row.temperature === "hot")?.openLeads || 0;
 
   if (!total) return <EmptyState text="No lead temperature data in this period." />;
 
@@ -420,14 +501,14 @@ function TemperatureBreakdown({ rows }) {
       <div className="flex h-3 overflow-hidden rounded-full bg-[var(--color-bg)]">
         {normalized.map((row) => row.share > 0 ? <div key={row.temperature} className={tones[row.temperature]} style={{ width: `${row.share}%` }} /> : null)}
       </div>
-      <div className="mt-4 space-y-3">
+      <div className="mt-4 space-y-2.5">
         {normalized.map((row) => (
           <div key={row.temperature} className="flex items-center justify-between gap-3 rounded-2xl bg-[var(--color-bg)] px-3.5 py-3">
             <div className="flex items-center gap-2.5">
               <span className={`h-2.5 w-2.5 rounded-full ${tones[row.temperature]}`} />
               <div>
                 <p className="text-xs font-bold capitalize">{row.temperature}</p>
-                <p className="text-[10px] text-[var(--color-text-muted)]">{row.share.toFixed(1)}% of leads</p>
+                <p className="text-[10px] text-[var(--color-text-muted)]">{row.share.toFixed(1)}% of cohort · {row.openLeads} open</p>
               </div>
             </div>
             <div className="text-right">
@@ -437,63 +518,100 @@ function TemperatureBreakdown({ rows }) {
           </div>
         ))}
       </div>
+      {hotOpen > 0 && (
+        <button type="button" onClick={onViewHot} className="mt-3 w-full rounded-xl border border-[var(--color-danger)]/20 bg-[var(--color-danger-light)] px-3 py-2.5 text-xs font-bold text-[var(--color-danger)] hover:border-[var(--color-danger)]/40">
+          View {hotOpen} open hot lead{hotOpen === 1 ? "" : "s"} →
+        </button>
+      )}
     </div>
   );
 }
 
-function ResponseCard({ title, stats, description }) {
+function ResponsePerformance({ stats }) {
+  const rows = [
+    ["Automated", stats.automated],
+    ["Human", stats.staff],
+  ];
   return (
-    <Panel title={title} subtitle={description}>
-      <div className="grid grid-cols-2 gap-3">
-        <SmallStat label="Median" value={formatDuration(stats.medianSeconds)} />
-        <SmallStat label="90th Percentile" value={formatDuration(stats.p90Seconds)} />
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[28rem] text-left text-xs">
+        <thead>
+          <tr className="border-b border-[var(--color-border)] text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+            <th className="pb-2 font-bold">Responder</th>
+            <th className="pb-2 px-2 text-right font-bold">Typical</th>
+            <th className="pb-2 px-2 text-right font-bold">90% within</th>
+            <th className="pb-2 pl-2 text-right font-bold">Episodes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([label, row]) => (
+            <tr key={label} className="border-b border-[var(--color-border)]/70 last:border-0">
+              <td className="py-4 font-semibold">{label}</td>
+              <td className="px-2 py-4 text-right font-display text-base font-bold">{formatDuration(row.medianSeconds)}</td>
+              <td className="px-2 py-4 text-right">{formatDuration(row.p90Seconds)}</td>
+              <td className="py-4 pl-2 text-right text-[var(--color-text-muted)]">{row.samples}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-3 text-[11px] leading-relaxed text-[var(--color-text-muted)]">“Typical” is the median wait. “90% within” means nine out of ten measured replies were at or below that time.</p>
+    </div>
+  );
+}
+
+function PerformanceBreakdown({ performance, activeTab, onTabChange, onOpen }) {
+  const availableTabs = PERFORMANCE_TABS.filter(([key]) => key === "source" || (performance[key] || []).length > 0);
+  const safeTab = availableTabs.some(([key]) => key === activeTab) ? activeTab : availableTabs[0]?.[0] || "source";
+  const rows = performance[safeTab] || [];
+  const title = PERFORMANCE_TABS.find(([key]) => key === safeTab)?.[1] || "Source";
+  return (
+    <div>
+      <div className="mb-4 flex gap-1.5 overflow-x-auto pb-1">
+        {availableTabs.map(([key, label]) => (
+          <button key={key} type="button" onClick={() => onTabChange(key)} className={`whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold ${safeTab === key ? "bg-[var(--color-primary)] text-white" : "bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{label}</button>
+        ))}
       </div>
-      <p className="mt-3 text-[11px] text-[var(--color-text-muted)]">Based on {stats.samples} completed waiting episode{stats.samples === 1 ? "" : "s"}.</p>
-    </Panel>
-  );
-}
-
-function SmallStat({ label, value, tone = "default" }) {
-  return (
-    <div className={`rounded-2xl px-4 py-3 ${tone === "danger" ? "bg-[var(--color-danger-light)]" : "bg-[var(--color-bg)]"}`}>
-      <p className="text-[10px] font-semibold text-[var(--color-text-muted)]">{label}</p>
-      <p className={`mt-1 font-display text-xl font-bold ${tone === "danger" ? "text-[var(--color-danger)]" : ""}`}>{value}</p>
-    </div>
-  );
-}
-
-function PerformanceTable({ title, rows, formatLabel = (value) => value }) {
-  return (
-    <Panel title={title} subtitle="Cohort performance for the selected date range and filters.">
       {rows.length ? (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[36rem] text-left text-xs">
+          <table className="w-full min-w-[38rem] text-left text-xs">
             <thead>
               <tr className="border-b border-[var(--color-border)] text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
-                <th className="pb-2 pr-3 font-bold">{title.replace(" Performance", "")}</th>
+                <th className="pb-2 pr-3 font-bold">{title}</th>
                 <th className="pb-2 px-2 text-right font-bold">Leads</th>
                 <th className="pb-2 px-2 text-right font-bold">Appt</th>
+                <th className="pb-2 px-2 text-right font-bold">Visits</th>
                 <th className="pb-2 px-2 text-right font-bold">Won</th>
-                <th className="pb-2 px-2 text-right font-bold">Conv.</th>
-                <th className="pb-2 pl-2 text-right font-bold">Est. value</th>
+                <th className="pb-2 pl-2 text-right font-bold">Conversion</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.label} className="border-b border-[var(--color-border)]/70 last:border-0">
-                  <td className="py-3 pr-3 font-semibold">{formatLabel(row.label)}</td>
-                  <td className="px-2 py-3 text-right">{row.leads}</td>
-                  <td className="px-2 py-3 text-right">{row.appointments}</td>
-                  <td className="px-2 py-3 text-right font-semibold">{row.won}</td>
-                  <td className="px-2 py-3 text-right text-[var(--color-primary)]">{row.conversionRate.toFixed(1)}%</td>
-                  <td className="py-3 pl-2 text-right">{money(row.estimatedWonValue)}</td>
-                </tr>
-              ))}
+              {rows.map((row) => {
+                const canOpen = row.label !== "Unspecified";
+                return (
+                  <tr key={row.label} onClick={canOpen ? () => onOpen(safeTab, row.label) : undefined} className={`border-b border-[var(--color-border)]/70 last:border-0 ${canOpen ? "cursor-pointer hover:bg-[var(--color-bg)]" : ""}`}>
+                    <td className="py-3 pr-3 font-semibold">{safeTab === "channel" ? formatChannel(row.label) : row.label}{canOpen && <span className="ml-1.5 text-[var(--color-primary)]">→</span>}</td>
+                    <td className="px-2 py-3 text-right">{row.leads}</td>
+                    <td className="px-2 py-3 text-right">{row.appointments}</td>
+                    <td className="px-2 py-3 text-right">{row.visits}</td>
+                    <td className="px-2 py-3 text-right font-semibold">{row.won}</td>
+                    <td className="py-3 pl-2 text-right text-[var(--color-primary)]">{row.conversionRate.toFixed(1)}%</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
-      ) : <EmptyState text="No data for this breakdown yet." />}
-    </Panel>
+      ) : <EmptyState text={`No ${title.toLowerCase()} data for this cohort yet.`} />}
+    </div>
+  );
+}
+
+function SmallStat({ label, value }) {
+  return (
+    <div className="rounded-2xl bg-[var(--color-bg)] px-4 py-3">
+      <p className="text-[10px] font-semibold text-[var(--color-text-muted)]">{label}</p>
+      <p className="mt-1 font-display text-xl font-bold">{value}</p>
+    </div>
   );
 }
 
@@ -515,6 +633,30 @@ function LostReasons({ rows }) {
       ))}
     </div>
   );
+}
+
+function SystemStatus({ health }) {
+  const scoring = health.aiScoring;
+  const delivery = health.delivery;
+  const scoringIssue = scoring.failed > 0;
+  const deliveryIssue = delivery.failed > 0;
+  return (
+    <section className="flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--color-border)] bg-white px-4 py-3 text-xs shadow-sm">
+      <span className="mr-1 font-display font-bold">System status</span>
+      <StatusChip
+        issue={deliveryIssue}
+        text={delivery.tracked === 0 ? "Delivery: no tracked messages" : deliveryIssue ? `${delivery.failed} delivery failure${delivery.failed === 1 ? "" : "s"} (${delivery.failureRate.toFixed(1)}%)` : "Messaging healthy"}
+      />
+      <StatusChip
+        issue={scoringIssue}
+        text={scoring.attempts === 0 ? "AI scoring: no attempts" : scoringIssue ? `${scoring.failed} AI scoring failure${scoring.failed === 1 ? "" : "s"}` : "AI scoring healthy"}
+      />
+    </section>
+  );
+}
+
+function StatusChip({ issue, text }) {
+  return <span className={`rounded-full px-2.5 py-1 font-semibold ${issue ? "bg-[var(--color-danger-light)] text-[var(--color-danger)]" : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"}`}>{issue ? "⚠" : "✓"} {text}</span>;
 }
 
 function EmptyState({ text }) {
