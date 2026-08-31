@@ -1,5 +1,6 @@
 const express = require("express");
 const pipelineRepo = require("../db/pipelineRepo");
+const analyticsRepo = require("../db/analyticsRepo");
 const contactsRepo = require("../db/contactsRepo");
 const usersRepo = require("../db/usersRepo");
 const clinicConfig = require("../config/clinicConfig");
@@ -9,6 +10,10 @@ const {
   normalizeStagePayload,
   normalizeStageOrder,
 } = require("../utils/pipelineValidation");
+const {
+  AnalyticsValidationError,
+  normalizeAnalyticsQuery,
+} = require("../utils/analyticsValidation");
 
 const router = express.Router();
 
@@ -17,7 +22,7 @@ function distinctNames(values) {
 }
 
 function handlePipelineError(res, err, fallbackMessage) {
-  if (err instanceof PipelineValidationError) {
+  if (err instanceof PipelineValidationError || err instanceof AnalyticsValidationError) {
     return res.status(err.status).json({ error: err.message });
   }
   if (err.code === "23505") {
@@ -55,6 +60,16 @@ router.get("/", async (req, res) => {
     });
   } catch (err) {
     handlePipelineError(res, err, "Something went wrong loading the pipeline.");
+  }
+});
+
+// GET /api/pipeline/analytics - server-side aggregate dashboard payload.
+router.get("/analytics", async (req, res) => {
+  try {
+    const filters = normalizeAnalyticsQuery(req.query);
+    res.json(await analyticsRepo.getAnalytics(filters));
+  } catch (err) {
+    handlePipelineError(res, err, "Something went wrong loading analytics.");
   }
 });
 
