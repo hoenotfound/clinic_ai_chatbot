@@ -1,9 +1,30 @@
 const clients = new Set();
 
+function normalizeAccess(res) {
+  const access = res.req?.user?.realtimeAccess;
+  if (!access) return null;
+  return {
+    contactIds: access.contactIds === null ? null : new Set((access.contactIds || []).map(Number)),
+    leadIds: access.leadIds === null ? null : new Set((access.leadIds || []).map(Number)),
+  };
+}
+
 function addClient(res) {
-  const client = { res };
+  const client = { res, access: normalizeAccess(res) };
   clients.add(client);
   return () => clients.delete(client);
+}
+
+function canReceive(client, payload) {
+  if (!client.access) return true;
+
+  if (payload?.contactId != null && client.access.contactIds !== null) {
+    return client.access.contactIds.has(Number(payload.contactId));
+  }
+  if (payload?.leadId != null && client.access.leadIds !== null) {
+    return client.access.leadIds.has(Number(payload.leadId));
+  }
+  return true;
 }
 
 function publish(event, payload = {}) {
@@ -13,6 +34,7 @@ function publish(event, payload = {}) {
       clients.delete(client);
       continue;
     }
+    if (!canReceive(client, payload)) continue;
 
     try {
       client.res.write(message);
