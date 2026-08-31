@@ -2,27 +2,21 @@ const express = require("express");
 const contactsRepo = require("../db/contactsRepo");
 const contactNotesRepo = require("../db/contactNotesRepo");
 const contactInsightsRepo = require("../db/contactInsightsRepo");
+const pipelineRepo = require("../db/pipelineRepo");
 
 const router = express.Router();
 const SOCIAL_CHANNELS = new Set(["facebook", "instagram"]);
 
-// Postgres' unique_violation code — thrown when a WhatsApp number collides
-// with an existing contact (see the UNIQUE constraint in schema.sql).
 const UNIQUE_VIOLATION = "23505";
 
 function isNonEmptyString(v) {
   return typeof v === "string" && v.trim().length > 0;
 }
 
-// A manually-entered WhatsApp number needs at least a plausible number of
-// digits once non-digit characters are stripped — loose on purpose (staff
-// may paste a number in any format: spaces, dashes, a leading "+", etc.),
-// just enough to catch an empty or obviously-wrong value before it's saved.
 function isPlausibleWhatsappNumber(v) {
   return isNonEmptyString(v) && contactsRepo.normalizeWhatsappNumber(v).length >= 8;
 }
 
-// GET /api/contacts?search=... — the full patient directory.
 router.get("/", async (req, res) => {
   try {
     const contacts = await contactsRepo.listContacts(req.query.search);
@@ -33,9 +27,6 @@ router.get("/", async (req, res) => {
   }
 });
 
-// GET /api/contacts/:id/insights — the latest lead state plus the structured
-// AI conversation summary. This is read on demand so Inbox/contact list calls
-// stay lightweight and opening the panel never triggers another AI request.
 router.get("/:id/insights", async (req, res) => {
   try {
     const insights = await contactInsightsRepo.getContactInsights(req.params.id);
@@ -47,7 +38,6 @@ router.get("/:id/insights", async (req, res) => {
   }
 });
 
-// GET /api/contacts/:id — one contact's profile.
 router.get("/:id", async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.id);
@@ -59,7 +49,10 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// POST /api/contacts — staff manually adds a patient who hasn't messaged in yet.
+// Restricted staff who are explicitly allowed to create contacts immediately
+// receive an owned pipeline lead for that contact. Without this, the contact
+// would disappear from their assigned-only directory as soon as the list
+// refreshes. Full-access admins keep the historical contact-only behavior.
 router.post("/", async (req, res) => {
   try {
     const { name, whatsappNumber } = req.body || {};
@@ -68,6 +61,12 @@ router.post("/", async (req, res) => {
     }
 
     const contact = await contactsRepo.createContact({ name: name?.trim(), whatsappNumber });
+    if (req.user?.permissions?.view_all_leads !== true) {
+      await pipelineRepo.createLead(
+        { contactId: contact.id, ownerUsername: req.user.username },
+        req.user.username
+      );
+    }
     res.status(201).json(contact);
   } catch (err) {
     if (err.code === UNIQUE_VIOLATION) {
@@ -78,9 +77,6 @@ router.post("/", async (req, res) => {
   }
 });
 
-// PATCH /api/contacts/:id — edit a contact. WhatsApp contacts may change their
-// number; Facebook/Instagram scoped identifiers are owned by Meta and must never
-// be run through the WhatsApp number normalizer.
 router.patch("/:id", async (req, res) => {
   try {
     const existing = await contactsRepo.getContactById(req.params.id);
@@ -120,7 +116,6 @@ router.patch("/:id", async (req, res) => {
   }
 });
 
-// GET /api/contacts/:id/notes — staff notes for one contact.
 router.get("/:id/notes", async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.id);
@@ -134,8 +129,6 @@ router.get("/:id/notes", async (req, res) => {
   }
 });
 
-// POST /api/contacts/:id/notes — add a note. Author is always the logged-in
-// staff member, never taken from the request body.
 router.post("/:id/notes", async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.id);
@@ -154,7 +147,6 @@ router.post("/:id/notes", async (req, res) => {
   }
 });
 
-// DELETE /api/contacts/:id/notes/:noteId
 router.delete("/:id/notes/:noteId", async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.id);
