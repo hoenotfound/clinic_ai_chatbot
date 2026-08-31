@@ -70,14 +70,33 @@ test("analytics concurrency limiter never exceeds the configured query cap", asy
   let active = 0;
   let maxActive = 0;
 
-  await Promise.all(
-    Array.from({ length: 12 }, (_, index) => run(async () => {
-      active += 1;
-      maxActive = Math.max(maxActive, active);
-      await new Promise((resolve) => setTimeout(resolve, 5 + (index % 3)));
-      active -= 1;
-    }))
+  const perform = (delay) => run(async () => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    active -= 1;
+  });
+
+  const firstWave = Array.from(
+    { length: ANALYTICS_QUERY_CONCURRENCY + 2 },
+    (_, index) => perform(8 + index)
+  );
+  await new Promise((resolve) => setTimeout(resolve, 2));
+  const lateArrivals = Array.from({ length: 7 }, (_, index) => perform(3 + (index % 3)));
+
+  await Promise.all([...firstWave, ...lateArrivals]);
+  assert.equal(maxActive, ANALYTICS_QUERY_CONCURRENCY);
+});
+
+test("analytics concurrency limiter releases capacity after a failed query", async () => {
+  const run = createConcurrencyLimiter(1);
+
+  await assert.rejects(
+    run(async () => {
+      throw new Error("query failed");
+    }),
+    /query failed/
   );
 
-  assert.equal(maxActive, ANALYTICS_QUERY_CONCURRENCY);
+  assert.equal(await run(async () => "next query"), "next query");
 });
