@@ -1,6 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const usersRepo = require("../db/usersRepo");
+const realtimeEvents = require("../utils/realtimeEvents");
 const { loginRateLimit, recordFailedAttempt, clearAttempts } = require("../middleware/loginRateLimit");
 const { requireAuth, requireCapability } = require("../middleware/requireAuth");
 const {
@@ -172,8 +173,6 @@ router.patch("/users/:userId", requireAuth, requireCapability("manage_users"), a
         return res.status(400).json({ error: "Role must be admin or sales." });
       }
       updates.role = req.body.role;
-      // Switching role should adopt that role's defaults unless the same request
-      // explicitly supplies capability overrides.
       if (!Object.prototype.hasOwnProperty.call(req.body || {}, "permissions")) {
         updates.permissions = {};
       }
@@ -203,6 +202,16 @@ router.patch("/users/:userId", requireAuth, requireCapability("manage_users"), a
     if (safetyError) return res.status(400).json({ error: safetyError });
 
     const updated = await usersRepo.updateUser(userId, updates);
+    if (
+      Object.prototype.hasOwnProperty.call(updates, "role") ||
+      Object.prototype.hasOwnProperty.call(updates, "permissions") ||
+      Object.prototype.hasOwnProperty.call(updates, "isActive")
+    ) {
+      // SSE permissions are snapshotted when the connection opens. Force the
+      // browser to reconnect so revoked/global access cannot linger on an old
+      // realtime connection after an administrator changes this account.
+      realtimeEvents.disconnectUser(userId);
+    }
     res.json({ user: presentUser(updated) });
   } catch (err) {
     console.error("Failed to update staff account:", err);
@@ -230,6 +239,7 @@ router.delete("/users/:userId", requireAuth, requireCapability("manage_users"), 
     if (safetyError) return res.status(400).json({ error: safetyError });
 
     const removed = await usersRepo.deactivateUser(userId);
+    realtimeEvents.disconnectUser(userId);
     res.json({ removed: true, user: presentUser(removed) });
   } catch (err) {
     console.error("Failed to remove staff access:", err);
