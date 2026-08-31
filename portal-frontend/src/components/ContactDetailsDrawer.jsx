@@ -2,8 +2,23 @@ import { useEffect } from "react";
 import ContactAvatar from "./ContactAvatar";
 import ContactInsights from "./ContactInsights";
 
+function isSocialContact(contact) {
+  return contact?.channel === "facebook" || contact?.channel === "instagram";
+}
+
+function channelLabel(channel) {
+  if (channel === "facebook") return "Facebook Messenger";
+  if (channel === "instagram") return "Instagram";
+  return "WhatsApp";
+}
+
 function formatPhone(number) {
   return number ? `+${number}` : "";
+}
+
+function contactIdentifier(contact) {
+  if (isSocialContact(contact)) return channelLabel(contact.channel);
+  return formatPhone(contact?.whatsapp_number || contact?.whatsappNumber);
 }
 
 function displayName(contact) {
@@ -11,6 +26,8 @@ function displayName(contact) {
     contact?.name ||
     contact?.whatsapp_profile_name ||
     contact?.whatsappProfileName ||
+    (contact?.channel === "facebook" ? "Facebook user" : null) ||
+    (contact?.channel === "instagram" ? "Instagram user" : null) ||
     formatPhone(contact?.whatsapp_number || contact?.whatsappNumber) ||
     "Contact"
   );
@@ -30,7 +47,6 @@ export default function ContactDetailsDrawer({ open, contact, onClose }) {
 
   if (!open || !contact || !contactId) return null;
 
-  const number = contact.whatsapp_number || contact.whatsappNumber;
   const photo = contact.photo_url || contact.photoUrl;
 
   return (
@@ -47,7 +63,7 @@ export default function ContactDetailsDrawer({ open, contact, onClose }) {
             <ContactAvatar src={photo} channel={contact.channel} size={46} />
             <div className="min-w-0">
               <h2 className="truncate font-display text-base font-bold">{displayName(contact)}</h2>
-              <p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">{formatPhone(number)}</p>
+              <p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">{contactIdentifier(contact)}</p>
             </div>
           </div>
           <button

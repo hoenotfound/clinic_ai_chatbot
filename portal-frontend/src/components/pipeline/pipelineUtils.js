@@ -18,8 +18,38 @@ export const CONSENT_OPTIONS = [
   ["opted_out", "Opted out"],
 ];
 
-export function displayName(lead) {
-  return lead.name || lead.whatsapp_profile_name || `+${lead.whatsapp_number}`;
+export function isSocialContact(contact) {
+  return contact?.channel === "facebook" || contact?.channel === "instagram";
+}
+
+export function channelLabel(channel) {
+  if (channel === "facebook") return "Facebook Messenger";
+  if (channel === "instagram") return "Instagram";
+  return "WhatsApp";
+}
+
+export function formatPhone(number) {
+  if (!number) return "";
+  const text = String(number).trim();
+  if (!text) return "";
+  return text.startsWith("+") ? text : `+${text}`;
+}
+
+export function contactIdentifier(contact) {
+  if (isSocialContact(contact)) return channelLabel(contact.channel);
+  return formatPhone(contact?.whatsapp_number || contact?.whatsappNumber);
+}
+
+export function displayName(contact) {
+  return (
+    contact?.name ||
+    contact?.whatsapp_profile_name ||
+    contact?.whatsappProfileName ||
+    (contact?.channel === "facebook" ? "Facebook user" : null) ||
+    (contact?.channel === "instagram" ? "Instagram user" : null) ||
+    formatPhone(contact?.whatsapp_number || contact?.whatsappNumber) ||
+    "Contact"
+  );
 }
 
 export function formatMoney(value) {

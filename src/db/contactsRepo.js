@@ -1,8 +1,10 @@
 const { pool } = require("./db");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("../services/telegramImmediateAlertService");
+const metaMessaging = require("../services/metaMessagingService");
 
 const SOCIAL_CHANNELS = new Set(["facebook", "instagram"]);
+const PROFILE_ENRICHMENT_WAIT_MS = 1200;
 
 function normalizeWhatsappNumber(input) {
   let digits = String(input || "").replace(/[^\d]/g, "");
@@ -53,6 +55,112 @@ function notifyTelegram(promise, label, contactId) {
   Promise.resolve(promise).catch((err) => {
     console.error(`Telegram ${label} alert failed for contact ${contactId}:`, err);
   });
+}
+
+function socialChannelLabel(channel) {
+  if (channel === "facebook") return "Facebook Messenger";
+  if (channel === "instagram") return "Instagram";
+  return null;
+}
+
+function socialFallbackName(channel) {
+  if (channel === "facebook") return "Facebook user";
+  if (channel === "instagram") return "Instagram user";
+  return null;
+}
+
+function logSocialEnrichmentError(row, err) {
+  console.warn(
+    `Failed to enrich ${row.channel} contact ${row.channel_user_id}:`,
+    err?.message || err
+  );
+}
+
+async function persistSocialProfile(row, profile) {
+  const profileName = profile?.profileName || null;
+  const profilePhoto = profile?.photoUrl || null;
+  if (!profileName && !profilePhoto) return row;
+
+  const result = await pool.query(
+    `UPDATE contacts
+     SET whatsapp_profile_name = COALESCE($1, whatsapp_profile_name),
+         photo_url = COALESCE($2, photo_url),
+         updated_at = now()
+     WHERE id = $3
+       AND (
+         ($1 IS NOT NULL AND whatsapp_profile_name IS DISTINCT FROM $1)
+         OR ($2 IS NOT NULL AND photo_url IS DISTINCT FROM $2)
+       )
+     RETURNING whatsapp_profile_name, photo_url, updated_at`,
+    [profileName, profilePhoto, row.contact_id || row.id]
+  );
+
+  const updated = result.rows[0];
+  if (!updated) return row;
+  publishContactChange(row.contact_id || row.id);
+  return { ...row, ...updated };
+}
+
+async function hydrateSocialContactRow(row) {
+  if (!row || !SOCIAL_CHANNELS.has(row.channel) || !row.channel_user_id) {
+    return row;
+  }
+
+  try {
+    // Always ask the cached Meta profile helper for social contacts. Its six-hour
+    // cache makes normal reads cheap, while still allowing expiring Instagram
+    // profile-photo URLs and changed platform names to be refreshed over time.
+    const profilePromise = metaMessaging.fetchUserProfile(
+      row.channel,
+      row.channel_user_id
+    );
+
+    let timer = null;
+    const quickResult = await Promise.race([
+      profilePromise.then((profile) => ({ timedOut: false, profile })),
+      new Promise((resolve) => {
+        timer = setTimeout(
+          () => resolve({ timedOut: true, profile: null }),
+          PROFILE_ENRICHMENT_WAIT_MS
+        );
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+
+    if (quickResult.timedOut) {
+      // Profile data is presentation-only. Never hold the Inbox/Contacts API
+      // open for Meta longer than a short grace period. If Meta finishes later,
+      // persist the result and publish an Inbox refresh event in the background.
+      profilePromise
+        .then((profile) => persistSocialProfile(row, profile))
+        .catch((err) => logSocialEnrichmentError(row, err));
+      return row;
+    }
+
+    return await persistSocialProfile(row, quickResult.profile);
+  } catch (err) {
+    // Profile enrichment must never stop the Inbox/Contacts APIs from loading.
+    logSocialEnrichmentError(row, err);
+    return row;
+  }
+}
+
+async function hydrateSocialContactRows(rows) {
+  return Promise.all((rows || []).map((row) => hydrateSocialContactRow(row)));
+}
+
+function presentPortalContact(row) {
+  if (!SOCIAL_CHANNELS.has(row?.channel)) return row;
+
+  return {
+    ...row,
+    // whatsapp_number is an internal NOT NULL compatibility key for social
+    // contacts (for example "facebook:<PSID>"). Never expose that storage key
+    // to the staff portal as though it were a phone number.
+    whatsapp_number: socialChannelLabel(row.channel),
+    whatsapp_profile_name:
+      row.whatsapp_profile_name || socialFallbackName(row.channel),
+  };
 }
 
 async function reconcileLegacyWhatsappContact(normalizedNumber, profileName) {
@@ -181,10 +289,12 @@ async function getContactById(id) {
 
 async function updateContactName(id, name) {
   const result = await pool.query(
-    "UPDATE contacts SET name = $1, updated_at = now() WHERE id = $2 RETURNING id",
-    [name, id]
+    "UPDATE contacts SET name = $1, updated_at = now() WHERE id = $2 RETURNING *",
+    [name || null, id]
   );
-  if (result.rows[0]) publishContactChange(result.rows[0].id);
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id);
+  return updated;
 }
 
 async function listContacts(search) {
@@ -206,7 +316,8 @@ async function listContacts(search) {
     `,
     params
   );
-  return result.rows;
+  const hydrated = await hydrateSocialContactRows(result.rows);
+  return hydrated.map((row) => presentPortalContact(row));
 }
 
 async function createContact({ name, whatsappNumber }) {
@@ -273,7 +384,8 @@ async function listConversations() {
     ORDER BY c.needs_attention DESC, m.created_at DESC
     `
   );
-  return result.rows;
+  const hydrated = await hydrateSocialContactRows(result.rows);
+  return hydrated.map((row) => presentPortalContact(row));
 }
 
 async function takeOver(id, staffUsername) {
@@ -435,6 +547,7 @@ module.exports = {
   createContact,
   updateContact,
   normalizeWhatsappNumber,
+  presentPortalContact,
   takeOver,
   returnToAi,
   setAttention,

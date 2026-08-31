@@ -1,5 +1,11 @@
 const GRAPH_API_VERSION = "v26.0";
 const MAX_REMOTE_MEDIA_BYTES = 16 * 1024 * 1024;
+const PROFILE_FETCH_TIMEOUT_MS = 5000;
+const PROFILE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const PROFILE_FAILURE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+const profileCache = new Map();
+const profileRequests = new Map();
 
 function channelLabel(channel) {
   if (channel === "facebook") return "Facebook Messenger";
@@ -37,6 +43,106 @@ function extractErrorText(data, fallback) {
     data?.message ||
     fallback
   );
+}
+
+function cleanProfileValue(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text || null;
+}
+
+function cachedProfile(key) {
+  const cached = profileCache.get(key);
+  if (!cached) return { hit: false, value: null };
+  if (cached.expiresAt <= Date.now()) {
+    profileCache.delete(key);
+    return { hit: false, value: null };
+  }
+  return { hit: true, value: cached.value };
+}
+
+/**
+ * Fetches the customer-facing profile information for a Messenger PSID or
+ * Instagram-scoped user ID. Webhook message payloads only contain the scoped
+ * ID, so this lookup is what lets the portal show a real name/profile photo
+ * instead of exposing the internal "facebook:<id>" / "instagram:<id>" key.
+ *
+ * Lookups are cached and fail soft. A temporary Meta/permission error must not
+ * block the Inbox or message processing path.
+ */
+async function fetchUserProfile(channel, userId) {
+  if (channel !== "facebook" && channel !== "instagram") return null;
+
+  const externalId = String(userId || "").trim();
+  if (!externalId) return null;
+
+  const config = getChannelConfig(channel);
+  if (!config.token || !config.baseUrl) return null;
+
+  const key = `${channel}:${externalId}`;
+  const cached = cachedProfile(key);
+  if (cached.hit) return cached.value;
+  if (profileRequests.has(key)) return profileRequests.get(key);
+
+  const request = (async () => {
+    const fields = channel === "facebook"
+      ? "first_name,last_name,profile_pic"
+      : "name,username,profile_pic";
+    const url =
+      `${config.baseUrl}/${GRAPH_API_VERSION}/${encodeURIComponent(externalId)}` +
+      `?fields=${encodeURIComponent(fields)}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), PROFILE_FETCH_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${config.token}` },
+        signal: controller.signal,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        console.warn(
+          `[${channelLabel(channel)}] Failed to fetch user profile ${externalId}: ` +
+            extractErrorText(data, `HTTP ${response.status}`)
+        );
+        return null;
+      }
+
+      const firstName = cleanProfileValue(data?.first_name);
+      const lastName = cleanProfileValue(data?.last_name);
+      const fullFacebookName = [firstName, lastName].filter(Boolean).join(" ") || null;
+      const username = cleanProfileValue(data?.username);
+      const profileName = channel === "facebook"
+        ? cleanProfileValue(data?.name) || fullFacebookName
+        : cleanProfileValue(data?.name) || username;
+      const photoUrl =
+        cleanProfileValue(data?.profile_pic) ||
+        cleanProfileValue(data?.profile_picture_url);
+
+      if (!profileName && !photoUrl && !username) return null;
+      return { profileName, photoUrl, username };
+    } catch (err) {
+      const reason = err?.name === "AbortError" ? "request timed out" : err?.message || String(err);
+      console.warn(
+        `[${channelLabel(channel)}] Failed to fetch user profile ${externalId}: ${reason}`
+      );
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  })();
+
+  profileRequests.set(key, request);
+  try {
+    const profile = await request;
+    profileCache.set(key, {
+      value: profile,
+      expiresAt:
+        Date.now() + (profile ? PROFILE_CACHE_TTL_MS : PROFILE_FAILURE_CACHE_TTL_MS),
+    });
+    return profile;
+  } finally {
+    profileRequests.delete(key);
+  }
 }
 
 async function postMessage(channel, recipientId, message) {
@@ -373,6 +479,7 @@ async function downloadMedia(url) {
 module.exports = {
   GRAPH_API_VERSION,
   configured,
+  fetchUserProfile,
   sendText,
   sendImage,
   parseIncomingMessages,
