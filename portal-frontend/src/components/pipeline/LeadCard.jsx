@@ -1,3 +1,4 @@
+import { useAuth } from "../../context/AuthContext";
 import ContactAvatar from "../ContactAvatar";
 import {
   displayName,
@@ -10,14 +11,16 @@ import {
 } from "./pipelineUtils";
 
 export default function LeadCard({ lead, now, noReplyHours, onOpen, onDragStart }) {
+  const { permissions } = useAuth();
   const overdue = isOverdue(lead, now);
   const noReply = isNoReply(lead, noReplyHours, now);
+  const canMoveLead = permissions.manage_assigned_leads === true && typeof onDragStart === "function";
 
   return (
     <button
       type="button"
-      draggable
-      onDragStart={(event) => onDragStart(event, lead)}
+      draggable={canMoveLead}
+      onDragStart={canMoveLead ? (event) => onDragStart(event, lead) : undefined}
       onClick={() => onOpen(lead.id)}
       className="w-full rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--color-primary)]/40 hover:shadow-md active:translate-y-0"
     >

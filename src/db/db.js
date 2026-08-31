@@ -29,9 +29,14 @@ async function initSchema() {
     path.join(__dirname, "socialChannelsSchema.sql"),
     "utf8"
   );
+  const accessControlSchema = fs.readFileSync(
+    path.join(__dirname, "accessControlSchema.sql"),
+    "utf8"
+  );
   await pool.query(schema);
   await pool.query(telegramAlertsSchema);
   await pool.query(socialChannelsSchema);
+  await pool.query(accessControlSchema);
 }
 
 module.exports = { pool, initSchema };

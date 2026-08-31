@@ -1,6 +1,7 @@
 /**
- * Usage: node scripts/createUser.js <username> <password>
- * Creates a staff login for the management portal.
+ * Usage: node scripts/createUser.js <username> <password> [sales|admin]
+ * Creates a staff login for the management portal. New CLI accounts default
+ * to Sales, matching the safer default used by Settings > Team & Access.
  */
 require("dotenv").config();
 const bcrypt = require("bcryptjs");
@@ -8,15 +9,16 @@ const usersRepo = require("../src/db/usersRepo");
 
 const { pool, initSchema } = require("../src/db/db");
 
-const [, , username, password] = process.argv;
+const [, , username, password, requestedRole = "sales"] = process.argv;
+const role = String(requestedRole).toLowerCase();
 
-if (!username || !password) {
-  console.error("Usage: node scripts/createUser.js <username> <password>");
+if (!username || !password || !["sales", "admin"].includes(role)) {
+  console.error("Usage: node scripts/createUser.js <username> <password> [sales|admin]");
   process.exit(1);
 }
 
 async function main() {
-  await initSchema(); // ensures the users table exists if this is a fresh DB
+  await initSchema();
 
   const existing = await usersRepo.getUserByUsername(username);
   if (existing) {
@@ -25,8 +27,14 @@ async function main() {
   }
 
   const passwordHash = bcrypt.hashSync(password, 10);
-  await usersRepo.createUser(username, passwordHash);
-  console.log(`✅ Created staff login "${username}". They can now log into the portal.`);
+  await usersRepo.createUser({
+    username,
+    displayName: username,
+    passwordHash,
+    role,
+    permissions: {},
+  });
+  console.log(`✅ Created ${role} portal login "${username}".`);
   await pool.end();
 }
 

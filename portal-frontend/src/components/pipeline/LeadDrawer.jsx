@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../../api";
+import { useAuth } from "../../context/AuthContext";
 import ContactAvatar from "../ContactAvatar";
 import Spinner from "../Spinner";
 import {
@@ -16,11 +17,14 @@ import {
 } from "./pipelineUtils";
 
 const inputClass =
-  "w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15";
+  "w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15 disabled:cursor-not-allowed disabled:bg-[var(--color-bg)] disabled:text-[var(--color-text-muted)]";
 const labelClass = "mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]";
 
 export default function LeadDrawer({ lead, stages, branches, owners, services, now, noReplyHours, onClose, onSaved, onToast }) {
   const navigate = useNavigate();
+  const { permissions } = useAuth();
+  const canManageLeads = permissions.manage_assigned_leads === true;
+  const canAssignLeads = permissions.manage_lead_assignment === true;
   const [form, setForm] = useState(() => formFromLead(lead));
   const [dirtyFields, setDirtyFields] = useState(() => new Set());
   const [saving, setSaving] = useState(false);
@@ -45,8 +49,6 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, n
   }, [lead.id, onToast]);
 
   useEffect(() => {
-    // Keep untouched controls current when another staff member or automation
-    // changes the lead. Locally edited fields stay intact until they are saved.
     const latest = formFromLead(lead);
     setForm((current) => {
       const merged = { ...current };
@@ -69,15 +71,18 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, n
   );
 
   function markDirty(...keys) {
+    if (!canManageLeads) return;
     setDirtyFields((current) => new Set([...current, ...keys]));
   }
 
   function update(key, value) {
+    if (!canManageLeads) return;
     setForm((current) => ({ ...current, [key]: value }));
     markDirty(key);
   }
 
   function updateTemperature(value) {
+    if (!canManageLeads) return;
     setForm((current) => ({
       ...current,
       temperature: value,
@@ -88,6 +93,7 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, n
   }
 
   function updateTemperatureLock(allowAutomatic) {
+    if (!canManageLeads) return;
     setForm((current) => ({
       ...current,
       temperatureLocked: !allowAutomatic,
@@ -97,6 +103,7 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, n
   }
 
   function updateAppointmentStatus(value) {
+    if (!canManageLeads) return;
     const stageKey = value === "set" ? "appointment_set" : value === "visited" ? "visited" : null;
     const matchingStage = stageKey
       ? stages.find((stage) => stage.system_key === stageKey)
@@ -114,6 +121,7 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, n
 
   async function handleSave(event) {
     event.preventDefault();
+    if (!canManageLeads || dirtyFields.size === 0) return;
     setSaving(true);
     try {
       const updated = await api.updateLead(
@@ -134,7 +142,7 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, n
 
   async function handleAddNote() {
     const content = note.trim();
-    if (!content || savingNote) return;
+    if (!canManageLeads || !content || savingNote) return;
     setSavingNote(true);
     try {
       const activity = await api.addLeadNote(lead.id, content);
@@ -161,7 +169,10 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, n
           <div className="flex min-w-0 items-center gap-3">
             <ContactAvatar src={lead.photo_url} channel={lead.channel} size={42} />
             <div className="min-w-0">
-              <h2 className="truncate font-display text-lg font-bold">{displayName(lead)}</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="truncate font-display text-lg font-bold">{displayName(lead)}</h2>
+                {!canManageLeads && <span className="shrink-0 rounded-full bg-[var(--color-bg)] px-2 py-1 text-[9px] font-bold uppercase text-[var(--color-text-muted)]">View only</span>}
+              </div>
               <p className="truncate text-xs text-[var(--color-text-muted)]">{contactIdentifier(lead)}</p>
             </div>
           </div>
@@ -183,116 +194,133 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, n
           </div>
 
           <form onSubmit={handleSave} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-            <div className="mb-4 flex items-center justify-between">
+            <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <h3 className="font-display text-base font-bold">Lead details</h3>
-                <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">Update ownership, progress and the next action.</p>
+                <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+                  {canManageLeads ? "Update progress and the next action." : "You can view this lead, but editing is disabled for your account."}
+                </p>
               </div>
-              <span className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-white" style={{ backgroundColor: selectedStage?.color || lead.stage_color }}>
+              <span className="shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-white" style={{ backgroundColor: selectedStage?.color || lead.stage_color }}>
                 {selectedStage?.name || lead.stage_name}
               </span>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Pipeline stage">
-                <select className={inputClass} value={form.stageId} onChange={(event) => update("stageId", event.target.value)}>
-                  {stages.map((stage) => <option key={stage.id} value={stage.id}>{stage.name}</option>)}
-                </select>
-              </Field>
-              <Field label="Lead temperature">
-                <select className={inputClass} value={form.temperature} onChange={(event) => updateTemperature(event.target.value)}>
-                  {TEMPERATURE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
-                <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg bg-[var(--color-bg)] px-2.5 py-2">
-                  <input
-                    type="checkbox"
-                    checked={!form.temperatureLocked}
-                    onChange={(event) => updateTemperatureLock(event.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]/25"
-                  />
-                  <span className="text-[11px] leading-4 text-[var(--color-text-muted)]">
-                    Allow rules and AI scoring to update this temperature
-                  </span>
-                </label>
-                <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
-                  {form.temperatureLocked
-                    ? "Staff control is on. Automatic scoring cannot change it."
-                    : `Automatic updates are allowed. Current source: ${temperatureSourceLabel(form.temperatureSource)}.`}
-                </p>
-              </Field>
-              <Field label="Branch">
-                <select className={inputClass} value={form.branchName} onChange={(event) => update("branchName", event.target.value)}>
-                  <option value="">Unassigned</option>
-                  {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
-                </select>
-              </Field>
-              <Field label="Lead owner">
-                <select className={inputClass} value={form.ownerUsername} onChange={(event) => update("ownerUsername", event.target.value)}>
-                  <option value="">No owner</option>
-                  {owners.map((owner) => <option key={owner} value={owner}>{owner}</option>)}
-                </select>
-              </Field>
-              <Field label="Treatment interest">
-                <input className={inputClass} list="pipeline-services" value={form.treatmentInterest} onChange={(event) => update("treatmentInterest", event.target.value)} placeholder="e.g. HIFU" />
-                <datalist id="pipeline-services">{services.map((service) => <option key={service} value={service} />)}</datalist>
-              </Field>
-              <Field label="Estimated value (RM)">
-                <input className={inputClass} type="number" min="0" step="0.01" value={form.estimatedValue} onChange={(event) => update("estimatedValue", event.target.value)} placeholder="0.00" />
-              </Field>
-              <Field label="Appointment status">
-                <select className={inputClass} value={form.appointmentStatus} onChange={(event) => updateAppointmentStatus(event.target.value)}>
-                  {APPOINTMENT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
-              </Field>
-              <Field label="Appointment date and time">
-                <input className={inputClass} type="datetime-local" value={form.appointmentAt} onChange={(event) => update("appointmentAt", event.target.value)} />
-              </Field>
-              <Field label="Next follow-up">
-                <input className={inputClass} type="datetime-local" value={form.nextFollowUpAt} onChange={(event) => update("nextFollowUpAt", event.target.value)} />
-              </Field>
-              <Field label="Marketing consent">
-                <select className={inputClass} value={form.marketingConsent} onChange={(event) => update("marketingConsent", event.target.value)}>
-                  {CONSENT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
-              </Field>
-              <Field label="Lead source">
-                <input className={inputClass} value={form.source} onChange={(event) => update("source", event.target.value)} placeholder="WhatsApp, Meta Ad, Referral…" />
-              </Field>
-              <Field label="Campaign">
-                <input className={inputClass} value={form.campaignName} onChange={(event) => update("campaignName", event.target.value)} placeholder="Optional campaign name" />
-              </Field>
-            </div>
-
-            {selectedStage?.stage_type === "lost" && (
-              <div className="mt-4">
-                <Field label="Lost reason">
-                  <input className={inputClass} value={form.lostReason} onChange={(event) => update("lostReason", event.target.value)} placeholder="No budget, unreachable, chose another clinic…" />
+            <fieldset disabled={!canManageLeads} className="disabled:opacity-90">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Pipeline stage">
+                  <select className={inputClass} value={form.stageId} onChange={(event) => update("stageId", event.target.value)}>
+                    {stages.map((stage) => <option key={stage.id} value={stage.id}>{stage.name}</option>)}
+                  </select>
+                </Field>
+                <Field label="Lead temperature">
+                  <select className={inputClass} value={form.temperature} onChange={(event) => updateTemperature(event.target.value)}>
+                    {TEMPERATURE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                  <label className="mt-2 flex items-start gap-2 rounded-lg bg-[var(--color-bg)] px-2.5 py-2">
+                    <input
+                      type="checkbox"
+                      checked={!form.temperatureLocked}
+                      onChange={(event) => updateTemperatureLock(event.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]/25"
+                    />
+                    <span className="text-[11px] leading-4 text-[var(--color-text-muted)]">
+                      Allow rules and AI scoring to update this temperature
+                    </span>
+                  </label>
+                  <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+                    {form.temperatureLocked
+                      ? "Staff control is on. Automatic scoring cannot change it."
+                      : `Automatic updates are allowed. Current source: ${temperatureSourceLabel(form.temperatureSource)}.`}
+                  </p>
+                </Field>
+                <Field label="Branch">
+                  <select className={inputClass} value={form.branchName} onChange={(event) => update("branchName", event.target.value)}>
+                    <option value="">Unassigned</option>
+                    {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
+                  </select>
+                </Field>
+                <Field label="Lead owner">
+                  <select
+                    className={inputClass}
+                    value={form.ownerUsername}
+                    disabled={!canManageLeads || !canAssignLeads}
+                    onChange={(event) => update("ownerUsername", event.target.value)}
+                    title={!canAssignLeads ? "Lead assignment is disabled for this account." : undefined}
+                  >
+                    <option value="">No owner</option>
+                    {owners.map((owner) => <option key={owner} value={owner}>{owner}</option>)}
+                  </select>
+                  {canManageLeads && !canAssignLeads && <p className="mt-1.5 text-[10px] text-[var(--color-text-muted)]">Only staff with Assign leads permission can change ownership.</p>}
+                </Field>
+                <Field label="Treatment interest">
+                  <input className={inputClass} list="pipeline-services" value={form.treatmentInterest} onChange={(event) => update("treatmentInterest", event.target.value)} placeholder="e.g. HIFU" />
+                  <datalist id="pipeline-services">{services.map((service) => <option key={service} value={service} />)}</datalist>
+                </Field>
+                <Field label="Estimated value (RM)">
+                  <input className={inputClass} type="number" min="0" step="0.01" value={form.estimatedValue} onChange={(event) => update("estimatedValue", event.target.value)} placeholder="0.00" />
+                </Field>
+                <Field label="Appointment status">
+                  <select className={inputClass} value={form.appointmentStatus} onChange={(event) => updateAppointmentStatus(event.target.value)}>
+                    {APPOINTMENT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Appointment date and time">
+                  <input className={inputClass} type="datetime-local" value={form.appointmentAt} onChange={(event) => update("appointmentAt", event.target.value)} />
+                </Field>
+                <Field label="Next follow-up">
+                  <input className={inputClass} type="datetime-local" value={form.nextFollowUpAt} onChange={(event) => update("nextFollowUpAt", event.target.value)} />
+                </Field>
+                <Field label="Marketing consent">
+                  <select className={inputClass} value={form.marketingConsent} onChange={(event) => update("marketingConsent", event.target.value)}>
+                    {CONSENT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Lead source">
+                  <input className={inputClass} value={form.source} onChange={(event) => update("source", event.target.value)} placeholder="WhatsApp, Meta Ad, Referral…" />
+                </Field>
+                <Field label="Campaign">
+                  <input className={inputClass} value={form.campaignName} onChange={(event) => update("campaignName", event.target.value)} placeholder="Optional campaign name" />
                 </Field>
               </div>
+
+              {selectedStage?.stage_type === "lost" && (
+                <div className="mt-4">
+                  <Field label="Lost reason">
+                    <input className={inputClass} value={form.lostReason} onChange={(event) => update("lostReason", event.target.value)} placeholder="No budget, unreachable, chose another clinic…" />
+                  </Field>
+                </div>
+              )}
+
+              <div className="mt-4">
+                <Field label="Lead notes">
+                  <textarea className={`${inputClass} resize-y`} rows={3} value={form.notes} onChange={(event) => update("notes", event.target.value)} placeholder="Short summary visible to staff" />
+                </Field>
+              </div>
+            </fieldset>
+
+            {canManageLeads && (
+              <div className="mt-5 flex justify-end">
+                <button type="submit" disabled={saving || dirtyFields.size === 0} className="inline-flex items-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50">
+                  {saving && <Spinner className="h-4 w-4" />}
+                  {saving ? "Saving…" : "Save changes"}
+                </button>
+              </div>
             )}
-
-            <div className="mt-4">
-              <Field label="Lead notes">
-                <textarea className={`${inputClass} resize-y`} rows={3} value={form.notes} onChange={(event) => update("notes", event.target.value)} placeholder="Short summary visible to staff" />
-              </Field>
-            </div>
-
-            <div className="mt-5 flex justify-end">
-              <button type="submit" disabled={saving || dirtyFields.size === 0} className="inline-flex items-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50">
-                {saving && <Spinner className="h-4 w-4" />}
-                {saving ? "Saving…" : "Save changes"}
-              </button>
-            </div>
           </form>
 
           <section className="mt-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
             <h3 className="font-display text-base font-bold">Activity</h3>
-            <div className="mt-3 flex gap-2">
-              <input className={inputClass} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Add an internal note…" onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); handleAddNote(); } }} />
-              <button type="button" onClick={handleAddNote} disabled={!note.trim() || savingNote} className="shrink-0 rounded-xl border border-[var(--color-border)] px-3.5 text-sm font-semibold hover:bg-[var(--color-bg)] disabled:opacity-50">
-                {savingNote ? "Saving…" : "Add"}
-              </button>
-            </div>
+            {canManageLeads ? (
+              <div className="mt-3 flex gap-2">
+                <input className={inputClass} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Add an internal note…" onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); handleAddNote(); } }} />
+                <button type="button" onClick={handleAddNote} disabled={!note.trim() || savingNote} className="shrink-0 rounded-xl border border-[var(--color-border)] px-3.5 text-sm font-semibold hover:bg-[var(--color-bg)] disabled:opacity-50">
+                  {savingNote ? "Saving…" : "Add"}
+                </button>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-[var(--color-text-muted)]">Activity history is available to view; adding notes is disabled for this account.</p>
+            )}
 
             {activities === null ? (
               <div className="flex justify-center py-8"><Spinner className="h-5 w-5 text-[var(--color-text-muted)]" /></div>

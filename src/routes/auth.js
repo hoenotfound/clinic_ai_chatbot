@@ -1,9 +1,67 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const usersRepo = require("../db/usersRepo");
+const realtimeEvents = require("../utils/realtimeEvents");
 const { loginRateLimit, recordFailedAttempt, clearAttempts } = require("../middleware/loginRateLimit");
+const { requireAuth, requireCapability } = require("../middleware/requireAuth");
+const {
+  effectivePermissions,
+  normalizePermissionOverrides,
+  presentUser,
+  publicPermissionDefinitions,
+  roleDefaults,
+} = require("../utils/permissions");
 
 const router = express.Router();
+const USERNAME_RE = /^[A-Za-z0-9._-]{3,60}$/;
+const ROLES = new Set(["admin", "sales"]);
+
+function validateDisplayName(value) {
+  const displayName = typeof value === "string" ? value.trim() : "";
+  return displayName && displayName.length <= 100 ? displayName : null;
+}
+
+function validatePassword(value, { optional = false } = {}) {
+  if ((value == null || value === "") && optional) return null;
+  if (typeof value !== "string" || value.length < 8 || value.length > 200) return false;
+  return value;
+}
+
+function proposedUser(users, targetId, updates) {
+  return users.map((user) => {
+    if (Number(user.id) !== Number(targetId)) return user;
+    return {
+      ...user,
+      display_name: Object.prototype.hasOwnProperty.call(updates, "displayName")
+        ? updates.displayName
+        : user.display_name,
+      role: Object.prototype.hasOwnProperty.call(updates, "role") ? updates.role : user.role,
+      permissions: Object.prototype.hasOwnProperty.call(updates, "permissions")
+        ? updates.permissions
+        : user.permissions,
+      is_active: Object.prototype.hasOwnProperty.call(updates, "isActive")
+        ? updates.isActive
+        : user.is_active,
+    };
+  });
+}
+
+function validateAdminSafety(users) {
+  const activeUsers = users.filter((user) => user.is_active !== false);
+  if (!activeUsers.some((user) => user.role === "admin")) {
+    return "At least one active admin account is required.";
+  }
+  if (!activeUsers.some((user) => effectivePermissions(user).manage_users === true)) {
+    return "At least one active account must be able to manage team access.";
+  }
+  return null;
+}
+
+function mutationError(code, message) {
+  const err = new Error(message);
+  err.code = code;
+  return err;
+}
 
 router.post("/login", loginRateLimit, async (req, res) => {
   const { username, password } = req.body || {};
@@ -13,7 +71,7 @@ router.post("/login", loginRateLimit, async (req, res) => {
 
   try {
     const user = await usersRepo.getUserByUsername(username);
-    if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+    if (!user || user.is_active === false || !bcrypt.compareSync(password, user.password_hash)) {
       recordFailedAttempt(req);
       return res.status(401).json({ error: "Invalid username or password." });
     }
@@ -21,7 +79,8 @@ router.post("/login", loginRateLimit, async (req, res) => {
     clearAttempts(req);
     req.session.userId = user.id;
     req.session.username = user.username;
-    return res.json({ username: user.username });
+    req.session.authVersion = Number(user.auth_version) || 0;
+    return res.json({ username: user.username, user: presentUser(user) });
   } catch (err) {
     console.error("Login failed:", err);
     return res.status(500).json({ error: "Something went wrong logging in." });
@@ -33,9 +92,194 @@ router.post("/logout", (req, res) => {
   res.json({ ok: true });
 });
 
-router.get("/me", (req, res) => {
-  if (!req.session?.userId) return res.status(401).json({ error: "Not logged in." });
-  res.json({ username: req.session.username });
+router.get("/me", requireAuth, (req, res) => {
+  res.json({ username: req.user.username, user: presentUser(req.user) });
+});
+
+router.get("/users", requireAuth, requireCapability("manage_users"), async (req, res) => {
+  try {
+    const users = await usersRepo.listUsers();
+    res.json({
+      users: users.map(presentUser),
+      permissionDefinitions: publicPermissionDefinitions(),
+      roleDefaults: {
+        admin: roleDefaults("admin"),
+        sales: roleDefaults("sales"),
+      },
+      currentUserId: req.user.id,
+    });
+  } catch (err) {
+    console.error("Failed to list staff accounts:", err);
+    res.status(500).json({ error: "Something went wrong loading team access." });
+  }
+});
+
+router.post("/users", requireAuth, requireCapability("manage_users"), async (req, res) => {
+  const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
+  const displayName = validateDisplayName(req.body?.displayName || username);
+  const password = validatePassword(req.body?.password);
+  const role = req.body?.role || "sales";
+
+  if (!USERNAME_RE.test(username)) {
+    return res.status(400).json({
+      error: "Username must be 3–60 characters using letters, numbers, dots, dashes or underscores.",
+    });
+  }
+  if (!displayName) {
+    return res.status(400).json({ error: "Display name is required and must be 100 characters or fewer." });
+  }
+  if (!password) {
+    return res.status(400).json({ error: "Password must be at least 8 characters." });
+  }
+  if (!ROLES.has(role)) {
+    return res.status(400).json({ error: "Role must be admin or sales." });
+  }
+
+  try {
+    if (await usersRepo.getUserByUsername(username)) {
+      return res.status(409).json({ error: "That username is already in use." });
+    }
+
+    const created = await usersRepo.createUser({
+      username,
+      displayName,
+      passwordHash: bcrypt.hashSync(password, 10),
+      role,
+      permissions: normalizePermissionOverrides(req.body?.permissions),
+    });
+    res.status(201).json({ user: presentUser(created) });
+  } catch (err) {
+    if (err.code === "23505") {
+      return res.status(409).json({ error: "That username is already in use." });
+    }
+    console.error("Failed to create staff account:", err);
+    res.status(500).json({ error: "Something went wrong creating this account." });
+  }
+});
+
+router.patch("/users/:userId", requireAuth, requireCapability("manage_users"), async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isSafeInteger(userId) || userId < 1) {
+    return res.status(400).json({ error: "Invalid staff account id." });
+  }
+
+  const updates = {};
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "displayName")) {
+    const displayName = validateDisplayName(req.body.displayName);
+    if (!displayName) {
+      return res.status(400).json({ error: "Display name is required and must be 100 characters or fewer." });
+    }
+    updates.displayName = displayName;
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "role")) {
+    if (!ROLES.has(req.body.role)) {
+      return res.status(400).json({ error: "Role must be admin or sales." });
+    }
+    updates.role = req.body.role;
+    if (!Object.prototype.hasOwnProperty.call(req.body || {}, "permissions")) {
+      updates.permissions = {};
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "permissions")) {
+    updates.permissions = normalizePermissionOverrides(req.body.permissions);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "isActive")) {
+    if (typeof req.body.isActive !== "boolean") {
+      return res.status(400).json({ error: "isActive must be true or false." });
+    }
+    if (userId === Number(req.user.id) && req.body.isActive === false) {
+      return res.status(400).json({ error: "You can't disable the account you're currently using." });
+    }
+    updates.isActive = req.body.isActive;
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "password")) {
+    const password = validatePassword(req.body.password, { optional: true });
+    if (password === false) {
+      return res.status(400).json({ error: "Password must be at least 8 characters." });
+    }
+    if (password) updates.passwordHash = bcrypt.hashSync(password, 10);
+  }
+
+  try {
+    const updated = await usersRepo.withAdminMutationLock(async (queryable) => {
+      const current = await usersRepo.getUserById(userId, queryable);
+      if (!current) throw mutationError("STAFF_NOT_FOUND", "Staff account not found.");
+
+      const allUsers = await usersRepo.listUsers(queryable);
+      const safetyError = validateAdminSafety(proposedUser(allUsers, userId, updates));
+      if (safetyError) throw mutationError("ADMIN_SAFETY", safetyError);
+
+      return usersRepo.updateUser(userId, updates, queryable);
+    });
+
+    if (
+      userId === Number(req.user.id) &&
+      Object.prototype.hasOwnProperty.call(updates, "passwordHash")
+    ) {
+      // Keep the password-resetting browser signed in while every other session
+      // still carries the previous version and is rejected on its next request.
+      req.session.authVersion = Number(updated?.auth_version) || 0;
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(updates, "role") ||
+      Object.prototype.hasOwnProperty.call(updates, "permissions") ||
+      Object.prototype.hasOwnProperty.call(updates, "isActive") ||
+      Object.prototype.hasOwnProperty.call(updates, "passwordHash")
+    ) {
+      // SSE permissions are snapshotted when the connection opens. Force the
+      // browser to reconnect after access or credential changes so stale
+      // realtime authorization cannot remain on a long-lived connection.
+      realtimeEvents.disconnectUser(userId);
+    }
+    res.json({ user: presentUser(updated) });
+  } catch (err) {
+    if (err.code === "STAFF_NOT_FOUND") {
+      return res.status(404).json({ error: err.message });
+    }
+    if (err.code === "ADMIN_SAFETY") {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error("Failed to update staff account:", err);
+    res.status(500).json({ error: "Something went wrong updating this account." });
+  }
+});
+
+router.delete("/users/:userId", requireAuth, requireCapability("manage_users"), async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isSafeInteger(userId) || userId < 1) {
+    return res.status(400).json({ error: "Invalid staff account id." });
+  }
+  if (userId === Number(req.user.id)) {
+    return res.status(400).json({ error: "You can't remove the account you're currently using." });
+  }
+
+  try {
+    const removed = await usersRepo.withAdminMutationLock(async (queryable) => {
+      const current = await usersRepo.getUserById(userId, queryable);
+      if (!current) throw mutationError("STAFF_NOT_FOUND", "Staff account not found.");
+
+      const allUsers = await usersRepo.listUsers(queryable);
+      const safetyError = validateAdminSafety(
+        proposedUser(allUsers, userId, { isActive: false })
+      );
+      if (safetyError) throw mutationError("ADMIN_SAFETY", safetyError);
+
+      return usersRepo.deactivateUser(userId, queryable);
+    });
+
+    realtimeEvents.disconnectUser(userId);
+    res.json({ removed: true, user: presentUser(removed) });
+  } catch (err) {
+    if (err.code === "STAFF_NOT_FOUND") {
+      return res.status(404).json({ error: err.message });
+    }
+    if (err.code === "ADMIN_SAFETY") {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error("Failed to remove staff access:", err);
+    res.status(500).json({ error: "Something went wrong removing this account." });
+  }
 });
 
 module.exports = router;
