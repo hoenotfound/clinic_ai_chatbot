@@ -136,24 +136,34 @@ export default function Pipeline() {
   const noReplyHours = Number(data?.noReplyHours) || 24;
   const selectedLead = leads.find((lead) => Number(lead.id) === Number(selectedLeadId)) || null;
 
-  const drilldownLeads = useMemo(() => {
+  // Analytics date/source/etc. filters are applied first without the branch.
+  // Branch cards can then show accurate counts inside the Analytics cohort,
+  // while selecting a branch narrows that same cohort instead of mixing scopes.
+  const analyticsBaseLeads = useMemo(() => {
+    if (!hasAnalyticsDrilldown) return leads;
     return leads.filter((lead) => {
-      if (branchFilter === "unassigned" && lead.branch_name) return false;
-      if (branchFilter !== "all" && branchFilter !== "unassigned" && lead.branch_name !== branchFilter) return false;
       if (analyticsFilters.channel && lead.channel !== analyticsFilters.channel) return false;
       if (analyticsFilters.source && lead.source !== analyticsFilters.source) return false;
       if (analyticsFilters.campaign && lead.campaign_name !== analyticsFilters.campaign) return false;
       if (analyticsFilters.treatment && lead.treatment_interest !== analyticsFilters.treatment) return false;
       if (analyticsFilters.owner && lead.owner_username !== analyticsFilters.owner) return false;
       if (analyticsFilters.from || analyticsFilters.to) {
-        const journeyDate = localDate(lead.created_at);
+        const journeyDate = localDate(lead.journey_started_at || lead.created_at);
         if (!journeyDate) return false;
         if (analyticsFilters.from && journeyDate < analyticsFilters.from) return false;
         if (analyticsFilters.to && journeyDate > analyticsFilters.to) return false;
       }
       return true;
     });
-  }, [analyticsFilters, branchFilter, leads]);
+  }, [analyticsFilters, hasAnalyticsDrilldown, leads]);
+
+  const drilldownLeads = useMemo(() => {
+    return analyticsBaseLeads.filter((lead) => {
+      if (branchFilter === "unassigned" && lead.branch_name) return false;
+      if (branchFilter !== "all" && branchFilter !== "unassigned" && lead.branch_name !== branchFilter) return false;
+      return true;
+    });
+  }, [analyticsBaseLeads, branchFilter]);
 
   const filteredLeads = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -187,21 +197,24 @@ export default function Pipeline() {
   const metricLeads = hasAnalyticsDrilldown ? drilldownLeads : leads;
   const metricActiveLeads = metricLeads.filter((lead) => !lead.is_closed);
   const pipelineValue = metricActiveLeads.reduce((sum, lead) => sum + (Number(lead.estimated_value) || 0), 0);
+  const branchCardBase = hasAnalyticsDrilldown ? analyticsBaseLeads : leads;
+  const branchCardActive = branchCardBase.filter((lead) => !lead.is_closed);
   const branchCards = useMemo(() => [
-    { key: "all", label: "All branches", leads: activeLeads },
+    { key: "all", label: "All branches", leads: branchCardActive },
     ...(data?.branches || []).map((branch) => ({
       key: branch,
       label: branch,
-      leads: activeLeads.filter((lead) => lead.branch_name === branch),
+      leads: branchCardActive.filter((lead) => lead.branch_name === branch),
     })),
-    { key: "unassigned", label: "Unassigned", leads: activeLeads.filter((lead) => !lead.branch_name) },
-  ], [activeLeads, data?.branches]);
+    { key: "unassigned", label: "Unassigned", leads: branchCardActive.filter((lead) => !lead.branch_name) },
+  ], [branchCardActive, data?.branches]);
 
   function updateParam(key, value) {
     const next = new URLSearchParams(searchParams);
     if (!value || value === "all") next.delete(key);
     else next.set(key, value);
     next.delete("lead");
+    setSelectedLeadId(null);
     setSearchParams(next, { replace: true });
   }
 
@@ -221,6 +234,7 @@ export default function Pipeline() {
     next.delete("lead");
     setBranchFilter("all");
     setCategoryFilter("all");
+    setSelectedLeadId(null);
     setSearchParams(next, { replace: true });
   }
 
