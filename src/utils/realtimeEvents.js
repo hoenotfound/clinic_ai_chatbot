@@ -10,9 +10,30 @@ function normalizeAccess(res) {
 }
 
 function addClient(res) {
-  const client = { res, access: normalizeAccess(res) };
+  const client = {
+    res,
+    userId: Number(res.req?.user?.id) || null,
+    access: normalizeAccess(res),
+  };
   clients.add(client);
   return () => clients.delete(client);
+}
+
+function disconnectUser(userId) {
+  const targetId = Number(userId);
+  if (!Number.isSafeInteger(targetId) || targetId < 1) return 0;
+  let disconnected = 0;
+  for (const client of [...clients]) {
+    if (client.userId !== targetId) continue;
+    clients.delete(client);
+    disconnected += 1;
+    try {
+      if (!client.res.writableEnded && !client.res.destroyed) client.res.end();
+    } catch {
+      // Removing the client is enough; a closed/broken response needs no work.
+    }
+  }
+  return disconnected;
 }
 
 function payloadForClient(client, event, payload) {
@@ -55,4 +76,4 @@ function publish(event, payload = {}) {
   }
 }
 
-module.exports = { addClient, publish };
+module.exports = { addClient, disconnectUser, publish };
