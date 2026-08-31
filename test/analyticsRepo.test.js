@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   buildComparison,
+  buildFunnel,
   metricDelta,
   percent,
 } = require("../src/db/analyticsRepo");
@@ -43,4 +44,21 @@ test("conversion comparison is expressed as percentage-point movement", () => {
   assert.equal(comparison.deltas.won, 60);
   assert.equal(comparison.deltas.conversionRate, 5);
   assert.equal(comparison.deltas.estimatedWonValue, 20);
+});
+
+test("funnel reports stage rates and leads not yet progressed", () => {
+  const funnel = buildFunnel({
+    newLeads: 100,
+    contacted: 80,
+    appointments: 40,
+    visits: 30,
+    won: 12,
+  });
+
+  assert.deepEqual(funnel.map((stage) => stage.count), [100, 80, 40, 30, 12]);
+  assert.equal(funnel[1].fromPreviousRate, 80);
+  assert.equal(funnel[2].fromPreviousRate, 50);
+  assert.equal(funnel[2].fromLeadRate, 40);
+  assert.equal(funnel[2].dropOff, 40);
+  assert.equal(funnel[4].dropOff, 18);
 });
