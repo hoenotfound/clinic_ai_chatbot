@@ -268,18 +268,17 @@ async function requireAuth(req, res, next) {
       return res.status(401).json({ error: "This account is no longer active." });
     }
 
-    if (user.credentials_changed_at) {
-      const credentialsChangedAt = new Date(user.credentials_changed_at).getTime();
-      const authenticatedAt = Number(req.session.authenticatedAt);
-      if (
-        Number.isFinite(credentialsChangedAt) &&
-        (!Number.isFinite(authenticatedAt) || authenticatedAt < credentialsChangedAt)
-      ) {
-        req.session = null;
-        return res.status(401).json({
-          error: "Your password was changed. Please log in again.",
-        });
-      }
+    const userAuthVersion = Number(user.auth_version) || 0;
+    const sessionAuthVersion = req.session.authVersion;
+    const hasSessionVersion = sessionAuthVersion !== undefined && sessionAuthVersion !== null;
+    if (
+      (hasSessionVersion && Number(sessionAuthVersion) !== userAuthVersion) ||
+      (!hasSessionVersion && userAuthVersion > 0)
+    ) {
+      req.session = null;
+      return res.status(401).json({
+        error: "Your password was changed. Please log in again.",
+      });
     }
 
     req.session.username = user.username;
