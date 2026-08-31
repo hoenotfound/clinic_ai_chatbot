@@ -61,6 +61,7 @@ const LEAD_SELECT = `
     l.campaign_name, l.appointment_status, l.appointment_at,
     l.next_follow_up_at, l.lost_reason, l.marketing_consent, l.is_closed,
     l.closed_at, l.created_by, l.created_at, l.updated_at,
+    COALESCE(start_message.created_at, l.created_at) AS journey_started_at,
     s.name AS stage_name, s.color AS stage_color, s.stage_type, s.system_key,
     c.whatsapp_number, c.name, c.whatsapp_profile_name, c.channel, c.photo_url,
     c.mode, c.needs_attention, c.needs_follow_up, c.is_unread,
@@ -80,6 +81,7 @@ const LEAD_SELECT = `
   FROM leads l
   JOIN pipeline_stages s ON s.id = l.stage_id
   JOIN contacts c ON c.id = l.contact_id
+  LEFT JOIN messages start_message ON start_message.id = l.started_message_id
   LEFT JOIN LATERAL (
     SELECT later.started_message_id,
            later.created_at AS journey_created_at
@@ -314,12 +316,7 @@ async function backfillLeadsForExistingContacts() {
          WHERE stage_type = 'open'
          ORDER BY CASE WHEN system_key = 'new' THEN 0 ELSE 1 END,
                   sort_order ASC, id ASC
-         LIMIT 1
-       ) first_stage
-       WHERE EXISTS (SELECT 1 FROM messages m WHERE m.contact_id = c.id)
-         AND NOT EXISTS (SELECT 1 FROM leads existing WHERE existing.contact_id = c.id)
-       ON CONFLICT (contact_id) WHERE is_closed = false DO NOTHING
-       RETURNING id, stage_id`,
+         LIMIT 1`
     );
 
     for (const lead of result.rows) {
