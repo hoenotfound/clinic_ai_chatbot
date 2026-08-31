@@ -80,6 +80,7 @@ test("hydrates a Facebook contact profile and never exposes its internal key as 
     assert.equal(queryCount, 2);
     assert.match(sql, /UPDATE contacts/);
     assert.match(sql, /whatsapp_profile_name = COALESCE/);
+    assert.match(sql, /photo_url IS DISTINCT FROM/);
     assert.deepEqual(params, [
       "Deon Tan",
       "https://example.test/deon.jpg",
@@ -152,4 +153,131 @@ test("Instagram uses a safe channel label and fallback name when profile lookup 
   assert.equal(conversations[0].whatsapp_number, "Instagram");
   assert.equal(conversations[0].whatsapp_profile_name, "Instagram user");
   assert.equal(conversations[0].channel_user_id, "igsid-456");
+});
+
+test("Contacts directory also hides social storage keys", async (t) => {
+  const originalQuery = pool.query;
+  const originalFetchProfile = metaMessaging.fetchUserProfile;
+  t.after(() => {
+    pool.query = originalQuery;
+    metaMessaging.fetchUserProfile = originalFetchProfile;
+  });
+
+  pool.query = async (sql) => {
+    assert.match(sql, /LEFT JOIN messages/);
+    return {
+      rows: [
+        {
+          id: 93,
+          whatsapp_number: "facebook:psid-directory",
+          name: null,
+          whatsapp_profile_name: "Directory User",
+          channel: "facebook",
+          channel_user_id: "psid-directory",
+          photo_url: "https://example.test/current.jpg",
+          message_count: 2,
+        },
+      ],
+    };
+  };
+
+  metaMessaging.fetchUserProfile = async () => ({
+    profileName: "Directory User",
+    photoUrl: "https://example.test/current.jpg",
+    username: null,
+  });
+
+  const contacts = await contactsRepo.listContacts();
+  assert.equal(contacts.length, 1);
+  assert.equal(contacts[0].whatsapp_number, "Facebook Messenger");
+  assert.equal(contacts[0].whatsapp_profile_name, "Directory User");
+  assert.equal(contacts[0].channel_user_id, "psid-directory");
+});
+
+test("refreshes an existing Instagram profile photo without overwriting a staff name", async (t) => {
+  const originalQuery = pool.query;
+  const originalFetchProfile = metaMessaging.fetchUserProfile;
+  t.after(() => {
+    pool.query = originalQuery;
+    metaMessaging.fetchUserProfile = originalFetchProfile;
+  });
+
+  let queryCount = 0;
+  pool.query = async (sql, params) => {
+    queryCount += 1;
+    if (queryCount === 1) {
+      return {
+        rows: [
+          {
+            id: 94,
+            whatsapp_number: "instagram:igsid-refresh",
+            name: "Clinic nickname",
+            whatsapp_profile_name: "Old platform name",
+            channel: "instagram",
+            channel_user_id: "igsid-refresh",
+            photo_url: "https://example.test/old.jpg",
+            message_count: 1,
+          },
+        ],
+      };
+    }
+
+    assert.equal(queryCount, 2);
+    assert.match(sql, /UPDATE contacts/);
+    assert.deepEqual(params, [
+      "New platform name",
+      "https://example.test/new.jpg",
+      94,
+    ]);
+    return {
+      rows: [
+        {
+          whatsapp_profile_name: "New platform name",
+          photo_url: "https://example.test/new.jpg",
+          updated_at: "2026-08-31T09:00:00.000Z",
+        },
+      ],
+    };
+  };
+
+  metaMessaging.fetchUserProfile = async () => ({
+    profileName: "New platform name",
+    photoUrl: "https://example.test/new.jpg",
+    username: "newusername",
+  });
+
+  const contacts = await contactsRepo.listContacts();
+  assert.equal(queryCount, 2);
+  assert.equal(contacts[0].name, "Clinic nickname");
+  assert.equal(contacts[0].whatsapp_profile_name, "New platform name");
+  assert.equal(contacts[0].photo_url, "https://example.test/new.jpg");
+});
+
+test("editing a social contact name never changes its channel identifier", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /SET name = \$1/);
+    assert.doesNotMatch(sql, /whatsapp_number =/);
+    assert.deepEqual(params, ["Preferred Name", 95]);
+    return {
+      rows: [
+        {
+          id: 95,
+          name: "Preferred Name",
+          whatsapp_number: "facebook:psid-safe",
+          channel: "facebook",
+          channel_user_id: "psid-safe",
+        },
+      ],
+    };
+  };
+
+  const updated = await contactsRepo.updateContactName(95, "Preferred Name");
+  assert.equal(updated.name, "Preferred Name");
+  assert.equal(updated.whatsapp_number, "facebook:psid-safe");
+  assert.equal(updated.channel_user_id, "psid-safe");
 });
