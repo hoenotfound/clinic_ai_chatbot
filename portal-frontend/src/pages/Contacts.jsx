@@ -28,7 +28,7 @@ export default function Contacts() {
       setContacts(data);
     } catch (err) {
       console.error("Failed to load contacts:", err);
-      showToast("Couldn't load contacts — please try again.", "error");
+      showToast("Couldn't load contacts. Please try again.", "error");
     }
   }
 
@@ -117,7 +117,7 @@ export default function Contacts() {
           ) : (
             <div className="hidden h-full items-center justify-center px-6 text-center md:flex">
               <p className="text-sm text-[var(--color-text-muted)]">
-                {contacts?.length === 0 ? "No contacts yet — add one to get started." : "Select a contact to view their profile."}
+                {contacts?.length === 0 ? "No contacts yet. Add one to get started." : "Select a contact to view their profile."}
               </p>
             </div>
           ))}
@@ -158,7 +158,7 @@ function ContactList({
         </div>
         <input
           className={`${inputClass} mt-3 text-xs`}
-          placeholder="Search by name or number…"
+          placeholder="Search by name, number or social ID…"
           value={searchInput}
           onChange={(e) => onSearchChange(e.target.value)}
         />
@@ -195,7 +195,7 @@ function ContactList({
                 <span className="shrink-0 text-[11px] text-[var(--color-text-muted)]">{formatTime(c.last_message_at)}</span>
               </div>
               <p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">
-                {formatPhone(c.whatsapp_number)}
+                {contactIdentifier(c)}
                 {c.message_count === 0 && " · No conversation yet"}
               </p>
             </div>
@@ -240,7 +240,7 @@ function ContactProfile({ contact, onEdit, onBack, onToast }) {
       setNotes((prev) => [note, ...(prev || [])]);
       setDraft("");
     } catch (err) {
-      console.error("Failed to add note:", err);
+      console.error("Failed to load notes:", err);
       onToast(err.message || "Couldn't save that note.", "error");
     } finally {
       setSaving(false);
@@ -284,7 +284,7 @@ function ContactProfile({ contact, onEdit, onBack, onToast }) {
               <span className="truncate">{displayName(contact)}</span>
               {contact.mode === "human" && <ModeBadge mode="human" />}
             </h2>
-            <p className="mt-1 break-all text-sm text-[var(--color-text-muted)]">{formatPhone(contact.whatsapp_number)}</p>
+            <p className="mt-1 break-all text-sm text-[var(--color-text-muted)]">{contactIdentifier(contact)}</p>
             <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
               Added {new Date(contact.created_at).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })}
             </p>
@@ -334,7 +334,7 @@ function ContactProfile({ contact, onEdit, onBack, onToast }) {
           <textarea
             className={`${inputClass} resize-y`}
             rows={2}
-            placeholder="Add a note about this patient — visible to staff only, never sent or shown to the AI."
+            placeholder="Add a note about this patient. Visible to staff only, never sent or shown to the AI."
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
           />
@@ -397,25 +397,37 @@ function MobileBackButton({ onClick, label }) {
   );
 }
 
-// Shared form for both "Add contact" and "Edit contact" — the only
-// difference is whether `contact` (the existing row) is passed in.
+// Shared form for both "Add contact" and "Edit contact". Social contacts keep
+// their Meta-scoped identifier read-only because changing it would break routing.
 function ContactForm({ contact, onSaved, onCancel, onError }) {
   const isNew = !contact;
+  const isSocial = !isNew && isSocialContact(contact);
   const [name, setName] = useState(contact?.name || "");
   const [whatsappNumber, setWhatsappNumber] = useState(contact?.whatsapp_number || "");
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!whatsappNumber.trim()) {
+    if (!isSocial && !whatsappNumber.trim()) {
       onError("A WhatsApp number is required.");
       return;
     }
     setSaving(true);
     try {
-      const saved = isNew
-        ? await api.createContact({ name: name.trim(), whatsappNumber: whatsappNumber.trim() })
-        : await api.updateContact(contact.id, { name: name.trim(), whatsappNumber: whatsappNumber.trim() });
+      let saved;
+      if (isNew) {
+        saved = await api.createContact({
+          name: name.trim(),
+          whatsappNumber: whatsappNumber.trim(),
+        });
+      } else if (isSocial) {
+        saved = await api.updateContact(contact.id, { name: name.trim() });
+      } else {
+        saved = await api.updateContact(contact.id, {
+          name: name.trim(),
+          whatsappNumber: whatsappNumber.trim(),
+        });
+      }
       onSaved(saved);
     } catch (err) {
       onError(err.message || "Couldn't save this contact.");
@@ -430,6 +442,8 @@ function ContactForm({ contact, onSaved, onCancel, onError }) {
       <p className="mb-6 text-sm text-[var(--color-text-muted)]">
         {isNew
           ? "Manually add a patient who hasn't messaged in yet. If they message this WhatsApp number later, it'll link to this same contact."
+          : isSocial
+          ? `Update this patient's name. Their ${channelLabel(contact.channel)} account identifier is managed by Meta.`
           : "Update this patient's name or WhatsApp number."}
       </p>
 
@@ -438,18 +452,30 @@ function ContactForm({ contact, onSaved, onCancel, onError }) {
         <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder="Optional" />
       </div>
 
-      <div className="mb-6">
-        <label className={labelClass}>WhatsApp number</label>
-        <input
-          className={inputClass}
-          value={whatsappNumber}
-          onChange={(e) => setWhatsappNumber(e.target.value)}
-          placeholder="e.g. +60 12-345 6789"
-        />
-        <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-          Any format works — it's normalized to match how WhatsApp identifies the patient.
-        </p>
-      </div>
+      {isSocial ? (
+        <div className="mb-6">
+          <label className={labelClass}>Channel</label>
+          <div className={`${inputClass} cursor-not-allowed text-[var(--color-text-muted)]`}>
+            {channelLabel(contact.channel)}
+          </div>
+          <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+            The customer identifier is supplied by Meta and can't be edited manually.
+          </p>
+        </div>
+      ) : (
+        <div className="mb-6">
+          <label className={labelClass}>WhatsApp number</label>
+          <input
+            className={inputClass}
+            value={whatsappNumber}
+            onChange={(e) => setWhatsappNumber(e.target.value)}
+            placeholder="e.g. +60 12-345 6789"
+          />
+          <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+            Any format works. It's normalized to match how WhatsApp identifies the patient.
+          </p>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <button
@@ -485,12 +511,34 @@ function ModeBadge({ mode }) {
   );
 }
 
+function isSocialContact(contact) {
+  return contact?.channel === "facebook" || contact?.channel === "instagram";
+}
+
+function channelLabel(channel) {
+  if (channel === "facebook") return "Facebook Messenger";
+  if (channel === "instagram") return "Instagram";
+  return "WhatsApp";
+}
+
 function formatPhone(number) {
-  return `+${number}`;
+  return number ? `+${number}` : "";
+}
+
+function contactIdentifier(contact) {
+  if (isSocialContact(contact)) return channelLabel(contact.channel);
+  return formatPhone(contact?.whatsapp_number);
 }
 
 function displayName(contact) {
-  return contact.name || contact.whatsapp_profile_name || formatPhone(contact.whatsapp_number);
+  return (
+    contact?.name ||
+    contact?.whatsapp_profile_name ||
+    (contact?.channel === "facebook" ? "Facebook user" : null) ||
+    (contact?.channel === "instagram" ? "Instagram user" : null) ||
+    formatPhone(contact?.whatsapp_number) ||
+    "Contact"
+  );
 }
 
 function formatTime(value) {
