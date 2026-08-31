@@ -1,6 +1,7 @@
 const { pool } = require("./db");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("../services/telegramImmediateAlertService");
+const metaMessaging = require("../services/metaMessagingService");
 
 const SOCIAL_CHANNELS = new Set(["facebook", "instagram"]);
 
@@ -53,6 +54,80 @@ function notifyTelegram(promise, label, contactId) {
   Promise.resolve(promise).catch((err) => {
     console.error(`Telegram ${label} alert failed for contact ${contactId}:`, err);
   });
+}
+
+function socialChannelLabel(channel) {
+  if (channel === "facebook") return "Facebook Messenger";
+  if (channel === "instagram") return "Instagram";
+  return null;
+}
+
+function socialFallbackName(channel) {
+  if (channel === "facebook") return "Facebook user";
+  if (channel === "instagram") return "Instagram user";
+  return null;
+}
+
+async function hydrateSocialContactRow(row) {
+  if (
+    !row ||
+    !SOCIAL_CHANNELS.has(row.channel) ||
+    !row.channel_user_id ||
+    row.name ||
+    row.whatsapp_profile_name
+  ) {
+    return row;
+  }
+
+  try {
+    const profile = await metaMessaging.fetchUserProfile(row.channel, row.channel_user_id);
+    if (!profile?.profileName && !profile?.photoUrl) return row;
+
+    const result = await pool.query(
+      `UPDATE contacts
+       SET whatsapp_profile_name = COALESCE($1, whatsapp_profile_name),
+           photo_url = COALESCE($2, photo_url),
+           updated_at = CASE
+             WHEN ($1 IS NOT NULL AND whatsapp_profile_name IS DISTINCT FROM $1)
+               OR ($2 IS NOT NULL AND photo_url IS DISTINCT FROM $2)
+             THEN now()
+             ELSE updated_at
+           END
+       WHERE id = $3
+       RETURNING whatsapp_profile_name, photo_url, updated_at`,
+      [profile.profileName || null, profile.photoUrl || null, row.contact_id || row.id]
+    );
+
+    const updated = result.rows[0];
+    if (!updated) return row;
+    return { ...row, ...updated };
+  } catch (err) {
+    // Profile enrichment is presentation data only. Meta profile permission or
+    // availability issues must never stop the Inbox/Contacts APIs from loading.
+    console.warn(
+      `Failed to enrich ${row.channel} contact ${row.channel_user_id}:`,
+      err?.message || err
+    );
+    return row;
+  }
+}
+
+async function hydrateSocialContactRows(rows) {
+  return Promise.all((rows || []).map((row) => hydrateSocialContactRow(row)));
+}
+
+function presentConversationContact(row) {
+  if (!SOCIAL_CHANNELS.has(row?.channel)) return row;
+
+  return {
+    ...row,
+    // whatsapp_number is an internal NOT NULL compatibility key for social
+    // contacts (for example "facebook:<PSID>"). Never expose that storage key
+    // in the Inbox as though it were a phone number.
+    whatsapp_number: socialChannelLabel(row.channel),
+    whatsapp_profile_name:
+      row.whatsapp_profile_name || socialFallbackName(row.channel),
+  };
 }
 
 async function reconcileLegacyWhatsappContact(normalizedNumber, profileName) {
@@ -206,7 +281,7 @@ async function listContacts(search) {
     `,
     params
   );
-  return result.rows;
+  return hydrateSocialContactRows(result.rows);
 }
 
 async function createContact({ name, whatsappNumber }) {
@@ -273,7 +348,8 @@ async function listConversations() {
     ORDER BY c.needs_attention DESC, m.created_at DESC
     `
   );
-  return result.rows;
+  const hydrated = await hydrateSocialContactRows(result.rows);
+  return hydrated.map((row) => presentConversationContact(row));
 }
 
 async function takeOver(id, staffUsername) {
