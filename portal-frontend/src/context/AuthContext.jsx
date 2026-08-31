@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 
 const AuthContext = createContext(null);
@@ -20,14 +20,29 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(undefined); // undefined = still checking, null = logged out
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    api
-      .me()
-      .then((res) => setUser(normalizeUser(res)))
-      .catch(() => setUser(null));
+  const refreshUser = useCallback(async () => {
+    const res = await api.me();
+    const nextUser = normalizeUser(res);
+    setUser(nextUser);
+    return nextUser;
   }, []);
 
-  async function login(u, p) {
+  useEffect(() => {
+    refreshUser().catch(() => setUser(null));
+  }, [refreshUser]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const permissions = user?.permissions || {};
+    root.dataset.canReplyLeads = String(permissions.reply_to_assigned_leads === true);
+    root.dataset.canManageLeads = String(permissions.manage_assigned_leads === true);
+    return () => {
+      delete root.dataset.canReplyLeads;
+      delete root.dataset.canManageLeads;
+    };
+  }, [user]);
+
+  const login = useCallback(async (u, p) => {
     setError(null);
     try {
       const res = await api.login(u, p);
@@ -37,12 +52,12 @@ export function AuthProvider({ children }) {
       setError(err.message);
       return false;
     }
-  }
+  }, []);
 
-  async function logout() {
+  const logout = useCallback(async () => {
     await api.logout().catch(() => {});
     setUser(null);
-  }
+  }, []);
 
   const value = useMemo(() => {
     const permissions = user?.permissions || {};
@@ -53,10 +68,11 @@ export function AuthProvider({ children }) {
       can: (capability) => permissions[capability] === true,
       login,
       logout,
+      refreshUser,
       error,
       loading: user === undefined,
     };
-  }, [user, error]);
+  }, [user, login, logout, refreshUser, error]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
