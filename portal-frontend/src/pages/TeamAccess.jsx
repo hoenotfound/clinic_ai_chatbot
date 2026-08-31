@@ -8,7 +8,7 @@ const inputClass =
   "h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20";
 
 export default function TeamAccess() {
-  const { user: signedInUser } = useAuth();
+  const { user: signedInUser, refreshUser } = useAuth();
   const { toasts, showToast, dismissToast } = useToasts();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -35,6 +35,16 @@ export default function TeamAccess() {
       ...current,
       users: current.users.map((user) => (user.id === updated.id ? updated : user)),
     }));
+  }
+
+  function handleUpdated(updated, message) {
+    replaceUser(updated);
+    showToast(message, "info");
+    if (Number(updated.id) === Number(signedInUser?.id)) {
+      refreshUser().catch(() => {
+        showToast("Your access was saved, but the page couldn't refresh your session. Reload the portal.", "warning");
+      });
+    }
   }
 
   function refresh() {
@@ -89,14 +99,8 @@ export default function TeamAccess() {
               staff={staff}
               currentUserId={data.currentUserId || signedInUser?.id}
               permissionDefinitions={data.permissionDefinitions}
-              onUpdated={(updated) => {
-                replaceUser(updated);
-                showToast("Access updated.", "info");
-              }}
-              onRemoved={(updated) => {
-                replaceUser(updated);
-                showToast("Account access removed.", "info");
-              }}
+              onUpdated={(updated) => handleUpdated(updated, "Access updated.")}
+              onRemoved={(updated) => handleUpdated(updated, "Account access removed.")}
               onError={(message) => showToast(message, "error")}
             />
           ))}
