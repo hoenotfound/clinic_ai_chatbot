@@ -2,7 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 import Spinner from "../Spinner";
 import ContactAvatar from "../ContactAvatar";
-import { displayName, TEMPERATURE_OPTIONS } from "./pipelineUtils";
+import {
+  contactIdentifier,
+  displayName,
+  TEMPERATURE_OPTIONS,
+} from "./pipelineUtils";
 
 const inputClass =
   "w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15";
@@ -35,7 +39,13 @@ export default function AddLeadModal({ branches, services, onClose, onCreated, o
     const term = search.trim().toLowerCase();
     if (!term) return contacts || [];
     return (contacts || []).filter((contact) =>
-      [contact.name, contact.whatsapp_profile_name, contact.whatsapp_number]
+      [
+        contact.name,
+        contact.whatsapp_profile_name,
+        contact.whatsapp_number,
+        contact.channel_user_id,
+        contact.channel,
+      ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(term))
     );
@@ -72,7 +82,7 @@ export default function AddLeadModal({ branches, services, onClose, onCreated, o
         </header>
 
         <div className="min-h-0 overflow-y-auto p-6">
-          <input className={inputClass} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search contact name or WhatsApp number…" autoFocus />
+          <input className={inputClass} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, number or social ID…" autoFocus />
           <div className="mt-3 max-h-60 overflow-y-auto rounded-2xl border border-[var(--color-border)]">
             {contacts === null ? (
               <div className="flex justify-center py-10"><Spinner className="h-5 w-5 text-[var(--color-text-muted)]" /></div>
@@ -83,7 +93,7 @@ export default function AddLeadModal({ branches, services, onClose, onCreated, o
                 <ContactAvatar src={contact.photo_url} channel={contact.channel} size={36} />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-semibold">{displayName(contact)}</p>
-                  <p className="truncate text-xs text-[var(--color-text-muted)]">+{contact.whatsapp_number}</p>
+                  <p className="truncate text-xs text-[var(--color-text-muted)]">{contactIdentifier(contact)}</p>
                 </div>
                 {Number(contactId) === Number(contact.id) && <span className="text-sm font-bold text-[var(--color-primary)]">✓</span>}
               </button>
