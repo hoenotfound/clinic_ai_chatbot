@@ -16,18 +16,20 @@ const TABS = [
 ];
 
 const inputClass =
-  "w-full rounded-xl border border-[var(--color-border)] px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] bg-[var(--color-surface)]";
+  "min-h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20";
 const textareaClass = `${inputClass} resize-y`;
-const labelClass = "block text-xs font-medium text-[var(--color-text-muted)] mb-1.5";
+const labelClass = "mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]";
 
 export default function Settings() {
   const [config, setConfig] = useState(null); // null = loading
   const [loadError, setLoadError] = useState(null);
+  const [reloadToken, setReloadToken] = useState(0);
   const [activeTab, setActiveTab] = useState("general");
   const { toasts, showToast, dismissToast } = useToasts();
 
   useEffect(() => {
     let cancelled = false;
+    setLoadError(null);
     api
       .getConfig()
       .then((data) => {
@@ -39,7 +41,7 @@ export default function Settings() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadToken]);
 
   // Called by a tab after it successfully saves — updates the shared config
   // so every other tab reflects the latest server state the next time it's
@@ -53,58 +55,95 @@ export default function Settings() {
     showToast(message, "error");
   }
 
+  function retryLoad() {
+    setConfig(null);
+    setLoadError(null);
+    setReloadToken((value) => value + 1);
+  }
+
   if (loadError) {
     return (
-      <div className="h-full flex items-center justify-center px-6">
-        <p className="text-sm text-[var(--color-danger)]">Couldn't load settings — {loadError}</p>
+      <div className="flex h-full items-center justify-center bg-[var(--color-bg)] px-4 sm:px-6">
+        <div className="w-full max-w-md rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center shadow-sm sm:p-8">
+          <h1 className="font-display text-lg font-bold">Couldn't load settings</h1>
+          <p className="mt-2 text-sm leading-relaxed text-[var(--color-danger)]">{loadError}</p>
+          <button
+            type="button"
+            onClick={retryLoad}
+            className="mt-5 h-11 rounded-xl bg-[var(--color-primary)] px-4 text-sm font-semibold text-white transition-colors hover:bg-[var(--color-primary-hover)]"
+          >
+            Try again
+          </button>
+        </div>
       </div>
     );
   }
 
   if (!config) {
     return (
-      <div className="h-full flex items-center justify-center">
+      <div className="flex h-full items-center justify-center bg-[var(--color-bg)]">
         <Spinner className="h-6 w-6 text-[var(--color-text-muted)]" />
       </div>
     );
   }
 
   return (
-    <div className="flex h-full">
-      <div className="w-56 shrink-0 border-r border-[var(--color-border)] h-full overflow-y-auto bg-[var(--color-surface)] py-4">
-        <div className="px-5 pb-3">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--color-bg)] md:flex-row">
+      <aside className="hidden h-full w-60 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] md:flex">
+        <div className="border-b border-[var(--color-border)] px-5 py-5">
           <h1 className="font-display text-lg font-bold">Settings</h1>
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">Bot & clinic configuration</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">Bot & clinic configuration</p>
         </div>
-        <nav className="px-2 space-y-0.5">
+        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2.5 py-3">
           {TABS.map((t) => (
             <button
               key={t.id}
+              type="button"
+              aria-current={activeTab === t.id ? "page" : undefined}
               onClick={() => setActiveTab(t.id)}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              className={`min-h-10 w-full rounded-xl px-3 text-left text-sm font-medium transition-colors ${
                 activeTab === t.id
-                  ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-                  : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"
+                  ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)]"
+                  : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
               }`}
             >
               {t.label}
             </button>
           ))}
         </nav>
-      </div>
+      </aside>
 
-      <div className="flex-1 overflow-y-auto px-8 py-8">
-        <div className="max-w-2xl pb-8">
-          {activeTab === "general" && <GeneralTab config={config} onSaved={handleSaved} onError={handleError} />}
-          {activeTab === "branches" && <BranchesTab config={config} onSaved={handleSaved} onError={handleError} />}
-          {activeTab === "hours" && <HoursContactTab config={config} onSaved={handleSaved} onError={handleError} />}
-          {activeTab === "services" && <ServicesTab config={config} onSaved={handleSaved} onError={handleError} />}
-          {activeTab === "aliases" && <AliasesTab config={config} onSaved={handleSaved} onError={handleError} />}
-          {activeTab === "faqs" && <FaqsTab config={config} onSaved={handleSaved} onError={handleError} />}
-          {activeTab === "promotions" && <PromotionsTab config={config} onSaved={handleSaved} onError={handleError} />}
-          {activeTab === "aiBehavior" && <AiBehaviorTab config={config} onSaved={handleSaved} onError={handleError} />}
-          {activeTab === "escalation" && <EscalationTab config={config} onSaved={handleSaved} onError={handleError} />}
-        </div>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-4 sm:px-5 md:hidden">
+          <h1 className="font-display text-xl font-bold">Settings</h1>
+          <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">Manage the information and rules your AI uses.</p>
+          <label className="mt-3 block">
+            <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Section</span>
+            <select
+              value={activeTab}
+              onChange={(event) => setActiveTab(event.target.value)}
+              className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm font-semibold text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
+            >
+              {TABS.map((tab) => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
+            </select>
+          </label>
+        </header>
+
+        <main className="min-h-0 flex-1 overflow-y-auto px-3.5 py-4 sm:px-5 sm:py-6 lg:px-8 lg:py-8">
+          <div className="w-full max-w-3xl pb-8">
+            <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm sm:rounded-3xl sm:p-6 lg:p-7">
+              {activeTab === "general" && <GeneralTab config={config} onSaved={handleSaved} onError={handleError} />}
+              {activeTab === "branches" && <BranchesTab config={config} onSaved={handleSaved} onError={handleError} />}
+              {activeTab === "hours" && <HoursContactTab config={config} onSaved={handleSaved} onError={handleError} />}
+              {activeTab === "services" && <ServicesTab config={config} onSaved={handleSaved} onError={handleError} />}
+              {activeTab === "aliases" && <AliasesTab config={config} onSaved={handleSaved} onError={handleError} />}
+              {activeTab === "faqs" && <FaqsTab config={config} onSaved={handleSaved} onError={handleError} />}
+              {activeTab === "promotions" && <PromotionsTab config={config} onSaved={handleSaved} onError={handleError} />}
+              {activeTab === "aiBehavior" && <AiBehaviorTab config={config} onSaved={handleSaved} onError={handleError} />}
+              {activeTab === "escalation" && <EscalationTab config={config} onSaved={handleSaved} onError={handleError} />}
+            </section>
+          </div>
+        </main>
       </div>
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
@@ -116,19 +155,19 @@ export default function Settings() {
 
 function SectionHeading({ title, description }) {
   return (
-    <div className="mb-6">
-      <h2 className="font-display text-lg font-bold">{title}</h2>
-      {description && <p className="text-sm text-[var(--color-text-muted)] mt-1">{description}</p>}
+    <div className="mb-5 sm:mb-6">
+      <h2 className="font-display text-lg font-bold sm:text-xl">{title}</h2>
+      {description && <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)] sm:text-sm">{description}</p>}
     </div>
   );
 }
 
 function Field({ label, hint, children }) {
   return (
-    <div className="mb-4">
+    <div className="mb-5 last:mb-0">
       <label className={labelClass}>{label}</label>
       {children}
-      {hint && <p className="text-[11px] text-[var(--color-text-muted)] mt-1">{hint}</p>}
+      {hint && <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--color-text-muted)]">{hint}</p>}
     </div>
   );
 }
@@ -139,7 +178,7 @@ function SaveButton({ saving, onClick, label = "Save changes" }) {
       type="button"
       onClick={onClick}
       disabled={saving}
-      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
+      className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-50 sm:w-auto"
     >
       {saving && <Spinner />}
       {saving ? "Saving…" : label}
@@ -168,20 +207,23 @@ function RepeatableListEditor({ items, fields, onChange, emptyItem, addLabel, on
   return (
     <div className="space-y-3">
       {items.map((item, idx) => (
-        <div key={idx} className="rounded-xl border border-[var(--color-border)] p-4 relative">
+        <div key={idx} className="relative rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3.5 sm:p-4">
+          <div className="mb-3 flex min-h-8 items-center pr-11">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Entry {idx + 1}</p>
+          </div>
           <button
             type="button"
             onClick={() => removeItem(idx)}
-            aria-label="Remove this entry"
+            aria-label={`Remove entry ${idx + 1}`}
             title="Remove"
-            className="absolute top-3 right-3 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors"
+            className="absolute right-2 top-2 flex h-10 w-10 items-center justify-center rounded-xl text-sm text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-danger-light)] hover:text-[var(--color-danger)]"
           >
             ✕
           </button>
-          <div className="grid gap-3 pr-6">
+          <div className="grid gap-3">
             {fields.map((f) => (
               <div key={f.key}>
-                <label className="block text-[11px] font-medium text-[var(--color-text-muted)] mb-1">{f.label}</label>
+                <label className="mb-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">{f.label}</label>
                 {f.type === "image" ? (
                   <ImageFieldEditor
                     value={item[f.key] ?? ""}
@@ -212,7 +254,7 @@ function RepeatableListEditor({ items, fields, onChange, emptyItem, addLabel, on
       <button
         type="button"
         onClick={addItem}
-        className="text-sm font-medium px-3 py-2.5 rounded-xl border border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] transition-colors w-full"
+        className="h-11 w-full rounded-xl border border-dashed border-[var(--color-border)] px-3 text-sm font-semibold text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
       >
         + {addLabel}
       </button>
@@ -262,16 +304,16 @@ function ImageFieldEditor({ value, onChange, onError }) {
         <img
           src={value}
           alt="Promotion graphic"
-          className="w-full max-h-40 object-cover rounded-lg border border-[var(--color-border)] mb-2"
+          className="mb-2 max-h-48 w-full rounded-xl border border-[var(--color-border)] object-cover sm:max-h-56"
         />
       )}
-      <div className="flex items-center gap-2 mb-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <input ref={fileInputRef} type="file" accept="image/jpeg,image/png" onChange={handleFilePicked} className="hidden" />
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading}
-          className="inline-flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-bg)] transition-colors disabled:opacity-50"
+          className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 text-xs font-semibold transition-colors hover:bg-[var(--color-surface)] disabled:opacity-50"
         >
           {uploading && <Spinner className="h-3 w-3" />}
           {uploading ? "Uploading…" : value ? "Replace image" : "Upload image"}
@@ -280,7 +322,7 @@ function ImageFieldEditor({ value, onChange, onError }) {
           <button
             type="button"
             onClick={() => onChange("")}
-            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors"
+            className="h-10 rounded-lg px-3 text-xs font-semibold text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-danger-light)] hover:text-[var(--color-danger)]"
           >
             Remove
           </button>
@@ -315,7 +357,7 @@ function StringListEditor({ items, onChange, addLabel, placeholder }) {
       {items.map((val, idx) => (
         <div key={idx} className="flex items-center gap-2">
           <input
-            className={inputClass}
+            className={`${inputClass} min-w-0 flex-1`}
             value={val}
             placeholder={placeholder}
             onChange={(e) => updateItem(idx, e.target.value)}
@@ -323,9 +365,9 @@ function StringListEditor({ items, onChange, addLabel, placeholder }) {
           <button
             type="button"
             onClick={() => removeItem(idx)}
-            aria-label="Remove this entry"
+            aria-label={`Remove entry ${idx + 1}`}
             title="Remove"
-            className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors px-1"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-danger-light)] hover:text-[var(--color-danger)]"
           >
             ✕
           </button>
@@ -334,7 +376,7 @@ function StringListEditor({ items, onChange, addLabel, placeholder }) {
       <button
         type="button"
         onClick={addItem}
-        className="text-sm font-medium px-3 py-2.5 rounded-xl border border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] transition-colors w-full"
+        className="h-11 w-full rounded-xl border border-dashed border-[var(--color-border)] px-3 text-sm font-semibold text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
       >
         + {addLabel}
       </button>
@@ -765,24 +807,24 @@ function AiBehaviorTab({ config, onSaved, onError }) {
       />
       <Field label="Texting style" hint="Concrete rules for how the AI writes messages (length, tone, punctuation, etc.).">
         <textarea
-          rows={14}
-          className={`${textareaClass} font-mono text-[13px]`}
+          rows={10}
+          className={`${textareaClass} min-h-52 font-mono text-[13px] sm:min-h-72`}
           value={form.messagingStyle}
           onChange={(e) => setForm({ ...form, messagingStyle: e.target.value })}
         />
       </Field>
       <Field label="Booking / conversion playbook" hint="How the AI should guide interested patients toward booking a consultation.">
         <textarea
-          rows={14}
-          className={`${textareaClass} font-mono text-[13px]`}
+          rows={10}
+          className={`${textareaClass} min-h-52 font-mono text-[13px] sm:min-h-72`}
           value={form.closingPlaybook}
           onChange={(e) => setForm({ ...form, closingPlaybook: e.target.value })}
         />
       </Field>
       <Field label="Standard operating procedures" hint="Internal policy — cancellations, complaints, medical/contraindication rules, etc.">
         <textarea
-          rows={14}
-          className={`${textareaClass} font-mono text-[13px]`}
+          rows={10}
+          className={`${textareaClass} min-h-52 font-mono text-[13px] sm:min-h-72`}
           value={form.sop}
           onChange={(e) => setForm({ ...form, sop: e.target.value })}
         />
