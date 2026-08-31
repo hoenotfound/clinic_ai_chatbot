@@ -4,6 +4,7 @@ const contactNotesRepo = require("../db/contactNotesRepo");
 const contactInsightsRepo = require("../db/contactInsightsRepo");
 
 const router = express.Router();
+const SOCIAL_CHANNELS = new Set(["facebook", "instagram"]);
 
 // Postgres' unique_violation code — thrown when a WhatsApp number collides
 // with an existing contact (see the UNIQUE constraint in schema.sql).
@@ -51,7 +52,7 @@ router.get("/:id", async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.id);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
-    res.json(contact);
+    res.json(contactsRepo.presentPortalContact(contact));
   } catch (err) {
     console.error("Failed to load contact:", err);
     res.status(500).json({ error: "Something went wrong loading this contact." });
@@ -77,18 +78,38 @@ router.post("/", async (req, res) => {
   }
 });
 
-// PATCH /api/contacts/:id — edit a contact's name and/or WhatsApp number.
+// PATCH /api/contacts/:id — edit a contact. WhatsApp contacts may change their
+// number; Facebook/Instagram scoped identifiers are owned by Meta and must never
+// be run through the WhatsApp number normalizer.
 router.patch("/:id", async (req, res) => {
   try {
     const existing = await contactsRepo.getContactById(req.params.id);
     if (!existing) return res.status(404).json({ error: "Contact not found." });
 
     const { name, whatsappNumber } = req.body || {};
+
+    if (SOCIAL_CHANNELS.has(existing.channel)) {
+      if (whatsappNumber !== undefined) {
+        return res.status(400).json({
+          error: "Facebook and Instagram account identifiers can't be edited manually.",
+        });
+      }
+
+      const updated = await contactsRepo.updateContactName(
+        existing.id,
+        name?.trim() || null
+      );
+      return res.json(contactsRepo.presentPortalContact(updated));
+    }
+
     if (!isPlausibleWhatsappNumber(whatsappNumber)) {
       return res.status(400).json({ error: "A valid WhatsApp number is required." });
     }
 
-    const updated = await contactsRepo.updateContact(existing.id, { name: name?.trim(), whatsappNumber });
+    const updated = await contactsRepo.updateContact(existing.id, {
+      name: name?.trim(),
+      whatsappNumber,
+    });
     res.json(updated);
   } catch (err) {
     if (err.code === UNIQUE_VIOLATION) {
