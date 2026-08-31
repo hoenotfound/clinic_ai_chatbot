@@ -58,6 +58,7 @@ export default function Pipeline() {
     const requested = searchParams.get("category") || "all";
     return CATEGORY_KEYS.has(requested) ? requested : "all";
   });
+  const [mobileStageId, setMobileStageId] = useState(null);
   const [selectedLeadId, setSelectedLeadId] = useState(null);
   const [showStages, setShowStages] = useState(false);
   const [showAddLead, setShowAddLead] = useState(false);
@@ -136,6 +137,16 @@ export default function Pipeline() {
   const noReplyHours = Number(data?.noReplyHours) || 24;
   const selectedLead = leads.find((lead) => Number(lead.id) === Number(selectedLeadId)) || null;
 
+  useEffect(() => {
+    if (!stages.length) {
+      setMobileStageId(null);
+      return;
+    }
+    setMobileStageId((current) => (
+      stages.some((stage) => Number(stage.id) === Number(current)) ? current : stages[0].id
+    ));
+  }, [stages]);
+
   // Analytics date/source/etc. filters are applied first without the branch.
   // Branch cards can then show accurate counts inside the Analytics cohort,
   // while selecting a branch narrows that same cohort instead of mixing scopes.
@@ -193,7 +204,6 @@ export default function Pipeline() {
     ])
   ), [drilldownLeads, noReplyHours, now]);
 
-  const activeLeads = useMemo(() => leads.filter((lead) => !lead.is_closed), [leads]);
   const metricLeads = hasAnalyticsDrilldown ? drilldownLeads : leads;
   const metricActiveLeads = metricLeads.filter((lead) => !lead.is_closed);
   const pipelineValue = metricActiveLeads.reduce((sum, lead) => sum + (Number(lead.estimated_value) || 0), 0);
@@ -208,6 +218,18 @@ export default function Pipeline() {
     })),
     { key: "unassigned", label: "Unassigned", leads: branchCardActive.filter((lead) => !lead.branch_name) },
   ], [branchCardActive, data?.branches]);
+
+  const stageCounts = useMemo(() => Object.fromEntries(
+    stages.map((stage) => [
+      stage.id,
+      filteredLeads.filter((lead) => Number(lead.stage_id) === Number(stage.id)).length,
+    ])
+  ), [filteredLeads, stages]);
+  const mobileStage = stages.find((stage) => Number(stage.id) === Number(mobileStageId)) || stages[0] || null;
+  const mobileStageLeads = mobileStage
+    ? filteredLeads.filter((lead) => Number(lead.stage_id) === Number(mobileStage.id))
+    : [];
+  const mobileStageValue = mobileStageLeads.reduce((sum, lead) => sum + (Number(lead.estimated_value) || 0), 0);
 
   function updateParam(key, value) {
     const next = new URLSearchParams(searchParams);
@@ -311,11 +333,11 @@ export default function Pipeline() {
 
   if (!data) {
     return (
-      <div className="flex h-full items-center justify-center bg-[var(--color-bg)] p-6">
-        <div className="max-w-md rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center shadow-sm">
+      <div className="flex h-full items-center justify-center bg-[var(--color-bg)] p-4 sm:p-6">
+        <div className="max-w-md rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center shadow-sm sm:p-8">
           <h1 className="font-display text-xl font-bold">Couldn't load the pipeline</h1>
           <p className="mt-2 text-sm text-[var(--color-text-muted)]">Check the connection and try again. Your lead data has not been changed.</p>
-          <button type="button" onClick={() => refreshPipeline()} className="mt-5 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)]">Try again</button>
+          <button type="button" onClick={() => refreshPipeline()} className="mt-5 h-11 rounded-xl bg-[var(--color-primary)] px-4 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)]">Try again</button>
         </div>
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       </div>
@@ -323,75 +345,131 @@ export default function Pipeline() {
   }
 
   return (
-    <div className="flex h-full min-w-0 flex-col bg-[var(--color-bg)]">
-      <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 lg:px-7">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--color-bg)]">
+      <header className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-4 sm:px-5 lg:px-7">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
             <div className="flex items-center gap-2.5">
-              <h1 className="font-display text-xl font-bold">Lead Pipeline</h1>
-              <span className="rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--color-primary)]">Live</span>
+              <h1 className="truncate font-display text-xl font-bold">Lead Pipeline</h1>
+              <span className="shrink-0 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--color-primary)]">Live</span>
             </div>
-            <p className="mt-1 text-sm text-[var(--color-text-muted)]">Move every enquiry from first message to clinic visit and conversion.</p>
+            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[var(--color-text-muted)] sm:text-sm">Track every enquiry, next action and sales outcome in one place.</p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => setShowStages(true)} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 text-sm font-semibold hover:bg-[var(--color-bg)]">Manage stages</button>
-            <button type="button" onClick={() => setShowAddLead(true)} className="rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)]">+ Add lead</button>
+          <div className="flex shrink-0 gap-2">
+            <button type="button" onClick={() => setShowStages(true)} className="h-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold transition hover:bg-[var(--color-bg)] sm:px-3.5 sm:text-sm">
+              <span className="sm:hidden">Stages</span><span className="hidden sm:inline">Manage stages</span>
+            </button>
+            <button type="button" onClick={() => setShowAddLead(true)} className="h-11 rounded-xl bg-[var(--color-primary)] px-3.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[var(--color-primary-hover)] sm:px-4 sm:text-sm">+ Add lead</button>
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3">
           <Metric label="Active leads" value={metricActiveLeads.length} detail={`${metricLeads.length} total journeys`} />
-          <Metric label="Hot leads" value={categoryCounts.hot || 0} detail="Require priority follow-up" tone="danger" />
-          <Metric label="Pipeline value" value={formatMoney(pipelineValue) || "RM 0"} detail="Estimated open value" />
+          <Metric label="Hot leads" value={categoryCounts.hot || 0} detail="Priority follow-up" tone="danger" />
+          <Metric className="col-span-2 sm:col-span-1" label="Pipeline value" value={formatMoney(pipelineValue) || "RM 0"} detail="Estimated open value" />
         </div>
       </header>
 
       {hasAnalyticsDrilldown && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-primary-light)] px-5 py-2.5 text-xs lg:px-7">
-          <span className="font-bold text-[var(--color-primary)]">Analytics drill-down</span>
-          {analyticsFilters.from && analyticsFilters.to && <FilterPill>{analyticsFilters.from} → {analyticsFilters.to}</FilterPill>}
-          {analyticsFilters.channel && <FilterPill>{analyticsFilters.channel}</FilterPill>}
-          {analyticsFilters.source && <FilterPill>Source: {analyticsFilters.source}</FilterPill>}
-          {analyticsFilters.campaign && <FilterPill>Campaign: {analyticsFilters.campaign}</FilterPill>}
-          {analyticsFilters.treatment && <FilterPill>Treatment: {analyticsFilters.treatment}</FilterPill>}
-          {analyticsFilters.owner && <FilterPill>Owner: {analyticsFilters.owner}</FilterPill>}
-          <button type="button" onClick={clearAnalyticsDrilldown} className="ml-auto rounded-lg px-2.5 py-1.5 font-semibold text-[var(--color-primary)] hover:bg-white/70">Clear drill-down</button>
+        <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-primary-light)] px-3.5 py-2.5 text-xs sm:px-5 lg:px-7">
+          <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+            <span className="shrink-0 font-bold text-[var(--color-primary)]">Analytics view</span>
+            {analyticsFilters.from && analyticsFilters.to && <FilterPill>{analyticsFilters.from} → {analyticsFilters.to}</FilterPill>}
+            {analyticsFilters.channel && <FilterPill>{analyticsFilters.channel}</FilterPill>}
+            {analyticsFilters.source && <FilterPill>Source: {analyticsFilters.source}</FilterPill>}
+            {analyticsFilters.campaign && <FilterPill>Campaign: {analyticsFilters.campaign}</FilterPill>}
+            {analyticsFilters.treatment && <FilterPill>Treatment: {analyticsFilters.treatment}</FilterPill>}
+            {analyticsFilters.owner && <FilterPill>Owner: {analyticsFilters.owner}</FilterPill>}
+            <button type="button" onClick={clearAnalyticsDrilldown} className="ml-auto h-9 shrink-0 rounded-lg px-2.5 font-semibold text-[var(--color-primary)] transition hover:bg-white/70">Clear</button>
+          </div>
         </div>
       )}
 
-      <div className="border-b border-[var(--color-border)] px-5 py-4 lg:px-7">
-        <div className="flex gap-3 overflow-x-auto pb-1">
+      <div className="shrink-0 border-b border-[var(--color-border)] px-3.5 py-3 sm:px-5 sm:py-4 lg:px-7">
+        <div className="flex gap-2.5 overflow-x-auto pb-1 sm:gap-3">
           {branchCards.map((branch) => {
             const hotCount = branch.leads.filter((lead) => lead.temperature === "hot").length;
             const appointmentCount = branch.leads.filter((lead) => lead.appointment_status === "set").length;
             return (
-              <button key={branch.key} type="button" onClick={() => selectBranch(branch.key)} className={`min-w-44 rounded-2xl border p-3 text-left transition ${branchFilter === branch.key ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] shadow-sm" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-primary)]/40"}`}>
+              <button key={branch.key} type="button" onClick={() => selectBranch(branch.key)} className={`min-w-36 rounded-2xl border px-3 py-2.5 text-left transition sm:min-w-44 sm:p-3 ${branchFilter === branch.key ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] shadow-sm" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-primary)]/40"}`}>
                 <div className="flex items-center justify-between gap-2">
                   <p className="truncate text-xs font-bold">{branch.label}</p>
                   <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-bold text-[var(--color-primary)]">{branch.leads.length}</span>
                 </div>
-                <p className="mt-2 text-[10px] text-[var(--color-text-muted)]">{hotCount} hot · {appointmentCount} appointments</p>
+                <p className="mt-1.5 truncate text-[9px] text-[var(--color-text-muted)] sm:mt-2 sm:text-[10px]">{hotCount} hot · {appointmentCount} appointments</p>
               </button>
             );
           })}
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3 lg:px-7">
-        <div className="relative min-w-52 flex-1 sm:max-w-xs">
-          <SearchIcon />
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search leads…" className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] py-2.5 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15" />
+      <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3 sm:px-5 lg:px-7">
+        <div className="flex items-center gap-2.5">
+          <div className="relative min-w-0 flex-1 sm:max-w-sm">
+            <SearchIcon />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search leads…" className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] pl-9 pr-9 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15" />
+            {search && <button type="button" onClick={() => setSearch("")} aria-label="Clear search" className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-sm text-[var(--color-text-muted)] hover:bg-white">✕</button>}
+          </div>
+          <span className="hidden shrink-0 text-[11px] font-medium text-[var(--color-text-muted)] md:block">{filteredLeads.length} shown</span>
         </div>
-        <div className="flex gap-1.5 overflow-x-auto">
+        <div className="mt-2.5 flex gap-1.5 overflow-x-auto pb-0.5">
           {CATEGORY_OPTIONS.map(([key, label]) => (
-            <button key={key} type="button" onClick={() => selectCategory(key)} className={`whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold transition ${categoryFilter === key ? "bg-[var(--color-primary)] text-white" : "border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}>
+            <button key={key} type="button" onClick={() => selectCategory(key)} className={`h-10 shrink-0 whitespace-nowrap rounded-xl px-3 text-xs font-semibold transition ${categoryFilter === key ? "bg-[var(--color-primary)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}>
               {label} <span className="ml-1 opacity-70">{categoryCounts[key] || 0}</span>
             </button>
           ))}
         </div>
       </div>
 
-      <main className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden p-5 lg:p-6">
+      <div className="flex min-h-0 flex-1 flex-col md:hidden">
+        <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-2.5">
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+            {stages.map((stage) => (
+              <button
+                key={stage.id}
+                type="button"
+                onClick={() => setMobileStageId(stage.id)}
+                className={`flex h-10 shrink-0 items-center gap-2 rounded-xl px-3 text-xs font-semibold transition ${Number(mobileStage?.id) === Number(stage.id) ? "bg-[var(--color-text)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)]"}`}
+              >
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: stage.color }} />
+                <span>{stage.name}</span>
+                <span className={`rounded-full px-1.5 py-0.5 text-[9px] ${Number(mobileStage?.id) === Number(stage.id) ? "bg-white/15 text-white" : "bg-[var(--color-bg)]"}`}>{stageCounts[stage.id] || 0}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <main className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3.5">
+          {mobileStage ? (
+            <section>
+              <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-[var(--color-border)] bg-white px-3.5 py-3 shadow-sm">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: mobileStage.color }} />
+                    <h2 className="truncate text-sm font-bold">{mobileStage.name}</h2>
+                  </div>
+                  <p className="mt-1 pl-[18px] text-[10px] text-[var(--color-text-muted)]">{mobileStageLeads.length} lead{mobileStageLeads.length === 1 ? "" : "s"} · {formatMoney(mobileStageValue) || "RM 0"}</p>
+                </div>
+                <span className="shrink-0 rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[10px] font-bold text-[var(--color-text-muted)]">{filteredLeads.length} shown</span>
+              </div>
+
+              <div className="space-y-2.5">
+                {mobileStageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} now={now} noReplyHours={noReplyHours} onOpen={openLead} onDragStart={handleDragStart} />)}
+                {mobileStageLeads.length === 0 && (
+                  <div className="rounded-2xl border border-dashed border-[var(--color-border)] bg-white/60 px-4 py-10 text-center">
+                    <p className="text-sm font-semibold">No leads here</p>
+                    <p className="mt-1 text-xs text-[var(--color-text-muted)]">Try another stage or adjust your filters.</p>
+                  </div>
+                )}
+              </div>
+            </section>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-[var(--color-border)] px-4 py-10 text-center text-xs text-[var(--color-text-muted)]">No pipeline stages yet.</div>
+          )}
+        </main>
+      </div>
+
+      <main className="hidden min-h-0 flex-1 overflow-x-auto overflow-y-hidden p-5 md:block lg:p-6">
         <div className="flex h-full min-w-max gap-4">
           {stages.map((stage) => {
             const stageLeads = filteredLeads.filter((lead) => Number(lead.stage_id) === Number(stage.id));
@@ -439,20 +517,20 @@ function matchesCategory(lead, category, now, noReplyHours) {
   return true;
 }
 
-function Metric({ label, value, detail, tone }) {
+function Metric({ label, value, detail, tone, className = "" }) {
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3">
-      <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">{label}</p>
+    <div className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 sm:px-4 ${className}`}>
+      <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] sm:text-[10px]">{label}</p>
       <div className="mt-1 flex items-end justify-between gap-3">
         <p className={`font-display text-xl font-bold ${tone === "danger" ? "text-[var(--color-danger)]" : ""}`}>{value}</p>
-        <p className="pb-0.5 text-[10px] text-[var(--color-text-muted)]">{detail}</p>
+        <p className="hidden pb-0.5 text-[10px] text-[var(--color-text-muted)] sm:block">{detail}</p>
       </div>
     </div>
   );
 }
 
 function FilterPill({ children }) {
-  return <span className="rounded-full bg-white/70 px-2.5 py-1 text-[10px] font-semibold text-[var(--color-text-muted)]">{children}</span>;
+  return <span className="shrink-0 rounded-full bg-white/70 px-2.5 py-1 text-[10px] font-semibold text-[var(--color-text-muted)]">{children}</span>;
 }
 
 function SearchIcon() {
