@@ -15,26 +15,36 @@ function addClient(res) {
   return () => clients.delete(client);
 }
 
-function canReceive(client, payload) {
-  if (!client.access) return true;
+function payloadForClient(client, event, payload) {
+  if (!client.access) return payload;
 
   if (payload?.contactId != null && client.access.contactIds !== null) {
-    return client.access.contactIds.has(Number(payload.contactId));
+    if (!client.access.contactIds.has(Number(payload.contactId))) {
+      // Still send a payload-free refresh signal. This is important when an
+      // admin has just assigned a previously invisible lead to this user: the
+      // SSE connection's access snapshot predates that assignment, so a silent
+      // drop would leave their Inbox stale until a manual reload.
+      return event === "conversation_changed" || event === "pipeline_changed" ? {} : null;
+    }
   }
   if (payload?.leadId != null && client.access.leadIds !== null) {
-    return client.access.leadIds.has(Number(payload.leadId));
+    if (!client.access.leadIds.has(Number(payload.leadId))) {
+      return event === "conversation_changed" || event === "pipeline_changed" ? {} : null;
+    }
   }
-  return true;
+  return payload;
 }
 
 function publish(event, payload = {}) {
-  const message = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
   for (const client of clients) {
     if (client.res.destroyed || client.res.writableEnded) {
       clients.delete(client);
       continue;
     }
-    if (!canReceive(client, payload)) continue;
+
+    const allowedPayload = payloadForClient(client, event, payload);
+    if (allowedPayload === null) continue;
+    const message = `event: ${event}\ndata: ${JSON.stringify(allowedPayload)}\n\n`;
 
     try {
       client.res.write(message);
