@@ -27,8 +27,8 @@ const CAPABILITY_DEFINITIONS = [
   },
   {
     key: "view_all_leads",
-    label: "View all leads",
-    description: "See every clinic lead and conversation instead of only assigned leads.",
+    label: "Access all leads",
+    description: "See every clinic lead and conversation. Any enabled reply or lead-management capabilities also apply across this clinic-wide view.",
     defaults: { admin: true, sales: false },
   },
   {
