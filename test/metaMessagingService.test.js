@@ -144,3 +144,75 @@ test("Instagram sends through the Instagram messages endpoint", async (t) => {
   assert.equal(result.wamid, null);
   assert.equal(result.externalMessageId, "ig-out-1");
 });
+
+test("fetches a Facebook Messenger user's display name and profile photo", async (t) => {
+  const originalFetch = global.fetch;
+  const oldToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (oldToken === undefined) delete process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    else process.env.FACEBOOK_PAGE_ACCESS_TOKEN = oldToken;
+  });
+
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN = "profile-page-token";
+
+  global.fetch = async (url, options) => {
+    const parsedUrl = new URL(url);
+    assert.equal(parsedUrl.origin, "https://graph.facebook.com");
+    assert.equal(parsedUrl.pathname, "/v26.0/psid-profile-1");
+    assert.equal(parsedUrl.searchParams.get("fields"), "first_name,last_name,profile_pic");
+    assert.equal(options.headers.Authorization, "Bearer profile-page-token");
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        first_name: "Deon",
+        last_name: "Tan",
+        profile_pic: "https://example.test/facebook.jpg",
+      }),
+    };
+  };
+
+  const profile = await meta.fetchUserProfile("facebook", "psid-profile-1");
+  assert.deepEqual(profile, {
+    profileName: "Deon Tan",
+    photoUrl: "https://example.test/facebook.jpg",
+    username: null,
+  });
+});
+
+test("fetches an Instagram user's name, username, and profile photo", async (t) => {
+  const originalFetch = global.fetch;
+  const oldToken = process.env.INSTAGRAM_ACCESS_TOKEN;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (oldToken === undefined) delete process.env.INSTAGRAM_ACCESS_TOKEN;
+    else process.env.INSTAGRAM_ACCESS_TOKEN = oldToken;
+  });
+
+  process.env.INSTAGRAM_ACCESS_TOKEN = "profile-ig-token";
+
+  global.fetch = async (url, options) => {
+    const parsedUrl = new URL(url);
+    assert.equal(parsedUrl.origin, "https://graph.instagram.com");
+    assert.equal(parsedUrl.pathname, "/v26.0/igsid-profile-1");
+    assert.equal(parsedUrl.searchParams.get("fields"), "name,username,profile_pic");
+    assert.equal(options.headers.Authorization, "Bearer profile-ig-token");
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        name: "Alicia Lim",
+        username: "alicialim",
+        profile_pic: "https://example.test/instagram.jpg",
+      }),
+    };
+  };
+
+  const profile = await meta.fetchUserProfile("instagram", "igsid-profile-1");
+  assert.deepEqual(profile, {
+    profileName: "Alicia Lim",
+    photoUrl: "https://example.test/instagram.jpg",
+    username: "alicialim",
+  });
+});
