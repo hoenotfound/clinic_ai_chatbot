@@ -5,9 +5,9 @@ import Login from "./pages/Login";
 import Inbox from "./pages/Inbox";
 import Contacts from "./pages/Contacts";
 import Settings from "./pages/Settings";
-import ComingSoon from "./pages/ComingSoon";
 import Tools from "./pages/Tools";
 import Pipeline from "./pages/Pipeline";
+import Analytics from "./pages/Analytics";
 
 function ProtectedRoute({ children }) {
   const { username, loading } = useAuth();
@@ -65,10 +65,7 @@ export default function App() {
             path="/analytics"
             element={
               <ProtectedRoute>
-                <ComingSoon
-                  title="Analytics"
-                  description="View conversation performance, response times, leads, bookings, and conversion results. Coming soon."
-                />
+                <Analytics />
               </ProtectedRoute>
             }
           />
