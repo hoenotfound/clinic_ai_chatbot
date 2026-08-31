@@ -7,6 +7,7 @@ import {
   APPOINTMENT_OPTIONS,
   CONSENT_OPTIONS,
   TEMPERATURE_OPTIONS,
+  contactIdentifier,
   displayName,
   buildLeadUpdatePayload,
   formatDateTime,
@@ -161,7 +162,7 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, n
             <ContactAvatar src={lead.photo_url} channel={lead.channel} size={42} />
             <div className="min-w-0">
               <h2 className="truncate font-display text-lg font-bold">{displayName(lead)}</h2>
-              <p className="truncate text-xs text-[var(--color-text-muted)]">+{lead.whatsapp_number}</p>
+              <p className="truncate text-xs text-[var(--color-text-muted)]">{contactIdentifier(lead)}</p>
             </div>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]" aria-label="Close lead details">✕</button>
