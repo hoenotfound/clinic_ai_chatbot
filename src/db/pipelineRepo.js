@@ -316,7 +316,12 @@ async function backfillLeadsForExistingContacts() {
          WHERE stage_type = 'open'
          ORDER BY CASE WHEN system_key = 'new' THEN 0 ELSE 1 END,
                   sort_order ASC, id ASC
-         LIMIT 1`
+         LIMIT 1
+       ) first_stage
+       WHERE EXISTS (SELECT 1 FROM messages m WHERE m.contact_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM leads existing WHERE existing.contact_id = c.id)
+       ON CONFLICT (contact_id) WHERE is_closed = false DO NOTHING
+       RETURNING id, stage_id`,
     );
 
     for (const lead of result.rows) {
