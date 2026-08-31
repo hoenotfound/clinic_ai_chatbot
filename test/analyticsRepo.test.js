@@ -1,8 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  ANALYTICS_QUERY_CONCURRENCY,
   buildComparison,
   buildFunnel,
+  createConcurrencyLimiter,
   metricDelta,
   percent,
 } = require("../src/db/analyticsRepo");
@@ -61,4 +63,21 @@ test("funnel reports stage rates and leads not yet progressed", () => {
   assert.equal(funnel[2].fromLeadRate, 40);
   assert.equal(funnel[2].dropOff, 40);
   assert.equal(funnel[4].dropOff, 18);
+});
+
+test("analytics concurrency limiter never exceeds the configured query cap", async () => {
+  const run = createConcurrencyLimiter(ANALYTICS_QUERY_CONCURRENCY);
+  let active = 0;
+  let maxActive = 0;
+
+  await Promise.all(
+    Array.from({ length: 12 }, (_, index) => run(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5 + (index % 3)));
+      active -= 1;
+    }))
+  );
+
+  assert.equal(maxActive, ANALYTICS_QUERY_CONCURRENCY);
 });
