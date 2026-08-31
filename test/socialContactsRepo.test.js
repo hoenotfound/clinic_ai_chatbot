@@ -79,8 +79,11 @@ test("hydrates a Facebook contact profile and never exposes its internal key as 
 
     assert.equal(queryCount, 2);
     assert.match(sql, /UPDATE contacts/);
-    assert.match(sql, /whatsapp_profile_name = COALESCE/);
-    assert.match(sql, /photo_url IS DISTINCT FROM/);
+    assert.match(sql, /whatsapp_profile_name = COALESCE\(\$1::text, whatsapp_profile_name\)/);
+    assert.match(sql, /photo_url = COALESCE\(\$2::text, photo_url\)/);
+    assert.match(sql, /\$1::text IS NOT NULL/);
+    assert.match(sql, /\$2::text IS NOT NULL/);
+    assert.match(sql, /photo_url IS DISTINCT FROM \$2::text/);
     assert.deepEqual(params, [
       "Deon Tan",
       "https://example.test/deon.jpg",
