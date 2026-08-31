@@ -16,7 +16,7 @@ function homeForPermissions(permissions = {}) {
   if (permissions.manage_tools) return "/tools";
   if (permissions.manage_settings) return "/settings";
   if (permissions.manage_users) return "/settings/team";
-  return "/login";
+  return "/no-access";
 }
 
 function ProtectedRoute({ children, anyCapabilities = [] }) {
@@ -46,6 +46,20 @@ function DefaultRoute() {
   return <Navigate to={homeForPermissions(permissions)} replace />;
 }
 
+function NoAccess() {
+  return (
+    <div className="flex h-full items-center justify-center bg-[var(--color-bg)] px-4">
+      <div className="w-full max-w-md rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center shadow-sm sm:p-8">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--color-primary-light)] text-xl text-[var(--color-primary)]">🔒</div>
+        <h1 className="mt-4 font-display text-xl font-bold">No portal access enabled</h1>
+        <p className="mt-2 text-sm leading-relaxed text-[var(--color-text-muted)]">
+          Your account is active, but no portal capabilities are currently enabled. Ask an administrator to update your access.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 const LEAD_VIEW = ["view_assigned_leads", "view_all_leads"];
 
 export default function App() {
@@ -62,6 +76,7 @@ export default function App() {
           <Route path="/tools" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><Tools /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute anyCapabilities={["manage_settings"]}><Settings /></ProtectedRoute>} />
           <Route path="/settings/team" element={<ProtectedRoute anyCapabilities={["manage_users"]}><TeamAccess /></ProtectedRoute>} />
+          <Route path="/no-access" element={<ProtectedRoute><NoAccess /></ProtectedRoute>} />
 
           <Route path="*" element={<DefaultRoute />} />
         </Routes>
