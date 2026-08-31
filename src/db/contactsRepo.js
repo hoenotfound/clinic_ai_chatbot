@@ -83,13 +83,13 @@ async function persistSocialProfile(row, profile) {
 
   const result = await pool.query(
     `UPDATE contacts
-     SET whatsapp_profile_name = COALESCE($1, whatsapp_profile_name),
-         photo_url = COALESCE($2, photo_url),
+     SET whatsapp_profile_name = COALESCE($1::text, whatsapp_profile_name),
+         photo_url = COALESCE($2::text, photo_url),
          updated_at = now()
      WHERE id = $3
        AND (
-         ($1 IS NOT NULL AND whatsapp_profile_name IS DISTINCT FROM $1)
-         OR ($2 IS NOT NULL AND photo_url IS DISTINCT FROM $2)
+         ($1::text IS NOT NULL AND whatsapp_profile_name IS DISTINCT FROM $1::text)
+         OR ($2::text IS NOT NULL AND photo_url IS DISTINCT FROM $2::text)
        )
      RETURNING whatsapp_profile_name, photo_url, updated_at`,
     [profileName, profilePhoto, row.contact_id || row.id]
