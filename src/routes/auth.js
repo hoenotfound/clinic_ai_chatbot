@@ -57,6 +57,12 @@ function validateAdminSafety(users) {
   return null;
 }
 
+function mutationError(code, message) {
+  const err = new Error(message);
+  err.code = code;
+  return err;
+}
+
 router.post("/login", loginRateLimit, async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) {
@@ -73,6 +79,7 @@ router.post("/login", loginRateLimit, async (req, res) => {
     clearAttempts(req);
     req.session.userId = user.id;
     req.session.username = user.username;
+    req.session.authenticatedAt = Date.now();
     return res.json({ username: user.username, user: presentUser(user) });
   } catch (err) {
     console.error("Login failed:", err);
@@ -156,64 +163,84 @@ router.patch("/users/:userId", requireAuth, requireCapability("manage_users"), a
     return res.status(400).json({ error: "Invalid staff account id." });
   }
 
+  const updates = {};
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "displayName")) {
+    const displayName = validateDisplayName(req.body.displayName);
+    if (!displayName) {
+      return res.status(400).json({ error: "Display name is required and must be 100 characters or fewer." });
+    }
+    updates.displayName = displayName;
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "role")) {
+    if (!ROLES.has(req.body.role)) {
+      return res.status(400).json({ error: "Role must be admin or sales." });
+    }
+    updates.role = req.body.role;
+    if (!Object.prototype.hasOwnProperty.call(req.body || {}, "permissions")) {
+      updates.permissions = {};
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "permissions")) {
+    updates.permissions = normalizePermissionOverrides(req.body.permissions);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "isActive")) {
+    if (typeof req.body.isActive !== "boolean") {
+      return res.status(400).json({ error: "isActive must be true or false." });
+    }
+    if (userId === Number(req.user.id) && req.body.isActive === false) {
+      return res.status(400).json({ error: "You can't disable the account you're currently using." });
+    }
+    updates.isActive = req.body.isActive;
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "password")) {
+    const password = validatePassword(req.body.password, { optional: true });
+    if (password === false) {
+      return res.status(400).json({ error: "Password must be at least 8 characters." });
+    }
+    if (password) updates.passwordHash = bcrypt.hashSync(password, 10);
+  }
+
   try {
-    const current = await usersRepo.getUserById(userId);
-    if (!current) return res.status(404).json({ error: "Staff account not found." });
+    const updated = await usersRepo.withAdminMutationLock(async (queryable) => {
+      const current = await usersRepo.getUserById(userId, queryable);
+      if (!current) throw mutationError("STAFF_NOT_FOUND", "Staff account not found.");
 
-    const updates = {};
-    if (Object.prototype.hasOwnProperty.call(req.body || {}, "displayName")) {
-      const displayName = validateDisplayName(req.body.displayName);
-      if (!displayName) {
-        return res.status(400).json({ error: "Display name is required and must be 100 characters or fewer." });
-      }
-      updates.displayName = displayName;
-    }
-    if (Object.prototype.hasOwnProperty.call(req.body || {}, "role")) {
-      if (!ROLES.has(req.body.role)) {
-        return res.status(400).json({ error: "Role must be admin or sales." });
-      }
-      updates.role = req.body.role;
-      if (!Object.prototype.hasOwnProperty.call(req.body || {}, "permissions")) {
-        updates.permissions = {};
-      }
-    }
-    if (Object.prototype.hasOwnProperty.call(req.body || {}, "permissions")) {
-      updates.permissions = normalizePermissionOverrides(req.body.permissions);
-    }
-    if (Object.prototype.hasOwnProperty.call(req.body || {}, "isActive")) {
-      if (typeof req.body.isActive !== "boolean") {
-        return res.status(400).json({ error: "isActive must be true or false." });
-      }
-      if (userId === Number(req.user.id) && req.body.isActive === false) {
-        return res.status(400).json({ error: "You can't disable the account you're currently using." });
-      }
-      updates.isActive = req.body.isActive;
-    }
-    if (Object.prototype.hasOwnProperty.call(req.body || {}, "password")) {
-      const password = validatePassword(req.body.password, { optional: true });
-      if (password === false) {
-        return res.status(400).json({ error: "Password must be at least 8 characters." });
-      }
-      if (password) updates.passwordHash = bcrypt.hashSync(password, 10);
+      const allUsers = await usersRepo.listUsers(queryable);
+      const safetyError = validateAdminSafety(proposedUser(allUsers, userId, updates));
+      if (safetyError) throw mutationError("ADMIN_SAFETY", safetyError);
+
+      return usersRepo.updateUser(userId, updates, queryable);
+    });
+
+    if (
+      userId === Number(req.user.id) &&
+      Object.prototype.hasOwnProperty.call(updates, "passwordHash") &&
+      updated?.credentials_changed_at
+    ) {
+      // Keep the password-resetting browser signed in while invalidating every
+      // other session that authenticated before this credential change.
+      req.session.authenticatedAt = new Date(updated.credentials_changed_at).getTime();
     }
 
-    const allUsers = await usersRepo.listUsers();
-    const safetyError = validateAdminSafety(proposedUser(allUsers, userId, updates));
-    if (safetyError) return res.status(400).json({ error: safetyError });
-
-    const updated = await usersRepo.updateUser(userId, updates);
     if (
       Object.prototype.hasOwnProperty.call(updates, "role") ||
       Object.prototype.hasOwnProperty.call(updates, "permissions") ||
-      Object.prototype.hasOwnProperty.call(updates, "isActive")
+      Object.prototype.hasOwnProperty.call(updates, "isActive") ||
+      Object.prototype.hasOwnProperty.call(updates, "passwordHash")
     ) {
       // SSE permissions are snapshotted when the connection opens. Force the
-      // browser to reconnect so revoked/global access cannot linger on an old
-      // realtime connection after an administrator changes this account.
+      // browser to reconnect after access or credential changes so stale
+      // realtime authorization cannot remain on a long-lived connection.
       realtimeEvents.disconnectUser(userId);
     }
     res.json({ user: presentUser(updated) });
   } catch (err) {
+    if (err.code === "STAFF_NOT_FOUND") {
+      return res.status(404).json({ error: err.message });
+    }
+    if (err.code === "ADMIN_SAFETY") {
+      return res.status(400).json({ error: err.message });
+    }
     console.error("Failed to update staff account:", err);
     res.status(500).json({ error: "Something went wrong updating this account." });
   }
@@ -229,19 +256,28 @@ router.delete("/users/:userId", requireAuth, requireCapability("manage_users"), 
   }
 
   try {
-    const current = await usersRepo.getUserById(userId);
-    if (!current) return res.status(404).json({ error: "Staff account not found." });
+    const removed = await usersRepo.withAdminMutationLock(async (queryable) => {
+      const current = await usersRepo.getUserById(userId, queryable);
+      if (!current) throw mutationError("STAFF_NOT_FOUND", "Staff account not found.");
 
-    const allUsers = await usersRepo.listUsers();
-    const safetyError = validateAdminSafety(
-      proposedUser(allUsers, userId, { isActive: false })
-    );
-    if (safetyError) return res.status(400).json({ error: safetyError });
+      const allUsers = await usersRepo.listUsers(queryable);
+      const safetyError = validateAdminSafety(
+        proposedUser(allUsers, userId, { isActive: false })
+      );
+      if (safetyError) throw mutationError("ADMIN_SAFETY", safetyError);
 
-    const removed = await usersRepo.deactivateUser(userId);
+      return usersRepo.deactivateUser(userId, queryable);
+    });
+
     realtimeEvents.disconnectUser(userId);
     res.json({ removed: true, user: presentUser(removed) });
   } catch (err) {
+    if (err.code === "STAFF_NOT_FOUND") {
+      return res.status(404).json({ error: err.message });
+    }
+    if (err.code === "ADMIN_SAFETY") {
+      return res.status(400).json({ error: err.message });
+    }
     console.error("Failed to remove staff access:", err);
     res.status(500).json({ error: "Something went wrong removing this account." });
   }
