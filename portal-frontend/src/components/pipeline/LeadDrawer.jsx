@@ -20,7 +20,7 @@ const inputClass =
   "w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15 disabled:cursor-not-allowed disabled:bg-[var(--color-bg)] disabled:text-[var(--color-text-muted)]";
 const labelClass = "mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]";
 
-export default function LeadDrawer({ lead, stages, branches, owners, services, now, noReplyHours, onClose, onSaved, onToast }) {
+export default function LeadDrawer({ lead, stages, owners, services, now, noReplyHours, onClose, onSaved, onToast }) {
   const navigate = useNavigate();
   const { permissions } = useAuth();
   const canManageLeads = permissions.manage_assigned_leads === true;
@@ -31,6 +31,7 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, n
   const [activities, setActivities] = useState(null);
   const [note, setNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
+  const [configuredBranches, setConfiguredBranches] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,6 +43,26 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, n
       .catch((err) => {
         console.error("Failed to load lead activity:", err);
         if (!cancelled) onToast("Couldn't load this lead's activity.", "error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [lead.id, onToast]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getConfiguredBranches()
+      .then((data) => {
+        if (!cancelled) {
+          setConfiguredBranches(Array.isArray(data?.branches) ? data.branches : []);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load configured branches for lead editing:", err);
+        if (!cancelled) {
+          setConfiguredBranches([]);
+          onToast("Couldn't refresh current branch options. Existing lead data is unchanged.", "warning");
+        }
       });
     return () => {
       cancelled = true;
@@ -69,6 +90,7 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, n
     () => stages.find((stage) => Number(stage.id) === Number(form.stageId)),
     [form.stageId, stages]
   );
+  const staleCurrentBranch = Boolean(form.branchName) && !configuredBranches.includes(form.branchName);
 
   function markDirty(...keys) {
     if (!canManageLeads) return;
@@ -237,8 +259,20 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, n
                 <Field label="Branch">
                   <select className={inputClass} value={form.branchName} onChange={(event) => update("branchName", event.target.value)}>
                     <option value="">Unassigned</option>
-                    {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
+                    {staleCurrentBranch && (
+                      <option value={form.branchName}>{form.branchName} · no longer configured</option>
+                    )}
+                    {configuredBranches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
                   </select>
+                  {staleCurrentBranch ? (
+                    <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-danger)]">
+                      This is historical branch data. You can save other lead changes without touching it, but choose a current branch or Unassigned before changing the branch.
+                    </p>
+                  ) : (
+                    <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+                      Only branches that currently exist in Clinic Settings can be newly selected.
+                    </p>
+                  )}
                 </Field>
                 <Field label="Lead owner">
                   <select
@@ -319,7 +353,7 @@ export default function LeadDrawer({ lead, stages, branches, owners, services, n
                 </button>
               </div>
             ) : (
-              <p className="mt-2 text-xs text-[var(--color-text-muted)]">Activity history is available to view; adding notes is disabled for this account.</p>
+              <p className="mt-2 text-xs text-[var(--color-text-muted)]">Activity history is available to view; adding notes is disabled for your account.</p>
             )}
 
             {activities === null ? (
