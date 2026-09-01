@@ -35,8 +35,9 @@ VALUES (1, NULL)
 ON CONFLICT (id) DO NOTHING;
 
 -- Assign only previously unowned leads. Explicit staff ownership is always
--- preserved. Eligibility is evaluated for every new lead so disabled accounts
--- and accounts changed away from the Sales role immediately leave the pool.
+-- preserved. Eligibility is evaluated for every new lead so disabled accounts,
+-- non-Sales accounts, and Sales accounts unable to view/reply to leads leave the
+-- pool immediately.
 CREATE OR REPLACE FUNCTION assign_lead_owner_round_robin()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -50,7 +51,7 @@ BEGIN
   END IF;
   NEW.owner_username := NULL;
 
-  SELECT COALESCE((data #>> '{leadDistribution,enabled}')::boolean, false)
+  SELECT COALESCE(data #>> '{leadDistribution,enabled}', 'false') = 'true'
   INTO distribution_enabled
   FROM clinic_config
   WHERE id = 1;
@@ -73,6 +74,11 @@ BEGIN
   FROM users
   WHERE is_active = true
     AND role = 'sales'
+    AND (
+      COALESCE(permissions ->> 'view_assigned_leads', 'true') = 'true'
+      OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
+    )
+    AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true'
     AND id > COALESCE(previous_user_id, 0)
   ORDER BY id ASC
   LIMIT 1;
@@ -83,6 +89,11 @@ BEGIN
     FROM users
     WHERE is_active = true
       AND role = 'sales'
+      AND (
+        COALESCE(permissions ->> 'view_assigned_leads', 'true') = 'true'
+        OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
+      )
+      AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true'
     ORDER BY id ASC
     LIMIT 1;
   END IF;
