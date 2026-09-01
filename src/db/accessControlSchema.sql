@@ -220,17 +220,20 @@ BEFORE INSERT ON leads
 FOR EACH ROW
 EXECUTE FUNCTION assign_new_lead_owner();
 
--- Any later explicit owner change is a staff/API decision. Mark it manual so
--- future assignment features can continue to respect it. Branch edits are not
--- part of this trigger and therefore never affect owner_username.
+-- Any later explicit owner change is a staff/API decision. A manual clear stays
+-- marked manual so recovery cannot silently assign it again. The only update path
+-- allowed to preserve 'automatic' is one that explicitly changes the source from
+-- a different value at the same time (used by conservative recovery below).
 CREATE OR REPLACE FUNCTION mark_manual_lead_owner_change()
 RETURNS TRIGGER AS $$
 BEGIN
   IF NEW.owner_username IS DISTINCT FROM OLD.owner_username THEN
-    NEW.owner_assignment_source := CASE
-      WHEN NULLIF(btrim(COALESCE(NEW.owner_username, '')), '') IS NULL THEN NULL
-      ELSE 'manual'
-    END;
+    IF NOT (
+      NEW.owner_assignment_source = 'automatic'
+      AND NEW.owner_assignment_source IS DISTINCT FROM OLD.owner_assignment_source
+    ) THEN
+      NEW.owner_assignment_source := 'manual';
+    END IF;
   END IF;
   RETURN NEW;
 END;
@@ -241,6 +244,187 @@ CREATE TRIGGER trg_mark_manual_lead_owner_change
 BEFORE UPDATE OF owner_username ON leads
 FOR EACH ROW
 EXECUTE FUNCTION mark_manual_lead_owner_change();
+
+-- Explicit recovery for leads that were never assigned because no eligible Sales
+-- account existed at creation time. Deliberately excludes owner_assignment_source
+-- = 'manual', so a lead intentionally cleared by staff remains untouched.
+CREATE OR REPLACE FUNCTION recover_unassigned_open_leads(max_leads INTEGER DEFAULT 100)
+RETURNS INTEGER AS $$
+DECLARE
+  distribution_enabled BOOLEAN := false;
+  safe_limit INTEGER := GREATEST(1, LEAST(COALESCE(max_leads, 100), 500));
+  lead_record RECORD;
+  target_branch TEXT;
+  route_branch TEXT;
+  routing_scope TEXT;
+  eligible_count INTEGER;
+  previous_user_id INTEGER;
+  selected_user_id INTEGER;
+  selected_username TEXT;
+  recovered_count INTEGER := 0;
+BEGIN
+  SELECT COALESCE(data #>> '{leadDistribution,enabled}', 'false') = 'true'
+  INTO distribution_enabled
+  FROM clinic_config
+  WHERE id = 1;
+
+  IF distribution_enabled IS DISTINCT FROM true THEN
+    RETURN 0;
+  END IF;
+
+  FOR lead_record IN
+    SELECT id, branch_name
+    FROM leads
+    WHERE is_closed = false
+      AND owner_username IS NULL
+      AND owner_assignment_source IS NULL
+    ORDER BY created_at ASC, id ASC
+    LIMIT safe_limit
+    FOR UPDATE SKIP LOCKED
+  LOOP
+    target_branch := NULLIF(btrim(COALESCE(lead_record.branch_name, '')), '');
+    route_branch := NULL;
+    routing_scope := 'global';
+    eligible_count := 0;
+    previous_user_id := NULL;
+    selected_user_id := NULL;
+    selected_username := NULL;
+
+    IF target_branch IS NOT NULL THEN
+      SELECT COUNT(*)::int
+      INTO eligible_count
+      FROM users
+      WHERE is_active = true
+        AND role = 'sales'
+        AND lower(btrim(COALESCE(branch_name, ''))) = lower(target_branch)
+        AND (
+          COALESCE(permissions ->> 'view_assigned_leads', 'true') = 'true'
+          OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
+        )
+        AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true';
+
+      IF eligible_count > 0 THEN
+        route_branch := target_branch;
+        routing_scope := 'branch:' || lower(target_branch);
+      END IF;
+    END IF;
+
+    IF route_branch IS NULL THEN
+      SELECT COUNT(*)::int
+      INTO eligible_count
+      FROM users
+      WHERE is_active = true
+        AND role = 'sales'
+        AND (
+          COALESCE(permissions ->> 'view_assigned_leads', 'true') = 'true'
+          OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
+        )
+        AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true';
+      routing_scope := 'global';
+    END IF;
+
+    IF eligible_count = 0 THEN
+      EXIT;
+    END IF;
+
+    IF eligible_count = 1 THEN
+      SELECT id, username
+      INTO selected_user_id, selected_username
+      FROM users
+      WHERE is_active = true
+        AND role = 'sales'
+        AND (route_branch IS NULL OR lower(btrim(COALESCE(branch_name, ''))) = lower(route_branch))
+        AND (
+          COALESCE(permissions ->> 'view_assigned_leads', 'true') = 'true'
+          OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
+        )
+        AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true'
+      ORDER BY id ASC
+      LIMIT 1
+      FOR SHARE;
+    ELSE
+      INSERT INTO lead_distribution_cursors (scope_key, last_user_id)
+      VALUES (routing_scope, NULL)
+      ON CONFLICT (scope_key) DO NOTHING;
+
+      SELECT last_user_id
+      INTO previous_user_id
+      FROM lead_distribution_cursors
+      WHERE scope_key = routing_scope
+      FOR UPDATE;
+
+      SELECT id, username
+      INTO selected_user_id, selected_username
+      FROM users
+      WHERE is_active = true
+        AND role = 'sales'
+        AND (route_branch IS NULL OR lower(btrim(COALESCE(branch_name, ''))) = lower(route_branch))
+        AND (
+          COALESCE(permissions ->> 'view_assigned_leads', 'true') = 'true'
+          OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
+        )
+        AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true'
+        AND id > COALESCE(previous_user_id, 0)
+      ORDER BY id ASC
+      LIMIT 1
+      FOR SHARE;
+
+      IF selected_user_id IS NULL THEN
+        SELECT id, username
+        INTO selected_user_id, selected_username
+        FROM users
+        WHERE is_active = true
+          AND role = 'sales'
+          AND (route_branch IS NULL OR lower(btrim(COALESCE(branch_name, ''))) = lower(route_branch))
+          AND (
+            COALESCE(permissions ->> 'view_assigned_leads', 'true') = 'true'
+            OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
+          )
+          AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true'
+        ORDER BY id ASC
+        LIMIT 1
+        FOR SHARE;
+      END IF;
+
+      UPDATE lead_distribution_cursors
+      SET last_user_id = selected_user_id, updated_at = now()
+      WHERE scope_key = routing_scope;
+    END IF;
+
+    IF selected_user_id IS NULL THEN
+      EXIT;
+    END IF;
+
+    UPDATE leads
+    SET owner_username = selected_username,
+        owner_assignment_source = 'automatic',
+        updated_at = now()
+    WHERE id = lead_record.id
+      AND is_closed = false
+      AND owner_username IS NULL
+      AND owner_assignment_source IS NULL;
+
+    IF FOUND THEN
+      INSERT INTO lead_activities (
+        lead_id, activity_type, description, actor, metadata
+      ) VALUES (
+        lead_record.id,
+        'updated',
+        format('Previously unassigned lead automatically assigned to %s.', selected_username),
+        'Lead distribution',
+        jsonb_build_object(
+          'source', 'lead_distribution_recovery',
+          'ownerUsername', selected_username,
+          'routingScope', routing_scope
+        )
+      );
+      recovered_count := recovered_count + 1;
+    END IF;
+  END LOOP;
+
+  RETURN recovered_count;
+END;
+$$ LANGUAGE plpgsql;
 
 -- The existing AI conversation summary returns preferredBranch. The prompt now
 -- canonicalizes a clear customer preference to one exact configured branch name.
