@@ -149,7 +149,7 @@ export default function LeadDistribution() {
                 </span>
               </div>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)]">
-                Route customers to the Sales team for their chosen clinic branch first. When a branch has multiple Sales accounts, leads rotate fairly within that branch. Customers who have not chosen a branch use the global Sales rotation from the start.
+                Assign each new lead to a Sales account immediately and keep that owner stable. If a trusted branch is already known when the lead is created, that branch pool is used first. Otherwise the lead starts in the global Sales rotation. The AI summary can record the customer's stated branch later without moving the conversation to another salesperson.
               </p>
             </div>
 
@@ -172,9 +172,9 @@ export default function LeadDistribution() {
           </header>
 
           <section className="mt-7 grid overflow-hidden rounded-2xl border border-[var(--color-border)] bg-white shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:grid-cols-3 sm:divide-x sm:divide-[var(--color-border)]">
-            <Overview label="Routing priority" value="Branch first" />
-            <Overview label="Within each pool" value="Round robin when 2+ Sales" />
-            <Overview label="No branch chosen" value="Global round robin" />
+            <Overview label="Assignment" value="Immediate" />
+            <Overview label="Owner continuity" value="No automatic rerouting" />
+            <Overview label="Branch record" value="AI summary + staff edit" />
           </section>
 
           {accounts.length === 0 && (
@@ -197,7 +197,7 @@ export default function LeadDistribution() {
                 <div>
                   <h2 className="font-display text-lg font-bold">Eligible Sales accounts</h2>
                   <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                    Assign each Sales account to its clinic branch from Team & Access. Accounts without a fixed branch still take part in the global rotation for customers who have not chosen a branch.
+                    Sales branches are useful when a lead already has a structured branch at creation. Most new chat leads start without one, so they enter the global rotation immediately and keep the same owner while the AI later records the preferred branch.
                   </p>
                 </div>
                 <button
@@ -241,19 +241,19 @@ export default function LeadDistribution() {
               <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)]">
                 <h2 className="font-display text-sm font-bold">How a lead is assigned</h2>
                 <ol className="mt-4 space-y-3 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  <Step number="1" text="The chatbot detects a clear branch choice from the customer's messages, including later messages and transcribed voice notes." />
-                  <Step number="2" text="If that branch has one eligible Sales account, the lead goes directly to that salesperson." />
-                  <Step number="3" text="If that branch has two or more eligible Sales accounts, the lead uses a separate round-robin rotation for that branch." />
-                  <Step number="4" text="If the customer has not identified a branch, the lead uses the global round-robin rotation across all eligible Sales accounts from the first message." />
+                  <Step number="1" text="The chatbot creates the lead and assigns an owner immediately, without waiting for the conversation summary." />
+                  <Step number="2" text="If a structured branch is already set at creation, one Sales account is assigned directly or multiple accounts rotate within that branch." />
+                  <Step number="3" text="If no branch is known yet, the lead uses the global round-robin rotation across eligible Sales accounts." />
+                  <Step number="4" text="When the existing AI summary later contains a stated preferred branch, a blank branch record is filled for reference only. The owner stays unchanged." />
                 </ol>
               </section>
 
               <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5">
                 <h2 className="font-display text-sm font-bold">Built-in safeguards</h2>
                 <ul className="mt-3 space-y-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  <li>• A later branch choice can reroute an automatically assigned lead.</li>
-                  <li>• An owner chosen manually is never overwritten by branch routing.</li>
-                  <li>• If a chosen branch has no eligible Sales account, routing falls back to the global Sales pool.</li>
+                  <li>• Customer message storage has no branch-routing trigger.</li>
+                  <li>• A later AI or staff branch change never changes the Sales owner.</li>
+                  <li>• A manually selected owner is never overwritten by automatic distribution.</li>
                   <li>• Disabled accounts, Admin accounts, and Sales accounts without lead viewing or reply access are skipped.</li>
                   <li>• Existing leads are not redistributed just because you enable the tool.</li>
                   <li>• If no eligible Sales account exists at all, the lead stays unassigned instead of blocking the chatbot.</li>
