@@ -67,10 +67,14 @@ test("lead distribution mutations require both Tools and Assign leads permission
 
 test("Lead Distribution is selected from inside Tools rather than the main sidebar", () => {
   const app = read("portal-frontend/src/App.jsx");
+  const toolsRoute = read("portal-frontend/src/pages/ToolsRoute.jsx");
   const sidebar = read("portal-frontend/src/components/Sidebar.jsx");
   const tools = read("portal-frontend/src/pages/Tools.jsx");
 
-  assert.match(app, /import Tools from "\.\/pages\/Tools"/);
+  assert.match(app, /import ToolsRoute from "\.\/pages\/ToolsRoute"/);
+  assert.match(app, /<ToolsRoute \/>/);
+  assert.match(toolsRoute, /import Tools from "\.\/Tools"/);
+  assert.match(toolsRoute, /<Tools \/>/);
   assert.doesNotMatch(app, /ToolsWithNavigation/);
   assert.match(app, /to="\/tools\?tool=lead-distribution"/);
   assert.doesNotMatch(sidebar, /label: "Lead Distribution"/);
@@ -80,6 +84,16 @@ test("Lead Distribution is selected from inside Tools rather than the main sideb
   assert.match(tools, /Automatic Lead Distribution/);
   assert.match(tools, /<LeadDistribution/);
   assert.match(tools, /distributionActive/);
+});
+
+test("Automated Follow-up clearly states its WhatsApp-only channel scope", () => {
+  const toolsRoute = read("portal-frontend/src/pages/ToolsRoute.jsx");
+
+  assert.match(toolsRoute, /WhatsApp only/);
+  assert.match(toolsRoute, /sent only to WhatsApp conversations/);
+  assert.match(toolsRoute, /Instagram and Facebook leads are not included/);
+  assert.match(toolsRoute, /selectedTool !== "lead-temperature"/);
+  assert.match(toolsRoute, /selectedTool !== "lead-distribution"/);
 });
 
 test("Lead Distribution UI exposes a simple branch/global choice and view-only state", () => {
