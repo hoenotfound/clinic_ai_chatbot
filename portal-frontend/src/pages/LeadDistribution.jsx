@@ -66,7 +66,7 @@ export default function LeadDistribution() {
 
   async function save() {
     if (settings.enabled && accounts.length === 0) {
-      showToast("Add at least one active Sales account before enabling lead distribution.", "error");
+      showToast("Add at least one eligible Sales account before enabling lead distribution.", "error");
       return;
     }
 
@@ -149,7 +149,7 @@ export default function LeadDistribution() {
                 </span>
               </div>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)]">
-                Give each new unassigned lead to an active Sales account in turn. The assigned salesperson then sees that lead through your existing Inbox, Contacts, and Pipeline access rules.
+                Give each new unassigned lead to an eligible Sales account in turn. The assigned salesperson then sees that lead through your existing Inbox, Contacts, and Pipeline access rules.
               </p>
             </div>
 
@@ -173,15 +173,15 @@ export default function LeadDistribution() {
 
           <section className="mt-7 grid overflow-hidden rounded-2xl border border-[var(--color-border)] bg-white shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:grid-cols-3 sm:divide-x sm:divide-[var(--color-border)]">
             <Overview label="Distribution method" value="Round robin" />
-            <Overview label="Eligible accounts" value={`${accounts.length} active Sales`} />
+            <Overview label="Eligible accounts" value={`${accounts.length} Sales`} />
             <Overview label="Applies to" value="New unassigned leads" />
           </section>
 
           {accounts.length === 0 && (
             <section className="mt-5 rounded-2xl border border-[var(--color-accent)]/30 bg-[var(--color-accent-light)] p-4 text-sm">
-              <p className="font-semibold">No active Sales accounts are available.</p>
+              <p className="font-semibold">No eligible Sales accounts are available.</p>
               <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                Create a Sales account in Team & Access, or change an existing account to Sales, before turning this tool on.
+                The account must be active, use the Sales role, and be allowed to view and reply to assigned leads.
               </p>
               {permissions.manage_users && (
                 <Link to="/settings/team" className="mt-3 inline-flex text-xs font-semibold text-[var(--color-primary)] hover:underline">
@@ -197,7 +197,7 @@ export default function LeadDistribution() {
                 <div>
                   <h2 className="font-display text-lg font-bold">Sales rotation</h2>
                   <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                    The next lead goes to the next active Sales account in this order, then the list starts again from the top.
+                    The next lead goes to the next eligible Sales account in this order, then the list starts again from the top.
                   </p>
                 </div>
                 <button
@@ -236,7 +236,7 @@ export default function LeadDistribution() {
                 <h2 className="font-display text-sm font-bold">What happens to a new lead</h2>
                 <ol className="mt-4 space-y-3 text-[11px] leading-5 text-[var(--color-text-muted)]">
                   <Step number="1" text="The chatbot creates the lead as it already does today." />
-                  <Step number="2" text="If no owner was chosen manually, the database selects the next active Sales account." />
+                  <Step number="2" text="If no owner was chosen manually, the database selects the next eligible Sales account." />
                   <Step number="3" text="The salesperson can immediately see the assigned lead wherever assigned-lead access is enforced." />
                   <Step number="4" text="The next new lead moves to the next salesperson in the rotation." />
                 </ol>
@@ -247,9 +247,10 @@ export default function LeadDistribution() {
                 <ul className="mt-3 space-y-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
                   <li>• Disabled accounts are skipped.</li>
                   <li>• Admin accounts are not included in the Sales rotation.</li>
+                  <li>• Sales accounts without lead viewing or reply access are skipped.</li>
                   <li>• An owner chosen manually is never overwritten.</li>
                   <li>• Existing leads are not redistributed when you enable the tool.</li>
-                  <li>• If no Sales account is available, the lead stays unassigned instead of blocking the chatbot.</li>
+                  <li>• If no eligible Sales account is available, the lead stays unassigned instead of blocking the chatbot.</li>
                 </ul>
               </section>
             </aside>
