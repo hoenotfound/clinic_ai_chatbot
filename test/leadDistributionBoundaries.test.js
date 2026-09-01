@@ -71,12 +71,20 @@ test("lead distribution mutations require both Tools and Assign leads permission
   assert.match(requireAuth, /req\.method !== "GET" && !canAssign/);
 });
 
-test("Lead Distribution is discoverable from within the Tools page", () => {
+test("Lead Distribution is selected from inside Tools rather than the main sidebar", () => {
   const app = read("portal-frontend/src/App.jsx");
-  const wrapper = read("portal-frontend/src/pages/ToolsWithNavigation.jsx");
-  assert.match(app, /ToolsWithNavigation/);
-  assert.match(wrapper, /to="\/tools\/lead-distribution"/);
-  assert.match(wrapper, /Automatic Lead Distribution/);
+  const sidebar = read("portal-frontend/src/components/Sidebar.jsx");
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+
+  assert.match(app, /import Tools from "\.\/pages\/Tools"/);
+  assert.doesNotMatch(app, /ToolsWithNavigation/);
+  assert.match(app, /to="\/tools\?tool=lead-distribution"/);
+  assert.doesNotMatch(sidebar, /label: "Lead Distribution"/);
+  assert.match(tools, /useSearchParams/);
+  assert.match(tools, /value === "lead-distribution"/);
+  assert.match(tools, /onSelect\("leadDistribution"\)/);
+  assert.match(tools, /Automatic Lead Distribution/);
+  assert.match(tools, /<LeadDistribution \/>/);
 });
 
 test("Lead Distribution UI exposes a clear branch routing choice and view-only state", () => {

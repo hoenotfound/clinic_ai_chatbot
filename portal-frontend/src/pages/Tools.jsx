@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import Spinner from "../components/Spinner";
 import { ToastContainer, useToasts } from "../components/Toast";
+import LeadDistribution from "./LeadDistribution";
 
 const DEFAULT_FOLLOW_UP = {
   enabled: false,
@@ -64,8 +66,21 @@ function normalizeFollowUpSettings(value = {}) {
   };
 }
 
+function toolFromQuery(value) {
+  if (value === "lead-temperature") return "leadScoring";
+  if (value === "lead-distribution") return "leadDistribution";
+  return "followUp";
+}
+
+function queryForTool(tool) {
+  if (tool === "leadScoring") return "lead-temperature";
+  if (tool === "leadDistribution") return "lead-distribution";
+  return "";
+}
+
 export default function Tools() {
-  const [activeTool, setActiveTool] = useState("followUp");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTool = toolFromQuery(searchParams.get("tool"));
   const [config, setConfig] = useState(null);
   const [form, setForm] = useState(DEFAULT_FOLLOW_UP);
   const [scoringForm, setScoringForm] = useState(DEFAULT_LEAD_SCORING);
@@ -78,6 +93,14 @@ export default function Tools() {
   const [uploadingImage, setUploadingImage] = useState(false);
   const imageInputRef = useRef(null);
   const { toasts, showToast, dismissToast } = useToasts();
+
+  function selectTool(tool) {
+    const next = new URLSearchParams(searchParams);
+    const queryValue = queryForTool(tool);
+    if (queryValue) next.set("tool", queryValue);
+    else next.delete("tool");
+    setSearchParams(next, { replace: true });
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -334,6 +357,22 @@ export default function Tools() {
     );
   }
 
+  if (activeTool === "leadDistribution") {
+    return (
+      <div className="flex h-full flex-col bg-[var(--color-bg)] lg:flex-row">
+        <ToolsSidebar
+          activeTool={activeTool}
+          onSelect={selectTool}
+          followUpActive={savedEnabled}
+          scoringActive={!!savedScoring.enabled}
+        />
+        <div className="min-h-0 min-w-0 flex-1">
+          <LeadDistribution />
+        </div>
+      </div>
+    );
+  }
+
   if (activeTool === "leadScoring") {
     return (
       <LeadScoringTool
@@ -344,7 +383,7 @@ export default function Tools() {
         saving={scoringSaving}
         onSave={handleSaveScoring}
         activeTool={activeTool}
-        onSelectTool={setActiveTool}
+        onSelectTool={selectTool}
         followUpActive={savedEnabled}
         toasts={toasts}
         dismissToast={dismissToast}
@@ -356,7 +395,7 @@ export default function Tools() {
     <div className="flex h-full flex-col bg-[var(--color-bg)] lg:flex-row">
       <ToolsSidebar
         activeTool={activeTool}
-        onSelect={setActiveTool}
+        onSelect={selectTool}
         followUpActive={savedEnabled}
         scoringActive={!!savedScoring.enabled}
       />
@@ -979,6 +1018,23 @@ function ToolsSidebar({ activeTool, onSelect, followUpActive, scoringActive }) {
           />
         </button>
 
+        <button
+          type="button"
+          onClick={() => onSelect("leadDistribution")}
+          className={`flex w-full min-w-[13.5rem] items-start gap-3 rounded-2xl border p-3.5 text-left transition-colors lg:min-w-0 ${activeTool === "leadDistribution" ? "border-[var(--color-primary)]/15 bg-[var(--color-primary-light)]" : "border-[var(--color-border)] bg-white hover:bg-[var(--color-bg)]"}`}
+          aria-current={activeTool === "leadDistribution" ? "page" : undefined}
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-[var(--color-primary)] shadow-sm">
+            <DistributionIcon className="h-5 w-5" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold text-[var(--color-text)]">Automatic Lead Distribution</span>
+            <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">
+              Share new leads across eligible Sales staff
+            </span>
+          </span>
+        </button>
+
         <p className="hidden px-1 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)] lg:block">
           Coming soon
         </p>
@@ -1122,6 +1178,17 @@ function ScoreIcon(props) {
     <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
       <path d="M4 19V9M10 19V5M16 19v-7M22 19V8" strokeLinecap="round" />
       <path d="m3 7 6-4 6 7 6-4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function DistributionIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="6" cy="5" r="2" />
+      <circle cx="18" cy="5" r="2" />
+      <circle cx="12" cy="19" r="2" />
+      <path d="M7.5 6.5 10.8 17M16.5 6.5 13.2 17M8 5h8" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

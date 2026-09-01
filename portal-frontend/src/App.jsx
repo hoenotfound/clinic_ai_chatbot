@@ -6,8 +6,7 @@ import Inbox from "./pages/Inbox";
 import Contacts from "./pages/Contacts";
 import Settings from "./pages/Settings";
 import TeamAccess from "./pages/TeamAccess";
-import ToolsWithNavigation from "./pages/ToolsWithNavigation";
-import LeadDistribution from "./pages/LeadDistribution";
+import Tools from "./pages/Tools";
 import Pipeline from "./pages/Pipeline";
 import Analytics from "./pages/Analytics";
 
@@ -74,8 +73,8 @@ export default function App() {
           <Route path="/contacts" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><Contacts /></ProtectedRoute>} />
           <Route path="/pipeline" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><Pipeline /></ProtectedRoute>} />
           <Route path="/analytics" element={<ProtectedRoute anyCapabilities={["view_analytics"]}><Analytics /></ProtectedRoute>} />
-          <Route path="/tools" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><ToolsWithNavigation /></ProtectedRoute>} />
-          <Route path="/tools/lead-distribution" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><LeadDistribution /></ProtectedRoute>} />
+          <Route path="/tools" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><Tools /></ProtectedRoute>} />
+          <Route path="/tools/lead-distribution" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><Navigate to="/tools?tool=lead-distribution" replace /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute anyCapabilities={["manage_settings"]}><Settings /></ProtectedRoute>} />
           <Route path="/settings/team" element={<ProtectedRoute anyCapabilities={["manage_users"]}><TeamAccess /></ProtectedRoute>} />
           <Route path="/no-access" element={<ProtectedRoute><NoAccess /></ProtectedRoute>} />

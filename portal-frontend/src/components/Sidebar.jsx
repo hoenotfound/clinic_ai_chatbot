@@ -8,8 +8,7 @@ const NAV_ITEMS = [
   { to: "/contacts", label: "Contacts", icon: ContactsIcon, capabilities: LEAD_VIEW },
   { to: "/pipeline", label: "Pipeline", icon: PipelineIcon, capabilities: LEAD_VIEW },
   { to: "/analytics", label: "Analytics", icon: AnalyticsIcon, capabilities: ["view_analytics"] },
-  { to: "/tools", label: "Tools", icon: ToolsIcon, capabilities: ["manage_tools"], end: true },
-  { to: "/tools/lead-distribution", label: "Lead Distribution", icon: DistributionIcon, capabilities: ["manage_tools"], child: true },
+  { to: "/tools", label: "Tools", icon: ToolsIcon, capabilities: ["manage_tools"] },
   { to: "/settings", label: "Settings", icon: SettingsIcon, capabilities: ["manage_settings"] },
   { to: "/settings/team", label: "Team & Access", icon: TeamIcon, capabilities: ["manage_users"] },
 ];
@@ -44,11 +43,10 @@ export default function Sidebar() {
           <NavLink
             key={item.to}
             to={item.to}
-            end={item.end === true}
             title={item.label}
             aria-label={item.label}
             className={({ isActive }) =>
-              `flex items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors lg:justify-start ${item.child ? "lg:ml-4 lg:px-3" : "lg:px-3"} ${
+              `flex items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors lg:justify-start lg:px-3 ${
                 isActive
                   ? "bg-[var(--color-primary)] text-white"
                   : "text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)]"
@@ -127,17 +125,6 @@ function ToolsIcon(props) {
   return (
     <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M14.7 6.3a4 4 0 0 0-5-5L12 3.6 8.4 7.2 6.1 4.9a4 4 0 0 0 5 5L4 17a2.1 2.1 0 0 0 3 3l7.1-7.1a4 4 0 0 0 5-5l-2.3 2.3-3.6-3.6 1.5-1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function DistributionIcon(props) {
-  return (
-    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="6" cy="5" r="2" />
-      <circle cx="18" cy="5" r="2" />
-      <circle cx="12" cy="19" r="2" />
-      <path d="M7.5 6.5 10.8 17M16.5 6.5 13.2 17M8 5h8" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
