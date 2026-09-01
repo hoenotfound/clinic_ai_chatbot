@@ -149,7 +149,7 @@ export default function LeadDistribution() {
                 </span>
               </div>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)]">
-                Give each new unassigned lead to an eligible Sales account in turn. The assigned salesperson then sees that lead through your existing Inbox, Contacts, and Pipeline access rules.
+                Route customers to the Sales team for their chosen clinic branch first. When a branch has multiple Sales accounts, leads rotate fairly within that branch. Customers who have not chosen a branch use the global Sales rotation from the start.
               </p>
             </div>
 
@@ -172,9 +172,9 @@ export default function LeadDistribution() {
           </header>
 
           <section className="mt-7 grid overflow-hidden rounded-2xl border border-[var(--color-border)] bg-white shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:grid-cols-3 sm:divide-x sm:divide-[var(--color-border)]">
-            <Overview label="Distribution method" value="Round robin" />
-            <Overview label="Eligible accounts" value={`${accounts.length} Sales`} />
-            <Overview label="Applies to" value="New unassigned leads" />
+            <Overview label="Routing priority" value="Branch first" />
+            <Overview label="Within each pool" value="Round robin when 2+ Sales" />
+            <Overview label="No branch chosen" value="Global round robin" />
           </section>
 
           {accounts.length === 0 && (
@@ -195,9 +195,9 @@ export default function LeadDistribution() {
             <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:p-6">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <h2 className="font-display text-lg font-bold">Sales rotation</h2>
+                  <h2 className="font-display text-lg font-bold">Eligible Sales accounts</h2>
                   <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                    The next lead goes to the next eligible Sales account in this order, then the list starts again from the top.
+                    Assign each Sales account to its clinic branch from Team & Access. Accounts without a fixed branch still take part in the global rotation for customers who have not chosen a branch.
                   </p>
                 </div>
                 <button
@@ -210,6 +210,12 @@ export default function LeadDistribution() {
                   {refreshing ? "Refreshing…" : "Refresh accounts"}
                 </button>
               </div>
+
+              {permissions.manage_users && (
+                <Link to="/settings/team" className="mt-4 inline-flex items-center rounded-xl border border-[var(--color-border)] px-3 py-2 text-xs font-semibold text-[var(--color-primary)] hover:bg-[var(--color-bg)]">
+                  Configure Sales branches in Team & Access
+                </Link>
+              )}
 
               <div className="mt-5 space-y-2">
                 {accounts.length > 0 ? accounts.map((account, index) => (
@@ -225,7 +231,7 @@ export default function LeadDistribution() {
                   </div>
                 )) : (
                   <div className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-xs text-[var(--color-text-muted)]">
-                    No Sales accounts in the rotation yet.
+                    No Sales accounts are eligible yet.
                   </div>
                 )}
               </div>
@@ -233,24 +239,24 @@ export default function LeadDistribution() {
 
             <aside className="space-y-5">
               <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)]">
-                <h2 className="font-display text-sm font-bold">What happens to a new lead</h2>
+                <h2 className="font-display text-sm font-bold">How a lead is assigned</h2>
                 <ol className="mt-4 space-y-3 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  <Step number="1" text="The chatbot creates the lead as it already does today." />
-                  <Step number="2" text="If no owner was chosen manually, the database selects the next eligible Sales account." />
-                  <Step number="3" text="The salesperson can immediately see the assigned lead wherever assigned-lead access is enforced." />
-                  <Step number="4" text="The next new lead moves to the next salesperson in the rotation." />
+                  <Step number="1" text="The chatbot detects a clear branch choice from the customer's messages, including later messages and transcribed voice notes." />
+                  <Step number="2" text="If that branch has one eligible Sales account, the lead goes directly to that salesperson." />
+                  <Step number="3" text="If that branch has two or more eligible Sales accounts, the lead uses a separate round-robin rotation for that branch." />
+                  <Step number="4" text="If the customer has not identified a branch, the lead uses the global round-robin rotation across all eligible Sales accounts from the first message." />
                 </ol>
               </section>
 
               <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5">
                 <h2 className="font-display text-sm font-bold">Built-in safeguards</h2>
                 <ul className="mt-3 space-y-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  <li>• Disabled accounts are skipped.</li>
-                  <li>• Admin accounts are not included in the Sales rotation.</li>
-                  <li>• Sales accounts without lead viewing or reply access are skipped.</li>
-                  <li>• An owner chosen manually is never overwritten.</li>
-                  <li>• Existing leads are not redistributed when you enable the tool.</li>
-                  <li>• If no eligible Sales account is available, the lead stays unassigned instead of blocking the chatbot.</li>
+                  <li>• A later branch choice can reroute an automatically assigned lead.</li>
+                  <li>• An owner chosen manually is never overwritten by branch routing.</li>
+                  <li>• If a chosen branch has no eligible Sales account, routing falls back to the global Sales pool.</li>
+                  <li>• Disabled accounts, Admin accounts, and Sales accounts without lead viewing or reply access are skipped.</li>
+                  <li>• Existing leads are not redistributed just because you enable the tool.</li>
+                  <li>• If no eligible Sales account exists at all, the lead stays unassigned instead of blocking the chatbot.</li>
                 </ul>
               </section>
             </aside>
