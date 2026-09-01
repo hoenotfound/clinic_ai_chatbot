@@ -144,7 +144,7 @@ function CreateStaffCard({ branches, onCreated, onError }) {
       <div className="mb-4">
         <h2 className="font-display text-lg font-bold">Add staff account</h2>
         <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
-          Sales accounts start with assigned-lead access only. Choose a branch for branch-first lead routing, or leave it blank for the global fallback pool.
+          Sales accounts start with assigned-lead access only. A fixed branch is used for branch-first assignment when that branch is already known as the lead is created. Every eligible Sales account still participates in the global rotation for leads without a known branch.
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -179,11 +179,11 @@ function CreateStaffCard({ branches, onCreated, onError }) {
           <label className="block sm:col-span-2">
             <span className="mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]">Sales branch</span>
             <select className={inputClass} value={form.branchName} onChange={(e) => setForm({ ...form, branchName: e.target.value })}>
-              <option value="">No fixed branch · global fallback pool</option>
+              <option value="">No fixed branch</option>
               {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
             </select>
             <span className="mt-1.5 block text-[11px] leading-5 text-[var(--color-text-muted)]">
-              A customer who chooses this branch will be routed here first. If multiple Sales accounts use the same branch, they rotate round robin.
+              Used only when a trusted branch is already known at lead creation. Later branch record changes never move the lead to another owner.
             </span>
           </label>
         )}
@@ -202,6 +202,8 @@ function StaffCard({ staff, branches, currentUserId, permissionDefinitions, onUp
   const [newPassword, setNewPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const isCurrent = Number(staff.id) === Number(currentUserId);
+  const savedBranchName = staff.branchName || "";
+  const staleBranch = Boolean(savedBranchName) && !branches.includes(savedBranchName);
 
   useEffect(() => {
     setDisplayName(staff.displayName || staff.username);
@@ -223,10 +225,10 @@ function StaffCard({ staff, branches, currentUserId, permissionDefinitions, onUp
   }
 
   async function saveProfile() {
-    const updates = {
-      displayName,
-      branchName: staff.role === "sales" ? branchName : null,
-    };
+    const updates = { displayName };
+    if (staff.role === "sales" && branchName !== savedBranchName) {
+      updates.branchName = branchName;
+    }
     if (newPassword) updates.password = newPassword;
     const updated = await patch(updates);
     if (updated) setNewPassword("");
@@ -264,8 +266,8 @@ function StaffCard({ staff, branches, currentUserId, permissionDefinitions, onUp
               {staff.role}
             </span>
             {staff.role === "sales" && staff.branchName && (
-              <span className="rounded-full bg-[var(--color-primary-light)] px-2 py-1 text-[10px] font-semibold text-[var(--color-primary)]">
-                {staff.branchName}
+              <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${staleBranch ? "bg-[var(--color-danger-light)] text-[var(--color-danger)]" : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"}`}>
+                {staff.branchName}{staleBranch ? " · old branch" : ""}
               </span>
             )}
             {!staff.isActive && <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 text-[10px] font-bold uppercase text-[var(--color-text-muted)]">Access removed</span>}
@@ -297,12 +299,21 @@ function StaffCard({ staff, branches, currentUserId, permissionDefinitions, onUp
           <label className="block sm:col-span-2">
             <span className="mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]">Sales branch</span>
             <select className={inputClass} value={branchName} onChange={(e) => setBranchName(e.target.value)}>
-              <option value="">No fixed branch · global fallback pool</option>
+              <option value="">No fixed branch</option>
+              {staleBranch && (
+                <option value={savedBranchName}>{savedBranchName} · no longer configured</option>
+              )}
               {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
             </select>
-            <span className="mt-1.5 block text-[11px] text-[var(--color-text-muted)]">
-              Used by Automatic Lead Distribution. Branchless customers still rotate across all eligible Sales accounts.
-            </span>
+            {staleBranch ? (
+              <span className="mt-1.5 block text-[11px] leading-5 text-[var(--color-danger)]">
+                This branch no longer exists in clinic settings. You can still save this staff member's name or password without changing it, but choose a current branch or No fixed branch before branch-specific routing can use this account again.
+              </span>
+            ) : (
+              <span className="mt-1.5 block text-[11px] leading-5 text-[var(--color-text-muted)]">
+                Used for branch-first assignment only when the branch is already known as the lead is created. Every eligible Sales account still participates in the global rotation for leads without a known branch.
+              </span>
+            )}
           </label>
         )}
       </div>
