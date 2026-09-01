@@ -52,7 +52,13 @@ async function listActiveSalesUsers(queryable = pool) {
   const result = await queryable.query(
     `SELECT id, username, display_name
      FROM users
-     WHERE is_active = true AND role = 'sales'
+     WHERE is_active = true
+       AND role = 'sales'
+       AND (
+         COALESCE(permissions ->> 'view_assigned_leads', 'true') = 'true'
+         OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
+       )
+       AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true'
      ORDER BY id ASC`
   );
   return result.rows;
