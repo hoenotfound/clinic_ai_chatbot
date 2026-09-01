@@ -6,8 +6,13 @@ const {
 
 const NO_REPLY_HOURS = 24;
 
-function publishPipelineChange(leadId = null) {
+function publishPipelineChange(leadId = null, { refreshInbox = false } = {}) {
   realtimeEvents.publish("pipeline_changed", { leadId });
+  if (refreshInbox) {
+    realtimeEvents.publish("conversation_changed", {
+      reason: "lead_assignment_changed",
+    });
+  }
 }
 
 async function withTransaction(work) {
@@ -247,7 +252,9 @@ async function ensureLeadForContact(
   });
 
   if (outcome.created || outcome.boundaryInitialized) {
-    publishPipelineChange(outcome.lead.id);
+    publishPipelineChange(outcome.lead.id, {
+      refreshInbox: outcome.created && Boolean(outcome.lead.owner_username),
+    });
   }
   return outcome;
 }
@@ -418,7 +425,11 @@ async function createLead(data, actor) {
     return { lead, created: true };
   });
 
-  if (outcome.created) publishPipelineChange(outcome.lead.id);
+  if (outcome.created) {
+    publishPipelineChange(outcome.lead.id, {
+      refreshInbox: Boolean(outcome.lead.owner_username),
+    });
+  }
   return outcome;
 }
 
@@ -565,7 +576,11 @@ async function updateLead(id, patch, actor) {
     return result.rows[0];
   });
 
-  if (updatedLead) publishPipelineChange(updatedLead.id);
+  if (updatedLead) {
+    publishPipelineChange(updatedLead.id, {
+      refreshInbox: Object.hasOwn(patch, "ownerUsername"),
+    });
+  }
   return updatedLead;
 }
 
