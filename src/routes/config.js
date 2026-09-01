@@ -2,7 +2,9 @@ const express = require("express");
 const multer = require("multer");
 const configRepo = require("../db/configRepo");
 const promoImagesRepo = require("../db/promoImagesRepo");
+const usersRepo = require("../db/usersRepo");
 const followUpTranslationService = require("../services/followUpTranslationService");
+const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
 
 const router = express.Router();
 
@@ -51,6 +53,7 @@ const VALIDATORS = {
   introMessage: isNonEmptyString,
   automatedFollowUp: isAutomatedFollowUpConfig,
   leadScoring: isLeadScoringConfig,
+  leadDistribution: (v) => normalizeLeadDistributionConfig(v) !== null,
   tone: isString,
   messagingStyle: isString,
   closingPlaybook: isString,
@@ -237,6 +240,25 @@ router.post("/automated-follow-up/translations", async (req, res) => {
   }
 });
 
+// Tools users can see the current round-robin pool without receiving password
+// hashes, permission overrides, inactive accounts, or admin accounts.
+router.get("/lead-distribution/status", async (req, res) => {
+  try {
+    const accounts = await usersRepo.listActiveSalesUsers();
+    res.json({
+      strategy: "round_robin",
+      accounts: accounts.map((user) => ({
+        id: user.id,
+        username: user.username,
+        displayName: user.display_name || user.username,
+      })),
+    });
+  } catch (err) {
+    console.error("Failed to load lead distribution status:", err);
+    res.status(500).json({ error: "Something went wrong loading lead distribution." });
+  }
+});
+
 async function saveUploadedImage(req, res) {
   try {
     if (!req.file) {
@@ -339,6 +361,16 @@ router.patch("/", async (req, res) => {
         });
       }
       updates.leadScoring = prepared;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, "leadDistribution")) {
+      const prepared = normalizeLeadDistributionConfig(updates.leadDistribution);
+      if (!prepared) {
+        return res.status(400).json({
+          error: "Invalid lead distribution settings. Round robin is the supported distribution method.",
+        });
+      }
+      updates.leadDistribution = prepared;
     }
 
     const invalidKeys = keys.filter((k) => !VALIDATORS[k](updates[k]));
