@@ -63,6 +63,28 @@ function normalizeFollowUpSettings(value = {}) {
   };
 }
 
+function followUpFormFromSettings(value = {}) {
+  const settings = normalizeFollowUpSettings(value);
+  return {
+    enabled: !!settings.enabled,
+    delayMinutes: Number(settings.delayMinutes) || DEFAULT_FOLLOW_UP.delayMinutes,
+    triggerMode: settings.triggerMode === "staff" ? "staff" : "all",
+    message: settings.message || DEFAULT_FOLLOW_UP.message,
+    translations: settings.translations,
+    imageUrl: settings.imageUrl || "",
+  };
+}
+
+function scoringFormFromSettings(value = {}) {
+  const settings = { ...DEFAULT_LEAD_SCORING, ...value };
+  return {
+    enabled: !!settings.enabled,
+    inactivityMinutes: Number(settings.inactivityMinutes),
+    maxConversationMinutes: Number(settings.maxConversationMinutes),
+    maxMessages: Number(settings.maxMessages),
+  };
+}
+
 function toolFromQuery(value) {
   if (value === "lead-temperature") return "leadScoring";
   if (value === "lead-distribution") return "leadDistribution";
@@ -87,6 +109,7 @@ export default function Tools() {
   const [translating, setTranslating] = useState(false);
   const [translationLanguage, setTranslationLanguage] = useState("en");
   const [translationsSource, setTranslationsSource] = useState(DEFAULT_FOLLOW_UP.message);
+  const [manualTranslationEdits, setManualTranslationEdits] = useState([]);
   const [reviewTranslations, setReviewTranslations] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [distributionDirty, setDistributionDirty] = useState(false);
@@ -100,24 +123,13 @@ export default function Tools() {
       .getConfig()
       .then((data) => {
         if (cancelled) return;
-        const settings = normalizeFollowUpSettings(data.automatedFollowUp);
-        const scoring = { ...DEFAULT_LEAD_SCORING, ...(data.leadScoring || {}) };
+        const followUp = followUpFormFromSettings(data.automatedFollowUp);
+        const scoring = scoringFormFromSettings(data.leadScoring);
         setConfig(data);
-        setForm({
-          enabled: !!settings.enabled,
-          delayMinutes: Number(settings.delayMinutes) || DEFAULT_FOLLOW_UP.delayMinutes,
-          triggerMode: settings.triggerMode === "staff" ? "staff" : "all",
-          message: settings.message || DEFAULT_FOLLOW_UP.message,
-          translations: settings.translations,
-          imageUrl: settings.imageUrl || "",
-        });
-        setScoringForm({
-          enabled: !!scoring.enabled,
-          inactivityMinutes: Number(scoring.inactivityMinutes),
-          maxConversationMinutes: Number(scoring.maxConversationMinutes),
-          maxMessages: Number(scoring.maxMessages),
-        });
-        setTranslationsSource(settings.message || DEFAULT_FOLLOW_UP.message);
+        setForm(followUp);
+        setScoringForm(scoring);
+        setTranslationsSource(followUp.message);
+        setManualTranslationEdits([]);
         setDistributionActive(Boolean(data.leadDistribution?.enabled));
       })
       .catch((err) => {
@@ -156,13 +168,31 @@ export default function Tools() {
     return false;
   }
 
+  function discardCurrentToolChanges() {
+    if (activeTool === "followUp") {
+      const saved = followUpFormFromSettings(config?.automatedFollowUp);
+      setForm(saved);
+      setTranslationsSource(saved.message);
+      setManualTranslationEdits([]);
+      setReviewTranslations(false);
+      setTranslationLanguage("en");
+      return;
+    }
+    if (activeTool === "leadScoring") {
+      setScoringForm(scoringFormFromSettings(config?.leadScoring));
+      return;
+    }
+    if (activeTool === "leadDistribution") {
+      setDistributionDirty(false);
+    }
+  }
+
   function selectTool(tool) {
     if (tool === activeTool) return;
-    if (
-      currentToolHasUnsavedChanges() &&
-      !window.confirm("You have unsaved changes in this tool. Leave without saving them?")
-    ) {
-      return;
+    if (currentToolHasUnsavedChanges()) {
+      const leave = window.confirm("You have unsaved changes in this tool. Leave without saving them?");
+      if (!leave) return;
+      discardCurrentToolChanges();
     }
     const next = new URLSearchParams(searchParams);
     const queryValue = queryForTool(tool);
@@ -179,12 +209,10 @@ export default function Tools() {
     setDistributionActive(Boolean(enabled));
   }, []);
 
-  async function generateTranslations(message, { announce = true } = {}) {
+  async function requestTranslations(message, { announce = true } = {}) {
     setTranslating(true);
     try {
       const { translations } = await api.translateFollowUp(message);
-      setForm((current) => ({ ...current, translations }));
-      setTranslationsSource(message);
       if (announce) showToast("Language versions updated.", "info");
       return translations;
     } catch (err) {
@@ -201,7 +229,29 @@ export default function Tools() {
       showToast("Add the follow-up message first.", "error");
       return;
     }
-    await generateTranslations(message);
+    const translations = await requestTranslations(message);
+    if (!translations) return;
+    setForm((current) => ({ ...current, translations }));
+    setTranslationsSource(message);
+    setManualTranslationEdits([]);
+  }
+
+  function handleSourceMessageChange(value) {
+    setForm((current) => ({ ...current, message: value }));
+    // Any translation edits made before a source-message change belong to the
+    // previous source. Only edits made after the latest source change should
+    // be preserved when Save auto-generates fresh versions.
+    setManualTranslationEdits([]);
+  }
+
+  function handleTranslationChange(languageKey, value) {
+    setForm((current) => ({
+      ...current,
+      translations: { ...current.translations, [languageKey]: value },
+    }));
+    setManualTranslationEdits((current) =>
+      current.includes(languageKey) ? current : [...current, languageKey]
+    );
   }
 
   async function handleImagePicked(event) {
@@ -249,10 +299,21 @@ export default function Tools() {
       let translations = Object.fromEntries(
         FOLLOW_UP_LANGUAGES.map(({ key }) => [key, form.translations[key]?.trim() || ""])
       );
+
       if (translationsNeedRefresh) {
-        const generated = await generateTranslations(message, { announce: false });
+        const generated = await requestTranslations(message, { announce: false });
         if (!generated) return;
-        translations = generated;
+
+        // Preserve only language versions the user manually edited after the
+        // latest source-message change. Untouched/stale versions are refreshed
+        // from AI so manual fine-tuning is never silently overwritten.
+        translations = Object.fromEntries(
+          FOLLOW_UP_LANGUAGES.map(({ key }) => {
+            const manualValue = form.translations[key]?.trim() || "";
+            const preserveManual = manualTranslationEdits.includes(key) && manualValue;
+            return [key, preserveManual ? manualValue : generated[key]];
+          })
+        );
       }
 
       const updated = await api.updateConfig({
@@ -265,17 +326,11 @@ export default function Tools() {
           imageUrl: form.imageUrl,
         },
       });
-      const saved = normalizeFollowUpSettings(updated.automatedFollowUp);
+      const saved = followUpFormFromSettings(updated.automatedFollowUp);
       setConfig(updated);
-      setForm({
-        enabled: !!saved.enabled,
-        delayMinutes: Number(saved.delayMinutes),
-        triggerMode: saved.triggerMode,
-        message: saved.message,
-        translations: saved.translations,
-        imageUrl: saved.imageUrl || "",
-      });
+      setForm(saved);
       setTranslationsSource(saved.message);
+      setManualTranslationEdits([]);
       showToast(saved.enabled ? "Automated follow-up is active." : "Automated follow-up is paused.", "info");
     } catch (err) {
       showToast(err.message || "Couldn't save the follow-up tool.", "error");
@@ -311,14 +366,9 @@ export default function Tools() {
           maxMessages,
         },
       });
-      const saved = { ...DEFAULT_LEAD_SCORING, ...updated.leadScoring };
+      const saved = scoringFormFromSettings(updated.leadScoring);
       setConfig(updated);
-      setScoringForm({
-        enabled: !!saved.enabled,
-        inactivityMinutes: Number(saved.inactivityMinutes),
-        maxConversationMinutes: Number(saved.maxConversationMinutes),
-        maxMessages: Number(saved.maxMessages),
-      });
+      setScoringForm(saved);
       showToast(saved.enabled ? "Automatic lead temperature is active." : "Automatic lead temperature is paused.", "info");
     } catch (err) {
       showToast(err.message || "Couldn't save automatic lead temperature.", "error");
@@ -372,6 +422,8 @@ export default function Tools() {
             saving={saving}
             delayDescription={delayDescription}
             imageInputRef={imageInputRef}
+            onSourceMessageChange={handleSourceMessageChange}
+            onTranslationChange={handleTranslationChange}
             onGenerateTranslations={handleGenerateTranslations}
             onImagePicked={handleImagePicked}
             onSave={handleSave}
@@ -421,6 +473,8 @@ function FollowUpTool({
   saving,
   delayDescription,
   imageInputRef,
+  onSourceMessageChange,
+  onTranslationChange,
   onGenerateTranslations,
   onImagePicked,
   onSave,
@@ -508,7 +562,7 @@ function FollowUpTool({
               rows="4"
               maxLength="1000"
               value={form.message}
-              onChange={(event) => setForm((current) => ({ ...current, message: event.target.value }))}
+              onChange={(event) => onSourceMessageChange(event.target.value)}
               className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
             />
 
@@ -517,13 +571,11 @@ function FollowUpTool({
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-xs font-semibold">Customer languages</p>
-                    <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
-                      English · BM · 中文
-                    </span>
+                    <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">English · BM · 中文</span>
                   </div>
                   <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
                     {translationsNeedRefresh
-                      ? "Language versions will refresh automatically when you save."
+                      ? "Language versions will refresh automatically when you save. Manual edits made after the latest message change will be kept."
                       : `${translationReadyCount} language versions are ready and matched to the customer automatically.`}
                   </p>
                 </div>
@@ -539,7 +591,7 @@ function FollowUpTool({
               {reviewTranslations && (
                 <div className="mt-4 border-t border-[var(--color-border)] pt-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-[11px] text-[var(--color-text-muted)]">You can review or fine-tune the generated versions before saving.</p>
+                    <p className="text-[11px] text-[var(--color-text-muted)]">Review or fine-tune any language. Your manual edits are preserved when Save refreshes the other versions.</p>
                     <button
                       type="button"
                       onClick={onGenerateTranslations}
@@ -574,12 +626,7 @@ function FollowUpTool({
                     rows="4"
                     maxLength="1000"
                     value={form.translations[translationLanguage] || ""}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        translations: { ...current.translations, [translationLanguage]: event.target.value },
-                      }))
-                    }
+                    onChange={(event) => onTranslationChange(translationLanguage, event.target.value)}
                     className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
                   />
                 </div>
@@ -672,16 +719,12 @@ function LeadScoringTool({ form, setForm, savedEnabled, hasUnsavedChanges, savin
             <OutcomeCard icon="❄️" title="Clear rejection → Cold" text="A clear no, rejection or loss of interest can move a lead to Cold." />
             <OutcomeCard icon="👤" title="Staff changes always win" text="A temperature set manually by staff is never overwritten automatically." />
           </div>
-          <p className="mt-4 text-[11px] leading-5 text-[var(--color-text-muted)]">
-            AI conversation summaries can still run independently when automatic temperature is paused.
-          </p>
+          <p className="mt-4 text-[11px] leading-5 text-[var(--color-text-muted)]">AI conversation summaries can still run independently when automatic temperature is paused.</p>
         </Card>
 
         <details className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:p-6">
           <summary className="cursor-pointer select-none font-display text-sm font-bold">Advanced timing settings</summary>
-          <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
-            Most clinics can keep the defaults. Change these only if you want the AI to review conversations sooner or later.
-          </p>
+          <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">Most clinics can keep the defaults. Change these only if you want the AI to review conversations sooner or later.</p>
           <div className="mt-5 grid gap-4 md:grid-cols-3">
             <ScoringField id="scoring-inactivity" label="Conversation quiet for" hint="5 to 30 minutes" value={form.inactivityMinutes} min="5" max="30" suffix="minutes" onChange={(value) => setForm((current) => ({ ...current, inactivityMinutes: value }))} />
             <ScoringField id="scoring-duration" label="Maximum active time" hint="30 to 120 minutes" value={form.maxConversationMinutes} min="30" max="120" suffix="minutes" onChange={(value) => setForm((current) => ({ ...current, maxConversationMinutes: value }))} />
@@ -694,7 +737,8 @@ function LeadScoringTool({ form, setForm, savedEnabled, hasUnsavedChanges, savin
 }
 
 function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChanges, onToggle, saveLabel, saving, saveDisabled, onSave, children, toasts, dismissToast }) {
-  const automationStatus = hasUnsavedChanges
+  const enabledStateChanged = enabled !== savedEnabled;
+  const automationStatus = enabledStateChanged
     ? enabled
       ? "Will be active after saving"
       : "Will be paused after saving"
@@ -723,7 +767,6 @@ function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChange
               <Switch checked={enabled} onChange={onToggle} ariaLabel={`Enable ${title}`} />
             </div>
           </header>
-
           <div className="mt-7">{children}</div>
         </div>
       </main>
