@@ -102,6 +102,9 @@ export const api = {
     }),
   getConfig: () => request("/config"),
   updateConfig: (updates) => request("/config", { method: "PATCH", body: JSON.stringify(updates) }),
+  getLeadDistributionStatus: () => request("/config/lead-distribution/status"),
+  recoverUnassignedLeads: () =>
+    request("/config/lead-distribution/recover-unassigned", { method: "POST" }),
   uploadPromoImage: async (file) => {
     const form = new FormData();
     form.append("image", file);
@@ -153,6 +156,7 @@ export const api = {
     request(`/contacts/${id}/notes`, { method: "POST", body: JSON.stringify({ content }) }),
   deleteContactNote: (id, noteId) => request(`/contacts/${id}/notes/${noteId}`, { method: "DELETE" }),
   getPipeline: () => request("/pipeline"),
+  getConfiguredBranches: () => request("/pipeline/configured-branches"),
   getAnalytics: (filters = {}) => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(filters)) {

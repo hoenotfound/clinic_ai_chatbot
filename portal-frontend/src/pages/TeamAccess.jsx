@@ -73,6 +73,8 @@ export default function TeamAccess() {
     );
   }
 
+  const branches = Array.isArray(data.branches) ? data.branches : [];
+
   return (
     <div className="h-full overflow-y-auto bg-[var(--color-bg)]">
       <div className="mx-auto w-full max-w-5xl px-3.5 py-5 sm:px-5 sm:py-7 lg:px-8">
@@ -80,11 +82,12 @@ export default function TeamAccess() {
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--color-primary)]">Settings</p>
           <h1 className="mt-1 font-display text-2xl font-bold sm:text-3xl">Team & Access</h1>
           <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-[var(--color-text-muted)]">
-            Add staff accounts, choose Admin or Sales, and control exactly what each person can see or change.
+            Add staff accounts, choose Admin or Sales, assign Sales accounts to branches, and control exactly what each person can see or change.
           </p>
         </div>
 
         <CreateStaffCard
+          branches={branches}
           onCreated={(created) => {
             setData((current) => ({ ...current, users: [created, ...current.users] }));
             showToast("Staff account created.", "info");
@@ -97,6 +100,7 @@ export default function TeamAccess() {
             <StaffCard
               key={staff.id}
               staff={staff}
+              branches={branches}
               currentUserId={data.currentUserId || signedInUser?.id}
               permissionDefinitions={data.permissionDefinitions}
               onUpdated={(updated) => handleUpdated(updated, "Access updated.")}
@@ -111,8 +115,14 @@ export default function TeamAccess() {
   );
 }
 
-function CreateStaffCard({ onCreated, onError }) {
-  const [form, setForm] = useState({ displayName: "", username: "", password: "", role: "sales" });
+function CreateStaffCard({ branches, onCreated, onError }) {
+  const [form, setForm] = useState({
+    displayName: "",
+    username: "",
+    password: "",
+    role: "sales",
+    branchName: "",
+  });
   const [saving, setSaving] = useState(false);
 
   async function submit(event) {
@@ -121,7 +131,7 @@ function CreateStaffCard({ onCreated, onError }) {
     try {
       const result = await teamApi.createUser(form);
       onCreated(result.user);
-      setForm({ displayName: "", username: "", password: "", role: "sales" });
+      setForm({ displayName: "", username: "", password: "", role: "sales", branchName: "" });
     } catch (err) {
       onError(err.message || "Couldn't create this account.");
     } finally {
@@ -134,7 +144,7 @@ function CreateStaffCard({ onCreated, onError }) {
       <div className="mb-4">
         <h2 className="font-display text-lg font-bold">Add staff account</h2>
         <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
-          Sales accounts start with assigned-lead access only. Admin accounts start with all capabilities, which you can still switch off below.
+          Sales accounts start with assigned-lead access only. A fixed branch is used for branch-first assignment when that branch is already known as the lead is created. Every eligible Sales account still participates in the global rotation for leads without a known branch.
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -152,11 +162,31 @@ function CreateStaffCard({ onCreated, onError }) {
         </label>
         <label className="block">
           <span className="mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]">Role</span>
-          <select className={inputClass} value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+          <select
+            className={inputClass}
+            value={form.role}
+            onChange={(e) => setForm({
+              ...form,
+              role: e.target.value,
+              branchName: e.target.value === "sales" ? form.branchName : "",
+            })}
+          >
             <option value="sales">Sales</option>
             <option value="admin">Admin</option>
           </select>
         </label>
+        {form.role === "sales" && (
+          <label className="block sm:col-span-2">
+            <span className="mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]">Sales branch</span>
+            <select className={inputClass} value={form.branchName} onChange={(e) => setForm({ ...form, branchName: e.target.value })}>
+              <option value="">No fixed branch</option>
+              {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
+            </select>
+            <span className="mt-1.5 block text-[11px] leading-5 text-[var(--color-text-muted)]">
+              Used only when a trusted branch is already known at lead creation. Later branch record changes never move the lead to another owner.
+            </span>
+          </label>
+        )}
       </div>
       <button type="submit" disabled={saving} className="mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 text-sm font-semibold text-white disabled:opacity-50 sm:w-auto">
         {saving && <Spinner />}
@@ -166,15 +196,19 @@ function CreateStaffCard({ onCreated, onError }) {
   );
 }
 
-function StaffCard({ staff, currentUserId, permissionDefinitions, onUpdated, onRemoved, onError }) {
+function StaffCard({ staff, branches, currentUserId, permissionDefinitions, onUpdated, onRemoved, onError }) {
   const [displayName, setDisplayName] = useState(staff.displayName || staff.username);
+  const [branchName, setBranchName] = useState(staff.branchName || "");
   const [newPassword, setNewPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const isCurrent = Number(staff.id) === Number(currentUserId);
+  const savedBranchName = staff.branchName || "";
+  const staleBranch = Boolean(savedBranchName) && !branches.includes(savedBranchName);
 
   useEffect(() => {
     setDisplayName(staff.displayName || staff.username);
-  }, [staff.displayName, staff.username]);
+    setBranchName(staff.branchName || "");
+  }, [staff.displayName, staff.username, staff.branchName]);
 
   async function patch(updates, success = onUpdated) {
     setBusy(true);
@@ -192,13 +226,17 @@ function StaffCard({ staff, currentUserId, permissionDefinitions, onUpdated, onR
 
   async function saveProfile() {
     const updates = { displayName };
+    if (staff.role === "sales" && branchName !== savedBranchName) {
+      updates.branchName = branchName;
+    }
     if (newPassword) updates.password = newPassword;
     const updated = await patch(updates);
     if (updated) setNewPassword("");
   }
 
   async function changeRole(role) {
-    await patch({ role });
+    const updated = await patch({ role });
+    if (updated?.role !== "sales") setBranchName("");
   }
 
   async function togglePermission(key) {
@@ -227,6 +265,11 @@ function StaffCard({ staff, currentUserId, permissionDefinitions, onUpdated, onR
             <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${staff.role === "admin" ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
               {staff.role}
             </span>
+            {staff.role === "sales" && staff.branchName && (
+              <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${staleBranch ? "bg-[var(--color-danger-light)] text-[var(--color-danger)]" : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"}`}>
+                {staff.branchName}{staleBranch ? " · old branch" : ""}
+              </span>
+            )}
             {!staff.isActive && <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 text-[10px] font-bold uppercase text-[var(--color-text-muted)]">Access removed</span>}
             {isCurrent && <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 text-[10px] font-bold uppercase text-[var(--color-text-muted)]">You</span>}
           </div>
@@ -252,6 +295,27 @@ function StaffCard({ staff, currentUserId, permissionDefinitions, onUpdated, onR
           <span className="mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]">Reset password</span>
           <input className={inputClass} type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Leave blank to keep current password" />
         </label>
+        {staff.role === "sales" && (
+          <label className="block sm:col-span-2">
+            <span className="mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]">Sales branch</span>
+            <select className={inputClass} value={branchName} onChange={(e) => setBranchName(e.target.value)}>
+              <option value="">No fixed branch</option>
+              {staleBranch && (
+                <option value={savedBranchName}>{savedBranchName} · no longer configured</option>
+              )}
+              {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
+            </select>
+            {staleBranch ? (
+              <span className="mt-1.5 block text-[11px] leading-5 text-[var(--color-danger)]">
+                This branch no longer exists in clinic settings. You can still save this staff member's name or password without changing it, but choose a current branch or No fixed branch before branch-specific routing can use this account again.
+              </span>
+            ) : (
+              <span className="mt-1.5 block text-[11px] leading-5 text-[var(--color-text-muted)]">
+                Used for branch-first assignment only when the branch is already known as the lead is created. Every eligible Sales account still participates in the global rotation for leads without a known branch.
+              </span>
+            )}
+          </label>
+        )}
       </div>
       <button type="button" disabled={busy} onClick={saveProfile} className="mt-3 h-10 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold disabled:opacity-50">
         Save account details

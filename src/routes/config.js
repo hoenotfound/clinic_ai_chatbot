@@ -2,7 +2,11 @@ const express = require("express");
 const multer = require("multer");
 const configRepo = require("../db/configRepo");
 const promoImagesRepo = require("../db/promoImagesRepo");
+const usersRepo = require("../db/usersRepo");
+const leadDistributionRepo = require("../db/leadDistributionRepo");
 const followUpTranslationService = require("../services/followUpTranslationService");
+const telegramAlertService = require("../services/telegramAlertService");
+const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
 
 const router = express.Router();
 
@@ -51,6 +55,7 @@ const VALIDATORS = {
   introMessage: isNonEmptyString,
   automatedFollowUp: isAutomatedFollowUpConfig,
   leadScoring: isLeadScoringConfig,
+  leadDistribution: (v) => normalizeLeadDistributionConfig(v) !== null,
   tone: isString,
   messagingStyle: isString,
   closingPlaybook: isString,
@@ -237,6 +242,67 @@ router.post("/automated-follow-up/translations", async (req, res) => {
   }
 });
 
+// Tools users can inspect the live eligible Sales pools without receiving
+// password hashes, permission overrides, inactive accounts, or admin accounts.
+router.get("/lead-distribution/status", async (req, res) => {
+  try {
+    const [accounts, unassigned] = await Promise.all([
+      usersRepo.listActiveSalesUsers(),
+      leadDistributionRepo.getUnassignedCounts(),
+    ]);
+    const config = configRepo.getConfig();
+    const configuredBranches = (config.branches || [])
+      .map((branch) => String(branch?.name || "").trim())
+      .filter(Boolean);
+    const leadScoringEnabled = config.leadScoring?.enabled === true;
+    const telegramSummaryEnabled = telegramAlertService.isTelegramEnabled();
+
+    res.json({
+      strategy: "round_robin",
+      configuredBranches,
+      ...unassigned,
+      aiBranchRecording: {
+        enabled: leadScoringEnabled || telegramSummaryEnabled,
+        leadScoringEnabled,
+        telegramSummaryEnabled,
+      },
+      accounts: accounts.map((user) => ({
+        id: user.id,
+        username: user.username,
+        displayName: user.display_name || user.username,
+        branchName: user.branch_name || null,
+      })),
+    });
+  } catch (err) {
+    console.error("Failed to load lead distribution status:", err);
+    res.status(500).json({ error: "Something went wrong loading lead distribution." });
+  }
+});
+
+router.post("/lead-distribution/recover-unassigned", async (req, res) => {
+  try {
+    const config = configRepo.getConfig();
+    if (config.leadDistribution?.enabled !== true) {
+      return res.status(409).json({
+        error: "Enable Automatic Lead Distribution before recovering unassigned leads.",
+      });
+    }
+
+    const accounts = await usersRepo.listActiveSalesUsers();
+    if (accounts.length === 0) {
+      return res.status(409).json({
+        error: "Add or reactivate an eligible Sales account before recovering unassigned leads.",
+      });
+    }
+
+    const outcome = await leadDistributionRepo.recoverUnassignedOpenLeads(100);
+    res.json(outcome);
+  } catch (err) {
+    console.error("Failed to recover unassigned leads:", err);
+    res.status(500).json({ error: "Something went wrong recovering unassigned leads." });
+  }
+});
+
 async function saveUploadedImage(req, res) {
   try {
     if (!req.file) {
@@ -339,6 +405,16 @@ router.patch("/", async (req, res) => {
         });
       }
       updates.leadScoring = prepared;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, "leadDistribution")) {
+      const prepared = normalizeLeadDistributionConfig(updates.leadDistribution);
+      if (!prepared) {
+        return res.status(400).json({
+          error: "Invalid lead distribution settings. Round robin is the supported distribution method.",
+        });
+      }
+      updates.leadDistribution = prepared;
     }
 
     const invalidKeys = keys.filter((k) => !VALIDATORS[k](updates[k]));

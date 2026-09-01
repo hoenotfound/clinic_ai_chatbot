@@ -11,8 +11,9 @@ import {
 const inputClass =
   "w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15";
 
-export default function AddLeadModal({ branches, services, onClose, onCreated, onToast }) {
+export default function AddLeadModal({ services, onClose, onCreated, onToast }) {
   const [contacts, setContacts] = useState(null);
+  const [branchOptions, setBranchOptions] = useState([]);
   const [search, setSearch] = useState("");
   const [contactId, setContactId] = useState(null);
   const [temperature, setTemperature] = useState("warm");
@@ -22,14 +23,33 @@ export default function AddLeadModal({ branches, services, onClose, onCreated, o
 
   useEffect(() => {
     let cancelled = false;
+
     api.listContacts("")
-      .then((data) => {
-        if (!cancelled) setContacts(data);
+      .then((contactData) => {
+        if (!cancelled) setContacts(contactData);
       })
       .catch((err) => {
         console.error("Failed to load contacts for lead creation:", err);
-        if (!cancelled) onToast("Couldn't load contacts.", "error");
+        if (!cancelled) {
+          setContacts([]);
+          onToast("Couldn't load contacts.", "error");
+        }
       });
+
+    api.getConfiguredBranches()
+      .then((data) => {
+        if (!cancelled) {
+          setBranchOptions(Array.isArray(data?.branches) ? data.branches : []);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load branch options for lead creation:", err);
+        if (!cancelled) {
+          setBranchOptions([]);
+          onToast("Couldn't refresh branch options. You can still add an unassigned lead.", "warning");
+        }
+      });
+
     return () => {
       cancelled = true;
     };
@@ -114,8 +134,11 @@ export default function AddLeadModal({ branches, services, onClose, onCreated, o
               <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Branch</span>
               <select className={inputClass} value={branchName} onChange={(event) => setBranchName(event.target.value)}>
                 <option value="">Unassigned</option>
-                {branches.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
+                {branchOptions.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
               </select>
+              <span className="mt-1.5 block text-[10px] leading-4 text-[var(--color-text-muted)]">
+                Only branches that currently exist in Clinic Settings can be selected for a new lead.
+              </span>
             </label>
           </div>
 

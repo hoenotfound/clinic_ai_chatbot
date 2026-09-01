@@ -2,6 +2,7 @@ const { pool } = require("./db");
 const clinicConfig = require("../config/clinicConfig");
 const defaultConfig = require("../config/clinicConfig.default");
 const promoImagesRepo = require("./promoImagesRepo");
+const { DEFAULT_LEAD_DISTRIBUTION } = require("../utils/leadDistribution");
 
 // Every top-level key the Settings page is allowed to read/write. Kept as a
 // single list shared by loadConfig/updateConfig so there's one place to
@@ -15,6 +16,7 @@ const CONFIG_KEYS = [
   "introMessage",
   "automatedFollowUp",
   "leadScoring",
+  "leadDistribution",
   "promotions",
   "services",
   "serviceAliases",
@@ -81,8 +83,12 @@ async function loadConfig() {
   const result = await pool.query("SELECT data FROM clinic_config WHERE id = 1");
 
   if (result.rows.length === 0) {
-    await pool.query("INSERT INTO clinic_config (id, data) VALUES (1, $1)", [defaultConfig]);
-    Object.assign(clinicConfig, defaultConfig);
+    const seededConfig = {
+      ...defaultConfig,
+      leadDistribution: { ...DEFAULT_LEAD_DISTRIBUTION },
+    };
+    await pool.query("INSERT INTO clinic_config (id, data) VALUES (1, $1)", [seededConfig]);
+    Object.assign(clinicConfig, seededConfig);
     console.log("Seeded clinic_config table from config/clinicConfig.default.js.");
     return clinicConfig;
   }
@@ -98,6 +104,10 @@ async function loadConfig() {
     leadScoring: {
       ...defaultConfig.leadScoring,
       ...(storedConfig.leadScoring || {}),
+    },
+    leadDistribution: {
+      ...DEFAULT_LEAD_DISTRIBUTION,
+      ...(storedConfig.leadDistribution || {}),
     },
   });
   return clinicConfig;

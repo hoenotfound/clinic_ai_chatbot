@@ -42,22 +42,24 @@ test("restricted realtime clients never receive another contact identifier", () 
   }
 });
 
-test("restricted realtime clients also receive their own changes as identifier-free refresh signals", () => {
+test("ordinary Pipeline changes stay Pipeline-only for restricted realtime clients", () => {
   const restricted = fakeResponse({ contactIds: [10], leadIds: [20] }, 7);
   const cleanup = realtimeEvents.addClient(restricted.res);
 
   try {
     realtimeEvents.publish("pipeline_changed", { leadId: 20 });
+
     assert.equal(restricted.writes.length, 1);
     assert.match(restricted.writes[0], /event: pipeline_changed/);
     assert.match(restricted.writes[0], /data: \{\}/);
+    assert.doesNotMatch(restricted.writes[0], /conversation_changed/);
     assert.doesNotMatch(restricted.writes[0], /20/);
   } finally {
     cleanup();
   }
 });
 
-test("unrestricted realtime clients preserve the existing full payload behavior", () => {
+test("unrestricted realtime clients preserve full payloads without synthetic Inbox events", () => {
   const unrestricted = fakeResponse(undefined, 8);
   const cleanup = realtimeEvents.addClient(unrestricted.res);
 
@@ -65,6 +67,13 @@ test("unrestricted realtime clients preserve the existing full payload behavior"
     realtimeEvents.publish("conversation_changed", { contactId: 42 });
     assert.equal(unrestricted.writes.length, 1);
     assert.match(unrestricted.writes[0], /\"contactId\":42/);
+
+    unrestricted.writes.length = 0;
+    realtimeEvents.publish("pipeline_changed", { leadId: 24 });
+    assert.equal(unrestricted.writes.length, 1);
+    assert.match(unrestricted.writes[0], /event: pipeline_changed/);
+    assert.match(unrestricted.writes[0], /\"leadId\":24/);
+    assert.doesNotMatch(unrestricted.writes[0], /conversation_changed/);
   } finally {
     cleanup();
   }

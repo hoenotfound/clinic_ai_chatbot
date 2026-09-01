@@ -1,5 +1,9 @@
 const { pool } = require("./db");
-const { normalizePermissionOverrides, normalizeRole } = require("../utils/permissions");
+const {
+  effectivePermissions,
+  normalizePermissionOverrides,
+  normalizeRole,
+} = require("../utils/permissions");
 
 async function getUserByUsername(username, queryable = pool) {
   const result = await queryable.query("SELECT * FROM users WHERE username = $1", [username]);
@@ -11,6 +15,25 @@ async function getUserById(id, queryable = pool) {
   return result.rows[0] || null;
 }
 
+async function getUserByIdForUpdate(id, queryable = pool) {
+  const result = await queryable.query(
+    "SELECT * FROM users WHERE id = $1 FOR UPDATE",
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
+async function countOpenOwnedLeads(username, queryable = pool) {
+  const result = await queryable.query(
+    `SELECT COUNT(*)::int AS count
+     FROM leads
+     WHERE is_closed = false
+       AND owner_username = $1`,
+    [username]
+  );
+  return Number(result.rows[0]?.count) || 0;
+}
+
 async function createUser(usernameOrData, passwordHashArg, queryable = pool) {
   const data = typeof usernameOrData === "string"
     ? {
@@ -19,6 +42,7 @@ async function createUser(usernameOrData, passwordHashArg, queryable = pool) {
         displayName: usernameOrData,
         role: "sales",
         permissions: {},
+        branchName: null,
       }
     : usernameOrData || {};
 
@@ -26,12 +50,17 @@ async function createUser(usernameOrData, passwordHashArg, queryable = pool) {
   const displayName = String(data.displayName || username).trim() || username;
   const role = normalizeRole(data.role);
   const permissions = normalizePermissionOverrides(data.permissions);
+  const branchName = role === "sales" && data.branchName
+    ? String(data.branchName).trim() || null
+    : null;
 
   const result = await queryable.query(
-    `INSERT INTO users (username, password_hash, display_name, role, permissions, is_active)
-     VALUES ($1, $2, $3, $4, $5, true)
+    `INSERT INTO users (
+       username, password_hash, display_name, role, permissions, branch_name, is_active
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, true)
      RETURNING *`,
-    [username, data.passwordHash, displayName, role, permissions]
+    [username, data.passwordHash, displayName, role, permissions, branchName]
   );
   return result.rows[0];
 }
@@ -48,10 +77,42 @@ async function listUsernames(queryable = pool) {
   return result.rows.map((row) => row.username);
 }
 
+async function listAssignableLeadOwners(queryable = pool) {
+  const result = await queryable.query(
+    `SELECT id, username, display_name, role, permissions, branch_name, is_active
+     FROM users
+     WHERE is_active = true
+     ORDER BY lower(display_name), lower(username), id`
+  );
+
+  return result.rows.filter((user) => {
+    const permissions = effectivePermissions(user);
+    const canView =
+      permissions.view_assigned_leads === true || permissions.view_all_leads === true;
+    return canView && permissions.reply_to_assigned_leads === true;
+  });
+}
+
+async function listActiveSalesUsers(queryable = pool) {
+  const result = await queryable.query(
+    `SELECT id, username, display_name, branch_name
+     FROM users
+     WHERE is_active = true
+       AND role = 'sales'
+       AND (
+         COALESCE(permissions ->> 'view_assigned_leads', 'true') = 'true'
+         OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
+       )
+       AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true'
+     ORDER BY id ASC`
+  );
+  return result.rows;
+}
+
 async function listUsers(queryable = pool) {
   const result = await queryable.query(
     `SELECT id, username, password_hash, display_name, role, permissions,
-            is_active, auth_version, created_at
+            branch_name, is_active, auth_version, created_at
      FROM users
      ORDER BY is_active DESC, lower(display_name), lower(username), id`
   );
@@ -74,6 +135,9 @@ async function updateUser(id, updates, queryable = pool) {
   }
   if (Object.prototype.hasOwnProperty.call(updates, "permissions")) {
     push("permissions", normalizePermissionOverrides(updates.permissions));
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "branchName")) {
+    push("branch_name", updates.branchName || null);
   }
   if (Object.prototype.hasOwnProperty.call(updates, "isActive")) {
     push("is_active", updates.isActive === true);
@@ -122,9 +186,13 @@ async function withAdminMutationLock(work) {
 module.exports = {
   getUserByUsername,
   getUserById,
+  getUserByIdForUpdate,
+  countOpenOwnedLeads,
   createUser,
   countUsers,
   listUsernames,
+  listAssignableLeadOwners,
+  listActiveSalesUsers,
   listUsers,
   updateUser,
   deactivateUser,

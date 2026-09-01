@@ -52,7 +52,7 @@ const CAPABILITY_DEFINITIONS = [
   {
     key: "manage_tools",
     label: "Manage automation tools",
-    description: "Open Tools and change automated follow-up or lead-scoring settings.",
+    description: "Open Tools and change follow-up, lead-scoring, and lead-distribution settings.",
     defaults: { admin: true, sales: false },
   },
   {
@@ -109,6 +109,7 @@ function presentUser(user) {
     username: user.username,
     displayName: user.display_name || user.username,
     role: normalizeRole(user.role),
+    branchName: user.branch_name || null,
     isActive: user.is_active !== false,
     permissions: effectivePermissions(user),
     createdAt: user.created_at || null,

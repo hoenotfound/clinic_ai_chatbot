@@ -1,9 +1,11 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const usersRepo = require("../db/usersRepo");
+const clinicConfig = require("../config/clinicConfig");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { loginRateLimit, recordFailedAttempt, clearAttempts } = require("../middleware/loginRateLimit");
 const { requireAuth, requireCapability } = require("../middleware/requireAuth");
+const { ownedLeadContinuityError } = require("../utils/leadOwnerContinuity");
 const {
   effectivePermissions,
   normalizePermissionOverrides,
@@ -27,6 +29,21 @@ function validatePassword(value, { optional = false } = {}) {
   return value;
 }
 
+function configuredBranches() {
+  return (clinicConfig.branches || [])
+    .map((branch) => String(branch?.name || "").trim())
+    .filter(Boolean);
+}
+
+function validateBranchName(value) {
+  const requested = typeof value === "string" ? value.trim() : "";
+  if (!requested) return null;
+  const match = configuredBranches().find(
+    (branchName) => branchName.toLowerCase() === requested.toLowerCase()
+  );
+  return match || false;
+}
+
 function proposedUser(users, targetId, updates) {
   return users.map((user) => {
     if (Number(user.id) !== Number(targetId)) return user;
@@ -39,6 +56,9 @@ function proposedUser(users, targetId, updates) {
       permissions: Object.prototype.hasOwnProperty.call(updates, "permissions")
         ? updates.permissions
         : user.permissions,
+      branch_name: Object.prototype.hasOwnProperty.call(updates, "branchName")
+        ? updates.branchName
+        : user.branch_name,
       is_active: Object.prototype.hasOwnProperty.call(updates, "isActive")
         ? updates.isActive
         : user.is_active,
@@ -61,6 +81,12 @@ function mutationError(code, message) {
   const err = new Error(message);
   err.code = code;
   return err;
+}
+
+function touchesLeadServiceEligibility(updates) {
+  return ["role", "permissions", "isActive"].some((key) =>
+    Object.prototype.hasOwnProperty.call(updates || {}, key)
+  );
 }
 
 router.post("/login", loginRateLimit, async (req, res) => {
@@ -101,6 +127,7 @@ router.get("/users", requireAuth, requireCapability("manage_users"), async (req,
     const users = await usersRepo.listUsers();
     res.json({
       users: users.map(presentUser),
+      branches: configuredBranches(),
       permissionDefinitions: publicPermissionDefinitions(),
       roleDefaults: {
         admin: roleDefaults("admin"),
@@ -119,6 +146,7 @@ router.post("/users", requireAuth, requireCapability("manage_users"), async (req
   const displayName = validateDisplayName(req.body?.displayName || username);
   const password = validatePassword(req.body?.password);
   const role = req.body?.role || "sales";
+  const requestedBranch = validateBranchName(req.body?.branchName);
 
   if (!USERNAME_RE.test(username)) {
     return res.status(400).json({
@@ -134,6 +162,9 @@ router.post("/users", requireAuth, requireCapability("manage_users"), async (req
   if (!ROLES.has(role)) {
     return res.status(400).json({ error: "Role must be admin or sales." });
   }
+  if (requestedBranch === false) {
+    return res.status(400).json({ error: "Choose a branch that exists in clinic settings." });
+  }
 
   try {
     if (await usersRepo.getUserByUsername(username)) {
@@ -145,6 +176,7 @@ router.post("/users", requireAuth, requireCapability("manage_users"), async (req
       displayName,
       passwordHash: bcrypt.hashSync(password, 10),
       role,
+      branchName: role === "sales" ? requestedBranch : null,
       permissions: normalizePermissionOverrides(req.body?.permissions),
     });
     res.status(201).json({ user: presentUser(created) });
@@ -183,6 +215,13 @@ router.patch("/users/:userId", requireAuth, requireCapability("manage_users"), a
   if (Object.prototype.hasOwnProperty.call(req.body || {}, "permissions")) {
     updates.permissions = normalizePermissionOverrides(req.body.permissions);
   }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "branchName")) {
+    const branchName = validateBranchName(req.body.branchName);
+    if (branchName === false) {
+      return res.status(400).json({ error: "Choose a branch that exists in clinic settings." });
+    }
+    updates.branchName = branchName;
+  }
   if (Object.prototype.hasOwnProperty.call(req.body || {}, "isActive")) {
     if (typeof req.body.isActive !== "boolean") {
       return res.status(400).json({ error: "isActive must be true or false." });
@@ -202,12 +241,25 @@ router.patch("/users/:userId", requireAuth, requireCapability("manage_users"), a
 
   try {
     const updated = await usersRepo.withAdminMutationLock(async (queryable) => {
-      const current = await usersRepo.getUserById(userId, queryable);
+      // Lock this account so automatic lead assignment cannot select it halfway
+      // through a disable/permission change and strand a newly assigned lead.
+      const current = await usersRepo.getUserByIdForUpdate(userId, queryable);
       if (!current) throw mutationError("STAFF_NOT_FOUND", "Staff account not found.");
+
+      const nextRole = updates.role || current.role;
+      if (nextRole !== "sales") {
+        updates.branchName = null;
+      }
 
       const allUsers = await usersRepo.listUsers(queryable);
       const safetyError = validateAdminSafety(proposedUser(allUsers, userId, updates));
       if (safetyError) throw mutationError("ADMIN_SAFETY", safetyError);
+
+      if (touchesLeadServiceEligibility(updates)) {
+        const openLeadCount = await usersRepo.countOpenOwnedLeads(current.username, queryable);
+        const continuityError = ownedLeadContinuityError(current, updates, openLeadCount);
+        if (continuityError) throw mutationError("OWNED_LEADS", continuityError);
+      }
 
       return usersRepo.updateUser(userId, updates, queryable);
     });
@@ -240,6 +292,9 @@ router.patch("/users/:userId", requireAuth, requireCapability("manage_users"), a
     if (err.code === "ADMIN_SAFETY") {
       return res.status(400).json({ error: err.message });
     }
+    if (err.code === "OWNED_LEADS") {
+      return res.status(409).json({ error: err.message, code: "OPEN_LEADS_REQUIRE_REASSIGNMENT" });
+    }
     console.error("Failed to update staff account:", err);
     res.status(500).json({ error: "Something went wrong updating this account." });
   }
@@ -256,7 +311,9 @@ router.delete("/users/:userId", requireAuth, requireCapability("manage_users"), 
 
   try {
     const removed = await usersRepo.withAdminMutationLock(async (queryable) => {
-      const current = await usersRepo.getUserById(userId, queryable);
+      // Pair this row lock with the assignment trigger's KEY SHARE lock so an
+      // account cannot be removed at the same moment it receives a new lead.
+      const current = await usersRepo.getUserByIdForUpdate(userId, queryable);
       if (!current) throw mutationError("STAFF_NOT_FOUND", "Staff account not found.");
 
       const allUsers = await usersRepo.listUsers(queryable);
@@ -264,6 +321,14 @@ router.delete("/users/:userId", requireAuth, requireCapability("manage_users"), 
         proposedUser(allUsers, userId, { isActive: false })
       );
       if (safetyError) throw mutationError("ADMIN_SAFETY", safetyError);
+
+      const openLeadCount = await usersRepo.countOpenOwnedLeads(current.username, queryable);
+      const continuityError = ownedLeadContinuityError(
+        current,
+        { isActive: false },
+        openLeadCount
+      );
+      if (continuityError) throw mutationError("OWNED_LEADS", continuityError);
 
       return usersRepo.deactivateUser(userId, queryable);
     });
@@ -276,6 +341,9 @@ router.delete("/users/:userId", requireAuth, requireCapability("manage_users"), 
     }
     if (err.code === "ADMIN_SAFETY") {
       return res.status(400).json({ error: err.message });
+    }
+    if (err.code === "OWNED_LEADS") {
+      return res.status(409).json({ error: err.message, code: "OPEN_LEADS_REQUIRE_REASSIGNMENT" });
     }
     console.error("Failed to remove staff access:", err);
     res.status(500).json({ error: "Something went wrong removing this account." });

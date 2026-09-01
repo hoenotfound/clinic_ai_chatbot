@@ -57,6 +57,13 @@ function payloadForClient(client, event, payload) {
   return payload;
 }
 
+function writeEvent(client, event, payload) {
+  const allowedPayload = payloadForClient(client, event, payload);
+  if (allowedPayload === null) return;
+  const message = `event: ${event}\ndata: ${JSON.stringify(allowedPayload)}\n\n`;
+  client.res.write(message);
+}
+
 function publish(event, payload = {}) {
   for (const client of clients) {
     if (client.res.destroyed || client.res.writableEnded) {
@@ -64,12 +71,8 @@ function publish(event, payload = {}) {
       continue;
     }
 
-    const allowedPayload = payloadForClient(client, event, payload);
-    if (allowedPayload === null) continue;
-    const message = `event: ${event}\ndata: ${JSON.stringify(allowedPayload)}\n\n`;
-
     try {
-      client.res.write(message);
+      writeEvent(client, event, payload);
     } catch {
       clients.delete(client);
     }

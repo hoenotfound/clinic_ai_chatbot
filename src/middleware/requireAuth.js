@@ -162,6 +162,13 @@ async function enforcePipelinePolicy(req, res, user) {
     return true;
   }
 
+  if (parts[0] === "configured-branches") {
+    if (!hasAnyLeadView(user)) {
+      return forbidden(res, "Pipeline access is disabled for this account.");
+    }
+    return true;
+  }
+
   if (parts[0] === "analytics") {
     if (!hasCapability(user, "view_analytics")) {
       return forbidden(res, "Analytics access is disabled for this account.");
@@ -213,6 +220,7 @@ function enforceConfigPolicy(req, res, user) {
   const parts = segments(req);
   const canSettings = hasCapability(user, "manage_settings");
   const canTools = hasCapability(user, "manage_tools");
+  const canAssign = hasCapability(user, "manage_lead_assignment");
 
   if (parts.length === 0 && req.method === "GET") {
     if (!canSettings && !canTools) return forbidden(res);
@@ -220,6 +228,7 @@ function enforceConfigPolicy(req, res, user) {
       wrapJson(res, (body) => ({
         automatedFollowUp: body?.automatedFollowUp,
         leadScoring: body?.leadScoring,
+        leadDistribution: body?.leadDistribution,
       }));
     }
     return true;
@@ -227,7 +236,17 @@ function enforceConfigPolicy(req, res, user) {
 
   if (parts.length === 0 && req.method === "PATCH") {
     const keys = Object.keys(req.body || {});
-    const toolOnly = keys.length > 0 && keys.every((key) => ["automatedFollowUp", "leadScoring"].includes(key));
+    const changesLeadDistribution = keys.includes("leadDistribution");
+    if (changesLeadDistribution && (!canTools || !canAssign)) {
+      return forbidden(
+        res,
+        "Changing lead distribution requires both Manage automation tools and Assign leads permissions."
+      );
+    }
+
+    const toolOnly = keys.length > 0 && keys.every((key) =>
+      ["automatedFollowUp", "leadScoring", "leadDistribution"].includes(key)
+    );
     if (toolOnly && canTools) return true;
     if (canSettings) return true;
     return forbidden(res);
@@ -235,6 +254,19 @@ function enforceConfigPolicy(req, res, user) {
 
   if (parts[0] === "automated-follow-up") {
     return canTools ? true : forbidden(res, "Automation tools are disabled for this account.");
+  }
+
+  if (parts[0] === "lead-distribution") {
+    if (!canTools) {
+      return forbidden(res, "Automation tools are disabled for this account.");
+    }
+    if (req.method !== "GET" && !canAssign) {
+      return forbidden(
+        res,
+        "Changing lead distribution requires the Assign leads permission."
+      );
+    }
+    return true;
   }
 
   return canSettings ? true : forbidden(res, "Clinic settings are disabled for this account.");
