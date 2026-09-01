@@ -25,6 +25,13 @@ function handlePipelineError(res, err, fallbackMessage) {
   if (err instanceof PipelineValidationError || err instanceof AnalyticsValidationError) {
     return res.status(err.status).json({ error: err.message });
   }
+  if (
+    err.code === "P0001" &&
+    (String(err.message || "").startsWith("Lead owner ") ||
+      String(err.message || "").startsWith("Lead branch "))
+  ) {
+    return res.status(409).json({ error: err.message });
+  }
   if (err.code === "23505") {
     return res.status(409).json({ error: "This contact already has an open lead, or that stage name is already in use." });
   }
@@ -41,21 +48,21 @@ function handlePipelineError(res, err, fallbackMessage) {
 // GET /api/pipeline - complete lightweight board payload.
 router.get("/", async (req, res) => {
   try {
-    const [stages, leads, owners] = await Promise.all([
+    const [stages, leads, assignableOwners] = await Promise.all([
       pipelineRepo.listStages(),
       pipelineRepo.listLeads(),
-      usersRepo.listUsernames(),
+      usersRepo.listAssignableLeadOwners(),
     ]);
     const configuredBranches = distinctNames((clinicConfig.branches || []).map((branch) => branch.name));
     const savedBranches = distinctNames(leads.map((lead) => lead.branch_name));
-    const configuredServices = distinctNames((clinicConfig.services || []).map((service) => service.name));
 
     res.json({
       stages,
       leads,
       branches: distinctNames([...configuredBranches, ...savedBranches]),
-      owners,
-      services: configuredServices,
+      configuredBranches,
+      owners: assignableOwners.map((owner) => owner.username),
+      services: distinctNames((clinicConfig.services || []).map((service) => service.name)),
       noReplyHours: pipelineRepo.NO_REPLY_HOURS,
     });
   } catch (err) {
