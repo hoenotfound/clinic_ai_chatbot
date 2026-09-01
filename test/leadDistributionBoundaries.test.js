@@ -59,6 +59,17 @@ test("Lead Distribution is discoverable from within the Tools page", () => {
   assert.match(wrapper, /Automatic Lead Distribution/);
 });
 
+test("Lead Distribution UI exposes a clear branch routing choice and view-only state", () => {
+  const page = read("portal-frontend/src/pages/LeadDistribution.jsx");
+  assert.match(page, /assignByBranch: true/);
+  assert.match(page, /Assign leads by branch/);
+  assert.match(page, /Global only/);
+  assert.match(page, /The branch is still recorded for CRM, reporting and appointments/);
+  assert.match(page, /canManageDistribution/);
+  assert.match(page, /View only/);
+  assert.match(page, /Advanced behavior & safeguards/);
+});
+
 test("production schema loads ownership/branch safeguards and initial assignment audit", () => {
   const db = read("src/db/db.js");
   const safetySchema = read("src/db/leadDistributionSafetySchema.sql");
@@ -66,4 +77,6 @@ test("production schema loads ownership/branch safeguards and initial assignment
   assert.match(db, /await pool\.query\(leadDistributionSafetySchema\)/);
   assert.match(safetySchema, /lead_distribution_initial/);
   assert.match(safetySchema, /Automatically assigned to %s when the lead was created/);
+  assert.match(safetySchema, /choose_lead_distribution_owner/);
+  assert.match(safetySchema, /leadDistribution,assignByBranch/);
 });
