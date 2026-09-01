@@ -23,20 +23,33 @@ export default function AddLeadModal({ services, onClose, onCreated, onToast }) 
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.listContacts(""), api.getPipeline()])
-      .then(([contactData, pipelineData]) => {
-        if (cancelled) return;
-        setContacts(contactData);
-        setBranchOptions(
-          Array.isArray(pipelineData?.configuredBranches)
-            ? pipelineData.configuredBranches
-            : []
-        );
+
+    api.listContacts("")
+      .then((contactData) => {
+        if (!cancelled) setContacts(contactData);
       })
       .catch((err) => {
-        console.error("Failed to load data for lead creation:", err);
-        if (!cancelled) onToast("Couldn't load lead creation options.", "error");
+        console.error("Failed to load contacts for lead creation:", err);
+        if (!cancelled) {
+          setContacts([]);
+          onToast("Couldn't load contacts.", "error");
+        }
       });
+
+    api.getConfiguredBranches()
+      .then((data) => {
+        if (!cancelled) {
+          setBranchOptions(Array.isArray(data?.branches) ? data.branches : []);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load branch options for lead creation:", err);
+        if (!cancelled) {
+          setBranchOptions([]);
+          onToast("Couldn't refresh branch options. You can still add an unassigned lead.", "warning");
+        }
+      });
+
     return () => {
       cancelled = true;
     };
