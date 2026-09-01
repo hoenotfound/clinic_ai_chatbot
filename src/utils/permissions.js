@@ -52,7 +52,7 @@ const CAPABILITY_DEFINITIONS = [
   {
     key: "manage_tools",
     label: "Manage automation tools",
-    description: "Open Tools and change automated follow-up or lead-scoring settings.",
+    description: "Open Tools and change follow-up, lead-scoring, and lead-distribution settings.",
     defaults: { admin: true, sales: false },
   },
   {
