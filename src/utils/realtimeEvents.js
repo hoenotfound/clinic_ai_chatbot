@@ -73,16 +73,6 @@ function publish(event, payload = {}) {
 
     try {
       writeEvent(client, event, payload);
-
-      // Inbox listens to conversation_changed while Pipeline listens to both.
-      // Ownership changes are published as pipeline_changed, so also send a
-      // lightweight conversation refresh signal. This makes a newly assigned
-      // conversation appear in the Sales Inbox immediately without waiting for
-      // another customer/AI message. Pipeline's debounce coalesces the duplicate
-      // refresh signal for views that already subscribe to both event types.
-      if (event === "pipeline_changed") {
-        writeEvent(client, "conversation_changed", { reason: "pipeline_changed" });
-      }
     } catch {
       clients.delete(client);
     }
