@@ -10,6 +10,7 @@ const schemaFiles = [
   "src/db/telegramAlertsSchema.sql",
   "src/db/socialChannelsSchema.sql",
   "src/db/accessControlSchema.sql",
+  "src/db/leadDistributionSafetySchema.sql",
 ];
 
 function quoteIdentifier(value) {
@@ -41,6 +42,15 @@ async function seedSales(client, users) {
       [user.username, user.username, user.active !== false, user.branch || null]
     );
   }
+}
+
+async function setBranchRouting(client, enabled) {
+  await client.query(
+    `UPDATE clinic_config
+     SET data = jsonb_set(data, '{leadDistribution,assignByBranch}', to_jsonb($1::boolean), true)
+     WHERE id = 1`,
+    [enabled]
+  );
 }
 
 let contactSequence = 0;
@@ -92,7 +102,11 @@ test(
        VALUES (1, $1::jsonb)
        ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data`,
       [JSON.stringify({
-        leadDistribution: { enabled: true, strategy: "round_robin" },
+        leadDistribution: {
+          enabled: true,
+          strategy: "round_robin",
+          assignByBranch: true,
+        },
         branches: [
           { name: "Puchong", address: "", phone: "" },
           { name: "Kuala Lumpur", address: "", phone: "" },
@@ -102,6 +116,7 @@ test(
 
     await t.test("global round robin advances and wraps", async () => {
       await resetFixtures(admin);
+      await setBranchRouting(admin, true);
       await seedSales(admin, [
         { username: "sales_a", branch: "Puchong" },
         { username: "sales_b", branch: "Kuala Lumpur" },
@@ -121,6 +136,7 @@ test(
 
     await t.test("known branches use their own pools and branch edits keep the owner stable", async () => {
       await resetFixtures(admin);
+      await setBranchRouting(admin, true);
       await seedSales(admin, [
         { username: "puchong_a", branch: "Puchong" },
         { username: "puchong_b", branch: "Puchong" },
@@ -147,8 +163,35 @@ test(
       assert.equal(changed.rows[0].owner_assignment_source, "automatic");
     });
 
+    await t.test("branch routing can be disabled without removing the branch record", async () => {
+      await resetFixtures(admin);
+      await setBranchRouting(admin, false);
+      await seedSales(admin, [
+        { username: "puchong_first", branch: "Puchong" },
+        { username: "kl_second", branch: "Kuala Lumpur" },
+      ]);
+
+      // Kuala Lumpur would normally route directly to kl_second. With branch
+      // routing off, the branch remains recorded but the global cursor starts
+      // with puchong_first instead.
+      const first = await createLead(admin, { branchName: "Kuala Lumpur" });
+      const second = await createLead(admin, { branchName: "Kuala Lumpur" });
+
+      assert.equal(first.branch_name, "Kuala Lumpur");
+      assert.equal(second.branch_name, "Kuala Lumpur");
+      assert.deepEqual(
+        [first.owner_username, second.owner_username],
+        ["puchong_first", "kl_second"]
+      );
+
+      await setBranchRouting(admin, true);
+      const branchAware = await createLead(admin, { branchName: "Kuala Lumpur" });
+      assert.equal(branchAware.owner_username, "kl_second");
+    });
+
     await t.test("recovery assigns only never-owned leads and respects manual unassignment", async () => {
       await resetFixtures(admin);
+      await setBranchRouting(admin, true);
       await seedSales(admin, [
         { username: "sales_a", branch: "Puchong" },
         { username: "sales_b", branch: "Puchong", active: false },
@@ -201,6 +244,7 @@ test(
 
     await t.test("concurrent lead inserts remain balanced through the persisted cursor", async () => {
       await resetFixtures(admin);
+      await setBranchRouting(admin, true);
       await seedSales(admin, [
         { username: "sales_a" },
         { username: "sales_b" },
