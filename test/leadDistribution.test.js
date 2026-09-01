@@ -57,7 +57,7 @@ test("customer message storage has no active branch-routing trigger", () => {
   assert.doesNotMatch(sql, /CREATE OR REPLACE FUNCTION detect_configured_branch_preference/i);
 });
 
-test("AI summary softly fills a blank branch without rerouting owner", () => {
+test("AI summary softly fills only a blank branch without rerouting owner", () => {
   const sql = fs.readFileSync(
     path.join(__dirname, "../src/db/accessControlSchema.sql"),
     "utf8"
@@ -66,7 +66,7 @@ test("AI summary softly fills a blank branch without rerouting owner", () => {
   assert.match(sql, /fill_lead_branch_from_ai_summary/i);
   assert.match(sql, /summary_data ->> 'preferredBranch'/i);
   assert.match(sql, /lower\(btrim\(branch ->> 'name'\)\) = lower\(requested_branch\)/i);
-  assert.match(sql, /WHERE id = NEW\.lead_id[\s\S]*AND branch_name IS NULL/i);
+  assert.match(sql, /NULLIF\(btrim\(COALESCE\(branch_name, ''\)\), ''\) IS NULL/i);
   assert.match(sql, /AFTER UPDATE OF status, summary_data ON lead_temperature_scores/i);
   assert.doesNotMatch(sql, /BEFORE UPDATE OF branch_name, owner_username ON leads/i);
 });
