@@ -37,6 +37,10 @@ function formatContactIdentifier(contact) {
   return `${channelLabel(channel)}: ${clean(contact?.channel_user_id)}`;
 }
 
+function formatAssignedOwner(lead) {
+  return clean(lead?.owner_display_name || lead?.owner_username, "Unassigned");
+}
+
 function formatAppointment(value) {
   if (!value) return "Not captured";
   const date = new Date(value);
@@ -92,6 +96,7 @@ function buildConversationSummaryMessage({ lead, score, env = process.env }) {
   const inboxUrl = buildInboxUrl(lead.contact_id, env);
   const currentTemperature = temperatureLabel(lead.current_temperature);
   const contactIdentifier = formatContactIdentifier(lead);
+  const assignedOwner = formatAssignedOwner(lead);
 
   if (score?.summaryUnavailable === true || score?.alertType === "ai_scoring_failed") {
     const lines = [
@@ -103,6 +108,7 @@ function buildConversationSummaryMessage({ lead, score, env = process.env }) {
       `Current Temperature: ${currentTemperature}`,
       `Treatment: ${clean(lead.treatment_interest)}`,
       `Branch: ${clean(lead.branch_name)}`,
+      `Assigned to: ${assignedOwner}`,
       `Appointment: ${formatAppointmentForLead(lead)}`,
       "",
       "AI Summary: Unavailable",
@@ -133,6 +139,7 @@ function buildConversationSummaryMessage({ lead, score, env = process.env }) {
     `AI Review: ${aiTemperature} (${clean(score?.confidence, "unknown")} confidence)`,
     `Treatment: ${treatment}`,
     `Branch: ${branch}`,
+    `Assigned to: ${assignedOwner}`,
     `Appointment: ${appointment}`,
     `Main concern: ${clean(summary.mainConcern)}`,
     "",
@@ -282,6 +289,7 @@ module.exports = {
   channelLabel,
   createTelegramAlertService,
   formatAppointmentForLead,
+  formatAssignedOwner,
   formatContactIdentifier,
   formatWhatsappNumber,
   isTelegramEnabled,
