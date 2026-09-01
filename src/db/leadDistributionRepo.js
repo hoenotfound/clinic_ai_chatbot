@@ -35,6 +35,9 @@ async function recoverUnassignedOpenLeads(limit = 100) {
   const recoveredCount = Number(result.rows[0]?.recovered_count) || 0;
   if (recoveredCount > 0) {
     realtimeEvents.publish("pipeline_changed", { leadId: null });
+    realtimeEvents.publish("conversation_changed", {
+      reason: "lead_assignment_recovered",
+    });
   }
   return {
     recoveredCount,
