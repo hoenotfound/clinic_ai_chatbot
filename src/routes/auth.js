@@ -1,6 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const usersRepo = require("../db/usersRepo");
+const clinicConfig = require("../config/clinicConfig");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { loginRateLimit, recordFailedAttempt, clearAttempts } = require("../middleware/loginRateLimit");
 const { requireAuth, requireCapability } = require("../middleware/requireAuth");
@@ -27,6 +28,21 @@ function validatePassword(value, { optional = false } = {}) {
   return value;
 }
 
+function configuredBranches() {
+  return (clinicConfig.branches || [])
+    .map((branch) => String(branch?.name || "").trim())
+    .filter(Boolean);
+}
+
+function validateBranchName(value) {
+  const requested = typeof value === "string" ? value.trim() : "";
+  if (!requested) return null;
+  const match = configuredBranches().find(
+    (branchName) => branchName.toLowerCase() === requested.toLowerCase()
+  );
+  return match || false;
+}
+
 function proposedUser(users, targetId, updates) {
   return users.map((user) => {
     if (Number(user.id) !== Number(targetId)) return user;
@@ -39,6 +55,9 @@ function proposedUser(users, targetId, updates) {
       permissions: Object.prototype.hasOwnProperty.call(updates, "permissions")
         ? updates.permissions
         : user.permissions,
+      branch_name: Object.prototype.hasOwnProperty.call(updates, "branchName")
+        ? updates.branchName
+        : user.branch_name,
       is_active: Object.prototype.hasOwnProperty.call(updates, "isActive")
         ? updates.isActive
         : user.is_active,
@@ -101,6 +120,7 @@ router.get("/users", requireAuth, requireCapability("manage_users"), async (req,
     const users = await usersRepo.listUsers();
     res.json({
       users: users.map(presentUser),
+      branches: configuredBranches(),
       permissionDefinitions: publicPermissionDefinitions(),
       roleDefaults: {
         admin: roleDefaults("admin"),
@@ -119,6 +139,7 @@ router.post("/users", requireAuth, requireCapability("manage_users"), async (req
   const displayName = validateDisplayName(req.body?.displayName || username);
   const password = validatePassword(req.body?.password);
   const role = req.body?.role || "sales";
+  const requestedBranch = validateBranchName(req.body?.branchName);
 
   if (!USERNAME_RE.test(username)) {
     return res.status(400).json({
@@ -134,6 +155,9 @@ router.post("/users", requireAuth, requireCapability("manage_users"), async (req
   if (!ROLES.has(role)) {
     return res.status(400).json({ error: "Role must be admin or sales." });
   }
+  if (requestedBranch === false) {
+    return res.status(400).json({ error: "Choose a branch that exists in clinic settings." });
+  }
 
   try {
     if (await usersRepo.getUserByUsername(username)) {
@@ -145,6 +169,7 @@ router.post("/users", requireAuth, requireCapability("manage_users"), async (req
       displayName,
       passwordHash: bcrypt.hashSync(password, 10),
       role,
+      branchName: role === "sales" ? requestedBranch : null,
       permissions: normalizePermissionOverrides(req.body?.permissions),
     });
     res.status(201).json({ user: presentUser(created) });
@@ -183,6 +208,13 @@ router.patch("/users/:userId", requireAuth, requireCapability("manage_users"), a
   if (Object.prototype.hasOwnProperty.call(req.body || {}, "permissions")) {
     updates.permissions = normalizePermissionOverrides(req.body.permissions);
   }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "branchName")) {
+    const branchName = validateBranchName(req.body.branchName);
+    if (branchName === false) {
+      return res.status(400).json({ error: "Choose a branch that exists in clinic settings." });
+    }
+    updates.branchName = branchName;
+  }
   if (Object.prototype.hasOwnProperty.call(req.body || {}, "isActive")) {
     if (typeof req.body.isActive !== "boolean") {
       return res.status(400).json({ error: "isActive must be true or false." });
@@ -204,6 +236,11 @@ router.patch("/users/:userId", requireAuth, requireCapability("manage_users"), a
     const updated = await usersRepo.withAdminMutationLock(async (queryable) => {
       const current = await usersRepo.getUserById(userId, queryable);
       if (!current) throw mutationError("STAFF_NOT_FOUND", "Staff account not found.");
+
+      const nextRole = updates.role || current.role;
+      if (nextRole !== "sales") {
+        updates.branchName = null;
+      }
 
       const allUsers = await usersRepo.listUsers(queryable);
       const safetyError = validateAdminSafety(proposedUser(allUsers, userId, updates));
