@@ -110,6 +110,27 @@ test("Tools UX keeps advanced details out of the main setup flow", () => {
   assert.doesNotMatch(tools, /function OverviewItem/);
 });
 
+test("leaving a dirty tool discards its local draft consistently", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+
+  assert.match(tools, /function discardCurrentToolChanges\(\)/);
+  assert.match(tools, /setForm\(saved\)/);
+  assert.match(tools, /setScoringForm\(scoringFormFromSettings\(config\?\.leadScoring\)\)/);
+  assert.match(tools, /discardCurrentToolChanges\(\)/);
+  assert.match(tools, /setDistributionDirty\(false\)/);
+});
+
+test("automatic translation refresh preserves manual language edits made after the latest source change", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+
+  assert.match(tools, /manualTranslationEdits/);
+  assert.match(tools, /setManualTranslationEdits\(\[\]\)/);
+  assert.match(tools, /manualTranslationEdits\.includes\(key\)/);
+  assert.match(tools, /preserveManual \? manualValue : generated\[key\]/);
+  assert.match(tools, /onTranslationChange\(translationLanguage, event\.target\.value\)/);
+  assert.match(tools, /enabledStateChanged = enabled !== savedEnabled/);
+});
+
 test("production schema loads ownership/branch safeguards and initial assignment audit", () => {
   const db = read("src/db/db.js");
   const safetySchema = read("src/db/leadDistributionSafetySchema.sql");
