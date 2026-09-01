@@ -3,6 +3,7 @@ const multer = require("multer");
 const configRepo = require("../db/configRepo");
 const promoImagesRepo = require("../db/promoImagesRepo");
 const usersRepo = require("../db/usersRepo");
+const leadDistributionRepo = require("../db/leadDistributionRepo");
 const followUpTranslationService = require("../services/followUpTranslationService");
 const telegramAlertService = require("../services/telegramAlertService");
 const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
@@ -245,7 +246,10 @@ router.post("/automated-follow-up/translations", async (req, res) => {
 // password hashes, permission overrides, inactive accounts, or admin accounts.
 router.get("/lead-distribution/status", async (req, res) => {
   try {
-    const accounts = await usersRepo.listActiveSalesUsers();
+    const [accounts, unassigned] = await Promise.all([
+      usersRepo.listActiveSalesUsers(),
+      leadDistributionRepo.getUnassignedCounts(),
+    ]);
     const config = configRepo.getConfig();
     const configuredBranches = (config.branches || [])
       .map((branch) => String(branch?.name || "").trim())
@@ -256,6 +260,7 @@ router.get("/lead-distribution/status", async (req, res) => {
     res.json({
       strategy: "round_robin",
       configuredBranches,
+      ...unassigned,
       aiBranchRecording: {
         enabled: leadScoringEnabled || telegramSummaryEnabled,
         leadScoringEnabled,
@@ -271,6 +276,30 @@ router.get("/lead-distribution/status", async (req, res) => {
   } catch (err) {
     console.error("Failed to load lead distribution status:", err);
     res.status(500).json({ error: "Something went wrong loading lead distribution." });
+  }
+});
+
+router.post("/lead-distribution/recover-unassigned", async (req, res) => {
+  try {
+    const config = configRepo.getConfig();
+    if (config.leadDistribution?.enabled !== true) {
+      return res.status(409).json({
+        error: "Enable Automatic Lead Distribution before recovering unassigned leads.",
+      });
+    }
+
+    const accounts = await usersRepo.listActiveSalesUsers();
+    if (accounts.length === 0) {
+      return res.status(409).json({
+        error: "Add or reactivate an eligible Sales account before recovering unassigned leads.",
+      });
+    }
+
+    const outcome = await leadDistributionRepo.recoverUnassignedOpenLeads(100);
+    res.json(outcome);
+  } catch (err) {
+    console.error("Failed to recover unassigned leads:", err);
+    res.status(500).json({ error: "Something went wrong recovering unassigned leads." });
   }
 });
 
