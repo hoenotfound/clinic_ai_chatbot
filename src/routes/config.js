@@ -4,6 +4,7 @@ const configRepo = require("../db/configRepo");
 const promoImagesRepo = require("../db/promoImagesRepo");
 const usersRepo = require("../db/usersRepo");
 const followUpTranslationService = require("../services/followUpTranslationService");
+const telegramAlertService = require("../services/telegramAlertService");
 const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
 
 const router = express.Router();
@@ -240,17 +241,31 @@ router.post("/automated-follow-up/translations", async (req, res) => {
   }
 });
 
-// Tools users can see the current round-robin pool without receiving password
-// hashes, permission overrides, inactive accounts, or admin accounts.
+// Tools users can inspect the live eligible Sales pools without receiving
+// password hashes, permission overrides, inactive accounts, or admin accounts.
 router.get("/lead-distribution/status", async (req, res) => {
   try {
     const accounts = await usersRepo.listActiveSalesUsers();
+    const config = configRepo.getConfig();
+    const configuredBranches = (config.branches || [])
+      .map((branch) => String(branch?.name || "").trim())
+      .filter(Boolean);
+    const leadScoringEnabled = config.leadScoring?.enabled === true;
+    const telegramSummaryEnabled = telegramAlertService.isTelegramEnabled();
+
     res.json({
       strategy: "round_robin",
+      configuredBranches,
+      aiBranchRecording: {
+        enabled: leadScoringEnabled || telegramSummaryEnabled,
+        leadScoringEnabled,
+        telegramSummaryEnabled,
+      },
       accounts: accounts.map((user) => ({
         id: user.id,
         username: user.username,
         displayName: user.display_name || user.username,
+        branchName: user.branch_name || null,
       })),
     });
   } catch (err) {
