@@ -65,7 +65,10 @@ export default function Contacts() {
       }, CONTACT_REALTIME_DEBOUNCE_MS);
     }
 
-    source.addEventListener("conversation_changed", scheduleRefresh);
+    // Assignment and lead-journey changes publish pipeline_changed. Listen to
+    // that narrower signal instead of every chat message so Contacts stays
+    // fresh without reloading the full list during normal conversations.
+    source.addEventListener("pipeline_changed", scheduleRefresh);
     source.onopen = scheduleRefresh;
     source.onerror = () => {
       // EventSource reconnects automatically. The next open reconciles the list.
@@ -73,7 +76,7 @@ export default function Contacts() {
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      source.removeEventListener("conversation_changed", scheduleRefresh);
+      source.removeEventListener("pipeline_changed", scheduleRefresh);
       source.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
