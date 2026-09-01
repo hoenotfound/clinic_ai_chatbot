@@ -54,7 +54,7 @@ test("Inbox keeps AI control separate from lead assignment and supports owner fi
   assert.match(badge, /value\?\.startsWith\("owner:"\)/);
 });
 
-test("Contacts exposes the same assignment filter and refreshes assignment badges on realtime changes", () => {
+test("Contacts exposes the same assignment filter and refreshes assignment badges only on pipeline changes", () => {
   const contacts = source("portal-frontend/src/pages/Contacts.jsx");
 
   assert.match(contacts, /buildLeadAssignmentFilterOptions/);
@@ -63,5 +63,6 @@ test("Contacts exposes the same assignment filter and refreshes assignment badge
   assert.match(contacts, /<LeadAssignmentBadge/);
   assert.match(contacts, /lead_owner_username/);
   assert.match(contacts, /new EventSource\("\/api\/conversations\/events"/);
-  assert.match(contacts, /conversation_changed/);
+  assert.match(contacts, /addEventListener\("pipeline_changed"/);
+  assert.doesNotMatch(contacts, /addEventListener\("conversation_changed"/);
 });
