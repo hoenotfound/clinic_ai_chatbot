@@ -11,6 +11,25 @@ async function getUserById(id, queryable = pool) {
   return result.rows[0] || null;
 }
 
+async function getUserByIdForUpdate(id, queryable = pool) {
+  const result = await queryable.query(
+    "SELECT * FROM users WHERE id = $1 FOR UPDATE",
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
+async function countOpenOwnedLeads(username, queryable = pool) {
+  const result = await queryable.query(
+    `SELECT COUNT(*)::int AS count
+     FROM leads
+     WHERE is_closed = false
+       AND owner_username = $1`,
+    [username]
+  );
+  return Number(result.rows[0]?.count) || 0;
+}
+
 async function createUser(usernameOrData, passwordHashArg, queryable = pool) {
   const data = typeof usernameOrData === "string"
     ? {
@@ -147,6 +166,8 @@ async function withAdminMutationLock(work) {
 module.exports = {
   getUserByUsername,
   getUserById,
+  getUserByIdForUpdate,
+  countOpenOwnedLeads,
   createUser,
   countUsers,
   listUsernames,
