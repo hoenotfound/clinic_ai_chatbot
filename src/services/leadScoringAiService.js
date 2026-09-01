@@ -1,10 +1,11 @@
 const Anthropic = require("@anthropic-ai/sdk");
 const { GoogleGenAI } = require("@google/genai");
+const clinicConfig = require("../config/clinicConfig");
 
 const PROVIDER = (process.env.AI_PROVIDER || "gemini").toLowerCase();
 const GEMINI_MODEL = process.env.LEAD_SCORING_GEMINI_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const CLAUDE_MODEL = process.env.LEAD_SCORING_CLAUDE_MODEL || "claude-sonnet-5";
-const PROMPT_VERSION = "lead-temperature-v2";
+const PROMPT_VERSION = "lead-temperature-v3";
 const MAX_REASON_CHARS = 240;
 const MAX_EVIDENCE_MESSAGES = 5;
 const GEMINI_TRANSIENT_RETRY_DELAYS_MS = [2000, 5000, 10000];
@@ -78,7 +79,15 @@ function transcriptForPrompt(messages) {
   }));
 }
 
+function configuredBranchNames() {
+  return (clinicConfig.branches || [])
+    .map((branch) => String(branch?.name || "").trim())
+    .filter(Boolean);
+}
+
 function buildLeadScorePrompt({ messages, lead }) {
+  const validBranches = configuredBranchNames();
+
   return `Classify the current sales temperature of a Malaysian clinic lead and create a concise handoff summary from the conversation data.
 
 Temperature definitions:
@@ -101,13 +110,18 @@ Conversation summary rules:
 - Summarize only facts actually present in the conversation. Never guess missing medical, booking, branch, pricing, or personal details.
 - Use an empty string for a structured field when the detail was not captured.
 - treatmentInterest should name the treatment or service the customer is currently interested in.
-- preferredBranch should contain only the customer's stated branch preference.
+- preferredBranch should contain only the customer's stated clinic branch preference.
+- If the stated branch clearly maps to one configured clinic branch below, return that branch's exact configured name, even when the customer used a common abbreviation or shortened form.
+- Do not infer preferredBranch merely from where the customer lives, works, or mentions a place. If no branch was actually chosen, or the mapping is ambiguous, return an empty string.
 - preferredAppointment should contain the customer's stated or agreed date/time in concise natural language.
 - mainConcern should describe the customer's main stated concern or goal without adding a diagnosis.
 - chatSummary should briefly cover what the customer wanted, key information discussed, objections or questions, and where the conversation ended.
 - nextAction should be one practical sales follow-up action based only on unresolved items in the conversation.
 - Keep the summary concise enough for a Telegram sales alert.
 - Return only the required structured result.
+
+Configured clinic branches (preferredBranch must use one of these exact names or an empty string):
+${JSON.stringify(validBranches)}
 
 Current lead:
 ${JSON.stringify({
