@@ -237,16 +237,16 @@ BEFORE UPDATE OF owner_username ON leads
 FOR EACH ROW
 EXECUTE FUNCTION mark_manual_lead_owner_change();
 
--- The existing AI conversation summary already returns preferredBranch and its
--- prompt explicitly says to use only the customer's stated branch preference.
--- Use that safer signal for CRM record-keeping after a score completes. This is
--- intentionally soft: it fills a blank branch only and never changes ownership.
--- Staff can edit branch_name later and the AI will not overwrite that record.
+-- The existing AI conversation summary returns preferredBranch. The prompt now
+-- canonicalizes a clear customer preference to one exact configured branch name.
+-- This remains soft CRM enrichment only: fill a blank branch and never touch owner.
+-- Staff corrections remain authoritative because non-blank branch records are kept.
 CREATE OR REPLACE FUNCTION fill_lead_branch_from_ai_summary()
 RETURNS TRIGGER AS $$
 DECLARE
   requested_branch TEXT;
   canonical_branch TEXT;
+  updated_lead_id INTEGER;
 BEGIN
   IF NEW.status <> 'completed' THEN
     RETURN NEW;
@@ -269,16 +269,42 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  UPDATE leads
-  SET branch_name = canonical_branch,
-      updated_at = now()
-  WHERE id = NEW.lead_id
-    AND branch_name IS NULL;
+  -- Branch enrichment is deliberately isolated from scoring. If anything about
+  -- the lead update fails, preserve the completed score and simply skip enrichment.
+  BEGIN
+    UPDATE leads
+    SET branch_name = canonical_branch,
+        updated_at = now()
+    WHERE id = NEW.lead_id
+      AND branch_name IS NULL
+    RETURNING id INTO updated_lead_id;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN NEW;
+  END;
 
-  RETURN NEW;
-EXCEPTION WHEN OTHERS THEN
-  -- Branch record enrichment must never make the AI score fail. The summary is
-  -- still preserved in lead_temperature_scores/Telegram for staff to review.
+  -- Record where the branch came from when it was actually filled. Activity
+  -- logging is best-effort and must never undo the branch update above.
+  IF updated_lead_id IS NOT NULL THEN
+    BEGIN
+      INSERT INTO lead_activities (
+        lead_id, activity_type, description, actor, metadata
+      ) VALUES (
+        updated_lead_id,
+        'updated',
+        format('AI summary recorded preferred branch: %s.', canonical_branch),
+        'AI summary',
+        jsonb_build_object(
+          'source', 'ai_summary',
+          'scoreId', NEW.id,
+          'throughMessageId', NEW.through_message_id,
+          'preferredBranch', canonical_branch
+        )
+      );
+    EXCEPTION WHEN OTHERS THEN
+      NULL;
+    END;
+  END IF;
+
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
