@@ -28,8 +28,8 @@ const CAPABILITY_DEFINITIONS = [
   {
     key: "view_all_leads",
     label: "Access all leads",
-    description: "See every clinic lead and conversation. Any enabled reply or lead-management capabilities also apply across this clinic-wide view.",
-    defaults: { admin: true, sales: false },
+    description: "See every clinic lead and conversation. Enabled by default so assignment can be used for workload ownership and filtering; any enabled reply or lead-management capabilities also apply across this clinic-wide view.",
+    defaults: { admin: true, sales: true },
   },
   {
     key: "manage_lead_assignment",
