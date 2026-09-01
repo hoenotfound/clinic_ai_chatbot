@@ -103,6 +103,8 @@ export const api = {
   getConfig: () => request("/config"),
   updateConfig: (updates) => request("/config", { method: "PATCH", body: JSON.stringify(updates) }),
   getLeadDistributionStatus: () => request("/config/lead-distribution/status"),
+  recoverUnassignedLeads: () =>
+    request("/config/lead-distribution/recover-unassigned", { method: "POST" }),
   uploadPromoImage: async (file) => {
     const form = new FormData();
     form.append("image", file);
