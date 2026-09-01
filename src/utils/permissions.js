@@ -109,6 +109,7 @@ function presentUser(user) {
     username: user.username,
     displayName: user.display_name || user.username,
     role: normalizeRole(user.role),
+    branchName: user.branch_name || null,
     isActive: user.is_active !== false,
     permissions: effectivePermissions(user),
     createdAt: user.created_at || null,
