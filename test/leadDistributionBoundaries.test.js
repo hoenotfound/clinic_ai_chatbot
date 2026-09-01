@@ -23,6 +23,7 @@ test("manual owner choices and database writes use serviceable staff only", () =
 
 test("new and edited lead branch options are separated from historical branch filters", () => {
   const pipelineRoute = read("src/routes/pipeline.js");
+  const requireAuth = read("src/middleware/requireAuth.js");
   const api = read("portal-frontend/src/api.js");
   const addLead = read("portal-frontend/src/components/pipeline/AddLeadModal.jsx");
   const leadDrawer = read("portal-frontend/src/components/pipeline/LeadDrawer.jsx");
@@ -30,6 +31,8 @@ test("new and edited lead branch options are separated from historical branch fi
 
   assert.match(pipelineRoute, /router\.get\("\/configured-branches"/);
   assert.match(pipelineRoute, /branches: distinctNames\(\[\.\.\.configuredBranches, \.\.\.savedBranches\]\)/);
+  assert.match(requireAuth, /parts\[0\] === "configured-branches"/);
+  assert.match(requireAuth, /Pipeline access is disabled for this account/);
   assert.match(api, /getConfiguredBranches: \(\) => request\("\/pipeline\/configured-branches"\)/);
   assert.match(addLead, /api\.getConfiguredBranches\(\)/);
   assert.doesNotMatch(addLead, /api\.getPipeline\(\)/);
