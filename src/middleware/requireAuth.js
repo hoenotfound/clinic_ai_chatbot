@@ -162,6 +162,13 @@ async function enforcePipelinePolicy(req, res, user) {
     return true;
   }
 
+  if (parts[0] === "configured-branches") {
+    if (!hasAnyLeadView(user)) {
+      return forbidden(res, "Pipeline access is disabled for this account.");
+    }
+    return true;
+  }
+
   if (parts[0] === "analytics") {
     if (!hasCapability(user, "view_analytics")) {
       return forbidden(res, "Analytics access is disabled for this account.");
