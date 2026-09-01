@@ -91,12 +91,12 @@ BEGIN
 
     SELECT string_agg(left(word, 1), '')
     INTO primary_acronym
-    FROM regexp_split_to_table(primary_name, '[[:space:]]+') AS word
+    FROM regexp_split_to_table(primary_name, '[[:space:]]+') AS words(word)
     WHERE word <> '';
 
     SELECT string_agg(left(word, 1), '')
     INTO secondary_acronym
-    FROM regexp_split_to_table(secondary_name, '[[:space:]]+') AS word
+    FROM regexp_split_to_table(secondary_name, '[[:space:]]+') AS words(word)
     WHERE word <> '';
 
     aliases := ARRAY[normalized_name, primary_name];
@@ -139,7 +139,7 @@ DECLARE
   distribution_enabled BOOLEAN := false;
   target_branch TEXT;
   route_branch TEXT := NULL;
-  scope_key TEXT := 'global';
+  routing_scope TEXT := 'global';
   eligible_count INTEGER := 0;
   previous_user_id INTEGER;
   selected_user_id INTEGER;
@@ -167,6 +167,11 @@ BEGIN
       RETURN NEW;
     END IF;
   ELSE
+    -- Backfill is historical bookkeeping, not a new sales event.
+    IF NEW.created_by = 'Migration' THEN
+      RETURN NEW;
+    END IF;
+
     IF NULLIF(btrim(COALESCE(NEW.owner_username, '')), '') IS NOT NULL THEN
       NEW.owner_assignment_source := 'manual';
       RETURN NEW;
@@ -223,7 +228,7 @@ BEGIN
 
     IF eligible_count > 0 THEN
       route_branch := target_branch;
-      scope_key := 'branch:' || lower(target_branch);
+      routing_scope := 'branch:' || lower(target_branch);
     END IF;
   END IF;
 
@@ -238,7 +243,7 @@ BEGIN
         OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
       )
       AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true';
-    scope_key := 'global';
+    routing_scope := 'global';
   END IF;
 
   IF eligible_count = 0 THEN
@@ -263,13 +268,13 @@ BEGIN
     LIMIT 1;
   ELSE
     INSERT INTO lead_distribution_cursors (scope_key, last_user_id)
-    VALUES (scope_key, NULL)
+    VALUES (routing_scope, NULL)
     ON CONFLICT (scope_key) DO NOTHING;
 
     SELECT last_user_id
     INTO previous_user_id
     FROM lead_distribution_cursors
-    WHERE lead_distribution_cursors.scope_key = route_lead_owner_by_branch.scope_key
+    WHERE scope_key = routing_scope
     FOR UPDATE;
 
     SELECT id, username
@@ -305,7 +310,7 @@ BEGIN
 
     UPDATE lead_distribution_cursors
     SET last_user_id = selected_user_id, updated_at = now()
-    WHERE lead_distribution_cursors.scope_key = route_lead_owner_by_branch.scope_key;
+    WHERE scope_key = routing_scope;
   END IF;
 
   IF selected_user_id IS NOT NULL THEN
