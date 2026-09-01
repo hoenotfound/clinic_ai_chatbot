@@ -5,13 +5,11 @@ const contactsRepo = require("../db/contactsRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
-const whatsapp = require("./whatsappService");
+const channelMessaging = require("./channelMessagingService");
 
 const FOLLOW_UP_CHECK_INTERVAL_MS = 60 * 1000;
 const FOLLOW_UP_BATCH_SIZE = 25;
 const STALE_CLAIM_GRACE_MINUTES = 10;
-const SEND_REJECTED_ERROR =
-  "WhatsApp did not accept this automated follow-up. Check the reply window or connection and retry it from the Inbox.";
 
 let sweepRunning = false;
 
@@ -64,6 +62,18 @@ function publishConversationChange(message, reason) {
   });
 }
 
+function contactForCandidate(candidate) {
+  return {
+    channel: candidate.channel || "whatsapp",
+    whatsapp_number: candidate.whatsapp_number,
+    channel_user_id: candidate.channel_user_id,
+  };
+}
+
+function rejectedFollowUpError(channel) {
+  return `${channelMessaging.labelForChannel(channel)} did not accept this automated follow-up. Check the reply window or connection and retry it from the Inbox.`;
+}
+
 async function sendCandidate(candidate) {
   // Read the live settings again for every candidate. A staff member may
   // pause the tool or make its criteria stricter while a sweep is running.
@@ -92,22 +102,27 @@ async function sendCandidate(candidate) {
 
   publishConversationChange(saved, "message");
 
+  const contact = contactForCandidate(candidate);
+  const channel = contact.channel || "whatsapp";
+  const rejectedError = rejectedFollowUpError(channel);
+
   let sendResult;
   try {
     sendResult = settings.imageUrl
-      ? await whatsapp.sendImage(
-          candidate.whatsapp_number,
+      ? await channelMessaging.sendImageByUrl(
+          contact,
           settings.imageUrl,
           followUpMessage
         )
-      : await whatsapp.sendMessage(candidate.whatsapp_number, followUpMessage);
+      : await channelMessaging.sendText(contact, followUpMessage);
   } catch (err) {
     console.error("Automated follow-up send failed:", err);
-    sendResult = { success: false, wamid: null };
+    sendResult = { success: false, wamid: null, externalMessageId: null };
   }
 
   let finalMessage = saved;
   if (sendResult?.wamid) {
+    // WhatsApp keeps using its asynchronous WAMID delivery-status pipeline.
     finalMessage =
       (await messagesRepo.setWhatsappMessageId(saved.id, sendResult.wamid)) || saved;
   } else if (!sendResult?.success) {
@@ -115,8 +130,15 @@ async function sendCandidate(candidate) {
       (await messagesRepo.setDeliveryStatusById(
         saved.id,
         "failed",
-        SEND_REJECTED_ERROR
+        rejectedError
       )) || saved;
+  } else if (channel !== "whatsapp") {
+    // Messenger/Instagram return an accepted send result but do not use the
+    // WhatsApp WAMID webhook pipeline. Mark that accepted result immediately
+    // so crash recovery can distinguish it from a claim whose send outcome
+    // was never recorded.
+    finalMessage =
+      (await messagesRepo.setDeliveryStatusById(saved.id, "sent", null)) || saved;
   }
 
   publishConversationChange(finalMessage, "delivery_status");
@@ -124,7 +146,7 @@ async function sendCandidate(candidate) {
   if (!sendResult?.success) {
     await contactsRepo.setDeliveryAttention(
       candidate.contact_id,
-      `Delivery failed: ${SEND_REJECTED_ERROR}`
+      `Delivery failed: ${rejectedError}`
     );
   } else {
     try {
