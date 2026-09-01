@@ -48,6 +48,16 @@ async function listUsernames(queryable = pool) {
   return result.rows.map((row) => row.username);
 }
 
+async function listActiveSalesUsers(queryable = pool) {
+  const result = await queryable.query(
+    `SELECT id, username, display_name
+     FROM users
+     WHERE is_active = true AND role = 'sales'
+     ORDER BY id ASC`
+  );
+  return result.rows;
+}
+
 async function listUsers(queryable = pool) {
   const result = await queryable.query(
     `SELECT id, username, password_hash, display_name, role, permissions,
@@ -125,6 +135,7 @@ module.exports = {
   createUser,
   countUsers,
   listUsernames,
+  listActiveSalesUsers,
   listUsers,
   updateUser,
   deactivateUser,
