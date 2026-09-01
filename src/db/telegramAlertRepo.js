@@ -112,6 +112,7 @@ async function claimSummary(alertId, inactivityMinutes) {
      FROM leads l
      JOIN pipeline_stages s ON s.id = l.stage_id
      JOIN contacts c ON c.id = l.contact_id
+     LEFT JOIN users u ON u.username = l.owner_username
      WHERE a.id = $1
        AND a.lead_id = l.id
        AND a.attempts < ${MAX_ATTEMPTS}
@@ -140,7 +141,8 @@ async function claimSummary(alertId, inactivityMinutes) {
        a.id AS alert_id, a.lead_id, a.through_message_id, a.score_data,
        l.contact_id, l.temperature AS current_temperature,
        l.branch_name, l.treatment_interest, l.appointment_at,
-       l.appointment_status, s.name AS stage_name,
+       l.appointment_status, l.owner_username,
+       u.display_name AS owner_display_name, s.name AS stage_name,
        c.whatsapp_number, c.name, c.whatsapp_profile_name,
        c.channel, c.channel_user_id`,
     [alertId, inactivityMinutes]
