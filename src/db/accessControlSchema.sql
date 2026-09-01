@@ -139,8 +139,8 @@ BEGIN
 
   -- A one-person pool is a direct assignment. Round robin is only meaningful
   -- when the selected pool contains two or more eligible Sales accounts.
-  -- KEY SHARE pairs with Team & Access FOR UPDATE locks so a selected rep cannot
-  -- be disabled or lose eligibility in the middle of this lead INSERT.
+  -- SHARE pairs with Team & Access FOR UPDATE locks so a selected rep cannot be
+  -- disabled or lose eligibility in the middle of this lead INSERT.
   IF eligible_count = 1 THEN
     SELECT id, username
     INTO selected_user_id, selected_username
@@ -155,7 +155,7 @@ BEGIN
       AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true'
     ORDER BY id ASC
     LIMIT 1
-    FOR KEY SHARE;
+    FOR SHARE;
   ELSE
     INSERT INTO lead_distribution_cursors (scope_key, last_user_id)
     VALUES (routing_scope, NULL)
@@ -181,7 +181,7 @@ BEGIN
       AND id > COALESCE(previous_user_id, 0)
     ORDER BY id ASC
     LIMIT 1
-    FOR KEY SHARE;
+    FOR SHARE;
 
     IF selected_user_id IS NULL THEN
       SELECT id, username
@@ -197,7 +197,7 @@ BEGIN
         AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true'
       ORDER BY id ASC
       LIMIT 1
-      FOR KEY SHARE;
+      FOR SHARE;
     END IF;
 
     UPDATE lead_distribution_cursors
