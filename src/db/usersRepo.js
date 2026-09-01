@@ -19,6 +19,7 @@ async function createUser(usernameOrData, passwordHashArg, queryable = pool) {
         displayName: usernameOrData,
         role: "sales",
         permissions: {},
+        branchName: null,
       }
     : usernameOrData || {};
 
@@ -26,12 +27,17 @@ async function createUser(usernameOrData, passwordHashArg, queryable = pool) {
   const displayName = String(data.displayName || username).trim() || username;
   const role = normalizeRole(data.role);
   const permissions = normalizePermissionOverrides(data.permissions);
+  const branchName = role === "sales" && data.branchName
+    ? String(data.branchName).trim() || null
+    : null;
 
   const result = await queryable.query(
-    `INSERT INTO users (username, password_hash, display_name, role, permissions, is_active)
-     VALUES ($1, $2, $3, $4, $5, true)
+    `INSERT INTO users (
+       username, password_hash, display_name, role, permissions, branch_name, is_active
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, true)
      RETURNING *`,
-    [username, data.passwordHash, displayName, role, permissions]
+    [username, data.passwordHash, displayName, role, permissions, branchName]
   );
   return result.rows[0];
 }
@@ -50,7 +56,7 @@ async function listUsernames(queryable = pool) {
 
 async function listActiveSalesUsers(queryable = pool) {
   const result = await queryable.query(
-    `SELECT id, username, display_name
+    `SELECT id, username, display_name, branch_name
      FROM users
      WHERE is_active = true
        AND role = 'sales'
@@ -67,7 +73,7 @@ async function listActiveSalesUsers(queryable = pool) {
 async function listUsers(queryable = pool) {
   const result = await queryable.query(
     `SELECT id, username, password_hash, display_name, role, permissions,
-            is_active, auth_version, created_at
+            branch_name, is_active, auth_version, created_at
      FROM users
      ORDER BY is_active DESC, lower(display_name), lower(username), id`
   );
@@ -90,6 +96,9 @@ async function updateUser(id, updates, queryable = pool) {
   }
   if (Object.prototype.hasOwnProperty.call(updates, "permissions")) {
     push("permissions", normalizePermissionOverrides(updates.permissions));
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "branchName")) {
+    push("branch_name", updates.branchName || null);
   }
   if (Object.prototype.hasOwnProperty.call(updates, "isActive")) {
     push("is_active", updates.isActive === true);
