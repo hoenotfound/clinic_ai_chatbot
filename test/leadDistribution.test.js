@@ -25,7 +25,7 @@ test("lead distribution accepts only a boolean switch and round robin", () => {
   assert.equal(normalizeLeadDistributionConfig(null), null);
 });
 
-test("access-control schema installs branch-first atomic Sales assignment", () => {
+test("access-control schema installs atomic Sales assignment with stable ownership", () => {
   const sql = fs.readFileSync(
     path.join(__dirname, "../src/db/accessControlSchema.sql"),
     "utf8"
@@ -34,29 +34,51 @@ test("access-control schema installs branch-first atomic Sales assignment", () =
   assert.match(sql, /ADD COLUMN IF NOT EXISTS branch_name TEXT/i);
   assert.match(sql, /owner_assignment_source/i);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS lead_distribution_cursors/i);
-  assert.match(sql, /detect_configured_branch_preference/i);
-  assert.match(sql, /route_lead_owner_by_branch/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION assign_new_lead_owner/i);
   assert.match(sql, /lower\(btrim\(COALESCE\(branch_name/i);
   assert.match(sql, /eligible_count = 1/i);
   assert.match(sql, /FOR UPDATE/i);
-  assert.match(sql, /routing_scope := 'global'/i);
+  assert.match(sql, /routing_scope TEXT := 'global'/i);
   assert.match(sql, /BEFORE INSERT ON leads/i);
-  assert.match(sql, /BEFORE UPDATE OF branch_name, owner_username ON leads/i);
-  assert.match(sql, /AFTER INSERT ON messages/i);
-  assert.match(sql, /AFTER UPDATE OF content ON messages/i);
+  assert.match(sql, /BEFORE UPDATE OF owner_username ON leads/i);
   assert.match(sql, /view_assigned_leads/i);
   assert.match(sql, /reply_to_assigned_leads/i);
   assert.match(sql, /leadDistribution,enabled/i);
 });
 
-test("branch routing preserves manual owners and excludes migration backfill", () => {
+test("customer message storage has no active branch-routing trigger", () => {
   const sql = fs.readFileSync(
     path.join(__dirname, "../src/db/accessControlSchema.sql"),
     "utf8"
   );
 
-  assert.match(sql, /owner_assignment_source := 'manual'/i);
-  assert.match(sql, /COALESCE\(OLD\.owner_assignment_source, 'manual'\) <> 'automatic'/i);
+  assert.doesNotMatch(sql, /CREATE TRIGGER trg_customer_branch_after_message_insert/i);
+  assert.doesNotMatch(sql, /CREATE TRIGGER trg_customer_branch_after_message_update/i);
+  assert.doesNotMatch(sql, /CREATE OR REPLACE FUNCTION detect_configured_branch_preference/i);
+});
+
+test("AI summary softly fills a blank branch without rerouting owner", () => {
+  const sql = fs.readFileSync(
+    path.join(__dirname, "../src/db/accessControlSchema.sql"),
+    "utf8"
+  );
+
+  assert.match(sql, /fill_lead_branch_from_ai_summary/i);
+  assert.match(sql, /summary_data ->> 'preferredBranch'/i);
+  assert.match(sql, /lower\(btrim\(branch ->> 'name'\)\) = lower\(requested_branch\)/i);
+  assert.match(sql, /WHERE id = NEW\.lead_id[\s\S]*AND branch_name IS NULL/i);
+  assert.match(sql, /AFTER UPDATE OF status, summary_data ON lead_temperature_scores/i);
+  assert.doesNotMatch(sql, /BEFORE UPDATE OF branch_name, owner_username ON leads/i);
+});
+
+test("manual owners remain authoritative and migration backfill is excluded", () => {
+  const sql = fs.readFileSync(
+    path.join(__dirname, "../src/db/accessControlSchema.sql"),
+    "utf8"
+  );
+
   assert.match(sql, /NEW\.created_by = 'Migration'/i);
   assert.match(sql, /NEW\.owner_assignment_source := 'automatic'/i);
+  assert.match(sql, /mark_manual_lead_owner_change/i);
+  assert.match(sql, /ELSE 'manual'/i);
 });
