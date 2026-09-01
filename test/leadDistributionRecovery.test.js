@@ -42,5 +42,5 @@ test("status and recovery endpoints expose recoverable unassigned leads", () => 
   assert.match(route, /Enable Automatic Lead Distribution/i);
   assert.match(frontendApi, /recoverUnassignedLeads/);
   assert.match(page, /Assign never-owned leads/);
-  assert.match(page, /manually unassigned by staff will stay unassigned/i);
+  assert.match(page, /manually (?:left )?unassigned by staff will stay unassigned/i);
 });

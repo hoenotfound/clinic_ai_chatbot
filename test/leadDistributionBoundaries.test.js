@@ -52,14 +52,8 @@ test("Inbox refresh signals are emitted only when lead visibility can change", (
   assert.doesNotMatch(realtimeEvents, /if \(event === "pipeline_changed"\)/);
   assert.match(pipelineRepo, /refreshInbox = false/);
   assert.match(pipelineRepo, /reason: "lead_assignment_changed"/);
-  assert.match(
-    pipelineRepo,
-    /refreshInbox: outcome\.created && Boolean\(outcome\.lead\.owner_username\)/
-  );
-  assert.match(
-    pipelineRepo,
-    /refreshInbox: Object\.hasOwn\(patch, "ownerUsername"\)/
-  );
+  assert.match(pipelineRepo, /refreshInbox: outcome\.created && Boolean\(outcome\.lead\.owner_username\)/);
+  assert.match(pipelineRepo, /refreshInbox: Object\.hasOwn\(patch, "ownerUsername"\)/);
   assert.match(recoveryRepo, /reason: "lead_assignment_recovered"/);
 });
 
@@ -84,18 +78,57 @@ test("Lead Distribution is selected from inside Tools rather than the main sideb
   assert.match(tools, /value === "lead-distribution"/);
   assert.match(tools, /onSelect\("leadDistribution"\)/);
   assert.match(tools, /Automatic Lead Distribution/);
-  assert.match(tools, /<LeadDistribution \/>/);
+  assert.match(tools, /<LeadDistribution/);
+  assert.match(tools, /distributionActive/);
 });
 
-test("Lead Distribution UI exposes a clear branch routing choice and view-only state", () => {
+test("Lead Distribution UI exposes a simple branch/global choice and view-only state", () => {
   const page = read("portal-frontend/src/pages/LeadDistribution.jsx");
   assert.match(page, /assignByBranch: true/);
-  assert.match(page, /Assign leads by branch/);
-  assert.match(page, /Global only/);
+  assert.match(page, /How should leads be shared\?/);
+  assert.match(page, /By branch/);
+  assert.match(page, /Across all Sales staff/);
   assert.match(page, /The branch is still recorded for CRM, reporting and appointments/);
   assert.match(page, /canManageDistribution/);
   assert.match(page, /View only/);
-  assert.match(page, /Advanced behavior & safeguards/);
+  assert.match(page, /View team & branch pools/);
+  assert.match(page, /How it works & advanced behavior/);
+  assert.doesNotMatch(page, /Back to Tools/);
+});
+
+test("Tools UX keeps advanced details out of the main setup flow", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+
+  assert.match(tools, /Review translations/);
+  assert.match(tools, /Language versions will refresh automatically when you save/);
+  assert.match(tools, /api\.translateFollowUp\(message\)/);
+  assert.match(tools, /Advanced timing settings/);
+  assert.match(tools, /Booking intent → Hot/);
+  assert.match(tools, /Clear rejection → Cold/);
+  assert.match(tools, /Staff changes always win/);
+  assert.match(tools, /You have unsaved changes in this tool\. Leave without saving them\?/);
+  assert.doesNotMatch(tools, /function OverviewItem/);
+});
+
+test("leaving a dirty tool discards its local draft consistently", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+
+  assert.match(tools, /function discardCurrentToolChanges\(\)/);
+  assert.match(tools, /setForm\(saved\)/);
+  assert.match(tools, /setScoringForm\(scoringFormFromSettings\(config\?\.leadScoring\)\)/);
+  assert.match(tools, /discardCurrentToolChanges\(\)/);
+  assert.match(tools, /setDistributionDirty\(false\)/);
+});
+
+test("automatic translation refresh preserves manual language edits made after the latest source change", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+
+  assert.match(tools, /manualTranslationEdits/);
+  assert.match(tools, /setManualTranslationEdits\(\[\]\)/);
+  assert.match(tools, /manualTranslationEdits\.includes\(key\)/);
+  assert.match(tools, /preserveManual \? manualValue : generated\[key\]/);
+  assert.match(tools, /onTranslationChange\(translationLanguage, event\.target\.value\)/);
+  assert.match(tools, /enabledStateChanged = enabled !== savedEnabled/);
 });
 
 test("production schema loads ownership/branch safeguards and initial assignment audit", () => {
