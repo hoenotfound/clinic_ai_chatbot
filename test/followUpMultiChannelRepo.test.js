@@ -66,6 +66,29 @@ test("atomic follow-up claim rechecks that the contact still has a valid recipie
   assert.match(capturedSql, /ON CONFLICT DO NOTHING/);
 });
 
+test("social follow-up graphics are stored as separate automated messages under the conversation lock", async () => {
+  let capturedSql = null;
+  let capturedParams = null;
+
+  pool.query = async (sql, params) => {
+    capturedSql = sql;
+    capturedParams = params;
+    return { rows: [] };
+  };
+
+  await followUpRepo.saveSocialImageCompanion({
+    contactId: 9,
+    imageUrl: "https://example.com/follow-up.jpg",
+  });
+
+  assert.match(capturedSql, /pg_advisory_xact_lock/);
+  assert.match(capturedSql, /'assistant', '', 'Follow-up automation'/);
+  assert.match(capturedSql, /media_url/);
+  assert.match(capturedSql, /is_automated_follow_up/);
+  assert.doesNotMatch(capturedSql, /automated_follow_up_for_message_id/);
+  assert.deepEqual(capturedParams, [9, "https://example.com/follow-up.jpg"]);
+});
+
 test("stale claim recovery is channel-neutral and never blindly resends", async () => {
   let capturedSql = null;
 
