@@ -67,10 +67,14 @@ test("lead distribution mutations require both Tools and Assign leads permission
 
 test("Lead Distribution is selected from inside Tools rather than the main sidebar", () => {
   const app = read("portal-frontend/src/App.jsx");
+  const toolsRoute = read("portal-frontend/src/pages/ToolsRoute.jsx");
   const sidebar = read("portal-frontend/src/components/Sidebar.jsx");
   const tools = read("portal-frontend/src/pages/Tools.jsx");
 
-  assert.match(app, /import Tools from "\.\/pages\/Tools"/);
+  assert.match(app, /import ToolsRoute from "\.\/pages\/ToolsRoute"/);
+  assert.match(app, /<ToolsRoute \/>/);
+  assert.match(toolsRoute, /import Tools from "\.\/Tools"/);
+  assert.match(toolsRoute, /<Tools \/>/);
   assert.doesNotMatch(app, /ToolsWithNavigation/);
   assert.match(app, /to="\/tools\?tool=lead-distribution"/);
   assert.doesNotMatch(sidebar, /label: "Lead Distribution"/);
@@ -80,6 +84,16 @@ test("Lead Distribution is selected from inside Tools rather than the main sideb
   assert.match(tools, /Automatic Lead Distribution/);
   assert.match(tools, /<LeadDistribution/);
   assert.match(tools, /distributionActive/);
+});
+
+test("Automated Follow-up clearly states its three-channel scope and 24-hour boundary", () => {
+  const toolsRoute = read("portal-frontend/src/pages/ToolsRoute.jsx");
+
+  assert.match(toolsRoute, /WhatsApp · Messenger · Instagram/);
+  assert.match(toolsRoute, /same settings on all three channels/);
+  assert.match(toolsRoute, /24-hour messaging window/);
+  assert.match(toolsRoute, /selectedTool !== "lead-temperature"/);
+  assert.match(toolsRoute, /selectedTool !== "lead-distribution"/);
 });
 
 test("Lead Distribution UI exposes a simple branch/global choice and view-only state", () => {
@@ -131,9 +145,15 @@ test("automatic translation refresh preserves manual language edits made after t
   assert.match(tools, /enabledStateChanged = enabled !== savedEnabled/);
 });
 
-test("production schema loads ownership/branch safeguards and initial assignment audit", () => {
+test("production schema loads ownership, routing, and social follow-up safeguards", () => {
   const db = read("src/db/db.js");
   const safetySchema = read("src/db/leadDistributionSafetySchema.sql");
+  const followUpSchema = read("src/db/followUpMultiChannelSchema.sql");
+
+  assert.match(db, /followUpMultiChannelSchema\.sql/);
+  assert.match(db, /await pool\.query\(followUpMultiChannelSchema\)/);
+  assert.match(followUpSchema, /normalize_social_automated_follow_up_retry_status/);
+  assert.match(followUpSchema, /c\.channel IN \('facebook', 'instagram'\)/);
   assert.match(db, /leadDistributionSafetySchema\.sql/);
   assert.match(db, /await pool\.query\(leadDistributionSafetySchema\)/);
   assert.match(safetySchema, /lead_distribution_initial/);
