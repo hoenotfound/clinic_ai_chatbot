@@ -66,25 +66,9 @@ test(
   { skip: !TEST_DATABASE_URL },
   async (t) => {
     const schemaName = `lead_distribution_safety_${process.pid}_${Date.now()}`;
-    const admin = await connectToSchema(schemaName).catch(async (err) => {
-      if (err?.code !== "3F000") throw err;
-      return null;
-    });
-
-    // The schema does not exist for the first connection, so create it with a
-    // separate default-search-path client, then reconnect into it.
-    let setup = admin;
-    if (!setup) {
-      setup = new Client({ connectionString: TEST_DATABASE_URL, ssl: false });
-      await setup.connect();
-    }
-
-    if (admin) {
-      // Extremely unlikely path if a prior interrupted run left the schema.
-      await admin.end();
-      await setup.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schemaName)} CASCADE`);
-    }
-
+    const setup = new Client({ connectionString: TEST_DATABASE_URL, ssl: false });
+    await setup.connect();
+    await setup.query(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schemaName)} CASCADE`);
     await setup.query(`CREATE SCHEMA ${quoteIdentifier(schemaName)}`);
     await setup.query(`SET search_path TO ${quoteIdentifier(schemaName)}, public`);
 
