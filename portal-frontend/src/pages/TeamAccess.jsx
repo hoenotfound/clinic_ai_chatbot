@@ -144,7 +144,7 @@ function CreateStaffCard({ branches, onCreated, onError }) {
       <div className="mb-4">
         <h2 className="font-display text-lg font-bold">Add staff account</h2>
         <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
-          Sales accounts start with assigned-lead access only. A fixed branch is used for branch-first assignment when that branch is already known as the lead is created. Every eligible Sales account still participates in the global rotation for leads without a known branch.
+          Sales accounts can see all leads by default, while lead assignment shows workload ownership and powers personal filters. A fixed branch is used for branch-first assignment when that branch is already known as the lead is created.
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
