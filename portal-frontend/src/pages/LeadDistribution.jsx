@@ -16,6 +16,12 @@ const DEFAULT_AI_BRANCH_RECORDING = {
   telegramSummaryEnabled: false,
 };
 
+const DEFAULT_UNASSIGNED = {
+  openUnassignedCount: 0,
+  recoverableUnassignedCount: 0,
+  manualUnassignedCount: 0,
+};
+
 export default function LeadDistribution() {
   const { permissions } = useAuth();
   const { toasts, showToast, dismissToast } = useToasts();
@@ -24,9 +30,11 @@ export default function LeadDistribution() {
   const [accounts, setAccounts] = useState([]);
   const [configuredBranches, setConfiguredBranches] = useState([]);
   const [aiBranchRecording, setAiBranchRecording] = useState(DEFAULT_AI_BRANCH_RECORDING);
+  const [unassigned, setUnassigned] = useState(DEFAULT_UNASSIGNED);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const [error, setError] = useState("");
 
   function applyStatus(status) {
@@ -37,6 +45,11 @@ export default function LeadDistribution() {
     setAiBranchRecording({
       ...DEFAULT_AI_BRANCH_RECORDING,
       ...(status?.aiBranchRecording || {}),
+    });
+    setUnassigned({
+      openUnassignedCount: Number(status?.openUnassignedCount) || 0,
+      recoverableUnassignedCount: Number(status?.recoverableUnassignedCount) || 0,
+      manualUnassignedCount: Number(status?.manualUnassignedCount) || 0,
     });
   }
 
@@ -95,6 +108,44 @@ export default function LeadDistribution() {
       showToast(err.message || "Couldn't refresh Sales accounts.", "error");
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  async function recoverUnassignedLeads() {
+    if (!savedSettings.enabled) {
+      showToast("Enable and save Automatic Lead Distribution before recovering leads.", "error");
+      return;
+    }
+    if (accounts.length === 0) {
+      showToast("Add or reactivate an eligible Sales account first.", "error");
+      return;
+    }
+    if (unassigned.recoverableUnassignedCount === 0) {
+      showToast("There are no never-owned open leads to recover.", "info");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Assign up to ${Math.min(unassigned.recoverableUnassignedCount, 100)} never-owned open leads using the current routing pools? Leads manually unassigned by staff will stay unassigned.`
+    );
+    if (!confirmed) return;
+
+    setRecovering(true);
+    try {
+      const outcome = await api.recoverUnassignedLeads();
+      const status = await api.getLeadDistributionStatus();
+      applyStatus(status);
+      const recovered = Number(outcome?.recoveredCount) || 0;
+      showToast(
+        recovered > 0
+          ? `${recovered} previously unassigned ${recovered === 1 ? "lead was" : "leads were"} assigned.`
+          : "No leads were assigned. Refresh the Sales pool and try again.",
+        recovered > 0 ? "info" : "warning"
+      );
+    } catch (err) {
+      showToast(err.message || "Couldn't recover unassigned leads.", "error");
+    } finally {
+      setRecovering(false);
     }
   }
 
@@ -234,6 +285,29 @@ export default function LeadDistribution() {
             </section>
           )}
 
+          {unassigned.openUnassignedCount > 0 && (
+            <section className="mt-5 rounded-2xl border border-[var(--color-accent)]/30 bg-white p-4 shadow-[0_8px_24px_rgba(24,39,33,0.03)] sm:flex sm:items-center sm:justify-between sm:gap-5">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-semibold">Open unassigned leads</p>
+                  <span className="rounded-full bg-[var(--color-accent-light)] px-2 py-0.5 text-[10px] font-bold">{unassigned.openUnassignedCount}</span>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                  {unassigned.recoverableUnassignedCount} were never assigned and can be recovered using the current branch/global rotation. {unassigned.manualUnassignedCount > 0 ? `${unassigned.manualUnassignedCount} were deliberately unassigned by staff and will stay untouched.` : "Staff-cleared owners are never recovered automatically."}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={recoverUnassignedLeads}
+                disabled={recovering || !savedEnabled || accounts.length === 0 || unassigned.recoverableUnassignedCount === 0}
+                className="mt-3 inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:mt-0"
+              >
+                {recovering && <Spinner className="h-3.5 w-3.5" />}
+                {recovering ? "Assigning…" : "Assign never-owned leads"}
+              </button>
+            </section>
+          )}
+
           {staleBranchAccounts.length > 0 && (
             <section className="mt-5 rounded-2xl border border-[var(--color-danger)]/20 bg-white p-4 text-sm">
               <p className="font-semibold text-[var(--color-danger)]">Some Sales accounts use an old branch name.</p>
@@ -325,10 +399,11 @@ export default function LeadDistribution() {
                   <li>• Customer message storage has no branch-routing trigger.</li>
                   <li>• A later AI or staff branch change never changes the Sales owner.</li>
                   <li>• A manually selected owner is never overwritten by automatic distribution.</li>
+                  <li>• A manually cleared owner is marked manual and excluded from unassigned-lead recovery.</li>
                   <li>• AI branch recording accepts only an exact configured branch returned by the structured summary.</li>
                   <li>• Disabled accounts, Admin accounts, and Sales accounts without lead viewing or reply access are skipped.</li>
-                  <li>• Existing leads are not redistributed just because you enable the tool.</li>
-                  <li>• If no eligible Sales account exists at all, the lead stays unassigned instead of blocking the chatbot.</li>
+                  <li>• Existing owned leads are not redistributed just because you enable the tool.</li>
+                  <li>• If no eligible Sales account exists at creation, the lead stays unassigned instead of blocking the chatbot and can be explicitly recovered later.</li>
                 </ul>
               </section>
 
