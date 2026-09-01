@@ -21,6 +21,10 @@ function distinctNames(values) {
   return [...new Set(values.map((value) => value?.trim()).filter(Boolean))];
 }
 
+function configuredBranchNames() {
+  return distinctNames((clinicConfig.branches || []).map((branch) => branch.name));
+}
+
 function handlePipelineError(res, err, fallbackMessage) {
   if (err instanceof PipelineValidationError || err instanceof AnalyticsValidationError) {
     return res.status(err.status).json({ error: err.message });
@@ -53,7 +57,7 @@ router.get("/", async (req, res) => {
       pipelineRepo.listLeads(),
       usersRepo.listAssignableLeadOwners(),
     ]);
-    const configuredBranches = distinctNames((clinicConfig.branches || []).map((branch) => branch.name));
+    const configuredBranches = configuredBranchNames();
     const savedBranches = distinctNames(leads.map((lead) => lead.branch_name));
 
     res.json({
@@ -68,6 +72,12 @@ router.get("/", async (req, res) => {
   } catch (err) {
     handlePipelineError(res, err, "Something went wrong loading the pipeline.");
   }
+});
+
+// Lightweight source of truth for branch-editing controls. This avoids loading
+// the full Pipeline board again just to populate one select menu.
+router.get("/configured-branches", (req, res) => {
+  res.json({ branches: configuredBranchNames() });
 });
 
 // GET /api/pipeline/analytics - server-side aggregate dashboard payload.
