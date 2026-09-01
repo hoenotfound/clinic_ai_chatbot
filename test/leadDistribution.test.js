@@ -34,6 +34,8 @@ test("access-control schema installs atomic Sales-only lead assignment", () => {
   assert.match(sql, /CREATE TABLE IF NOT EXISTS lead_distribution_state/i);
   assert.match(sql, /FOR UPDATE/i);
   assert.match(sql, /is_active = true[\s\S]*role = 'sales'/i);
+  assert.match(sql, /view_assigned_leads/i);
+  assert.match(sql, /reply_to_assigned_leads/i);
   assert.match(sql, /BEFORE INSERT ON leads/i);
   assert.match(sql, /NEW\.owner_username/i);
   assert.match(sql, /leadDistribution,enabled/i);
