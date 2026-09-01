@@ -6,6 +6,10 @@ import { useToasts, ToastContainer } from "../components/Toast";
 import Lightbox from "../components/Lightbox";
 import ContactAvatar from "../components/ContactAvatar";
 import ContactDetailsDrawer from "../components/ContactDetailsDrawer";
+import LeadAssignmentBadge, {
+  buildLeadAssignmentFilterOptions,
+  matchesLeadAssignment,
+} from "../components/LeadAssignmentBadge";
 import {
   AlertIcon,
   ArrowLeftIcon,
@@ -684,6 +688,7 @@ export default function Inbox() {
         selectedId={selectedId}
         onSelect={handleSelectConversation}
         mobileThreadOpen={mobileThreadOpen}
+        currentUsername={username}
       />
       <ThreadView
         key={selectedId ?? "no-conversation"}
@@ -719,15 +724,20 @@ export default function Inbox() {
   );
 }
 
-function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpen }) {
+function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpen, currentUsername }) {
   const [filters, setFilters] = useState({
     status: "all",
     channel: "all",
-    owner: "all",
+    control: "all",
+    assignment: "all",
     query: "",
   });
 
   const conversationList = useMemo(() => conversations || [], [conversations]);
+  const assignmentOptions = useMemo(
+    () => buildLeadAssignmentFilterOptions(conversationList, currentUsername),
+    [conversationList, currentUsername]
+  );
   const statusCounts = useMemo(
     () => ({
       all: conversationList.length,
@@ -747,25 +757,29 @@ function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpe
       if (filters.status === "unread" && !conversation.is_unread) return false;
       if (filters.status === "attention" && !conversation.needs_attention) return false;
       if (filters.channel !== "all" && (conversation.channel || "whatsapp") !== filters.channel) return false;
-      if (filters.owner !== "all" && conversation.mode !== filters.owner) return false;
+      if (filters.control !== "all" && conversation.mode !== filters.control) return false;
+      if (!matchesLeadAssignment(conversation, filters.assignment, currentUsername)) return false;
       if (!query) return true;
 
       const searchableText = [
         displayName(conversation),
         conversation.whatsapp_number,
         conversation.last_message,
+        conversation.lead_owner_display_name,
+        conversation.lead_owner_username,
       ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
       return searchableText.includes(query);
     });
-  }, [conversationList, filters]);
+  }, [conversationList, filters, currentUsername]);
 
   const hasActiveFilters =
     filters.status !== "all" ||
     filters.channel !== "all" ||
-    filters.owner !== "all" ||
+    filters.control !== "all" ||
+    filters.assignment !== "all" ||
     !!filters.query.trim();
 
   function updateFilter(key, value) {
@@ -773,7 +787,7 @@ function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpe
   }
 
   function clearFilters() {
-    setFilters({ status: "all", channel: "all", owner: "all", query: "" });
+    setFilters({ status: "all", channel: "all", control: "all", assignment: "all", query: "" });
   }
 
   return (
@@ -811,7 +825,7 @@ function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpe
             value={filters.query}
             onChange={(event) => updateFilter("query", event.target.value)}
             placeholder="Search conversations"
-            aria-label="Search by name, number, or message"
+            aria-label="Search by name, number, message, or assignee"
             className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] py-2.5 pl-9 pr-9 text-xs outline-none transition focus:border-[var(--color-primary)] focus:bg-white focus:ring-2 focus:ring-[var(--color-primary-light)]"
           />
           {filters.query && (
@@ -864,14 +878,22 @@ function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpe
             ]}
           />
           <FilterSelect
-            label="Filter by owner"
-            value={filters.owner}
-            onChange={(value) => updateFilter("owner", value)}
+            label="Filter by conversation control"
+            value={filters.control}
+            onChange={(value) => updateFilter("control", value)}
             options={[
               ["all", "AI + staff"],
               ["ai", "AI controlled"],
               ["human", "Staff controlled"],
             ]}
+          />
+        </div>
+        <div className="mt-2">
+          <FilterSelect
+            label="Filter by lead assignment"
+            value={filters.assignment}
+            onChange={(value) => updateFilter("assignment", value)}
+            options={assignmentOptions}
           />
         </div>
       </header>
@@ -940,7 +962,13 @@ function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpe
                       <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--color-primary)] ring-4 ring-[var(--color-primary-light)]" title="Unread" />
                     )}
                   </div>
-                  <div className="mt-2 flex min-w-0 items-center gap-1.5">
+                  <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+                    <LeadAssignmentBadge
+                      ownerUsername={conversation.lead_owner_username}
+                      ownerDisplayName={conversation.lead_owner_display_name}
+                      currentUsername={currentUsername}
+                      compact
+                    />
                     <ModeBadge mode={conversation.mode} compact />
                     {conversation.needs_follow_up && <StatusBadge tone="accent">Follow-up</StatusBadge>}
                     {conversation.needs_attention && <StatusBadge tone="danger">Attention</StatusBadge>}
