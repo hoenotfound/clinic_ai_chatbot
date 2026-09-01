@@ -1,5 +1,9 @@
 const { pool } = require("./db");
-const { normalizePermissionOverrides, normalizeRole } = require("../utils/permissions");
+const {
+  effectivePermissions,
+  normalizePermissionOverrides,
+  normalizeRole,
+} = require("../utils/permissions");
 
 async function getUserByUsername(username, queryable = pool) {
   const result = await queryable.query("SELECT * FROM users WHERE username = $1", [username]);
@@ -71,6 +75,22 @@ async function listUsernames(queryable = pool) {
     "SELECT username FROM users WHERE is_active = true ORDER BY lower(username), id"
   );
   return result.rows.map((row) => row.username);
+}
+
+async function listAssignableLeadOwners(queryable = pool) {
+  const result = await queryable.query(
+    `SELECT id, username, display_name, role, permissions, branch_name, is_active
+     FROM users
+     WHERE is_active = true
+     ORDER BY lower(display_name), lower(username), id`
+  );
+
+  return result.rows.filter((user) => {
+    const permissions = effectivePermissions(user);
+    const canView =
+      permissions.view_assigned_leads === true || permissions.view_all_leads === true;
+    return canView && permissions.reply_to_assigned_leads === true;
+  });
 }
 
 async function listActiveSalesUsers(queryable = pool) {
@@ -171,6 +191,7 @@ module.exports = {
   createUser,
   countUsers,
   listUsernames,
+  listAssignableLeadOwners,
   listActiveSalesUsers,
   listUsers,
   updateUser,
