@@ -13,6 +13,7 @@ const { runAutomatedFollowUps } = require("../src/services/followUpService");
 const originals = {
   findCandidates: followUpRepo.findCandidates,
   saveIfStillEligible: followUpRepo.saveIfStillEligible,
+  saveSocialImageCompanion: followUpRepo.saveSocialImageCompanion,
   markStaleClaimsUnconfirmed: followUpRepo.markStaleClaimsUnconfirmed,
   setWhatsappMessageId: messagesRepo.setWhatsappMessageId,
   setDeliveryStatusById: messagesRepo.setDeliveryStatusById,
@@ -27,6 +28,7 @@ test.after(() => {
   Object.assign(followUpRepo, {
     findCandidates: originals.findCandidates,
     saveIfStillEligible: originals.saveIfStillEligible,
+    saveSocialImageCompanion: originals.saveSocialImageCompanion,
     markStaleClaimsUnconfirmed: originals.markStaleClaimsUnconfirmed,
   });
   Object.assign(messagesRepo, {
@@ -59,6 +61,7 @@ function enableTool({ imageUrl = "" } = {}) {
 test.beforeEach(() => {
   enableTool();
   followUpRepo.markStaleClaimsUnconfirmed = async () => [];
+  followUpRepo.saveSocialImageCompanion = async () => null;
   contactsRepo.setDeliveryAttention = async () => {};
   pipelineRepo.markContactedForContact = async () => false;
   realtimeEvents.publish = () => {};
@@ -115,11 +118,12 @@ test("Facebook Messenger follow-up uses the scoped recipient and records an acce
   assert.deepEqual(contacted, { contactId: 101, actor: "Automated follow-up" });
 });
 
-test("Instagram follow-up sends the configured graphic and localized caption", async () => {
+test("Instagram image follow-up records text first and sends the graphic as a separate retry-safe message", async () => {
   enableTool({ imageUrl: "https://example.com/follow-up.jpg" });
   let claimed = null;
-  let sent = null;
-  let persisted = null;
+  let companionInput = null;
+  const sends = [];
+  const persisted = [];
 
   followUpRepo.findCandidates = async () => [
     {
@@ -135,29 +139,117 @@ test("Instagram follow-up sends the configured graphic and localized caption", a
     claimed = input;
     return { id: 511, contact_id: 102, delivery_status: null };
   };
+  followUpRepo.saveSocialImageCompanion = async (input) => {
+    companionInput = input;
+    return { id: 512, contact_id: 102, media_url: input.imageUrl, delivery_status: null };
+  };
+  channelMessaging.sendText = async (contact, text) => {
+    sends.push({ type: "text", contact, text });
+    return { success: true, wamid: null, externalMessageId: "mid-instagram-text-511" };
+  };
   channelMessaging.sendImageByUrl = async (contact, imageUrl, caption) => {
-    sent = { contact, imageUrl, caption };
-    return { success: true, wamid: null, externalMessageId: "mid-instagram-511" };
+    sends.push({ type: "image", contact, imageUrl, caption });
+    return { success: true, wamid: null, externalMessageId: "mid-instagram-image-512" };
   };
   messagesRepo.setDeliveryStatusById = async (id, status, error) => {
-    persisted = { id, status, error };
+    persisted.push({ id, status, error });
     return { id, contact_id: 102, delivery_status: status, delivery_error: error };
   };
 
   await runAutomatedFollowUps();
 
   assert.equal(claimed.content, "您好，请问还需要帮助吗？");
-  assert.equal(claimed.mediaUrl, "https://example.com/follow-up.jpg");
-  assert.deepEqual(sent, {
+  assert.equal(claimed.mediaUrl, null);
+  assert.deepEqual(companionInput, {
+    contactId: 102,
+    imageUrl: "https://example.com/follow-up.jpg",
+  });
+  assert.equal(sends.length, 2);
+  assert.deepEqual(sends[0], {
+    type: "text",
+    contact: {
+      channel: "instagram",
+      whatsapp_number: "+instagram:102",
+      channel_user_id: "igsid-102",
+    },
+    text: "您好，请问还需要帮助吗？",
+  });
+  assert.deepEqual(sends[1], {
+    type: "image",
     contact: {
       channel: "instagram",
       whatsapp_number: "+instagram:102",
       channel_user_id: "igsid-102",
     },
     imageUrl: "https://example.com/follow-up.jpg",
-    caption: "您好，请问还需要帮助吗？",
+    caption: undefined,
   });
-  assert.deepEqual(persisted, { id: 511, status: "sent", error: null });
+  assert.deepEqual(persisted, [
+    { id: 511, status: "sent", error: null },
+    { id: 512, status: "sent", error: null },
+  ]);
+});
+
+test("a failed optional social graphic never makes the already-sent follow-up text retryable", async () => {
+  enableTool({ imageUrl: "https://example.com/follow-up.jpg" });
+  const persisted = [];
+  const attention = [];
+  let textSendCount = 0;
+  let imageSendCount = 0;
+  let contacted = null;
+
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 104,
+      channel: "facebook",
+      whatsapp_number: "+facebook:104",
+      channel_user_id: "psid-104",
+      trigger_message_id: 530,
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    assert.equal(input.mediaUrl, null);
+    return { id: 531, contact_id: 104, delivery_status: null };
+  };
+  followUpRepo.saveSocialImageCompanion = async () => ({
+    id: 532,
+    contact_id: 104,
+    delivery_status: null,
+  });
+  channelMessaging.sendText = async () => {
+    textSendCount += 1;
+    return { success: true, wamid: null, externalMessageId: "mid-facebook-text-531" };
+  };
+  channelMessaging.sendImageByUrl = async (contact, imageUrl, caption) => {
+    imageSendCount += 1;
+    assert.equal(caption, undefined);
+    return { success: false, wamid: null, externalMessageId: null, error: "Image rejected" };
+  };
+  messagesRepo.setDeliveryStatusById = async (id, status, error) => {
+    persisted.push({ id, status, error });
+    return { id, contact_id: 104, delivery_status: status, delivery_error: error };
+  };
+  contactsRepo.setDeliveryAttention = async (contactId, reason) => {
+    attention.push({ contactId, reason });
+  };
+  pipelineRepo.markContactedForContact = async (contactId, actor) => {
+    contacted = { contactId, actor };
+    return true;
+  };
+
+  await runAutomatedFollowUps();
+
+  assert.equal(textSendCount, 1);
+  assert.equal(imageSendCount, 1);
+  assert.equal(persisted[0].id, 531);
+  assert.equal(persisted[0].status, "sent");
+  assert.equal(persisted[0].error, null);
+  assert.equal(persisted[1].id, 532);
+  assert.equal(persisted[1].status, "failed");
+  assert.match(persisted[1].error, /optional follow-up graphic/i);
+  assert.deepEqual(contacted, { contactId: 104, actor: "Automated follow-up" });
+  assert.equal(attention.length, 1);
+  assert.match(attention[0].reason, /follow-up text was sent/i);
 });
 
 test("social follow-up rejection is failed with the correct channel name and human attention", async () => {
