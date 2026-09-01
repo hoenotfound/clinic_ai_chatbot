@@ -10,16 +10,35 @@ const DEFAULT_SETTINGS = {
   strategy: "round_robin",
 };
 
+const DEFAULT_AI_BRANCH_RECORDING = {
+  enabled: false,
+  leadScoringEnabled: false,
+  telegramSummaryEnabled: false,
+};
+
 export default function LeadDistribution() {
   const { permissions } = useAuth();
   const { toasts, showToast, dismissToast } = useToasts();
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [savedSettings, setSavedSettings] = useState(DEFAULT_SETTINGS);
   const [accounts, setAccounts] = useState([]);
+  const [configuredBranches, setConfiguredBranches] = useState([]);
+  const [aiBranchRecording, setAiBranchRecording] = useState(DEFAULT_AI_BRANCH_RECORDING);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+
+  function applyStatus(status) {
+    setAccounts(Array.isArray(status?.accounts) ? status.accounts : []);
+    setConfiguredBranches(
+      Array.isArray(status?.configuredBranches) ? status.configuredBranches : []
+    );
+    setAiBranchRecording({
+      ...DEFAULT_AI_BRANCH_RECORDING,
+      ...(status?.aiBranchRecording || {}),
+    });
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -33,7 +52,7 @@ export default function LeadDistribution() {
         };
         setSettings(current);
         setSavedSettings(current);
-        setAccounts(Array.isArray(status.accounts) ? status.accounts : []);
+        applyStatus(status);
       })
       .catch((err) => {
         if (!cancelled) setError(err.message || "Failed to load lead distribution.");
@@ -51,12 +70,27 @@ export default function LeadDistribution() {
     [settings.enabled, savedSettings.enabled]
   );
 
+  const branchPools = useMemo(
+    () => configuredBranches.map((branchName) => ({
+      branchName,
+      accounts: accounts.filter((account) => account.branchName === branchName),
+    })),
+    [accounts, configuredBranches]
+  );
+
+  const staleBranchAccounts = useMemo(() => {
+    const configured = new Set(configuredBranches);
+    return accounts.filter(
+      (account) => account.branchName && !configured.has(account.branchName)
+    );
+  }, [accounts, configuredBranches]);
+
   async function refreshAccounts() {
     setRefreshing(true);
     try {
       const status = await api.getLeadDistributionStatus();
-      setAccounts(Array.isArray(status.accounts) ? status.accounts : []);
-      showToast("Sales account list refreshed.", "info");
+      applyStatus(status);
+      showToast("Lead distribution status refreshed.", "info");
     } catch (err) {
       showToast(err.message || "Couldn't refresh Sales accounts.", "error");
     } finally {
@@ -149,7 +183,7 @@ export default function LeadDistribution() {
                 </span>
               </div>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)]">
-                Assign each new lead to a Sales account immediately and keep that owner stable. If a trusted branch is already known when the lead is created, that branch pool is used first. Otherwise the lead starts in the global Sales rotation. The AI summary can record the customer's stated branch later without moving the conversation to another salesperson.
+                Assign each new lead to a Sales account immediately and keep that owner stable. If a trusted branch is already known when the lead is created, that branch pool is used first. Otherwise the lead starts in the global Sales rotation. A later AI summary may record the customer's chosen branch without moving the conversation to another salesperson.
               </p>
             </div>
 
@@ -174,8 +208,17 @@ export default function LeadDistribution() {
           <section className="mt-7 grid overflow-hidden rounded-2xl border border-[var(--color-border)] bg-white shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:grid-cols-3 sm:divide-x sm:divide-[var(--color-border)]">
             <Overview label="Assignment" value="Immediate" />
             <Overview label="Owner continuity" value="No automatic rerouting" />
-            <Overview label="Branch record" value="AI summary + staff edit" />
+            <Overview label="Branch record" value={aiBranchRecording.enabled ? "AI summary + staff edit" : "Staff edit until AI analysis is enabled"} />
           </section>
+
+          {!aiBranchRecording.enabled && (
+            <section className="mt-5 rounded-2xl border border-[var(--color-accent)]/30 bg-[var(--color-accent-light)] p-4 text-sm">
+              <p className="font-semibold">AI branch recording is currently inactive.</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                Lead assignment still works normally. The branch stays blank until staff edits it unless Lead Scoring or Telegram conversation summaries are enabled, because those existing conversation analyses produce the structured AI summary used for branch recording.
+              </p>
+            </section>
+          )}
 
           {accounts.length === 0 && (
             <section className="mt-5 rounded-2xl border border-[var(--color-accent)]/30 bg-[var(--color-accent-light)] p-4 text-sm">
@@ -191,13 +234,22 @@ export default function LeadDistribution() {
             </section>
           )}
 
+          {staleBranchAccounts.length > 0 && (
+            <section className="mt-5 rounded-2xl border border-[var(--color-danger)]/20 bg-white p-4 text-sm">
+              <p className="font-semibold text-[var(--color-danger)]">Some Sales accounts use an old branch name.</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                Update these accounts in Team & Access so branch-specific routing can recognize them: {staleBranchAccounts.map((account) => account.displayName).join(", ")}.
+              </p>
+            </section>
+          )}
+
           <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(19rem,0.75fr)]">
             <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:p-6">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <h2 className="font-display text-lg font-bold">Eligible Sales accounts</h2>
+                  <h2 className="font-display text-lg font-bold">Sales routing pools</h2>
                   <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                    Sales branches are useful when a lead already has a structured branch at creation. Most new chat leads start without one, so they enter the global rotation immediately and keep the same owner while the AI later records the preferred branch.
+                    The global pool contains every eligible Sales account. A branch-specific pool contains only Sales accounts assigned to that branch in Team & Access.
                   </p>
                 </div>
                 <button
@@ -207,7 +259,7 @@ export default function LeadDistribution() {
                   className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold disabled:opacity-50"
                 >
                   {refreshing && <Spinner className="h-3.5 w-3.5" />}
-                  {refreshing ? "Refreshing…" : "Refresh accounts"}
+                  {refreshing ? "Refreshing…" : "Refresh status"}
                 </button>
               </div>
 
@@ -217,7 +269,24 @@ export default function LeadDistribution() {
                 </Link>
               )}
 
-              <div className="mt-5 space-y-2">
+              <div className="mt-5 grid gap-2 sm:grid-cols-2">
+                <PoolSummary
+                  name="Global pool"
+                  count={accounts.length}
+                  note="Used when no trusted branch exists at lead creation."
+                />
+                {branchPools.map((pool) => (
+                  <PoolSummary
+                    key={pool.branchName}
+                    name={pool.branchName}
+                    count={pool.accounts.length}
+                    note={pool.accounts.length > 1 ? "Round robin within this branch." : pool.accounts.length === 1 ? "Direct assignment when branch is known." : "No fixed Sales account for this branch."}
+                  />
+                ))}
+              </div>
+
+              <h3 className="mt-6 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Eligible accounts</h3>
+              <div className="mt-3 space-y-2">
                 {accounts.length > 0 ? accounts.map((account, index) => (
                   <div key={account.id} className="flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3">
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-xs font-bold text-[var(--color-primary)] shadow-sm">
@@ -227,7 +296,9 @@ export default function LeadDistribution() {
                       <p className="truncate text-sm font-semibold">{account.displayName}</p>
                       <p className="mt-0.5 truncate text-[11px] text-[var(--color-text-muted)]">@{account.username}</p>
                     </div>
-                    <span className="rounded-full bg-[var(--color-primary-light)] px-2 py-1 text-[10px] font-semibold text-[var(--color-primary)]">Sales</span>
+                    <span className="max-w-44 truncate rounded-full bg-[var(--color-primary-light)] px-2 py-1 text-[10px] font-semibold text-[var(--color-primary)]" title={account.branchName || "No fixed branch"}>
+                      {account.branchName || "No fixed branch"}
+                    </span>
                   </div>
                 )) : (
                   <div className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-xs text-[var(--color-text-muted)]">
@@ -241,10 +312,10 @@ export default function LeadDistribution() {
               <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)]">
                 <h2 className="font-display text-sm font-bold">How a lead is assigned</h2>
                 <ol className="mt-4 space-y-3 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  <Step number="1" text="The chatbot creates the lead and assigns an owner immediately, without waiting for the conversation summary." />
-                  <Step number="2" text="If a structured branch is already set at creation, one Sales account is assigned directly or multiple accounts rotate within that branch." />
-                  <Step number="3" text="If no branch is known yet, the lead uses the global round-robin rotation across eligible Sales accounts." />
-                  <Step number="4" text="When the existing AI summary later contains a stated preferred branch, a blank branch record is filled for reference only. The owner stays unchanged." />
+                  <Step number="1" text="The chatbot stores the customer message first, then creates the lead and assigns an owner immediately." />
+                  <Step number="2" text="If a trusted structured branch already exists at creation, one Sales account is assigned directly or multiple accounts rotate within that branch." />
+                  <Step number="3" text="If no branch is known yet, the lead uses the global round-robin rotation across every eligible Sales account." />
+                  <Step number="4" text="A later conversation summary may fill a blank branch record using the exact configured clinic branch name. This is record-keeping only and never changes the owner." />
                 </ol>
               </section>
 
@@ -254,10 +325,20 @@ export default function LeadDistribution() {
                   <li>• Customer message storage has no branch-routing trigger.</li>
                   <li>• A later AI or staff branch change never changes the Sales owner.</li>
                   <li>• A manually selected owner is never overwritten by automatic distribution.</li>
+                  <li>• AI branch recording accepts only an exact configured branch returned by the structured summary.</li>
                   <li>• Disabled accounts, Admin accounts, and Sales accounts without lead viewing or reply access are skipped.</li>
                   <li>• Existing leads are not redistributed just because you enable the tool.</li>
                   <li>• If no eligible Sales account exists at all, the lead stays unassigned instead of blocking the chatbot.</li>
                 </ul>
+              </section>
+
+              <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5">
+                <h2 className="font-display text-sm font-bold">AI branch recording</h2>
+                <div className="mt-3 space-y-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  <StatusLine label="Available" enabled={aiBranchRecording.enabled} />
+                  <StatusLine label="Lead Scoring" enabled={aiBranchRecording.leadScoringEnabled} />
+                  <StatusLine label="Telegram summaries" enabled={aiBranchRecording.telegramSummaryEnabled} />
+                </div>
               </section>
             </aside>
           </div>
@@ -303,11 +384,34 @@ function Overview({ label, value }) {
   );
 }
 
+function PoolSummary({ name, count, note }) {
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3.5">
+      <div className="flex items-center justify-between gap-3">
+        <p className="truncate text-xs font-semibold">{name}</p>
+        <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-[var(--color-primary)]">{count}</span>
+      </div>
+      <p className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">{note}</p>
+    </div>
+  );
+}
+
 function Step({ number, text }) {
   return (
     <li className="flex gap-2.5">
       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[var(--color-primary-light)] text-[10px] font-bold text-[var(--color-primary)]">{number}</span>
       <span>{text}</span>
     </li>
+  );
+}
+
+function StatusLine({ label, enabled }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span>{label}</span>
+      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${enabled ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
+        {enabled ? "On" : "Off"}
+      </span>
+    </div>
   );
 }
