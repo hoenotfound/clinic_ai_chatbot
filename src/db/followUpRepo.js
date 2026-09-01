@@ -160,6 +160,33 @@ async function saveIfStillEligible({
 }
 
 /**
+ * Facebook Messenger and Instagram send text and linked images as separate
+ * Meta messages. Store the optional image as its own automated row only after
+ * the text follow-up was accepted. A failed/unknown image can then be retried
+ * from Inbox without re-sending the already-delivered follow-up text.
+ */
+async function saveSocialImageCompanion({ contactId, imageUrl }) {
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     )
+     INSERT INTO messages (
+       contact_id,
+       role,
+       content,
+       sent_by_username,
+       media_url,
+       is_automated_follow_up
+     )
+     SELECT $1, 'assistant', '', 'Follow-up automation', $2, true
+     FROM conversation_lock
+     RETURNING ${FOLLOW_UP_MESSAGE_COLUMNS}`,
+    [contactId, imageUrl]
+  );
+  return result.rows[0] || null;
+}
+
+/**
  * A process can stop after claiming a follow-up but before it records the
  * response returned by the messaging provider. Once the grace period has
  * passed, surface those rows as unconfirmed instead of blindly resending and
@@ -191,5 +218,6 @@ async function markStaleClaimsUnconfirmed({ olderThanMinutes, limit = 25 }) {
 module.exports = {
   findCandidates,
   saveIfStillEligible,
+  saveSocialImageCompanion,
   markStaleClaimsUnconfirmed,
 };
