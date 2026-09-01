@@ -8,17 +8,37 @@ const {
   normalizeLeadDistributionConfig,
 } = require("../src/utils/leadDistribution");
 
-test("lead distribution defaults to paused round robin", () => {
+test("lead distribution defaults to paused round robin with branch routing enabled", () => {
   assert.deepEqual(DEFAULT_LEAD_DISTRIBUTION, {
     enabled: false,
     strategy: "round_robin",
+    assignByBranch: true,
   });
 });
 
-test("lead distribution accepts only a boolean switch and round robin", () => {
+test("lead distribution validates global and branch-aware round robin settings", () => {
+  assert.deepEqual(
+    normalizeLeadDistributionConfig({
+      enabled: true,
+      strategy: "round_robin",
+      assignByBranch: false,
+    }),
+    { enabled: true, strategy: "round_robin", assignByBranch: false }
+  );
+
+  // Older saved configs/clients keep the previous branch-aware behavior.
   assert.deepEqual(
     normalizeLeadDistributionConfig({ enabled: true, strategy: "round_robin" }),
-    { enabled: true, strategy: "round_robin" }
+    { enabled: true, strategy: "round_robin", assignByBranch: true }
+  );
+
+  assert.equal(
+    normalizeLeadDistributionConfig({
+      enabled: true,
+      strategy: "round_robin",
+      assignByBranch: "false",
+    }),
+    null
   );
   assert.equal(normalizeLeadDistributionConfig({ enabled: "true", strategy: "round_robin" }), null);
   assert.equal(normalizeLeadDistributionConfig({ enabled: true, strategy: "random" }), null);
@@ -44,6 +64,19 @@ test("access-control schema installs atomic Sales assignment with stable ownersh
   assert.match(sql, /view_assigned_leads/i);
   assert.match(sql, /reply_to_assigned_leads/i);
   assert.match(sql, /leadDistribution,enabled/i);
+});
+
+test("runtime routing safety layer applies the branch assignment toggle", () => {
+  const sql = fs.readFileSync(
+    path.join(__dirname, "../src/db/leadDistributionSafetySchema.sql"),
+    "utf8"
+  );
+
+  assert.match(sql, /choose_lead_distribution_owner/i);
+  assert.match(sql, /leadDistribution,assignByBranch/i);
+  assert.match(sql, /branch_routing_enabled/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION assign_new_lead_owner/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION recover_unassigned_open_leads/i);
 });
 
 test("customer message storage has no active branch-routing trigger", () => {
