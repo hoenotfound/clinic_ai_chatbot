@@ -276,7 +276,7 @@ BEGIN
     SET branch_name = canonical_branch,
         updated_at = now()
     WHERE id = NEW.lead_id
-      AND branch_name IS NULL
+      AND NULLIF(btrim(COALESCE(branch_name, '')), '') IS NULL
     RETURNING id INTO updated_lead_id;
   EXCEPTION WHEN OTHERS THEN
     RETURN NEW;
