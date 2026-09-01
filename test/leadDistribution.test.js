@@ -96,7 +96,7 @@ test("lead distribution status exposes branches and AI branch-recording availabi
   assert.match(source, /branchName: user\.branch_name \|\| null/);
 });
 
-test("manual owners remain authoritative and migration backfill is excluded", () => {
+test("manual owner changes remain authoritative and migration backfill is excluded", () => {
   const sql = fs.readFileSync(
     path.join(__dirname, "../src/db/accessControlSchema.sql"),
     "utf8"
@@ -105,5 +105,9 @@ test("manual owners remain authoritative and migration backfill is excluded", ()
   assert.match(sql, /NEW\.created_by = 'Migration'/i);
   assert.match(sql, /NEW\.owner_assignment_source := 'automatic'/i);
   assert.match(sql, /mark_manual_lead_owner_change/i);
-  assert.match(sql, /ELSE 'manual'/i);
+  assert.match(sql, /NEW\.owner_assignment_source := 'manual'/i);
+  assert.match(
+    sql,
+    /NEW\.owner_assignment_source = 'automatic'[\s\S]*IS DISTINCT FROM OLD\.owner_assignment_source/i
+  );
 });
