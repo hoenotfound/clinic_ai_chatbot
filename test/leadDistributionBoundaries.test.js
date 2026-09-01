@@ -86,12 +86,12 @@ test("Lead Distribution is selected from inside Tools rather than the main sideb
   assert.match(tools, /distributionActive/);
 });
 
-test("Automated Follow-up clearly states its WhatsApp-only channel scope", () => {
+test("Automated Follow-up clearly states its three-channel scope and 24-hour boundary", () => {
   const toolsRoute = read("portal-frontend/src/pages/ToolsRoute.jsx");
 
-  assert.match(toolsRoute, /WhatsApp only/);
-  assert.match(toolsRoute, /sent only to WhatsApp conversations/);
-  assert.match(toolsRoute, /Instagram and Facebook leads are not included/);
+  assert.match(toolsRoute, /WhatsApp · Messenger · Instagram/);
+  assert.match(toolsRoute, /same settings on all three channels/);
+  assert.match(toolsRoute, /24-hour messaging window/);
   assert.match(toolsRoute, /selectedTool !== "lead-temperature"/);
   assert.match(toolsRoute, /selectedTool !== "lead-distribution"/);
 });
@@ -145,9 +145,15 @@ test("automatic translation refresh preserves manual language edits made after t
   assert.match(tools, /enabledStateChanged = enabled !== savedEnabled/);
 });
 
-test("production schema loads ownership/branch safeguards and initial assignment audit", () => {
+test("production schema loads ownership, routing, and social follow-up safeguards", () => {
   const db = read("src/db/db.js");
   const safetySchema = read("src/db/leadDistributionSafetySchema.sql");
+  const followUpSchema = read("src/db/followUpMultiChannelSchema.sql");
+
+  assert.match(db, /followUpMultiChannelSchema\.sql/);
+  assert.match(db, /await pool\.query\(followUpMultiChannelSchema\)/);
+  assert.match(followUpSchema, /normalize_social_automated_follow_up_retry_status/);
+  assert.match(followUpSchema, /c\.channel IN \('facebook', 'instagram'\)/);
   assert.match(db, /leadDistributionSafetySchema\.sql/);
   assert.match(db, /await pool\.query\(leadDistributionSafetySchema\)/);
   assert.match(safetySchema, /lead_distribution_initial/);
