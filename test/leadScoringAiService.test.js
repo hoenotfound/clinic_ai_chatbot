@@ -41,6 +41,21 @@ test("lead score prompt protects sales definitions and summary grounding", () =>
   assert.match(prompt, /Use an empty string for a structured field when the detail was not captured/);
 });
 
+test("lead score prompt canonicalizes stated branch preferences against clinic settings", () => {
+  const prompt = buildLeadScorePrompt({
+    messages,
+    lead: { temperature: "warm", temperature_source: "rule" },
+  });
+
+  assert.match(prompt, /Configured clinic branches/);
+  assert.match(prompt, /return that branch's exact configured name/);
+  assert.match(prompt, /common abbreviation or shortened form/);
+  assert.match(prompt, /Do not infer preferredBranch merely from where the customer lives/);
+  assert.match(prompt, /Puchong/);
+  assert.match(prompt, /Petaling Jaya/);
+  assert.match(prompt, /Sri Petaling, Kuala Lumpur/);
+});
+
 test("parses a valid structured score and keeps only customer evidence", () => {
   const score = parseLeadScore({
     temperature: "HOT",
