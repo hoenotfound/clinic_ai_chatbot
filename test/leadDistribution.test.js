@@ -71,6 +71,31 @@ test("AI summary softly fills a blank branch without rerouting owner", () => {
   assert.doesNotMatch(sql, /BEFORE UPDATE OF branch_name, owner_username ON leads/i);
 });
 
+test("AI branch enrichment writes an audit activity on a best-effort basis", () => {
+  const sql = fs.readFileSync(
+    path.join(__dirname, "../src/db/accessControlSchema.sql"),
+    "utf8"
+  );
+
+  assert.match(sql, /INSERT INTO lead_activities/i);
+  assert.match(sql, /AI summary recorded preferred branch/i);
+  assert.match(sql, /'source', 'ai_summary'/i);
+  assert.match(sql, /EXCEPTION WHEN OTHERS THEN\s+NULL;/i);
+});
+
+test("lead distribution status exposes branches and AI branch-recording availability", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/routes/config.js"),
+    "utf8"
+  );
+
+  assert.match(source, /configuredBranches/);
+  assert.match(source, /aiBranchRecording/);
+  assert.match(source, /leadScoringEnabled/);
+  assert.match(source, /telegramSummaryEnabled/);
+  assert.match(source, /branchName: user\.branch_name \|\| null/);
+});
+
 test("manual owners remain authoritative and migration backfill is excluded", () => {
   const sql = fs.readFileSync(
     path.join(__dirname, "../src/db/accessControlSchema.sql"),
