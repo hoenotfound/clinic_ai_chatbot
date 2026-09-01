@@ -20,15 +20,16 @@ const FOLLOW_UP_MESSAGE_COLUMNS = `
 /**
  * Returns conversations whose newest message is a successful outbound
  * message and whose customer has stayed silent for the configured delay.
- * The WhatsApp session check leaves a small buffer before the 24-hour limit,
- * because free-form follow-ups outside that window require an approved
- * message template rather than the normal send-message endpoint.
+ * All supported Meta messaging channels use the same standard 24-hour
+ * customer-response window, so leave a small safety buffer before that limit.
  */
 async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 25 }) {
   const result = await pool.query(
     `SELECT
        c.id AS contact_id,
+       c.channel,
        c.whatsapp_number,
+       c.channel_user_id,
        latest.id AS trigger_message_id,
        latest.content AS trigger_message_content,
        ARRAY(
@@ -55,7 +56,11 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
        ORDER BY created_at DESC, id DESC
        LIMIT 1
      ) latest_inbound ON true
-     WHERE c.channel = 'whatsapp'
+     WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
+       AND (
+         (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
+         OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
+       )
        AND latest.role = 'assistant'
        AND latest.is_automated_follow_up = false
        AND latest.delivery_status IS DISTINCT FROM 'failed'
@@ -124,8 +129,14 @@ async function saveIfStillEligible({
        automated_follow_up_for_message_id
      )
      SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2
-     FROM latest, latest_inbound
-     WHERE latest.id = $2
+     FROM latest, latest_inbound, contacts c
+     WHERE c.id = $1
+       AND c.channel IN ('whatsapp', 'facebook', 'instagram')
+       AND (
+         (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
+         OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
+       )
+       AND latest.id = $2
        AND latest.role = 'assistant'
        AND latest.is_automated_follow_up = false
        AND latest.delivery_status IS DISTINCT FROM 'failed'
@@ -150,15 +161,16 @@ async function saveIfStillEligible({
 
 /**
  * A process can stop after claiming a follow-up but before it records the
- * result returned by WhatsApp. Once the grace period has passed, surface
- * those rows as unconfirmed instead of leaving them silently stuck forever.
- * SKIP LOCKED keeps multiple app instances from reporting the same recovery.
+ * response returned by the messaging provider. Once the grace period has
+ * passed, surface those rows as unconfirmed instead of blindly resending and
+ * risking a duplicate. SKIP LOCKED keeps multiple app instances from reporting
+ * the same recovery.
  */
 async function markStaleClaimsUnconfirmed({ olderThanMinutes, limit = 25 }) {
   const result = await pool.query(
     `UPDATE messages
      SET delivery_status = 'unknown',
-         delivery_error = 'Delivery could not be confirmed because the server restarted during this automated follow-up. Check the WhatsApp chat before retrying to avoid sending it twice.'
+         delivery_error = 'Delivery could not be confirmed because the server restarted during this automated follow-up. Check the customer chat before retrying to avoid sending it twice.'
      WHERE id IN (
        SELECT id
        FROM messages
