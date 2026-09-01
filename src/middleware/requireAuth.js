@@ -220,6 +220,7 @@ function enforceConfigPolicy(req, res, user) {
       wrapJson(res, (body) => ({
         automatedFollowUp: body?.automatedFollowUp,
         leadScoring: body?.leadScoring,
+        leadDistribution: body?.leadDistribution,
       }));
     }
     return true;
@@ -227,13 +228,15 @@ function enforceConfigPolicy(req, res, user) {
 
   if (parts.length === 0 && req.method === "PATCH") {
     const keys = Object.keys(req.body || {});
-    const toolOnly = keys.length > 0 && keys.every((key) => ["automatedFollowUp", "leadScoring"].includes(key));
+    const toolOnly = keys.length > 0 && keys.every((key) =>
+      ["automatedFollowUp", "leadScoring", "leadDistribution"].includes(key)
+    );
     if (toolOnly && canTools) return true;
     if (canSettings) return true;
     return forbidden(res);
   }
 
-  if (parts[0] === "automated-follow-up") {
+  if (["automated-follow-up", "lead-distribution"].includes(parts[0])) {
     return canTools ? true : forbidden(res, "Automation tools are disabled for this account.");
   }
 
