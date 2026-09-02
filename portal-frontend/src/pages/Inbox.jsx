@@ -62,10 +62,6 @@ function mergeMessageState(existing, incoming) {
   const deliveryAttemptChanged =
     incomingHasWamid && existing.whatsapp_message_id !== incoming.whatsapp_message_id;
 
-  // A new WAMID means this is a genuinely new retry attempt, so its state may
-  // start again at pending. For the same WAMID, only move forwards. This stops
-  // a slower retry response from overwriting a failure webhook that already
-  // arrived for that same attempt.
   if (deliveryAttemptChanged) {
     return merged;
   }
@@ -205,9 +201,6 @@ export default function Inbox() {
           const status = byId.get(Number(message.id));
           if (!status) return message;
 
-          // If a retry changed this message's WAMID while the reconciliation
-          // request was in flight, its response may describe the old attempt.
-          // Ignore that snapshot and let the retry response/live event win.
           const expectedWamid = expectedWamids.get(Number(message.id));
           if (
             message.whatsapp_message_id !== expectedWamid &&
@@ -265,9 +258,6 @@ export default function Inbox() {
     );
     if (stillAccessible) return;
 
-    // A restricted Sales user can lose access while this page is open when a
-    // lead is reassigned. Return mobile users to the list instead of leaving a
-    // blank thread, and select the next accessible conversation for desktop.
     const nextConversation = conversations[0] || null;
     setSelectedId(nextConversation?.contact_id ?? null);
     setMessages([]);
@@ -397,13 +387,9 @@ export default function Inbox() {
 
     source.addEventListener("conversation_changed", handleConversationChanged);
     source.onopen = () => {
-      // SSE does not replay events that happened before the connection opened.
-      // Always reconcile, including the first open, to close the gap between
-      // the initial thread request and the live stream becoming ready.
       scheduleRefresh();
     };
     source.onerror = () => {
-      // EventSource reconnects automatically using the server's retry hint.
     };
 
     return () => {
@@ -764,6 +750,7 @@ function ConversationList({
     assignment: "all",
     query: "",
   });
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const conversationList = useMemo(() => conversations || [], [conversations]);
   const assignmentOptions = useMemo(
@@ -779,6 +766,14 @@ function ConversationList({
       attention: conversationList.filter((item) => item.needs_attention).length,
     }),
     [conversationList]
+  );
+  const statusOptions = useMemo(
+    () =>
+      STATUS_FILTERS.map((filter) => [
+        filter.key,
+        `${filter.label} (${statusCounts[filter.key]})`,
+      ]),
+    [statusCounts]
   );
 
   useEffect(() => {
@@ -816,18 +811,23 @@ function ConversationList({
     });
   }, [conversationList, filters, currentUsername, canViewAllLeads]);
 
-  const hasActiveFilters =
-    filters.status !== "all" ||
-    filters.channel !== "all" ||
-    filters.control !== "all" ||
-    (canViewAllLeads && filters.assignment !== "all") ||
-    !!filters.query.trim();
+  const activeFilterCount =
+    (filters.status !== "all" ? 1 : 0) +
+    (filters.channel !== "all" ? 1 : 0) +
+    (filters.control !== "all" ? 1 : 0) +
+    (canViewAllLeads && filters.assignment !== "all" ? 1 : 0);
 
-  const activeSecondaryFilters = useMemo(() => {
+  const hasActiveFilters = activeFilterCount > 0 || !!filters.query.trim();
+
+  const activeFilterChips = useMemo(() => {
     const active = [];
+    if (filters.status !== "all") {
+      const label = STATUS_FILTERS.find((item) => item.key === filters.status)?.label;
+      active.push({ key: "status", label: label || "Status" });
+    }
     if (canViewAllLeads && filters.assignment !== "all") {
       const label = assignmentOptions.find(([value]) => value === filters.assignment)?.[1];
-      active.push({ key: "assignment", label: label || "Lead owner" });
+      active.push({ key: "assignment", label: `Owner · ${label || "Selected"}` });
     }
     if (filters.channel !== "all") {
       const channelLabels = {
@@ -840,14 +840,24 @@ function ConversationList({
     if (filters.control !== "all") {
       active.push({
         key: "control",
-        label: filters.control === "human" ? "Handled by staff" : "Handled by AI",
+        label: filters.control === "human" ? "Handled by · Staff" : "Handled by · AI",
       });
     }
     return active;
-  }, [assignmentOptions, canViewAllLeads, filters.assignment, filters.channel, filters.control]);
+  }, [assignmentOptions, canViewAllLeads, filters.assignment, filters.channel, filters.control, filters.status]);
 
   function updateFilter(key, value) {
     setFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function clearAppliedFilters() {
+    setFilters((current) => ({
+      ...current,
+      status: "all",
+      channel: "all",
+      control: "all",
+      assignment: "all",
+    }));
   }
 
   function clearFilters() {
@@ -859,129 +869,148 @@ function ConversationList({
       className={`${mobileThreadOpen ? "hidden md:flex" : "flex"} h-full w-full shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] md:w-[21.5rem] lg:w-[23rem] xl:w-[24.5rem]`}
       aria-label="Conversation inbox"
     >
-      <header className="shrink-0 border-b border-[var(--color-border)] px-4 pb-4 pt-5 sm:px-5">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="font-display text-xl font-bold tracking-[-0.02em]">Inbox</h1>
-            <p className="mt-1 text-xs text-[var(--color-text-muted)]" aria-live="polite">
-              {!conversations
-                ? "Loading conversations…"
-                : hasActiveFilters
-                ? `${filteredConversations.length} shown from ${conversationList.length}`
-                : `${conversationList.length} conversation${conversationList.length === 1 ? "" : "s"}`}
-            </p>
-          </div>
-          {hasActiveFilters && (
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="rounded-lg px-2 py-1 text-[11px] font-semibold text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-light)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
-            >
-              Clear all
-            </button>
-          )}
+      <header className="shrink-0 border-b border-[var(--color-border)] px-4 pb-3 pt-5 sm:px-5">
+        <div>
+          <h1 className="font-display text-xl font-bold tracking-[-0.02em]">Inbox</h1>
+          <p className="mt-1 text-xs text-[var(--color-text-muted)]" aria-live="polite">
+            {!conversations
+              ? "Loading conversations…"
+              : hasActiveFilters
+              ? `${filteredConversations.length} shown from ${conversationList.length}`
+              : `${conversationList.length} conversation${conversationList.length === 1 ? "" : "s"}`}
+          </p>
         </div>
 
-        <div className="relative mt-4">
-          <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" />
-          <input
-            type="search"
-            value={filters.query}
-            onChange={(event) => updateFilter("query", event.target.value)}
-            placeholder="Search conversations"
-            aria-label="Search by name, number, message, or assignee"
-            className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] py-2.5 pl-9 pr-9 text-xs outline-none transition focus:border-[var(--color-primary)] focus:bg-white focus:ring-2 focus:ring-[var(--color-primary-light)]"
-          />
-          {filters.query && (
-            <button
-              type="button"
-              onClick={() => updateFilter("query", "")}
-              aria-label="Clear search"
-              className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-white hover:text-[var(--color-text)]"
-            >
-              <CloseIcon className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
-
-        <div className="-mx-1 mt-3 flex gap-1.5 overflow-x-auto px-1 pb-1" aria-label="Conversation status filters">
-          {STATUS_FILTERS.map((filter) => {
-            const active = filters.status === filter.key;
-            return (
-              <button
-                key={filter.key}
-                type="button"
-                onClick={() => updateFilter("status", filter.key)}
-                aria-pressed={active}
-                title={filter.key === "attention" ? "Needs attention" : undefined}
-                className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${
-                  active
-                    ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white"
-                    : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:border-[var(--color-primary)]/40 hover:text-[var(--color-text)]"
-                }`}
-              >
-                <span>{filter.label}</span>
-                <span className={`rounded-full px-1.5 py-0.5 text-[9px] leading-none ${active ? "bg-white/20 text-white" : "bg-[var(--color-bg)]"}`}>
-                  {statusCounts[filter.key]}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        {canViewAllLeads ? (
-          <div className="mt-3">
-            <FilterSelect
-              label="Lead owner"
-              value={filters.assignment}
-              onChange={(value) => updateFilter("assignment", value)}
-              options={assignmentOptions}
+        <div className="mt-4 flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" />
+            <input
+              type="search"
+              value={filters.query}
+              onChange={(event) => updateFilter("query", event.target.value)}
+              placeholder="Search conversations"
+              aria-label="Search by name, number, message, or assignee"
+              className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] py-2.5 pl-9 pr-9 text-xs outline-none transition focus:border-[var(--color-primary)] focus:bg-white focus:ring-2 focus:ring-[var(--color-primary-light)]"
             />
+            {filters.query && (
+              <button
+                type="button"
+                onClick={() => updateFilter("query", "")}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-white hover:text-[var(--color-text)]"
+              >
+                <CloseIcon className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
-        ) : (
-          <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--color-primary)]/15 bg-[var(--color-primary-light)]/60 px-3 py-2">
-            <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-              Lead owner
-            </span>
-            <span className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-[var(--color-primary)]">
-              <UserIcon className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">My assigned leads</span>
-            </span>
+
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((current) => !current)}
+            aria-expanded={filtersOpen}
+            aria-controls="inbox-filter-panel"
+            className={`inline-flex h-[38px] shrink-0 items-center gap-1.5 rounded-xl border px-3 text-[11px] font-semibold transition focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${
+              filtersOpen || activeFilterCount > 0
+                ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:border-[var(--color-primary)]/35 hover:text-[var(--color-text)]"
+            }`}
+          >
+            <span>Filters</span>
+            {activeFilterCount > 0 && (
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-primary)] px-1 text-[9px] font-bold leading-none text-white">
+                {activeFilterCount}
+              </span>
+            )}
+            <ChevronDownIcon
+              className={`h-3 w-3 transition-transform ${filtersOpen ? "rotate-180" : ""}`}
+            />
+          </button>
+        </div>
+
+        {filtersOpen && (
+          <div
+            id="inbox-filter-panel"
+            className="mt-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]/70 p-3 shadow-[0_8px_24px_rgba(24,39,33,0.05)]"
+            aria-label="Inbox filters"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                  Filter conversations
+                </p>
+                <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
+                  Narrow the Inbox only when you need to.
+                </p>
+              </div>
+              {activeFilterCount > 0 && (
+                <button
+                  type="button"
+                  onClick={clearAppliedFilters}
+                  className="shrink-0 rounded-lg px-2 py-1 text-[10px] font-semibold text-[var(--color-primary)] hover:bg-white"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <FilterSelect
+                label="Status"
+                value={filters.status}
+                onChange={(value) => updateFilter("status", value)}
+                options={statusOptions}
+              />
+              <FilterSelect
+                label="Channel"
+                value={filters.channel}
+                onChange={(value) => updateFilter("channel", value)}
+                options={[
+                  ["all", "All"],
+                  ["whatsapp", "WhatsApp"],
+                  ["facebook", "Facebook"],
+                  ["instagram", "Instagram"],
+                ]}
+              />
+              <FilterSelect
+                label="Handled by"
+                value={filters.control}
+                onChange={(value) => updateFilter("control", value)}
+                options={[
+                  ["all", "Any"],
+                  ["ai", "AI"],
+                  ["human", "Staff"],
+                ]}
+              />
+              {canViewAllLeads ? (
+                <FilterSelect
+                  label="Lead owner"
+                  value={filters.assignment}
+                  onChange={(value) => updateFilter("assignment", value)}
+                  options={assignmentOptions}
+                />
+              ) : (
+                <div className="min-w-0 rounded-lg border border-[var(--color-primary)]/15 bg-[var(--color-primary-light)]/60 px-2.5 py-2">
+                  <span className="block text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                    Lead owner
+                  </span>
+                  <span className="mt-1 inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-[var(--color-primary)]">
+                    <UserIcon className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">My assigned leads</span>
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <FilterSelect
-            label="Channel"
-            value={filters.channel}
-            onChange={(value) => updateFilter("channel", value)}
-            options={[
-              ["all", "All"],
-              ["whatsapp", "WhatsApp"],
-              ["facebook", "Facebook"],
-              ["instagram", "Instagram"],
-            ]}
-          />
-          <FilterSelect
-            label="Handled by"
-            value={filters.control}
-            onChange={(value) => updateFilter("control", value)}
-            options={[
-              ["all", "Any"],
-              ["ai", "AI"],
-              ["human", "Staff"],
-            ]}
-          />
-        </div>
-
-        {activeSecondaryFilters.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Active Inbox filters">
-            {activeSecondaryFilters.map((filter) => (
+        {activeFilterChips.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5" aria-label="Active Inbox filters">
+            {activeFilterChips.map((filter) => (
               <button
                 key={filter.key}
                 type="button"
                 onClick={() => updateFilter(filter.key, "all")}
-                className="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--color-bg)] px-2 py-1 text-[9px] font-semibold text-[var(--color-text-muted)] transition hover:bg-[var(--color-primary-light)] hover:text-[var(--color-primary)]"
+                className="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--color-primary-light)] px-2 py-1 text-[9px] font-semibold text-[var(--color-primary)] transition hover:bg-[var(--color-primary)] hover:text-white"
                 title={`Remove ${filter.label} filter`}
               >
                 <span className="truncate">{filter.label}</span>
@@ -1498,7 +1527,6 @@ function ThreadView({
       await onSendVoice(voiceBlob, voiceMimeType);
       if (mountedRef.current) clearVoice();
     } catch {
-      // Parent shows the error toast. Keep the preview so staff can retry.
     } finally {
       if (mountedRef.current) setSending(false);
     }
@@ -1543,7 +1571,6 @@ function ThreadView({
       }
       if (mountedRef.current) setDraft("");
     } catch {
-      // Parent shows the error toast; keep the draft/attachment for retry.
     } finally {
       if (mountedRef.current) setSending(false);
     }
