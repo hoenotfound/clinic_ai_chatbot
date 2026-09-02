@@ -6,6 +6,7 @@ const whatsapp = require("../src/services/whatsappService");
 const meta = require("../src/services/metaMessagingService");
 const metaAttachments = require("../src/services/metaAttachmentService");
 const mediaStorage = require("../src/services/mediaStorageService");
+const audioConvert = require("../src/services/audioConvertService");
 const messaging = require("../src/services/channelMessagingService");
 
 test("WhatsApp contacts keep using the existing WhatsApp send function", async (t) => {
@@ -175,6 +176,69 @@ test("Facebook voice bytes route to an audio attachment without WhatsApp", async
   });
 });
 
+test("Instagram voice is converted to M4A before temporary URL delivery", async (t) => {
+  const originalConvert = audioConvert.convertToInstagramAudio;
+  const originalUploadTemporary = mediaStorage.uploadTemporaryMedia;
+  const originalScheduleDelete = mediaStorage.scheduleTemporaryMediaDelete;
+  const originalUrlSend = metaAttachments.sendUrlAttachment;
+  t.after(() => {
+    audioConvert.convertToInstagramAudio = originalConvert;
+    mediaStorage.uploadTemporaryMedia = originalUploadTemporary;
+    mediaStorage.scheduleTemporaryMediaDelete = originalScheduleDelete;
+    metaAttachments.sendUrlAttachment = originalUrlSend;
+  });
+
+  const calls = [];
+  audioConvert.convertToInstagramAudio = async (buffer, mimeType) => {
+    calls.push({ kind: "convert", bytes: buffer.toString(), mimeType });
+    return {
+      buffer: Buffer.from("m4a-data"),
+      mimeType: "audio/mp4",
+      filename: "voice.m4a",
+    };
+  };
+  mediaStorage.uploadTemporaryMedia = async (buffer, mimeType, options) => {
+    calls.push({
+      kind: "temp-upload",
+      bytes: buffer.toString(),
+      mimeType,
+      contactId: options.contactId,
+    });
+    return {
+      key: "meta-outbound/55/voice.m4a",
+      url: "https://r2.example/voice.m4a?signed=1",
+    };
+  };
+  mediaStorage.scheduleTemporaryMediaDelete = (key) => {
+    calls.push({ kind: "cleanup", key });
+  };
+  metaAttachments.sendUrlAttachment = async (channel, to, type, mediaUrl) => {
+    calls.push({ kind: "url-attachment", channel, to, type, mediaUrl });
+    return { success: true, wamid: null, externalMessageId: "voice-ig-1" };
+  };
+
+  const result = await messaging.sendAudioBuffer(
+    { id: 55, channel: "instagram", channel_user_id: "igsid-voice" },
+    Buffer.from("stored-mp3"),
+    "audio/mpeg",
+    "voice.mp3"
+  );
+
+  assert.equal(result.success, true);
+  assert.deepEqual(calls, [
+    { kind: "convert", bytes: "stored-mp3", mimeType: "audio/mpeg" },
+    { kind: "temp-upload", bytes: "m4a-data", mimeType: "audio/mp4", contactId: 55 },
+    {
+      kind: "url-attachment",
+      channel: "instagram",
+      to: "igsid-voice",
+      type: "audio",
+      mediaUrl: "https://r2.example/voice.m4a?signed=1",
+    },
+    { kind: "cleanup", key: "meta-outbound/55/voice.m4a" },
+  ]);
+});
+
 test("WhatsApp voice is not delivered if Staff mode ends during media upload", async (t) => {
   const originalGetContact = contactsRepo.getContactById;
   const originalUpload = whatsapp.uploadMedia;
@@ -212,20 +276,31 @@ test("WhatsApp voice is not delivered if Staff mode ends during media upload", a
 
 test("Instagram voice is not delivered if Staff mode ends during temporary upload", async (t) => {
   const originalGetContact = contactsRepo.getContactById;
+  const originalConvert = audioConvert.convertToInstagramAudio;
   const originalUploadTemporary = mediaStorage.uploadTemporaryMedia;
   const originalScheduleDelete = mediaStorage.scheduleTemporaryMediaDelete;
   const originalUrlSend = metaAttachments.sendUrlAttachment;
   t.after(() => {
     contactsRepo.getContactById = originalGetContact;
+    audioConvert.convertToInstagramAudio = originalConvert;
     mediaStorage.uploadTemporaryMedia = originalUploadTemporary;
     mediaStorage.scheduleTemporaryMediaDelete = originalScheduleDelete;
     metaAttachments.sendUrlAttachment = originalUrlSend;
   });
 
-  mediaStorage.uploadTemporaryMedia = async () => ({
-    key: "meta-outbound/88/voice.mp3",
-    url: "https://r2.example/voice.mp3?signed=1",
+  audioConvert.convertToInstagramAudio = async () => ({
+    buffer: Buffer.from("m4a-data"),
+    mimeType: "audio/mp4",
+    filename: "voice.m4a",
   });
+  mediaStorage.uploadTemporaryMedia = async (buffer, mimeType) => {
+    assert.equal(buffer.toString(), "m4a-data");
+    assert.equal(mimeType, "audio/mp4");
+    return {
+      key: "meta-outbound/88/voice.m4a",
+      url: "https://r2.example/voice.m4a?signed=1",
+    };
+  };
   let cleanedKey = null;
   mediaStorage.scheduleTemporaryMediaDelete = (key) => {
     cleanedKey = key;
@@ -252,5 +327,5 @@ test("Instagram voice is not delivered if Staff mode ends during temporary uploa
   assert.equal(result.success, false);
   assert.equal(result.error, "This conversation is no longer in Staff mode.");
   assert.equal(deliveries, 0);
-  assert.equal(cleanedKey, "meta-outbound/88/voice.mp3");
+  assert.equal(cleanedKey, "meta-outbound/88/voice.m4a");
 });
