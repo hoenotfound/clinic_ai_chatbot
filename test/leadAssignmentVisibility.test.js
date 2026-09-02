@@ -35,23 +35,54 @@ test("Inbox and Contacts derive assignment from the same current lead used by ac
   assert.match(contactsRepo, /LEFT JOIN users lead_owner/i);
 });
 
-test("Inbox keeps AI control separate from lead assignment and supports owner filters", () => {
+test("Inbox keeps AI handling separate from lead assignment with a clear filter hierarchy", () => {
   const inbox = source("portal-frontend/src/pages/Inbox.jsx");
   const badge = source("portal-frontend/src/components/LeadAssignmentBadge.jsx");
 
   assert.match(inbox, /control: "all"/);
   assert.match(inbox, /assignment: "all"/);
-  assert.match(inbox, /Filter by conversation control/);
-  assert.match(inbox, /Filter by lead assignment/);
+  assert.match(inbox, /label="Lead owner"/);
+  assert.match(inbox, /label="Channel"/);
+  assert.match(inbox, /label="Handled by"/);
+  assert.match(inbox, /\["all", "Any"\]/);
   assert.match(inbox, /matchesLeadAssignment/);
   assert.match(inbox, /lead_owner_display_name/);
   assert.match(inbox, /<LeadAssignmentBadge/);
+  assert.match(inbox, /<ControlIndicator/);
 
-  assert.match(badge, /Assigned to me/);
-  assert.match(badge, /Unassigned/);
+  assert.match(badge, /\["all", "All leads"\]/);
+  assert.match(badge, /\["mine", "My leads"\]/);
+  assert.match(badge, /\["unassigned", "Unassigned"\]/);
   assert.match(badge, /value === "mine"/);
   assert.match(badge, /value === "unassigned"/);
   assert.match(badge, /value\?\.startsWith\("owner:"\)/);
+});
+
+test("restricted Inbox scope hides irrelevant assignment choices and explains the visible workload", () => {
+  const inbox = source("portal-frontend/src/pages/Inbox.jsx");
+
+  assert.match(inbox, /const \{ username, permissions \} = useAuth\(\)/);
+  assert.match(inbox, /const canViewAllLeads = permissions\.view_all_leads === true/);
+  assert.match(inbox, /canViewAllLeads \? \(/);
+  assert.match(inbox, /My assigned leads/);
+  assert.match(inbox, /No assigned conversations/);
+  assert.match(inbox, /Leads assigned to you will appear here automatically/);
+  assert.match(
+    inbox,
+    /canViewAllLeads &&\s*!matchesLeadAssignment\(conversation, filters\.assignment, currentUsername\)/
+  );
+});
+
+test("Inbox returns to a safe list state when a selected restricted lead is reassigned away", () => {
+  const inbox = source("portal-frontend/src/pages/Inbox.jsx");
+
+  assert.match(inbox, /const stillAccessible = conversations\.some/);
+  assert.match(inbox, /if \(stillAccessible\) return/);
+  assert.match(inbox, /const nextConversation = conversations\[0\] \|\| null/);
+  assert.match(inbox, /setSelectedId\(nextConversation\?\.contact_id \?\? null\)/);
+  assert.match(inbox, /setContactDetailsOpen\(false\)/);
+  assert.match(inbox, /setMobileThreadOpen\(false\)/);
+  assert.match(inbox, /setSearchParams\(\{\}, \{ replace: true \}\)/);
 });
 
 test("Contacts exposes the same assignment filter and refreshes assignment badges only on pipeline changes", () => {
