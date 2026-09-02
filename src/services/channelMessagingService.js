@@ -2,6 +2,7 @@ const contactsRepo = require("../db/contactsRepo");
 const whatsapp = require("./whatsappService");
 const meta = require("./metaMessagingService");
 const metaAttachments = require("./metaAttachmentService");
+const mediaStorage = require("./mediaStorageService");
 
 function channelOf(contactOrIncoming) {
   return contactOrIncoming?.channel || "whatsapp";
@@ -51,6 +52,34 @@ async function stillInStaffMode(contact) {
   }
 }
 
+function temporaryMediaFailure(channel, err) {
+  const label = labelForChannel(channel);
+  console.error(`${label} temporary media preparation failed:`, err);
+  return {
+    success: false,
+    wamid: null,
+    externalMessageId: null,
+    error: `The media could not be prepared for ${label}. Please try again.`,
+  };
+}
+
+async function withTemporaryMediaUrl(contact, buffer, mimeType, deliver) {
+  const channel = channelOf(contact);
+  let temporary = null;
+  try {
+    temporary = await mediaStorage.uploadTemporaryMedia(buffer, mimeType, {
+      contactId: contact?.id || channel,
+    });
+    return await deliver(temporary.url);
+  } catch (err) {
+    return temporaryMediaFailure(channel, err);
+  } finally {
+    if (temporary?.key) {
+      mediaStorage.scheduleTemporaryMediaDelete(temporary.key);
+    }
+  }
+}
+
 async function sendText(contact, text) {
   const channel = channelOf(contact);
   if (channel === "whatsapp") {
@@ -90,6 +119,21 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
     if (!captionResult.success) return captionResult;
   }
 
+  // Live Instagram testing showed that this Page-linked Instagram setup can
+  // upload a reusable attachment but rejects the later attachment_id POST.
+  // The Send API supports media URLs, so expose only a disposable R2 copy via
+  // a short-lived presigned URL. Facebook Messenger keeps its binary upload.
+  if (channel === "instagram") {
+    return withTemporaryMediaUrl(contact, buffer, mimeType, (mediaUrl) =>
+      metaAttachments.sendUrlAttachment(
+        channel,
+        recipientFor(contact),
+        "image",
+        mediaUrl
+      )
+    );
+  }
+
   return metaAttachments.sendBuffer(
     channel,
     recipientFor(contact),
@@ -119,9 +163,26 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
     return whatsapp.sendVoiceById(contact.whatsapp_number, mediaId);
   }
 
-  // Keep the simple generic path for retries/tests that are not tied to an
-  // active Staff takeover. Active Staff sends split upload from delivery so we
-  // can re-check the takeover after the potentially slow upload finishes.
+  if (channel === "instagram") {
+    return withTemporaryMediaUrl(contact, buffer, mimeType, async (mediaUrl) => {
+      // Keep the race-condition protection added for PR #54: a slow upload
+      // must not deliver after another staff session returns the chat to AI.
+      if (!(await stillInStaffMode(contact))) {
+        return staffModeChangedResult();
+      }
+      return metaAttachments.sendUrlAttachment(
+        channel,
+        recipientFor(contact),
+        "audio",
+        mediaUrl
+      );
+    });
+  }
+
+  // Facebook Messenger keeps the attachment upload path. Active Staff sends
+  // split upload from delivery so we can re-check ownership after the slow
+  // upload finishes; retries/tests without an active takeover keep the simple
+  // generic path.
   if (contact?.mode !== "human" || !contact?.id) {
     return metaAttachments.sendBuffer(
       channel,
