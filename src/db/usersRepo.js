@@ -101,7 +101,7 @@ async function listActiveSalesUsers(queryable = pool) {
        AND role = 'sales'
        AND (
          COALESCE(permissions ->> 'view_assigned_leads', 'true') = 'true'
-         OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
+         OR COALESCE(permissions ->> 'view_all_leads', 'true') = 'true'
        )
        AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true'
      ORDER BY id ASC`
