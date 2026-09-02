@@ -18,6 +18,28 @@ test("Sales users can see all leads by default while explicit access overrides r
   );
 });
 
+test("Lead Distribution uses the same all-lead default as the Sales permission model", () => {
+  const usersRepo = source("src/db/usersRepo.js");
+  const safetySchema = source("src/db/leadDistributionSafetySchema.sql");
+
+  assert.match(
+    usersRepo,
+    /COALESCE\(permissions ->> 'view_all_leads', 'true'\) = 'true'/
+  );
+  assert.doesNotMatch(
+    usersRepo,
+    /COALESCE\(permissions ->> 'view_all_leads', 'false'\) = 'true'/
+  );
+  assert.match(
+    safetySchema,
+    /COALESCE\(permissions ->> 'view_all_leads', 'true'\) = 'true'/
+  );
+  assert.match(
+    safetySchema,
+    /COALESCE\(\(selected_permissions ->> 'view_all_leads'\)::boolean, true\)/
+  );
+});
+
 test("Inbox and Contacts derive assignment from the same current lead used by access control", () => {
   const contactsRepo = source("src/db/contactsRepo.js");
   const accessControl = source("src/utils/accessControl.js");
