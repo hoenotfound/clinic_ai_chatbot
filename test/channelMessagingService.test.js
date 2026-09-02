@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+const contactsRepo = require("../src/db/contactsRepo");
 const whatsapp = require("../src/services/whatsappService");
 const meta = require("../src/services/metaMessagingService");
 const metaAttachments = require("../src/services/metaAttachmentService");
@@ -144,4 +145,78 @@ test("Facebook voice bytes route to an audio attachment without WhatsApp", async
     mimeType: "audio/mpeg",
     filename: "voice.mp3",
   });
+});
+
+test("WhatsApp voice is not delivered if Staff mode ends during media upload", async (t) => {
+  const originalGetContact = contactsRepo.getContactById;
+  const originalUpload = whatsapp.uploadMedia;
+  const originalSendVoice = whatsapp.sendVoiceById;
+  t.after(() => {
+    contactsRepo.getContactById = originalGetContact;
+    whatsapp.uploadMedia = originalUpload;
+    whatsapp.sendVoiceById = originalSendVoice;
+  });
+
+  whatsapp.uploadMedia = async () => "voice-media-id";
+  contactsRepo.getContactById = async () => ({ id: 77, mode: "ai" });
+  let deliveries = 0;
+  whatsapp.sendVoiceById = async () => {
+    deliveries += 1;
+    return { success: true, wamid: "should-not-send" };
+  };
+
+  const result = await messaging.sendAudioBuffer(
+    {
+      id: 77,
+      mode: "human",
+      channel: "whatsapp",
+      whatsapp_number: "60111111111",
+    },
+    Buffer.from("ogg-data"),
+    "audio/ogg",
+    "voice.ogg"
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.error, "This conversation is no longer in Staff mode.");
+  assert.equal(deliveries, 0);
+});
+
+test("Instagram voice is not delivered if Staff mode ends during attachment upload", async (t) => {
+  const originalGetContact = contactsRepo.getContactById;
+  const originalUpload = metaAttachments.uploadAttachment;
+  const originalSend = metaAttachments.sendAttachmentId;
+  t.after(() => {
+    contactsRepo.getContactById = originalGetContact;
+    metaAttachments.uploadAttachment = originalUpload;
+    metaAttachments.sendAttachmentId = originalSend;
+  });
+
+  metaAttachments.uploadAttachment = async () => ({
+    success: true,
+    attachmentId: "ig-audio-1",
+    error: null,
+  });
+  contactsRepo.getContactById = async () => ({ id: 88, mode: "ai" });
+  let deliveries = 0;
+  metaAttachments.sendAttachmentId = async () => {
+    deliveries += 1;
+    return { success: true, wamid: null, externalMessageId: "should-not-send" };
+  };
+
+  const result = await messaging.sendAudioBuffer(
+    {
+      id: 88,
+      mode: "human",
+      channel: "instagram",
+      channel_user_id: "igsid-race",
+    },
+    Buffer.from("mp3-data"),
+    "audio/mpeg",
+    "voice.mp3"
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.error, "This conversation is no longer in Staff mode.");
+  assert.equal(deliveries, 0);
 });
