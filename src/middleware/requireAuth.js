@@ -2,8 +2,6 @@ const usersRepo = require("../db/usersRepo");
 const {
   canAccessContact,
   canAccessLead,
-  canActOnContact,
-  canActOnLead,
   filterLeadsForUser,
   filterRowsByAccessibleContacts,
   getAccessibleContactIds,
@@ -62,10 +60,11 @@ async function enforceConversationsPolicy(req, res, user) {
   const contactId = positiveId(parts[0]);
   if (!contactId) return forbidden(res);
   if (!(await canAccessContact(user, contactId))) {
-    return forbidden(res, "This conversation isn't visible to your account.");
+    return forbidden(res, "This conversation isn't assigned to you.");
   }
 
   const action = parts[1] || "";
+  const subAction = parts[2] || "";
   const fourth = parts[3] || "";
 
   const isSend =
@@ -77,38 +76,23 @@ async function enforceConversationsPolicy(req, res, user) {
       (action === "messages" && fourth === "retry")
     );
 
-  if (isSend) {
-    if (!hasCapability(user, "reply_to_assigned_leads")) {
-      return forbidden(res, "Replying to leads is disabled for this account.");
-    }
-    if (!(await canActOnContact(user, contactId))) {
-      return forbidden(res, "This lead is assigned to another salesperson. You can view the conversation, but only its owner can reply.");
-    }
+  if (isSend && !hasCapability(user, "reply_to_assigned_leads")) {
+    return forbidden(res, "Replying to leads is disabled for this account.");
   }
 
   const isConversationManagement =
     (req.method === "POST" && ["takeover", "return-to-ai"].includes(action)) ||
     (req.method === "PATCH" && ["attention", "follow-up"].includes(action));
 
-  if (isConversationManagement) {
-    if (!hasCapability(user, "manage_assigned_leads")) {
-      return forbidden(res, "Managing assigned leads is disabled for this account.");
-    }
-    if (!(await canActOnContact(user, contactId))) {
-      return forbidden(res, "This lead is assigned to another salesperson. You can view it, but only its owner can manage it.");
-    }
+  if (isConversationManagement && !hasCapability(user, "manage_assigned_leads")) {
+    return forbidden(res, "Managing assigned leads is disabled for this account.");
   }
 
-  // Read/unread is shared conversation state, so clinic-wide visibility alone
-  // must not let one salesperson clear another owner's unread indicator.
-  // Assigned users may still acknowledge read state even if their broader lead-
-  // management capability is disabled. Delivery-status lookup remains read-only.
-  if (req.method === "PATCH" && action === "read-state") {
-    if (!(await canActOnContact(user, contactId))) {
-      return forbidden(res, "Only the assigned salesperson can change this conversation's read state.");
-    }
-  }
-
+  // Read-state is deliberately view-level metadata. Inbox marks an assigned
+  // conversation read when it is opened, so a view-only user must be able to
+  // acknowledge that state without gaining permission to edit the lead itself.
+  // POST /messages/delivery-statuses is also a read-style request.
+  void subAction;
   return true;
 }
 
@@ -138,17 +122,12 @@ async function enforceContactsPolicy(req, res, user) {
 
   const contactId = positiveId(parts[0]);
   if (!contactId || !(await canAccessContact(user, contactId))) {
-    return forbidden(res, "This contact isn't visible to your account.");
+    return forbidden(res, "This contact isn't assigned to you.");
   }
 
   const isWrite = req.method !== "GET" && req.method !== "HEAD";
-  if (isWrite) {
-    if (!hasCapability(user, "manage_assigned_leads")) {
-      return forbidden(res, "Managing assigned leads is disabled for this account.");
-    }
-    if (!(await canActOnContact(user, contactId))) {
-      return forbidden(res, "This lead is assigned to another salesperson. You can view the contact, but only its owner can manage it.");
-    }
+  if (isWrite && !hasCapability(user, "manage_assigned_leads")) {
+    return forbidden(res, "Managing assigned leads is disabled for this account.");
   }
   return true;
 }
@@ -218,17 +197,13 @@ async function enforcePipelinePolicy(req, res, user) {
 
   const leadId = positiveId(parts[1]);
   if (!leadId || !(await canAccessLead(user, leadId))) {
-    return forbidden(res, "This lead isn't visible to your account.");
+    return forbidden(res, "This lead isn't assigned to you.");
   }
 
   if (req.method === "GET") return true;
 
   if (!hasCapability(user, "manage_assigned_leads")) {
     return forbidden(res, "Managing assigned leads is disabled for this account.");
-  }
-
-  if (!(await canActOnLead(user, leadId))) {
-    return forbidden(res, "This lead is assigned to another salesperson. You can view it, but only its owner can manage it.");
   }
 
   if (
