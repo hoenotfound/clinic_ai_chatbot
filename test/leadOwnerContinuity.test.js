@@ -26,15 +26,28 @@ test("disabling an owner with open leads requires reassignment first", () => {
   assert.match(error, /Reassign 2 open leads/i);
 });
 
-test("removing owned-lead visibility requires reassignment unless all-lead view remains", () => {
-  const blocked = ownedLeadContinuityError(
+test("removing assigned-lead view is safe while all-lead view remains, but removing both requires reassignment", () => {
+  const stillVisible = ownedLeadContinuityError(
     salesUser,
     { permissions: { view_assigned_leads: false } },
     1
   );
+  assert.equal(stillVisible, null);
+
+  const blocked = ownedLeadContinuityError(
+    salesUser,
+    {
+      permissions: {
+        view_assigned_leads: false,
+        view_all_leads: false,
+        reply_to_assigned_leads: true,
+      },
+    },
+    1
+  );
   assert.match(blocked, /Reassign 1 open lead/i);
 
-  const allowed = ownedLeadContinuityError(
+  const explicitAllLeadView = ownedLeadContinuityError(
     salesUser,
     {
       permissions: {
@@ -45,7 +58,7 @@ test("removing owned-lead visibility requires reassignment unless all-lead view 
     },
     1
   );
-  assert.equal(allowed, null);
+  assert.equal(explicitAllLeadView, null);
 });
 
 test("removing reply access from an owner with open leads requires reassignment", () => {
