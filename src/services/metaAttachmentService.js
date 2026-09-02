@@ -158,7 +158,7 @@ async function sendUrlAttachment(channel, recipientId, type, mediaUrl) {
     channel,
     recipientId,
     type,
-    { url: mediaUrl, is_reusable: false },
+    { url: mediaUrl },
     "URL attachment send"
   );
 }
