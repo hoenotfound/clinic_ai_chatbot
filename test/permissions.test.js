@@ -14,12 +14,12 @@ test("admin defaults grant every capability", () => {
   assert.equal(Object.values(defaults).every(Boolean), true);
 });
 
-test("sales defaults are limited to assigned lead work", () => {
+test("sales defaults include clinic-wide visibility while keeping admin capabilities disabled", () => {
   const defaults = roleDefaults("sales");
   assert.equal(defaults.view_assigned_leads, true);
   assert.equal(defaults.reply_to_assigned_leads, true);
   assert.equal(defaults.manage_assigned_leads, true);
-  assert.equal(defaults.view_all_leads, false);
+  assert.equal(defaults.view_all_leads, true);
   assert.equal(defaults.manage_users, false);
   assert.equal(defaults.manage_settings, false);
 });
@@ -67,7 +67,7 @@ test("presentUser never exposes password hashes and returns effective permission
   assert.equal(presented.displayName, "Jessica Tan");
   assert.equal(presented.password_hash, undefined);
   assert.equal(presented.permissions.create_leads, true);
-  assert.equal(presented.permissions.view_all_leads, false);
+  assert.equal(presented.permissions.view_all_leads, true);
   assert.deepEqual(presented.permissions, effectivePermissions({
     role: "sales",
     permissions: { create_leads: true },
