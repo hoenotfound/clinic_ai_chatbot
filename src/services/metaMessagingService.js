@@ -22,10 +22,14 @@ function getChannelConfig(channel) {
     };
   }
   if (channel === "instagram") {
+    // Instagram Messaging is configured through Messenger from Meta. It uses
+    // the Facebook Page linked to the Instagram Professional account, a Page
+    // access token generated under Messenger > Instagram settings, and the
+    // graph.facebook.com Messenger Platform endpoint.
     return {
-      token: process.env.INSTAGRAM_ACCESS_TOKEN,
-      senderId: process.env.INSTAGRAM_ACCOUNT_ID,
-      baseUrl: "https://graph.instagram.com",
+      token: process.env.INSTAGRAM_PAGE_ACCESS_TOKEN,
+      senderId: process.env.INSTAGRAM_PAGE_ID,
+      baseUrl: "https://graph.facebook.com",
     };
   }
   return { token: null, senderId: null, baseUrl: null };
@@ -66,8 +70,9 @@ function cachedProfile(key) {
  * ID, so this lookup is what lets the portal show a real name/profile photo
  * instead of exposing the internal "facebook:<id>" / "instagram:<id>" key.
  *
- * Lookups are cached and fail soft. A temporary Meta/permission error must not
- * block the Inbox or message processing path.
+ * Both channels use the Messenger Platform Graph host and their respective
+ * Page access tokens. Lookups are cached and fail soft. A temporary Meta or
+ * permission error must never block Inbox/message processing.
  */
 async function fetchUserProfile(channel, userId) {
   if (channel !== "facebook" && channel !== "instagram") return null;
@@ -240,19 +245,14 @@ async function fetchLatestConversationMessage(channel) {
   const config = getChannelConfig(channel);
   if (!config.token || !config.senderId) return null;
 
-  // TEMPORARY DIAGNOSTIC — confirms which ID is actually being used, to
-  // rule out stale env vars / deploy lag. Not a secret, safe to log.
-  console.log(`[meta-webhook debug] fetchLatestConversationMessage using senderId=${config.senderId}`);
-
+  const platformParam = channel === "instagram" ? "&platform=instagram" : "";
   const url =
     `${config.baseUrl}/${GRAPH_API_VERSION}/${config.senderId}/conversations` +
-    `?platform=instagram&fields=${encodeURIComponent("messages.limit(1){message,from,created_time}")}` +
-    `&access_token=${encodeURIComponent(config.token)}`;
+    `?fields=${encodeURIComponent("messages.limit(1){message,from,created_time}")}` +
+    `${platformParam}&access_token=${encodeURIComponent(config.token)}`;
   try {
     const response = await fetch(url);
     const data = await response.json();
-    console.log(`[meta-webhook debug] fetchLatestConversationMessage HTTP ${response.status}, ok=${response.ok}`);
-    console.log(`[meta-webhook debug] fetchLatestConversationMessage raw response:`, JSON.stringify(data));
     if (!response.ok) {
       console.error(
         `[${channelLabel(channel)}] Failed to fetch conversations: ${extractErrorText(data, response.statusText)}`
@@ -277,7 +277,6 @@ async function fetchMessageById(channel, mid) {
   try {
     const response = await fetch(url);
     const data = await response.json();
-    console.log(`[meta-webhook debug] fetchMessageById(${mid}) HTTP ${response.status}, ok=${response.ok}`);
     if (!response.ok) {
       console.error(
         `[${channelLabel(channel)}] Failed to fetch message ${mid}: ${extractErrorText(data, response.statusText)}`
@@ -319,17 +318,12 @@ async function resolveMessageEditEvents(body) {
   const resolved = await Promise.all(
     edits.map(async ({ mid, entryId }) => {
       let data = await fetchMessageById(channel, mid);
-      // TEMPORARY DIAGNOSTIC — logs the raw Graph API response for a
-      // fetched message_edit event so we can see its actual field names.
-      console.log(`[meta-webhook debug] fetchMessageById(${mid}) raw response:`, JSON.stringify(data));
 
       // The direct by-ID fetch has been observed to return an empty object
       // for some message_edit events even on a 200 response. Fall back to
       // pulling the most recent message from the conversations list.
       if (!data?.from?.id || typeof data?.message !== "string") {
-        console.log(`[meta-webhook debug] falling back to conversations lookup for ${mid}`);
         data = await fetchLatestConversationMessage(channel);
-        console.log(`[meta-webhook debug] conversations fallback result:`, JSON.stringify(data));
       }
 
       const senderId = data?.from?.id;
