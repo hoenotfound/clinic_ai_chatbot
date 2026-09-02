@@ -80,6 +80,52 @@ test("Inbox keeps AI handling separate from lead assignment with a clear filter 
   assert.match(badge, /value\?\.startsWith\("owner:"\)/);
 });
 
+test("Inbox keeps advanced filters collapsed behind one compact control", () => {
+  const inbox = source("portal-frontend/src/pages/Inbox.jsx");
+
+  assert.match(inbox, /const \[filtersOpen, setFiltersOpen\] = useState\(false\)/);
+  assert.match(inbox, /aria-controls="inbox-filter-panel"/);
+  assert.match(inbox, />Filters</);
+  assert.match(inbox, /activeFilterCount/);
+  assert.match(inbox, /filtersOpen && \(/);
+  assert.match(inbox, /id="inbox-filter-panel"/);
+  assert.match(inbox, /label="Status"/);
+  assert.match(inbox, /activeFilterChips/);
+  assert.doesNotMatch(inbox, /aria-label="Conversation status filters"/);
+  assert.doesNotMatch(inbox, /Narrow the Inbox only when you need to/);
+});
+
+test("Inbox keeps normal states quiet and emphasizes actionable exceptions", () => {
+  const inbox = source("portal-frontend/src/pages/Inbox.jsx");
+  const styles = source("portal-frontend/src/index.css");
+
+  assert.match(inbox, /function ControlIndicator\(\{ mode \}\) \{\s*if \(mode !== "human"\) return null/);
+  assert.match(inbox, /title="Handled by staff"/);
+  assert.doesNotMatch(inbox, /last_message_role === "assistant" \? "You: "/);
+  assert.doesNotMatch(inbox, /function ChannelBadge/);
+  assert.doesNotMatch(inbox, /function ModeBadge/);
+  assert.doesNotMatch(inbox, /Enter to send · Shift \+ Enter for a new line/);
+  assert.doesNotMatch(styles, /radial-gradient\(/);
+
+  assert.match(inbox, /<StatusBadge tone="accent">Follow-up<\/StatusBadge>/);
+  assert.match(inbox, /<StatusBadge tone="danger">Attention<\/StatusBadge>/);
+  assert.match(inbox, /contact\.needs_attention && \(/);
+});
+
+test("Inbox thread header stays compact while keeping owner and channel context", () => {
+  const inbox = source("portal-frontend/src/pages/Inbox.jsx");
+
+  assert.match(inbox, /currentUsername=\{username\}/);
+  assert.match(inbox, /function contactMeta\(contact\)/);
+  assert.match(inbox, /if \(channel === "facebook"\) return "Facebook Messenger"/);
+  assert.match(inbox, /if \(channel === "instagram"\) return "Instagram"/);
+  assert.match(inbox, /ownerUsername=\{contact\.lead_owner_username\}/);
+  assert.match(inbox, /ownerDisplayName=\{contact\.lead_owner_display_name\}/);
+  assert.match(inbox, /Message this patient…/);
+  assert.match(inbox, /Message to take over from AI…/);
+  assert.doesNotMatch(inbox, /Type a WhatsApp message to this patient/);
+});
+
 test("restricted Inbox scope hides irrelevant assignment choices and explains the visible workload", () => {
   const inbox = source("portal-frontend/src/pages/Inbox.jsx");
 
