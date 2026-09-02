@@ -15,10 +15,15 @@ function getChannelConfig(channel) {
     };
   }
   if (channel === "instagram") {
+    // Instagram's current Messaging/Attachment Upload API is served from
+    // graph.instagram.com. Text messaging in metaMessagingService keeps the
+    // existing Page-linked Messenger path because it is already working for
+    // this app, but uploaded Instagram assets must be uploaded and delivered
+    // through the Instagram Graph host.
     return {
       token: process.env.INSTAGRAM_PAGE_ACCESS_TOKEN,
       senderId: process.env.INSTAGRAM_PAGE_ID,
-      baseUrl: "https://graph.facebook.com",
+      baseUrl: "https://graph.instagram.com",
     };
   }
   return { token: null, senderId: null, baseUrl: null };
