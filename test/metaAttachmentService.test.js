@@ -96,7 +96,6 @@ test("Instagram URL attachment keeps the Page-linked graph.facebook.com path", a
   assert.equal(sentBody.message.attachment.type, "audio");
   assert.deepEqual(sentBody.message.attachment.payload, {
     url: "https://private-r2.example/voice.mp3?signed=1",
-    is_reusable: false,
   });
 });
 
