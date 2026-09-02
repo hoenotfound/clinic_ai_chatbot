@@ -22,8 +22,8 @@ export function buildLeadAssignmentFilterOptions(items, currentUsername) {
     .map(([username, displayName]) => [`owner:${username}`, displayName]);
 
   return [
-    ["all", "All assignments"],
-    ["mine", "Assigned to me"],
+    ["all", "All leads"],
+    ["mine", "My leads"],
     ["unassigned", "Unassigned"],
     ...specificOwners,
   ];
