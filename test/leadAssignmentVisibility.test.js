@@ -80,6 +80,20 @@ test("Inbox keeps AI handling separate from lead assignment with a clear filter 
   assert.match(badge, /value\?\.startsWith\("owner:"\)/);
 });
 
+test("Inbox keeps advanced filters collapsed behind one compact control", () => {
+  const inbox = source("portal-frontend/src/pages/Inbox.jsx");
+
+  assert.match(inbox, /const \[filtersOpen, setFiltersOpen\] = useState\(false\)/);
+  assert.match(inbox, /aria-controls="inbox-filter-panel"/);
+  assert.match(inbox, />Filters</);
+  assert.match(inbox, /activeFilterCount/);
+  assert.match(inbox, /filtersOpen && \(/);
+  assert.match(inbox, /id="inbox-filter-panel"/);
+  assert.match(inbox, /label="Status"/);
+  assert.match(inbox, /activeFilterChips/);
+  assert.doesNotMatch(inbox, /aria-label="Conversation status filters"/);
+});
+
 test("restricted Inbox scope hides irrelevant assignment choices and explains the visible workload", () => {
   const inbox = source("portal-frontend/src/pages/Inbox.jsx");
 
