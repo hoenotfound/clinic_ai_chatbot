@@ -306,12 +306,23 @@ async function listContacts(search) {
       c.id, c.whatsapp_number, c.name, c.whatsapp_profile_name, c.mode, c.needs_attention,
       c.is_unread, c.needs_follow_up, c.created_at, c.updated_at,
       c.channel, c.channel_user_id, c.photo_url,
+      current_lead.id AS lead_id,
+      current_lead.owner_username AS lead_owner_username,
+      COALESCE(lead_owner.display_name, current_lead.owner_username) AS lead_owner_display_name,
       COUNT(m.id)::int AS message_count,
       MAX(m.created_at) AS last_message_at
     FROM contacts c
+    LEFT JOIN LATERAL (
+      SELECT l.id, l.owner_username
+      FROM leads l
+      WHERE l.contact_id = c.id
+      ORDER BY l.is_closed ASC, l.created_at DESC, l.id DESC
+      LIMIT 1
+    ) current_lead ON true
+    LEFT JOIN users lead_owner ON lead_owner.username = current_lead.owner_username
     LEFT JOIN messages m ON m.contact_id = c.id
     ${term ? "WHERE c.name ILIKE $1 OR c.whatsapp_profile_name ILIKE $1 OR c.whatsapp_number ILIKE $1 OR c.channel_user_id ILIKE $1" : ""}
-    GROUP BY c.id
+    GROUP BY c.id, current_lead.id, current_lead.owner_username, lead_owner.display_name
     ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
     `,
     params
@@ -356,6 +367,9 @@ async function listConversations() {
       c.attention_reason,
       c.is_unread,
       c.needs_follow_up,
+      current_lead.id AS lead_id,
+      current_lead.owner_username AS lead_owner_username,
+      COALESCE(lead_owner.display_name, current_lead.owner_username) AS lead_owner_display_name,
       m.content AS last_message,
       m.role AS last_message_role,
       m.media_url AS last_message_media_url,
@@ -378,6 +392,14 @@ async function listConversations() {
           )
       ) AS has_unreplied
     FROM contacts c
+    LEFT JOIN LATERAL (
+      SELECT l.id, l.owner_username
+      FROM leads l
+      WHERE l.contact_id = c.id
+      ORDER BY l.is_closed ASC, l.created_at DESC, l.id DESC
+      LIMIT 1
+    ) current_lead ON true
+    LEFT JOIN users lead_owner ON lead_owner.username = current_lead.owner_username
     JOIN messages m ON m.id = (
       SELECT id FROM messages WHERE contact_id = c.id ORDER BY created_at DESC, id DESC LIMIT 1
     )

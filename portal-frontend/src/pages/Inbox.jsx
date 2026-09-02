@@ -6,6 +6,10 @@ import { useToasts, ToastContainer } from "../components/Toast";
 import Lightbox from "../components/Lightbox";
 import ContactAvatar from "../components/ContactAvatar";
 import ContactDetailsDrawer from "../components/ContactDetailsDrawer";
+import LeadAssignmentBadge, {
+  buildLeadAssignmentFilterOptions,
+  matchesLeadAssignment,
+} from "../components/LeadAssignmentBadge";
 import {
   AlertIcon,
   ArrowLeftIcon,
@@ -105,7 +109,8 @@ function isConversationUnreplied(conversation) {
 }
 
 export default function Inbox() {
-  const { username } = useAuth();
+  const { username, permissions } = useAuth();
+  const canViewAllLeads = permissions.view_all_leads === true;
   const { toasts, showToast, dismissToast } = useToasts();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedContactId = /^\d+$/.test(searchParams.get("contact") || "")
@@ -252,6 +257,29 @@ export default function Inbox() {
       }
     }
   }, [conversations, requestedContactId, selectedId, showToast]);
+
+  useEffect(() => {
+    if (!conversations || selectedId == null) return;
+    const stillAccessible = conversations.some(
+      (conversation) => Number(conversation.contact_id) === Number(selectedId)
+    );
+    if (stillAccessible) return;
+
+    // A restricted Sales user can lose access while this page is open when a
+    // lead is reassigned. Return mobile users to the list instead of leaving a
+    // blank thread, and select the next accessible conversation for desktop.
+    const nextConversation = conversations[0] || null;
+    setSelectedId(nextConversation?.contact_id ?? null);
+    setMessages([]);
+    setHasMoreOlderMessages(false);
+    setContactDetailsOpen(false);
+    setMobileThreadOpen(false);
+    if (nextConversation) {
+      setSearchParams({ contact: String(nextConversation.contact_id) }, { replace: true });
+    } else {
+      setSearchParams({}, { replace: true });
+    }
+  }, [conversations, selectedId, setSearchParams]);
 
   useEffect(() => {
     if (selectedId == null) return;
@@ -684,6 +712,8 @@ export default function Inbox() {
         selectedId={selectedId}
         onSelect={handleSelectConversation}
         mobileThreadOpen={mobileThreadOpen}
+        currentUsername={username}
+        canViewAllLeads={canViewAllLeads}
       />
       <ThreadView
         key={selectedId ?? "no-conversation"}
@@ -719,15 +749,27 @@ export default function Inbox() {
   );
 }
 
-function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpen }) {
+function ConversationList({
+  conversations,
+  selectedId,
+  onSelect,
+  mobileThreadOpen,
+  currentUsername,
+  canViewAllLeads,
+}) {
   const [filters, setFilters] = useState({
     status: "all",
     channel: "all",
-    owner: "all",
+    control: "all",
+    assignment: "all",
     query: "",
   });
 
   const conversationList = useMemo(() => conversations || [], [conversations]);
+  const assignmentOptions = useMemo(
+    () => buildLeadAssignmentFilterOptions(conversationList, currentUsername),
+    [conversationList, currentUsername]
+  );
   const statusCounts = useMemo(
     () => ({
       all: conversationList.length,
@@ -739,6 +781,12 @@ function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpe
     [conversationList]
   );
 
+  useEffect(() => {
+    if (!canViewAllLeads && filters.assignment !== "all") {
+      setFilters((current) => ({ ...current, assignment: "all" }));
+    }
+  }, [canViewAllLeads, filters.assignment]);
+
   const filteredConversations = useMemo(() => {
     const query = filters.query.trim().toLowerCase();
     return conversationList.filter((conversation) => {
@@ -747,33 +795,63 @@ function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpe
       if (filters.status === "unread" && !conversation.is_unread) return false;
       if (filters.status === "attention" && !conversation.needs_attention) return false;
       if (filters.channel !== "all" && (conversation.channel || "whatsapp") !== filters.channel) return false;
-      if (filters.owner !== "all" && conversation.mode !== filters.owner) return false;
+      if (filters.control !== "all" && conversation.mode !== filters.control) return false;
+      if (
+        canViewAllLeads &&
+        !matchesLeadAssignment(conversation, filters.assignment, currentUsername)
+      ) return false;
       if (!query) return true;
 
       const searchableText = [
         displayName(conversation),
         conversation.whatsapp_number,
         conversation.last_message,
+        conversation.lead_owner_display_name,
+        conversation.lead_owner_username,
       ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
       return searchableText.includes(query);
     });
-  }, [conversationList, filters]);
+  }, [conversationList, filters, currentUsername, canViewAllLeads]);
 
   const hasActiveFilters =
     filters.status !== "all" ||
     filters.channel !== "all" ||
-    filters.owner !== "all" ||
+    filters.control !== "all" ||
+    (canViewAllLeads && filters.assignment !== "all") ||
     !!filters.query.trim();
+
+  const activeSecondaryFilters = useMemo(() => {
+    const active = [];
+    if (canViewAllLeads && filters.assignment !== "all") {
+      const label = assignmentOptions.find(([value]) => value === filters.assignment)?.[1];
+      active.push({ key: "assignment", label: label || "Lead owner" });
+    }
+    if (filters.channel !== "all") {
+      const channelLabels = {
+        whatsapp: "WhatsApp",
+        facebook: "Facebook",
+        instagram: "Instagram",
+      };
+      active.push({ key: "channel", label: channelLabels[filters.channel] || filters.channel });
+    }
+    if (filters.control !== "all") {
+      active.push({
+        key: "control",
+        label: filters.control === "human" ? "Handled by staff" : "Handled by AI",
+      });
+    }
+    return active;
+  }, [assignmentOptions, canViewAllLeads, filters.assignment, filters.channel, filters.control]);
 
   function updateFilter(key, value) {
     setFilters((current) => ({ ...current, [key]: value }));
   }
 
   function clearFilters() {
-    setFilters({ status: "all", channel: "all", owner: "all", query: "" });
+    setFilters({ status: "all", channel: "all", control: "all", assignment: "all", query: "" });
   }
 
   return (
@@ -811,7 +889,7 @@ function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpe
             value={filters.query}
             onChange={(event) => updateFilter("query", event.target.value)}
             placeholder="Search conversations"
-            aria-label="Search by name, number, or message"
+            aria-label="Search by name, number, message, or assignee"
             className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] py-2.5 pl-9 pr-9 text-xs outline-none transition focus:border-[var(--color-primary)] focus:bg-white focus:ring-2 focus:ring-[var(--color-primary-light)]"
           />
           {filters.query && (
@@ -851,29 +929,67 @@ function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpe
           })}
         </div>
 
+        {canViewAllLeads ? (
+          <div className="mt-3">
+            <FilterSelect
+              label="Lead owner"
+              value={filters.assignment}
+              onChange={(value) => updateFilter("assignment", value)}
+              options={assignmentOptions}
+            />
+          </div>
+        ) : (
+          <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--color-primary)]/15 bg-[var(--color-primary-light)]/60 px-3 py-2">
+            <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+              Lead owner
+            </span>
+            <span className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-[var(--color-primary)]">
+              <UserIcon className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">My assigned leads</span>
+            </span>
+          </div>
+        )}
+
         <div className="mt-2 grid grid-cols-2 gap-2">
           <FilterSelect
-            label="Filter by channel"
+            label="Channel"
             value={filters.channel}
             onChange={(value) => updateFilter("channel", value)}
             options={[
-              ["all", "All channels"],
+              ["all", "All"],
               ["whatsapp", "WhatsApp"],
               ["facebook", "Facebook"],
               ["instagram", "Instagram"],
             ]}
           />
           <FilterSelect
-            label="Filter by owner"
-            value={filters.owner}
-            onChange={(value) => updateFilter("owner", value)}
+            label="Handled by"
+            value={filters.control}
+            onChange={(value) => updateFilter("control", value)}
             options={[
-              ["all", "AI + staff"],
-              ["ai", "AI controlled"],
-              ["human", "Staff controlled"],
+              ["all", "Any"],
+              ["ai", "AI"],
+              ["human", "Staff"],
             ]}
           />
         </div>
+
+        {activeSecondaryFilters.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Active Inbox filters">
+            {activeSecondaryFilters.map((filter) => (
+              <button
+                key={filter.key}
+                type="button"
+                onClick={() => updateFilter(filter.key, "all")}
+                className="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--color-bg)] px-2 py-1 text-[9px] font-semibold text-[var(--color-text-muted)] transition hover:bg-[var(--color-primary-light)] hover:text-[var(--color-primary)]"
+                title={`Remove ${filter.label} filter`}
+              >
+                <span className="truncate">{filter.label}</span>
+                <CloseIcon className="h-2.5 w-2.5 shrink-0" />
+              </button>
+            ))}
+          </div>
+        )}
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -881,8 +997,12 @@ function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpe
 
         {conversations && conversations.length === 0 && (
           <EmptyListState
-            title="No conversations yet"
-            description="New patient messages will appear here automatically."
+            title={canViewAllLeads ? "No conversations yet" : "No assigned conversations"}
+            description={
+              canViewAllLeads
+                ? "New patient messages will appear here automatically."
+                : "Leads assigned to you will appear here automatically."
+            }
           />
         )}
 
@@ -940,8 +1060,14 @@ function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpe
                       <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--color-primary)] ring-4 ring-[var(--color-primary-light)]" title="Unread" />
                     )}
                   </div>
-                  <div className="mt-2 flex min-w-0 items-center gap-1.5">
-                    <ModeBadge mode={conversation.mode} compact />
+                  <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+                    <LeadAssignmentBadge
+                      ownerUsername={conversation.lead_owner_username}
+                      ownerDisplayName={conversation.lead_owner_display_name}
+                      currentUsername={currentUsername}
+                      compact
+                    />
+                    <ControlIndicator mode={conversation.mode} />
                     {conversation.needs_follow_up && <StatusBadge tone="accent">Follow-up</StatusBadge>}
                     {conversation.needs_attention && <StatusBadge tone="danger">Attention</StatusBadge>}
                   </div>
@@ -957,18 +1083,23 @@ function ConversationList({ conversations, selectedId, onSelect, mobileThreadOpe
 
 function FilterSelect({ label, value, onChange, options }) {
   return (
-    <label className="relative block">
-      <span className="sr-only">{label}</span>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full appearance-none rounded-lg border border-[var(--color-border)] bg-white py-2 pl-2.5 pr-7 text-[11px] font-medium text-[var(--color-text)] outline-none transition focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
-      >
-        {options.map(([optionValue, optionLabel]) => (
-          <option key={optionValue} value={optionValue}>{optionLabel}</option>
-        ))}
-      </select>
-      <ChevronDownIcon className="pointer-events-none absolute right-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--color-text-muted)]" />
+    <label className="block min-w-0">
+      <span className="mb-1 block text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+        {label}
+      </span>
+      <span className="relative block">
+        <select
+          aria-label={label}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="w-full appearance-none rounded-lg border border-[var(--color-border)] bg-white py-2 pl-2.5 pr-7 text-[11px] font-medium text-[var(--color-text)] outline-none transition focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+        >
+          {options.map(([optionValue, optionLabel]) => (
+            <option key={optionValue} value={optionValue}>{optionLabel}</option>
+          ))}
+        </select>
+        <ChevronDownIcon className="pointer-events-none absolute right-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--color-text-muted)]" />
+      </span>
     </label>
   );
 }
@@ -1715,6 +1846,24 @@ function ConversationActionItem({ icon: Icon, label, description, active, disabl
         </span>
       </span>
     </button>
+  );
+}
+
+function ControlIndicator({ mode }) {
+  const isHuman = mode === "human";
+  return (
+    <span
+      title={isHuman ? "Handled by staff" : "Handled by AI"}
+      className="inline-flex shrink-0 items-center gap-1 px-0.5 text-[9px] font-medium text-[var(--color-text-muted)]"
+    >
+      <span
+        aria-hidden="true"
+        className={`h-1.5 w-1.5 rounded-full ${
+          isHuman ? "bg-[var(--color-accent)]" : "bg-[var(--color-primary)]/70"
+        }`}
+      />
+      {isHuman ? "Staff" : "AI"}
+    </span>
   );
 }
 

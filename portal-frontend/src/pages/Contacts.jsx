@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
@@ -6,23 +6,31 @@ import { useToasts, ToastContainer } from "../components/Toast";
 import Spinner from "../components/Spinner";
 import ContactAvatar from "../components/ContactAvatar";
 import ContactInsights from "../components/ContactInsights";
+import LeadAssignmentBadge, {
+  buildLeadAssignmentFilterOptions,
+  matchesLeadAssignment,
+} from "../components/LeadAssignmentBadge";
 
 const SEARCH_DEBOUNCE_MS = 300;
+const CONTACT_REALTIME_DEBOUNCE_MS = 150;
 
 const inputClass =
   "w-full rounded-xl border border-[var(--color-border)] px-3.5 py-2.5 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] bg-[var(--color-surface)]";
 const labelClass = "block text-xs font-medium text-[var(--color-text-muted)] mb-1.5";
 
 export default function Contacts() {
-  const { permissions } = useAuth();
+  const { permissions, username } = useAuth();
   const { toasts, showToast, dismissToast } = useToasts();
   const canCreateContacts = permissions.create_leads === true;
   const canManageContacts = permissions.manage_assigned_leads === true;
 
   const [contacts, setContacts] = useState(null);
   const [searchInput, setSearchInput] = useState("");
+  const [assignmentFilter, setAssignmentFilter] = useState("all");
   const [selectedId, setSelectedId] = useState(null);
   const [panelMode, setPanelMode] = useState("view");
+  const searchInputRef = useRef(searchInput);
+  searchInputRef.current = searchInput;
 
   async function refreshContacts(search) {
     try {
@@ -44,6 +52,35 @@ export default function Contacts() {
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchInput]);
+
+  useEffect(() => {
+    const source = new EventSource("/api/conversations/events", { withCredentials: true });
+    let debounceTimer = null;
+
+    function scheduleRefresh() {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        refreshContacts(searchInputRef.current);
+      }, CONTACT_REALTIME_DEBOUNCE_MS);
+    }
+
+    // Assignment and lead-journey changes publish pipeline_changed. Listen to
+    // that narrower signal instead of every chat message so Contacts stays
+    // fresh without reloading the full list during normal conversations.
+    source.addEventListener("pipeline_changed", scheduleRefresh);
+    source.onopen = scheduleRefresh;
+    source.onerror = () => {
+      // EventSource reconnects automatically. The next open reconciles the list.
+    };
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      source.removeEventListener("pipeline_changed", scheduleRefresh);
+      source.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (panelMode === "create" && !canCreateContacts) setPanelMode("view");
@@ -86,6 +123,9 @@ export default function Contacts() {
         canCreateContacts={canCreateContacts}
         searchInput={searchInput}
         onSearchChange={setSearchInput}
+        assignmentFilter={assignmentFilter}
+        onAssignmentFilterChange={setAssignmentFilter}
+        currentUsername={username}
         hiddenOnMobile={mobilePanelOpen}
       />
       <div className={`${mobilePanelOpen ? "block" : "hidden"} min-w-0 flex-1 overflow-y-auto md:block`}>
@@ -115,6 +155,7 @@ export default function Contacts() {
             <ContactProfile
               key={selectedContact.id}
               contact={selectedContact}
+              currentUsername={username}
               canManage={canManageContacts}
               canCreateLeads={canCreateContacts}
               onEdit={() => canManageContacts && setPanelMode("edit")}
@@ -144,8 +185,22 @@ function ContactList({
   canCreateContacts,
   searchInput,
   onSearchChange,
+  assignmentFilter,
+  onAssignmentFilterChange,
+  currentUsername,
   hiddenOnMobile,
 }) {
+  const contactList = useMemo(() => contacts || [], [contacts]);
+  const assignmentOptions = useMemo(
+    () => buildLeadAssignmentFilterOptions(contactList, currentUsername),
+    [contactList, currentUsername]
+  );
+  const filteredContacts = useMemo(
+    () => contactList.filter((contact) => matchesLeadAssignment(contact, assignmentFilter, currentUsername)),
+    [contactList, assignmentFilter, currentUsername]
+  );
+  const assignmentFilterActive = assignmentFilter !== "all";
+
   return (
     <div className={`${hiddenOnMobile ? "hidden md:flex" : "flex"} h-full w-full min-w-0 shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-surface)] md:w-80`}>
       <div className="sticky top-0 z-10 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4 sm:px-5">
@@ -153,7 +208,11 @@ function ContactList({
           <div className="min-w-0">
             <h1 className="font-display text-lg font-bold">Contacts</h1>
             <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
-              {contacts ? `${contacts.length} contact${contacts.length === 1 ? "" : "s"}` : "Loading…"}
+              {contacts
+                ? assignmentFilterActive
+                  ? `${filteredContacts.length} shown from ${contactList.length}`
+                  : `${contactList.length} contact${contactList.length === 1 ? "" : "s"}`
+                : "Loading…"}
             </p>
           </div>
           {canCreateContacts && (
@@ -172,6 +231,19 @@ function ContactList({
           value={searchInput}
           onChange={(e) => onSearchChange(e.target.value)}
         />
+        <label className="relative mt-2 block">
+          <span className="sr-only">Filter contacts by lead assignment</span>
+          <select
+            value={assignmentFilter}
+            onChange={(event) => onAssignmentFilterChange(event.target.value)}
+            className="w-full appearance-none rounded-lg border border-[var(--color-border)] bg-white py-2 pl-2.5 pr-8 text-[11px] font-medium text-[var(--color-text)] outline-none transition focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+          >
+            {assignmentOptions.map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-[var(--color-text-muted)]">▾</span>
+        </label>
       </div>
 
       {contacts && contacts.length === 0 && (
@@ -182,7 +254,14 @@ function ContactList({
         </div>
       )}
 
-      {contacts?.map((c) => (
+      {contacts && contacts.length > 0 && filteredContacts.length === 0 && (
+        <div className="px-4 py-10 text-center sm:px-5">
+          <p className="text-sm font-medium">No contacts match this assignment</p>
+          <p className="mt-1 text-xs text-[var(--color-text-muted)]">Choose another assignment filter to see more contacts.</p>
+        </div>
+      )}
+
+      {filteredContacts.map((c) => (
         <button
           key={c.id}
           onClick={() => onSelect(c.id)}
@@ -208,6 +287,14 @@ function ContactList({
                 {contactIdentifier(c)}
                 {c.message_count === 0 && " · No conversation yet"}
               </p>
+              <div className="mt-1.5 flex min-w-0 items-center gap-1.5">
+                <LeadAssignmentBadge
+                  ownerUsername={c.lead_owner_username}
+                  ownerDisplayName={c.lead_owner_display_name}
+                  currentUsername={currentUsername}
+                  compact
+                />
+              </div>
             </div>
           </div>
         </button>
@@ -216,7 +303,7 @@ function ContactList({
   );
 }
 
-function ContactProfile({ contact, canManage, canCreateLeads, onEdit, onBack, onToast }) {
+function ContactProfile({ contact, currentUsername, canManage, canCreateLeads, onEdit, onBack, onToast }) {
   const navigate = useNavigate();
   const [notes, setNotes] = useState(null);
   const [draft, setDraft] = useState("");
@@ -303,9 +390,16 @@ function ContactProfile({ contact, canManage, canCreateLeads, onEdit, onBack, on
               {!canManage && <span className="shrink-0 rounded-full bg-[var(--color-bg)] px-2 py-1 text-[9px] font-bold uppercase text-[var(--color-text-muted)]">View only</span>}
             </div>
             <p className="mt-1 break-all text-sm text-[var(--color-text-muted)]">{contactIdentifier(contact)}</p>
-            <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
-              Added {new Date(contact.created_at).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })}
-            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <LeadAssignmentBadge
+                ownerUsername={contact.lead_owner_username}
+                ownerDisplayName={contact.lead_owner_display_name}
+                currentUsername={currentUsername}
+              />
+              <span className="text-xs text-[var(--color-text-muted)]">
+                Added {new Date(contact.created_at).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })}
+              </span>
+            </div>
           </div>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">

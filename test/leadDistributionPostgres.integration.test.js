@@ -38,8 +38,14 @@ async function seedSales(client, users) {
     await client.query(
       `INSERT INTO users (
          username, password_hash, display_name, role, permissions, is_active, branch_name
-       ) VALUES ($1, 'test-hash', $2, 'sales', '{}'::jsonb, $3, $4)`,
-      [user.username, user.username, user.active !== false, user.branch || null]
+       ) VALUES ($1, 'test-hash', $2, 'sales', $3::jsonb, $4, $5)`,
+      [
+        user.username,
+        user.username,
+        JSON.stringify(user.permissions || {}),
+        user.active !== false,
+        user.branch || null,
+      ]
     );
   }
 }
@@ -132,6 +138,34 @@ test(
         ["sales_a", "sales_b", "sales_a", "sales_b"]
       );
       assert.ok(leads.every((lead) => lead.owner_assignment_source === "automatic"));
+    });
+
+    await t.test("missing view_all_leads inherits the Sales default while an explicit false override is respected", async () => {
+      await resetFixtures(admin);
+      await setBranchRouting(admin, true);
+      await seedSales(admin, [
+        {
+          username: "default_all_sales",
+          permissions: {
+            view_assigned_leads: false,
+            reply_to_assigned_leads: true,
+          },
+        },
+      ]);
+
+      const inheritedDefault = await createLead(admin);
+      assert.equal(inheritedDefault.owner_username, "default_all_sales");
+      assert.equal(inheritedDefault.owner_assignment_source, "automatic");
+
+      await admin.query(
+        `UPDATE users
+         SET permissions = permissions || '{"view_all_leads": false}'::jsonb
+         WHERE username = 'default_all_sales'`
+      );
+
+      const explicitlyRestricted = await createLead(admin);
+      assert.equal(explicitlyRestricted.owner_username, null);
+      assert.equal(explicitlyRestricted.owner_assignment_source, null);
     });
 
     await t.test("known branches use their own pools and branch edits keep the owner stable", async () => {

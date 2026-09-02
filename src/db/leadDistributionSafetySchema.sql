@@ -38,7 +38,7 @@ BEGIN
       AND lower(btrim(COALESCE(branch_name, ''))) = lower(route_branch)
       AND (
         COALESCE(permissions ->> 'view_assigned_leads', 'true') = 'true'
-        OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
+        OR COALESCE(permissions ->> 'view_all_leads', 'true') = 'true'
       )
       AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true';
 
@@ -59,7 +59,7 @@ BEGIN
       AND role = 'sales'
       AND (
         COALESCE(permissions ->> 'view_assigned_leads', 'true') = 'true'
-        OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
+        OR COALESCE(permissions ->> 'view_all_leads', 'true') = 'true'
       )
       AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true';
     chosen_scope := 'global';
@@ -81,7 +81,7 @@ BEGIN
       )
       AND (
         COALESCE(permissions ->> 'view_assigned_leads', 'true') = 'true'
-        OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
+        OR COALESCE(permissions ->> 'view_all_leads', 'true') = 'true'
       )
       AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true'
     ORDER BY id ASC
@@ -109,7 +109,7 @@ BEGIN
       )
       AND (
         COALESCE(permissions ->> 'view_assigned_leads', 'true') = 'true'
-        OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
+        OR COALESCE(permissions ->> 'view_all_leads', 'true') = 'true'
       )
       AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true'
       AND id > COALESCE(previous_user_id, 0)
@@ -129,7 +129,7 @@ BEGIN
         )
         AND (
           COALESCE(permissions ->> 'view_assigned_leads', 'true') = 'true'
-          OR COALESCE(permissions ->> 'view_all_leads', 'false') = 'true'
+          OR COALESCE(permissions ->> 'view_all_leads', 'true') = 'true'
         )
         AND COALESCE(permissions ->> 'reply_to_assigned_leads', 'true') = 'true'
       ORDER BY id ASC
@@ -315,11 +315,11 @@ BEGIN
       USING ERRCODE = 'P0001';
   END IF;
 
-  -- view_assigned_leads and reply_to_assigned_leads default to true for both
-  -- current roles. view_all_leads defaults to true for Admin and false for Sales.
+  -- view_assigned_leads, view_all_leads and reply_to_assigned_leads now default
+  -- to true for both current roles. Explicit false overrides remain authoritative.
   can_view :=
     COALESCE((selected_permissions ->> 'view_assigned_leads')::boolean, true)
-    OR COALESCE((selected_permissions ->> 'view_all_leads')::boolean, selected_role = 'admin');
+    OR COALESCE((selected_permissions ->> 'view_all_leads')::boolean, true);
   can_reply := COALESCE((selected_permissions ->> 'reply_to_assigned_leads')::boolean, true);
 
   IF can_view IS DISTINCT FROM true OR can_reply IS DISTINCT FROM true THEN
