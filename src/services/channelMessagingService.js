@@ -3,6 +3,7 @@ const whatsapp = require("./whatsappService");
 const meta = require("./metaMessagingService");
 const metaAttachments = require("./metaAttachmentService");
 const mediaStorage = require("./mediaStorageService");
+const audioConvert = require("./audioConvertService");
 
 function channelOf(contactOrIncoming) {
   return contactOrIncoming?.channel || "whatsapp";
@@ -164,19 +165,34 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
   }
 
   if (channel === "instagram") {
-    return withTemporaryMediaUrl(contact, buffer, mimeType, async (mediaUrl) => {
-      // Keep the race-condition protection added for PR #54: a slow upload
-      // must not deliver after another staff session returns the chat to AI.
-      if (!(await stillInStaffMode(contact))) {
-        return staffModeChangedResult();
+    const instagramAudio = await audioConvert.convertToInstagramAudio(buffer, mimeType);
+    if (!instagramAudio) {
+      return {
+        success: false,
+        wamid: null,
+        externalMessageId: null,
+        error: "The voice recording could not be converted to an Instagram-supported audio format.",
+      };
+    }
+
+    return withTemporaryMediaUrl(
+      contact,
+      instagramAudio.buffer,
+      instagramAudio.mimeType,
+      async (mediaUrl) => {
+        // Keep the race-condition protection added for PR #54: conversion and
+        // upload can both take time, so re-check immediately before delivery.
+        if (!(await stillInStaffMode(contact))) {
+          return staffModeChangedResult();
+        }
+        return metaAttachments.sendUrlAttachment(
+          channel,
+          recipientFor(contact),
+          "audio",
+          mediaUrl
+        );
       }
-      return metaAttachments.sendUrlAttachment(
-        channel,
-        recipientFor(contact),
-        "audio",
-        mediaUrl
-      );
-    });
+    );
   }
 
   // Facebook Messenger keeps the attachment upload path. Active Staff sends
