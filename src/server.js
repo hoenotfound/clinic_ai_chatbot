@@ -641,15 +641,9 @@ app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
   // by the existing WhatsApp webhook.
   res.sendStatus(200);
 
-  // TEMPORARY DIAGNOSTIC — remove once Instagram messages are confirmed
-  // flowing end-to-end. Logs the full raw payload (message content/IDs
-  // only, no secrets) and how many messages parseIncomingMessages extracted.
-  console.log("[meta-webhook debug] raw body:", JSON.stringify(req.body));
-
   const incomingMessages = metaMessaging.parseIncomingMessages(req.body);
   const resolvedEditMessages = await metaMessaging.resolveMessageEditEvents(req.body);
   const allIncoming = [...incomingMessages, ...resolvedEditMessages];
-  console.log(`[meta-webhook debug] parsed ${incomingMessages.length} message(s), resolved ${resolvedEditMessages.length} message_edit event(s):`, JSON.stringify(allIncoming));
 
   try {
     await Promise.all(
@@ -661,7 +655,7 @@ app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
       )
     );
   } catch (err) {
-    console.error("[meta-webhook debug] error while processing incoming message(s):", err);
+    console.error("Failed to process incoming Meta message(s):", err);
   }
 });
 
