@@ -82,6 +82,51 @@ function isOggOpus(buffer) {
 }
 
 /**
+ * Instagram's Page-linked messaging endpoint rejects MP3 voice attachments on
+ * some accounts with error (#100) "This attachment format is not supported".
+ * Normalize the outbound copy to AAC in an M4A container, while leaving the
+ * stored Inbox playback copy as MP3 and the WhatsApp copy as Ogg/Opus.
+ *
+ * @param {Buffer} inputBuffer
+ * @param {string} inputMimeType
+ * @returns {Promise<{buffer: Buffer, mimeType: string, filename: string}|null>}
+ */
+async function convertToInstagramAudio(inputBuffer, inputMimeType) {
+  const tmpDir = os.tmpdir();
+  const id = crypto.randomUUID();
+  const inputPath = path.join(tmpDir, `${id}-instagram-in${extensionForMimeType(inputMimeType)}`);
+  const outputPath = path.join(tmpDir, `${id}-instagram-out.m4a`);
+
+  try {
+    await fs.writeFile(inputPath, inputBuffer);
+
+    await runFfmpeg(inputPath, outputPath, (command) =>
+      command
+        .duration(MAX_WHATSAPP_VOICE_SECONDS)
+        .audioCodec("aac")
+        .audioChannels(1)
+        .audioFrequency(44100)
+        .audioBitrate("64k")
+        .outputOptions("-movflags +faststart")
+        .format("ipod")
+    );
+
+    const buffer = await fs.readFile(outputPath);
+    return {
+      buffer,
+      mimeType: "audio/mp4",
+      filename: "voice.m4a",
+    };
+  } catch (err) {
+    console.error("Instagram audio conversion to M4A failed:", err);
+    return null;
+  } finally {
+    await fs.unlink(inputPath).catch(() => {});
+    await fs.unlink(outputPath).catch(() => {});
+  }
+}
+
+/**
  * Normalizes a browser microphone recording into both formats needed by the
  * app: mono Ogg/Opus for a native WhatsApp voice note, and MP3 for reliable
  * playback in every portal browser (especially Safari).
@@ -166,4 +211,4 @@ async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
   }
 }
 
-module.exports = { convertToMp3, convertToWhatsAppVoice };
+module.exports = { convertToMp3, convertToInstagramAudio, convertToWhatsAppVoice };
