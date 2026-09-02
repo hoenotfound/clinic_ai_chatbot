@@ -45,18 +45,18 @@ test("Facebook attachment send uploads bytes then sends attachment id", async (t
   assert.equal(result.success, true);
   assert.equal(result.externalMessageId, "mid-1");
   assert.equal(calls.length, 2);
-  assert.match(calls[0].url, /\/v26\.0\/page-123\/message_attachments$/);
+  assert.match(calls[0].url, /^https:\/\/graph\.facebook\.com\/v26\.0\/page-123\/message_attachments$/);
   assert.equal(calls[0].options.method, "POST");
   assert.ok(calls[0].options.body instanceof FormData);
 
-  assert.match(calls[1].url, /\/v26\.0\/page-123\/messages$/);
+  assert.match(calls[1].url, /^https:\/\/graph\.facebook\.com\/v26\.0\/page-123\/messages$/);
   const sentBody = JSON.parse(calls[1].options.body);
   assert.deepEqual(sentBody.recipient, { id: "psid-1" });
   assert.equal(sentBody.message.attachment.type, "image");
   assert.equal(sentBody.message.attachment.payload.attachment_id, "att-1");
 });
 
-test("Instagram audio uses the Instagram page token and audio attachment type", async (t) => {
+test("Instagram URL attachment keeps the Page-linked graph.facebook.com path", async (t) => {
   const originalFetch = global.fetch;
   const originalToken = process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
   const originalPageId = process.env.INSTAGRAM_PAGE_ID;
@@ -68,33 +68,35 @@ test("Instagram audio uses the Instagram page token and audio attachment type", 
     else process.env.INSTAGRAM_PAGE_ID = originalPageId;
   });
 
-  process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = "ig-token";
-  process.env.INSTAGRAM_PAGE_ID = "ig-page-1";
+  process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = "ig-page-token";
+  process.env.INSTAGRAM_PAGE_ID = "linked-page-1";
 
-  const calls = [];
+  let call = null;
   global.fetch = async (url, options) => {
-    calls.push({ url, options });
-    if (url.endsWith("/message_attachments")) {
-      return new Response(JSON.stringify({ attachment_id: "ig-att-1" }), { status: 200 });
-    }
-    return new Response(JSON.stringify({ message_id: "ig-mid-1" }), { status: 200 });
+    call = { url, options };
+    return new Response(JSON.stringify({ message_id: "ig-mid-1" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   };
 
-  const result = await metaAttachments.sendBuffer(
+  const result = await metaAttachments.sendUrlAttachment(
     "instagram",
     "igsid-1",
     "audio",
-    Buffer.from("mp3-bytes"),
-    "audio/mpeg",
-    "voice.mp3"
+    "https://private-r2.example/voice.mp3?signed=1"
   );
 
   assert.equal(result.success, true);
-  assert.match(calls[0].url, /\/v26\.0\/ig-page-1\/message_attachments$/);
-  const sentBody = JSON.parse(calls[1].options.body);
+  assert.equal(result.externalMessageId, "ig-mid-1");
+  assert.equal(call.url, "https://graph.facebook.com/v26.0/linked-page-1/messages");
+  assert.equal(call.options.headers.Authorization, "Bearer ig-page-token");
+  const sentBody = JSON.parse(call.options.body);
   assert.equal(sentBody.recipient.id, "igsid-1");
   assert.equal(sentBody.message.attachment.type, "audio");
-  assert.equal(sentBody.message.attachment.payload.attachment_id, "ig-att-1");
+  assert.deepEqual(sentBody.message.attachment.payload, {
+    url: "https://private-r2.example/voice.mp3?signed=1",
+  });
 });
 
 test("attachment upload failure is returned without attempting delivery", async (t) => {

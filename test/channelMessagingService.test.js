@@ -5,6 +5,7 @@ const contactsRepo = require("../src/db/contactsRepo");
 const whatsapp = require("../src/services/whatsappService");
 const meta = require("../src/services/metaMessagingService");
 const metaAttachments = require("../src/services/metaAttachmentService");
+const mediaStorage = require("../src/services/mediaStorageService");
 const messaging = require("../src/services/channelMessagingService");
 
 test("WhatsApp contacts keep using the existing WhatsApp send function", async (t) => {
@@ -68,12 +69,18 @@ test("Facebook contacts never fall through to WhatsApp", async (t) => {
   });
 });
 
-test("Instagram image bytes send caption then image attachment", async (t) => {
+test("Instagram image bytes use a short-lived media URL instead of attachment_id", async (t) => {
   const originalMetaSend = meta.sendText;
-  const originalAttachmentSend = metaAttachments.sendBuffer;
+  const originalUploadTemporary = mediaStorage.uploadTemporaryMedia;
+  const originalScheduleDelete = mediaStorage.scheduleTemporaryMediaDelete;
+  const originalUrlSend = metaAttachments.sendUrlAttachment;
+  const originalBufferSend = metaAttachments.sendBuffer;
   t.after(() => {
     meta.sendText = originalMetaSend;
-    metaAttachments.sendBuffer = originalAttachmentSend;
+    mediaStorage.uploadTemporaryMedia = originalUploadTemporary;
+    mediaStorage.scheduleTemporaryMediaDelete = originalScheduleDelete;
+    metaAttachments.sendUrlAttachment = originalUrlSend;
+    metaAttachments.sendBuffer = originalBufferSend;
   });
 
   const calls = [];
@@ -81,13 +88,33 @@ test("Instagram image bytes send caption then image attachment", async (t) => {
     calls.push({ kind: "text", channel, to, text });
     return { success: true, wamid: null, externalMessageId: "caption-1" };
   };
-  metaAttachments.sendBuffer = async (channel, to, type, buffer, mimeType, filename) => {
-    calls.push({ kind: "attachment", channel, to, type, bytes: buffer.toString(), mimeType, filename });
+  mediaStorage.uploadTemporaryMedia = async (buffer, mimeType, options) => {
+    calls.push({
+      kind: "temp-upload",
+      bytes: buffer.toString(),
+      mimeType,
+      contactId: options.contactId,
+    });
+    return {
+      key: "meta-outbound/44/image.jpg",
+      url: "https://r2.example/image.jpg?signed=1",
+    };
+  };
+  mediaStorage.scheduleTemporaryMediaDelete = (key) => {
+    calls.push({ kind: "cleanup", key });
+  };
+  metaAttachments.sendUrlAttachment = async (channel, to, type, mediaUrl) => {
+    calls.push({ kind: "url-attachment", channel, to, type, mediaUrl });
     return { success: true, wamid: null, externalMessageId: "image-1" };
+  };
+  let bufferSends = 0;
+  metaAttachments.sendBuffer = async () => {
+    bufferSends += 1;
+    return { success: true, externalMessageId: "wrong" };
   };
 
   const result = await messaging.sendImageBuffer(
-    { channel: "instagram", channel_user_id: "igsid-123" },
+    { id: 44, channel: "instagram", channel_user_id: "igsid-123" },
     Buffer.from("image-data"),
     "image/jpeg",
     "Hello from IG",
@@ -95,17 +122,18 @@ test("Instagram image bytes send caption then image attachment", async (t) => {
   );
 
   assert.equal(result.success, true);
+  assert.equal(bufferSends, 0);
   assert.deepEqual(calls, [
     { kind: "text", channel: "instagram", to: "igsid-123", text: "Hello from IG" },
+    { kind: "temp-upload", bytes: "image-data", mimeType: "image/jpeg", contactId: 44 },
     {
-      kind: "attachment",
+      kind: "url-attachment",
       channel: "instagram",
       to: "igsid-123",
       type: "image",
-      bytes: "image-data",
-      mimeType: "image/jpeg",
-      filename: "photo.jpg",
+      mediaUrl: "https://r2.example/image.jpg?signed=1",
     },
+    { kind: "cleanup", key: "meta-outbound/44/image.jpg" },
   ]);
 });
 
@@ -182,24 +210,29 @@ test("WhatsApp voice is not delivered if Staff mode ends during media upload", a
   assert.equal(deliveries, 0);
 });
 
-test("Instagram voice is not delivered if Staff mode ends during attachment upload", async (t) => {
+test("Instagram voice is not delivered if Staff mode ends during temporary upload", async (t) => {
   const originalGetContact = contactsRepo.getContactById;
-  const originalUpload = metaAttachments.uploadAttachment;
-  const originalSend = metaAttachments.sendAttachmentId;
+  const originalUploadTemporary = mediaStorage.uploadTemporaryMedia;
+  const originalScheduleDelete = mediaStorage.scheduleTemporaryMediaDelete;
+  const originalUrlSend = metaAttachments.sendUrlAttachment;
   t.after(() => {
     contactsRepo.getContactById = originalGetContact;
-    metaAttachments.uploadAttachment = originalUpload;
-    metaAttachments.sendAttachmentId = originalSend;
+    mediaStorage.uploadTemporaryMedia = originalUploadTemporary;
+    mediaStorage.scheduleTemporaryMediaDelete = originalScheduleDelete;
+    metaAttachments.sendUrlAttachment = originalUrlSend;
   });
 
-  metaAttachments.uploadAttachment = async () => ({
-    success: true,
-    attachmentId: "ig-audio-1",
-    error: null,
+  mediaStorage.uploadTemporaryMedia = async () => ({
+    key: "meta-outbound/88/voice.mp3",
+    url: "https://r2.example/voice.mp3?signed=1",
   });
+  let cleanedKey = null;
+  mediaStorage.scheduleTemporaryMediaDelete = (key) => {
+    cleanedKey = key;
+  };
   contactsRepo.getContactById = async () => ({ id: 88, mode: "ai" });
   let deliveries = 0;
-  metaAttachments.sendAttachmentId = async () => {
+  metaAttachments.sendUrlAttachment = async () => {
     deliveries += 1;
     return { success: true, wamid: null, externalMessageId: "should-not-send" };
   };
@@ -219,4 +252,5 @@ test("Instagram voice is not delivered if Staff mode ends during attachment uplo
   assert.equal(result.success, false);
   assert.equal(result.error, "This conversation is no longer in Staff mode.");
   assert.equal(deliveries, 0);
+  assert.equal(cleanedKey, "meta-outbound/88/voice.mp3");
 });

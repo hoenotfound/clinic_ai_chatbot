@@ -15,6 +15,9 @@ function getChannelConfig(channel) {
     };
   }
   if (channel === "instagram") {
+    // This app uses Instagram Messaging through the Facebook Page linked to
+    // the Instagram Professional account. Keep this on the same Page access
+    // token + graph.facebook.com path that already delivers Instagram text.
     return {
       token: process.env.INSTAGRAM_PAGE_ACCESS_TOKEN,
       senderId: process.env.INSTAGRAM_PAGE_ID,
@@ -77,7 +80,7 @@ async function uploadAttachment(channel, type, buffer, mimeType, filename) {
   }
 }
 
-async function sendAttachmentId(channel, recipientId, type, attachmentId) {
+async function postAttachment(channel, recipientId, type, payload, logLabel) {
   const config = getChannelConfig(channel);
   const label = channelLabel(channel);
   if (!config.token || !config.senderId) {
@@ -95,7 +98,7 @@ async function sendAttachmentId(channel, recipientId, type, attachmentId) {
     message: {
       attachment: {
         type,
-        payload: { attachment_id: attachmentId },
+        payload,
       },
     },
   };
@@ -119,7 +122,7 @@ async function sendAttachmentId(channel, recipientId, type, attachmentId) {
 
     if (!response.ok) {
       const error = extractErrorText(data, raw || `${label} returned HTTP ${response.status}.`);
-      console.error(`${label} attachment send failed:`, response.status, error);
+      console.error(`${label} ${logLabel} failed:`, response.status, error);
       return { success: false, wamid: null, externalMessageId: null, error };
     }
 
@@ -130,14 +133,34 @@ async function sendAttachmentId(channel, recipientId, type, attachmentId) {
       error: null,
     };
   } catch (err) {
-    console.error(`${label} attachment send threw an error:`, err);
+    console.error(`${label} ${logLabel} threw an error:`, err);
     return {
       success: false,
       wamid: null,
       externalMessageId: null,
-      error: err?.message || `${label} attachment send failed.`,
+      error: err?.message || `${label} ${logLabel} failed.`,
     };
   }
+}
+
+async function sendAttachmentId(channel, recipientId, type, attachmentId) {
+  return postAttachment(
+    channel,
+    recipientId,
+    type,
+    { attachment_id: attachmentId },
+    "attachment send"
+  );
+}
+
+async function sendUrlAttachment(channel, recipientId, type, mediaUrl) {
+  return postAttachment(
+    channel,
+    recipientId,
+    type,
+    { url: mediaUrl },
+    "URL attachment send"
+  );
 }
 
 async function sendBuffer(channel, recipientId, type, buffer, mimeType, filename) {
@@ -156,5 +179,6 @@ async function sendBuffer(channel, recipientId, type, buffer, mimeType, filename
 module.exports = {
   uploadAttachment,
   sendAttachmentId,
+  sendUrlAttachment,
   sendBuffer,
 };

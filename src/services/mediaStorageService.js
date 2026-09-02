@@ -4,9 +4,10 @@
  * client pointed at R2's endpoint — no Cloudflare-specific SDK needed.
  *
  * The bucket is kept PRIVATE. Patient photos/recordings are sensitive, so
- * bytes are only ever fetched server-side by authenticated routes. Browser
- * playback is streamed through the backend instead of exposing a public R2
- * URL or buffering an entire object in memory first.
+ * bytes are only ever fetched server-side by authenticated routes. For the
+ * rare case where Meta must fetch an outbound Instagram attachment by URL,
+ * a duplicate temporary object is exposed only through a short-lived SigV4
+ * presigned GET URL and then deleted automatically.
  */
 
 const crypto = require("crypto");
@@ -17,21 +18,30 @@ const {
   DeleteObjectCommand,
 } = require("@aws-sdk/client-s3");
 
+const DEFAULT_META_SHARE_SECONDS = 10 * 60;
+const DEFAULT_TEMP_DELETE_DELAY_MS = 12 * 60 * 1000;
 let cachedClient = null;
 
-function getClient() {
-  if (cachedClient) return cachedClient;
-
+function getStorageConfig() {
   const accountId = process.env.R2_ACCOUNT_ID;
   const accessKeyId = process.env.R2_ACCESS_KEY_ID;
   const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+  const bucket = process.env.R2_BUCKET_NAME;
 
   if (!accountId || !accessKeyId || !secretAccessKey) {
     throw new Error(
       "R2 storage is not configured. Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY."
     );
   }
+  if (!bucket) throw new Error("R2 storage is not configured. Set R2_BUCKET_NAME.");
 
+  return { accountId, accessKeyId, secretAccessKey, bucket };
+}
+
+function getClient() {
+  if (cachedClient) return cachedClient;
+
+  const { accountId, accessKeyId, secretAccessKey } = getStorageConfig();
   cachedClient = new S3Client({
     region: "auto",
     endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
@@ -41,9 +51,7 @@ function getClient() {
 }
 
 function getBucketName() {
-  const bucket = process.env.R2_BUCKET_NAME;
-  if (!bucket) throw new Error("R2 storage is not configured. Set R2_BUCKET_NAME.");
-  return bucket;
+  return getStorageConfig().bucket;
 }
 
 function extensionForMimeType(mimeType) {
@@ -57,14 +65,82 @@ function extensionForMimeType(mimeType) {
   return "bin";
 }
 
-/**
- * Uploads a media buffer to R2 and returns the object key to persist in
- * Postgres. Keys are namespaced by contact so a bucket listing stays
- * organized and a contact's media can be found/deleted together later.
- */
-async function uploadMedia(buffer, mimeType, { contactId = "misc" } = {}) {
-  const key = `messages/${contactId}/${Date.now()}-${crypto.randomUUID()}.${extensionForMimeType(mimeType)}`;
+function encodeAwsComponent(value) {
+  return encodeURIComponent(String(value)).replace(/[!'()*]/g, (char) =>
+    `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+}
 
+function encodeObjectPath(value) {
+  return String(value).split("/").map(encodeAwsComponent).join("/");
+}
+
+function hmac(key, value) {
+  return crypto.createHmac("sha256", key).update(value).digest();
+}
+
+function sha256Hex(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+/**
+ * Creates an R2 SigV4 presigned GET URL without making the bucket public.
+ * This mirrors the standard S3 presign algorithm and uses R2's required
+ * `auto` region. `now` is injectable only so the signature has a stable unit
+ * test; production callers omit it.
+ */
+function createPresignedGetUrl(
+  key,
+  { expiresSeconds = DEFAULT_META_SHARE_SECONDS, now = new Date() } = {}
+) {
+  const { accountId, accessKeyId, secretAccessKey, bucket } = getStorageConfig();
+  const expires = Math.max(1, Math.min(604800, Math.floor(Number(expiresSeconds) || 1)));
+  const host = `${accountId}.r2.cloudflarestorage.com`;
+  const canonicalUri = `/${encodeAwsComponent(bucket)}/${encodeObjectPath(key)}`;
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const dateStamp = amzDate.slice(0, 8);
+  const scope = `${dateStamp}/auto/s3/aws4_request`;
+
+  const params = {
+    "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+    "X-Amz-Credential": `${accessKeyId}/${scope}`,
+    "X-Amz-Date": amzDate,
+    "X-Amz-Expires": String(expires),
+    "X-Amz-SignedHeaders": "host",
+  };
+  const canonicalQuery = Object.entries(params)
+    .map(([name, value]) => [encodeAwsComponent(name), encodeAwsComponent(value)])
+    .sort(([aName, aValue], [bName, bValue]) =>
+      aName === bName ? aValue.localeCompare(bValue) : aName.localeCompare(bName)
+    )
+    .map(([name, value]) => `${name}=${value}`)
+    .join("&");
+
+  const canonicalRequest = [
+    "GET",
+    canonicalUri,
+    canonicalQuery,
+    `host:${host}\n`,
+    "host",
+    "UNSIGNED-PAYLOAD",
+  ].join("\n");
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    scope,
+    sha256Hex(canonicalRequest),
+  ].join("\n");
+
+  const dateKey = hmac(Buffer.from(`AWS4${secretAccessKey}`, "utf8"), dateStamp);
+  const regionKey = hmac(dateKey, "auto");
+  const serviceKey = hmac(regionKey, "s3");
+  const signingKey = hmac(serviceKey, "aws4_request");
+  const signature = crypto.createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+
+  return `https://${host}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+}
+
+async function putObject(key, buffer, mimeType) {
   await getClient().send(
     new PutObjectCommand({
       Bucket: getBucketName(),
@@ -73,8 +149,48 @@ async function uploadMedia(buffer, mimeType, { contactId = "misc" } = {}) {
       ContentType: mimeType || "application/octet-stream",
     })
   );
+}
 
+/**
+ * Uploads a media buffer to R2 and returns the object key to persist in
+ * Postgres. Keys are namespaced by contact so a bucket listing stays
+ * organized and a contact's media can be found/deleted together later.
+ */
+async function uploadMedia(buffer, mimeType, { contactId = "misc" } = {}) {
+  const key = `messages/${contactId}/${Date.now()}-${crypto.randomUUID()}.${extensionForMimeType(mimeType)}`;
+  await putObject(key, buffer, mimeType);
   return key;
+}
+
+/**
+ * Creates a second, disposable copy for Meta to fetch. We intentionally do
+ * not make the permanent patient-media object public or expose its key. The
+ * temporary URL expires after a few minutes and the object is removed shortly
+ * afterwards. Failed retries simply create a fresh short-lived copy.
+ */
+async function uploadTemporaryMedia(
+  buffer,
+  mimeType,
+  { contactId = "misc", expiresSeconds = DEFAULT_META_SHARE_SECONDS } = {}
+) {
+  const key = `meta-outbound/${contactId}/${Date.now()}-${crypto.randomUUID()}.${extensionForMimeType(mimeType)}`;
+  await putObject(key, buffer, mimeType);
+  return {
+    key,
+    url: createPresignedGetUrl(key, { expiresSeconds }),
+    expiresSeconds,
+  };
+}
+
+function scheduleTemporaryMediaDelete(key, delayMs = DEFAULT_TEMP_DELETE_DELAY_MS) {
+  if (!key) return null;
+  const timer = setTimeout(() => {
+    deleteMedia(key).catch((err) => {
+      console.error(`Failed to delete temporary Meta media ${key}:`, err);
+    });
+  }, delayMs);
+  timer.unref?.();
+  return timer;
 }
 
 /**
@@ -135,6 +251,9 @@ async function deleteMedia(key) {
 
 module.exports = {
   uploadMedia,
+  uploadTemporaryMedia,
+  createPresignedGetUrl,
+  scheduleTemporaryMediaDelete,
   openMediaStream,
   downloadMedia,
   isRangeNotSatisfiableError,
