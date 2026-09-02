@@ -10,6 +10,7 @@ const channelMessaging = require("./services/channelMessagingService");
 const ai = require("./services/aiService");
 const { transcribeAudio } = require("./services/transcriptionService");
 const { convertToMp3 } = require("./services/audioConvertService");
+const { getAiOwnedContact } = require("./services/automaticReplyGuard");
 const conversationStore = require("./utils/conversationStore");
 const { getActivePromotion } = require("./utils/activePromotion");
 const clinicConfig = require("./config/clinicConfig");
@@ -165,11 +166,20 @@ async function processIncomingMessage(incoming) {
         true,
         `Unsupported ${label} message (${unsupportedType}) needs staff review.`
       );
-      responseAttempted = true;
-      await sendTrackedText(
-        contact,
-        "Sorry, I can only read text, voice, or photo messages for now — could you type that out for me? 🙂"
-      );
+
+      const autoReplyContact = await getAiOwnedContact(contact, {
+        channel,
+        from,
+        reason: "unsupported-message fallback",
+      });
+      if (autoReplyContact) {
+        contact = autoReplyContact;
+        responseAttempted = true;
+        await sendTrackedText(
+          contact,
+          "Sorry, I can only read text, voice, or photo messages for now — could you type that out for me? 🙂"
+        );
+      }
       return;
     }
 
@@ -206,11 +216,20 @@ async function processIncomingMessage(incoming) {
           true,
           "A patient voice message could not be transcribed."
         );
-        responseAttempted = true;
-        await sendTrackedText(
-          contact,
-          "Sorry, I couldn't quite catch that voice message — mind typing it out, or sending the voice note again? 🙂"
-        );
+
+        const autoReplyContact = await getAiOwnedContact(contact, {
+          channel,
+          from,
+          reason: "voice-transcription fallback",
+        });
+        if (autoReplyContact) {
+          contact = autoReplyContact;
+          responseAttempted = true;
+          await sendTrackedText(
+            contact,
+            "Sorry, I couldn't quite catch that voice message — mind typing it out, or sending the voice note again? 🙂"
+          );
+        }
         return;
       }
 
@@ -231,11 +250,20 @@ async function processIncomingMessage(incoming) {
           true,
           "A patient photo could not be downloaded."
         );
-        responseAttempted = true;
-        await sendTrackedText(
-          contact,
-          "Sorry, I couldn't load that photo — mind sending it again? 🙂"
-        );
+
+        const autoReplyContact = await getAiOwnedContact(contact, {
+          channel,
+          from,
+          reason: "photo-download fallback",
+        });
+        if (autoReplyContact) {
+          contact = autoReplyContact;
+          responseAttempted = true;
+          await sendTrackedText(
+            contact,
+            "Sorry, I couldn't load that photo — mind sending it again? 🙂"
+          );
+        }
         return;
       }
 
@@ -310,12 +338,32 @@ async function processIncomingMessage(incoming) {
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
       : aiReply;
 
+    // AI generation can take long enough for staff to take over after the
+    // earlier ownership check. Re-check immediately before the actual send.
+    const aiReplyContact = await getAiOwnedContact(contact, {
+      channel,
+      from,
+      reason: "AI reply",
+    });
+    if (!aiReplyContact) return;
+    contact = aiReplyContact;
+
     responseAttempted = true;
     await sendTrackedText(contact, reply);
 
     if (isFirstMessage) {
       const promo = getActivePromotion(clinicConfig.promotions);
       if (promo) {
+        // Do not let a promo image slip out if staff takes over immediately
+        // after the AI text reply but before the follow-up media send.
+        const promoContact = await getAiOwnedContact(contact, {
+          channel,
+          from,
+          reason: "automatic promo image",
+        });
+        if (!promoContact) return;
+        contact = promoContact;
+
         const savedPromo = await conversationStore.appendMessageForContact(
           contact.id,
           "assistant",
@@ -357,6 +405,13 @@ async function processIncomingMessage(incoming) {
 
     if (contact && savedInbound && !responseAttempted) {
       try {
+        const fallbackContact = await getAiOwnedContact(contact, {
+          channel,
+          from,
+          reason: "processing-error fallback",
+        });
+        if (!fallbackContact) return;
+        contact = fallbackContact;
         responseAttempted = true;
         await sendTrackedText(
           contact,
