@@ -602,7 +602,7 @@ function StaffEditorModal({
                   hint={
                     staleBranch
                       ? "This branch is no longer configured. Choose a current branch or No fixed branch before branch-specific routing can use this account again."
-                      : "Optional. Used for branch-first assignment when the branch is already known. Every eligible Sales account still participates in the global rotation for leads without a known branch."
+                      : "Optional. Used for branch-first assignment when the branch is already known. Every eligible Sales account still participates in the global rotation for leads without a known branch. Later branch record changes never move the lead to another owner."
                   }
                   danger={staleBranch}
                 >
