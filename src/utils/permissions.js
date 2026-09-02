@@ -28,13 +28,13 @@ const CAPABILITY_DEFINITIONS = [
   {
     key: "view_all_leads",
     label: "Access all leads",
-    description: "See every clinic lead and conversation. Enabled by default for shared visibility; reply and lead-management permissions still apply only to assigned leads unless this account can Assign leads.",
+    description: "See every clinic lead and conversation. Enabled by default so assignment can be used for workload ownership and filtering; existing reply and lead-management capabilities continue to work across this clinic-wide view.",
     defaults: { admin: true, sales: true },
   },
   {
     key: "manage_lead_assignment",
     label: "Assign leads",
-    description: "Assign or reassign leads between staff accounts and manage leads across owners.",
+    description: "Assign or reassign leads between staff accounts.",
     defaults: { admin: true, sales: false },
   },
   {
