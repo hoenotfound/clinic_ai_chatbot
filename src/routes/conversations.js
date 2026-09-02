@@ -132,77 +132,43 @@ async function sendStoredMessage(contact, message) {
   const mimeType = String(message.media_mime_type || "").toLowerCase();
   const channel = contact.channel || "whatsapp";
 
-  if (channel !== "whatsapp") {
-    if (message.media_url) {
-      return channelMessaging.sendImageByUrl(
+  if (mimeType.startsWith("audio/") && message.media_base64) {
+    const storedBuffer = Buffer.from(message.media_base64, "base64");
+    if (channel === "whatsapp") {
+      const converted = await convertToWhatsAppVoice(storedBuffer, mimeType);
+      if (!converted) {
+        return { success: false, wamid: null, error: "The saved voice recording could not be processed." };
+      }
+      return channelMessaging.sendAudioBuffer(
         contact,
-        message.media_url,
-        message.content || undefined
+        converted.whatsapp.buffer,
+        converted.whatsapp.mimeType,
+        converted.whatsapp.filename
       );
     }
-
-    if (mimeType.startsWith("audio/") || (mimeType.startsWith("image/") && message.media_base64)) {
-      return {
-        success: false,
-        wamid: null,
-        error: `Retrying stored ${mimeType.startsWith("audio/") ? "voice" : "image"} uploads is currently WhatsApp-only.`,
-      };
-    }
-
-    if (message.content?.trim()) {
-      return channelMessaging.sendText(contact, message.content.trim());
-    }
-
-    return { success: false, wamid: null, error: "This message has no retryable content." };
-  }
-
-  if (mimeType.startsWith("audio/")) {
-    if (!message.media_base64) {
-      return { success: false, wamid: null, error: "The saved voice recording is unavailable." };
-    }
-    const converted = await convertToWhatsAppVoice(
-      Buffer.from(message.media_base64, "base64"),
-      mimeType
-    );
-    if (!converted) {
-      return { success: false, wamid: null, error: "The saved voice recording could not be processed." };
-    }
-    const mediaId = await whatsapp.uploadMedia(
-      converted.whatsapp.buffer,
-      converted.whatsapp.mimeType,
-      converted.whatsapp.filename
-    );
-    if (!mediaId) {
-      return { success: false, wamid: null, error: "The voice recording could not be uploaded to WhatsApp." };
-    }
-    return whatsapp.sendVoiceById(contact.whatsapp_number, mediaId);
+    return channelMessaging.sendAudioBuffer(contact, storedBuffer, mimeType, "voice.mp3");
   }
 
   if (mimeType.startsWith("image/") && message.media_base64) {
-    const mediaId = await whatsapp.uploadMedia(
+    return channelMessaging.sendImageBuffer(
+      contact,
       Buffer.from(message.media_base64, "base64"),
-      mimeType
-    );
-    if (!mediaId) {
-      return { success: false, wamid: null, error: "The image could not be uploaded to WhatsApp." };
-    }
-    return whatsapp.sendImageById(
-      contact.whatsapp_number,
-      mediaId,
-      message.content || undefined
+      mimeType,
+      message.content || undefined,
+      "image"
     );
   }
 
   if (message.media_url) {
-    return whatsapp.sendImage(
-      contact.whatsapp_number,
+    return channelMessaging.sendImageByUrl(
+      contact,
       message.media_url,
       message.content || undefined
     );
   }
 
   if (message.content?.trim()) {
-    return whatsapp.sendMessage(contact.whatsapp_number, message.content.trim());
+    return channelMessaging.sendText(contact, message.content.trim());
   }
 
   return { success: false, wamid: null, error: "This message has no retryable content." };
@@ -602,12 +568,6 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     const contact = await contactsRepo.getContactById(req.params.contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
 
-    if ((contact.channel || "whatsapp") !== "whatsapp") {
-      return res.status(400).json({
-        error: "Sending new image uploads from the Inbox is currently WhatsApp-only. Text replies work on Facebook and Instagram.",
-      });
-    }
-
     if (!req.file) {
       return res.status(400).json({ error: "An image file is required." });
     }
@@ -621,16 +581,10 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       await contactsRepo.setUnread(contact.id, false);
     }
 
-    const mediaId = await whatsapp.uploadMedia(req.file.buffer, req.file.mimetype);
-    if (!mediaId) {
-      return res.status(502).json({ error: "Failed to upload image to WhatsApp. Please try again." });
-    }
-
-    // Save before asking WhatsApp to deliver it. If Postgres fails, the
-    // customer must not receive an image that the Inbox cannot show, track,
-    // or retry.
-    const saved = await conversationStore.appendMessage(
-      contact.whatsapp_number,
+    // Persist the exact image bytes first. This keeps the Inbox and retry path
+    // consistent even when Meta accepts the upload but later rejects delivery.
+    const saved = await conversationStore.appendMessageForContact(
+      contact.id,
       "assistant",
       caption,
       null,
@@ -639,14 +593,17 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       { mimeType: req.file.mimetype, buffer: req.file.buffer }
     );
 
-    const sendResult = await whatsapp.sendImageById(
-      contact.whatsapp_number,
-      mediaId,
-      caption || undefined
+    const sendResult = await channelMessaging.sendImageBuffer(
+      contact,
+      req.file.buffer,
+      req.file.mimetype,
+      caption || undefined,
+      req.file.originalname || "image"
     );
-    const finalMessage = await persistSendOutcome(saved, sendResult);
+    const errorText = sendResult.error || rejectedErrorFor(contact);
+    const finalMessage = await persistSendOutcome(saved, sendResult, errorText);
     if (!sendResult.success) {
-      await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${SEND_REJECTED_ERROR}`);
+      await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${errorText}`);
     } else {
       await markLeadContacted(contact.id, req.session.username, sendResult);
     }
@@ -662,12 +619,6 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
-
-    if ((contact.channel || "whatsapp") !== "whatsapp") {
-      return res.status(400).json({
-        error: "Sending voice messages from the Inbox is currently WhatsApp-only. Text replies work on Facebook and Instagram.",
-      });
-    }
 
     if (contact.mode !== "human") {
       return res.status(409).json({ error: "Take over this conversation before sending a voice message." });
@@ -696,23 +647,9 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       return res.status(409).json({ error: "This conversation is no longer in Staff mode." });
     }
 
-    const mediaId = await whatsapp.uploadMedia(
-      converted.whatsapp.buffer,
-      converted.whatsapp.mimeType,
-      converted.whatsapp.filename
-    );
-    if (!mediaId) {
-      return res.status(502).json({ error: "Failed to upload voice message to WhatsApp. Please try again." });
-    }
-
-    currentContact = await contactsRepo.getContactById(contact.id);
-    if (!currentContact || currentContact.mode !== "human") {
-      return res.status(409).json({ error: "This conversation is no longer in Staff mode." });
-    }
-
     const content = transcript ? `🎤 ${transcript}` : "🎤 Staff sent a voice message";
-    const saved = await conversationStore.appendMessage(
-      currentContact.whatsapp_number,
+    const saved = await conversationStore.appendMessageForContact(
+      currentContact.id,
       "assistant",
       content,
       null,
@@ -724,8 +661,20 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       }
     );
 
-    const sendResult = await whatsapp.sendVoiceById(currentContact.whatsapp_number, mediaId);
-    const finalMessage = await persistSendOutcome(saved, sendResult);
+    const channel = currentContact.channel || "whatsapp";
+    const outboundAudio = channel === "whatsapp" ? converted.whatsapp : {
+      buffer: converted.playback.buffer,
+      mimeType: converted.playback.mimeType,
+      filename: "voice.mp3",
+    };
+    const sendResult = await channelMessaging.sendAudioBuffer(
+      currentContact,
+      outboundAudio.buffer,
+      outboundAudio.mimeType,
+      outboundAudio.filename
+    );
+    const errorText = sendResult.error || rejectedErrorFor(currentContact);
+    const finalMessage = await persistSendOutcome(saved, sendResult, errorText);
     try {
       if (sendResult.success) {
         await contactsRepo.setAttention(currentContact.id, false);
@@ -733,7 +682,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       } else {
         await contactsRepo.setDeliveryAttention(
           currentContact.id,
-          `Delivery failed: ${SEND_REJECTED_ERROR}`
+          `Delivery failed: ${errorText}`
         );
       }
     } catch (attentionErr) {
