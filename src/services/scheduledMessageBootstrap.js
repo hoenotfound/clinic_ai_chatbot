@@ -45,7 +45,7 @@ async function buildWindow(contactId) {
     lastInboundAt: latestInboundAt,
   });
   return {
-    lastInboundAt,
+    lastInboundAt: latestInboundAt,
     windowEndsAt: probe.windowEndsAt,
   };
 }
