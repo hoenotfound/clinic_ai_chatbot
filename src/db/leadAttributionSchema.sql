@@ -20,16 +20,88 @@ CREATE TABLE IF NOT EXISTS lead_attributions (
   body TEXT,
   media_type TEXT,
   media_url TEXT,
+  meta_account_id TEXT,
   campaign_id TEXT,
   campaign_name TEXT,
   adset_id TEXT,
   adset_name TEXT,
   ad_name TEXT,
+  enrichment_status TEXT NOT NULL DEFAULT 'not_applicable',
+  enrichment_attempts INTEGER NOT NULL DEFAULT 0,
+  enrichment_last_attempt_at TIMESTAMPTZ,
+  enrichment_next_attempt_at TIMESTAMPTZ,
+  enrichment_last_error TEXT,
+  enriched_at TIMESTAMPTZ,
   raw_referral JSONB,
   attributed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- PR #65 may already be deployed before this enrichment layer. Keep the
+-- startup schema idempotent so existing lead_attributions rows gain the new
+-- fields without a destructive migration.
+ALTER TABLE lead_attributions
+  ADD COLUMN IF NOT EXISTS meta_account_id TEXT,
+  ADD COLUMN IF NOT EXISTS enrichment_status TEXT NOT NULL DEFAULT 'not_applicable',
+  ADD COLUMN IF NOT EXISTS enrichment_attempts INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS enrichment_last_attempt_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS enrichment_next_attempt_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS enrichment_last_error TEXT,
+  ADD COLUMN IF NOT EXISTS enriched_at TIMESTAMPTZ;
+
+-- During a zero-downtime deploy, the old PR #65 process can briefly continue
+-- receiving webhooks after this migration is installed. That older code does
+-- not know about enrichment_status and would otherwise receive the column's
+-- not_applicable default. Normalize exact Meta-ad inserts at the database edge
+-- so those leads are still picked up immediately by the #67 worker.
+CREATE OR REPLACE FUNCTION queue_meta_ad_attribution_enrichment()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW.source = 'meta_ads'
+     AND NEW.meta_ad_id IS NOT NULL
+     AND NEW.enrichment_status = 'not_applicable' THEN
+    NEW.enrichment_status := 'pending';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Do not drop/recreate this trigger on every startup: normal deploys should not
+-- take an avoidable table lock. The duplicate_object guard also keeps two new
+-- instances starting at the same time from failing if both race to install it.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgname = 'trg_queue_meta_ad_attribution_enrichment'
+      AND tgrelid = 'lead_attributions'::regclass
+      AND NOT tgisinternal
+  ) THEN
+    BEGIN
+      CREATE TRIGGER trg_queue_meta_ad_attribution_enrichment
+      BEFORE INSERT ON lead_attributions
+      FOR EACH ROW
+      EXECUTE FUNCTION queue_meta_ad_attribution_enrichment();
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END;
+  END IF;
+END;
+$$;
+
+-- Meta ad rows captured by PR #65 predate verified Marketing API enrichment.
+-- Even if some referral metadata happened to contain hierarchy names, #65 had
+-- no Ad Account ID or enrichment state, so queue each legacy Meta-ad row once
+-- and let the Marketing API worker establish the complete hierarchy. Restrict
+-- this to the ALTER-added default so already-pending retries are not rewritten
+-- on every application startup.
+UPDATE lead_attributions
+SET enrichment_status = 'pending'
+WHERE source = 'meta_ads'
+  AND meta_ad_id IS NOT NULL
+  AND enrichment_status = 'not_applicable';
 
 CREATE INDEX IF NOT EXISTS idx_lead_attributions_source
   ON lead_attributions(source, attributed_at DESC);
@@ -39,6 +111,9 @@ CREATE INDEX IF NOT EXISTS idx_lead_attributions_meta_ad
 CREATE INDEX IF NOT EXISTS idx_lead_attributions_campaign
   ON lead_attributions(campaign_id)
   WHERE campaign_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_lead_attributions_enrichment_pending
+  ON lead_attributions(enrichment_next_attempt_at, attributed_at)
+  WHERE enrichment_status = 'pending' AND meta_ad_id IS NOT NULL;
 
 -- Facebook/Instagram can emit an OPEN_THREAD referral event separately from
 -- the first actual message. Store it briefly so the next message from that

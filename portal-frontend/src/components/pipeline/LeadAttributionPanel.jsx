@@ -33,6 +33,7 @@ export default function LeadAttributionPanel({ lead }) {
   if (!attribution && !lead?.source) return null;
 
   const source = attribution?.source || lead.source;
+  const isMetaAds = source === "meta_ads";
   const adLabel = attribution?.ad_name || attribution?.headline || null;
   const adFieldLabel = attribution?.ad_name ? "Ad" : attribution?.headline ? "Creative" : "Ad";
   const campaignLabel = attribution?.campaign_name || null;
@@ -42,6 +43,21 @@ export default function LeadAttributionPanel({ lead }) {
     : null;
   const campaignOverride = attribution && lead.campaign_name && lead.campaign_name !== attribution.campaign_name
     ? lead.campaign_name
+    : null;
+  const enrichmentStatus = attribution?.enrichment_status || null;
+  const metaHierarchyFallback = enrichmentStatus === "pending"
+    ? "Pending Meta Ads enrichment"
+    : isMetaAds
+      ? "Not available from this attribution"
+      : "—";
+  const enrichmentMessage = attribution && isMetaAds
+    ? enrichmentStatus === "enriched"
+      ? `Ad details synced from Meta${attribution?.enriched_at ? ` · ${formatDateTime(attribution.enriched_at)}` : ""}`
+      : enrichmentStatus === "pending"
+        ? "Ad, Ad Set and Campaign names are waiting for Meta Marketing API enrichment."
+        : attribution?.meta_ad_id
+          ? "Meta ad hierarchy enrichment is not available for this attribution."
+          : "Meta identified this as ad traffic, but the referral did not include an exact Ad ID, so Ad Set and Campaign enrichment is unavailable."
     : null;
 
   return (
@@ -54,22 +70,38 @@ export default function LeadAttributionPanel({ lead }) {
         <LeadSourceBadge source={source} />
       </div>
 
+      {enrichmentMessage && (
+        <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+          {enrichmentMessage}
+        </p>
+      )}
+
       <div className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
         <AttributionRow label="Channel" value={formatChannel(attribution?.channel || lead.channel)} />
-        <AttributionRow label="Platform" value={attribution?.platform || (source === "meta_ads" ? "Meta" : null)} />
+        <AttributionRow label="Platform" value={attribution?.platform || (isMetaAds ? "Meta" : null)} />
         <AttributionRow
           label={adFieldLabel}
           value={adLabel || (attribution?.meta_ad_id ? `Meta Ad ${attribution.meta_ad_id}` : null)}
-          mutedFallback={source === "meta_ads" ? "Ad name available after Meta Ads API sync" : "—"}
+          mutedFallback={isMetaAds ? metaHierarchyFallback : "—"}
         />
+        {isMetaAds && (
+          <AttributionRow
+            label="Ad Set"
+            value={attribution?.adset_name || null}
+            mutedFallback={metaHierarchyFallback}
+          />
+        )}
         <AttributionRow
           label="Campaign"
           value={campaignLabel}
-          mutedFallback={source === "meta_ads" ? "Available after Meta Ads API sync" : "—"}
+          mutedFallback={isMetaAds ? metaHierarchyFallback : "—"}
         />
         {sourceOverride && <AttributionRow label="Source override" value={sourceLabel(sourceOverride)} />}
         {campaignOverride && <AttributionRow label="Campaign override" value={campaignOverride} />}
         {attribution?.meta_ad_id && <AttributionRow label="Meta Ad ID" value={attribution.meta_ad_id} mono />}
+        {attribution?.adset_id && <AttributionRow label="Meta Ad Set ID" value={attribution.adset_id} mono />}
+        {attribution?.campaign_id && <AttributionRow label="Meta Campaign ID" value={attribution.campaign_id} mono />}
+        {attribution?.meta_account_id && <AttributionRow label="Meta Ad Account ID" value={attribution.meta_account_id} mono />}
         {attribution?.ctwa_clid && <AttributionRow label="CTWA click ID" value={attribution.ctwa_clid} mono />}
       </div>
 
@@ -100,4 +132,14 @@ function formatChannel(channel) {
   if (channel === "instagram") return "Instagram";
   if (channel === "whatsapp") return "WhatsApp";
   return channel || "—";
+}
+
+function formatDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "synced";
+  return new Intl.DateTimeFormat("en-MY", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Kuala_Lumpur",
+  }).format(date);
 }

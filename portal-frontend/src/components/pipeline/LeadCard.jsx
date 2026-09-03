@@ -16,6 +16,13 @@ export default function LeadCard({ lead, now, noReplyHours, onOpen, onDragStart 
   const overdue = isOverdue(lead, now);
   const noReply = isNoReply(lead, noReplyHours, now);
   const canMoveLead = permissions.manage_assigned_leads === true && typeof onDragStart === "function";
+  const metaAdLabel = lead.attribution?.ad_name
+    ? { prefix: "Ad", value: lead.attribution.ad_name }
+    : lead.attribution?.headline
+      ? { prefix: "Creative", value: lead.attribution.headline }
+      : lead.attribution?.meta_ad_id
+        ? { prefix: "Ad ID", value: lead.attribution.meta_ad_id }
+        : null;
 
   return (
     <button
@@ -60,11 +67,9 @@ export default function LeadCard({ lead, now, noReplyHours, onOpen, onDragStart 
         )}
       </div>
 
-      {lead.attribution?.source === "meta_ads" && (lead.attribution?.headline || lead.attribution?.meta_ad_id) && (
-        <p className="mt-2.5 truncate text-[10px] font-medium text-[var(--color-text-muted)]" title={lead.attribution.headline || lead.attribution.meta_ad_id}>
-          {lead.attribution.headline
-            ? `Creative: ${lead.attribution.headline}`
-            : `Ad ID: ${lead.attribution.meta_ad_id}`}
+      {lead.attribution?.source === "meta_ads" && metaAdLabel && (
+        <p className="mt-2.5 truncate text-[10px] font-medium text-[var(--color-text-muted)]" title={metaAdLabel.value}>
+          {metaAdLabel.prefix}: {metaAdLabel.value}
         </p>
       )}
 

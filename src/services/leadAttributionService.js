@@ -1,5 +1,6 @@
 const attributionRepo = require("../db/leadAttributionRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
+const metaAdsEnrichment = require("./metaAdsEnrichmentService");
 const {
   normalizeAttribution,
 } = require("../utils/leadAttribution");
@@ -19,7 +20,11 @@ function isReferralAttribution(attribution) {
   );
 }
 
-function createLeadAttributionService(repo = attributionRepo, events = realtimeEvents) {
+function createLeadAttributionService(
+  repo = attributionRepo,
+  events = realtimeEvents,
+  enrichment = metaAdsEnrichment
+) {
   async function rememberPendingReferral(incoming) {
     if (!incoming?.attributionOnly || !incoming?.attribution) return false;
     if (!["facebook", "instagram"].includes(incoming.channel)) return false;
@@ -67,6 +72,13 @@ function createLeadAttributionService(repo = attributionRepo, events = realtimeE
         leadId: lead.id,
         reason: "lead_attribution_captured",
       });
+
+      // Marketing API lookup is intentionally fire-and-forget. The patient
+      // message and immutable first-touch row are already durable, so a slow or
+      // unavailable Meta API must never delay the chatbot reply path.
+      if (saved.enrichment_status === "pending") {
+        enrichment.queueAttributionEnrichment?.(saved.id);
+      }
     }
     return saved;
   }

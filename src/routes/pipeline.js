@@ -33,6 +33,7 @@ function publicAttribution(attribution) {
     platform: attribution.platform || null,
     channel: attribution.channel || null,
     meta_ad_id: attribution.meta_ad_id || null,
+    meta_account_id: attribution.meta_account_id || null,
     meta_source_id: attribution.meta_source_id || null,
     meta_source_type: attribution.meta_source_type || null,
     referral_ref: attribution.referral_ref || null,
@@ -49,6 +50,8 @@ function publicAttribution(attribution) {
     adset_id: attribution.adset_id || null,
     adset_name: attribution.adset_name || null,
     ad_name: attribution.ad_name || null,
+    enrichment_status: attribution.enrichment_status || null,
+    enriched_at: attribution.enriched_at || null,
     attributed_at: attribution.attributed_at || null,
   };
 }
