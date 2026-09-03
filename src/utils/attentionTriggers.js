@@ -12,6 +12,9 @@
 
 const TRIGGER_PATTERNS = [
   // English: explicit human request / complaint / urgent safety language.
+  // Avoid broad matches such as plain "side effects" or "in pain" because the
+  // deterministic layer now causes a real Staff-mode handoff; normal questions
+  // like "what are the side effects?" and "will I be in pain?" should stay AI.
   /\bspeak (to|with) (a |an )?(human|person|staff|someone|agent)\b/i,
   /\btalk (to|with) (a |an )?(human|person|staff|someone|agent)\b/i,
   /\breal (person|human)\b/i,
@@ -20,9 +23,10 @@ const TRIGGER_PATTERNS = [
   /\brefund\b/i,
   /\bemergency\b/i,
   /\burgent(ly)?\b/i,
-  /\ballerg(y|ic|ic reaction)\b/i,
-  /\bside effect\b/i,
-  /\bin pain\b|\bhurts a lot\b|\bsevere pain\b|\bgetting worse\b/i,
+  /\b(?:i'?m|i am) allergic\b|\bi have (?:an )?allerg(?:y|ies)\b|\ballergic reaction\b/i,
+  /\b(?:i'?m|i am) (?:having|experiencing) (?:a |some )?side effects?\b/i,
+  /\bside effects? (?:after|since)\b|\badverse reaction\b|\bbad reaction\b/i,
+  /\b(?:i'?m|i am) in pain\b|\bhurts a lot\b|\bsevere pain\b|\bgetting worse\b/i,
   /\blodge (a )?complaint\b/i,
   /\bmanager\b/i,
   /\blawyer\b|\blegal action\b/i,
