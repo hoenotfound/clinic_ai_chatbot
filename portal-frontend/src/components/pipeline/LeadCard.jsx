@@ -62,7 +62,9 @@ export default function LeadCard({ lead, now, noReplyHours, onOpen, onDragStart 
 
       {lead.attribution?.source === "meta_ads" && (lead.attribution?.headline || lead.attribution?.meta_ad_id) && (
         <p className="mt-2.5 truncate text-[10px] font-medium text-[var(--color-text-muted)]" title={lead.attribution.headline || lead.attribution.meta_ad_id}>
-          Ad: {lead.attribution.headline || lead.attribution.meta_ad_id}
+          {lead.attribution.headline
+            ? `Creative: ${lead.attribution.headline}`
+            : `Ad ID: ${lead.attribution.meta_ad_id}`}
         </p>
       )}
 
