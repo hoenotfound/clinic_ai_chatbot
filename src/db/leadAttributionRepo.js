@@ -6,19 +6,30 @@ function toJson(value) {
 
 async function savePending(channel, externalUserId, attribution) {
   if (!channel || !externalUserId || !attribution) return null;
-  const result = await pool.query(
-    `INSERT INTO pending_lead_attributions (
-       channel, external_user_id, attribution, created_at, expires_at
-     )
-     VALUES ($1, $2, $3::jsonb, now(), now() + interval '7 days')
-     ON CONFLICT (channel, external_user_id) DO UPDATE SET
-       attribution = EXCLUDED.attribution,
-       created_at = now(),
-       expires_at = now() + interval '7 days'
-     RETURNING *`,
-    [channel, String(externalUserId), toJson(attribution)]
-  );
-  return result.rows[0] || null;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`DELETE FROM pending_lead_attributions WHERE expires_at <= now()`);
+    const result = await client.query(
+      `INSERT INTO pending_lead_attributions (
+         channel, external_user_id, attribution, created_at, expires_at
+       )
+       VALUES ($1, $2, $3::jsonb, now(), now() + interval '7 days')
+       ON CONFLICT (channel, external_user_id) DO UPDATE SET
+         attribution = EXCLUDED.attribution,
+         created_at = now(),
+         expires_at = now() + interval '7 days'
+       RETURNING *`,
+      [channel, String(externalUserId), toJson(attribution)]
+    );
+    await client.query("COMMIT");
+    return result.rows[0] || null;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function takePending(channel, externalUserId) {
@@ -144,8 +155,9 @@ async function createFirstTouch({ leadId, firstMessageId, attribution }) {
       );
     }
 
+    const existing = inserted || await getForLeadWithClient(client, leadId);
     await client.query("COMMIT");
-    return inserted || await getForLeadWithClient(client, leadId);
+    return existing;
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     throw err;
