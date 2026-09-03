@@ -36,6 +36,7 @@ export default function LeadAttributionPanel({ lead }) {
   const adLabel = attribution?.ad_name || attribution?.headline || null;
   const adFieldLabel = attribution?.ad_name ? "Ad" : attribution?.headline ? "Creative" : "Ad";
   const campaignLabel = attribution?.campaign_name || null;
+  const panelEyebrow = attribution ? "Captured acquisition" : "Lead source";
   const sourceOverride = attribution && lead.source && lead.source !== attribution.source
     ? lead.source
     : null;
@@ -47,7 +48,7 @@ export default function LeadAttributionPanel({ lead }) {
     <section className="mb-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Captured acquisition</p>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{panelEyebrow}</p>
           <h3 className="mt-1 font-display text-base font-bold">{sourceLabel(source)}</h3>
         </div>
         <LeadSourceBadge source={source} />
