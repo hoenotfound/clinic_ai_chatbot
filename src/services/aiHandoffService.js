@@ -12,49 +12,58 @@ const AI_HANDOFF_OWNER = "AI handoff";
  * while the model is generating this becomes a no-op and the late AI reply is
  * suppressed by the caller.
  */
-async function pauseAiForHumanHandoff(
-  contactId,
-  reason = "AI handed off this conversation."
-) {
-  const result = await pool.query(
-    `UPDATE contacts c
-     SET mode = 'human',
-         takeover_by = $1,
-         takeover_at = now(),
-         needs_attention = true,
-         attention_reason = $2,
-         updated_at = now()
-     WHERE c.id = $3
-       AND c.mode = 'ai'
-     RETURNING c.*,
-       (SELECT m.id FROM messages m
-        WHERE m.contact_id = c.id AND m.role = 'user'
-        ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS attention_message_id`,
-    [AI_HANDOFF_OWNER, reason, contactId]
-  );
+function createAiHandoffService({
+  database = pool,
+  publish = realtimeEvents.publish,
+  sendHumanInterventionAlert = telegramImmediateAlerts.sendHumanInterventionAlert,
+} = {}) {
+  return async function pauseAiForHumanHandoff(
+    contactId,
+    reason = "AI handed off this conversation."
+  ) {
+    const result = await database.query(
+      `UPDATE contacts c
+       SET mode = 'human',
+           takeover_by = $1,
+           takeover_at = now(),
+           needs_attention = true,
+           attention_reason = $2,
+           updated_at = now()
+       WHERE c.id = $3
+         AND c.mode = 'ai'
+       RETURNING c.*,
+         (SELECT m.id FROM messages m
+          WHERE m.contact_id = c.id AND m.role = 'user'
+          ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS attention_message_id`,
+      [AI_HANDOFF_OWNER, reason, contactId]
+    );
 
-  const updated = result.rows[0] || null;
-  if (!updated) return null;
+    const updated = result.rows[0] || null;
+    if (!updated) return null;
 
-  realtimeEvents.publish("conversation_changed", {
-    contactId: updated.id,
-    reason: "ai_handoff",
-  });
-
-  Promise.resolve(
-    telegramImmediateAlerts.sendHumanInterventionAlert({
+    publish("conversation_changed", {
       contactId: updated.id,
-      messageId: updated.attention_message_id,
-      reason: updated.attention_reason || reason,
-    })
-  ).catch((err) => {
-    console.error(`Telegram AI-handoff alert failed for contact ${updated.id}:`, err);
-  });
+      reason: "ai_handoff",
+    });
 
-  return updated;
+    Promise.resolve(
+      sendHumanInterventionAlert({
+        contactId: updated.id,
+        messageId: updated.attention_message_id,
+        reason: updated.attention_reason || reason,
+      })
+    ).catch((err) => {
+      console.error(`Telegram AI-handoff alert failed for contact ${updated.id}:`, err);
+    });
+
+    return updated;
+  };
 }
+
+const pauseAiForHumanHandoff = createAiHandoffService();
 
 module.exports = {
   AI_HANDOFF_OWNER,
+  createAiHandoffService,
   pauseAiForHumanHandoff,
 };
