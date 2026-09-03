@@ -16,6 +16,22 @@ const SCHEDULED_MESSAGE_COLUMNS = `
   failure_reason
 `;
 
+const SCHEDULED_MESSAGE_COLUMNS_WITH_ALIAS = `
+  s.id,
+  s.contact_id,
+  s.content,
+  s.scheduled_for,
+  s.status,
+  s.scheduled_by_username,
+  s.created_at,
+  s.updated_at,
+  s.sent_at,
+  s.cancelled_at,
+  s.claimed_at,
+  s.message_id,
+  s.failure_reason
+`;
+
 async function ensureSchema() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS scheduled_messages (
@@ -123,7 +139,7 @@ async function claimDue(limit = 25) {
        SET status = 'processing', claimed_at = NOW(), updated_at = NOW()
        FROM due
        WHERE s.id = due.id
-       RETURNING s.${SCHEDULED_MESSAGE_COLUMNS.replace(/\n/g, " s.").replace(/^\s*s\./, "")}`,
+       RETURNING ${SCHEDULED_MESSAGE_COLUMNS_WITH_ALIAS}`,
       [limit]
     );
     await client.query("COMMIT");
