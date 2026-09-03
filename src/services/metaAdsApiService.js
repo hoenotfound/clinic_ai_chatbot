@@ -1,7 +1,7 @@
 const DEFAULT_GRAPH_API_VERSION = "v26.0";
 const DEFAULT_TIMEOUT_MS = 10000;
 const MAX_TIMEOUT_MS = 30000;
-const AD_FIELDS = "id,name,account_id,campaign{id,name},adset{id,name}";
+const AD_FIELDS = "id,name,account_id,adset_id,campaign_id,campaign{id,name},adset{id,name}";
 
 class MetaAdsApiError extends Error {
   constructor(
@@ -81,6 +81,43 @@ function buildAdDetailsUrl(adId, version = graphApiVersion()) {
   return `https://graph.facebook.com/${version}/${normalizedAdId}?${params.toString()}`;
 }
 
+function normalizeAdDetails(data, expectedAdId) {
+  const returnedAdId = cleanId(data?.id);
+  if (!returnedAdId || returnedAdId !== expectedAdId) {
+    throw new MetaAdsApiError("Meta Marketing API returned an unexpected ad object.", {
+      retryable: true,
+    });
+  }
+
+  const details = {
+    adId: returnedAdId,
+    adName: cleanText(data?.name),
+    accountId: cleanId(data?.account_id),
+    adsetId: cleanId(data?.adset_id) || cleanId(data?.adset?.id),
+    adsetName: cleanText(data?.adset?.name),
+    campaignId: cleanId(data?.campaign_id) || cleanId(data?.campaign?.id),
+    campaignName: cleanText(data?.campaign?.name),
+  };
+
+  const missing = [
+    ["Ad name", details.adName],
+    ["Ad Account ID", details.accountId],
+    ["Ad Set ID", details.adsetId],
+    ["Ad Set name", details.adsetName],
+    ["Campaign ID", details.campaignId],
+    ["Campaign name", details.campaignName],
+  ].filter(([, value]) => !value).map(([label]) => label);
+
+  if (missing.length) {
+    throw new MetaAdsApiError(
+      `Meta Marketing API returned incomplete ad hierarchy: missing ${missing.join(", ")}.`,
+      { code: "INCOMPLETE_HIERARCHY", retryable: false }
+    );
+  }
+
+  return details;
+}
+
 async function fetchAdDetails(
   adId,
   {
@@ -139,22 +176,7 @@ async function fetchAdDetails(
       );
     }
 
-    const returnedAdId = cleanId(data?.id);
-    if (!returnedAdId || returnedAdId !== normalizedAdId) {
-      throw new MetaAdsApiError("Meta Marketing API returned an unexpected ad object.", {
-        retryable: true,
-      });
-    }
-
-    return {
-      adId: returnedAdId,
-      adName: cleanText(data?.name),
-      accountId: cleanId(data?.account_id),
-      adsetId: cleanId(data?.adset?.id),
-      adsetName: cleanText(data?.adset?.name),
-      campaignId: cleanId(data?.campaign?.id),
-      campaignName: cleanText(data?.campaign?.name),
-    };
+    return normalizeAdDetails(data, normalizedAdId);
   } catch (err) {
     if (err instanceof MetaAdsApiError) throw err;
     if (err?.name === "AbortError") {
@@ -183,5 +205,6 @@ module.exports = {
   isConfigurationGraphFailure,
   isRetryableGraphFailure,
   marketingAccessToken,
+  normalizeAdDetails,
   requestTimeoutMs,
 };
