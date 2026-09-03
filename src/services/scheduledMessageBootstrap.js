@@ -4,6 +4,7 @@ const conversationsRouter = require("../routes/conversations");
 const contactsRepo = require("../db/contactsRepo");
 const scheduledRepo = require("../db/scheduledMessageRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
+const { AI_HANDOFF_OWNER } = require("./aiHandoffService");
 const { startScheduledMessages, scheduleValidation } = require("./scheduledMessageService");
 
 function positiveInt(value) {
@@ -29,10 +30,17 @@ function publishScheduleChange(contactId) {
   });
 }
 
+function isRealStaffMode(contact) {
+  return contact?.mode === "human" && contact?.takeover_by !== AI_HANDOFF_OWNER;
+}
+
 function requireStaffMode(contact, res) {
-  if (contact.mode === "human") return true;
+  if (isRealStaffMode(contact)) return true;
+  const isAiHandoff = contact?.mode === "human" && contact?.takeover_by === AI_HANDOFF_OWNER;
   res.status(409).json({
-    error: "Take over this conversation before scheduling a staff message.",
+    error: isAiHandoff
+      ? "This conversation is waiting for a human after an AI handoff. Send a staff reply first before scheduling a later message."
+      : "Take over this conversation before scheduling a staff message.",
     code: "staff_mode_required",
   });
   return false;
@@ -65,7 +73,7 @@ conversationsRouter.get("/:contactId/scheduled-messages", async (req, res) => {
       items,
       lastInboundAt: window.lastInboundAt,
       windowEndsAt: window.windowEndsAt,
-      staffMode: contact.mode === "human",
+      staffMode: isRealStaffMode(contact),
     });
   } catch (err) {
     console.error("Failed to list scheduled messages:", err);

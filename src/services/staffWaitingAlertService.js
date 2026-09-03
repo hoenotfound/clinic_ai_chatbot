@@ -41,12 +41,12 @@ async function findWaitingStaffOwnedConversations(
   const result = await query(
     `SELECT
        c.id AS contact_id,
-       first_waiting.id AS waiting_since_message_id,
-       first_waiting.created_at AS waiting_since,
+       latest_waiting.id AS waiting_since_message_id,
+       latest_waiting.created_at AS waiting_since,
        latest_waiting.id AS latest_customer_message_id,
        GREATEST(
          1,
-         FLOOR(EXTRACT(EPOCH FROM (now() - first_waiting.created_at)) / 60)::integer
+         FLOOR(EXTRACT(EPOCH FROM (now() - latest_waiting.created_at)) / 60)::integer
        ) AS waiting_minutes
      FROM contacts c
      LEFT JOIN LATERAL (
@@ -54,49 +54,38 @@ async function findWaitingStaffOwnedConversations(
        FROM messages m
        WHERE m.contact_id = c.id
          AND m.role = 'assistant'
+         AND m.sent_by_username IS NOT NULL
+         AND m.is_automated_follow_up = false
          AND (
            m.delivery_status IS NULL
            OR m.delivery_status NOT IN ('failed', 'unknown')
          )
        ORDER BY m.created_at DESC, m.id DESC
        LIMIT 1
-     ) last_valid_outbound ON true
+     ) last_valid_staff_outbound ON true
      JOIN LATERAL (
        SELECT m.id, m.created_at
        FROM messages m
        WHERE m.contact_id = c.id
          AND m.role = 'user'
          AND (
-           last_valid_outbound.id IS NULL
+           last_valid_staff_outbound.id IS NULL
            OR (m.created_at, m.id) >
-              (last_valid_outbound.created_at, last_valid_outbound.id)
-         )
-       ORDER BY m.created_at ASC, m.id ASC
-       LIMIT 1
-     ) first_waiting ON true
-     JOIN LATERAL (
-       SELECT m.id, m.created_at
-       FROM messages m
-       WHERE m.contact_id = c.id
-         AND m.role = 'user'
-         AND (
-           last_valid_outbound.id IS NULL
-           OR (m.created_at, m.id) >
-              (last_valid_outbound.created_at, last_valid_outbound.id)
+              (last_valid_staff_outbound.created_at, last_valid_staff_outbound.id)
          )
        ORDER BY m.created_at DESC, m.id DESC
        LIMIT 1
      ) latest_waiting ON true
      WHERE (c.mode = 'human' OR c.needs_attention = true)
-       AND first_waiting.created_at <=
+       AND latest_waiting.created_at <=
            now() - ($1::integer * interval '1 minute')
        AND NOT EXISTS (
          SELECT 1
          FROM telegram_immediate_alerts a
          WHERE a.event_key =
-           'staff_waiting:' || c.id::text || ':' || first_waiting.id::text
+           'staff_waiting:' || c.id::text || ':' || latest_waiting.id::text
        )
-     ORDER BY first_waiting.created_at ASC, c.id ASC
+     ORDER BY latest_waiting.created_at ASC, c.id ASC
      LIMIT $2`,
     [waitMinutes, limit]
   );
@@ -112,10 +101,10 @@ async function isStillWaitingForStaff(
     `SELECT EXISTS (
        SELECT 1
        FROM contacts c
-       JOIN messages first_waiting
-         ON first_waiting.id = $2
-        AND first_waiting.contact_id = c.id
-        AND first_waiting.role = 'user'
+       JOIN messages waiting_message
+         ON waiting_message.id = $2
+        AND waiting_message.contact_id = c.id
+        AND waiting_message.role = 'user'
        WHERE c.id = $1
          AND (c.mode = 'human' OR c.needs_attention = true)
          AND NOT EXISTS (
@@ -123,12 +112,14 @@ async function isStillWaitingForStaff(
            FROM messages outbound
            WHERE outbound.contact_id = c.id
              AND outbound.role = 'assistant'
+             AND outbound.sent_by_username IS NOT NULL
+             AND outbound.is_automated_follow_up = false
              AND (
                outbound.delivery_status IS NULL
                OR outbound.delivery_status NOT IN ('failed', 'unknown')
              )
              AND (outbound.created_at, outbound.id) >
-                 (first_waiting.created_at, first_waiting.id)
+                 (waiting_message.created_at, waiting_message.id)
          )
      ) AS waiting`,
     [contactId, waitingSinceMessageId]
@@ -222,9 +213,10 @@ function createStaffWaitingAlertService({
         return { status: "skipped", reason: "contact-not-found" };
       }
 
-      // Re-check immediately before building/sending the alert. A successful
-      // outbound reply resolves the episode. Keeping Staff mode active, or an
-      // outstanding attention flag after Return to AI, keeps it eligible.
+      // Re-check immediately before building/sending the alert. Only an actual
+      // staff-authored outbound resolves the waiting episode; an AI handoff
+      // acknowledgement or automated follow-up must not masquerade as the staff
+      // response this reminder is waiting for.
       if (!await stillWaiting(contactId, waitingSinceMessageId, query)) {
         await client.query("COMMIT");
         transactionStarted = false;
@@ -238,7 +230,7 @@ function createStaffWaitingAlertService({
         text,
       });
 
-      // Only a successful Telegram send becomes the permanent one-per-episode
+      // Only a successful Telegram send becomes the permanent one-per-message
       // marker. If sendMessage throws, ROLLBACK leaves no marker and a later
       // sweep can retry the reminder.
       await client.query(

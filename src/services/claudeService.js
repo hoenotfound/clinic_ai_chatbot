@@ -1,22 +1,10 @@
 const Anthropic = require("@anthropic-ai/sdk");
-const { buildSystemPrompt } = require("../utils/systemPrompt");
+const { buildSystemPrompt, normalizeOptions } = require("../utils/systemPrompt");
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 
-// Use Sonnet for reply quality. Once volume is high, consider routing
-// simple FAQ-style messages to Haiku instead to cut cost — same prompt works on both.
-const MODEL = "claude-sonnet-5";
-
-/**
- * @param {Array<{role: 'user'|'assistant', content: string|Array<object>}>} messages - full conversation, ending in the latest user message
- * @param {boolean} isFirstMessage - true if this is the patient's first-ever message (see server.js)
- * @returns {Promise<string>} the assistant's reply text
- */
-async function getReply(messages, isFirstMessage = false) {
-  // Most messages have plain string content (from history); a message with a
-  // live photo attached (see aiService.js) instead has content as an array
-  // of generic {type, ...} parts that need converting to Claude's block format.
-  const claudeMessages = messages.map((m) => {
+function buildClaudeMessages(messages) {
+  return messages.map((m) => {
     if (!Array.isArray(m.content)) return m;
 
     const content = m.content.map((part) =>
@@ -26,16 +14,33 @@ async function getReply(messages, isFirstMessage = false) {
     );
     return { role: m.role, content };
   });
+}
 
+async function getReply(messages, optionsOrFirstMessage = false, apiKey = null) {
+  const options = normalizeOptions(optionsOrFirstMessage);
+  const resolvedKey = apiKey || process.env.ANTHROPIC_API_KEY;
+  if (!resolvedKey) {
+    const err = new Error("ANTHROPIC_API_KEY is not configured.");
+    err.code = "AI_PROVIDER_NOT_CONFIGURED";
+    throw err;
+  }
+
+  const anthropic = new Anthropic({ apiKey: resolvedKey });
   const response = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 800,
-    system: buildSystemPrompt(isFirstMessage),
-    messages: claudeMessages,
+    max_tokens: 1000,
+    system: buildSystemPrompt(options),
+    messages: buildClaudeMessages(messages),
   });
 
   const textBlock = response.content.find((block) => block.type === "text");
-  return textBlock ? textBlock.text : "Sorry, I couldn't generate a reply — please try again.";
+  const text = textBlock?.text?.trim();
+  if (!text) {
+    const err = new Error("Claude returned an empty response.");
+    err.code = "EMPTY_AI_RESPONSE";
+    throw err;
+  }
+  return text;
 }
 
-module.exports = { getReply };
+module.exports = { MODEL, buildClaudeMessages, getReply };

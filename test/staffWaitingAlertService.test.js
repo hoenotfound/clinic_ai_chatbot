@@ -48,11 +48,11 @@ function createFakeDatabase(queryHandler = async () => ({ rows: [] })) {
   };
 }
 
-test("waiting candidate query finds unresolved episodes after 10 minutes", async () => {
+test("waiting candidate query uses the latest unanswered customer message after 10 minutes", async () => {
   let captured = null;
   const rows = [{
     contact_id: 12,
-    waiting_since_message_id: 45,
+    waiting_since_message_id: 46,
     latest_customer_message_id: 46,
     waiting_minutes: 11,
   }];
@@ -68,7 +68,9 @@ test("waiting candidate query finds unresolved episodes after 10 minutes", async
   assert.deepEqual(result, rows);
   assert.deepEqual(captured.params, [STAFF_WAITING_MINUTES, STAFF_WAITING_BATCH_SIZE]);
   assert.match(captured.sql, /c\.mode = 'human' OR c\.needs_attention = true/);
-  assert.match(captured.sql, /first_waiting\.created_at <=/);
+  assert.match(captured.sql, /latest_waiting\.created_at <=/);
+  assert.match(captured.sql, /latest_waiting\.id AS waiting_since_message_id/);
+  assert.match(captured.sql, /ORDER BY m\.created_at DESC, m\.id DESC/);
   assert.match(captured.sql, /delivery_status NOT IN \('failed', 'unknown'\)/);
   assert.match(captured.sql, /staff_waiting:/);
 });
@@ -88,6 +90,8 @@ test("revalidation keeps Staff mode or outstanding attention eligible until a va
   assert.deepEqual(captured.params, [12, 45]);
   assert.match(captured.sql, /c\.mode = 'human' OR c\.needs_attention = true/);
   assert.match(captured.sql, /outbound\.role = 'assistant'/);
+  assert.match(captured.sql, /outbound\.sent_by_username IS NOT NULL/);
+  assert.match(captured.sql, /outbound\.is_automated_follow_up = false/);
   assert.match(captured.sql, /outbound\.delivery_status NOT IN \('failed', 'unknown'\)/);
 });
 

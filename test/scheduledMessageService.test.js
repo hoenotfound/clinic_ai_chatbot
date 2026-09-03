@@ -8,6 +8,7 @@ const scheduledRepo = require("../src/db/scheduledMessageRepo");
 const conversationStore = require("../src/utils/conversationStore");
 const realtimeEvents = require("../src/utils/realtimeEvents");
 const channelMessaging = require("../src/services/channelMessagingService");
+const { AI_HANDOFF_OWNER } = require("../src/services/aiHandoffService");
 const { runScheduledMessages } = require("../src/services/scheduledMessageService");
 
 test.beforeEach(() => {
@@ -69,6 +70,34 @@ test("does not send a scheduled staff message after the conversation returns to 
   assert.equal(sendCount, 0);
   assert.equal(failedReason.id, 10);
   assert.match(failedReason.reason, /no longer in Staff mode/i);
+});
+
+test("does not let an old scheduled message fire just because AI handoff switched the chat to Staff mode", async () => {
+  let failedReason = null;
+  let sendCount = 0;
+
+  scheduledRepo.claimDue = async () => [
+    { id: 14, contact_id: 1, content: "Old sales follow-up", scheduled_by_username: "staff1" },
+  ];
+  contactsRepo.getContactById = async () => ({
+    id: 1,
+    channel: "whatsapp",
+    mode: "human",
+    takeover_by: AI_HANDOFF_OWNER,
+  });
+  scheduledRepo.markFailed = async (id, reason) => {
+    failedReason = { id, reason };
+  };
+  channelMessaging.sendText = async () => {
+    sendCount += 1;
+    return { success: true, wamid: "unexpected" };
+  };
+
+  await runScheduledMessages();
+
+  assert.equal(sendCount, 0);
+  assert.equal(failedReason.id, 14);
+  assert.match(failedReason.reason, /AI handed this conversation to staff/i);
 });
 
 test("keeps accepted Facebook scheduled sends on the existing neutral delivery status path", async () => {

@@ -1,25 +1,11 @@
 const { GoogleGenAI } = require("@google/genai");
-const { buildSystemPrompt } = require("../utils/systemPrompt");
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const { buildSystemPrompt, normalizeOptions } = require("../utils/systemPrompt");
 
 // Flash-tier models are what Google's free tier covers as of mid-2026.
-// Model names on the free tier shift fairly often — if this model returns
-// a 404/"not found" error, open Google AI Studio, check which model shows
-// a free quota right now, and update GEMINI_MODEL in your .env.
 const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
-/**
- * @param {Array<{role: 'user'|'assistant', content: string}>} messages - full conversation, ending in the latest user message
- * @param {boolean} isFirstMessage - true if this is the patient's first-ever message (see server.js)
- * @returns {Promise<string>} the assistant's reply text
- */
-async function getReply(messages, isFirstMessage = false) {
-  // Gemini uses "model" instead of "assistant" as the role name, and expects
-  // parts arrays rather than plain strings. Most messages have plain string
-  // content (from history); a message with a live photo attached (see
-  // aiService.js) instead has content as an array of {type, ...} parts.
-  const contents = messages.map((m) => {
+function buildContents(messages) {
+  return messages.map((m) => {
     const role = m.role === "assistant" ? "model" : "user";
 
     if (Array.isArray(m.content)) {
@@ -33,25 +19,42 @@ async function getReply(messages, isFirstMessage = false) {
 
     return { role, parts: [{ text: m.content }] };
   });
+}
 
+/**
+ * Low-level Gemini attempt. apiService.js supplies the API key so it can rotate
+ * keys and fail over without this provider caching one key at module startup.
+ */
+async function getReply(messages, optionsOrFirstMessage = false, apiKey = null) {
+  const options = normalizeOptions(optionsOrFirstMessage);
+  const resolvedKey = apiKey || process.env.GEMINI_API_KEY;
+  if (!resolvedKey) {
+    const err = new Error("GEMINI_API_KEY is not configured.");
+    err.code = "AI_PROVIDER_NOT_CONFIGURED";
+    throw err;
+  }
+
+  const ai = new GoogleGenAI({ apiKey: resolvedKey });
   const response = await ai.models.generateContent({
     model: MODEL,
-    contents,
+    contents: buildContents(messages),
     config: {
-      systemInstruction: buildSystemPrompt(isFirstMessage),
-      maxOutputTokens: 1000,
-      // Flash 2.5 has "thinking" on by default, and those invisible reasoning
-      // tokens are deducted from maxOutputTokens too — on a small budget the
-      // model can burn it all on thinking and return a reply cut off mid-word.
-      // This is a simple FAQ/front-desk bot, not a reasoning task, so turn it off.
-      thinkingConfig: {
-        thinkingBudget: 0,
-      },
+      systemInstruction: buildSystemPrompt(options),
+      maxOutputTokens: 1200,
+      responseMimeType: "application/json",
+      // Flash 2.5 has thinking on by default; these front-desk responses don't
+      // need a large reasoning budget and visible output matters more.
+      thinkingConfig: { thinkingBudget: 0 },
     },
   });
 
-  const text = response.text;
-  return text || "Sorry, I couldn't generate a reply — please try again.";
+  const text = response.text?.trim();
+  if (!text) {
+    const err = new Error("Gemini returned an empty response.");
+    err.code = "EMPTY_AI_RESPONSE";
+    throw err;
+  }
+  return text;
 }
 
-module.exports = { getReply };
+module.exports = { MODEL, buildContents, getReply };

@@ -10,6 +10,8 @@ function fakeDatabase({
   temperature = "warm",
   temperatureLocked = false,
   contactUpdated = true,
+  branchName = null,
+  treatmentInterest = null,
 } = {}) {
   const calls = [];
   const client = {
@@ -23,9 +25,15 @@ function fakeDatabase({
       if (normalized.startsWith("UPDATE contacts")) {
         return { rows: contactUpdated ? [{ id: 42 }] : [] };
       }
-      if (normalized.startsWith("SELECT id, temperature, temperature_locked FROM leads")) {
+      if (normalized.startsWith("SELECT id, temperature, temperature_locked, branch_name, treatment_interest FROM leads")) {
         return {
-          rows: [{ id: 9, temperature, temperature_locked: temperatureLocked }],
+          rows: [{
+            id: 9,
+            temperature,
+            temperature_locked: temperatureLocked,
+            branch_name: branchName,
+            treatment_interest: treatmentInterest,
+          }],
         };
       }
       if (normalized.startsWith("UPDATE leads")) {
@@ -66,15 +74,18 @@ test("booking-ready flags Inbox, makes an unlocked lead Hot, records activity, a
 
   const result = await markBookingReady(42, 777);
 
-  assert.deepEqual(result, {
-    contactUpdated: true,
-    leadId: 9,
-    leadChanged: true,
+  assert.equal(result.contactUpdated, true);
+  assert.equal(result.leadId, 9);
+  assert.equal(result.leadChanged, true);
+  assert.deepEqual(result.details, {
+    branch: null,
+    treatment: null,
+    appointmentPreference: null,
   });
   assert.ok(
     calls.some(({ sql }) =>
-      sql.includes("temperature = 'hot'") &&
-      sql.includes("temperature_source = 'ai'")
+      sql.includes("temperature_locked = false THEN 'hot'") &&
+      sql.includes("temperature_locked = false THEN 'ai'")
     )
   );
   assert.ok(
@@ -107,7 +118,46 @@ test("booking-ready flags Inbox, makes an unlocked lead Hot, records activity, a
   assert.doesNotMatch(allSql, /stage_id\s*=/i);
 });
 
-test("booking-ready preserves a staff-locked lead temperature", async () => {
+test("structured Booking Ready persists canonical branch/treatment and appointment preference metadata", async () => {
+  const { database, calls } = fakeDatabase();
+  const markBookingReady = createBookingReadyOutcomeService({
+    database,
+    publish() {},
+    sendBookingReadyAlert() { return { status: "sent" }; },
+  });
+
+  const result = await markBookingReady(42, 780, {
+    details: {
+      branch: "Petaling Jaya",
+      treatment: "HIFU Non-Surgical Facelift",
+      appointmentPreference: "Saturday afternoon",
+    },
+  });
+
+  assert.deepEqual(result.details, {
+    branch: "Petaling Jaya",
+    treatment: "HIFU Non-Surgical Facelift",
+    appointmentPreference: "Saturday afternoon",
+  });
+  const contactUpdate = calls.find(({ sql }) => sql.startsWith("UPDATE contacts"));
+  assert.match(contactUpdate.sql, /latest_booking\.metadata->>'branch' IS DISTINCT FROM \$3/);
+  assert.match(contactUpdate.sql, /latest_booking\.metadata->>'treatment' IS DISTINCT FROM \$4/);
+  assert.match(contactUpdate.sql, /latest_booking\.metadata->>'appointmentPreference' IS DISTINCT FROM \$5/);
+  assert.deepEqual(contactUpdate.params.slice(2), [
+    "Petaling Jaya",
+    "HIFU Non-Surgical Facelift",
+    "Saturday afternoon",
+  ]);
+
+  const leadUpdate = calls.find(({ sql }) => sql.startsWith("UPDATE leads"));
+  assert.equal(leadUpdate.params[1], "Petaling Jaya");
+  assert.equal(leadUpdate.params[2], "HIFU Non-Surgical Facelift");
+  const activity = calls.find(({ sql }) => sql.startsWith("INSERT INTO lead_activities"));
+  assert.equal(activity.params[2].appointmentPreference, "Saturday afternoon");
+  assert.doesNotMatch(leadUpdate.sql, /appointment_at/i);
+});
+
+test("booking-ready preserves a staff-locked lead temperature when no structured details changed", async () => {
   const { database, calls } = fakeDatabase({
     temperature: "cold",
     temperatureLocked: true,
@@ -149,15 +199,24 @@ test("booking-ready does nothing when the contact is no longer eligible for a fr
 
   const result = await markBookingReady(42, 779);
 
-  assert.deepEqual(result, {
-    contactUpdated: false,
-    leadId: null,
-    leadChanged: false,
+  assert.equal(result.contactUpdated, false);
+  assert.equal(result.leadId, null);
+  assert.equal(result.leadChanged, false);
+  assert.deepEqual(result.details, {
+    branch: null,
+    treatment: null,
+    appointmentPreference: null,
   });
+  // The atomic eligibility UPDATE is allowed to inspect the current lead, but
+  // once it returns no row there must be no follow-on lead mutation/activity.
   assert.equal(
-    calls.some(({ sql }) => sql.includes("FROM leads")),
+    calls.some(({ sql }) =>
+      sql.startsWith("SELECT id, temperature, temperature_locked, branch_name, treatment_interest FROM leads")
+    ),
     false
   );
+  assert.equal(calls.some(({ sql }) => sql.startsWith("UPDATE leads")), false);
+  assert.equal(calls.some(({ sql }) => sql.startsWith("INSERT INTO lead_activities")), false);
   assert.deepEqual(published, []);
   assert.deepEqual(alerts, []);
 });

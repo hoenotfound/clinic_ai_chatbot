@@ -4,6 +4,7 @@ const pipelineRepo = require("../db/pipelineRepo");
 const scheduledRepo = require("../db/scheduledMessageRepo");
 const conversationStore = require("../utils/conversationStore");
 const realtimeEvents = require("../utils/realtimeEvents");
+const { AI_HANDOFF_OWNER } = require("./aiHandoffService");
 const channelMessaging = require("./channelMessagingService");
 const { validateScheduledTime, getServiceWindowEndsAt } = require("./scheduledMessageRules");
 
@@ -30,12 +31,26 @@ function publishScheduleChange(contactId) {
   });
 }
 
-async function failBecauseAiOwnsConversation(item, contact) {
-  const reason =
-    "Scheduled message was not sent because this conversation is no longer in Staff mode. Take over the conversation and send or reschedule it.";
+async function failScheduledOwnership(item, contact, reason) {
   await scheduledRepo.markFailed(item.id, reason);
   await contactsRepo.setAttention(contact.id, true, reason).catch(() => {});
   publishScheduleChange(contact.id);
+}
+
+async function failBecauseAiOwnsConversation(item, contact) {
+  return failScheduledOwnership(
+    item,
+    contact,
+    "Scheduled message was not sent because this conversation is no longer in Staff mode. Take over the conversation and send or reschedule it."
+  );
+}
+
+async function failBecauseAiHandoffNeedsStaff(item, contact) {
+  return failScheduledOwnership(
+    item,
+    contact,
+    "Scheduled message was not sent because the AI handed this conversation to staff for personal review. A staff member should reply directly before any later message is scheduled."
+  );
 }
 
 async function processScheduledMessage(item) {
@@ -50,6 +65,16 @@ async function processScheduledMessage(item) {
   // conflict with a live AI conversation.
   if (contact.mode !== "human") {
     await failBecauseAiOwnsConversation(item, contact);
+    return;
+  }
+
+  // AI handoff intentionally uses Staff mode to stop automated replies, but it
+  // is not equivalent to a staff member actively owning the conversation yet.
+  // Never allow an old scheduled sales message to fire into a complaint,
+  // medical/safety escalation, or provider-failure handoff merely because the
+  // AI pause changed mode from ai -> human.
+  if (contact.takeover_by === AI_HANDOFF_OWNER) {
+    await failBecauseAiHandoffNeedsStaff(item, contact);
     return;
   }
 
@@ -180,6 +205,8 @@ function scheduleValidation({ scheduledFor, lastInboundAt, now = new Date() }) {
 
 module.exports = {
   CHECK_INTERVAL_MS,
+  failBecauseAiHandoffNeedsStaff,
+  processScheduledMessage,
   runScheduledMessages,
   startScheduledMessages,
   scheduleValidation,
