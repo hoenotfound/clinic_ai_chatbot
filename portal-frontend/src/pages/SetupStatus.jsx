@@ -102,6 +102,9 @@ export default function SetupStatus() {
 
   const summary = data.summary || {};
   const allRequiredReady = summary.requiredTotal > 0 && summary.requiredReady === summary.requiredTotal;
+  const hasMetaMessaging = (data.checks || []).some(
+    (check) => ["facebook", "instagram"].includes(check.key) && check.configured
+  );
 
   return (
     <div className="h-full overflow-y-auto overscroll-contain bg-[var(--color-bg)]">
@@ -153,6 +156,18 @@ export default function SetupStatus() {
             </p>
           </div>
         </div>
+
+        {hasMetaMessaging && (
+          <div className="flex items-start gap-3 rounded-2xl border border-[var(--color-border)] bg-white px-4 py-3.5 shadow-sm">
+            <InfoIcon className="mt-0.5 h-5 w-5 shrink-0 text-[var(--color-accent)]" />
+            <div>
+              <p className="text-xs font-bold">Meta app review is separate</p>
+              <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                Facebook and Instagram checks confirm access to configured test assets and signed webhook activity. They cannot confirm that Meta has approved public messaging access.
+              </p>
+            </div>
+          </div>
+        )}
 
         {groups.map((group) => (
           <section key={group.name}>
@@ -249,4 +264,8 @@ function RefreshIcon(props) {
 
 function ShieldIcon(props) {
   return <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" strokeLinejoin="round" /><path d="m9 12 2 2 4-4" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+}
+
+function InfoIcon(props) {
+  return <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" strokeLinecap="round" /></svg>;
 }
