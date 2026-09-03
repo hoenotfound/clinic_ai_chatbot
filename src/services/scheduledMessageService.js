@@ -30,10 +30,26 @@ function publishScheduleChange(contactId) {
   });
 }
 
+async function failBecauseAiOwnsConversation(item, contact) {
+  const reason =
+    "Scheduled message was not sent because this conversation is no longer in Staff mode. Take over the conversation and send or reschedule it.";
+  await scheduledRepo.markFailed(item.id, reason);
+  await contactsRepo.setAttention(contact.id, true, reason).catch(() => {});
+  publishScheduleChange(contact.id);
+}
+
 async function processScheduledMessage(item) {
   const contact = await contactsRepo.getContactById(item.contact_id);
   if (!contact) {
     await scheduledRepo.markFailed(item.id, "Contact no longer exists.");
+    return;
+  }
+
+  // Scheduled messages are staff actions. If staff returned the conversation
+  // to AI before the due time, do not let an old staff message fire later and
+  // conflict with a live AI conversation.
+  if (contact.mode !== "human") {
+    await failBecauseAiOwnsConversation(item, contact);
     return;
   }
 
@@ -51,6 +67,12 @@ async function processScheduledMessage(item) {
     publishScheduleChange(contact.id);
     return;
   }
+
+  // Match normal staff-send behavior: once staff sends a reply, clear the
+  // current unread/attention state. A delivery failure below will immediately
+  // replace it with a delivery-specific attention reason.
+  await contactsRepo.setAttention(contact.id, false);
+  await contactsRepo.setUnread(contact.id, false);
 
   const saved = await conversationStore.appendMessageForContact(
     contact.id,
@@ -78,8 +100,12 @@ async function processScheduledMessage(item) {
     finalMessage =
       (await messagesRepo.setDeliveryStatusById(saved.id, "failed", errorText)) || saved;
   } else {
+    // Facebook/Instagram accepted sends intentionally have no WhatsApp WAMID.
+    // Keep their delivery state neutral, matching the existing manual-send
+    // pipeline rather than inventing a delivery receipt those channels did not
+    // provide.
     finalMessage =
-      (await messagesRepo.setDeliveryStatusById(saved.id, "sent", null)) || saved;
+      (await messagesRepo.setDeliveryStatusById(saved.id, null, null)) || saved;
   }
   publishConversationChange(finalMessage, "delivery_status");
 
