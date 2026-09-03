@@ -50,6 +50,29 @@ ALTER TABLE lead_attributions
   ADD COLUMN IF NOT EXISTS enrichment_last_error TEXT,
   ADD COLUMN IF NOT EXISTS enriched_at TIMESTAMPTZ;
 
+-- During a zero-downtime deploy, the old PR #65 process can briefly continue
+-- receiving webhooks after this migration is installed. That older code does
+-- not know about enrichment_status and would otherwise receive the column's
+-- not_applicable default. Normalize exact Meta-ad inserts at the database edge
+-- so those leads are still picked up immediately by the #67 worker.
+CREATE OR REPLACE FUNCTION queue_meta_ad_attribution_enrichment()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW.source = 'meta_ads'
+     AND NEW.meta_ad_id IS NOT NULL
+     AND NEW.enrichment_status = 'not_applicable' THEN
+    NEW.enrichment_status := 'pending';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_queue_meta_ad_attribution_enrichment ON lead_attributions;
+CREATE TRIGGER trg_queue_meta_ad_attribution_enrichment
+BEFORE INSERT ON lead_attributions
+FOR EACH ROW
+EXECUTE FUNCTION queue_meta_ad_attribution_enrichment();
+
 -- Meta ad rows captured by PR #65 predate verified Marketing API enrichment.
 -- Even if some referral metadata happened to contain hierarchy names, #65 had
 -- no Ad Account ID or enrichment state, so queue each legacy Meta-ad row once
