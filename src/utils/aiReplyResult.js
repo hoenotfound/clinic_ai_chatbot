@@ -13,13 +13,58 @@ function cleanOptionalText(value) {
   return cleaned ? cleaned.slice(0, MAX_METADATA_LENGTH) : null;
 }
 
+function normalizeName(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
 function canonicalConfiguredName(value, items) {
   const cleaned = cleanOptionalText(value);
   if (!cleaned) return null;
+  const target = normalizeName(cleaned);
   const match = (items || []).find(
-    (item) => String(item?.name || "").trim().toLowerCase() === cleaned.toLowerCase()
+    (item) => normalizeName(item?.name) === target
   );
   return match ? String(match.name).trim() : null;
+}
+
+function configuredBranchAliases(branch) {
+  const canonical = String(branch?.name || "").trim();
+  if (!canonical) return new Set();
+
+  const primaryPart = canonical.split(",")[0].trim();
+  const normalizedFull = normalizeName(canonical);
+  const normalizedPrimary = normalizeName(primaryPart);
+  const primaryWords = normalizedPrimary.split(" ").filter(Boolean);
+  const initials = primaryWords.length >= 2
+    ? primaryWords.map((word) => word[0]).join("")
+    : "";
+
+  return new Set(
+    [normalizedFull, normalizedPrimary, initials.length >= 2 ? initials : null]
+      .filter(Boolean)
+  );
+}
+
+function canonicalConfiguredBranch(value, branches = clinicConfig.branches) {
+  const cleaned = cleanOptionalText(value);
+  if (!cleaned) return null;
+  const target = normalizeName(cleaned);
+  if (!target) return null;
+
+  const matches = (branches || []).filter((branch) =>
+    configuredBranchAliases(branch).has(target)
+  );
+  return matches.length === 1 ? String(matches[0].name).trim() : null;
+}
+
+function invalidResponse(message) {
+  const err = new Error(message);
+  err.code = "INVALID_AI_RESPONSE";
+  return err;
 }
 
 function stripJsonFence(value) {
@@ -40,8 +85,7 @@ function parseStructuredReply(raw) {
     parsed = JSON.parse(candidate);
   } catch (err) {
     if (looksLikeStructuredReply(raw)) {
-      const invalid = new Error("AI returned malformed structured JSON.");
-      invalid.code = "INVALID_AI_RESPONSE";
+      const invalid = invalidResponse("AI returned malformed structured JSON.");
       invalid.cause = err;
       throw invalid;
     }
@@ -49,9 +93,7 @@ function parseStructuredReply(raw) {
   }
 
   if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
-    const invalid = new Error("AI structured response must be a JSON object.");
-    invalid.code = "INVALID_AI_RESPONSE";
-    throw invalid;
+    throw invalidResponse("AI structured response must be a JSON object.");
   }
 
   const reply = typeof parsed.reply === "string"
@@ -62,29 +104,32 @@ function parseStructuredReply(raw) {
     : "";
 
   if (!reply || !VALID_OUTCOMES.has(outcome)) {
-    const invalid = new Error("AI structured response is missing a valid reply/outcome.");
-    invalid.code = "INVALID_AI_RESPONSE";
-    throw invalid;
+    throw invalidResponse("AI structured response is missing a valid reply/outcome.");
   }
 
-  // Structured outcomes use canonical config names rather than trusting free
-  // model text. An abbreviation such as "PJ" is not enough to authorize a
-  // Booking Ready side effect; the model was explicitly instructed to return
-  // "Petaling Jaya". This makes the backend fail closed if it doesn't comply.
-  const branch = canonicalConfiguredName(parsed.branch, clinicConfig.branches);
+  const branch = canonicalConfiguredBranch(parsed.branch);
   const treatment = parsed.treatment == null
     ? null
     : canonicalConfiguredName(parsed.treatment, clinicConfig.services);
   const appointmentPreference = cleanOptionalText(parsed.appointmentPreference);
 
-  const bookingReady =
-    outcome === "booking_ready" && Boolean(branch && appointmentPreference);
+  // A structured Booking Ready response is an executable business outcome, so
+  // don't silently downgrade malformed metadata while still showing the model's
+  // "the team will confirm" reply. Reject it and let the AI orchestrator retry
+  // another key/provider; if all attempts fail, the normal safe staff fallback
+  // takes over. Common unambiguous clinic shorthand such as PJ/SP is resolved
+  // above before this check.
+  if (outcome === "booking_ready" && (!branch || !appointmentPreference)) {
+    throw invalidResponse(
+      "AI booking_ready response did not contain a valid configured branch and appointment preference."
+    );
+  }
 
   return {
     text: reply,
     flagged: outcome === "needs_human",
-    bookingReady,
-    outcome: bookingReady ? "booking_ready" : outcome === "booking_ready" ? "normal" : outcome,
+    bookingReady: outcome === "booking_ready",
+    outcome,
     structured: true,
     details: {
       branch,
@@ -126,7 +171,9 @@ function parseAiReplyResult(raw) {
 
 module.exports = {
   VALID_OUTCOMES,
+  canonicalConfiguredBranch,
   canonicalConfiguredName,
+  configuredBranchAliases,
   parseAiReplyResult,
   parseStructuredReply,
 };
