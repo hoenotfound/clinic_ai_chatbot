@@ -19,6 +19,15 @@ const PERFORMANCE_TABS = [
   ["channel", "Channel"],
   ["owner", "Owner"],
 ];
+const SOURCE_LABELS = {
+  meta_ads: "Meta Ads",
+  meta_post: "Meta post",
+  facebook_referral: "Facebook referral",
+  instagram_referral: "Instagram referral",
+  facebook_organic: "Facebook organic / untracked",
+  instagram_organic: "Instagram organic / untracked",
+  whatsapp_unattributed: "WhatsApp direct / untracked",
+};
 
 function dateInMalaysia(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -270,7 +279,7 @@ export default function Analytics() {
 
         {showMoreFilters && (
           <div className="mt-3 grid grid-cols-2 gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:flex sm:flex-wrap sm:items-end">
-            <FilterSelect label="Source" value={draftFilters.source} onChange={(value) => updateDraft("source", value)} options={filterOptions.sources} />
+            <FilterSelect label="Source" value={draftFilters.source} onChange={(value) => updateDraft("source", value)} options={filterOptions.sources} format={formatSource} />
             <FilterSelect label="Campaign" value={draftFilters.campaign} onChange={(value) => updateDraft("campaign", value)} options={filterOptions.campaigns} />
             <FilterSelect label="Treatment" value={draftFilters.treatment} onChange={(value) => updateDraft("treatment", value)} options={filterOptions.treatments} />
             <FilterSelect label="Owner" value={draftFilters.owner} onChange={(value) => updateDraft("owner", value)} options={filterOptions.owners} />
@@ -628,7 +637,11 @@ function PerformanceBreakdown({ performance, activeTab, onTabChange, onOpen }) {
           <div className="space-y-2.5 md:hidden">
             {rows.map((row) => {
               const canOpen = row.label !== "Unspecified";
-              const displayLabel = safeTab === "channel" ? formatChannel(row.label) : row.label;
+              const displayLabel = safeTab === "channel"
+      ? formatChannel(row.label)
+      : safeTab === "source"
+        ? formatSource(row.label)
+        : row.label;
               return (
                 <button
                   key={row.label}
@@ -674,7 +687,7 @@ function PerformanceBreakdown({ performance, activeTab, onTabChange, onOpen }) {
                   const canOpen = row.label !== "Unspecified";
                   return (
                     <tr key={row.label} onClick={canOpen ? () => onOpen(safeTab, row.label) : undefined} className={`border-b border-[var(--color-border)]/70 last:border-0 ${canOpen ? "cursor-pointer hover:bg-[var(--color-bg)]" : ""}`}>
-                      <td className="py-3 pr-3 font-semibold">{safeTab === "channel" ? formatChannel(row.label) : row.label}{canOpen && <span className="ml-1.5 text-[var(--color-primary)]">→</span>}</td>
+                      <td className="py-3 pr-3 font-semibold">{safeTab === "channel" ? formatChannel(row.label) : safeTab === "source" ? formatSource(row.label) : row.label}{canOpen && <span className="ml-1.5 text-[var(--color-primary)]">→</span>}</td>
                       <td className="px-2 py-3 text-right">{row.leads}</td>
                       <td className="px-2 py-3 text-right">{row.appointments}</td>
                       <td className="px-2 py-3 text-right">{row.visits}</td>
@@ -772,4 +785,8 @@ function formatChannel(value) {
   if (value === "instagram") return "Instagram";
   if (value === "facebook") return "Facebook";
   return value;
+}
+
+function formatSource(value) {
+  return SOURCE_LABELS[value] || value;
 }

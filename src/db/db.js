@@ -41,12 +41,17 @@ async function initSchema() {
     path.join(__dirname, "leadDistributionSafetySchema.sql"),
     "utf8"
   );
+  const leadAttributionSchema = fs.readFileSync(
+    path.join(__dirname, "leadAttributionSchema.sql"),
+    "utf8"
+  );
   await pool.query(schema);
   await pool.query(telegramAlertsSchema);
   await pool.query(socialChannelsSchema);
   await pool.query(followUpMultiChannelSchema);
   await pool.query(accessControlSchema);
   await pool.query(leadDistributionSafetySchema);
+  await pool.query(leadAttributionSchema);
 }
 
 module.exports = { pool, initSchema };

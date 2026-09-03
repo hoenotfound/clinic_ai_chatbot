@@ -1,6 +1,7 @@
 const express = require("express");
 const pipelineRepo = require("../db/pipelineRepo");
 const analyticsRepo = require("../db/analyticsRepo");
+const leadAttributionRepo = require("../db/leadAttributionRepo");
 const contactsRepo = require("../db/contactsRepo");
 const usersRepo = require("../db/usersRepo");
 const clinicConfig = require("../config/clinicConfig");
@@ -23,6 +24,43 @@ function distinctNames(values) {
 
 function configuredBranchNames() {
   return distinctNames((clinicConfig.branches || []).map((branch) => branch.name));
+}
+
+function publicAttribution(attribution) {
+  if (!attribution) return null;
+  return {
+    source: attribution.source || null,
+    platform: attribution.platform || null,
+    channel: attribution.channel || null,
+    meta_ad_id: attribution.meta_ad_id || null,
+    meta_source_id: attribution.meta_source_id || null,
+    meta_source_type: attribution.meta_source_type || null,
+    referral_ref: attribution.referral_ref || null,
+    referral_source: attribution.referral_source || null,
+    referral_type: attribution.referral_type || null,
+    ctwa_clid: attribution.ctwa_clid || null,
+    source_url: attribution.source_url || null,
+    headline: attribution.headline || null,
+    body: attribution.body || null,
+    media_type: attribution.media_type || null,
+    media_url: attribution.media_url || null,
+    campaign_id: attribution.campaign_id || null,
+    campaign_name: attribution.campaign_name || null,
+    adset_id: attribution.adset_id || null,
+    adset_name: attribution.adset_name || null,
+    ad_name: attribution.ad_name || null,
+    attributed_at: attribution.attributed_at || null,
+  };
+}
+
+function withAttribution(lead, attribution) {
+  if (!lead) return lead;
+  return { ...lead, attribution: publicAttribution(attribution) };
+}
+
+async function enrichLead(lead) {
+  if (!lead) return null;
+  return withAttribution(lead, await leadAttributionRepo.getForLead(lead.id));
 }
 
 function handlePipelineError(res, err, fallbackMessage) {
@@ -52,11 +90,17 @@ function handlePipelineError(res, err, fallbackMessage) {
 // GET /api/pipeline - complete lightweight board payload.
 router.get("/", async (req, res) => {
   try {
-    const [stages, leads, assignableOwners] = await Promise.all([
+    const [stages, rawLeads, assignableOwners] = await Promise.all([
       pipelineRepo.listStages(),
       pipelineRepo.listLeads(),
       usersRepo.listAssignableLeadOwners(),
     ]);
+    const attributionByLead = await leadAttributionRepo.getForLeadIds(
+      rawLeads.map((lead) => lead.id)
+    );
+    const leads = rawLeads.map((lead) =>
+      withAttribution(lead, attributionByLead.get(Number(lead.id)))
+    );
     const configuredBranches = configuredBranchNames();
     const savedBranches = distinctNames(leads.map((lead) => lead.branch_name));
 
@@ -106,7 +150,7 @@ router.post("/leads", async (req, res) => {
     const contact = await contactsRepo.getContactById(data.contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
     const result = await pipelineRepo.createLead(data, req.session.username);
-    const lead = await pipelineRepo.getLeadById(result.lead.id);
+    const lead = await enrichLead(await pipelineRepo.getLeadById(result.lead.id));
     res.status(result.created ? 201 : 200).json({ lead, created: result.created });
   } catch (err) {
     handlePipelineError(res, err, "Something went wrong creating the lead.");
@@ -118,7 +162,7 @@ router.patch("/leads/:leadId", async (req, res) => {
     const patch = normalizeLeadPayload(req.body, { partial: true });
     const updated = await pipelineRepo.updateLead(req.params.leadId, patch, req.session.username);
     if (!updated) return res.status(404).json({ error: "Lead not found." });
-    res.json(await pipelineRepo.getLeadById(updated.id));
+    res.json(await enrichLead(await pipelineRepo.getLeadById(updated.id)));
   } catch (err) {
     handlePipelineError(res, err, "Something went wrong updating the lead.");
   }

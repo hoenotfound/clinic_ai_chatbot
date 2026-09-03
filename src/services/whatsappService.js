@@ -1,4 +1,5 @@
 const GRAPH_API_VERSION = "v26.0";
+const { normalizeWhatsAppReferral } = require("../utils/leadAttribution");
 
 // A 200 OK from POST .../messages only means Meta *accepted* the send
 // request for later processing — it is not proof the patient's phone ever
@@ -288,12 +289,19 @@ function parseIncomingMessages(body) {
           if (!message?.id || !message?.from) continue;
           const whatsappContact = contacts.find((contact) => contact.wa_id === message.from);
           const profileName = whatsappContact?.profile?.name?.trim() || null;
+          const attribution = message.referral
+            ? normalizeWhatsAppReferral(message.referral)
+            : null;
+          const base = {
+            id: message.id,
+            from: message.from,
+            profileName,
+            ...(attribution ? { attribution } : {}),
+          };
 
           if (message.type === "text") {
             parsed.push({
-              id: message.id,
-              from: message.from,
-              profileName,
+              ...base,
               text: message.text?.body || "",
               mediaId: null,
               mediaType: null,
@@ -301,9 +309,7 @@ function parseIncomingMessages(body) {
             });
           } else if (message.type === "audio") {
             parsed.push({
-              id: message.id,
-              from: message.from,
-              profileName,
+              ...base,
               text: null,
               mediaId: message.audio?.id || null,
               mediaType: "audio",
@@ -311,9 +317,7 @@ function parseIncomingMessages(body) {
             });
           } else if (message.type === "image") {
             parsed.push({
-              id: message.id,
-              from: message.from,
-              profileName,
+              ...base,
               text: message.image?.caption || null,
               mediaId: message.image?.id || null,
               mediaType: "image",
@@ -321,9 +325,7 @@ function parseIncomingMessages(body) {
             });
           } else {
             parsed.push({
-              id: message.id,
-              from: message.from,
-              profileName,
+              ...base,
               text: null,
               mediaId: null,
               mediaType: null,

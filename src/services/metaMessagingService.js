@@ -3,6 +3,7 @@ const MAX_REMOTE_MEDIA_BYTES = 16 * 1024 * 1024;
 const PROFILE_FETCH_TIMEOUT_MS = 5000;
 const PROFILE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const PROFILE_FAILURE_CACHE_TTL_MS = 5 * 60 * 1000;
+const { normalizeSocialReferral } = require("../utils/leadAttribution");
 
 const profileCache = new Map();
 const profileRequests = new Map();
@@ -361,7 +362,26 @@ function parseIncomingMessages(body) {
     for (const event of entry?.messaging || []) {
       const message = event?.message;
       const senderId = event?.sender?.id;
-      if (!message?.mid || !senderId) continue;
+      const attribution = event?.referral
+        ? normalizeSocialReferral(channel, event.referral)
+        : null;
+
+      // OPEN_THREAD referrals can arrive as their own webhook before the user
+      // types. Keep them in the same queue as messages, but mark them so the
+      // inbound claim service stores pending attribution without creating a
+      // fake conversation message.
+      if (!message?.mid || !senderId) {
+        if (!message?.mid && senderId && attribution) {
+          parsed.push({
+            id: `referral:${entry?.id || "page"}:${event?.timestamp || "unknown"}:${senderId}`,
+            from: String(senderId),
+            channel,
+            attributionOnly: true,
+            attribution,
+          });
+        }
+        continue;
+      }
 
       // Instagram includes outgoing echoes in the messages subscription.
       // Messenger may also deliver echoes depending on subscribed fields.
@@ -373,13 +393,17 @@ function parseIncomingMessages(body) {
       const attachment = firstAttachment(message);
       const attachmentType = attachment?.type || null;
       const mediaUrl = attachment?.payload?.url || null;
+      const base = {
+        id: message.mid,
+        from: String(senderId),
+        channel,
+        profileName: null,
+        ...(attribution ? { attribution } : {}),
+      };
 
       if (attachmentType === "image") {
         parsed.push({
-          id: message.mid,
-          from: String(senderId),
-          channel,
-          profileName: null,
+          ...base,
           text: message.text || null,
           mediaId: null,
           mediaUrl,
@@ -388,10 +412,7 @@ function parseIncomingMessages(body) {
         });
       } else if (attachmentType === "audio") {
         parsed.push({
-          id: message.mid,
-          from: String(senderId),
-          channel,
-          profileName: null,
+          ...base,
           text: message.text || null,
           mediaId: null,
           mediaUrl,
@@ -400,10 +421,7 @@ function parseIncomingMessages(body) {
         });
       } else if (attachmentType) {
         parsed.push({
-          id: message.mid,
-          from: String(senderId),
-          channel,
-          profileName: null,
+          ...base,
           text: message.text || null,
           mediaId: null,
           mediaUrl,
@@ -412,10 +430,7 @@ function parseIncomingMessages(body) {
         });
       } else if (typeof message.text === "string") {
         parsed.push({
-          id: message.mid,
-          from: String(senderId),
-          channel,
-          profileName: null,
+          ...base,
           text: message.text,
           mediaId: null,
           mediaUrl: null,

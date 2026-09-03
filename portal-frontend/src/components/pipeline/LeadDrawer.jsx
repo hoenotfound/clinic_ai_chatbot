@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../context/AuthContext";
 import ContactAvatar from "../ContactAvatar";
+import LeadAttributionPanel from "./LeadAttributionPanel";
 import Spinner from "../Spinner";
 import {
   APPOINTMENT_OPTIONS,
@@ -215,6 +216,8 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
             {lead.is_unread && <StatusPill tone="primary">Unread</StatusPill>}
           </div>
 
+          <LeadAttributionPanel lead={lead} />
+
           <form onSubmit={handleSave} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
@@ -310,10 +313,10 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
                     {CONSENT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
                 </Field>
-                <Field label="Lead source">
+                <Field label="Lead source (manual override)">
                   <input className={inputClass} value={form.source} onChange={(event) => update("source", event.target.value)} placeholder="WhatsApp, Meta Ad, Referral…" />
                 </Field>
-                <Field label="Campaign">
+                <Field label="Campaign (manual override)">
                   <input className={inputClass} value={form.campaignName} onChange={(event) => update("campaignName", event.target.value)} placeholder="Optional campaign name" />
                 </Field>
               </div>
