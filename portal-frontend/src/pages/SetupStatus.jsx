@@ -28,11 +28,11 @@ const STATUS_STYLE = {
 };
 
 const AI_KEY_STATUS = {
-  ready: { label: "Active", badge: "bg-[var(--color-primary-light)] text-[var(--color-primary)]" },
-  rate_limited: { label: "Rate limited", badge: "bg-[var(--color-danger-light)] text-[var(--color-danger)]" },
-  unavailable: { label: "Temporarily unavailable", badge: "bg-[var(--color-accent-light)] text-[var(--color-text)]" },
-  invalid: { label: "Invalid credentials", badge: "bg-[var(--color-danger-light)] text-[var(--color-danger)]" },
-  failed: { label: "Failed", badge: "bg-[var(--color-danger-light)] text-[var(--color-danger)]" },
+  ready: { label: "Succeeded last attempt", badge: "bg-[var(--color-primary-light)] text-[var(--color-primary)]" },
+  rate_limited: { label: "Rate limited last attempt", badge: "bg-[var(--color-danger-light)] text-[var(--color-danger)]" },
+  unavailable: { label: "Unavailable last attempt", badge: "bg-[var(--color-accent-light)] text-[var(--color-text)]" },
+  invalid: { label: "Credentials rejected", badge: "bg-[var(--color-danger-light)] text-[var(--color-danger)]" },
+  failed: { label: "Failed last attempt", badge: "bg-[var(--color-danger-light)] text-[var(--color-danger)]" },
   not_checked: { label: "Not checked", badge: "bg-[var(--color-bg)] text-[var(--color-text-muted)]" },
 };
 
@@ -52,6 +52,7 @@ export default function SetupStatus() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
+  const [announcement, setAnnouncement] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -80,10 +81,19 @@ export default function SetupStatus() {
     if (running) return;
     setRunning(true);
     setError("");
+    setAnnouncement("Running all connection checks.");
     try {
-      setData(await api.runSetupChecks());
+      const nextData = await api.runSetupChecks();
+      setData(nextData);
+      const attention = Number(nextData?.summary?.attention) || 0;
+      setAnnouncement(
+        attention > 0
+          ? `Connection checks complete. ${attention} ${attention === 1 ? "check needs" : "checks need"} attention.`
+          : "Connection checks complete. No connection issues were found."
+      );
     } catch (err) {
       setError(err.message || "Couldn't run setup checks.");
+      setAnnouncement("Connection checks could not be completed.");
     } finally {
       setRunning(false);
     }
@@ -114,81 +124,80 @@ export default function SetupStatus() {
   const hasMetaMessaging = (data.checks || []).some(
     (check) => ["facebook", "instagram"].includes(check.key) && check.configured
   );
+  const requiredAttention = (data.checks || []).filter(
+    (check) => !check.optional && ["warning", "error"].includes(check.status)
+  ).length;
+  const optionalAttention = (data.checks || []).filter(
+    (check) => check.optional && ["warning", "error"].includes(check.status)
+  ).length;
+  const attentionBreakdown = [
+    requiredAttention ? `${requiredAttention} required` : null,
+    optionalAttention ? `${optionalAttention} optional` : null,
+  ].filter(Boolean).join(" · ") || "Nothing flagged";
 
   return (
     <div className="h-full overflow-y-auto overscroll-contain bg-[var(--color-bg)]">
       <header className="border-b border-[var(--color-border)] bg-white px-4 py-5 sm:px-6 lg:px-8">
-        <div className="mx-auto flex max-w-6xl flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="font-display text-2xl font-bold sm:text-3xl">Setup status</h1>
-              <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${allRequiredReady ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-accent-light)] text-[var(--color-text)]"}`}>
-                {allRequiredReady ? "Core setup ready" : "Check setup"}
-              </span>
+        <div className="mx-auto max-w-6xl">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h1 className="font-display text-2xl font-bold sm:text-3xl">Setup status</h1>
+                <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${allRequiredReady ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-accent-light)] text-[var(--color-text)]"}`}>
+                  {allRequiredReady ? "Core setup ready" : "Check setup"}
+                </span>
+              </div>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)]">
+                Confirm this clinic's database, AI, messaging channels and supporting services before going live.
+              </p>
             </div>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)]">
-              Confirm this clinic's database, AI, messaging channels and supporting services before going live.
-            </p>
+            <button
+              type="button"
+              onClick={runChecks}
+              disabled={running}
+              aria-busy={running}
+              className="inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-[var(--color-primary-hover)] disabled:cursor-wait disabled:opacity-65 sm:w-auto"
+            >
+              {running ? <Spinner className="h-4 w-4" /> : <RefreshIcon className="h-4 w-4" />}
+              {running ? "Checking connections…" : "Run all checks"}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={runChecks}
-            disabled={running}
-            className="inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-[var(--color-primary-hover)] disabled:cursor-wait disabled:opacity-65 sm:w-auto"
-          >
-            {running ? <Spinner className="h-4 w-4" /> : <RefreshIcon className="h-4 w-4" />}
-            {running ? "Checking connections…" : "Run all checks"}
-          </button>
+          <div className="mt-3 flex items-start gap-2 text-[11px] leading-5 text-[var(--color-text-muted)] sm:text-xs">
+            <ShieldIcon className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-primary)]" />
+            <p>Credentials remain on the server, and these checks never message customers.</p>
+          </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl space-y-5 px-4 py-5 pb-[max(2rem,env(safe-area-inset-bottom))] sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+        <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+          {announcement}
+        </div>
         {error && (
-          <div className="rounded-2xl border border-[var(--color-danger)]/20 bg-[var(--color-danger-light)] px-4 py-3 text-sm text-[var(--color-danger)]">
+          <div role="alert" className="rounded-2xl border border-[var(--color-danger)]/20 bg-[var(--color-danger-light)] px-4 py-3 text-sm text-[var(--color-danger)]">
             {error}
           </div>
         )}
 
         <section className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3">
           <SummaryCard label="Required ready" value={`${summary.requiredReady || 0}/${summary.requiredTotal || 0}`} tone="primary" />
-          <SummaryCard label="Need checking" value={summary.attention || 0} tone={summary.attention ? "warning" : "neutral"} />
-          <SummaryCard label="Optional unused" value={summary.optionalNotConfigured || 0} tone="neutral" />
-          <SummaryCard label="Last run" value={data.lastRunAt ? formatTime(data.lastRunAt) : "Not yet"} compact />
+          <SummaryCard label="Needs attention" value={summary.attention || 0} hint={attentionBreakdown} tone={summary.attention ? "warning" : "neutral"} />
+          <SummaryCard label="Optional not set up" value={summary.optionalNotConfigured || 0} tone="neutral" />
+          <SummaryCard label="Last run" value={data.lastRunAt ? formatTime(data.lastRunAt) : "Not yet"} hint="Malaysia time" compact />
         </section>
-
-        <div className="flex items-start gap-3 rounded-2xl border border-[var(--color-border)] bg-white px-4 py-3.5 shadow-sm">
-          <ShieldIcon className="mt-0.5 h-5 w-5 shrink-0 text-[var(--color-primary)]" />
-          <div>
-            <p className="text-xs font-bold">Credentials stay private</p>
-            <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-              Tokens, passwords and API keys are checked only by the server. They are never returned to this page. Connection tests do not message customers.
-            </p>
-          </div>
-        </div>
-
-        {hasMetaMessaging && (
-          <div className="flex items-start gap-3 rounded-2xl border border-[var(--color-border)] bg-white px-4 py-3.5 shadow-sm">
-            <InfoIcon className="mt-0.5 h-5 w-5 shrink-0 text-[var(--color-accent)]" />
-            <div>
-              <p className="text-xs font-bold">Meta app review is separate</p>
-              <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                Facebook and Instagram checks confirm access to configured test assets and signed webhook activity. They cannot confirm that Meta has approved public messaging access.
-              </p>
-            </div>
-          </div>
-        )}
 
         {groups.map((group) => (
           <section key={group.name}>
             <div className="mb-2.5 flex items-center justify-between gap-3 px-0.5">
               <h2 className="font-display text-sm font-bold sm:text-base">{group.name}</h2>
-              <span className="text-[10px] text-[var(--color-text-muted)]">
-                {group.checks.filter((check) => check.status === "ready").length}/{group.checks.length} ready
+              <span className="text-right text-[11px] leading-4 text-[var(--color-text-muted)]">
+                {groupStatusLabel(group.checks)}
               </span>
             </div>
             <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
               {group.checks.map((check) => <ConnectionCard key={check.key} check={check} />)}
             </div>
+            {group.name === "Messaging channels" && hasMetaMessaging && <MetaReviewNote />}
           </section>
         ))}
       </main>
@@ -205,7 +214,7 @@ function ConnectionCard({ check }) {
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${style.dot}`} />
           <h3 className="truncate text-sm font-bold">{check.label}</h3>
         </div>
-        <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-wide ${style.badge}`}>
+        <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${style.badge}`}>
           {style.label}
         </span>
       </div>
@@ -224,7 +233,7 @@ function ConnectionCard({ check }) {
       )}
       {check.displayValue && <p className="mt-3 truncate rounded-lg bg-[var(--color-bg)] px-2.5 py-2 text-[10px] text-[var(--color-text-muted)]">{check.displayValue}</p>}
 
-      <dl className="mt-4 space-y-1.5 border-t border-[var(--color-border)]/70 pt-3 text-[10px] text-[var(--color-text-muted)]">
+      <dl className="mt-4 space-y-1.5 border-t border-[var(--color-border)]/70 pt-3 text-[11px] text-[var(--color-text-muted)]">
         <div className="flex items-start justify-between gap-3">
           <dt>Last checked</dt>
           <dd className="text-right font-medium text-[var(--color-text)]">{formatTime(check.checkedAt)}</dd>
@@ -256,7 +265,7 @@ function AiKeyHealth({ candidates }) {
   if (!candidates.length) return null;
   return (
     <details className="group mt-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]">
-      <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-[10px] font-bold text-[var(--color-text)] [&::-webkit-details-marker]:hidden">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-3 py-2 text-xs font-bold text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)]/30 [&::-webkit-details-marker]:hidden">
         <span>View AI key health</span>
         <ChevronIcon className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" />
       </summary>
@@ -266,12 +275,12 @@ function AiKeyHealth({ candidates }) {
           return (
             <div key={`${candidate.provider}:${candidate.label}`} className="rounded-lg border border-[var(--color-border)]/70 px-2.5 py-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[10px] font-bold text-[var(--color-text)]">{candidate.label}</span>
-                <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wide ${style.badge}`}>
+                <span className="text-[11px] font-bold text-[var(--color-text)]">{candidate.label}</span>
+                <span className={`max-w-full rounded-full px-2 py-1 text-[10px] font-bold leading-4 ${style.badge}`}>
                   {style.label}
                 </span>
               </div>
-              <dl className="mt-2 space-y-1 text-[9px] text-[var(--color-text-muted)]">
+              <dl className="mt-2 space-y-1 text-[11px] text-[var(--color-text-muted)]">
                 <div className="flex items-start justify-between gap-2">
                   <dt>Last attempted</dt>
                   <dd className="text-right font-medium text-[var(--color-text)]">{formatTime(candidate.lastAttemptAt)}</dd>
@@ -292,30 +301,61 @@ function AiKeyHealth({ candidates }) {
             </div>
           );
         })}
-        <p className="px-1 text-[9px] leading-4 text-[var(--color-text-muted)]">
-          Key values are never displayed. A rate limit may be temporary or daily; Gemini does not reliably identify which one caused every quota response.
+        <p className="px-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+          Fallback keys are only checked when earlier keys cannot complete a reply. A Gemini rate limit may be temporary or daily because quota responses do not always identify the exact limit.
         </p>
       </div>
     </details>
   );
 }
 
-function SummaryCard({ label, value, tone = "neutral", compact = false }) {
+function MetaReviewNote() {
+  return (
+    <details className="group mt-2.5 overflow-hidden rounded-xl border border-[var(--color-border)] bg-white shadow-sm">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-3.5 py-2 text-xs font-semibold text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)]/30 [&::-webkit-details-marker]:hidden">
+        <span className="flex min-w-0 items-center gap-2">
+          <InfoIcon className="h-4 w-4 shrink-0 text-[var(--color-accent)]" />
+          <span>About Meta app review</span>
+        </span>
+        <ChevronIcon className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" />
+      </summary>
+      <p className="border-t border-[var(--color-border)] px-3.5 py-3 text-[11px] leading-5 text-[var(--color-text-muted)] sm:text-xs">
+        Facebook and Instagram checks confirm access to configured test assets and signed webhook activity. They cannot confirm that Meta has approved public messaging access.
+      </p>
+    </details>
+  );
+}
+
+function groupStatusLabel(checks) {
+  const ready = checks.filter((check) => check.status === "ready").length;
+  const attention = checks.filter((check) => ["warning", "error"].includes(check.status)).length;
+  const optionalNotSetUp = checks.filter(
+    (check) => check.optional && check.status === "not_configured"
+  ).length;
+  return [
+    ready ? `${ready} ready` : null,
+    attention ? `${attention} ${attention === 1 ? "needs" : "need"} attention` : null,
+    optionalNotSetUp ? `${optionalNotSetUp} optional not set up` : null,
+  ].filter(Boolean).join(" · ") || "No checks available";
+}
+
+function SummaryCard({ label, value, hint = null, tone = "neutral", compact = false }) {
   const valueClass = tone === "primary"
     ? "text-[var(--color-primary)]"
     : tone === "warning"
       ? "text-[var(--color-danger)]"
-      : "text-[var(--color-text)]";
+    : "text-[var(--color-text)]";
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-white p-3.5 shadow-sm sm:p-4">
-      <p className="text-[10px] font-semibold text-[var(--color-text-muted)] sm:text-xs">{label}</p>
+      <p className="text-[11px] font-semibold leading-4 text-[var(--color-text-muted)] sm:text-xs">{label}</p>
       <p className={`mt-1.5 font-display font-bold ${compact ? "text-xs leading-5 sm:text-sm" : "text-xl sm:text-2xl"} ${valueClass}`}>{value}</p>
+      {hint && <p className="mt-1 text-[10px] leading-4 text-[var(--color-text-muted)]">{hint}</p>}
     </div>
   );
 }
 
 function MiniBadge({ text }) {
-  return <span className="rounded-lg bg-[var(--color-bg)] px-2 py-1 text-[9px] font-semibold text-[var(--color-text-muted)]">{text}</span>;
+  return <span className="rounded-lg bg-[var(--color-bg)] px-2 py-1 text-[10px] font-semibold text-[var(--color-text-muted)]">{text}</span>;
 }
 
 function RefreshIcon(props) {
