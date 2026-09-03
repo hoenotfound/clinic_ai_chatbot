@@ -49,6 +49,7 @@ function createMetaAdsEnrichmentService({
 } = {}) {
   let timer = null;
   let sweepRunning = false;
+  let immediateSweepQueued = false;
 
   async function processClaimed(row) {
     if (!row?.id || !row?.meta_ad_id) return { status: "skipped" };
@@ -84,19 +85,6 @@ function createMetaAdsEnrichmentService({
     return processClaimed(claimed);
   }
 
-  function queueAttributionEnrichment(attributionId) {
-    if (!api.configured() || !attributionId) return false;
-    const immediate = setImmediateImpl(async () => {
-      try {
-        await enrichAttributionNow(attributionId);
-      } catch (err) {
-        logger.error?.(`Failed to run immediate Meta Ads enrichment for attribution ${attributionId}:`, err);
-      }
-    });
-    immediate?.unref?.();
-    return true;
-  }
-
   async function runSweep() {
     if (!api.configured()) return { status: "not_configured", processed: 0 };
     if (sweepRunning) return { status: "already_running", processed: 0 };
@@ -126,6 +114,27 @@ function createMetaAdsEnrichmentService({
     } finally {
       sweepRunning = false;
     }
+  }
+
+  function queueAttributionEnrichment(attributionId) {
+    if (!api.configured() || !attributionId) return false;
+    if (immediateSweepQueued) return true;
+
+    // A campaign can generate many first messages at once. Coalesce those
+    // triggers into the same durable batch sweep instead of opening one Meta
+    // request per lead in parallel. The database lease/claim remains the source
+    // of truth, so multiple app instances can still work safely in parallel.
+    immediateSweepQueued = true;
+    const immediate = setImmediateImpl(async () => {
+      immediateSweepQueued = false;
+      try {
+        await runSweep();
+      } catch (err) {
+        logger.error?.("Failed to run immediate Meta Ads enrichment sweep:", err);
+      }
+    });
+    immediate?.unref?.();
+    return true;
   }
 
   function start() {
