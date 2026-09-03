@@ -1,0 +1,170 @@
+name: Apply attribution regression hardening
+
+on:
+  push:
+    branches:
+      - feature/lead-source-attribution
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/lead-source-attribution
+          fetch-depth: 0
+
+      - name: Apply reviewed attribution hardening
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          # Backend: expose only the attribution fields the portal needs and
+          # stop returning a global source list that bypasses lead visibility.
+          path = Path('src/routes/pipeline.js')
+          text = path.read_text()
+          old = '''function withAttribution(lead, attribution) {
+            if (!lead) return lead;
+            return { ...lead, attribution: attribution || null };
+          }'''
+          new = '''function publicAttribution(attribution) {
+            if (!attribution) return null;
+            return {
+              source: attribution.source || null,
+              platform: attribution.platform || null,
+              channel: attribution.channel || null,
+              meta_ad_id: attribution.meta_ad_id || null,
+              meta_source_id: attribution.meta_source_id || null,
+              meta_source_type: attribution.meta_source_type || null,
+              referral_ref: attribution.referral_ref || null,
+              referral_source: attribution.referral_source || null,
+              referral_type: attribution.referral_type || null,
+              ctwa_clid: attribution.ctwa_clid || null,
+              source_url: attribution.source_url || null,
+              headline: attribution.headline || null,
+              body: attribution.body || null,
+              media_type: attribution.media_type || null,
+              media_url: attribution.media_url || null,
+              campaign_id: attribution.campaign_id || null,
+              campaign_name: attribution.campaign_name || null,
+              adset_id: attribution.adset_id || null,
+              adset_name: attribution.adset_name || null,
+              ad_name: attribution.ad_name || null,
+              attributed_at: attribution.attributed_at || null,
+            };
+          }
+
+          function withAttribution(lead, attribution) {
+            if (!lead) return lead;
+            return { ...lead, attribution: publicAttribution(attribution) };
+          }'''
+          if old not in text:
+              raise SystemExit('pipeline withAttribution target not found')
+          text = text.replace(old, new, 1)
+          old = '''      sources: distinctNames(
+                leads.map((lead) => lead.attribution?.source || lead.source)
+              ).sort(),
+          '''
+          if old not in text:
+              raise SystemExit('pipeline sources target not found')
+          text = text.replace(old, '', 1)
+          path.write_text(text)
+
+          # Pipeline: derive source options from the post-auth visible lead list,
+          # let the existing manual source field behave as a real override, and
+          # preserve the pre-existing top-metric branch-filter behavior.
+          path = Path('portal-frontend/src/pages/Pipeline.jsx')
+          text = path.read_text()
+          old = '''  const leads = useMemo(() => data?.leads || [], [data?.leads]);
+            const stages = useMemo(() => data?.stages || [], [data?.stages]);'''
+          new = '''  const leads = useMemo(() => data?.leads || [], [data?.leads]);
+            const stages = useMemo(() => data?.stages || [], [data?.stages]);
+            const availableSources = useMemo(() => [...new Set(
+              leads.map((lead) => lead.source || lead.attribution?.source).filter(Boolean)
+            )].sort(), [leads]);'''
+          if old not in text:
+              raise SystemExit('Pipeline visible source target not found')
+          text = text.replace(old, new, 1)
+          old = '''      (lead) => (lead.attribution?.source || lead.source) === sourceFilter'''
+          new = '''      (lead) => (lead.source || lead.attribution?.source) === sourceFilter'''
+          if old not in text:
+              raise SystemExit('Pipeline source filter target not found')
+          text = text.replace(old, new, 1)
+          old = '''  const metricLeads = hasAnalyticsDrilldown || sourceFilter !== "all" ? drilldownLeads : leads;'''
+          new = '''  const metricLeads = hasAnalyticsDrilldown
+            ? drilldownLeads
+            : sourceFilter !== "all"
+              ? sourceFilteredLeads
+              : leads;'''
+          if old not in text:
+              raise SystemExit('Pipeline metric target not found')
+          text = text.replace(old, new, 1)
+          old = '''            {(data?.sources || []).map((source) => ('''
+          new = '''            {availableSources.map((source) => ('''
+          if old not in text:
+              raise SystemExit('Pipeline source options target not found')
+          text = text.replace(old, new, 1)
+          path.write_text(text)
+
+          # Cards use the effective/manual source when staff explicitly correct it.
+          path = Path('portal-frontend/src/components/pipeline/LeadCard.jsx')
+          text = path.read_text()
+          old = '''        <LeadSourceBadge source={lead.attribution?.source || lead.source} />'''
+          new = '''        <LeadSourceBadge source={lead.source || lead.attribution?.source} />'''
+          if old not in text:
+              raise SystemExit('LeadCard source target not found')
+          path.write_text(text.replace(old, new, 1))
+
+          # Drawer distinguishes immutable captured evidence from staff overrides,
+          # and never labels a referral headline as an Ads Manager ad name.
+          path = Path('portal-frontend/src/components/pipeline/LeadAttributionPanel.jsx')
+          text = path.read_text()
+          old = '''  const source = attribution?.source || lead.source;
+            const adLabel = attribution?.ad_name || attribution?.headline || null;
+            const campaignLabel = attribution?.campaign_name || lead.campaign_name || null;'''
+          new = '''  const source = attribution?.source || lead.source;
+            const adLabel = attribution?.ad_name || attribution?.headline || null;
+            const adFieldLabel = attribution?.ad_name ? "Ad" : attribution?.headline ? "Creative" : "Ad";
+            const campaignLabel = attribution?.campaign_name || null;
+            const sourceOverride = attribution && lead.source && lead.source !== attribution.source
+              ? lead.source
+              : null;
+            const campaignOverride = attribution && lead.campaign_name && lead.campaign_name !== attribution.campaign_name
+              ? lead.campaign_name
+              : null;'''
+          if old not in text:
+              raise SystemExit('LeadAttributionPanel labels target not found')
+          text = text.replace(old, new, 1)
+          text = text.replace('>Acquisition source</p>', '>Captured acquisition</p>', 1)
+          old = '''          label="Ad"
+                    value={adLabel || (attribution?.meta_ad_id ? `Meta Ad ${attribution.meta_ad_id}` : null)}'''
+          new = '''          label={adFieldLabel}
+                    value={adLabel || (attribution?.meta_ad_id ? `Meta Ad ${attribution.meta_ad_id}` : null)}'''
+          if old not in text:
+              raise SystemExit('LeadAttributionPanel ad field target not found')
+          text = text.replace(old, new, 1)
+          old = '''        {attribution?.meta_ad_id && <AttributionRow label="Meta Ad ID" value={attribution.meta_ad_id} mono />}
+                {attribution?.ctwa_clid && <AttributionRow label="CTWA click ID" value={attribution.ctwa_clid} mono />}'''
+          new = '''        {sourceOverride && <AttributionRow label="Source override" value={sourceLabel(sourceOverride)} />}
+                {campaignOverride && <AttributionRow label="Campaign override" value={campaignOverride} />}
+                {attribution?.meta_ad_id && <AttributionRow label="Meta Ad ID" value={attribution.meta_ad_id} mono />}
+                {attribution?.ctwa_clid && <AttributionRow label="CTWA click ID" value={attribution.ctwa_clid} mono />}'''
+          if old not in text:
+              raise SystemExit('LeadAttributionPanel override rows target not found')
+          text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+
+      - name: Commit hardening and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/review-attribution-hardening.yml
+          git add src/routes/pipeline.js portal-frontend/src/pages/Pipeline.jsx portal-frontend/src/components/pipeline/LeadCard.jsx portal-frontend/src/components/pipeline/LeadAttributionPanel.jsx
+          git commit -m "Harden attribution access and override semantics"
+          git push origin HEAD:feature/lead-source-attribution
