@@ -52,9 +52,18 @@ function checkKeywordTriggers(text) {
   return null;
 }
 
+function stripInternalOutcomeMarkers(text) {
+  let cleaned = text;
+  for (const marker of AI_OUTCOME_MARKERS) {
+    cleaned = cleaned.split(marker).join("");
+  }
+  return cleaned.trim();
+}
+
 /**
- * Strips any supported internal outcome markers from the start of an AI reply.
- * Escalation wins if a model ever emits both markers accidentally.
+ * Recognizes supported internal outcome markers only when the model follows the
+ * required prefix protocol. Any stray marker elsewhere is still stripped from
+ * visible text, but it cannot trigger backend side effects.
  *
  * @param {string} reply
  * @returns {{ text: string, flagged: boolean, bookingReady: boolean }}
@@ -85,7 +94,13 @@ function extractAiOutcomeSignals(reply) {
   // outcome. Never run booking-ready automation on the same reply.
   if (flagged) bookingReady = false;
 
-  return { text: text.trim(), flagged, bookingReady };
+  // Internal control tokens are never patient-facing. If a model accidentally
+  // repeats one later in the reply, remove it without granting a signal.
+  return {
+    text: stripInternalOutcomeMarkers(text),
+    flagged,
+    bookingReady,
+  };
 }
 
 /**
@@ -101,6 +116,7 @@ module.exports = {
   checkKeywordTriggers,
   extractAiOutcomeSignals,
   extractHandoffSignal,
+  stripInternalOutcomeMarkers,
   NEEDS_HUMAN_MARKER,
   BOOKING_READY_MARKER,
 };
