@@ -45,6 +45,10 @@ async function initSchema() {
     path.join(__dirname, "leadAttributionSchema.sql"),
     "utf8"
   );
+  const whatsappPolicySchema = fs.readFileSync(
+    path.join(__dirname, "whatsappPolicySchema.sql"),
+    "utf8"
+  );
   await pool.query(schema);
   await pool.query(telegramAlertsSchema);
   await pool.query(socialChannelsSchema);
@@ -52,6 +56,7 @@ async function initSchema() {
   await pool.query(accessControlSchema);
   await pool.query(leadDistributionSafetySchema);
   await pool.query(leadAttributionSchema);
+  await pool.query(whatsappPolicySchema);
 }
 
 module.exports = { pool, initSchema };

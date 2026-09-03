@@ -63,8 +63,10 @@ function publishConversationChange(message, reason) {
 }
 
 function contactForCandidate(candidate) {
+  const channel = candidate.channel || "whatsapp";
   return {
-    channel: candidate.channel || "whatsapp",
+    ...(channel === "whatsapp" ? { id: candidate.contact_id } : {}),
+    channel,
     whatsapp_number: candidate.whatsapp_number,
     channel_user_id: candidate.channel_user_id,
   };
@@ -72,6 +74,14 @@ function contactForCandidate(candidate) {
 
 function rejectedFollowUpError(channel) {
   return `${channelMessaging.labelForChannel(channel)} did not accept this automated follow-up. Check the reply window or connection and retry it from the Inbox.`;
+}
+
+function deliveryErrorFor(channel, sendResult, rejectedError) {
+  // WhatsApp policy blocks contain a useful reason staff need to see. Keep
+  // Facebook/Instagram's existing channel-specific wording unchanged.
+  return channel === "whatsapp" && sendResult?.error
+    ? sendResult.error
+    : rejectedError;
 }
 
 async function markContacted(contactId) {
@@ -182,19 +192,26 @@ async function sendCandidate(candidate) {
       // failure/retry can never duplicate a text message Meta already accepted.
       sendResult = await channelMessaging.sendText(contact, followUpMessage);
     } else {
+      const policyOptions = { purpose: "marketing" };
       sendResult = settings.imageUrl
         ? await channelMessaging.sendImageByUrl(
             contact,
             settings.imageUrl,
-            followUpMessage
+            followUpMessage,
+            policyOptions
           )
-        : await channelMessaging.sendText(contact, followUpMessage);
+        : await channelMessaging.sendText(
+            contact,
+            followUpMessage,
+            policyOptions
+          );
     }
   } catch (err) {
     console.error("Automated follow-up send failed:", err);
     sendResult = { success: false, wamid: null, externalMessageId: null };
   }
 
+  const deliveryError = deliveryErrorFor(channel, sendResult, rejectedError);
   let finalMessage = saved;
   if (sendResult?.wamid) {
     // WhatsApp keeps using its asynchronous WAMID delivery-status pipeline.
@@ -205,7 +222,7 @@ async function sendCandidate(candidate) {
       (await messagesRepo.setDeliveryStatusById(
         saved.id,
         "failed",
-        rejectedError
+        deliveryError
       )) || saved;
   } else if (isSocial) {
     // Messenger/Instagram return an accepted send result but do not use the
@@ -220,7 +237,7 @@ async function sendCandidate(candidate) {
   if (!sendResult?.success) {
     await contactsRepo.setDeliveryAttention(
       candidate.contact_id,
-      `Delivery failed: ${rejectedError}`
+      `Delivery failed: ${deliveryError}`
     );
     return;
   }

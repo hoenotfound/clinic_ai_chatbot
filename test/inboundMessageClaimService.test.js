@@ -5,7 +5,7 @@ const {
   createInboundMessageClaimService,
 } = require("../src/services/inboundMessageClaimService");
 
-function makeService({ duplicate = false } = {}) {
+function makeService({ duplicate = false, policy = undefined } = {}) {
   const calls = [];
   const contacts = {
     async getOrCreateContact(from, profileName) {
@@ -17,6 +17,9 @@ function makeService({ duplicate = false } = {}) {
     },
     async setUnread(id, unread) {
       calls.push(["unread", id, unread]);
+    },
+    async setAttention(id, needsAttention, reason) {
+      calls.push(["attention", id, needsAttention, reason]);
     },
   };
   const store = {
@@ -40,7 +43,13 @@ function makeService({ duplicate = false } = {}) {
 
   return {
     calls,
-    claim: createInboundMessageClaimService({ contacts, store, pipeline, messages }),
+    claim: createInboundMessageClaimService({
+      contacts,
+      store,
+      pipeline,
+      messages,
+      ...(policy ? { policy } : {}),
+    }),
   };
 }
 
@@ -71,4 +80,36 @@ test("duplicate webhook claims stop before any later side effects", async () => 
 
   assert.equal(result, null);
   assert.deepEqual(calls.map((call) => call[0]), ["contact", "claim"]);
+});
+
+test("WhatsApp opt-out is stored and stops before lead or AI processing", async () => {
+  const policyCalls = [];
+  const policy = {
+    isOptOutText(text) {
+      return /^stop$/i.test(text.trim());
+    },
+    async recordOptOut(contactId, source) {
+      policyCalls.push([contactId, source]);
+      return { id: contactId };
+    },
+  };
+  const { calls, claim } = makeService({ policy });
+
+  const result = await claim({
+    id: "wamid-stop",
+    from: "60123456789",
+    text: "STOP",
+    channel: "whatsapp",
+  });
+
+  assert.equal(result, null);
+  assert.deepEqual(policyCalls, [[42, "customer_message"]]);
+  assert.deepEqual(calls.map((call) => call[0]), [
+    "contact",
+    "claim",
+    "attention",
+    "unread",
+  ]);
+  assert.equal(calls.some((call) => call[0] === "lead"), false);
+  assert.equal(calls.some((call) => call[0] === "first-message"), false);
 });

@@ -3,6 +3,7 @@ const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const leadAttributionService = require("./leadAttributionService");
 const conversationStore = require("../utils/conversationStore");
+const whatsappPolicy = require("./whatsappPolicyService");
 
 function initialInboundText(incoming) {
   if (incoming.unsupportedType) {
@@ -21,6 +22,7 @@ function createInboundMessageClaimService({
   pipeline = pipelineRepo,
   attribution = leadAttributionService,
   store = conversationStore,
+  policy = whatsappPolicy,
 } = {}) {
   return async function claimIncomingMessage(incoming) {
     // Messenger/Instagram may send OPEN_THREAD attribution as its own event
@@ -61,6 +63,44 @@ function createInboundMessageClaimService({
       storedInboundId
     );
     if (!savedInbound) return null;
+
+    const isWhatsappOptOut =
+      channel === "whatsapp" &&
+      incoming.mediaType == null &&
+      policy.isOptOutText(incoming.text);
+
+    // A clear stop/unsubscribe request is terminal for this inbound turn. Keep
+    // the customer's message durable and visible, mark it unread/attention,
+    // then return without lead scoring, AI generation, promo delivery or an
+    // automated acknowledgement. A later genuine customer-initiated message
+    // can start a new service conversation without restoring marketing consent.
+    if (isWhatsappOptOut) {
+      try {
+        await policy.recordOptOut(contact.id, "customer_message");
+      } catch (err) {
+        // Even when the consent-state write has a transient failure, fail
+        // closed for this turn and never continue into an outbound AI reply.
+        console.error(`Failed to record WhatsApp opt-out for contact ${contact.id}:`, err);
+      }
+
+      try {
+        await contacts.setAttention(
+          contact.id,
+          true,
+          "Customer opted out of WhatsApp messages. Do not send proactive messages without a new explicit opt-in."
+        );
+      } catch (err) {
+        console.error(`Failed to flag WhatsApp opt-out for contact ${contact.id}:`, err);
+      }
+
+      try {
+        await contacts.setUnread(contact.id, true);
+      } catch (err) {
+        console.error(`Failed to mark opt-out message unread for contact ${contact.id}:`, err);
+      }
+
+      return null;
+    }
 
     // Operational bookkeeping is best-effort after the durable message claim.
     // A transient failure here must not turn a successfully stored customer
