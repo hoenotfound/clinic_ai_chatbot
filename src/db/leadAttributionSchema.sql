@@ -50,28 +50,17 @@ ALTER TABLE lead_attributions
   ADD COLUMN IF NOT EXISTS enrichment_last_error TEXT,
   ADD COLUMN IF NOT EXISTS enriched_at TIMESTAMPTZ;
 
--- Meta ad rows captured by #65 before this migration should become eligible
--- automatically. Non-ad rows already receive the not_applicable default, so do
--- not rewrite those rows on every startup. Only rows that already have all
--- three hierarchy names are treated as previously enriched; partial metadata
--- stays pending so the Marketing API can complete it.
+-- Meta ad rows captured by PR #65 predate verified Marketing API enrichment.
+-- Even if some referral metadata happened to contain hierarchy names, #65 had
+-- no Ad Account ID or enrichment state, so queue each legacy Meta-ad row once
+-- and let the Marketing API worker establish the complete hierarchy. Restrict
+-- this to the ALTER-added default so already-pending retries are not rewritten
+-- on every application startup.
 UPDATE lead_attributions
-SET enrichment_status = CASE
-      WHEN ad_name IS NOT NULL AND adset_name IS NOT NULL AND campaign_name IS NOT NULL
-        THEN 'enriched'
-      ELSE 'pending'
-    END,
-    enriched_at = CASE
-      WHEN enriched_at IS NULL
-       AND ad_name IS NOT NULL
-       AND adset_name IS NOT NULL
-       AND campaign_name IS NOT NULL
-        THEN updated_at
-      ELSE enriched_at
-    END
+SET enrichment_status = 'pending'
 WHERE source = 'meta_ads'
   AND meta_ad_id IS NOT NULL
-  AND enrichment_status <> 'enriched';
+  AND enrichment_status = 'not_applicable';
 
 CREATE INDEX IF NOT EXISTS idx_lead_attributions_source
   ON lead_attributions(source, attributed_at DESC);
