@@ -27,6 +27,15 @@ const STATUS_STYLE = {
   },
 };
 
+const AI_KEY_STATUS = {
+  ready: { label: "Active", badge: "bg-[var(--color-primary-light)] text-[var(--color-primary)]" },
+  rate_limited: { label: "Rate limited", badge: "bg-[var(--color-danger-light)] text-[var(--color-danger)]" },
+  unavailable: { label: "Temporarily unavailable", badge: "bg-[var(--color-accent-light)] text-[var(--color-text)]" },
+  invalid: { label: "Invalid credentials", badge: "bg-[var(--color-danger-light)] text-[var(--color-danger)]" },
+  failed: { label: "Failed", badge: "bg-[var(--color-danger-light)] text-[var(--color-danger)]" },
+  not_checked: { label: "Not checked", badge: "bg-[var(--color-bg)] text-[var(--color-text-muted)]" },
+};
+
 function formatTime(value) {
   if (!value) return "Not checked yet";
   const date = new Date(value);
@@ -204,11 +213,14 @@ function ConnectionCard({ check }) {
       <p className="mt-3 min-h-10 text-xs leading-5 text-[var(--color-text-muted)]">{check.summary}</p>
 
       {check.key === "ai" && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          <MiniBadge text={`Preferred: ${check.aiProvider || "gemini"}`} />
-          <MiniBadge text={`${check.geminiKeyCount || 0} Gemini key${check.geminiKeyCount === 1 ? "" : "s"}`} />
-          {check.claudeFallback && <MiniBadge text="Claude available" />}
-        </div>
+        <>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            <MiniBadge text={`Preferred: ${check.aiProvider || "gemini"}`} />
+            <MiniBadge text={`${check.geminiKeyCount || 0} Gemini key${check.geminiKeyCount === 1 ? "" : "s"}`} />
+            {check.claudeFallback && <MiniBadge text="Claude available" />}
+          </div>
+          <AiKeyHealth candidates={check.candidateHealth || []} />
+        </>
       )}
       {check.displayValue && <p className="mt-3 truncate rounded-lg bg-[var(--color-bg)] px-2.5 py-2 text-[10px] text-[var(--color-text-muted)]">{check.displayValue}</p>}
 
@@ -240,6 +252,54 @@ function ConnectionCard({ check }) {
   );
 }
 
+function AiKeyHealth({ candidates }) {
+  if (!candidates.length) return null;
+  return (
+    <details className="group mt-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]">
+      <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-[10px] font-bold text-[var(--color-text)] [&::-webkit-details-marker]:hidden">
+        <span>View AI key health</span>
+        <ChevronIcon className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="space-y-2 border-t border-[var(--color-border)] bg-white p-2.5">
+        {candidates.map((candidate) => {
+          const style = AI_KEY_STATUS[candidate.status] || AI_KEY_STATUS.not_checked;
+          return (
+            <div key={`${candidate.provider}:${candidate.label}`} className="rounded-lg border border-[var(--color-border)]/70 px-2.5 py-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[10px] font-bold text-[var(--color-text)]">{candidate.label}</span>
+                <span className={`rounded-full px-2 py-1 text-[8px] font-bold uppercase tracking-wide ${style.badge}`}>
+                  {style.label}
+                </span>
+              </div>
+              <dl className="mt-2 space-y-1 text-[9px] text-[var(--color-text-muted)]">
+                <div className="flex items-start justify-between gap-2">
+                  <dt>Last attempted</dt>
+                  <dd className="text-right font-medium text-[var(--color-text)]">{formatTime(candidate.lastAttemptAt)}</dd>
+                </div>
+                {candidate.lastSuccessAt && (
+                  <div className="flex items-start justify-between gap-2">
+                    <dt>Last successful</dt>
+                    <dd className="text-right font-medium text-[var(--color-text)]">{formatTime(candidate.lastSuccessAt)}</dd>
+                  </div>
+                )}
+                {candidate.lastRateLimitedAt && (
+                  <div className="flex items-start justify-between gap-2">
+                    <dt>Last rate limited</dt>
+                    <dd className="text-right font-medium text-[var(--color-danger)]">{formatTime(candidate.lastRateLimitedAt)}</dd>
+                  </div>
+                )}
+              </dl>
+            </div>
+          );
+        })}
+        <p className="px-1 text-[9px] leading-4 text-[var(--color-text-muted)]">
+          Key values are never displayed. A rate limit may be temporary or daily; Gemini does not reliably identify which one caused every quota response.
+        </p>
+      </div>
+    </details>
+  );
+}
+
 function SummaryCard({ label, value, tone = "neutral", compact = false }) {
   const valueClass = tone === "primary"
     ? "text-[var(--color-primary)]"
@@ -268,4 +328,8 @@ function ShieldIcon(props) {
 
 function InfoIcon(props) {
   return <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" strokeLinecap="round" /></svg>;
+}
+
+function ChevronIcon(props) {
+  return <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 }
