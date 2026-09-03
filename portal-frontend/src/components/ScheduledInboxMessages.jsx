@@ -24,11 +24,7 @@ function getDefaultScheduledFor(windowEndsAt) {
   const now = Date.now();
   let target = now + 60 * 60 * 1000;
   const windowEnd = windowEndsAt ? new Date(windowEndsAt).getTime() : NaN;
-
-  if (Number.isFinite(windowEnd)) {
-    target = Math.min(target, windowEnd - 5 * 60 * 1000);
-  }
-
+  if (Number.isFinite(windowEnd)) target = Math.min(target, windowEnd - 5 * 60 * 1000);
   if (target <= now + 60 * 1000) return "";
   return toLocalInputValue(new Date(target));
 }
@@ -45,26 +41,9 @@ function formatDateTime(value) {
   });
 }
 
-function statusLabel(status) {
-  const labels = {
-    scheduled: "Scheduled",
-    processing: "Sending",
-    failed: "Failed",
-    expired: "Expired",
-  };
-  return labels[status] || status;
-}
-
 function ClockIcon({ className = "" }) {
   return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.9"
-      aria-hidden="true"
-    >
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
       <circle cx="12" cy="12" r="8.25" />
       <path d="M12 7.5V12l3.2 2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
@@ -73,14 +52,7 @@ function ClockIcon({ className = "" }) {
 
 function CloseIcon({ className = "" }) {
   return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      aria-hidden="true"
-    >
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
       <path d="m6 6 12 12M18 6 6 18" strokeLinecap="round" />
     </svg>
   );
@@ -88,10 +60,7 @@ function CloseIcon({ className = "" }) {
 
 function nativeSetTextareaValue(textarea, value) {
   if (!textarea) return;
-  const setter = Object.getOwnPropertyDescriptor(
-    window.HTMLTextAreaElement.prototype,
-    "value"
-  )?.set;
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
   if (setter) setter.call(textarea, value);
   else textarea.value = value;
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
@@ -102,11 +71,12 @@ export default function ScheduledInboxMessages() {
   const contactId = /^\d+$/.test(searchParams.get("contact") || "")
     ? Number(searchParams.get("contact"))
     : null;
-  const formRef = useRef(null);
+
   const composerFormRef = useRef(null);
   const draftSnapshotRef = useRef("");
   const [composerMount, setComposerMount] = useState(null);
-  const [composerBlocked, setComposerBlocked] = useState(false);
+  const [composerMediaBlocked, setComposerMediaBlocked] = useState(false);
+  const [staffMode, setStaffMode] = useState(false);
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState([]);
   const [windowEndsAt, setWindowEndsAt] = useState(null);
@@ -135,6 +105,7 @@ export default function ScheduledInboxMessages() {
       const data = await request(`/conversations/${contactId}/scheduled-messages`);
       setItems(data.items || []);
       setWindowEndsAt(data.windowEndsAt || null);
+      setStaffMode(data.staffMode === true);
       setError("");
       return data;
     } catch (err) {
@@ -148,6 +119,7 @@ export default function ScheduledInboxMessages() {
   useEffect(() => {
     setItems([]);
     setWindowEndsAt(null);
+    setStaffMode(false);
     setOpen(false);
     setEditingId(null);
     setContent("");
@@ -158,18 +130,11 @@ export default function ScheduledInboxMessages() {
   }, [contactId, load]);
 
   useEffect(() => {
-    if (!contactId) {
-      setComposerMount(null);
-      composerFormRef.current = null;
-      return undefined;
-    }
-
+    if (!contactId) return undefined;
     let ownedMount = null;
 
     function findComposer() {
-      const conversationSection = document.querySelector(
-        'section[aria-label^="Conversation with "]'
-      );
+      const conversationSection = document.querySelector('section[aria-label^="Conversation with "]');
       const form = conversationSection?.querySelector("form");
       const sendButton = form?.querySelector('button[type="submit"]');
       if (!form || !sendButton) return;
@@ -186,11 +151,9 @@ export default function ScheduledInboxMessages() {
       setComposerMount((current) => (current === mount ? current : mount));
 
       const textarea = form.querySelector("textarea");
-      const hasMedia = !!form.querySelector(
-        'img[alt="Selected attachment"], audio'
-      );
+      const hasMedia = !!form.querySelector('img[alt="Selected attachment"], audio');
       const blocked = !!textarea?.disabled || hasMedia;
-      setComposerBlocked((current) => (current === blocked ? current : blocked));
+      setComposerMediaBlocked((current) => (current === blocked ? current : blocked));
     }
 
     findComposer();
@@ -205,7 +168,7 @@ export default function ScheduledInboxMessages() {
     return () => {
       observer.disconnect();
       if (ownedMount?.isConnected) ownedMount.remove();
-      if (composerFormRef.current?.contains(ownedMount)) composerFormRef.current = null;
+      composerFormRef.current = null;
       setComposerMount(null);
     };
   }, [contactId]);
@@ -216,14 +179,9 @@ export default function ScheduledInboxMessages() {
     const onChange = (event) => {
       try {
         const payload = JSON.parse(event.data || "{}");
-        if (
-          Number(payload.contactId) === Number(contactId) &&
-          payload.reason === "scheduled_message"
-        ) {
-          load();
-        }
+        if (Number(payload.contactId) === Number(contactId)) load();
       } catch {
-        // Ignore malformed events in this small companion listener.
+        // Ignore malformed events in this companion listener.
       }
     };
     source.addEventListener("conversation_changed", onChange);
@@ -235,11 +193,9 @@ export default function ScheduledInboxMessages() {
 
   useEffect(() => {
     if (!open) return undefined;
-
     function onKeyDown(event) {
       if (event.key === "Escape" && !saving) setOpen(false);
     }
-
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open, saving]);
@@ -253,7 +209,7 @@ export default function ScheduledInboxMessages() {
   }
 
   async function openScheduler() {
-    if (!contactId || composerBlocked) return;
+    if (!contactId || composerMediaBlocked || !staffMode) return;
     const textarea = composerFormRef.current?.querySelector("textarea");
     const draft = textarea?.value || "";
     draftSnapshotRef.current = draft;
@@ -261,8 +217,11 @@ export default function ScheduledInboxMessages() {
     setContent(draft);
     setError("");
     setOpen(true);
-
     const data = await load();
+    if (data?.staffMode !== true) {
+      setOpen(false);
+      return;
+    }
     setScheduledFor(getDefaultScheduledFor(data?.windowEndsAt || null));
   }
 
@@ -272,7 +231,6 @@ export default function ScheduledInboxMessages() {
     setScheduledFor(toLocalInputValue(item.scheduled_for));
     setError("");
     draftSnapshotRef.current = "";
-    requestAnimationFrame(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
 
   function applyQuickTime(minutes) {
@@ -289,7 +247,6 @@ export default function ScheduledInboxMessages() {
     event.preventDefault();
     if (!contactId || !content.trim() || !scheduledFor) return;
     const wasEditing = !!editingId;
-    const scheduledContent = content.trim();
     setSaving(true);
     setError("");
     try {
@@ -299,16 +256,14 @@ export default function ScheduledInboxMessages() {
       await request(path, {
         method: editingId ? "PATCH" : "POST",
         body: JSON.stringify({
-          content: scheduledContent,
+          content: content.trim(),
           scheduledFor: new Date(scheduledFor).toISOString(),
         }),
       });
 
       if (!wasEditing && draftSnapshotRef.current) {
         const textarea = composerFormRef.current?.querySelector("textarea");
-        if (textarea?.value === draftSnapshotRef.current) {
-          nativeSetTextareaValue(textarea, "");
-        }
+        if (textarea?.value === draftSnapshotRef.current) nativeSetTextareaValue(textarea, "");
       }
 
       const data = await load();
@@ -316,6 +271,7 @@ export default function ScheduledInboxMessages() {
       setOpen(false);
     } catch (err) {
       setError(err.message || "Couldn't schedule this message.");
+      if (/take over/i.test(err.message || "")) setStaffMode(false);
     } finally {
       setSaving(false);
     }
@@ -325,9 +281,7 @@ export default function ScheduledInboxMessages() {
     if (!contactId || item.status !== "scheduled") return;
     setError("");
     try {
-      await request(`/conversations/${contactId}/scheduled-messages/${item.id}`, {
-        method: "DELETE",
-      });
+      await request(`/conversations/${contactId}/scheduled-messages/${item.id}`, { method: "DELETE" });
       if (editingId === item.id) resetForm();
       await load();
     } catch (err) {
@@ -337,19 +291,19 @@ export default function ScheduledInboxMessages() {
 
   if (!contactId) return null;
 
+  const disabledReason = !staffMode
+    ? "Take over this conversation before scheduling a staff message."
+    : composerMediaBlocked
+    ? "Scheduled messages support text only. Finish or remove the current image or voice message first."
+    : null;
+
   const scheduleButton = composerMount
     ? createPortal(
         <button
           type="button"
           onClick={openScheduler}
-          disabled={composerBlocked}
-          title={
-            composerBlocked
-              ? "Scheduled messages support text only. Finish or remove the current media first."
-              : activeItems.length > 0
-              ? `${activeItems.length} scheduled message${activeItems.length === 1 ? "" : "s"}. Schedule another.`
-              : "Schedule this message"
-          }
+          disabled={!!disabledReason}
+          title={disabledReason || (activeItems.length > 0 ? `${activeItems.length} scheduled message${activeItems.length === 1 ? "" : "s"}` : "Schedule this message")}
           aria-label="Schedule message"
           className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:cursor-not-allowed disabled:opacity-35 sm:h-10 sm:w-10 ${
             activeItems.length > 0
@@ -371,253 +325,121 @@ export default function ScheduledInboxMessages() {
   return (
     <>
       {scheduleButton}
-
       {open && (
         <div
           className="fixed inset-0 z-[80] flex items-end justify-center bg-black/40 p-0 backdrop-blur-[1px] sm:items-center sm:p-4"
-          role="presentation"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget && !saving) setOpen(false);
           }}
         >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="schedule-message-title"
-            className="max-h-[92vh] w-full overflow-y-auto rounded-t-3xl bg-white shadow-[0_24px_70px_rgba(20,34,28,0.22)] sm:max-w-lg sm:rounded-3xl"
-          >
+          <div role="dialog" aria-modal="true" aria-labelledby="schedule-message-title" className="max-h-[92vh] w-full overflow-y-auto rounded-t-3xl bg-white shadow-[0_24px_70px_rgba(20,34,28,0.22)] sm:max-w-lg sm:rounded-3xl">
             <div className="sticky top-0 z-10 border-b border-[var(--color-border)] bg-white/95 px-5 py-4 backdrop-blur sm:px-6">
               <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--color-primary-light)] text-[var(--color-primary)]">
-                      <ClockIcon className="h-4 w-4" />
-                    </span>
-                    <div>
-                      <h2 id="schedule-message-title" className="font-display text-lg font-bold">
-                        {editingId ? "Edit scheduled message" : "Schedule message"}
-                      </h2>
-                      <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
-                        Send this message automatically later.
-                      </p>
-                    </div>
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-primary-light)] text-[var(--color-primary)]">
+                    <ClockIcon className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <h2 id="schedule-message-title" className="font-display text-lg font-bold">{editingId ? "Edit scheduled message" : "Schedule message"}</h2>
+                    <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">Staff mode stays in control until you return this conversation to AI.</p>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => !saving && setOpen(false)}
-                  disabled={saving}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] disabled:opacity-40"
-                  aria-label="Close scheduled messages"
-                >
+                <button type="button" onClick={() => !saving && setOpen(false)} disabled={saving} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] disabled:opacity-40" aria-label="Close scheduler">
                   <CloseIcon className="h-4 w-4" />
                 </button>
               </div>
 
-              <div
-                className={`mt-3 flex items-center gap-2 rounded-xl px-3 py-2 text-[11px] ${
-                  windowOpen
-                    ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-                    : "bg-[var(--color-danger-light)] text-[var(--color-danger)]"
-                }`}
-              >
+              <div className={`mt-3 flex items-center gap-2 rounded-xl px-3 py-2 text-[11px] ${windowOpen ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-danger-light)] text-[var(--color-danger)]"}`}>
                 <span className={`h-2 w-2 shrink-0 rounded-full ${windowOpen ? "bg-[var(--color-primary)]" : "bg-[var(--color-danger)]"}`} />
-                <span className="font-semibold">
-                  {windowOpen
-                    ? `Can schedule until ${formatDateTime(windowEndsAt)}`
-                    : windowEndsAt
-                    ? `Reply window closed ${formatDateTime(windowEndsAt)}`
-                    : "No active customer reply window"}
-                </span>
+                <span className="font-semibold">{windowOpen ? `Can schedule until ${formatDateTime(windowEndsAt)}` : "Customer reply window is closed"}</span>
               </div>
             </div>
 
             <div className="space-y-5 p-5 sm:p-6">
-              <form ref={formRef} onSubmit={save} className="space-y-4">
-                <label className="block">
-                  <span className="mb-1.5 block text-xs font-semibold text-[var(--color-text)]">Message</span>
+              <form onSubmit={save} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]/70 p-4">
+                <label className="block text-xs font-semibold text-[var(--color-text)]">
+                  Message
                   <textarea
                     value={content}
                     onChange={(event) => setContent(event.target.value)}
                     rows={4}
                     maxLength={4096}
-                    autoFocus
                     placeholder="Type the message to send later…"
-                    className="w-full resize-y rounded-2xl border border-[var(--color-border)] bg-white px-3.5 py-3 text-sm leading-relaxed outline-none transition focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+                    className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
                   />
-                  <div className="mt-1 flex justify-end text-[10px] text-[var(--color-text-muted)]">
-                    {content.length}/4096
-                  </div>
                 </label>
 
-                <div>
-                  <div className="mb-1.5 flex items-center justify-between gap-3">
-                    <span className="text-xs font-semibold text-[var(--color-text)]">Send at</span>
-                    {!editingId && windowOpen && (
-                      <div className="flex items-center gap-1">
-                        {[30, 60, 180].map((minutes) => {
-                          const candidate = Date.now() + minutes * 60 * 1000;
-                          const disabled = candidate >= windowEndTime;
-                          return (
-                            <button
-                              key={minutes}
-                              type="button"
-                              onClick={() => applyQuickTime(minutes)}
-                              disabled={disabled}
-                              className="rounded-lg bg-[var(--color-bg)] px-2 py-1 text-[10px] font-semibold text-[var(--color-text-muted)] transition hover:bg-[var(--color-primary-light)] hover:text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-35"
-                            >
-                              {minutes < 60 ? `${minutes}m` : `${minutes / 60}h`}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
+                <label className="mt-4 block text-xs font-semibold text-[var(--color-text)]">
+                  Send at
                   <input
                     type="datetime-local"
                     value={scheduledFor}
                     min={toLocalInputValue(new Date(Date.now() + 60 * 1000))}
                     max={maxScheduleValue}
-                    onChange={(event) => {
-                      setScheduledFor(event.target.value);
-                      setError("");
-                    }}
-                    disabled={!windowOpen}
-                    className="w-full rounded-2xl border border-[var(--color-border)] bg-white px-3.5 py-3 text-sm font-medium text-[var(--color-text)] outline-none transition focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)] disabled:cursor-not-allowed disabled:bg-[var(--color-bg)] disabled:opacity-60"
+                    onChange={(event) => setScheduledFor(event.target.value)}
+                    className="mt-2 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm font-medium outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
                   />
-                </div>
+                </label>
 
-                {error && (
-                  <p className="rounded-xl bg-[var(--color-danger-light)] px-3 py-2.5 text-xs font-medium leading-relaxed text-[var(--color-danger)]">
-                    {error}
-                  </p>
-                )}
-
-                <div className="flex items-center justify-end gap-2 pt-1">
-                  {editingId && (
-                    <button
-                      type="button"
-                      onClick={() => resetForm()}
-                      disabled={saving}
-                      className="rounded-xl border border-[var(--color-border)] px-3.5 py-2.5 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] disabled:opacity-40"
-                    >
-                      New message
-                    </button>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={saving || !content.trim() || !scheduledFor || !windowOpen}
-                    className="inline-flex min-w-[132px] items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {saving && (
-                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/35 border-t-white" />
-                    )}
-                    {saving ? "Saving…" : editingId ? "Save changes" : "Schedule"}
-                  </button>
-                </div>
-              </form>
-
-              <div className="border-t border-[var(--color-border)] pt-5">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-bold">Scheduled</h3>
-                    <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
-                      Manage messages that have not finished sending.
-                    </p>
-                  </div>
-                  {items.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={load}
-                      disabled={loading}
-                      className="rounded-lg px-2 py-1 text-[11px] font-semibold text-[var(--color-primary)] transition hover:bg-[var(--color-primary-light)] disabled:opacity-40"
-                    >
-                      {loading ? "Refreshing…" : "Refresh"}
-                    </button>
-                  )}
-                </div>
-
-                {loading && items.length === 0 && (
-                  <div className="space-y-2.5" aria-label="Loading scheduled messages">
-                    {[0, 1].map((item) => (
-                      <div key={item} className="h-20 animate-pulse rounded-2xl bg-[var(--color-bg)]" />
+                {!editingId && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {[30, 60, 180].map((minutes) => (
+                      <button key={minutes} type="button" onClick={() => applyQuickTime(minutes)} disabled={!windowOpen} className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-[11px] font-semibold text-[var(--color-text-muted)] transition hover:border-[var(--color-primary)]/30 hover:text-[var(--color-primary)] disabled:opacity-40">
+                        {minutes < 60 ? `${minutes}m` : `${minutes / 60}h`}
+                      </button>
                     ))}
                   </div>
                 )}
 
-                {!loading && items.length === 0 && (
-                  <div className="rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg)]/45 px-4 py-7 text-center">
-                    <ClockIcon className="mx-auto h-5 w-5 text-[var(--color-text-muted)]" />
-                    <p className="mt-2 text-xs font-semibold text-[var(--color-text)]">Nothing scheduled</p>
-                    <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                      Scheduled messages for this conversation will appear here.
-                    </p>
+                {error && <p className="mt-3 rounded-xl bg-[var(--color-danger-light)] px-3 py-2.5 text-xs font-medium leading-relaxed text-[var(--color-danger)]">{error}</p>}
+
+                <div className="mt-4 flex items-center justify-end gap-2">
+                  {editingId && (
+                    <button type="button" onClick={() => resetForm()} disabled={saving} className="rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-xs font-semibold transition hover:bg-[var(--color-bg)] disabled:opacity-40">Cancel edit</button>
+                  )}
+                  <button type="submit" disabled={saving || !content.trim() || !scheduledFor || !windowOpen} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40">
+                    {saving ? "Saving…" : editingId ? "Save changes" : "Schedule message"}
+                  </button>
+                </div>
+              </form>
+
+              <section>
+                <div className="mb-2.5 flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold">Scheduled</h3>
+                    <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">Upcoming messages and anything that needs review.</p>
                   </div>
-                )}
+                  <button type="button" onClick={load} className="text-xs font-semibold text-[var(--color-primary)]">Refresh</button>
+                </div>
+
+                {loading && <p className="py-5 text-center text-xs text-[var(--color-text-muted)]">Loading…</p>}
+                {!loading && items.length === 0 && <p className="rounded-2xl border border-dashed border-[var(--color-border)] px-4 py-7 text-center text-xs text-[var(--color-text-muted)]">No scheduled messages for this conversation.</p>}
 
                 <div className="space-y-2.5">
                   {items.map((item) => {
                     const canChange = item.status === "scheduled";
                     const needsReview = item.status === "failed" || item.status === "expired";
                     return (
-                      <div
-                        key={item.id}
-                        className={`rounded-2xl border p-3.5 ${
-                          needsReview
-                            ? "border-[var(--color-danger)]/20 bg-[var(--color-danger-light)]/35"
-                            : "border-[var(--color-border)] bg-white"
-                        }`}
-                      >
-                        <div className="flex items-start gap-3">
-                          <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${needsReview ? "bg-white text-[var(--color-danger)]" : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"}`}>
-                            <ClockIcon className="h-4 w-4" />
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--color-text)]">
-                              {item.content}
-                            </p>
-                            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-[var(--color-text-muted)]">
-                              <span className="font-semibold text-[var(--color-text)]">
-                                {formatDateTime(item.scheduled_for)}
-                              </span>
-                              <span>•</span>
-                              <span className={needsReview ? "font-semibold text-[var(--color-danger)]" : "font-medium"}>
-                                {statusLabel(item.status)}
-                              </span>
-                              {item.scheduled_by_username && <span>• {item.scheduled_by_username}</span>}
-                            </div>
-                          </div>
+                      <div key={item.id} className="rounded-2xl border border-[var(--color-border)] bg-white p-3.5 shadow-sm">
+                        <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{item.content}</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+                          <span className="font-semibold">{formatDateTime(item.scheduled_for)}</span>
+                          <span>•</span>
+                          <span className="capitalize">{item.status}</span>
+                          {item.scheduled_by_username && <><span>•</span><span>{item.scheduled_by_username}</span></>}
                         </div>
-
-                        {needsReview && item.failure_reason && (
-                          <p className="mt-3 rounded-xl bg-white px-3 py-2 text-[10px] leading-relaxed text-[var(--color-danger)]">
-                            {item.failure_reason}
-                          </p>
-                        )}
-
+                        {needsReview && item.failure_reason && <p className="mt-2 rounded-lg bg-[var(--color-danger-light)] px-2.5 py-2 text-[10px] leading-relaxed text-[var(--color-danger)]">{item.failure_reason}</p>}
                         {canChange && (
                           <div className="mt-3 flex justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={() => startEdit(item)}
-                              className="rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-xs font-semibold transition hover:bg-[var(--color-bg)]"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => cancel(item)}
-                              className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-[var(--color-danger)] transition hover:bg-[var(--color-danger-light)]"
-                            >
-                              Cancel send
-                            </button>
+                            <button type="button" onClick={() => startEdit(item)} disabled={!staffMode} className="rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-xs font-semibold transition hover:bg-[var(--color-bg)] disabled:opacity-40">Edit</button>
+                            <button type="button" onClick={() => cancel(item)} className="rounded-lg border border-[var(--color-danger)]/25 px-2.5 py-1.5 text-xs font-semibold text-[var(--color-danger)] transition hover:bg-[var(--color-danger-light)]">Cancel send</button>
                           </div>
                         )}
                       </div>
                     );
                   })}
                 </div>
-              </div>
+              </section>
             </div>
           </div>
         </div>
