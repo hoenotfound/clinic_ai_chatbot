@@ -79,19 +79,17 @@ async function processScheduledMessage(item) {
     return;
   }
 
-  if ((contact.channel || "whatsapp") === "whatsapp") {
-    const policy = await whatsappPolicy.checkFreeformAllowed(contact, new Date(), {
-      purpose: "service",
-    });
-    if (!policy.allowed) {
-      await scheduledRepo.markExpired(item.id, policy.message);
-      await contactsRepo.setDeliveryAttention(
-        contact.id,
-        `Scheduled message not sent: ${policy.message}`
-      );
-      publishScheduleChange(contact.id);
-      return;
-    }
+  const policy = await whatsappPolicy.checkFreeformAllowed(contact, new Date(), {
+    purpose: "service",
+  });
+  if (!policy.allowed) {
+    await scheduledRepo.markExpired(item.id, policy.message);
+    await contactsRepo.setDeliveryAttention(
+      contact.id,
+      `Scheduled message not sent: ${policy.message}`
+    );
+    publishScheduleChange(contact.id);
+    return;
   }
 
   const latestInboundAt = await scheduledRepo.getLatestInboundAt(contact.id);
