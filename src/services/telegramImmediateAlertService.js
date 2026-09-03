@@ -126,12 +126,21 @@ function humanInterventionEventKey(context, reason, messageId = null) {
   return `human:${context.contact_id}:${capturedMessageId}`;
 }
 
+function bookingReadyEventKey(context, messageId = null) {
+  const capturedMessageId = Number(messageId || context.latest_customer_message_id);
+  if (!Number.isSafeInteger(capturedMessageId) || capturedMessageId < 1) return null;
+  return `booking-ready:${context.contact_id}:${capturedMessageId}`;
+}
+
 function buildImmediateAlertMessage({ type, context, reason, env = process.env }) {
   const isDelivery = type === "delivery_failure";
+  const isBookingReady = type === "booking_ready";
   const platform = channelLabel(context.channel || "whatsapp");
   const title = isDelivery
     ? `⚠️ ${platform} Delivery Failed`
-    : "🚨 Human Intervention Required";
+    : isBookingReady
+      ? "🔥 Booking Ready"
+      : "🚨 Human Intervention Required";
   const name = clean(context.name || context.whatsapp_profile_name, "Unknown contact");
   const lines = [
     title,
@@ -153,12 +162,12 @@ function buildImmediateAlertMessage({ type, context, reason, env = process.env }
     );
   }
 
-  lines.push(
-    "",
-    isDelivery
-      ? "Action: Check the failed message in Inbox and retry or contact the customer manually."
-      : "Action: Open the conversation and review/respond as soon as possible."
-  );
+  const action = isDelivery
+    ? "Action: Check the failed message in Inbox and retry or contact the customer manually."
+    : isBookingReady
+      ? "Action: Open the conversation, verify the requested branch/time, and confirm the appointment availability with the customer."
+      : "Action: Open the conversation and review/respond as soon as possible.";
+  lines.push("", action);
 
   const inboxUrl = buildInboxUrl(context.contact_id, env);
   if (inboxUrl) lines.push("", `Inbox: ${inboxUrl}`);
@@ -198,6 +207,13 @@ function createTelegramImmediateAlertService({
         cooldownMinutes: HUMAN_ALERT_COOLDOWN_MINUTES,
       });
       if (!claimed) return { status: "suppressed" };
+    } else if (type === "booking_ready") {
+      eventKey = bookingReadyEventKey(context, messageId);
+      if (!eventKey) {
+        eventKey = `booking-ready:${contactId}:event:${crypto.randomUUID()}`;
+      }
+      const claimed = await claimAlert({ eventKey, type, contactId });
+      if (!claimed) return { status: "suppressed" };
     }
 
     try {
@@ -209,8 +225,8 @@ function createTelegramImmediateAlertService({
       });
       return { status: "sent", result };
     } catch (err) {
-      // A failed send must not consume the cooldown. Release this event so a
-      // later attention path can retry instead of being muted for 30 minutes.
+      // A failed send must not consume the claim. Release the event so a later
+      // attempt can retry instead of being permanently suppressed.
       if (eventKey) {
         await releaseAlert(eventKey).catch(() => {});
       }
@@ -225,6 +241,9 @@ function createTelegramImmediateAlertService({
     sendDeliveryFailureAlert(input) {
       return send("delivery_failure", input);
     },
+    sendBookingReadyAlert(input) {
+      return send("booking_ready", input);
+    },
   };
 }
 
@@ -234,6 +253,7 @@ module.exports = {
   HUMAN_ALERT_COOLDOWN_MINUTES,
   HUMAN_ALERT_LOCK_NAMESPACE,
   buildImmediateAlertMessage,
+  bookingReadyEventKey,
   claimImmediateAlert,
   createTelegramImmediateAlertService,
   getImmediateAlertContext,
@@ -241,4 +261,5 @@ module.exports = {
   releaseImmediateAlert,
   sendHumanInterventionAlert: defaultService.sendHumanInterventionAlert,
   sendDeliveryFailureAlert: defaultService.sendDeliveryFailureAlert,
+  sendBookingReadyAlert: defaultService.sendBookingReadyAlert,
 };
