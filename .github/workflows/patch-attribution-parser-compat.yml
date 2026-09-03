@@ -2,66 +2,52 @@ name: Patch attribution parser compatibility
 
 on:
   push:
-    branches: [feature/lead-source-attribution]
+    branches:
+      - feature/lead-source-attribution
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: ${{ github.event.head_commit.message == 'Apply parser attribution compatibility fix' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: feature/lead-source-attribution
           fetch-depth: 0
+
       - name: Preserve ordinary inbound parser shapes
+        shell: bash
         run: |
-          python - <<'PY'
+          python3 <<'PY'
           from pathlib import Path
 
-          for filename in ['src/services/metaMessagingService.js', 'src/services/whatsappService.js']:
+          replacements = {
+              'src/services/metaMessagingService.js': (
+                  '''      const base = {\n        id: message.mid,\n        from: String(senderId),\n        channel,\n        profileName: null,\n        attribution,\n      };''',
+                  '''      const base = {\n        id: message.mid,\n        from: String(senderId),\n        channel,\n        profileName: null,\n        ...(attribution ? { attribution } : {}),\n      };'''
+              ),
+              'src/services/whatsappService.js': (
+                  '''          const base = {\n            id: message.id,\n            from: message.from,\n            profileName,\n            attribution,\n          };''',
+                  '''          const base = {\n            id: message.id,\n            from: message.from,\n            profileName,\n            ...(attribution ? { attribution } : {}),\n          };'''
+              ),
+          }
+
+          for filename, (old, new) in replacements.items():
               path = Path(filename)
               text = path.read_text()
-              old = '''          const base = {
-            id: message.'''
-              if filename.endswith('metaMessagingService.js'):
-                  target = '''      const base = {
-        id: message.mid,
-        from: String(senderId),
-        channel,
-        profileName: null,
-        attribution,
-      };'''
-                  replacement = '''      const base = {
-        id: message.mid,
-        from: String(senderId),
-        channel,
-        profileName: null,
-        ...(attribution ? { attribution } : {}),
-      };'''
-              else:
-                  target = '''          const base = {
-            id: message.id,
-            from: message.from,
-            profileName,
-            attribution,
-          };'''
-                  replacement = '''          const base = {
-            id: message.id,
-            from: message.from,
-            profileName,
-            ...(attribution ? { attribution } : {}),
-          };'''
-              if target not in text:
-                  raise SystemExit(f'Parser target not found in {filename}')
-              path.write_text(text.replace(target, replacement, 1))
+              if old not in text:
+                  raise SystemExit(f'Expected parser block not found in {filename}')
+              path.write_text(text.replace(old, new, 1))
           PY
-      - name: Commit compatibility fix
+
+      - name: Commit fix and remove one-shot workflow
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/patch-attribution-parser-compat.yml
           git add src/services/metaMessagingService.js src/services/whatsappService.js
           git commit -m "Preserve inbound parser compatibility"
           git push origin HEAD:feature/lead-source-attribution
