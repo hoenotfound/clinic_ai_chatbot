@@ -171,6 +171,8 @@ export const api = {
     const query = params.toString();
     return request(`/pipeline/analytics${query ? `?${query}` : ""}`);
   },
+  getSetupStatus: () => request("/setup-status"),
+  runSetupChecks: () => request("/setup-status/run", { method: "POST" }),
   createLead: (data) =>
     request("/pipeline/leads", { method: "POST", body: JSON.stringify(data) }),
   updateLead: (leadId, data) =>
