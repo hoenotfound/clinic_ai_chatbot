@@ -112,6 +112,28 @@ function mapStored(rows) {
   return new Map((rows || []).map((row) => [row.check_key, row]));
 }
 
+function mergeWebhookEvidence(storedRows, inboundRows) {
+  const rows = new Map(
+    (storedRows || []).map((row) => [row.check_key, { ...row }])
+  );
+  for (const activity of inboundRows || []) {
+    const key = activity.channel === "whatsapp"
+      ? "whatsapp_webhook"
+      : ["facebook", "instagram"].includes(activity.channel)
+        ? "meta_webhook"
+        : null;
+    const candidate = iso(activity.last_inbound_at);
+    if (!key || !candidate) continue;
+
+    const previous = rows.get(key) || { check_key: key };
+    const previousAt = iso(previous.last_webhook_at);
+    if (!previousAt || new Date(candidate) > new Date(previousAt)) {
+      rows.set(key, { ...previous, last_webhook_at: candidate });
+    }
+  }
+  return [...rows.values()];
+}
+
 function sessionSecurityResult(env, checkedAt) {
   const secret = text(env.SESSION_SECRET);
   const weak = secret.length < 32 || /^(change|secret|password|test)/i.test(secret);
@@ -302,10 +324,18 @@ function createSetupStatusService({
   }
 
   async function storedRows() {
+    let saved = [];
     try {
-      return await repository.listConnectionHealth(database);
+      saved = await repository.listConnectionHealth(database);
     } catch {
-      return [];
+      saved = [];
+    }
+    if (typeof repository.listLatestInboundActivity !== "function") return saved;
+    try {
+      const inbound = await repository.listLatestInboundActivity(database);
+      return mergeWebhookEvidence(saved, inbound);
+    } catch {
+      return saved;
     }
   }
 
@@ -595,6 +625,7 @@ module.exports = {
   createSetupStatusService,
   definitions,
   mergeOverview,
+  mergeWebhookEvidence,
   publicUrlResult,
   requestJson,
   safeError,
