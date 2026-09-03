@@ -72,8 +72,9 @@ function createInboundMessageClaimService({
     }
 
     let lead = null;
+    let leadOutcome = null;
     try {
-      const leadOutcome = await pipeline.ensureLeadForContact(
+      leadOutcome = await pipeline.ensureLeadForContact(
         contact.id,
         "Automation",
         savedInbound.id
@@ -83,7 +84,19 @@ function createInboundMessageClaimService({
       console.error(`Failed to create or locate lead for contact ${contact.id}:`, err);
     }
 
-    if (lead) {
+    // First-touch attribution belongs to the start of a lead journey. Do not
+    // retrofit an old open lead with a new ad click after this feature is
+    // deployed. A concurrently-created lead is still safe because its stable
+    // journey boundary equals this first inbound message.
+    const startsThisJourney = Boolean(
+      lead &&
+      (
+        leadOutcome?.created === true ||
+        Number(lead.started_message_id) === Number(savedInbound.id)
+      )
+    );
+
+    if (startsThisJourney) {
       try {
         await attribution.captureForInbound({
           lead,
