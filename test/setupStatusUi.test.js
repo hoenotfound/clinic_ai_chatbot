@@ -28,6 +28,10 @@ test("setup status UI includes private-credential copy and responsive controls",
   assert.match(page, /safe-area-inset-bottom/);
   assert.match(page, /Meta app review is separate/);
   assert.match(page, /cannot confirm that Meta has approved public messaging access/);
+  assert.match(page, /<details/);
+  assert.match(page, /View AI key health/);
+  assert.match(page, /Key values are never displayed/);
+  assert.match(page, /Last rate limited/);
 });
 
 test("legacy public Instagram diagnostic routes were removed", () => {
@@ -42,6 +46,8 @@ test("setup schema is included in startup and stores no credentials", () => {
   assert.match(db, /setupStatusSchema\.sql/);
   assert.match(schema, /last_success_at/);
   assert.match(schema, /last_webhook_at/);
+  assert.match(schema, /setup_ai_candidate_health/);
+  assert.match(schema, /last_rate_limited_at/);
   assert.doesNotMatch(schema, /access_token|api_key|password/i);
 });
 
