@@ -5,6 +5,7 @@ const {
   getActivePromotion,
   getActivePromotions,
   isPromotionActive,
+  localDateString,
 } = require("../src/utils/activePromotion");
 
 const promo = {
@@ -31,4 +32,13 @@ test("active promotions used by the AI can be text-only while promo image sendin
   const now = new Date("2026-09-10T04:00:00Z");
   assert.equal(getActivePromotions([textOnly], now).length, 1);
   assert.equal(getActivePromotion([textOnly], now), null);
+});
+
+test("an invalid optional clinic timezone falls back to Malaysia instead of breaking replies", () => {
+  const now = new Date("2026-09-30T15:59:59Z");
+  assert.equal(localDateString(now, "Not/A_Timezone"), "2026-09-30");
+  assert.equal(
+    isPromotionActive(promo, now, { timeZone: "Not/A_Timezone" }),
+    true
+  );
 });
