@@ -37,7 +37,18 @@ function isRetryableAiError(err) {
   if ([408, 409, 425, 429].includes(status) || status >= 500) return true;
 
   const code = String(err?.code || "").toUpperCase();
-  if (["ETIMEDOUT", "ECONNRESET", "EAI_AGAIN", "AI_TIMEOUT"].includes(code)) return true;
+  if (
+    [
+      "ETIMEDOUT",
+      "ECONNRESET",
+      "EAI_AGAIN",
+      "AI_TIMEOUT",
+      "INVALID_AI_RESPONSE",
+      "EMPTY_AI_RESPONSE",
+    ].includes(code)
+  ) {
+    return true;
+  }
 
   const message = String(err?.message || "").toLowerCase();
   return /timeout|timed out|rate limit|quota|resource exhausted|overload|temporar|unavailable|try again|429|500|502|503|504/.test(message);
@@ -66,9 +77,10 @@ async function runCandidate(candidate, messages, options, timeoutMs, retryCount)
         timeoutMs,
         candidate.label
       );
-      // Validate the provider response before calling it a success. Malformed
-      // structured JSON or an empty reply should fall through to the next key/
-      // provider rather than being shown to the patient as raw control output.
+      // Validate the provider response before calling it a success. Empty or
+      // malformed structured output is usually a one-off model formatting
+      // failure, so it gets the same bounded retry as transient provider
+      // failures before rotating to the next key/provider.
       parseAiReplyResult(raw);
       return raw;
     } catch (err) {
