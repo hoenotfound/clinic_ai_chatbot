@@ -324,12 +324,10 @@ async function markMetaEnrichmentSuccess(attributionId, details) {
       if (details.campaignName) {
         await client.query(
           `UPDATE leads
-           SET campaign_name = CASE
-                 WHEN NULLIF(BTRIM(campaign_name), '') IS NULL THEN $2
-                 ELSE campaign_name
-               END,
+           SET campaign_name = $2,
                updated_at = now()
-           WHERE id = $1`,
+           WHERE id = $1
+             AND NULLIF(BTRIM(campaign_name), '') IS NULL`,
           [updated.lead_id, details.campaignName]
         );
       }
