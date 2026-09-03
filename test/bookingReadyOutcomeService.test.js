@@ -6,7 +6,11 @@ const {
   createBookingReadyOutcomeService,
 } = require("../src/services/bookingReadyOutcomeService");
 
-function fakeDatabase({ temperature = "warm", temperatureLocked = false } = {}) {
+function fakeDatabase({
+  temperature = "warm",
+  temperatureLocked = false,
+  contactUpdated = true,
+} = {}) {
   const calls = [];
   const client = {
     async query(sql, params = []) {
@@ -17,7 +21,7 @@ function fakeDatabase({ temperature = "warm", temperatureLocked = false } = {}) 
         return { rows: [] };
       }
       if (normalized.startsWith("UPDATE contacts")) {
-        return { rows: [{ id: 42 }] };
+        return { rows: contactUpdated ? [{ id: 42 }] : [] };
       }
       if (normalized.startsWith("SELECT id, temperature, temperature_locked FROM leads")) {
         return {
@@ -96,6 +100,7 @@ test("booking-ready flags Inbox, makes an unlocked lead Hot, records activity, a
   );
 
   const allSql = calls.map(({ sql }) => sql).join("\n");
+  assert.match(allSql, /mode = 'ai'/i);
   assert.doesNotMatch(allSql, /appointment_status/i);
   assert.doesNotMatch(allSql, /stage_id\s*=/i);
 });
@@ -123,4 +128,34 @@ test("booking-ready preserves a staff-locked lead temperature", async () => {
     calls.some(({ sql }) => sql.startsWith("INSERT INTO lead_activities")),
     true
   );
+});
+
+test("booking-ready does nothing if staff took over while the AI was generating", async () => {
+  const { database, calls } = fakeDatabase({ contactUpdated: false });
+  const published = [];
+  const alerts = [];
+  const markBookingReady = createBookingReadyOutcomeService({
+    database,
+    publish(type, payload) {
+      published.push({ type, payload });
+    },
+    sendBookingReadyAlert(input) {
+      alerts.push(input);
+      return { status: "sent" };
+    },
+  });
+
+  const result = await markBookingReady(42, 779);
+
+  assert.deepEqual(result, {
+    contactUpdated: false,
+    leadId: null,
+    leadChanged: false,
+  });
+  assert.equal(
+    calls.some(({ sql }) => sql.includes("FROM leads")),
+    false
+  );
+  assert.deepEqual(published, []);
+  assert.deepEqual(alerts, []);
 });
