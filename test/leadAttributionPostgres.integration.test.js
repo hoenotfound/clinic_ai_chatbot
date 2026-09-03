@@ -66,11 +66,11 @@ test(
         `INSERT INTO lead_attributions (
            lead_id, first_message_id, source, platform, channel,
            meta_ad_id, meta_source_id, meta_source_type, ctwa_clid,
-           headline, raw_referral
+           headline, enrichment_status, raw_referral
          ) VALUES (
            $1, $2, 'meta_ads', 'meta', 'whatsapp',
            '120210000001234', '120210000001234', 'ad', 'clid-test',
-           'HIFU Promo', '{"source_type":"ad"}'::jsonb
+           'HIFU Promo', 'pending', '{"source_type":"ad"}'::jsonb
          )
          RETURNING *`,
         [leadId, messageId]
@@ -79,8 +79,41 @@ test(
       assert.equal(inserted.rows[0].source, "meta_ads");
       assert.equal(inserted.rows[0].meta_ad_id, "120210000001234");
       assert.equal(inserted.rows[0].ctwa_clid, "clid-test");
+      assert.equal(inserted.rows[0].enrichment_status, "pending");
       assert.equal(Number(inserted.rows[0].first_message_id), messageId);
       assert.equal(inserted.rows[0].raw_referral.source_type, "ad");
+    });
+
+    await t.test("stores the enriched Meta Ad -> Ad Set -> Campaign hierarchy", async () => {
+      const updated = await client.query(
+        `UPDATE lead_attributions
+         SET meta_account_id = '123456789',
+             ad_name = 'HIFU Doctor Video V3',
+             adset_id = '120210000001111',
+             adset_name = 'Women 25-45 KL',
+             campaign_id = '120210000001000',
+             campaign_name = 'HIFU September Sales',
+             enrichment_status = 'enriched',
+             enrichment_attempts = enrichment_attempts + 1,
+             enrichment_last_attempt_at = now(),
+             enrichment_next_attempt_at = NULL,
+             enrichment_last_error = NULL,
+             enriched_at = now(),
+             updated_at = now()
+         WHERE lead_id = $1
+         RETURNING *`,
+        [leadId]
+      );
+
+      const row = updated.rows[0];
+      assert.equal(row.enrichment_status, "enriched");
+      assert.equal(row.meta_account_id, "123456789");
+      assert.equal(row.ad_name, "HIFU Doctor Video V3");
+      assert.equal(row.adset_id, "120210000001111");
+      assert.equal(row.adset_name, "Women 25-45 KL");
+      assert.equal(row.campaign_id, "120210000001000");
+      assert.equal(row.campaign_name, "HIFU September Sales");
+      assert.ok(row.enriched_at instanceof Date);
     });
 
     await t.test("rejects a second first-touch attribution for the same lead", async () => {
