@@ -7,9 +7,19 @@ const meta = require("../src/services/metaMessagingService");
 const metaAttachments = require("../src/services/metaAttachmentService");
 const mediaStorage = require("../src/services/mediaStorageService");
 const audioConvert = require("../src/services/audioConvertService");
+const whatsappPolicy = require("../src/services/whatsappPolicyService");
 const messaging = require("../src/services/channelMessagingService");
 
-test("WhatsApp contacts keep using the existing WhatsApp send function", async (t) => {
+function allowWhatsappPolicy(t) {
+  const original = whatsappPolicy.checkFreeformAllowed;
+  whatsappPolicy.checkFreeformAllowed = async () => ({ allowed: true });
+  t.after(() => {
+    whatsappPolicy.checkFreeformAllowed = original;
+  });
+}
+
+test("WhatsApp contacts keep using the existing WhatsApp send function after policy approval", async (t) => {
+  allowWhatsappPolicy(t);
   const originalWhatsappSend = whatsapp.sendMessage;
   const originalMetaSend = meta.sendText;
   t.after(() => {
@@ -29,13 +39,44 @@ test("WhatsApp contacts keep using the existing WhatsApp send function", async (
   };
 
   const result = await messaging.sendText(
-    { channel: "whatsapp", whatsapp_number: "60123456789" },
+    { id: 1, channel: "whatsapp", whatsapp_number: "60123456789" },
     "Hello"
   );
 
   assert.deepEqual(whatsappCall, { to: "60123456789", text: "Hello" });
   assert.equal(metaCalls, 0);
   assert.equal(result.wamid, "wamid-1");
+});
+
+test("WhatsApp policy rejection blocks the lower-level send", async (t) => {
+  const originalPolicy = whatsappPolicy.checkFreeformAllowed;
+  const originalWhatsappSend = whatsapp.sendMessage;
+  t.after(() => {
+    whatsappPolicy.checkFreeformAllowed = originalPolicy;
+    whatsapp.sendMessage = originalWhatsappSend;
+  });
+
+  whatsappPolicy.checkFreeformAllowed = async () => ({
+    allowed: false,
+    code: "outside_customer_service_window",
+    message: "window closed",
+  });
+  let whatsappCalls = 0;
+  whatsapp.sendMessage = async () => {
+    whatsappCalls += 1;
+    return { success: true, wamid: "wrong" };
+  };
+
+  const result = await messaging.sendText(
+    { id: 2, channel: "whatsapp", whatsapp_number: "60123456789" },
+    "Too late"
+  );
+
+  assert.equal(whatsappCalls, 0);
+  assert.equal(result.success, false);
+  assert.equal(result.policyBlocked, true);
+  assert.equal(result.policyCode, "outside_customer_service_window");
+  assert.equal(result.error, "window closed");
 });
 
 test("Facebook contacts never fall through to WhatsApp", async (t) => {
@@ -240,6 +281,7 @@ test("Instagram voice is converted to M4A before temporary URL delivery", async 
 });
 
 test("WhatsApp voice is not delivered if Staff mode ends during media upload", async (t) => {
+  allowWhatsappPolicy(t);
   const originalGetContact = contactsRepo.getContactById;
   const originalUpload = whatsapp.uploadMedia;
   const originalSendVoice = whatsapp.sendVoiceById;
