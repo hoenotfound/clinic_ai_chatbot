@@ -36,6 +36,27 @@ test("WhatsApp parser preserves CTWA referral on the inbound message", () => {
   assert.equal(parsed[0].attribution.ctwaClid, "clid-123");
 });
 
+test("ordinary WhatsApp message keeps the legacy parser shape without an attribution field", () => {
+  const parsed = whatsapp.parseIncomingMessages({
+    entry: [{
+      changes: [{
+        value: {
+          contacts: [{ wa_id: "60123456789", profile: { name: "Caden" } }],
+          messages: [{
+            id: "wamid.organic-1",
+            from: "60123456789",
+            type: "text",
+            text: { body: "Hello" },
+          }],
+        },
+      }],
+    }],
+  });
+
+  assert.equal(parsed.length, 1);
+  assert.equal(Object.hasOwn(parsed[0], "attribution"), false);
+});
+
 test("Facebook message parser preserves ad referral attached to a message", () => {
   const parsed = metaMessaging.parseIncomingMessages({
     object: "page",
@@ -92,7 +113,7 @@ test("Instagram OPEN_THREAD referral becomes attribution-only work, not a fake m
   assert.equal(parsed[0].attribution.adId, "120288800000001");
 });
 
-test("ordinary Instagram DM has no fake ad attribution attached by the parser", () => {
+test("ordinary Instagram DM keeps the legacy parser shape without fake attribution", () => {
   const parsed = metaMessaging.parseIncomingMessages({
     object: "instagram",
     entry: [{
@@ -105,5 +126,5 @@ test("ordinary Instagram DM has no fake ad attribution attached by the parser", 
   });
 
   assert.equal(parsed.length, 1);
-  assert.equal(parsed[0].attribution, null);
+  assert.equal(Object.hasOwn(parsed[0], "attribution"), false);
 });
