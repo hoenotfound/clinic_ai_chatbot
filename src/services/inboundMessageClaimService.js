@@ -1,6 +1,7 @@
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
+const leadAttributionService = require("./leadAttributionService");
 const conversationStore = require("../utils/conversationStore");
 
 function initialInboundText(incoming) {
@@ -18,9 +19,25 @@ function createInboundMessageClaimService({
   contacts = contactsRepo,
   messages = messagesRepo,
   pipeline = pipelineRepo,
+  attribution = leadAttributionService,
   store = conversationStore,
 } = {}) {
   return async function claimIncomingMessage(incoming) {
+    // Messenger/Instagram may send OPEN_THREAD attribution as its own event
+    // before the customer types. Remember it without creating a fake contact,
+    // lead or message; the next real inbound message consumes it.
+    if (incoming?.attributionOnly) {
+      try {
+        await attribution.rememberPendingReferral(incoming);
+      } catch (err) {
+        console.error(
+          `Failed to remember pending ${incoming.channel || "Meta"} attribution for ${incoming.from}:`,
+          err
+        );
+      }
+      return null;
+    }
+
     const channel = incoming.channel || "whatsapp";
     const contact = channel === "whatsapp"
       ? await contacts.getOrCreateContact(incoming.from, incoming.profileName)
@@ -54,14 +71,30 @@ function createInboundMessageClaimService({
       console.error(`Failed to mark contact ${contact.id} unread after inbound claim:`, err);
     }
 
+    let lead = null;
     try {
-      await pipeline.ensureLeadForContact(
+      const leadOutcome = await pipeline.ensureLeadForContact(
         contact.id,
         "Automation",
         savedInbound.id
       );
+      lead = leadOutcome?.lead || null;
     } catch (err) {
       console.error(`Failed to create or locate lead for contact ${contact.id}:`, err);
+    }
+
+    if (lead) {
+      try {
+        await attribution.captureForInbound({
+          lead,
+          incoming,
+          firstMessageId: savedInbound.id,
+        });
+      } catch (err) {
+        // Attribution must never block the patient conversation. The raw
+        // message is already durable and can still be handled normally.
+        console.error(`Failed to capture lead attribution for lead ${lead.id}:`, err);
+      }
     }
 
     let wasFirstMessage = false;
