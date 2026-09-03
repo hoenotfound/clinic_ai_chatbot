@@ -60,10 +60,30 @@ function createAiHandoffService({
   };
 }
 
+/**
+ * Re-checks that the conversation is still in the temporary synthetic handoff
+ * state immediately before the one final AI handoff acknowledgement is sent.
+ * If a real staff member has claimed the chat in the meantime, this returns
+ * null so the late AI message is suppressed.
+ */
+async function getPendingAiHandoffContact(contactId, database = pool) {
+  const result = await database.query(
+    `SELECT *
+     FROM contacts
+     WHERE id = $1
+       AND mode = 'human'
+       AND takeover_by = $2
+     LIMIT 1`,
+    [contactId, AI_HANDOFF_OWNER]
+  );
+  return result.rows[0] || null;
+}
+
 const pauseAiForHumanHandoff = createAiHandoffService();
 
 module.exports = {
   AI_HANDOFF_OWNER,
   createAiHandoffService,
+  getPendingAiHandoffContact,
   pauseAiForHumanHandoff,
 };
