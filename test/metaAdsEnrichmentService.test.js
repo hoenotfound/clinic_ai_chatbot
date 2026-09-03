@@ -169,6 +169,36 @@ test("worker stays dormant when Marketing API is not configured", async () => {
   assert.equal(claims, 0);
 });
 
+test("rapid enrichment triggers coalesce into one durable batch sweep", async () => {
+  const immediates = [];
+  let claims = 0;
+  const repo = {
+    async claimMetaEnrichmentBatch() {
+      claims += 1;
+      return [];
+    },
+  };
+  const api = { configured: () => true };
+  const service = createMetaAdsEnrichmentService({
+    repo,
+    api,
+    events: { publish() {} },
+    logger: silentLogger(),
+    setImmediateImpl(callback) {
+      immediates.push(callback);
+      return { unref() {} };
+    },
+  });
+
+  assert.equal(service.queueAttributionEnrichment(1), true);
+  assert.equal(service.queueAttributionEnrichment(2), true);
+  assert.equal(service.queueAttributionEnrichment(3), true);
+  assert.equal(immediates.length, 1);
+
+  await immediates[0]();
+  assert.equal(claims, 1);
+});
+
 test("retry backoff grows but eventually caps at one day", () => {
   assert.equal(retryDelayMs(1, { retryable: true }), 60 * 1000);
   assert.equal(retryDelayMs(2, { retryable: true }), 5 * 60 * 1000);
