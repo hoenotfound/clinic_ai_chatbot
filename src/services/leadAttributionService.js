@@ -18,42 +18,51 @@ function isReferralAttribution(attribution) {
   );
 }
 
-async function rememberPendingReferral(incoming) {
-  if (!incoming?.attributionOnly || !incoming?.attribution) return false;
-  if (!["facebook", "instagram"].includes(incoming.channel)) return false;
-  await attributionRepo.savePending(
-    incoming.channel,
-    incoming.from,
-    incoming.attribution
-  );
-  return true;
-}
-
-async function captureForInbound({ lead, incoming, firstMessageId }) {
-  if (!lead?.id || !incoming) return null;
-
-  const channel = incoming.channel || "whatsapp";
-  let attribution = incoming.attribution || null;
-
-  // Messenger/Instagram OPEN_THREAD referrals can arrive before the message
-  // itself. Prefer attribution attached to the message, otherwise consume the
-  // most recent pending referral for this scoped user.
-  if (!isReferralAttribution(attribution) && ["facebook", "instagram"].includes(channel)) {
-    const pending = await attributionRepo.takePending(channel, incoming.from);
-    if (pending) attribution = pending;
+function createLeadAttributionService(repo = attributionRepo) {
+  async function rememberPendingReferral(incoming) {
+    if (!incoming?.attributionOnly || !incoming?.attribution) return false;
+    if (!["facebook", "instagram"].includes(incoming.channel)) return false;
+    await repo.savePending(
+      incoming.channel,
+      incoming.from,
+      incoming.attribution
+    );
+    return true;
   }
 
-  if (!attribution) attribution = normalizeAttribution(channel, null);
+  async function captureForInbound({ lead, incoming, firstMessageId }) {
+    if (!lead?.id || !incoming) return null;
 
-  return attributionRepo.createFirstTouch({
-    leadId: lead.id,
-    firstMessageId,
-    attribution,
-  });
+    const channel = incoming.channel || "whatsapp";
+    let attribution = incoming.attribution || null;
+
+    // Messenger/Instagram OPEN_THREAD referrals can arrive before the message
+    // itself. Prefer attribution attached to the message, otherwise consume the
+    // most recent pending referral for this scoped user.
+    if (!isReferralAttribution(attribution) && ["facebook", "instagram"].includes(channel)) {
+      const pending = await repo.takePending(channel, incoming.from);
+      if (pending) attribution = pending;
+    }
+
+    if (!attribution) attribution = normalizeAttribution(channel, null);
+
+    return repo.createFirstTouch({
+      leadId: lead.id,
+      firstMessageId,
+      attribution,
+    });
+  }
+
+  return {
+    captureForInbound,
+    rememberPendingReferral,
+  };
 }
 
+const service = createLeadAttributionService();
+
 module.exports = {
-  captureForInbound,
-  rememberPendingReferral,
+  ...service,
+  createLeadAttributionService,
   isReferralAttribution,
 };
