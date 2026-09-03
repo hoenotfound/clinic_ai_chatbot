@@ -10,6 +10,7 @@ import TeamAccess from "./pages/TeamAccess";
 import ToolsRoute from "./pages/ToolsRoute";
 import Pipeline from "./pages/Pipeline";
 import Analytics from "./pages/Analytics";
+import SetupStatus from "./pages/SetupStatus";
 
 function homeForPermissions(permissions = {}) {
   if (permissions.view_all_leads || permissions.view_assigned_leads) return "/inbox";
@@ -20,8 +21,8 @@ function homeForPermissions(permissions = {}) {
   return "/no-access";
 }
 
-function ProtectedRoute({ children, anyCapabilities = [] }) {
-  const { username, permissions, loading } = useAuth();
+function ProtectedRoute({ children, anyCapabilities = [], adminOnly = false }) {
+  const { user, username, permissions, loading } = useAuth();
 
   if (loading) {
     return (
@@ -32,6 +33,10 @@ function ProtectedRoute({ children, anyCapabilities = [] }) {
   }
 
   if (!username) return <Navigate to="/login" replace />;
+
+  if (adminOnly && user?.role !== "admin") {
+    return <Navigate to={homeForPermissions(permissions)} replace />;
+  }
 
   if (anyCapabilities.length > 0 && !anyCapabilities.some((capability) => permissions[capability])) {
     return <Navigate to={homeForPermissions(permissions)} replace />;
@@ -87,6 +92,7 @@ export default function App() {
           <Route path="/tools/lead-distribution" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><Navigate to="/tools?tool=lead-distribution" replace /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute anyCapabilities={["manage_settings"]}><Settings /></ProtectedRoute>} />
           <Route path="/settings/team" element={<ProtectedRoute anyCapabilities={["manage_users"]}><TeamAccess /></ProtectedRoute>} />
+          <Route path="/setup" element={<ProtectedRoute adminOnly><SetupStatus /></ProtectedRoute>} />
           <Route path="/no-access" element={<ProtectedRoute><NoAccess /></ProtectedRoute>} />
 
           <Route path="*" element={<DefaultRoute />} />

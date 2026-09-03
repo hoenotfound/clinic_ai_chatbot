@@ -1,6 +1,8 @@
+const crypto = require("crypto");
 const gemini = require("./geminiService");
 const claude = require("./claudeService");
 const { parseAiReplyResult } = require("../utils/aiReplyResult");
+const setupStatusRepo = require("../db/setupStatusRepo");
 
 const provider = (process.env.AI_PROVIDER || "gemini").toLowerCase();
 if (!new Set(["gemini", "claude"]).has(provider)) {
@@ -9,6 +11,7 @@ if (!new Set(["gemini", "claude"]).has(provider)) {
 
 const DEFAULT_TIMEOUT_MS = 18 * 1000;
 const DEFAULT_RETRY_COUNT = 1;
+const runtimeCandidateHealth = new Map();
 
 function positiveInt(value, fallback, max = 60_000) {
   const parsed = Number(value);
@@ -54,6 +57,72 @@ function isRetryableAiError(err) {
   return /timeout|timed out|rate limit|quota|resource exhausted|overload|temporar|unavailable|try again|429|500|502|503|504/.test(message);
 }
 
+function credentialFingerprint(value) {
+  return crypto
+    .createHash("sha256")
+    .update(String(value || ""))
+    .digest("hex")
+    .slice(0, 24);
+}
+
+function classifyCandidateHealthFailure(err) {
+  const status = Number(err?.status || err?.statusCode || err?.response?.status);
+  const code = String(err?.code || "").toUpperCase();
+  const message = String(err?.message || "").toLowerCase();
+
+  if (status === 429 || /rate limit|quota|resource exhausted|too many requests/.test(message)) {
+    return { status: "rate_limited", failureKind: "rate_limit" };
+  }
+  if ([401, 403].includes(status) || /api.?key.*invalid|invalid.*api.?key|unauthorized|permission denied/.test(message)) {
+    return { status: "invalid", failureKind: "authentication" };
+  }
+  if (["INVALID_AI_RESPONSE", "EMPTY_AI_RESPONSE"].includes(code)) {
+    return { status: "failed", failureKind: "invalid_response" };
+  }
+  if (code === "AI_TIMEOUT" || /timeout|timed out/.test(message)) {
+    return { status: "unavailable", failureKind: "timeout" };
+  }
+  if (isRetryableAiError(err)) {
+    return { status: "unavailable", failureKind: "temporary_failure" };
+  }
+  return { status: "failed", failureKind: "provider_error" };
+}
+
+function recordCandidateHealth(candidate, outcome) {
+  if (!candidate?.healthKey || !candidate?.provider || !outcome?.status) return;
+  const at = new Date();
+  const previous = runtimeCandidateHealth.get(candidate.healthKey) || {};
+  const failed = outcome.status !== "ready";
+  runtimeCandidateHealth.set(candidate.healthKey, {
+    candidate_key: candidate.healthKey,
+    provider: candidate.provider,
+    last_status: outcome.status,
+    last_failure_kind: failed
+      ? outcome.failureKind || "provider_error"
+      : previous.last_failure_kind || null,
+    last_attempt_at: at,
+    last_success_at: outcome.status === "ready" ? at : previous.last_success_at || null,
+    last_failure_at: failed ? at : previous.last_failure_at || null,
+    last_rate_limited_at: outcome.status === "rate_limited"
+      ? at
+      : previous.last_rate_limited_at || null,
+  });
+
+  setupStatusRepo.recordAiCandidateOutcome({
+    candidateKey: candidate.healthKey,
+    provider: candidate.provider,
+    status: outcome.status,
+    failureKind: outcome.failureKind || null,
+    at,
+  }).catch((err) => {
+    console.warn(`Could not save ${candidate.label} health:`, err?.message || err);
+  });
+}
+
+function getRuntimeCandidateHealth() {
+  return [...runtimeCandidateHealth.values()].map((row) => ({ ...row }));
+}
+
 function withTimeout(promise, timeoutMs, label) {
   let timer;
   return Promise.race([
@@ -82,9 +151,11 @@ async function runCandidate(candidate, messages, options, timeoutMs, retryCount)
       // failure, so it gets the same bounded retry as transient provider
       // failures before rotating to the next key/provider.
       parseAiReplyResult(raw);
+      candidate.reportOutcome?.({ status: "ready", failureKind: null });
       return raw;
     } catch (err) {
       lastError = err;
+      candidate.reportOutcome?.(classifyCandidateHealthFailure(err));
       const retry = attempt < retryCount && isRetryableAiError(err);
       console.warn(
         `${candidate.label} attempt ${attempt + 1} failed${retry ? "; retrying" : ""}:`,
@@ -97,21 +168,41 @@ async function runCandidate(candidate, messages, options, timeoutMs, retryCount)
 }
 
 function buildCandidates(env = process.env) {
-  const geminiCandidates = getGeminiApiKeys(env).map((apiKey, index) => ({
-    label: `Gemini key ${index + 1}`,
-    run: (messages, options) => gemini.getReply(messages, options, apiKey),
-  }));
+  const geminiCandidates = getGeminiApiKeys(env).map((apiKey, index) => {
+    const candidate = {
+      label: `Gemini key ${index + 1}`,
+      provider: "gemini",
+      healthKey: `gemini_${credentialFingerprint(apiKey)}`,
+      run: (messages, options) => gemini.getReply(messages, options, apiKey),
+    };
+    candidate.reportOutcome = (outcome) => recordCandidateHealth(candidate, outcome);
+    return candidate;
+  });
 
   const claudeCandidates = env.ANTHROPIC_API_KEY
-    ? [{
-        label: "Claude fallback",
-        run: (messages, options) => claude.getReply(messages, options, env.ANTHROPIC_API_KEY),
-      }]
+    ? (() => {
+        const candidate = {
+          label: "Claude fallback",
+          provider: "claude",
+          healthKey: `claude_${credentialFingerprint(env.ANTHROPIC_API_KEY)}`,
+          run: (messages, options) => claude.getReply(messages, options, env.ANTHROPIC_API_KEY),
+        };
+        candidate.reportOutcome = (outcome) => recordCandidateHealth(candidate, outcome);
+        return [candidate];
+      })()
     : [];
 
   return provider === "claude"
     ? [...claudeCandidates, ...geminiCandidates]
     : [...geminiCandidates, ...claudeCandidates];
+}
+
+function getCandidateHealthDescriptors(env = process.env) {
+  return buildCandidates(env).map(({ healthKey, label, provider }) => ({
+    healthKey,
+    label,
+    provider,
+  }));
 }
 
 async function getReply(messages, optionsOrFirstMessage = false) {
@@ -150,7 +241,11 @@ console.log(`AI provider preference: ${provider}`);
 
 module.exports = {
   buildCandidates,
+  classifyCandidateHealthFailure,
+  credentialFingerprint,
+  getCandidateHealthDescriptors,
   getGeminiApiKeys,
+  getRuntimeCandidateHealth,
   getReply,
   isRetryableAiError,
   runCandidate,

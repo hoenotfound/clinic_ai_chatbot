@@ -43,11 +43,13 @@ const conversationsRoutes = require("./routes/conversations");
 const configRoutes = require("./routes/config");
 const contactsRoutes = require("./routes/contacts");
 const pipelineRoutes = require("./routes/pipeline");
+const setupStatusRoutes = require("./routes/setupStatus");
 const { bootstrapAdminUser } = require("./db/bootstrapAdmin");
 const configRepo = require("./db/configRepo");
 const { pruneOrphanedPromoImages } = configRepo;
 const promoImagesRepo = require("./db/promoImagesRepo");
 const { initSchema } = require("./db/db");
+const setupStatusRepo = require("./db/setupStatusRepo");
 const { startAutomatedFollowUps } = require("./services/followUpService");
 const { startLeadScoring } = require("./services/leadScoringService");
 const { startStaffWaitingAlerts } = require("./services/staffWaitingAlertService");
@@ -667,6 +669,9 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   // Respond to Meta immediately — don't make them wait on the AI call,
   // or Meta may retry/resend the same message.
   res.sendStatus(200);
+  setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
+    console.error("Failed to record WhatsApp webhook activity:", err);
+  });
 
   // The durable message claim runs immediately in queueIncomingForReply(); only
   // the expensive media/AI response work waits for the typing debounce.
@@ -721,60 +726,13 @@ app.get("/meta-webhook", (req, res) => {
   return res.sendStatus(403);
 });
 
-// TEMPORARY DIAGNOSTIC ROUTE — remove once the Instagram conversations
-// issue is resolved. Tries a few variations of the conversations GET call
-// to isolate which query shape (if any) actually returns data. Gated
-// behind META_VERIFY_TOKEN like the token debug route below.
-app.get("/debug-instagram-conversations", async (req, res) => {
-  if (req.query.key !== process.env.META_VERIFY_TOKEN) {
-    return res.sendStatus(404);
-  }
-  const token = process.env.INSTAGRAM_ACCESS_TOKEN;
-  const igId = process.env.INSTAGRAM_ACCOUNT_ID;
-  const variants = {
-    bare: `https://graph.instagram.com/v21.0/${igId}/conversations?access_token=${token}`,
-    withPlatform: `https://graph.instagram.com/v21.0/${igId}/conversations?platform=instagram&access_token=${token}`,
-    withFieldsNoPlatform: `https://graph.instagram.com/v21.0/${igId}/conversations?fields=participants&access_token=${token}`,
-    meConversations: `https://graph.instagram.com/v21.0/me/conversations?platform=instagram&access_token=${token}`,
-  };
-
-  const results = {};
-  for (const [name, url] of Object.entries(variants)) {
-    try {
-      const response = await fetch(url);
-      const data = await response.json();
-      results[name] = { status: response.status, data };
-    } catch (err) {
-      results[name] = { error: String(err) };
-    }
-  }
-  res.json(results);
-});
-
-app.get("/debug-instagram-token", (req, res) => {
-  const providedKey = req.query.key || "";
-  const expectedKey = process.env.META_VERIFY_TOKEN || "";
-  console.log(
-    `[debug-instagram-token] provided key length=${providedKey.length}, ` +
-      `expected key length=${expectedKey.length}, match=${providedKey === expectedKey}`
-  );
-  if (providedKey !== expectedKey) {
-    return res.sendStatus(404);
-  }
-  const token = process.env.INSTAGRAM_ACCESS_TOKEN || "";
-  res.json({
-    length: token.length,
-    first8: token.slice(0, 8),
-    last4: token.slice(-4),
-    hasWhitespace: /\s/.test(token),
-    hasQuoteChars: /["']/.test(token),
-  });
-});
-
 app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
   // Acknowledge Meta before AI/network work for the same retry protection used
   // by the existing WhatsApp webhook.
   res.sendStatus(200);
+  setupStatusRepo.recordWebhook("meta_webhook").catch((err) => {
+    console.error("Failed to record Meta webhook activity:", err);
+  });
 
   const incomingMessages = metaMessaging.parseIncomingMessages(req.body);
   const resolvedEditMessages = await metaMessaging.resolveMessageEditEvents(req.body);
@@ -815,6 +773,7 @@ app.use("/api/conversations", requireAuth, conversationsRoutes);
 app.use("/api/config", requireAuth, configRoutes);
 app.use("/api/contacts", requireAuth, contactsRoutes);
 app.use("/api/pipeline", requireAuth, pipelineRoutes);
+app.use("/api/setup-status", requireAuth, setupStatusRoutes);
 
 // ── Serve the built portal frontend in production ──
 const portalBuildPath = path.join(__dirname, "../portal-frontend/dist");

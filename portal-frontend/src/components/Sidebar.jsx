@@ -11,13 +11,16 @@ const NAV_ITEMS = [
   { to: "/tools", label: "Tools", icon: ToolsIcon, capabilities: ["manage_tools"] },
   { to: "/settings", label: "Settings", icon: SettingsIcon, capabilities: ["manage_settings"] },
   { to: "/settings/team", label: "Team & Access", icon: TeamIcon, capabilities: ["manage_users"] },
+  { to: "/setup", label: "Setup Status", icon: SetupIcon, adminOnly: true, capabilities: [] },
 ];
 
 export default function Sidebar() {
   const { user, username, permissions, logout } = useAuth();
   const navigate = useNavigate();
   const visibleItems = NAV_ITEMS.filter((item) =>
-    item.capabilities.some((capability) => permissions[capability] === true)
+    item.adminOnly
+      ? user?.role === "admin"
+      : item.capabilities.some((capability) => permissions[capability] === true)
   );
 
   async function handleLogout() {
@@ -144,6 +147,17 @@ function TeamIcon(props) {
       <circle cx="9" cy="8" r="3" />
       <path d="M3 20v-1a6 6 0 0 1 12 0v1" strokeLinecap="round" />
       <path d="M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 5v1" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function SetupIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4 5h10M18 5h2M4 12h2M10 12h10M4 19h7M15 19h5" strokeLinecap="round" />
+      <circle cx="16" cy="5" r="2" />
+      <circle cx="8" cy="12" r="2" />
+      <circle cx="13" cy="19" r="2" />
     </svg>
   );
 }
