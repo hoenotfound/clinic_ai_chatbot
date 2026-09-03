@@ -129,3 +129,21 @@ test("pending social referral is consumed by the next real inbound message", asy
     "createFirstTouch",
   ]);
 });
+
+test("can consume an unused pending social referral without creating attribution", async () => {
+  const calls = [];
+  const repo = {
+    async takePending(channel, externalUserId) {
+      calls.push([channel, externalUserId]);
+      return { source: "meta_ads", adId: "old-click" };
+    },
+  };
+  const service = createLeadAttributionService(repo);
+  const result = await service.consumePendingForInbound({
+    channel: "instagram",
+    from: "igsid-old-lead",
+  });
+
+  assert.equal(result.adId, "old-click");
+  assert.deepEqual(calls, [["instagram", "igsid-old-lead"]]);
+});
