@@ -6,6 +6,7 @@ const scheduledRepo = require("../db/scheduledMessageRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { AI_HANDOFF_OWNER } = require("./aiHandoffService");
 const { startScheduledMessages, scheduleValidation } = require("./scheduledMessageService");
+const whatsappPolicy = require("./whatsappPolicyService");
 
 function positiveInt(value) {
   const parsed = Number(value);
@@ -46,8 +47,16 @@ function requireStaffMode(contact, res) {
   return false;
 }
 
-async function buildWindow(contactId) {
-  const latestInboundAt = await scheduledRepo.getLatestInboundAt(contactId);
+function schedulePolicy(contact, latestInboundAt) {
+  return whatsappPolicy.evaluateFreeformState(
+    { ...contact, latest_inbound_at: latestInboundAt },
+    new Date(),
+    { purpose: "service" }
+  );
+}
+
+async function buildWindow(contact) {
+  const latestInboundAt = await scheduledRepo.getLatestInboundAt(contact.id);
   const probe = scheduleValidation({
     scheduledFor: new Date(Date.now() + 60 * 1000),
     lastInboundAt: latestInboundAt,
@@ -55,6 +64,9 @@ async function buildWindow(contactId) {
   return {
     lastInboundAt: latestInboundAt,
     windowEndsAt: probe.windowEndsAt,
+    policy: (contact.channel || "whatsapp") === "whatsapp"
+      ? schedulePolicy(contact, latestInboundAt)
+      : { allowed: true, code: null, message: null },
   };
 }
 
@@ -67,13 +79,17 @@ conversationsRouter.get("/:contactId/scheduled-messages", async (req, res) => {
 
     const [items, window] = await Promise.all([
       scheduledRepo.listForContact(contactId),
-      buildWindow(contactId),
+      buildWindow(contact),
     ]);
     res.json({
       items,
       lastInboundAt: window.lastInboundAt,
       windowEndsAt: window.windowEndsAt,
       staffMode: isRealStaffMode(contact),
+      channel: contact.channel || "whatsapp",
+      messagingAllowed: window.policy.allowed,
+      policyCode: window.policy.code,
+      policyMessage: window.policy.message,
     });
   } catch (err) {
     console.error("Failed to list scheduled messages:", err);
@@ -96,6 +112,16 @@ conversationsRouter.post("/:contactId/scheduled-messages", async (req, res) => {
     }
 
     const lastInboundAt = await scheduledRepo.getLatestInboundAt(contactId);
+    if ((contact.channel || "whatsapp") === "whatsapp") {
+      const policy = schedulePolicy(contact, lastInboundAt);
+      if (!policy.allowed) {
+        return res.status(403).json({
+          error: policy.message,
+          code: policy.code,
+          policyBlocked: true,
+        });
+      }
+    }
     const validation = scheduleValidation({
       scheduledFor: req.body?.scheduledFor,
       lastInboundAt,
@@ -140,6 +166,16 @@ conversationsRouter.patch("/:contactId/scheduled-messages/:scheduledId", async (
     }
 
     const lastInboundAt = await scheduledRepo.getLatestInboundAt(contactId);
+    if ((contact.channel || "whatsapp") === "whatsapp") {
+      const policy = schedulePolicy(contact, lastInboundAt);
+      if (!policy.allowed) {
+        return res.status(403).json({
+          error: policy.message,
+          code: policy.code,
+          policyBlocked: true,
+        });
+      }
+    }
     const validation = scheduleValidation({
       scheduledFor: req.body?.scheduledFor,
       lastInboundAt,

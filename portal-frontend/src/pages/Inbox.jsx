@@ -11,6 +11,10 @@ import LeadAssignmentBadge, {
   matchesLeadAssignment,
 } from "../components/LeadAssignmentBadge";
 import {
+  policyFailureExplanation,
+  whatsappPolicyStatus,
+} from "../utils/whatsappPolicy";
+import {
   AlertIcon,
   ArrowLeftIcon,
   BotIcon,
@@ -102,6 +106,18 @@ function isConversationUnreplied(conversation) {
   return typeof conversation.has_unreplied === "boolean"
     ? conversation.has_unreplied
     : conversation.last_message_role === "user";
+}
+
+function formatPolicyDate(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return "an unknown date";
+  return date.toLocaleString([], {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export default function Inbox() {
@@ -610,7 +626,7 @@ export default function Inbox() {
       if (selectedIdRef.current === contactId) {
         setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
       }
-      showToast("Couldn't send that message — please try again.", "error");
+      showToast(err.message || "Couldn't send that message — please try again.", "error");
       throw err;
     } finally {
       if (selectedIdRef.current === contactId) setActionPending(false);
@@ -1256,9 +1272,18 @@ function ThreadView({
   const [voicePreviewUrl, setVoicePreviewUrl] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [policyNow, setPolicyNow] = useState(Date.now());
 
   activeContactIdRef.current = contact?.contact_id;
   activeContactModeRef.current = contact?.mode;
+  const messagingPolicy = whatsappPolicyStatus(contact, policyNow);
+  const policyBlocksComposer = messagingPolicy.applies && !messagingPolicy.freeformAllowed;
+
+  useEffect(() => {
+    setPolicyNow(Date.now());
+    const timer = setInterval(() => setPolicyNow(Date.now()), 60 * 1000);
+    return () => clearInterval(timer);
+  }, [contact?.contact_id]);
 
   useEffect(() => {
     if (!loading && messages.length > 0 && shouldStickToBottomRef.current) {
@@ -1273,6 +1298,13 @@ function ThreadView({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contact?.mode]);
+
+  useEffect(() => {
+    if (!policyBlocksComposer) return;
+    cancelRecording();
+    clearVoice();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [policyBlocksComposer]);
 
   useEffect(() => () => {
     if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
@@ -1333,6 +1365,10 @@ function ThreadView({
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    if (policyBlocksComposer) {
+      onToast(messagingPolicy.explanation, "warning");
+      return;
+    }
     if (!file.type.startsWith("image/")) {
       onToast("Please choose an image file.", "error");
       return;
@@ -1390,6 +1426,10 @@ function ThreadView({
 
   async function startRecording() {
     if (sending || isRecording || recordingStartingRef.current) return;
+    if (policyBlocksComposer) {
+      onToast(messagingPolicy.explanation, "warning");
+      return;
+    }
     if (contact.mode !== "human") {
       onToast("Take over this conversation before recording a voice message.", "warning");
       return;
@@ -1507,6 +1547,10 @@ function ThreadView({
 
   async function sendRecordedVoice() {
     if (!voiceBlob || sending) return;
+    if (policyBlocksComposer) {
+      onToast(messagingPolicy.explanation, "warning");
+      return;
+    }
     setSending(true);
     try {
       await onSendVoice(voiceBlob, voiceMimeType);
@@ -1546,6 +1590,10 @@ function ThreadView({
     const text = draft.trim();
     if (sending || isStartingRecording || isRecording || voiceBlob) return;
     if (!text && !imageFile) return;
+    if (policyBlocksComposer) {
+      onToast(messagingPolicy.explanation, "warning");
+      return;
+    }
     setSending(true);
     try {
       if (imageFile) {
@@ -1599,7 +1647,7 @@ function ThreadView({
               </div>
             </div>
           </div>
-          <div ref={actionsMenuRef} className="relative flex shrink-0 items-center gap-2">
+          <div ref={actionsMenuRef} className="relative flex shrink-0 items-center gap-1.5 sm:gap-2">
             {contact.mode === "human" ? (
               <button
                 type="button"
@@ -1609,11 +1657,11 @@ function ThreadView({
                 }}
                 disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
                 title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice recording first" : "Return control to AI"}
-                className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50"
+                aria-label="Return control to AI"
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-white px-2.5 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50 sm:h-auto sm:gap-2 sm:px-3 sm:py-2"
               >
-                {actionPending && <Spinner />}
-                <BotIcon className="hidden h-4 w-4 sm:block" />
-                Return to AI
+                {actionPending ? <Spinner /> : <BotIcon className="h-4 w-4" />}
+                <span className="hidden min-[430px]:inline">Return to AI</span>
               </button>
             ) : (
               <button
@@ -1623,11 +1671,11 @@ function ThreadView({
                   onTakeOver();
                 }}
                 disabled={actionPending}
-                className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-[var(--color-primary)] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50"
+                aria-label="Take over conversation"
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-[var(--color-primary)] px-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50 sm:h-auto sm:gap-2 sm:px-3 sm:py-2"
               >
-                {actionPending && <Spinner />}
-                <UserIcon className="hidden h-4 w-4 sm:block" />
-                Take over
+                {actionPending ? <Spinner /> : <UserIcon className="h-4 w-4" />}
+                <span className="hidden min-[430px]:inline">Take over</span>
               </button>
             )}
             <button
@@ -1691,6 +1739,25 @@ function ThreadView({
             </span>
           </div>
         )}
+        {messagingPolicy.applies && (
+          <div className={`border-t px-3 py-2.5 sm:px-5 ${messagingPolicy.freeformAllowed ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+            <div className="flex items-start gap-2">
+              <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${messagingPolicy.freeformAllowed ? "bg-emerald-500" : "bg-amber-500"}`} />
+              <div className="min-w-0">
+                <p className="break-words text-[11px] font-semibold">{messagingPolicy.label}</p>
+                <p className="mt-0.5 break-words text-[10px] leading-4 opacity-80">{messagingPolicy.explanation}</p>
+                {messagingPolicy.optedOutAt && (
+                  <p className="mt-1 text-[10px] font-medium leading-4">
+                    Customer opted out of WhatsApp messages on {formatPolicyDate(messagingPolicy.optedOutAt)}.
+                    {messagingPolicy.customerReinitiatedAfterOptOut
+                      ? " Service replies are allowed for this new request, but automated follow-ups remain blocked."
+                      : " Automated follow-ups remain blocked."}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </header>
 
       <div ref={threadScrollRef} onScroll={handleThreadScroll} className="inbox-thread-bg min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5 sm:py-5">
@@ -1712,12 +1779,18 @@ function ThreadView({
           {loading && <ThreadLoadingSkeleton />}
 
           {!loading && messages.length === 0 && (
-            <div className="py-16 text-center">
+            <div className="mx-auto my-6 max-w-md rounded-2xl border border-dashed border-[var(--color-border)] bg-white/70 px-5 py-8 text-center sm:my-10 sm:px-8 sm:py-10">
               <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-[var(--color-primary)]">
                 <ChatOutlineIcon className="h-5 w-5" />
               </div>
-              <p className="mt-3 text-sm font-semibold">No messages yet</p>
-              <p className="mt-1 text-xs text-[var(--color-text-muted)]">Start the conversation below.</p>
+              <p className="mt-3 text-sm font-semibold">
+                {messagingPolicy.applies ? "No customer messages yet" : "No messages yet"}
+              </p>
+              <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-[var(--color-text-muted)]">
+                {messagingPolicy.applies
+                  ? "This WhatsApp contact must message the business before staff can send a normal reply."
+                  : "Start the conversation below."}
+              </p>
             </div>
           )}
 
@@ -1736,8 +1809,17 @@ function ThreadView({
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 sm:px-5">
+      <form
+        onSubmit={handleSubmit}
+        className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 pt-2.5 sm:px-5"
+        style={{ paddingBottom: "max(0.625rem, env(safe-area-inset-bottom))" }}
+      >
         <div className="mx-auto w-full max-w-4xl">
+          {policyBlocksComposer && (
+            <div aria-live="polite" className="mb-2.5 break-words rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-4 text-amber-900 sm:px-3">
+              <span className="font-semibold">Sending unavailable.</span> {messagingPolicy.explanation}
+            </div>
+          )}
           {isStartingRecording && (
             <div className="mb-2.5 flex items-center gap-3 rounded-xl bg-[var(--color-primary-light)] px-3 py-2.5">
               <Spinner className="text-[var(--color-primary)]" />
@@ -1767,7 +1849,7 @@ function ThreadView({
               </div>
               <div className="flex shrink-0 items-center justify-end gap-2">
                 <button type="button" onClick={clearVoice} disabled={sending} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-medium transition-colors hover:bg-white disabled:opacity-50">Remove</button>
-                <button type="button" onClick={sendRecordedVoice} disabled={sending} className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-50">
+                <button type="button" onClick={sendRecordedVoice} disabled={sending || policyBlocksComposer} className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-50">
                   {sending && <Spinner />}{sending ? "Sending…" : "Send voice"}
                 </button>
               </div>
@@ -1785,9 +1867,9 @@ function ThreadView({
           )}
           <div className="flex items-end gap-1.5 rounded-2xl border border-[var(--color-border)] bg-white p-1.5 transition focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)] sm:gap-2">
             <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFilePicked} className="hidden" />
-            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={sending || isStartingRecording || isRecording || !!voiceBlob} title="Attach an image" aria-label="Attach an image" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50 sm:h-10 sm:w-10"><ImageIcon className="h-[18px] w-[18px]" /></button>
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={sending || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Attach an image"} aria-label="Attach an image" className="flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><ImageIcon className="h-[18px] w-[18px]" /></button>
             {contact.mode === "human" && (
-              <button type="button" onClick={startRecording} disabled={sending || isStartingRecording || isRecording || !!voiceBlob || !!imageFile} title="Record a voice message" aria-label="Record a voice message" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50 sm:h-10 sm:w-10"><MicrophoneIcon className="h-[18px] w-[18px]" /></button>
+              <button type="button" onClick={startRecording} disabled={sending || isStartingRecording || isRecording || !!voiceBlob || !!imageFile || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Record a voice message"} aria-label="Record a voice message" className="flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><MicrophoneIcon className="h-[18px] w-[18px]" /></button>
             )}
             <textarea
               ref={textareaRef}
@@ -1800,11 +1882,11 @@ function ThreadView({
                   handleSubmit(e);
                 }
               }}
-              placeholder={imageFile ? "Add a caption…" : contact.mode === "human" ? "Message this patient…" : "Message to take over from AI…"}
+              placeholder={policyBlocksComposer ? "WhatsApp reply unavailable" : imageFile ? "Add a caption…" : contact.mode === "human" ? "Message this patient…" : "Message to take over from AI…"}
               rows={1}
-              className="max-h-32 min-h-9 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-2 py-2 text-sm leading-relaxed outline-none disabled:opacity-50 sm:min-h-10 sm:px-2.5 sm:py-2.5"
+              className="max-h-32 min-h-10 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2.5 text-sm leading-relaxed outline-none disabled:opacity-50 sm:px-2.5"
             />
-            <button type="submit" disabled={(!draft.trim() && !imageFile) || sending || isStartingRecording || isRecording || !!voiceBlob} title="Send message" className="flex h-9 shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40 sm:h-10 sm:px-4 sm:text-sm">
+            <button type="submit" disabled={(!draft.trim() && !imageFile) || sending || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Send message"} aria-label="Send message" className="flex h-10 shrink-0 touch-manipulation items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40 sm:px-4 sm:text-sm">
               {sending ? <Spinner /> : <SendIcon className="h-4 w-4" />}
               <span className="hidden sm:inline">{sending ? (imageFile ? "Uploading…" : "Sending…") : "Send"}</span>
             </button>
@@ -1881,6 +1963,7 @@ function MessageBubble({ contactId, message, onImageClick, onRetry }) {
   const deliveryFailed = !isPatient && message.delivery_status === "failed";
   const deliveryUnconfirmed = !isPatient && message.delivery_status === "unknown";
   const deliveryNeedsAction = deliveryFailed || deliveryUnconfirmed;
+  const policyFailureExplanationText = policyFailureExplanation(message);
   const storedMediaSrc = message.media_base64
     ? `data:${message.media_mime_type || "application/octet-stream"};base64,${message.media_base64}`
     : message.has_media_attachment
@@ -1917,19 +2000,26 @@ function MessageBubble({ contactId, message, onImageClick, onRetry }) {
               <span className="text-[10px] font-semibold">
                 {deliveryUnconfirmed ? "Delivery unconfirmed" : "Not delivered"}
               </span>
-              <button
-                type="button"
-                onClick={() => onRetry?.(message.id)}
-                disabled={message._retrying}
-                className="inline-flex items-center gap-1 rounded-md border border-[var(--color-danger)]/30 px-2 py-1 text-[10px] font-semibold transition-colors hover:bg-[var(--color-danger-light)] disabled:opacity-60"
-              >
-                {message._retrying && <Spinner className="h-2.5 w-2.5" />}
-                {message._retrying ? "Retrying…" : "Retry"}
-              </button>
+              {!policyFailureExplanationText && (
+                <button
+                  type="button"
+                  onClick={() => onRetry?.(message.id)}
+                  disabled={message._retrying}
+                  className="inline-flex items-center gap-1 rounded-md border border-[var(--color-danger)]/30 px-2 py-1 text-[10px] font-semibold transition-colors hover:bg-[var(--color-danger-light)] disabled:opacity-60"
+                >
+                  {message._retrying && <Spinner className="h-2.5 w-2.5" />}
+                  {message._retrying ? "Retrying…" : "Retry"}
+                </button>
+              )}
             </div>
             {message.delivery_error && (
               <p className="mt-1 text-[10px] leading-snug opacity-80" title={message.delivery_error}>
                 {message.delivery_error}
+              </p>
+            )}
+            {policyFailureExplanationText && (
+              <p className="mt-1 text-[10px] font-medium leading-snug">
+                Cannot retry: {policyFailureExplanationText}
               </p>
             )}
           </div>

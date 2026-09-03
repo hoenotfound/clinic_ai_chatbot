@@ -8,8 +8,10 @@ const scheduledRepo = require("../src/db/scheduledMessageRepo");
 const conversationStore = require("../src/utils/conversationStore");
 const realtimeEvents = require("../src/utils/realtimeEvents");
 const channelMessaging = require("../src/services/channelMessagingService");
+const whatsappPolicy = require("../src/services/whatsappPolicyService");
 const { AI_HANDOFF_OWNER } = require("../src/services/aiHandoffService");
 const { runScheduledMessages } = require("../src/services/scheduledMessageService");
+const originalPolicyCheck = whatsappPolicy.checkFreeformAllowed;
 
 test.beforeEach(() => {
   scheduledRepo.recoverStaleProcessing = async () => [];
@@ -47,6 +49,11 @@ test.beforeEach(() => {
   channelMessaging.sendText = async () => ({ success: true, wamid: "wamid-101" });
   channelMessaging.rejectedError = () => "Message was rejected.";
   realtimeEvents.publish = () => {};
+  whatsappPolicy.checkFreeformAllowed = async () => ({ allowed: true });
+});
+
+test.after(() => {
+  whatsappPolicy.checkFreeformAllowed = originalPolicyCheck;
 });
 
 test("does not send a scheduled staff message after the conversation returns to AI", async () => {
@@ -181,4 +188,41 @@ test("uses the existing WhatsApp WAMID delivery pipeline for a successful schedu
 
   assert.deepEqual(wamidUpdate, { id: 101, wamid: "wamid-scheduled-13" });
   assert.equal(neutralUpdateCount, 0);
+});
+
+test("expires a scheduled WhatsApp message after the customer opts out", async () => {
+  let expired = null;
+  let appendCount = 0;
+  let sendCount = 0;
+
+  scheduledRepo.claimDue = async () => [
+    { id: 15, contact_id: 1, content: "Later", scheduled_by_username: "staff1" },
+  ];
+  contactsRepo.getContactById = async () => ({
+    id: 1,
+    channel: "whatsapp",
+    mode: "human",
+    takeover_by: "staff1",
+  });
+  whatsappPolicy.checkFreeformAllowed = async () => ({
+    allowed: false,
+    code: "opted_out",
+    message: "WhatsApp send blocked because this customer opted out of WhatsApp messages.",
+  });
+  scheduledRepo.markExpired = async (id, reason) => {
+    expired = { id, reason };
+  };
+  conversationStore.appendMessageForContact = async () => {
+    appendCount += 1;
+  };
+  channelMessaging.sendText = async () => {
+    sendCount += 1;
+  };
+
+  await runScheduledMessages();
+
+  assert.equal(expired.id, 15);
+  assert.match(expired.reason, /opted out/i);
+  assert.equal(appendCount, 0);
+  assert.equal(sendCount, 0);
 });

@@ -308,10 +308,13 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
                 <Field label="Next follow-up">
                   <input className={inputClass} type="datetime-local" value={form.nextFollowUpAt} onChange={(event) => update("nextFollowUpAt", event.target.value)} />
                 </Field>
-                <Field label="Marketing consent">
+                <Field label="CRM marketing consent">
                   <select className={inputClass} value={form.marketingConsent} onChange={(event) => update("marketingConsent", event.target.value)}>
                     {CONSENT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
+                  <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+                    Internal CRM preference only. This does not record the dedicated WhatsApp opt-in used for WhatsApp templates or proactive messages.
+                  </p>
                 </Field>
                 <Field label="Lead source (manual override)">
                   <input className={inputClass} value={form.source} onChange={(event) => update("source", event.target.value)} placeholder="WhatsApp, Meta Ad, Referral…" />

@@ -6,6 +6,7 @@ import { useToasts, ToastContainer } from "../components/Toast";
 import Spinner from "../components/Spinner";
 import ContactAvatar from "../components/ContactAvatar";
 import ContactInsights from "../components/ContactInsights";
+import WhatsAppMessagingDetails from "../components/WhatsAppMessagingDetails";
 import LeadAssignmentBadge, {
   buildLeadAssignmentFilterOptions,
   matchesLeadAssignment,
@@ -421,13 +422,13 @@ function ContactProfile({ contact, currentUsername, canManage, canCreateLeads, o
             {addingLead && <Spinner className="h-3 w-3" />}
             {addingLead ? "Opening…" : "Pipeline"}
           </button>
-          {contact.message_count > 0 ? (
+          {contact.message_count > 0 || (contact.channel || "whatsapp") === "whatsapp" ? (
             <button
               type="button"
               onClick={() => navigate(`/inbox?contact=${contact.id}`)}
               className="w-full rounded-lg bg-[var(--color-primary)] px-3 py-2 text-center text-xs font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)] sm:w-auto"
             >
-              View conversation
+              {contact.message_count > 0 ? "View conversation" : "View messaging status"}
             </button>
           ) : (
             <span
@@ -440,6 +441,7 @@ function ContactProfile({ contact, currentUsername, canManage, canCreateLeads, o
         </div>
       </div>
 
+      <WhatsAppMessagingDetails contact={contact} className="mb-4" />
       <ContactInsights contactId={contact.id} className="mb-8" />
 
       <div>

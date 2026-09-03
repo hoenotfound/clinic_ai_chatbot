@@ -305,12 +305,15 @@ async function listContacts(search) {
     SELECT
       c.id, c.whatsapp_number, c.name, c.whatsapp_profile_name, c.mode, c.needs_attention,
       c.is_unread, c.needs_follow_up, c.created_at, c.updated_at,
+      c.whatsapp_opt_in_at, c.whatsapp_opt_in_source,
+      c.whatsapp_opt_out_at, c.whatsapp_opt_out_source,
       c.channel, c.channel_user_id, c.photo_url,
       current_lead.id AS lead_id,
       current_lead.owner_username AS lead_owner_username,
       COALESCE(lead_owner.display_name, current_lead.owner_username) AS lead_owner_display_name,
       COUNT(m.id)::int AS message_count,
-      MAX(m.created_at) AS last_message_at
+      MAX(m.created_at) AS last_message_at,
+      MAX(m.created_at) FILTER (WHERE m.role = 'user') AS latest_inbound_at
     FROM contacts c
     LEFT JOIN LATERAL (
       SELECT l.id, l.owner_username
@@ -367,6 +370,10 @@ async function listConversations() {
       c.attention_reason,
       c.is_unread,
       c.needs_follow_up,
+      c.whatsapp_opt_in_at,
+      c.whatsapp_opt_in_source,
+      c.whatsapp_opt_out_at,
+      c.whatsapp_opt_out_source,
       current_lead.id AS lead_id,
       current_lead.owner_username AS lead_owner_username,
       COALESCE(lead_owner.display_name, current_lead.owner_username) AS lead_owner_display_name,
@@ -374,6 +381,7 @@ async function listConversations() {
       m.role AS last_message_role,
       m.media_url AS last_message_media_url,
       m.created_at AS last_message_at,
+      latest_customer.created_at AS latest_inbound_at,
       EXISTS (
         SELECT 1
         FROM messages inbound
@@ -400,10 +408,22 @@ async function listConversations() {
       LIMIT 1
     ) current_lead ON true
     LEFT JOIN users lead_owner ON lead_owner.username = current_lead.owner_username
-    JOIN messages m ON m.id = (
-      SELECT id FROM messages WHERE contact_id = c.id ORDER BY created_at DESC, id DESC LIMIT 1
-    )
-    ORDER BY c.needs_attention DESC, m.created_at DESC
+    LEFT JOIN LATERAL (
+      SELECT content, role, media_url, created_at
+      FROM messages
+      WHERE contact_id = c.id
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    ) m ON true
+    LEFT JOIN LATERAL (
+      SELECT created_at
+      FROM messages
+      WHERE contact_id = c.id AND role = 'user'
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    ) latest_customer ON true
+    WHERE m.created_at IS NOT NULL OR c.channel = 'whatsapp'
+    ORDER BY c.needs_attention DESC, m.created_at DESC NULLS LAST, c.created_at DESC
     `
   );
   const hydrated = await hydrateSocialContactRows(result.rows);
