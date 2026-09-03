@@ -60,6 +60,65 @@ test("normalizes Ad, Ad Set, Campaign and account details from Meta", async () =
   assert.equal(requestedOptions.headers.Authorization, "Bearer secret-marketing-token");
 });
 
+test("uses top-level Ad Set/Campaign IDs when Meta returns them alongside nested names", async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    async text() {
+      return JSON.stringify({
+        id: "120210000001234",
+        name: "HIFU Doctor Video V3",
+        account_id: "123456789",
+        adset_id: "120210000001111",
+        campaign_id: "120210000001000",
+        adset: { name: "Women 25-45 KL" },
+        campaign: { name: "HIFU September Sales" },
+      });
+    },
+  });
+
+  const details = await fetchAdDetails("120210000001234", {
+    fetchImpl,
+    token: "token",
+    version: "v26.0",
+    timeoutMs: 5000,
+  });
+  assert.equal(details.adsetId, "120210000001111");
+  assert.equal(details.campaignId, "120210000001000");
+});
+
+test("a partial 200 response is not falsely marked as fully enriched", async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    async text() {
+      return JSON.stringify({
+        id: "120210000001234",
+        name: "HIFU Doctor Video V3",
+        account_id: "123456789",
+        campaign: { id: "120210000001000", name: "HIFU September Sales" },
+      });
+    },
+  });
+
+  await assert.rejects(
+    fetchAdDetails("120210000001234", {
+      fetchImpl,
+      token: "token",
+      version: "v26.0",
+      timeoutMs: 5000,
+    }),
+    (err) => {
+      assert.ok(err instanceof MetaAdsApiError);
+      assert.equal(err.code, "INCOMPLETE_HIERARCHY");
+      assert.equal(err.retryable, false);
+      assert.match(err.message, /Ad Set ID/);
+      assert.match(err.message, /Ad Set name/);
+      return true;
+    }
+  );
+});
+
 test("classifies token and permission failures as configuration-wide errors", async () => {
   const fetchImpl = async () => ({
     ok: false,
