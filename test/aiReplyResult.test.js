@@ -22,31 +22,43 @@ test("parses a structured booking-ready response and keeps booking metadata inte
   });
 });
 
-test("structured booking_ready without branch/time is downgraded to normal", () => {
-  const result = parseAiReplyResult(JSON.stringify({
-    reply: "which branch works for u?",
-    outcome: "booking_ready",
-    treatment: "HIFU Non-Surgical Facelift",
-    branch: null,
-    appointmentPreference: null,
-  }));
-
-  assert.equal(result.bookingReady, false);
-  assert.equal(result.outcome, "normal");
+test("structured booking_ready missing branch/time is rejected for retry/fallback", () => {
+  assert.throws(
+    () => parseAiReplyResult(JSON.stringify({
+      reply: "which branch works for u?",
+      outcome: "booking_ready",
+      treatment: "HIFU Non-Surgical Facelift",
+      branch: null,
+      appointmentPreference: null,
+    })),
+    (err) => err.code === "INVALID_AI_RESPONSE"
+  );
 });
 
-test("structured booking_ready with an abbreviation/non-configured branch fails closed", () => {
+test("common unambiguous configured branch shorthand is canonicalized", () => {
   const result = parseAiReplyResult(JSON.stringify({
-    reply: "I'll get the team to check for u",
+    reply: "I'll get the PJ team to check for u",
     outcome: "booking_ready",
     treatment: "HIFU Non-Surgical Facelift",
     branch: "PJ",
     appointmentPreference: "Saturday 3pm",
   }));
 
-  assert.equal(result.bookingReady, false);
-  assert.equal(result.outcome, "normal");
-  assert.equal(result.details.branch, null);
+  assert.equal(result.bookingReady, true);
+  assert.equal(result.details.branch, "Petaling Jaya");
+});
+
+test("non-configured Booking Ready branch is rejected for retry/fallback", () => {
+  assert.throws(
+    () => parseAiReplyResult(JSON.stringify({
+      reply: "I'll get the team to check for u",
+      outcome: "booking_ready",
+      treatment: "HIFU Non-Surgical Facelift",
+      branch: "Mont Kiara",
+      appointmentPreference: "Saturday 3pm",
+    })),
+    (err) => err.code === "INVALID_AI_RESPONSE"
+  );
 });
 
 test("malformed JSON-looking AI output fails closed instead of leaking raw control output", () => {
