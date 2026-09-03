@@ -35,6 +35,20 @@ test("structured booking_ready without branch/time is downgraded to normal", () 
   assert.equal(result.outcome, "normal");
 });
 
+test("structured booking_ready with an abbreviation/non-configured branch fails closed", () => {
+  const result = parseAiReplyResult(JSON.stringify({
+    reply: "I'll get the team to check for u",
+    outcome: "booking_ready",
+    treatment: "HIFU Non-Surgical Facelift",
+    branch: "PJ",
+    appointmentPreference: "Saturday 3pm",
+  }));
+
+  assert.equal(result.bookingReady, false);
+  assert.equal(result.outcome, "normal");
+  assert.equal(result.details.branch, null);
+});
+
 test("malformed JSON-looking AI output fails closed instead of leaking raw control output", () => {
   assert.throws(
     () => parseAiReplyResult('{"reply":"hello","outcome":'),
