@@ -6,6 +6,7 @@
 
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
+const { claimAiHandoffOwnership } = require("../services/staffOwnershipService");
 const realtimeEvents = require("./realtimeEvents");
 
 const MAX_MESSAGES_FOR_AI_CONTEXT = 20; // bounds prompt size/cost, not what's shown in the portal
@@ -75,6 +76,19 @@ async function appendMessageForContact(
     mediaAttachment?.buffer || mediaAttachment?.data || null,
     mediaAttachment?.mimeType || null
   );
+
+  // AI-triggered handoff puts the thread in Staff mode immediately. The first
+  // real staff-authored message should then replace the synthetic "AI handoff"
+  // owner with the username that actually picked the conversation up. This is
+  // bookkeeping only and must never turn a successfully saved staff message
+  // into a failed send if the ownership update has a transient DB problem.
+  if (sentByUsername) {
+    try {
+      await claimAiHandoffOwnership(contactId, sentByUsername);
+    } catch (err) {
+      console.error(`Failed to claim AI handoff for contact ${contactId}:`, err);
+    }
+  }
 
   publishMessageChange(contactId, saved.id);
   return saved;
