@@ -37,10 +37,25 @@ function staffModeChangedResult() {
   };
 }
 
-async function whatsappFreeformGuard(contact) {
+async function whatsappFreeformGuard(contact, purpose = "service") {
   if (channelOf(contact) !== "whatsapp") return null;
-  const policy = await whatsappPolicy.checkFreeformAllowed(contact);
-  return policy.allowed ? null : whatsappPolicy.blockedSendResult(policy);
+  try {
+    const policy = await whatsappPolicy.checkFreeformAllowed(contact, new Date(), {
+      purpose,
+    });
+    return policy.allowed ? null : whatsappPolicy.blockedSendResult(policy);
+  } catch (err) {
+    // The policy gate is deliberately fail-closed, but a temporary database
+    // problem should still look like a normal failed delivery to callers. This
+    // lets Inbox/retry/scheduler paths persist a clear failure instead of
+    // throwing after an outbound row has already been saved.
+    console.error("Failed to verify WhatsApp messaging-policy state:", err);
+    return whatsappPolicy.blockedSendResult({
+      code: "policy_state_unavailable",
+      message:
+        "WhatsApp send blocked because messaging-policy state could not be verified. Please retry after the connection recovers.",
+    });
+  }
 }
 
 async function stillInStaffMode(contact) {
@@ -88,20 +103,20 @@ async function withTemporaryMediaUrl(contact, buffer, mimeType, deliver) {
   }
 }
 
-async function sendText(contact, text) {
+async function sendText(contact, text, options = {}) {
   const channel = channelOf(contact);
   if (channel === "whatsapp") {
-    const blocked = await whatsappFreeformGuard(contact);
+    const blocked = await whatsappFreeformGuard(contact, options.purpose);
     if (blocked) return blocked;
     return whatsapp.sendMessage(contact.whatsapp_number, text);
   }
   return meta.sendText(channel, recipientFor(contact), text);
 }
 
-async function sendImageByUrl(contact, imageUrl, caption) {
+async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
   const channel = channelOf(contact);
   if (channel === "whatsapp") {
-    const blocked = await whatsappFreeformGuard(contact);
+    const blocked = await whatsappFreeformGuard(contact, options.purpose);
     if (blocked) return blocked;
     return whatsapp.sendImage(contact.whatsapp_number, imageUrl, caption);
   }
