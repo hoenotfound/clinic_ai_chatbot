@@ -100,7 +100,9 @@ test("booking-ready flags Inbox, makes an unlocked lead Hot, records activity, a
   );
 
   const allSql = calls.map(({ sql }) => sql).join("\n");
+  const contactUpdate = calls.find(({ sql }) => sql.startsWith("UPDATE contacts"));
   assert.match(allSql, /mode = 'ai'/i);
+  assert.doesNotMatch(contactUpdate.sql, /attention_reason LIKE 'Booking ready:%'/i);
   assert.doesNotMatch(allSql, /appointment_status/i);
   assert.doesNotMatch(allSql, /stage_id\s*=/i);
 });
@@ -130,7 +132,7 @@ test("booking-ready preserves a staff-locked lead temperature", async () => {
   );
 });
 
-test("booking-ready does nothing if staff took over while the AI was generating", async () => {
+test("booking-ready does nothing when the contact is no longer eligible for a fresh outcome", async () => {
   const { database, calls } = fakeDatabase({ contactUpdated: false });
   const published = [];
   const alerts = [];
