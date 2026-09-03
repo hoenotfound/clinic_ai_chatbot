@@ -669,7 +669,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   // Respond to Meta immediately — don't make them wait on the AI call,
   // or Meta may retry/resend the same message.
   res.sendStatus(200);
-  setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
+  const webhookActivity = setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
     console.error("Failed to record WhatsApp webhook activity:", err);
   });
 
@@ -708,7 +708,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
     }
   }
 
-  await incomingWork;
+  await Promise.all([incomingWork, webhookActivity]);
 });
 
 // ── Facebook Messenger + Instagram Messaging webhook verification ──
@@ -730,7 +730,7 @@ app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
   // Acknowledge Meta before AI/network work for the same retry protection used
   // by the existing WhatsApp webhook.
   res.sendStatus(200);
-  setupStatusRepo.recordWebhook("meta_webhook").catch((err) => {
+  const webhookActivity = setupStatusRepo.recordWebhook("meta_webhook").catch((err) => {
     console.error("Failed to record Meta webhook activity:", err);
   });
 
@@ -739,14 +739,15 @@ app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
   const allIncoming = [...incomingMessages, ...resolvedEditMessages];
 
   try {
-    await Promise.all(
-      allIncoming.map((incoming) =>
+    await Promise.all([
+      webhookActivity,
+      ...allIncoming.map((incoming) =>
         queueIncomingForReply(
           `${incoming.channel}:${incoming.from}`,
           incoming
         )
-      )
-    );
+      ),
+    ]);
   } catch (err) {
     console.error("Failed to process incoming Meta message(s):", err);
   }
