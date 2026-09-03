@@ -45,7 +45,7 @@ function completeEnv() {
   };
 }
 
-function memoryRepository(initial = [], candidateInitial = []) {
+function memoryRepository(initial = [], candidateInitial = [], inboundInitial = []) {
   const rows = new Map(initial.map((row) => [row.check_key, { ...row }]));
   const candidateRows = new Map(
     candidateInitial.map((row) => [row.candidate_key, { ...row }])
@@ -72,6 +72,9 @@ function memoryRepository(initial = [], candidateInitial = []) {
     },
     async listAiCandidateHealth() {
       return [...candidateRows.values()];
+    },
+    async listLatestInboundActivity() {
+      return inboundInitial.map((row) => ({ ...row }));
     },
   };
 }
@@ -267,6 +270,23 @@ test("overview reports the persisted last run instead of the page-load time", as
   const status = await service.getOverview();
   assert.equal(status.checkedAt, "2026-09-03T12:00:00.000Z");
   assert.equal(status.lastRunAt, "2026-09-02T08:30:00.000Z");
+});
+
+test("stored inbound WhatsApp activity prevents a false webhook warning", async () => {
+  const latestInboundAt = "2026-09-03T11:45:00.000Z";
+  const service = createSetupStatusService({
+    env: completeEnv(),
+    now: () => new Date("2026-09-03T12:00:00.000Z"),
+    repository: memoryRepository([], [], [
+      { channel: "whatsapp", last_inbound_at: latestInboundAt },
+    ]),
+  });
+
+  const status = await service.getOverview();
+  const webhook = status.checks.find((check) => check.key === "whatsapp_webhook");
+  assert.equal(webhook.status, "ready");
+  assert.equal(webhook.lastWebhookAt, latestInboundAt);
+  assert.match(webhook.summary, /valid signed webhook has been received/i);
 });
 
 test("overview exposes masked candidate health without any key material", async () => {
