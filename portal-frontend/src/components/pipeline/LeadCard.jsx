@@ -1,5 +1,6 @@
 import { useAuth } from "../../context/AuthContext";
 import ContactAvatar from "../ContactAvatar";
+import { LeadSourceBadge } from "./LeadAttributionPanel";
 import {
   displayName,
   formatDateTime,
@@ -46,6 +47,7 @@ export default function LeadCard({ lead, now, noReplyHours, onOpen, onDragStart 
         <Badge className="bg-[var(--color-primary-light)] text-[var(--color-primary)]">
           {lead.branch_name || "Unassigned"}
         </Badge>
+        <LeadSourceBadge source={lead.attribution?.source || lead.source} />
         {noReply && <Badge className="bg-slate-100 text-slate-600">No reply</Badge>}
         {lead.appointment_status === "reschedule" && (
           <Badge className="bg-[var(--color-accent-light)] text-[#8a641f]">Reschedule</Badge>
@@ -57,6 +59,12 @@ export default function LeadCard({ lead, now, noReplyHours, onOpen, onDragStart 
           <Badge className="bg-[var(--color-danger-light)] text-[var(--color-danger)]">Attention</Badge>
         )}
       </div>
+
+      {lead.attribution?.source === "meta_ads" && (lead.attribution?.headline || lead.attribution?.meta_ad_id) && (
+        <p className="mt-2.5 truncate text-[10px] font-medium text-[var(--color-text-muted)]" title={lead.attribution.headline || lead.attribution.meta_ad_id}>
+          Ad: {lead.attribution.headline || lead.attribution.meta_ad_id}
+        </p>
+      )}
 
       {(lead.appointment_at || lead.next_follow_up_at) && (
         <div className="mt-3 space-y-1.5 border-t border-[var(--color-border)] pt-2.5 text-[11px]">
