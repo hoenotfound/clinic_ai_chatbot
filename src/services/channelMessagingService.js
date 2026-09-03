@@ -4,6 +4,7 @@ const meta = require("./metaMessagingService");
 const metaAttachments = require("./metaAttachmentService");
 const mediaStorage = require("./mediaStorageService");
 const audioConvert = require("./audioConvertService");
+const whatsappPolicy = require("./whatsappPolicyService");
 
 function channelOf(contactOrIncoming) {
   return contactOrIncoming?.channel || "whatsapp";
@@ -34,6 +35,12 @@ function staffModeChangedResult() {
     externalMessageId: null,
     error: "This conversation is no longer in Staff mode.",
   };
+}
+
+async function whatsappFreeformGuard(contact) {
+  if (channelOf(contact) !== "whatsapp") return null;
+  const policy = await whatsappPolicy.checkFreeformAllowed(contact);
+  return policy.allowed ? null : whatsappPolicy.blockedSendResult(policy);
 }
 
 async function stillInStaffMode(contact) {
@@ -84,6 +91,8 @@ async function withTemporaryMediaUrl(contact, buffer, mimeType, deliver) {
 async function sendText(contact, text) {
   const channel = channelOf(contact);
   if (channel === "whatsapp") {
+    const blocked = await whatsappFreeformGuard(contact);
+    if (blocked) return blocked;
     return whatsapp.sendMessage(contact.whatsapp_number, text);
   }
   return meta.sendText(channel, recipientFor(contact), text);
@@ -92,6 +101,8 @@ async function sendText(contact, text) {
 async function sendImageByUrl(contact, imageUrl, caption) {
   const channel = channelOf(contact);
   if (channel === "whatsapp") {
+    const blocked = await whatsappFreeformGuard(contact);
+    if (blocked) return blocked;
     return whatsapp.sendImage(contact.whatsapp_number, imageUrl, caption);
   }
   return meta.sendImage(channel, recipientFor(contact), imageUrl, caption);
@@ -100,6 +111,11 @@ async function sendImageByUrl(contact, imageUrl, caption) {
 async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "image") {
   const channel = channelOf(contact);
   if (channel === "whatsapp") {
+    // Check policy before uploading bytes to Meta. This avoids creating media
+    // objects for a message we are not permitted to deliver.
+    const blocked = await whatsappFreeformGuard(contact);
+    if (blocked) return blocked;
+
     const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename);
     if (!mediaId) {
       return {
@@ -148,6 +164,9 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
 async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3") {
   const channel = channelOf(contact);
   if (channel === "whatsapp") {
+    const blocked = await whatsappFreeformGuard(contact);
+    if (blocked) return blocked;
+
     const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename);
     if (!mediaId) {
       return {
