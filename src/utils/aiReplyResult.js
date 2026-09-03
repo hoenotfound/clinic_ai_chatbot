@@ -1,3 +1,4 @@
+const clinicConfig = require("../config/clinicConfig");
 const {
   extractAiOutcomeSignals,
   stripInternalOutcomeMarkers,
@@ -10,6 +11,15 @@ function cleanOptionalText(value) {
   if (typeof value !== "string") return null;
   const cleaned = stripInternalOutcomeMarkers(value).trim();
   return cleaned ? cleaned.slice(0, MAX_METADATA_LENGTH) : null;
+}
+
+function canonicalConfiguredName(value, items) {
+  const cleaned = cleanOptionalText(value);
+  if (!cleaned) return null;
+  const match = (items || []).find(
+    (item) => String(item?.name || "").trim().toLowerCase() === cleaned.toLowerCase()
+  );
+  return match ? String(match.name).trim() : null;
 }
 
 function stripJsonFence(value) {
@@ -57,13 +67,16 @@ function parseStructuredReply(raw) {
     throw invalid;
   }
 
-  const branch = cleanOptionalText(parsed.branch);
-  const treatment = cleanOptionalText(parsed.treatment);
+  // Structured outcomes use canonical config names rather than trusting free
+  // model text. An abbreviation such as "PJ" is not enough to authorize a
+  // Booking Ready side effect; the model was explicitly instructed to return
+  // "Petaling Jaya". This makes the backend fail closed if it doesn't comply.
+  const branch = canonicalConfiguredName(parsed.branch, clinicConfig.branches);
+  const treatment = parsed.treatment == null
+    ? null
+    : canonicalConfiguredName(parsed.treatment, clinicConfig.services);
   const appointmentPreference = cleanOptionalText(parsed.appointmentPreference);
 
-  // A structured booking-ready result is only actionable when the model also
-  // supplies the structured booking fields the backend needs. This is a second
-  // guard behind the prompt criteria, not a substitute for them.
   const bookingReady =
     outcome === "booking_ready" && Boolean(branch && appointmentPreference);
 
@@ -113,6 +126,7 @@ function parseAiReplyResult(raw) {
 
 module.exports = {
   VALID_OUTCOMES,
+  canonicalConfiguredName,
   parseAiReplyResult,
   parseStructuredReply,
 };
