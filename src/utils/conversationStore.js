@@ -20,12 +20,41 @@ function publishMessageChange(contactId, messageId) {
   });
 }
 
-async function getHistoryForContact(contactId) {
-  const rows = await messagesRepo.getMessagesForContact(
-    contactId,
-    MAX_MESSAGES_FOR_AI_CONTEXT,
-    false
+function aiVisibleRows(rows) {
+  return (rows || []).filter(
+    (row) =>
+      row.role !== "assistant" ||
+      row.delivery_status == null ||
+      !["failed", "unknown"].includes(row.delivery_status)
   );
+}
+
+async function getHistoryForContact(contactId, { throughMessageId = null } = {}) {
+  let rows;
+  if (throughMessageId != null) {
+    const boundary = Number(throughMessageId);
+    if (!Number.isSafeInteger(boundary) || boundary < 1) {
+      throw new TypeError("throughMessageId must be a positive safe integer.");
+    }
+
+    // Inbound webhook payloads are now durably stored before the typing
+    // debounce. A later customer message can therefore already exist in the DB
+    // while the previous burst is generating its reply. Limit this AI snapshot
+    // to the last message that belongs to the current burst so the model cannot
+    // "see ahead" and answer the next burst twice.
+    const page = await messagesRepo.getMessagePageForContact(contactId, {
+      limit: MAX_MESSAGES_FOR_AI_CONTEXT,
+      beforeId: boundary + 1,
+      includeMedia: false,
+    });
+    rows = aiVisibleRows(page.rows);
+  } else {
+    rows = await messagesRepo.getMessagesForContact(
+      contactId,
+      MAX_MESSAGES_FOR_AI_CONTEXT,
+      false
+    );
+  }
 
   const isPhotoRow = (r) => r.has_media_attachment && r.media_mime_type?.startsWith("image/");
   const photoIndices = [];
@@ -147,6 +176,7 @@ async function updateInboundMessage(contactId, messageId, content, mediaAttachme
 }
 
 module.exports = {
+  aiVisibleRows,
   getHistory,
   getHistoryForContact,
   appendMessage,
