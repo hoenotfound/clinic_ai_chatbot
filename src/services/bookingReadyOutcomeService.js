@@ -67,21 +67,60 @@ function createBookingReadyOutcomeService({
     try {
       await client.query("BEGIN");
 
+      // Normally an unresolved Booking Ready attention flag suppresses another
+      // model outcome so an "ok"/"thanks" cannot spam staff. The exception is
+      // a genuinely changed structured booking preference (branch, treatment,
+      // or requested day/time) on the same open lead. That change must refresh
+      // the lead/activity/Telegram alert instead of leaving staff with stale
+      // scheduling details.
       const contactResult = await client.query(
-        `UPDATE contacts
+        `UPDATE contacts c
          SET needs_attention = true,
              attention_reason = $1,
              updated_at = now()
-         WHERE id = $2
-           AND mode = 'ai'
+         WHERE c.id = $2
+           AND c.mode = 'ai'
            AND (
-             needs_attention = false
-             OR attention_reason IS NULL
-             OR attention_reason LIKE 'Delivery failed:%'
-             OR attention_reason LIKE 'Delivery unconfirmed:%'
+             c.needs_attention = false
+             OR c.attention_reason IS NULL
+             OR c.attention_reason LIKE 'Delivery failed:%'
+             OR c.attention_reason LIKE 'Delivery unconfirmed:%'
+             OR (
+               c.needs_attention = true
+               AND c.attention_reason = $1
+               AND EXISTS (
+                 SELECT 1
+                 FROM LATERAL (
+                   SELECT l.id
+                   FROM leads l
+                   WHERE l.contact_id = c.id
+                     AND l.is_closed = false
+                   ORDER BY l.created_at DESC, l.id DESC
+                   LIMIT 1
+                 ) current_lead
+                 LEFT JOIN LATERAL (
+                   SELECT a.metadata
+                   FROM lead_activities a
+                   WHERE a.lead_id = current_lead.id
+                     AND a.metadata->>'outcome' = 'booking_ready'
+                   ORDER BY a.created_at DESC, a.id DESC
+                   LIMIT 1
+                 ) latest_booking ON true
+                 WHERE
+                   ($3::text IS NOT NULL AND latest_booking.metadata->>'branch' IS DISTINCT FROM $3::text)
+                   OR ($4::text IS NOT NULL AND latest_booking.metadata->>'treatment' IS DISTINCT FROM $4::text)
+                   OR ($5::text IS NOT NULL AND latest_booking.metadata->>'appointmentPreference' IS DISTINCT FROM $5::text)
+               )
+             )
            )
          RETURNING id`,
-        [reason, contactId]
+        [
+          reason,
+          contactId,
+          details.branch,
+          details.treatment,
+          details.appointmentPreference,
+        ]
       );
       contactUpdated = Boolean(contactResult.rows[0]);
 
