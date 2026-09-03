@@ -50,6 +50,18 @@ async function recordWebhook(checkKey, at = new Date(), queryable = pool) {
   );
 }
 
+async function listLatestInboundActivity(queryable = pool) {
+  const result = await queryable.query(
+    `SELECT c.channel, MAX(m.created_at) AS last_inbound_at
+     FROM messages m
+     JOIN contacts c ON c.id = m.contact_id
+     WHERE m.role = 'user'
+       AND c.channel IN ('whatsapp', 'facebook', 'instagram')
+     GROUP BY c.channel`
+  );
+  return result.rows;
+}
+
 async function listAiCandidateHealth(queryable = pool) {
   const result = await queryable.query(
     `SELECT candidate_key, provider, last_status, last_failure_kind,
@@ -120,6 +132,7 @@ async function recordAiCandidateOutcome(
 module.exports = {
   listAiCandidateHealth,
   listConnectionHealth,
+  listLatestInboundActivity,
   recordAiCandidateOutcome,
   recordWebhook,
   saveCheckResults,

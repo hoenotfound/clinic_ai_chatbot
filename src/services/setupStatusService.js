@@ -112,6 +112,30 @@ function mapStored(rows) {
   return new Map((rows || []).map((row) => [row.check_key, row]));
 }
 
+function mergeWebhookEvidence(storedRows, inboundRows) {
+  const rows = new Map(
+    (storedRows || []).map((row) => [row.check_key, { ...row }])
+  );
+  for (const activity of inboundRows || []) {
+    const keys = activity.channel === "whatsapp"
+      ? ["whatsapp_webhook"]
+      : ["facebook", "instagram"].includes(activity.channel)
+        ? [activity.channel, "meta_webhook"]
+        : [];
+    const candidate = iso(activity.last_inbound_at);
+    if (!keys.length || !candidate) continue;
+
+    for (const key of keys) {
+      const previous = rows.get(key) || { check_key: key };
+      const previousAt = iso(previous.last_webhook_at);
+      if (!previousAt || new Date(candidate) > new Date(previousAt)) {
+        rows.set(key, { ...previous, last_webhook_at: candidate });
+      }
+    }
+  }
+  return [...rows.values()];
+}
+
 function sessionSecurityResult(env, checkedAt) {
   const secret = text(env.SESSION_SECRET);
   const weak = secret.length < 32 || /^(change|secret|password|test)/i.test(secret);
@@ -169,7 +193,7 @@ function webhookResult(definition, stored, checkedAt) {
     lastWebhookAt ? "ready" : "warning",
     lastWebhookAt
       ? "A valid signed webhook has been received."
-      : "Configured, but no valid webhook has been recorded since this checker was installed.",
+      : "Configured. Waiting for the first valid signed webhook from Meta.",
     checkedAt,
     { lastWebhookAt }
   );
@@ -198,6 +222,18 @@ function mergeOverview(
     if (definition.key === "public_url") item ||= publicUrlResult(env, requestBaseUrl, checkedAt);
     if (["whatsapp_webhook", "meta_webhook"].includes(definition.key)) {
       item ||= webhookResult(definition, saved, checkedAt);
+    }
+    if (["facebook", "instagram"].includes(definition.key) && !item) {
+      const lastActivityAt = iso(saved?.last_webhook_at);
+      item = result(
+        definition.key,
+        lastActivityAt ? "ready" : "warning",
+        lastActivityAt
+          ? "Messaging confirmed by a received customer message."
+          : "Configured. Send and receive a test message to confirm messaging.",
+        saved?.last_checked_at || null,
+        { lastActivityAt }
+      );
     }
     if (!item && !definition.isConfigured) {
       item = result(
@@ -228,7 +264,16 @@ function mergeOverview(
       configured: definition.isConfigured,
       ...item,
       lastSuccessAt: iso(saved?.last_success_at),
-      lastWebhookAt: item.lastWebhookAt || iso(saved?.last_webhook_at),
+      lastWebhookAt: item.lastWebhookAt || (
+        ["whatsapp_webhook", "meta_webhook"].includes(definition.key)
+          ? iso(saved?.last_webhook_at)
+          : null
+      ),
+      lastActivityAt: item.lastActivityAt || (
+        ["facebook", "instagram"].includes(definition.key)
+          ? iso(saved?.last_webhook_at)
+          : null
+      ),
     };
     if (definition.key === "ai") {
       merged.candidateHealth = (definition.aiCandidates || []).map((candidate) => {
@@ -302,10 +347,18 @@ function createSetupStatusService({
   }
 
   async function storedRows() {
+    let saved = [];
     try {
-      return await repository.listConnectionHealth(database);
+      saved = await repository.listConnectionHealth(database);
     } catch {
-      return [];
+      saved = [];
+    }
+    if (typeof repository.listLatestInboundActivity !== "function") return saved;
+    try {
+      const inbound = await repository.listLatestInboundActivity(database);
+      return mergeWebhookEvidence(saved, inbound);
+    } catch {
+      return saved;
     }
   }
 
@@ -413,6 +466,22 @@ function createSetupStatusService({
     } catch (err) {
       return result(key, "error", privateError(err), checkedAt);
     }
+  }
+
+  function checkSocialMessaging({ key, definition, stored, checkedAt }) {
+    if (!definition.isConfigured) {
+      return result(key, "not_configured", "Optional integration is not configured.", checkedAt);
+    }
+    const lastActivityAt = iso(stored?.last_webhook_at);
+    return result(
+      key,
+      lastActivityAt ? "ready" : "warning",
+      lastActivityAt
+        ? "Messaging confirmed by a received customer message."
+        : "Configured. Send and receive a test message to confirm messaging.",
+      checkedAt,
+      { lastActivityAt }
+    );
   }
 
   async function checkR2(checkedAt, definition) {
@@ -525,6 +594,7 @@ function createSetupStatusService({
     const checkedAt = now();
     const defs = definitions(env);
     const byKey = new Map(defs.map((item) => [item.key, item]));
+    const savedBeforeChecks = mapStored(await storedRows());
     const results = await Promise.all([
       checkDatabase(checkedAt),
       Promise.resolve(sessionSecurityResult(env, checkedAt)),
@@ -540,24 +610,18 @@ function createSetupStatusService({
         readyLabel: "WhatsApp business number",
         checkedAt,
       }),
-      checkGraphObject({
+      Promise.resolve(checkSocialMessaging({
         key: "facebook",
         definition: byKey.get("facebook"),
-        objectId: text(env.FACEBOOK_PAGE_ID),
-        token: text(env.FACEBOOK_PAGE_ACCESS_TOKEN),
-        fields: "id,name",
-        readyLabel: "Facebook Page",
+        stored: savedBeforeChecks.get("facebook"),
         checkedAt,
-      }),
-      checkGraphObject({
+      })),
+      Promise.resolve(checkSocialMessaging({
         key: "instagram",
         definition: byKey.get("instagram"),
-        objectId: text(env.INSTAGRAM_PAGE_ID),
-        token: text(env.INSTAGRAM_PAGE_ACCESS_TOKEN),
-        fields: "id,name",
-        readyLabel: "Instagram-linked Page",
+        stored: savedBeforeChecks.get("instagram"),
         checkedAt,
-      }),
+      })),
       checkR2(checkedAt, byKey.get("r2")),
       checkTelegram(checkedAt, byKey.get("telegram")),
       checkMetaMarketing(checkedAt, byKey.get("meta_marketing")),
@@ -595,6 +659,7 @@ module.exports = {
   createSetupStatusService,
   definitions,
   mergeOverview,
+  mergeWebhookEvidence,
   publicUrlResult,
   requestJson,
   safeError,

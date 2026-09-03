@@ -32,6 +32,8 @@ test("setup status UI includes private-credential copy and responsive controls",
   assert.match(page, /View AI key health/);
   assert.match(page, /Fallback keys are only checked when earlier keys cannot complete a reply/);
   assert.match(page, /Last rate limited/);
+  assert.match(page, /Awaiting activity/);
+  assert.match(page, /Latest customer message/);
 });
 
 test("setup status uses clear historical AI labels and accessible mobile controls", () => {
@@ -67,6 +69,10 @@ test("setup schema is included in startup and stores no credentials", () => {
 
 test("WhatsApp webhook activity updates the dedicated webhook check", () => {
   const server = read("src/server.js");
+  const repository = read("src/db/setupStatusRepo.js");
   assert.match(server, /recordWebhook\("whatsapp_webhook"\)/);
+  assert.match(server, /Promise\.all\(\[incomingWork, webhookActivity\]\)/);
   assert.doesNotMatch(server, /recordWebhook\("whatsapp"\)/);
+  assert.match(repository, /listLatestInboundActivity/);
+  assert.match(repository, /m\.role = 'user'/);
 });
