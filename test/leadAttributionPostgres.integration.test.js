@@ -253,7 +253,7 @@ test(
     }
 
     const pendingId = await createLegacyLead("60111111111", "meta_ads", "120210000001001");
-    const completeId = await createLegacyLead(
+    const partialMetadataId = await createLegacyLead(
       "60222222222",
       "meta_ads",
       "120210000001002",
@@ -270,7 +270,8 @@ test(
     const upgradeSql = readSchema("src/db/leadAttributionSchema.sql");
     await client.query(upgradeSql);
     // Startup schemas are intentionally run on every deploy. Prove the second
-    // execution is also safe and does not rewrite non-ad rows.
+    // execution is also safe and does not rewrite non-ad rows or reclassify a
+    // pending legacy row without a verified Marketing API sync.
     await client.query(upgradeSql);
 
     const columns = await client.query(
@@ -298,15 +299,18 @@ test(
        FROM lead_attributions
        WHERE id = ANY($1::int[])
        ORDER BY id`,
-      [[pendingId, completeId, organicId]]
+      [[pendingId, partialMetadataId, organicId]]
     );
     const byId = new Map(rows.rows.map((row) => [Number(row.id), row]));
 
     assert.equal(byId.get(pendingId).enrichment_status, "pending");
     assert.equal(byId.get(pendingId).enriched_at, null);
 
-    assert.equal(byId.get(completeId).enrichment_status, "enriched");
-    assert.ok(byId.get(completeId).enriched_at instanceof Date);
+    // PR #65 never had a verified Marketing API sync or Ad Account ID. Even if
+    // old referral metadata contained names, #67 must verify it before calling
+    // the hierarchy enriched.
+    assert.equal(byId.get(partialMetadataId).enrichment_status, "pending");
+    assert.equal(byId.get(partialMetadataId).enriched_at, null);
 
     assert.equal(byId.get(organicId).enrichment_status, "not_applicable");
     assert.equal(byId.get(organicId).enriched_at, null);
