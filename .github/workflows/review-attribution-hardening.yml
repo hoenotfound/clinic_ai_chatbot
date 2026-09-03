@@ -23,8 +23,6 @@ jobs:
           python3 <<'PY'
           from pathlib import Path
 
-          # Backend: expose only the attribution fields the portal needs and
-          # stop returning a global source list that bypasses lead visibility.
           path = Path('src/routes/pipeline.js')
           text = path.read_text()
           old = '''function withAttribution(lead, attribution) {
@@ -65,18 +63,13 @@ jobs:
           if old not in text:
               raise SystemExit('pipeline withAttribution target not found')
           text = text.replace(old, new, 1)
-          old = '''      sources: distinctNames(
-                leads.map((lead) => lead.attribution?.source || lead.source)
-              ).sort(),
-          '''
-          if old not in text:
+          source_start = text.find('      sources: distinctNames(')
+          no_reply_start = text.find('      noReplyHours:', source_start)
+          if source_start < 0 or no_reply_start < 0:
               raise SystemExit('pipeline sources target not found')
-          text = text.replace(old, '', 1)
+          text = text[:source_start] + text[no_reply_start:]
           path.write_text(text)
 
-          # Pipeline: derive source options from the post-auth visible lead list,
-          # let the existing manual source field behave as a real override, and
-          # preserve the pre-existing top-metric branch-filter behavior.
           path = Path('portal-frontend/src/pages/Pipeline.jsx')
           text = path.read_text()
           old = '''  const leads = useMemo(() => data?.leads || [], [data?.leads]);
@@ -110,7 +103,6 @@ jobs:
           text = text.replace(old, new, 1)
           path.write_text(text)
 
-          # Cards use the effective/manual source when staff explicitly correct it.
           path = Path('portal-frontend/src/components/pipeline/LeadCard.jsx')
           text = path.read_text()
           old = '''        <LeadSourceBadge source={lead.attribution?.source || lead.source} />'''
@@ -119,8 +111,6 @@ jobs:
               raise SystemExit('LeadCard source target not found')
           path.write_text(text.replace(old, new, 1))
 
-          # Drawer distinguishes immutable captured evidence from staff overrides,
-          # and never labels a referral headline as an Ads Manager ad name.
           path = Path('portal-frontend/src/components/pipeline/LeadAttributionPanel.jsx')
           text = path.read_text()
           old = '''  const source = attribution?.source || lead.source;
