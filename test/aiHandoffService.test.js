@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   AI_HANDOFF_OWNER,
   createAiHandoffService,
+  getPendingAiHandoffContact,
 } = require("../src/services/aiHandoffService");
 
 test("AI handoff atomically pauses AI, keeps Needs Attention, and alerts staff", async () => {
@@ -63,4 +64,24 @@ test("AI handoff is a no-op if staff already took ownership", async () => {
 
   assert.equal(await pause(42), null);
   assert.equal(alerted, false);
+});
+
+test("final AI handoff reply is allowed only while the synthetic AI owner still owns Staff mode", async () => {
+  const queries = [];
+  const pending = await getPendingAiHandoffContact(42, {
+    async query(sql, params) {
+      queries.push({ sql: String(sql).replace(/\s+/g, " ").trim(), params });
+      return { rows: [{ id: 42, mode: "human", takeover_by: AI_HANDOFF_OWNER }] };
+    },
+  });
+
+  assert.equal(pending.id, 42);
+  assert.match(queries[0].sql, /mode = 'human'/);
+  assert.match(queries[0].sql, /takeover_by = \$2/);
+  assert.deepEqual(queries[0].params, [42, AI_HANDOFF_OWNER]);
+
+  const claimedByStaff = await getPendingAiHandoffContact(42, {
+    async query() { return { rows: [] }; },
+  });
+  assert.equal(claimedByStaff, null);
 });
