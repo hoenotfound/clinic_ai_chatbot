@@ -1,10 +1,11 @@
-// Keep each customer's reply work in arrival order while still allowing different
-// customers to process in parallel. Inbound webhook claims use a separate fast
-// queue so a new message can be durably stored even while an earlier AI reply is
-// waiting on a provider/network call. A second layer groups rapid-fire inbound
-// messages so "hi" + "how much hifu" + "for double chin" becomes one AI turn.
+// Keep each customer's fast inbound-claim work in arrival order while still
+// allowing different customers to process in parallel. Reply processing uses a
+// separate per-customer queue so a new webhook can be durably stored even while
+// an earlier AI reply is waiting on a provider/network call. A second layer
+// groups rapid-fire inbound messages so "hi" + "how much hifu" + "for double
+// chin" becomes one AI turn.
 const queues = new Map();
-const claimQueues = new Map();
+const replyQueues = new Map();
 const bursts = new Map();
 
 const DEFAULT_BURST_DELAY_MS = 1200;
@@ -31,13 +32,15 @@ function enqueueConversation(key, task) {
 }
 
 /**
- * Serializes only the short durable inbound-claim step for a contact. This is
- * deliberately independent from enqueueConversation(): a webhook arriving
- * while an earlier burst is generating an AI reply must not wait behind that
- * slow network call before its message is saved to Postgres.
+ * Explicit alias used when a caller wants to document that this is the short
+ * durable webhook-claim lane rather than slow reply processing.
  */
 function enqueueConversationClaim(key, task) {
-  return enqueueOn(claimQueues, key, task);
+  return enqueueConversation(key, task);
+}
+
+function enqueueReplyConversation(key, task) {
+  return enqueueOn(replyQueues, key, task);
 }
 
 function normalizeDelay(value) {
@@ -53,7 +56,7 @@ function flushBurst(queueKey, entry) {
 
   const items = entry.items.splice(0);
   const waiters = entry.waiters.splice(0);
-  const work = enqueueConversation(queueKey, () => entry.batchTask(items));
+  const work = enqueueReplyConversation(queueKey, () => entry.batchTask(items));
   work.then(
     (value) => waiters.forEach(({ resolve }) => resolve(value)),
     (err) => waiters.forEach(({ reject }) => reject(err))
@@ -62,8 +65,9 @@ function flushBurst(queueKey, entry) {
 
 /**
  * Collects individual inbound payloads arriving within a short quiet window,
- * then hands the whole ordered batch to one task. The batch task is still run
- * through enqueueConversation, so a second burst cannot overtake the first.
+ * then hands the whole ordered batch to one task. The batch task is serialized
+ * on the reply queue, so a second burst cannot overtake the first while the
+ * independent inbound-claim queue remains free to persist newer webhooks.
  */
 function enqueueConversationBurst(
   key,
