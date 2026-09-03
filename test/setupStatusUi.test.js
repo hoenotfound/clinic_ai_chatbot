@@ -26,6 +26,8 @@ test("setup status UI includes private-credential copy and responsive controls",
   assert.match(page, /w-full.*sm:w-auto/);
   assert.match(page, /sm:grid-cols-2/);
   assert.match(page, /safe-area-inset-bottom/);
+  assert.match(page, /Meta app review is separate/);
+  assert.match(page, /cannot confirm that Meta has approved public messaging access/);
 });
 
 test("legacy public Instagram diagnostic routes were removed", () => {
