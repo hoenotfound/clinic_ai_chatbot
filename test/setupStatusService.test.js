@@ -19,6 +19,7 @@ function completeEnv() {
   return {
     AI_PROVIDER: "gemini",
     GEMINI_API_KEY: "gemini-secret-value",
+    GEMINI_API_KEY_1: "rotated-gemini-secret-value",
     ANTHROPIC_API_KEY: "claude-secret-value",
     SESSION_SECRET: "a-strong-random-session-secret-with-more-than-32-characters",
     PUBLIC_BASE_URL: "https://clinic.example.test",
@@ -83,6 +84,9 @@ test("runs safe checks without exposing credentials or messaging customers", asy
     database: {
       async query(sql) {
         if (/COUNT/.test(sql)) return { rows: [{ count: 1 }] };
+        if (/SELECT meta_ad_id/.test(sql)) {
+          return { rows: [{ meta_ad_id: "120210000001234" }] };
+        }
         return { rows: [{ ok: 1 }] };
       },
     },
@@ -113,6 +117,9 @@ test("runs safe checks without exposing credentials or messaging customers", asy
       if (url.includes("/20002?")) return response({ id: "20002", name: "Clinic Page" });
       if (url.includes("/30003?")) return response({ id: "30003", name: "Clinic IG Page" });
       if (url.includes("/me?")) return response({ id: "system-user" });
+      if (url.includes("/120210000001234?")) {
+        return response({ id: "120210000001234", name: "Clinic Ad", account_id: "123456789" });
+      }
       throw new Error(`Unexpected URL: ${url}`);
     },
   });
@@ -127,12 +134,14 @@ test("runs safe checks without exposing credentials or messaging customers", asy
   assert.equal(byKey.get("instagram").status, "ready");
   assert.equal(byKey.get("telegram").status, "ready");
   assert.equal(byKey.get("r2").status, "ready");
+  assert.equal(byKey.get("meta_marketing").status, "ready");
   assert.equal(byKey.get("whatsapp_webhook").lastWebhookAt, webhookAt);
   assert.deepEqual(deleted, ["messages/setup-check/object.bin"]);
 
   const payload = JSON.stringify(status);
   for (const secret of [
     env.GEMINI_API_KEY,
+    env.GEMINI_API_KEY_1,
     env.ANTHROPIC_API_KEY,
     env.WHATSAPP_TOKEN,
     env.FACEBOOK_PAGE_ACCESS_TOKEN,
@@ -264,7 +273,7 @@ test("provider errors redact configured secrets even when echoed without a Beare
     },
     ai: {
       async getReply() {
-        throw new Error(`AI rejected key ${env.GEMINI_API_KEY}`);
+        throw new Error(`AI rejected key ${env.GEMINI_API_KEY_1}`);
       },
     },
     storage: {
@@ -276,8 +285,75 @@ test("provider errors redact configured secrets even when echoed without a Beare
 
   const status = await service.runAll();
   const ai = status.checks.find((check) => check.key === "ai");
-  assert.equal(ai.summary.includes(env.GEMINI_API_KEY), false);
+  assert.equal(ai.summary.includes(env.GEMINI_API_KEY_1), false);
   assert.match(ai.summary, /\[hidden\]/);
+});
+
+test("Meta Ads stays cautious until access to a captured Ad can be verified", async () => {
+  const env = completeEnv();
+  const service = createSetupStatusService({
+    env,
+    repository: memoryRepository(),
+    database: {
+      async query(sql) {
+        if (/COUNT/.test(sql)) return { rows: [{ count: 1 }] };
+        if (/SELECT meta_ad_id/.test(sql)) return { rows: [] };
+        return { rows: [{ ok: 1 }] };
+      },
+    },
+    ai: { async getReply() { return "ok"; } },
+    storage: {
+      async uploadMedia() { return "test-key"; },
+      async deleteMedia() {},
+    },
+    fetchImpl: async (url) => {
+      if (url.includes("api.telegram.org")) return response({ ok: true, result: {} });
+      return response({ id: url.includes("/me?") ? "system-user" : "connected", name: "Connected" });
+    },
+  });
+
+  const status = await service.runAll();
+  const meta = status.checks.find((check) => check.key === "meta_marketing");
+  assert.equal(meta.status, "warning");
+  assert.match(meta.summary, /Capture a Meta Ad ID/);
+});
+
+test("Meta Ads reports missing ads_read or ad account access", async () => {
+  const env = completeEnv();
+  const service = createSetupStatusService({
+    env,
+    repository: memoryRepository(),
+    database: {
+      async query(sql) {
+        if (/COUNT/.test(sql)) return { rows: [{ count: 1 }] };
+        if (/SELECT meta_ad_id/.test(sql)) {
+          return { rows: [{ meta_ad_id: "120210000001234" }] };
+        }
+        return { rows: [{ ok: 1 }] };
+      },
+    },
+    ai: { async getReply() { return "ok"; } },
+    storage: {
+      async uploadMedia() { return "test-key"; },
+      async deleteMedia() {},
+    },
+    fetchImpl: async (url) => {
+      if (url.includes("/me?")) return response({ id: "system-user" });
+      if (url.includes("/120210000001234?")) {
+        return response(
+          { error: { message: "Missing permission" } },
+          { ok: false, status: 403 }
+        );
+      }
+      if (url.includes("api.telegram.org")) return response({ ok: true, result: {} });
+      return response({ id: "connected", name: "Connected" });
+    },
+  });
+
+  const status = await service.runAll();
+  const meta = status.checks.find((check) => check.key === "meta_marketing");
+  assert.equal(meta.status, "error");
+  assert.match(meta.summary, /ads_read and ad account access/);
 });
 
 test("R2 test objects are cleaned up after a later failure", async () => {
