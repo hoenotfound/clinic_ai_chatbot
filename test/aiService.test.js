@@ -2,6 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  classifyCandidateHealthFailure,
+  credentialFingerprint,
   getGeminiApiKeys,
   isRetryableAiError,
   runCandidate,
@@ -25,11 +27,30 @@ test("transient provider errors and invalid model output are retryable", () => {
   assert.equal(isRetryableAiError({ status: 400, message: "bad request" }), false);
 });
 
+test("AI candidate health classifies quota, credential and temporary failures", () => {
+  assert.deepEqual(
+    classifyCandidateHealthFailure({ status: 429, message: "Resource exhausted" }),
+    { status: "rate_limited", failureKind: "rate_limit" }
+  );
+  assert.deepEqual(
+    classifyCandidateHealthFailure({ status: 401, message: "Unauthorized" }),
+    { status: "invalid", failureKind: "authentication" }
+  );
+  assert.deepEqual(
+    classifyCandidateHealthFailure({ status: 503, message: "Unavailable" }),
+    { status: "unavailable", failureKind: "temporary_failure" }
+  );
+  assert.equal(credentialFingerprint("private-key").length, 24);
+  assert.equal(credentialFingerprint("private-key").includes("private-key"), false);
+});
+
 test("candidate retries a transient failure and validates structured success", async () => {
   let attempts = 0;
+  const health = [];
   const raw = await runCandidate(
     {
       label: "fake AI",
+      reportOutcome(outcome) { health.push(outcome); },
       async run() {
         attempts += 1;
         if (attempts === 1) {
@@ -53,7 +74,35 @@ test("candidate retries a transient failure and validates structured success", a
   );
 
   assert.equal(attempts, 2);
+  assert.deepEqual(health, [
+    { status: "unavailable", failureKind: "temporary_failure" },
+    { status: "ready", failureKind: null },
+  ]);
   assert.match(raw, /"outcome":"normal"/);
+});
+
+test("a quota failure is recorded before rotating away from a candidate", async () => {
+  const health = [];
+  await assert.rejects(
+    runCandidate(
+      {
+        label: "limited AI",
+        reportOutcome(outcome) { health.push(outcome); },
+        async run() {
+          const err = new Error("Quota exceeded");
+          err.status = 429;
+          throw err;
+        },
+      },
+      [],
+      {},
+      1000,
+      0
+    )
+  );
+  assert.deepEqual(health, [
+    { status: "rate_limited", failureKind: "rate_limit" },
+  ]);
 });
 
 test("malformed structured output gets one bounded retry before the candidate fails", async () => {
