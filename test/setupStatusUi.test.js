@@ -67,6 +67,10 @@ test("setup schema is included in startup and stores no credentials", () => {
 
 test("WhatsApp webhook activity updates the dedicated webhook check", () => {
   const server = read("src/server.js");
+  const repository = read("src/db/setupStatusRepo.js");
   assert.match(server, /recordWebhook\("whatsapp_webhook"\)/);
+  assert.match(server, /Promise\.all\(\[incomingWork, webhookActivity\]\)/);
   assert.doesNotMatch(server, /recordWebhook\("whatsapp"\)/);
+  assert.match(repository, /listLatestInboundActivity/);
+  assert.match(repository, /m\.role = 'user'/);
 });
