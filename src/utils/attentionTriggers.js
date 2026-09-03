@@ -1,23 +1,17 @@
 /**
  * Backup safety-net for flagging conversations that need a human.
  *
- * The primary signal is the AI itself: systemPrompt.js instructs it to
- * prefix replies with an internal marker for actionable conversation outcomes.
- * NEEDS_HUMAN is the existing escalation path; BOOKING_READY means the customer
- * has provided enough scheduling preference for staff to confirm availability.
- * Both markers are stripped before the patient ever sees the reply.
+ * The primary signal is the AI's structured conversation outcome. Legacy
+ * NEEDS_HUMAN / BOOKING_READY markers remain supported during rollout, but
+ * this keyword layer is deliberately independent so urgent/human-request
+ * messages are still protected if the AI provider fails.
  *
- * This keyword check exists for cases the AI signal can't cover:
- *  - the AI call fails/errors and the fallback message goes out instead
- *  - a patient sends something urgent while a staff member already owns
- *    the conversation (mode='human'), so no AI call happens at all
- *  - defense-in-depth, in case the model just doesn't add the marker
- *
- * Keep this list short and high-precision — it only needs to catch clear
- * cases, not do the AI's job.
+ * Keep patterns high-precision. This is not an intent classifier; it is a
+ * defense-in-depth stop for clear English, Bahasa Malaysia and Chinese cases.
  */
 
 const TRIGGER_PATTERNS = [
+  // English: explicit human request / complaint / urgent safety language.
   /\bspeak (to|with) (a |an )?(human|person|staff|someone|agent)\b/i,
   /\btalk (to|with) (a |an )?(human|person|staff|someone|agent)\b/i,
   /\breal (person|human)\b/i,
@@ -28,32 +22,47 @@ const TRIGGER_PATTERNS = [
   /\burgent(ly)?\b/i,
   /\ballerg(y|ic|ic reaction)\b/i,
   /\bside effect\b/i,
-  /\bin pain\b|\bhurts a lot\b/i,
+  /\bin pain\b|\bhurts a lot\b|\bsevere pain\b|\bgetting worse\b/i,
   /\blodge (a )?complaint\b/i,
   /\bmanager\b/i,
   /\blawyer\b|\blegal action\b/i,
+
+  // Bahasa Malaysia / common Malaysian chat phrasing.
+  /\b(nak|mahu) (cakap|bercakap) (dengan )?(staff|orang|manusia|agent|ejen)\b/i,
+  /\b(cakap|sambung) (dengan )?(staff|orang sebenar|agent|ejen)\b/i,
+  /\brefund( duit)?\b|\bpulangkan duit\b/i,
+  /\b(aduan|buat aduan|nak complain)\b/i,
+  /\b(sakit sangat|terlalu sakit|sakit teruk|makin sakit|semakin sakit)\b/i,
+  /\b(sesak nafas|susah bernafas|tak boleh bernafas)\b/i,
+  /\b(reaksi alergi|alahan teruk|bengkak teruk)\b/i,
+  /\b(kecemasan|darurat)\b/i,
+
+  // Simplified/traditional Chinese phrases common in clinic chat.
+  /(我要|想找|帮我找|转)(真人|人工|客服|工作人员|职员|職員)/u,
+  /(真人客服|人工客服|转人工|轉人工|找经理|找經理)/u,
+  /(投诉|投訴|我要投诉|我要投訴|退款|退钱|退錢)/u,
+  /(呼吸困难|呼吸困難|喘不过气|喘不過氣|不能呼吸)/u,
+  /(过敏反应|過敏反應|严重过敏|嚴重過敏)/u,
+  /(很痛|非常痛|剧痛|劇痛|越来越痛|越來越痛)/u,
+  /(越来越严重|越來越嚴重|越来越肿|越來越腫)/u,
 ];
 
 const NEEDS_HUMAN_MARKER = "[[NEEDS_HUMAN]]";
 const BOOKING_READY_MARKER = "[[BOOKING_READY]]";
 const AI_OUTCOME_MARKERS = [NEEDS_HUMAN_MARKER, BOOKING_READY_MARKER];
 
-/**
- * @param {string} text - inbound patient message
- * @returns {string|null} a short reason string if a trigger matched, else null
- */
 function checkKeywordTriggers(text) {
   if (!text) return null;
   for (const pattern of TRIGGER_PATTERNS) {
     if (pattern.test(text)) {
-      return "Message may need human attention (auto-detected keyword).";
+      return "Message may need human attention (auto-detected safety/handoff phrase).";
     }
   }
   return null;
 }
 
 function stripInternalOutcomeMarkers(text) {
-  let cleaned = text;
+  let cleaned = String(text ?? "");
   for (const marker of AI_OUTCOME_MARKERS) {
     cleaned = cleaned.split(marker).join("");
   }
@@ -61,12 +70,9 @@ function stripInternalOutcomeMarkers(text) {
 }
 
 /**
- * Recognizes supported internal outcome markers only when the model follows the
- * required prefix protocol. Any stray marker elsewhere is still stripped from
- * visible text, but it cannot trigger backend side effects.
- *
- * @param {string} reply
- * @returns {{ text: string, flagged: boolean, bookingReady: boolean }}
+ * Legacy marker parser kept for backwards compatibility while providers move
+ * to structured JSON. Markers only grant side effects at the start; misplaced
+ * control text is stripped from the patient-visible reply without authority.
  */
 function extractAiOutcomeSignals(reply) {
   if (typeof reply !== "string") {
@@ -90,12 +96,8 @@ function extractAiOutcomeSignals(reply) {
     }
   }
 
-  // A medical/safety/human escalation is always more important than a sales
-  // outcome. Never run booking-ready automation on the same reply.
   if (flagged) bookingReady = false;
 
-  // Internal control tokens are never patient-facing. If a model accidentally
-  // repeats one later in the reply, remove it without granting a signal.
   return {
     text: stripInternalOutcomeMarkers(text),
     flagged,
@@ -103,16 +105,13 @@ function extractAiOutcomeSignals(reply) {
   };
 }
 
-/**
- * Backward-compatible helper kept for existing callers/tests that only care
- * about the human-handoff signal.
- */
 function extractHandoffSignal(reply) {
   const { text, flagged } = extractAiOutcomeSignals(reply);
   return { text, flagged };
 }
 
 module.exports = {
+  TRIGGER_PATTERNS,
   checkKeywordTriggers,
   extractAiOutcomeSignals,
   extractHandoffSignal,
