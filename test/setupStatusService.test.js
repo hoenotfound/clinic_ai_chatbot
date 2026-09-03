@@ -82,10 +82,17 @@ function memoryRepository(initial = [], candidateInitial = [], inboundInitial = 
 test("runs safe checks without exposing credentials or messaging customers", async () => {
   const env = completeEnv();
   const webhookAt = "2026-09-03T10:00:00.000Z";
-  const repository = memoryRepository([
-    { check_key: "whatsapp_webhook", last_webhook_at: webhookAt },
-    { check_key: "meta_webhook", last_webhook_at: webhookAt },
-  ]);
+  const repository = memoryRepository(
+    [
+      { check_key: "whatsapp_webhook", last_webhook_at: webhookAt },
+      { check_key: "meta_webhook", last_webhook_at: webhookAt },
+    ],
+    [],
+    [
+      { channel: "facebook", last_inbound_at: "2026-09-03T09:00:00.000Z" },
+      { channel: "instagram", last_inbound_at: "2026-09-03T09:30:00.000Z" },
+    ]
+  );
   const requested = [];
   const deleted = [];
   const service = createSetupStatusService({
@@ -143,6 +150,8 @@ test("runs safe checks without exposing credentials or messaging customers", asy
   assert.equal(byKey.get("whatsapp").status, "ready");
   assert.equal(byKey.get("facebook").status, "ready");
   assert.equal(byKey.get("instagram").status, "ready");
+  assert.equal(byKey.get("facebook").lastActivityAt, "2026-09-03T09:00:00.000Z");
+  assert.equal(byKey.get("instagram").lastActivityAt, "2026-09-03T09:30:00.000Z");
   assert.equal(byKey.get("telegram").status, "ready");
   assert.equal(byKey.get("r2").status, "ready");
   assert.equal(byKey.get("meta_marketing").status, "ready");
@@ -164,6 +173,7 @@ test("runs safe checks without exposing credentials or messaging customers", asy
     assert.equal(payload.includes(secret), false);
   }
   assert.equal(requested.some(({ url }) => /\/messages(?:\?|$)/.test(url)), false);
+  assert.equal(requested.some(({ url }) => /\/(?:20002|30003)\?/.test(url)), false);
   assert.equal(requested.some(({ url }) => /sendMessage/i.test(url)), false);
 });
 
@@ -287,6 +297,27 @@ test("stored inbound WhatsApp activity prevents a false webhook warning", async 
   assert.equal(webhook.status, "ready");
   assert.equal(webhook.lastWebhookAt, latestInboundAt);
   assert.match(webhook.summary, /valid signed webhook has been received/i);
+});
+
+test("stored social activity confirms messaging without unrelated Page metadata access", async () => {
+  const service = createSetupStatusService({
+    env: completeEnv(),
+    now: () => new Date("2026-09-03T12:00:00.000Z"),
+    repository: memoryRepository([], [], [
+      { channel: "facebook", last_inbound_at: "2026-09-03T10:30:00.000Z" },
+      { channel: "instagram", last_inbound_at: "2026-09-03T11:15:00.000Z" },
+    ]),
+  });
+
+  const status = await service.getOverview();
+  const byKey = new Map(status.checks.map((check) => [check.key, check]));
+  assert.equal(byKey.get("facebook").status, "ready");
+  assert.equal(byKey.get("instagram").status, "ready");
+  assert.equal(byKey.get("meta_webhook").status, "ready");
+  assert.match(byKey.get("facebook").summary, /customer message/i);
+  assert.equal(byKey.get("facebook").lastActivityAt, "2026-09-03T10:30:00.000Z");
+  assert.equal(byKey.get("instagram").lastActivityAt, "2026-09-03T11:15:00.000Z");
+  assert.equal(byKey.get("meta_webhook").lastWebhookAt, "2026-09-03T11:15:00.000Z");
 });
 
 test("overview exposes masked candidate health without any key material", async () => {
