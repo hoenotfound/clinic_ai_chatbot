@@ -67,11 +67,29 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_queue_meta_ad_attribution_enrichment ON lead_attributions;
-CREATE TRIGGER trg_queue_meta_ad_attribution_enrichment
-BEFORE INSERT ON lead_attributions
-FOR EACH ROW
-EXECUTE FUNCTION queue_meta_ad_attribution_enrichment();
+-- Do not drop/recreate this trigger on every startup: normal deploys should not
+-- take an avoidable table lock. The duplicate_object guard also keeps two new
+-- instances starting at the same time from failing if both race to install it.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgname = 'trg_queue_meta_ad_attribution_enrichment'
+      AND tgrelid = 'lead_attributions'::regclass
+      AND NOT tgisinternal
+  ) THEN
+    BEGIN
+      CREATE TRIGGER trg_queue_meta_ad_attribution_enrichment
+      BEFORE INSERT ON lead_attributions
+      FOR EACH ROW
+      EXECUTE FUNCTION queue_meta_ad_attribution_enrichment();
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END;
+  END IF;
+END;
+$$;
 
 -- Meta ad rows captured by PR #65 predate verified Marketing API enrichment.
 -- Even if some referral metadata happened to contain hierarchy names, #65 had
