@@ -8,10 +8,11 @@ let workerStarted = false;
 async function startWhenSchemaIsReady() {
   if (workerStarted || !process.env.META_MARKETING_ACCESS_TOKEN) return;
   try {
-    // Preloads run before server.js calls initSchema(). Wait for PR #65/#66's
-    // attribution table to exist so a deploy never fails just because this
-    // background worker started a fraction of a second before schema setup.
-    await pool.query(`SELECT 1 FROM lead_attributions LIMIT 1`);
+    // Preloads run before server.js calls initSchema(). A database that already
+    // deployed PR #65 can have lead_attributions before the enrichment columns
+    // exist, so probe a #67 column rather than only probing the table itself.
+    // This prevents the worker's first sweep from racing the startup migration.
+    await pool.query(`SELECT enrichment_status FROM lead_attributions LIMIT 0`);
     if (workerStarted) return;
     workerStarted = true;
     start();
