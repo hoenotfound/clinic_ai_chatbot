@@ -143,7 +143,7 @@ export default function SetupStatus() {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2.5">
                 <h1 className="font-display text-2xl font-bold sm:text-3xl">Setup status</h1>
-                <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${allRequiredReady ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-accent-light)] text-[var(--color-text)]"}`}>
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${allRequiredReady ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-accent-light)] text-[var(--color-text)]"}`}>
                   {allRequiredReady ? "Core setup ready" : "Check setup"}
                 </span>
               </div>
@@ -214,7 +214,7 @@ function ConnectionCard({ check }) {
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${style.dot}`} />
           <h3 className="truncate text-sm font-bold">{check.label}</h3>
         </div>
-        <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${style.badge}`}>
+        <span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-bold uppercase tracking-wide ${style.badge}`}>
           {style.label}
         </span>
       </div>
@@ -276,7 +276,7 @@ function AiKeyHealth({ candidates }) {
             <div key={`${candidate.provider}:${candidate.label}`} className="rounded-lg border border-[var(--color-border)]/70 px-2.5 py-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[11px] font-bold text-[var(--color-text)]">{candidate.label}</span>
-                <span className={`max-w-full rounded-full px-2 py-1 text-[10px] font-bold leading-4 ${style.badge}`}>
+                <span className={`max-w-full rounded-full px-2 py-1 text-[11px] font-bold leading-4 ${style.badge}`}>
                   {style.label}
                 </span>
               </div>
@@ -355,7 +355,7 @@ function SummaryCard({ label, value, hint = null, tone = "neutral", compact = fa
 }
 
 function MiniBadge({ text }) {
-  return <span className="rounded-lg bg-[var(--color-bg)] px-2 py-1 text-[10px] font-semibold text-[var(--color-text-muted)]">{text}</span>;
+  return <span className="rounded-lg bg-[var(--color-bg)] px-2 py-1 text-[11px] font-semibold text-[var(--color-text-muted)]">{text}</span>;
 }
 
 function RefreshIcon(props) {
