@@ -108,6 +108,18 @@ function createInboundMessageClaimService({
         // message is already durable and can still be handled normally.
         console.error(`Failed to capture lead attribution for lead ${lead.id}:`, err);
       }
+    } else {
+      // A pending social OPEN_THREAD referral belongs to the next actual
+      // message, even when that message is part of an older open journey. Eat
+      // it here so it cannot leak into a future lead after this one is closed.
+      try {
+        await attribution.consumePendingForInbound?.(incoming);
+      } catch (err) {
+        console.error(
+          `Failed to clear unused pending attribution for ${channel}:${incoming.from}:`,
+          err
+        );
+      }
     }
 
     let wasFirstMessage = false;
