@@ -1,4 +1,7 @@
 export const WHATSAPP_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const STANDARD_MESSAGING_WINDOW_MS = WHATSAPP_REPLY_WINDOW_MS;
+
+const STANDARD_WINDOW_CHANNELS = new Set(["whatsapp", "facebook", "instagram"]);
 
 const POLICY_COPY = {
   opted_out: {
@@ -18,6 +21,27 @@ const POLICY_COPY = {
   },
 };
 
+export function messagingChannelLabel(channel) {
+  if (channel === "facebook") return "Facebook Messenger";
+  if (channel === "instagram") return "Instagram";
+  return "WhatsApp";
+}
+
+function policyExplanation(channel, code) {
+  if (code === "no_customer_message") {
+    if (channel === "facebook") {
+      return "The customer must message the Page before a normal Messenger reply can be sent.";
+    }
+    if (channel === "instagram") {
+      return "The customer must message the Instagram account before a normal reply can be sent.";
+    }
+  }
+  if (code === "outside_customer_service_window" && channel !== "whatsapp") {
+    return `The customer must message again before a normal ${messagingChannelLabel(channel)} reply can be sent.`;
+  }
+  return POLICY_COPY[code].explanation;
+}
+
 function timestamp(value) {
   if (!value) return null;
   const valueMs = new Date(value).getTime();
@@ -31,9 +55,9 @@ export function formatReplyTimeRemaining(milliseconds) {
   return `${hours}h ${String(minutes).padStart(2, "0")}m`;
 }
 
-export function whatsappPolicyStatus(contact, now = Date.now()) {
+export function messagingPolicyStatus(contact, now = Date.now()) {
   const channel = contact?.channel || "whatsapp";
-  if (channel !== "whatsapp") {
+  if (!STANDARD_WINDOW_CHANNELS.has(channel)) {
     return {
       applies: false,
       freeformAllowed: true,
@@ -44,6 +68,8 @@ export function whatsappPolicyStatus(contact, now = Date.now()) {
       latestCustomerMessageAt: null,
       replyWindowExpiresAt: null,
       optedOutAt: null,
+      channel,
+      channelLabel: messagingChannelLabel(channel),
     };
   }
 
@@ -51,7 +77,9 @@ export function whatsappPolicyStatus(contact, now = Date.now()) {
   const latestInboundValue =
     contact?.latest_inbound_at || contact?.latestInboundAt || contact?.latest_customer_message_at;
   const latestInboundMs = timestamp(latestInboundValue);
-  const optOutValue = contact?.whatsapp_opt_out_at || contact?.whatsappOptOutAt;
+  const optOutValue = channel === "whatsapp"
+    ? contact?.whatsapp_opt_out_at || contact?.whatsappOptOutAt
+    : null;
   const optOutMs = timestamp(optOutValue);
   const replyWindowExpiresMs = latestInboundMs == null
     ? null
@@ -78,7 +106,9 @@ export function whatsappPolicyStatus(contact, now = Date.now()) {
     label: freeformAllowed
       ? `Reply available · ${formatReplyTimeRemaining(remainingMs)} remaining`
       : POLICY_COPY[code].label,
-    explanation: freeformAllowed ? null : POLICY_COPY[code].explanation,
+    explanation: freeformAllowed ? null : policyExplanation(channel, code),
+    channel,
+    channelLabel: messagingChannelLabel(channel),
     latestCustomerMessageAt: latestInboundValue || null,
     replyWindowExpiresAt: replyWindowExpiresMs == null
       ? null
@@ -87,6 +117,9 @@ export function whatsappPolicyStatus(contact, now = Date.now()) {
     customerReinitiatedAfterOptOut,
   };
 }
+
+// Keep the existing export while callers migrate to the channel-neutral name.
+export const whatsappPolicyStatus = messagingPolicyStatus;
 
 export function policyFailureCodeFromMessage(message) {
   if (message?.policy_code && POLICY_COPY[message.policy_code]) {
@@ -104,7 +137,7 @@ export function policyFailureCodeFromMessage(message) {
   return null;
 }
 
-export function policyFailureExplanation(message) {
+export function policyFailureExplanation(message, channel = "whatsapp") {
   const code = policyFailureCodeFromMessage(message);
-  return code ? POLICY_COPY[code].explanation : null;
+  return code ? policyExplanation(channel, code) : null;
 }
