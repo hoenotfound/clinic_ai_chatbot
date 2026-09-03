@@ -137,15 +137,15 @@ jobs:
           if old not in text:
               raise SystemExit('LeadAttributionPanel ad field target not found')
           text = text.replace(old, new, 1)
-          old = '''        {attribution?.meta_ad_id && <AttributionRow label="Meta Ad ID" value={attribution.meta_ad_id} mono />}
-                {attribution?.ctwa_clid && <AttributionRow label="CTWA click ID" value={attribution.ctwa_clid} mono />}'''
-          new = '''        {sourceOverride && <AttributionRow label="Source override" value={sourceLabel(sourceOverride)} />}
-                {campaignOverride && <AttributionRow label="Campaign override" value={campaignOverride} />}
-                {attribution?.meta_ad_id && <AttributionRow label="Meta Ad ID" value={attribution.meta_ad_id} mono />}
-                {attribution?.ctwa_clid && <AttributionRow label="CTWA click ID" value={attribution.ctwa_clid} mono />}'''
-          if old not in text:
-              raise SystemExit('LeadAttributionPanel override rows target not found')
-          text = text.replace(old, new, 1)
+          marker = '        {attribution?.meta_ad_id && <AttributionRow label="Meta Ad ID"'
+          idx = text.find(marker)
+          if idx < 0:
+              raise SystemExit('LeadAttributionPanel Meta Ad ID anchor not found')
+          insertion = (
+              '        {sourceOverride && <AttributionRow label="Source override" value={sourceLabel(sourceOverride)} />}\n'
+              '        {campaignOverride && <AttributionRow label="Campaign override" value={campaignOverride} />}\n'
+          )
+          text = text[:idx] + insertion + text[idx:]
           path.write_text(text)
           PY
 
