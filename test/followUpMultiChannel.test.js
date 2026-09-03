@@ -108,6 +108,7 @@ test("Facebook Messenger follow-up uses the scoped recipient and records an acce
 
   assert.deepEqual(sent, {
     contact: {
+      id: 101,
       channel: "facebook",
       whatsapp_number: "+facebook:101",
       channel_user_id: "psid-101",
@@ -168,6 +169,7 @@ test("Instagram image follow-up records text first and sends the graphic as a se
   assert.deepEqual(sends[0], {
     type: "text",
     contact: {
+      id: 102,
       channel: "instagram",
       whatsapp_number: "+instagram:102",
       channel_user_id: "igsid-102",
@@ -177,6 +179,7 @@ test("Instagram image follow-up records text first and sends the graphic as a se
   assert.deepEqual(sends[1], {
     type: "image",
     contact: {
+      id: 102,
       channel: "instagram",
       whatsapp_number: "+instagram:102",
       channel_user_id: "igsid-102",

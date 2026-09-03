@@ -11,8 +11,8 @@ import LeadAssignmentBadge, {
   matchesLeadAssignment,
 } from "../components/LeadAssignmentBadge";
 import {
+  messagingPolicyStatus,
   policyFailureExplanation,
-  whatsappPolicyStatus,
 } from "../utils/whatsappPolicy";
 import {
   AlertIcon,
@@ -1276,7 +1276,7 @@ function ThreadView({
 
   activeContactIdRef.current = contact?.contact_id;
   activeContactModeRef.current = contact?.mode;
-  const messagingPolicy = whatsappPolicyStatus(contact, policyNow);
+  const messagingPolicy = messagingPolicyStatus(contact, policyNow);
   const policyBlocksComposer = messagingPolicy.applies && !messagingPolicy.freeformAllowed;
   const quietReplyAvailable =
     messagingPolicy.applies &&
@@ -1794,7 +1794,7 @@ function ThreadView({
               </p>
               <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-[var(--color-text-muted)]">
                 {messagingPolicy.applies
-                  ? "This WhatsApp contact must message the business before staff can send a normal reply."
+                  ? `This ${messagingPolicy.channelLabel} contact must message the business before staff can send a normal reply.`
                   : "Start the conversation below."}
               </p>
             </div>
@@ -1805,6 +1805,7 @@ function ThreadView({
               {shouldShowDateSeparator(messages, index) && <DateSeparator value={message.created_at} />}
               <MessageBubble
                 contactId={contact.contact_id}
+                channel={contact.channel}
                 message={message}
                 onImageClick={setLightboxSrc}
                 onRetry={onRetryMessage}
@@ -1883,7 +1884,7 @@ function ThreadView({
                   handleSubmit(e);
                 }
               }}
-              placeholder={policyBlocksComposer ? "WhatsApp reply unavailable" : imageFile ? "Add a caption…" : contact.mode === "human" ? "Message this patient…" : "Message to take over from AI…"}
+              placeholder={policyBlocksComposer ? `${messagingPolicy.channelLabel} reply unavailable` : imageFile ? "Add a caption…" : contact.mode === "human" ? "Message this patient…" : "Message to take over from AI…"}
               rows={1}
               className="max-h-32 min-h-10 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2.5 text-sm leading-relaxed outline-none disabled:opacity-50 sm:px-2.5"
             />
@@ -1952,7 +1953,7 @@ function Spinner({ className = "" }) {
   );
 }
 
-function MessageBubble({ contactId, message, onImageClick, onRetry }) {
+function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
   const senderLabel = message.is_automated_follow_up
@@ -1964,7 +1965,7 @@ function MessageBubble({ contactId, message, onImageClick, onRetry }) {
   const deliveryFailed = !isPatient && message.delivery_status === "failed";
   const deliveryUnconfirmed = !isPatient && message.delivery_status === "unknown";
   const deliveryNeedsAction = deliveryFailed || deliveryUnconfirmed;
-  const policyFailureExplanationText = policyFailureExplanation(message);
+  const policyFailureExplanationText = policyFailureExplanation(message, channel);
   const storedMediaSrc = message.media_base64
     ? `data:${message.media_mime_type || "application/octet-stream"};base64,${message.media_base64}`
     : message.has_media_attachment

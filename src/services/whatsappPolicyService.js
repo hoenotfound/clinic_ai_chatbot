@@ -1,6 +1,7 @@
 const { pool } = require("../db/db");
 
 const CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const STANDARD_WINDOW_CHANNELS = new Set(["whatsapp", "facebook", "instagram"]);
 
 const OPT_OUT_PATTERNS = [
   /^stop$/i,
@@ -65,12 +66,37 @@ function policyError(code, message, extra = {}) {
   };
 }
 
+function channelLabel(channel) {
+  if (channel === "facebook") return "Facebook Messenger";
+  if (channel === "instagram") return "Instagram";
+  return "WhatsApp";
+}
+
+function noCustomerMessageError(channel) {
+  if (channel === "whatsapp") {
+    return "WhatsApp send blocked because this customer has never messaged the business. Use an approved template only after valid WhatsApp opt-in has been recorded.";
+  }
+  return `${channelLabel(channel)} send blocked because this customer has never messaged the business.`;
+}
+
+function outsideWindowError(channel) {
+  if (channel === "whatsapp") {
+    return "WhatsApp send blocked because the 24-hour customer-service window has closed. Use an approved template only after valid WhatsApp opt-in has been recorded.";
+  }
+  return `${channelLabel(channel)} send blocked because the 24-hour standard messaging window has closed. The customer must message again before a normal reply can be sent.`;
+}
+
 function evaluateFreeformState(state, now = new Date(), { purpose = "service" } = {}) {
   if (!state) {
     return policyError(
       "contact_not_found",
       "WhatsApp send blocked because the contact no longer exists."
     );
+  }
+
+  const channel = state.channel || "whatsapp";
+  if (!STANDARD_WINDOW_CHANNELS.has(channel)) {
+    return { allowed: true, code: null, message: null };
   }
 
   const lastInboundAt = state.latest_inbound_at
@@ -80,7 +106,7 @@ function evaluateFreeformState(state, now = new Date(), { purpose = "service" } 
     ? new Date(state.whatsapp_opt_out_at)
     : null;
 
-  if (optOutAt) {
+  if (channel === "whatsapp" && optOutAt) {
     // Opt-out is a hard stop for proactive/marketing sends. A customer is still
     // allowed to start a later support conversation themselves; in that case a
     // normal service reply may resume inside the new 24-hour window without
@@ -98,7 +124,7 @@ function evaluateFreeformState(state, now = new Date(), { purpose = "service" } 
   if (!lastInboundAt) {
     return policyError(
       "no_customer_message",
-      "WhatsApp send blocked because this customer has never messaged the business. Use an approved template only after valid WhatsApp opt-in has been recorded."
+      noCustomerMessageError(channel)
     );
   }
 
@@ -107,7 +133,7 @@ function evaluateFreeformState(state, now = new Date(), { purpose = "service" } 
   if (current.getTime() >= windowEndsAt.getTime()) {
     return policyError(
       "outside_customer_service_window",
-      "WhatsApp send blocked because the 24-hour customer-service window has closed. Use an approved template only after valid WhatsApp opt-in has been recorded.",
+      outsideWindowError(channel),
       { lastInboundAt, windowEndsAt }
     );
   }
@@ -126,7 +152,8 @@ async function checkFreeformAllowed(
   now = new Date(),
   { purpose = "service" } = {}
 ) {
-  if ((contact?.channel || "whatsapp") !== "whatsapp") {
+  const channel = contact?.channel || "whatsapp";
+  if (!STANDARD_WINDOW_CHANNELS.has(channel)) {
     return { allowed: true, code: null, message: null };
   }
 
@@ -134,11 +161,17 @@ async function checkFreeformAllowed(
   if (!Number.isSafeInteger(contactId) || contactId <= 0) {
     return policyError(
       "missing_contact_id",
-      "WhatsApp send blocked because the contact could not be verified against messaging-policy state."
+      `${channelLabel(channel)} send blocked because the contact could not be verified against messaging-policy state.`
     );
   }
 
   const state = await getPolicyState(contactId);
+  if (!state) {
+    return policyError(
+      "contact_not_found",
+      `${channelLabel(channel)} send blocked because the contact no longer exists.`
+    );
+  }
   return evaluateFreeformState(state, now, { purpose });
 }
 
@@ -222,12 +255,13 @@ function blockedSendResult(policy) {
     externalMessageId: null,
     policyBlocked: true,
     policyCode: policy?.code || "policy_blocked",
-    error: policy?.message || "WhatsApp send blocked by messaging policy.",
+    error: policy?.message || "Message blocked by channel messaging policy.",
   };
 }
 
 module.exports = {
   CUSTOMER_SERVICE_WINDOW_MS,
+  STANDARD_WINDOW_CHANNELS,
   blockedSendResult,
   checkFreeformAllowed,
   checkTemplateAllowed,

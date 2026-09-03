@@ -104,8 +104,6 @@ function rejectedErrorFor(contact) {
 }
 
 async function requireFreeformPolicy(contact, res, purpose = "service") {
-  if ((contact?.channel || "whatsapp") !== "whatsapp") return true;
-
   try {
     const policy = await whatsappPolicy.checkFreeformAllowed(contact, new Date(), {
       purpose,
@@ -119,9 +117,10 @@ async function requireFreeformPolicy(contact, res, purpose = "service") {
     });
     return false;
   } catch (err) {
-    console.error("Failed to pre-check WhatsApp messaging policy:", err);
+    const label = channelMessaging.labelForChannel(contact?.channel || "whatsapp");
+    console.error(`Failed to pre-check ${label} messaging policy:`, err);
     res.status(503).json({
-      error: "WhatsApp messaging status could not be verified. Please try again shortly.",
+      error: `${label} messaging status could not be verified. Please try again shortly.`,
       code: "policy_state_unavailable",
       policyBlocked: true,
     });
