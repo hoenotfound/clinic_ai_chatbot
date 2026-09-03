@@ -14,6 +14,11 @@ function configured(...values) {
   return values.every((value) => Boolean(text(value)));
 }
 
+function marketingGraphVersion(env) {
+  const value = text(env.META_MARKETING_API_VERSION);
+  return /^v\d+\.\d+$/.test(value) ? value : GRAPH_API_VERSION;
+}
+
 function iso(value) {
   if (!value) return null;
   const date = new Date(value);
@@ -244,6 +249,11 @@ function createSetupStatusService({
   const secrets = [
     env.GEMINI_API_KEY,
     env.GEMINI_API_KEYS,
+    env.GEMINI_API_KEY_1,
+    env.GEMINI_API_KEY_2,
+    env.GEMINI_API_KEY_3,
+    env.GEMINI_API_KEY_4,
+    env.GEMINI_API_KEY_5,
     env.ANTHROPIC_API_KEY,
     env.WHATSAPP_TOKEN,
     env.WHATSAPP_APP_SECRET,
@@ -389,11 +399,60 @@ function createSetupStatusService({
       return result("meta_marketing", "not_configured", "Meta Ads enrichment is optional and not configured.", checkedAt);
     }
     try {
+      const graphVersion = marketingGraphVersion(env);
       await requestJson(
-        `https://graph.facebook.com/${GRAPH_API_VERSION}/me?fields=id%2Cname`,
+        `https://graph.facebook.com/${graphVersion}/me?fields=id%2Cname`,
         { fetchImpl, token: text(env.META_MARKETING_ACCESS_TOKEN) }
       );
-      return result("meta_marketing", "ready", "The Meta Marketing API token is valid.", checkedAt);
+
+      let adId = null;
+      try {
+        const storedAd = await database.query(
+          `SELECT meta_ad_id
+           FROM lead_attributions
+           WHERE meta_ad_id ~ '^[0-9]+$'
+           ORDER BY attributed_at DESC, id DESC
+           LIMIT 1`
+        );
+        adId = text(storedAd.rows[0]?.meta_ad_id);
+      } catch {
+        return result(
+          "meta_marketing",
+          "warning",
+          "Token accepted, but stored Meta Ad access could not be checked.",
+          checkedAt
+        );
+      }
+
+      if (!adId) {
+        return result(
+          "meta_marketing",
+          "warning",
+          "Token accepted. Capture a Meta Ad ID to confirm ads_read and ad account access.",
+          checkedAt
+        );
+      }
+
+      try {
+        const ad = await requestJson(
+          `https://graph.facebook.com/${graphVersion}/${encodeURIComponent(adId)}?fields=id%2Cname%2Caccount_id`,
+          { fetchImpl, token: text(env.META_MARKETING_ACCESS_TOKEN) }
+        );
+        if (text(ad?.id) !== adId) throw new Error("Meta returned an unexpected ad object.");
+        return result(
+          "meta_marketing",
+          "ready",
+          "The token can read a captured Meta Ad and its ad account.",
+          checkedAt
+        );
+      } catch (err) {
+        return result(
+          "meta_marketing",
+          "error",
+          `Token accepted, but captured Ad access failed. Check ads_read and ad account access. ${privateError(err)}`,
+          checkedAt
+        );
+      }
     } catch (err) {
       return result("meta_marketing", "error", privateError(err), checkedAt);
     }
