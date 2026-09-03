@@ -11,7 +11,11 @@ const ai = require("./services/aiService");
 const { transcribeAudio } = require("./services/transcriptionService");
 const { convertToMp3 } = require("./services/audioConvertService");
 const { getAiOwnedContact } = require("./services/automaticReplyGuard");
-const { pauseAiForHumanHandoff } = require("./services/aiHandoffService");
+const {
+  getPendingAiHandoffContact,
+  pauseAiForHumanHandoff,
+} = require("./services/aiHandoffService");
+const { claimIncomingMessage } = require("./services/inboundMessageClaimService");
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const conversationStore = require("./utils/conversationStore");
 const { getActivePromotion } = require("./utils/activePromotion");
@@ -20,10 +24,10 @@ const { fallbackHandoffReply } = require("./utils/handoffReply");
 const clinicConfig = require("./config/clinicConfig");
 const messagesRepo = require("./db/messagesRepo");
 const contactsRepo = require("./db/contactsRepo");
-const pipelineRepo = require("./db/pipelineRepo");
 const { checkKeywordTriggers } = require("./utils/attentionTriggers");
 const realtimeEvents = require("./utils/realtimeEvents");
 const {
+  enqueueConversation,
   enqueueConversationBurst,
 } = require("./utils/conversationQueue");
 const { verifyWebhookSignature } = require("./middleware/verifyWebhookSignature");
@@ -100,27 +104,21 @@ async function sendTrackedText(contact, text) {
   return { finalMessage, sendResult };
 }
 
-function initialInboundText(incoming) {
-  if (incoming.unsupportedType) {
-    return `📎 [Patient sent an unsupported ${incoming.unsupportedType} message]`;
-  }
-  if (incoming.mediaType === "audio") return "🎤 [Patient sent a voice message]";
-  if (incoming.mediaType === "image") {
-    return incoming.text ? `📷 ${incoming.text}` : "📷 [Patient sent a photo]";
-  }
-  return incoming.text || "[Patient sent an empty message]";
+function unwrapIncoming(item) {
+  return item?.incoming || item;
 }
 
 function dedupeIncomingBatch(items) {
   const seen = new Set();
   const result = [];
-  for (const incoming of items || []) {
+  for (const item of items || []) {
+    const incoming = unwrapIncoming(item);
     const channel = incoming?.channel || "whatsapp";
     const id = incoming?.id;
     const key = id ? `${channel}:${id}` : `${channel}:${incoming?.from}:${result.length}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    result.push(incoming);
+    result.push(item);
   }
   return result;
 }
@@ -147,79 +145,75 @@ async function processIncomingBatch(items) {
   }
 }
 
+/**
+ * Persist each webhook message immediately, then let the short typing debounce
+ * decide when to run the expensive reply work. The per-contact queue keeps the
+ * durable claims in arrival order even when Meta sends multiple webhook
+ * requests close together.
+ */
+async function queueIncomingForReply(queueKey, incoming) {
+  try {
+    const claimed = await enqueueConversation(
+      queueKey,
+      () => claimIncomingMessage(incoming)
+    );
+    if (!claimed) {
+      console.log(
+        `Skipping duplicate/retried ${incoming.channel || "whatsapp"} message ${incoming.id}`
+      );
+      return null;
+    }
+    return await enqueueConversationBurst(
+      queueKey,
+      claimed,
+      processIncomingBatch
+    );
+  } catch (err) {
+    console.error(
+      `Failed to claim/queue incoming ${incoming.channel || "whatsapp"} message ${incoming.id || "without id"}:`,
+      err
+    );
+    return null;
+  }
+}
+
 async function processIncomingMessage(
-  incoming,
+  item,
   {
     suppressAutoReply = false,
     forceFirstMessage = false,
     inheritedKeywordReason = null,
   } = {}
 ) {
+  const preclaimed = item?.incoming && item?.contact && item?.savedInbound
+    ? item
+    : null;
+  const incoming = preclaimed?.incoming || item;
   const {
     id,
     from,
-    profileName,
     mediaType,
     unsupportedType,
   } = incoming;
   const channel = incoming.channel || "whatsapp";
-  let contact = null;
-  let savedInbound = null;
+  let contact = preclaimed?.contact || null;
+  let savedInbound = preclaimed?.savedInbound || null;
   let responseAttempted = false;
-  let wasFirstMessage = false;
+  let wasFirstMessage = Boolean(preclaimed?.wasFirstMessage);
   let keywordReason = inheritedKeywordReason;
 
   try {
-    contact = channel === "whatsapp"
-      ? await contactsRepo.getOrCreateContact(from, profileName)
-      : await contactsRepo.getOrCreateChannelContact(
-          channel,
-          from,
-          profileName,
-          incoming.photoUrl || null
-        );
-
-    // This INSERT is the durable webhook claim. It happens before media or AI
-    // work and uses ON CONFLICT, so simultaneous Meta retries cannot both send
-    // a response. Prefix social message ids with their channel so they can
-    // never collide with WhatsApp WAMIDs or another social network's ids.
-    const storedInboundId = channel === "whatsapp" ? id : `${channel}:${id}`;
-    savedInbound = await conversationStore.appendInboundMessageIfNew(
-      contact.id,
-      initialInboundText(incoming),
-      storedInboundId
-    );
-    if (!savedInbound) {
-      console.log(`Skipping duplicate/retried ${channel} message ${id}`);
-      return { wasFirstMessage: false, keywordReason };
-    }
-
-    // Only burst-suppressed turns need to remember whether they were the very
-    // first stored message. The final turn can then still prepend the normal
-    // clinic intro and send the first-message promo once, after considering the
-    // customer's whole rapid-fire burst.
-    if (suppressAutoReply) {
-      const firstPage = await messagesRepo.getMessagePageForContact(contact.id, {
-        limit: 2,
-        includeMedia: false,
-      });
-      wasFirstMessage = firstPage.rows.length === 1 && !firstPage.hasMore;
-    }
-
-    await contactsRepo.setUnread(contact.id, true);
-
-    // Every genuine first inbound conversation becomes a lead. The partial
-    // unique index keeps one open sales journey per contact while still
-    // allowing a returning patient to start a new journey after closing one.
-    try {
-      await pipelineRepo.ensureLeadForContact(
-        contact.id,
-        "Automation",
-        savedInbound.id
-      );
-    } catch (pipelineErr) {
-      // Pipeline bookkeeping must never prevent the chatbot from answering.
-      console.error(`Failed to create or locate lead for contact ${contact.id}:`, pipelineErr);
+    // Keep a direct-call fallback for internal/tests, but normal webhook flow
+    // arrives here already durably claimed before the reply debounce starts.
+    if (!preclaimed) {
+      const claimed = await claimIncomingMessage(incoming);
+      if (!claimed) {
+        console.log(`Skipping duplicate/retried ${channel} message ${id}`);
+        return { wasFirstMessage: false, keywordReason };
+      }
+      contact = claimed.contact;
+      savedInbound = claimed.savedInbound;
+      wasFirstMessage = Boolean(claimed.wasFirstMessage);
     }
 
     if (unsupportedType) {
@@ -405,8 +399,8 @@ async function processIncomingMessage(
 
     // The deterministic keyword layer is a safety backstop, not just a badge.
     // If it sees a high-confidence human/safety phrase but the model fails to
-    // choose needs_human, force a short language-matched handoff instead of
-    // allowing a potentially unsafe normal sales reply through.
+    // choose needs_human, force a language-matched handoff. True urgent symptom
+    // phrases receive immediate-care guidance in fallbackHandoffReply().
     if (keywordReason && !flagged) {
       flagged = true;
       bookingReady = false;
@@ -429,16 +423,19 @@ async function processIncomingMessage(
     contact = aiReplyContact;
 
     if (flagged) {
-      // A handoff is now an actual ownership transition, not only a red badge.
-      // pauseAiForHumanHandoff atomically succeeds only while mode is still AI;
-      // the returned Staff-mode contact is intentionally allowed to send this
-      // one final handoff acknowledgement before the bot goes silent.
+      // A handoff is an actual ownership transition, not only a red badge.
       const pausedContact = await pauseAiForHumanHandoff(
         contact.id,
         keywordReason || "AI handed off this conversation."
       );
       if (!pausedContact) return { wasFirstMessage, keywordReason };
-      contact = pausedContact;
+
+      // Staff can claim the synthetic handoff immediately from the Inbox. Do a
+      // final ownership read right before the one allowed AI handoff message so
+      // a late model reply does not overwrite a staff member who already acted.
+      const pendingHandoff = await getPendingAiHandoffContact(pausedContact.id);
+      if (!pendingHandoff) return { wasFirstMessage, keywordReason };
+      contact = pendingHandoff;
     } else if (bookingReady) {
       try {
         await markBookingReadyForContact(contact.id, savedInbound.id, {
@@ -476,7 +473,10 @@ async function processIncomingMessage(
           from,
           reason: "automatic promo image",
         });
-        if (!promoContact) return { wasFirstMessage, keywordReason };
+        // Re-check both ownership and attention immediately before the promo.
+        if (!promoContact || promoContact.needs_attention) {
+          return { wasFirstMessage, keywordReason };
+        }
         contact = promoContact;
 
         const savedPromo = await conversationStore.appendMessageForContact(
@@ -546,10 +546,13 @@ async function processIncomingMessage(
         );
         if (!pausedContact) return { wasFirstMessage, keywordReason };
 
+        const pendingHandoff = await getPendingAiHandoffContact(pausedContact.id);
+        if (!pendingHandoff) return { wasFirstMessage, keywordReason };
+
         if (!responseAttempted) {
           responseAttempted = true;
           await sendTrackedText(
-            pausedContact,
+            pendingHandoff,
             "Sorry, something went wrong on our end — a team member will follow up with you shortly!"
           );
         }
@@ -659,11 +662,11 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   // or Meta may retry/resend the same message.
   res.sendStatus(200);
 
-  // Group rapid-fire messages from the same customer into one response turn.
-  // Each unique inbound is still durably stored before the final AI call.
+  // The durable message claim runs immediately in queueIncomingForReply(); only
+  // the expensive media/AI response work waits for the typing debounce.
   const incomingWork = Promise.all(
     whatsapp.parseIncomingMessages(req.body).map((incoming) =>
-      enqueueConversationBurst(incoming.from, incoming, processIncomingBatch)
+      queueIncomingForReply(incoming.from, incoming)
     )
   );
 
@@ -774,10 +777,9 @@ app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
   try {
     await Promise.all(
       allIncoming.map((incoming) =>
-        enqueueConversationBurst(
+        queueIncomingForReply(
           `${incoming.channel}:${incoming.from}`,
-          incoming,
-          processIncomingBatch
+          incoming
         )
       )
     );
@@ -827,7 +829,7 @@ async function start() {
 
   // Bring existing conversations into the first pipeline stage on the
   // initial deployment.
-  const backfilledLeadCount = await pipelineRepo.backfillLeadsForExistingContacts();
+  const backfilledLeadCount = await require("./db/pipelineRepo").backfillLeadsForExistingContacts();
   if (backfilledLeadCount > 0) {
     console.log(`Added ${backfilledLeadCount} existing conversation(s) to the lead pipeline.`);
   }
