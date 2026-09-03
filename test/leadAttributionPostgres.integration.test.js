@@ -80,6 +80,7 @@ test(
       assert.equal(inserted.rows[0].meta_ad_id, "120210000001234");
       assert.equal(inserted.rows[0].ctwa_clid, "clid-test");
       assert.equal(Number(inserted.rows[0].first_message_id), messageId);
+      assert.equal(inserted.rows[0].raw_referral.source_type, "ad");
     });
 
     await t.test("rejects a second first-touch attribution for the same lead", async () => {
