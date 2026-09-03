@@ -686,6 +686,7 @@ function FollowUpTool({
             <ul className="mt-4 space-y-3">
               <Rule text="A customer reply cancels the timer immediately." />
               <Rule text="Each timer sends only one automated follow-up." />
+              <Rule text="WhatsApp follow-ups send only while messaging is permitted and never after the customer opts out." />
               <Rule text="Saving does not add timers to older conversations." />
             </ul>
           </Card>

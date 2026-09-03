@@ -463,7 +463,7 @@ function describeChanges(current, patch) {
   if (Object.hasOwn(patch, "appointmentAt") && dateValue(patch.appointmentAt) !== dateValue(current.appointment_at)) descriptions.push(patch.appointmentAt ? "Appointment date updated." : "Appointment date cleared.");
   if (Object.hasOwn(patch, "nextFollowUpAt") && dateValue(patch.nextFollowUpAt) !== dateValue(current.next_follow_up_at)) descriptions.push(patch.nextFollowUpAt ? "Next follow-up scheduled." : "Next follow-up cleared.");
   if (Object.hasOwn(patch, "lostReason") && (patch.lostReason || null) !== (current.lost_reason || null)) descriptions.push(patch.lostReason ? `Lost reason: ${patch.lostReason}.` : "Lost reason cleared.");
-  if (Object.hasOwn(patch, "marketingConsent") && patch.marketingConsent !== current.marketing_consent) descriptions.push(`Marketing consent set to ${patch.marketingConsent}.`);
+  if (Object.hasOwn(patch, "marketingConsent") && patch.marketingConsent !== current.marketing_consent) descriptions.push(`CRM marketing consent set to ${patch.marketingConsent}.`);
   if (Object.hasOwn(patch, "notes") && patch.notes !== current.notes) descriptions.push("Lead notes updated.");
   return descriptions.join(" ");
 }

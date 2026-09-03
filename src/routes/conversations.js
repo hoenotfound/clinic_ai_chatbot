@@ -11,6 +11,7 @@ const channelMessaging = require("../services/channelMessagingService");
 const mediaStorage = require("../services/mediaStorageService");
 const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const { transcribeStaffAudio } = require("../services/transcriptionService");
+const whatsappPolicy = require("../services/whatsappPolicyService");
 
 const router = express.Router();
 const STAFF_TRANSCRIPTION_TIMEOUT_MS = 15 * 1000;
@@ -100,6 +101,32 @@ function publishDeliveryStatus(message) {
 
 function rejectedErrorFor(contact) {
   return channelMessaging.rejectedError(contact?.channel || "whatsapp");
+}
+
+async function requireFreeformPolicy(contact, res, purpose = "service") {
+  if ((contact?.channel || "whatsapp") !== "whatsapp") return true;
+
+  try {
+    const policy = await whatsappPolicy.checkFreeformAllowed(contact, new Date(), {
+      purpose,
+    });
+    if (policy.allowed) return true;
+
+    res.status(403).json({
+      error: policy.message,
+      code: policy.code,
+      policyBlocked: true,
+    });
+    return false;
+  } catch (err) {
+    console.error("Failed to pre-check WhatsApp messaging policy:", err);
+    res.status(503).json({
+      error: "WhatsApp messaging status could not be verified. Please try again shortly.",
+      code: "policy_state_unavailable",
+      policyBlocked: true,
+    });
+    return false;
+  }
 }
 
 async function persistSendOutcome(savedMessage, sendResult, errorText = SEND_REJECTED_ERROR) {
@@ -458,6 +485,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
 
     const contact = await contactsRepo.getContactById(contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
+    if (!(await requireFreeformPolicy(contact, res))) return;
 
     const message = await messagesRepo.getMessageForRetry(contactId, messageId);
     if (!message) return res.status(404).json({ error: "Message not found." });
@@ -509,6 +537,7 @@ router.post("/:contactId/messages", async (req, res) => {
     if (!text || !text.trim()) {
       return res.status(400).json({ error: "Message text is required." });
     }
+    if (!(await requireFreeformPolicy(contact, res))) return;
 
     if (contact.mode !== "human") {
       await contactsRepo.takeOver(contact.id, req.session.username);
@@ -571,6 +600,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "An image file is required." });
     }
+    if (!(await requireFreeformPolicy(contact, res))) return;
 
     const caption = (req.body?.caption || "").trim();
 
@@ -619,6 +649,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
+    if (!(await requireFreeformPolicy(contact, res))) return;
 
     if (contact.mode !== "human") {
       return res.status(409).json({ error: "Take over this conversation before sending a voice message." });

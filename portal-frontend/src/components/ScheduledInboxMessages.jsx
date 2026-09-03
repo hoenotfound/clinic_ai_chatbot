@@ -81,6 +81,10 @@ export default function ScheduledInboxMessages() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState([]);
   const [windowEndsAt, setWindowEndsAt] = useState(null);
+  const [channel, setChannel] = useState(null);
+  const [messagingAllowed, setMessagingAllowed] = useState(null);
+  const [policyCode, setPolicyCode] = useState(null);
+  const [policyMessage, setPolicyMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -96,6 +100,8 @@ export default function ScheduledInboxMessages() {
 
   const windowEndTime = windowEndsAt ? new Date(windowEndsAt).getTime() : NaN;
   const windowOpen = Number.isFinite(windowEndTime) && windowEndTime > Date.now() + 60 * 1000;
+  const policyBlocked = channel === "whatsapp" && messagingAllowed === false;
+  const canSchedule = windowOpen && !policyBlocked;
   const maxScheduleValue = windowOpen
     ? toLocalInputValue(new Date(windowEndTime - 60 * 1000))
     : undefined;
@@ -107,6 +113,10 @@ export default function ScheduledInboxMessages() {
       const data = await request(`/conversations/${contactId}/scheduled-messages`);
       setItems(data.items || []);
       setWindowEndsAt(data.windowEndsAt || null);
+      setChannel(data.channel || "whatsapp");
+      setMessagingAllowed(data.messagingAllowed !== false);
+      setPolicyCode(data.policyCode || null);
+      setPolicyMessage(data.policyMessage || "");
       setStaffMode(data.staffMode === true);
       setLoadFailed(false);
       setError("");
@@ -114,6 +124,10 @@ export default function ScheduledInboxMessages() {
     } catch (err) {
       setLoadFailed(true);
       setWindowEndsAt(null);
+      setChannel(null);
+      setMessagingAllowed(null);
+      setPolicyCode(null);
+      setPolicyMessage("");
       setError(err.message || "Couldn't load scheduled messages.");
       return null;
     } finally {
@@ -124,6 +138,10 @@ export default function ScheduledInboxMessages() {
   useEffect(() => {
     setItems([]);
     setWindowEndsAt(null);
+    setChannel(null);
+    setMessagingAllowed(null);
+    setPolicyCode(null);
+    setPolicyMessage("");
     setStaffMode(false);
     setCheckingMode(false);
     setLoadFailed(false);
@@ -241,6 +259,8 @@ export default function ScheduledInboxMessages() {
 
       if (data.staffMode !== true) {
         setError("Take over this conversation first, then click Schedule again.");
+      } else if (data.messagingAllowed === false) {
+        setError(data.policyMessage || "WhatsApp messaging is not currently permitted.");
       }
     } finally {
       setCheckingMode(false);
@@ -267,7 +287,7 @@ export default function ScheduledInboxMessages() {
 
   async function save(event) {
     event.preventDefault();
-    if (!contactId || !content.trim() || !scheduledFor || !staffMode) return;
+    if (!contactId || !content.trim() || !scheduledFor || !staffMode || policyBlocked) return;
     const wasEditing = !!editingId;
     setSaving(true);
     setError("");
@@ -316,15 +336,23 @@ export default function ScheduledInboxMessages() {
   const mediaDisabledReason = composerMediaBlocked
     ? "Scheduled messages support text only. Finish or remove the current image or voice message first."
     : null;
+  const policyDisabledReason = policyBlocked
+    ? policyCode === "opted_out"
+      ? "Customer opted out of WhatsApp messages. Scheduled sending is unavailable."
+      : policyCode === "no_customer_message"
+      ? "The customer must message the business before a normal WhatsApp message can be scheduled."
+      : policyMessage || "The customer must message again before a normal WhatsApp message can be scheduled."
+    : null;
+  const scheduleButtonDisabled = !!mediaDisabledReason || checkingMode || (!!policyDisabledReason && activeItems.length === 0);
 
   const scheduleButton = composerMount
     ? createPortal(
         <button
           type="button"
           onClick={openScheduler}
-          disabled={!!mediaDisabledReason || checkingMode}
+          disabled={scheduleButtonDisabled}
           title={
-            mediaDisabledReason ||
+            mediaDisabledReason || policyDisabledReason ||
             (checkingMode
               ? "Checking conversation status…"
               : !staffMode
@@ -378,11 +406,13 @@ export default function ScheduledInboxMessages() {
                 </button>
               </div>
 
-              <div className={`mt-3 flex items-center gap-2 rounded-xl px-3 py-2 text-[11px] ${windowOpen ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-danger-light)] text-[var(--color-danger)]"}`}>
-                <span className={`h-2 w-2 shrink-0 rounded-full ${windowOpen ? "bg-[var(--color-primary)]" : "bg-[var(--color-danger)]"}`} />
+              <div className={`mt-3 flex items-start gap-2 rounded-xl px-3 py-2 text-[11px] ${canSchedule ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-danger-light)] text-[var(--color-danger)]"}`}>
+                <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${canSchedule ? "bg-[var(--color-primary)]" : "bg-[var(--color-danger)]"}`} />
                 <span className="font-semibold">
                   {loadFailed
                     ? "Unable to check customer reply window — tap Refresh and try again."
+                    : policyBlocked
+                    ? policyDisabledReason
                     : windowOpen
                     ? `Can schedule until ${formatDateTime(windowEndsAt)}`
                     : "Customer reply window is closed"}
@@ -400,7 +430,7 @@ export default function ScheduledInboxMessages() {
                     rows={4}
                     maxLength={4096}
                     placeholder="Type the message to send later…"
-                    disabled={!staffMode}
+                    disabled={!staffMode || policyBlocked}
                     className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)] disabled:cursor-not-allowed disabled:opacity-60"
                   />
                 </label>
@@ -413,7 +443,7 @@ export default function ScheduledInboxMessages() {
                     min={toLocalInputValue(new Date(Date.now() + 60 * 1000))}
                     max={maxScheduleValue}
                     onChange={(event) => setScheduledFor(event.target.value)}
-                    disabled={!staffMode}
+                    disabled={!staffMode || policyBlocked}
                     className="mt-2 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm font-medium outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)] disabled:cursor-not-allowed disabled:opacity-60"
                   />
                 </label>
@@ -421,7 +451,7 @@ export default function ScheduledInboxMessages() {
                 {!editingId && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {[30, 60, 180].map((minutes) => (
-                      <button key={minutes} type="button" onClick={() => applyQuickTime(minutes)} disabled={!staffMode || !windowOpen || loadFailed} className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-[11px] font-semibold text-[var(--color-text-muted)] transition hover:border-[var(--color-primary)]/30 hover:text-[var(--color-primary)] disabled:opacity-40">
+                      <button key={minutes} type="button" onClick={() => applyQuickTime(minutes)} disabled={!staffMode || !canSchedule || loadFailed} className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-[11px] font-semibold text-[var(--color-text-muted)] transition hover:border-[var(--color-primary)]/30 hover:text-[var(--color-primary)] disabled:opacity-40">
                         {minutes < 60 ? `${minutes}m` : `${minutes / 60}h`}
                       </button>
                     ))}
@@ -434,7 +464,7 @@ export default function ScheduledInboxMessages() {
                   {editingId && (
                     <button type="button" onClick={() => resetForm()} disabled={saving} className="rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-xs font-semibold transition hover:bg-[var(--color-bg)] disabled:opacity-40">Cancel edit</button>
                   )}
-                  <button type="submit" disabled={saving || !staffMode || !content.trim() || !scheduledFor || !windowOpen || loadFailed} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40">
+                  <button type="submit" disabled={saving || !staffMode || !content.trim() || !scheduledFor || !canSchedule || loadFailed} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40">
                     {saving ? "Saving…" : editingId ? "Save changes" : "Schedule message"}
                   </button>
                 </div>
@@ -473,7 +503,7 @@ export default function ScheduledInboxMessages() {
                         {needsReview && item.failure_reason && <p className="mt-2 rounded-lg bg-[var(--color-danger-light)] px-2.5 py-2 text-[10px] leading-relaxed text-[var(--color-danger)]">{item.failure_reason}</p>}
                         {canChange && (
                           <div className="mt-3 flex justify-end gap-2">
-                            <button type="button" onClick={() => startEdit(item)} disabled={!staffMode} className="rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-xs font-semibold transition hover:bg-[var(--color-bg)] disabled:opacity-40">Edit</button>
+                            <button type="button" onClick={() => startEdit(item)} disabled={!staffMode || policyBlocked} className="rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-xs font-semibold transition hover:bg-[var(--color-bg)] disabled:opacity-40">Edit</button>
                             <button type="button" onClick={() => cancel(item)} className="rounded-lg border border-[var(--color-danger)]/25 px-2.5 py-1.5 text-xs font-semibold text-[var(--color-danger)] transition hover:bg-[var(--color-danger-light)]">Cancel send</button>
                           </div>
                         )}

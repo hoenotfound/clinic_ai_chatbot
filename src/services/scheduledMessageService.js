@@ -6,6 +6,7 @@ const conversationStore = require("../utils/conversationStore");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { AI_HANDOFF_OWNER } = require("./aiHandoffService");
 const channelMessaging = require("./channelMessagingService");
+const whatsappPolicy = require("./whatsappPolicyService");
 const { validateScheduledTime, getServiceWindowEndsAt } = require("./scheduledMessageRules");
 
 const CHECK_INTERVAL_MS = 30 * 1000;
@@ -76,6 +77,21 @@ async function processScheduledMessage(item) {
   if (contact.takeover_by === AI_HANDOFF_OWNER) {
     await failBecauseAiHandoffNeedsStaff(item, contact);
     return;
+  }
+
+  if ((contact.channel || "whatsapp") === "whatsapp") {
+    const policy = await whatsappPolicy.checkFreeformAllowed(contact, new Date(), {
+      purpose: "service",
+    });
+    if (!policy.allowed) {
+      await scheduledRepo.markExpired(item.id, policy.message);
+      await contactsRepo.setDeliveryAttention(
+        contact.id,
+        `Scheduled message not sent: ${policy.message}`
+      );
+      publishScheduleChange(contact.id);
+      return;
+    }
   }
 
   const latestInboundAt = await scheduledRepo.getLatestInboundAt(contact.id);

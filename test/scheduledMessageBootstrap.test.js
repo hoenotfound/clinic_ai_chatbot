@@ -8,7 +8,7 @@ test("scheduled-message window returns the latest inbound timestamp without a Re
     path.join(__dirname, "../src/services/scheduledMessageBootstrap.js"),
     "utf8"
   );
-  const match = source.match(/async function buildWindow\(contactId\) \{[\s\S]*?\n\}/);
+  const match = source.match(/function schedulePolicy\(contact, latestInboundAt\) \{[\s\S]*?\n\}\n\nasync function buildWindow\(contact\) \{[\s\S]*?\n\}/);
   assert.ok(match, "Could not locate buildWindow in scheduledMessageBootstrap.js");
 
   const latestInboundAt = new Date("2026-09-03T02:00:00.000Z");
@@ -19,6 +19,13 @@ test("scheduled-message window returns the latest inbound timestamp without a Re
       return latestInboundAt;
     },
   };
+  const whatsappPolicy = {
+    evaluateFreeformState(state) {
+      assert.equal(state.id, 42);
+      assert.equal(state.latest_inbound_at, latestInboundAt);
+      return { allowed: true, code: null, message: null };
+    },
+  };
   const scheduleValidation = ({ lastInboundAt }) => {
     assert.equal(lastInboundAt, latestInboundAt);
     return { windowEndsAt };
@@ -27,10 +34,12 @@ test("scheduled-message window returns the latest inbound timestamp without a Re
   const buildWindow = new Function(
     "scheduledRepo",
     "scheduleValidation",
+    "whatsappPolicy",
     `${match[0]}; return buildWindow;`
-  )(scheduledRepo, scheduleValidation);
+  )(scheduledRepo, scheduleValidation, whatsappPolicy);
 
-  const result = await buildWindow(42);
+  const result = await buildWindow({ id: 42, channel: "whatsapp" });
   assert.equal(result.lastInboundAt, latestInboundAt);
   assert.equal(result.windowEndsAt, windowEndsAt);
+  assert.equal(result.policy.allowed, true);
 });

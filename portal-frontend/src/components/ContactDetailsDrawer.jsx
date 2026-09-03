@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import ContactAvatar from "./ContactAvatar";
 import ContactInsights from "./ContactInsights";
+import WhatsAppMessagingDetails from "./WhatsAppMessagingDetails";
 
 function isSocialContact(contact) {
   return contact?.channel === "facebook" || contact?.channel === "instagram";
@@ -77,6 +78,7 @@ export default function ContactDetailsDrawer({ open, contact, onClose }) {
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+          <WhatsAppMessagingDetails contact={contact} className="mb-4" />
           <ContactInsights contactId={contactId} />
         </div>
       </aside>
