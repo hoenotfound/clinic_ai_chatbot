@@ -11,3 +11,16 @@ CREATE TABLE IF NOT EXISTS setup_connection_health (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS setup_ai_candidate_health (
+  candidate_key TEXT PRIMARY KEY,
+  provider TEXT NOT NULL CHECK (provider IN ('gemini', 'claude')),
+  last_status TEXT NOT NULL CHECK (
+    last_status IN ('ready', 'rate_limited', 'unavailable', 'invalid', 'failed')
+  ),
+  last_failure_kind TEXT,
+  last_attempt_at TIMESTAMPTZ NOT NULL,
+  last_success_at TIMESTAMPTZ,
+  last_failure_at TIMESTAMPTZ,
+  last_rate_limited_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
