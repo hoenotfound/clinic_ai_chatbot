@@ -1,26 +1,43 @@
-// Keep each customer's work in arrival order while still allowing different
-// customers to process in parallel. A second layer groups rapid-fire inbound
+// Keep each customer's reply work in arrival order while still allowing different
+// customers to process in parallel. Inbound webhook claims use a separate fast
+// queue so a new message can be durably stored even while an earlier AI reply is
+// waiting on a provider/network call. A second layer groups rapid-fire inbound
 // messages so "hi" + "how much hifu" + "for double chin" becomes one AI turn.
 const queues = new Map();
+const claimQueues = new Map();
 const bursts = new Map();
 
 const DEFAULT_BURST_DELAY_MS = 1200;
 const MAX_BURST_DELAY_MS = 3000;
 const MAX_BURST_ITEMS = 20;
 
-function enqueueConversation(key, task) {
+function enqueueOn(queueMap, key, task) {
   const queueKey = String(key || "unknown");
-  const previous = queues.get(queueKey) || Promise.resolve();
+  const previous = queueMap.get(queueKey) || Promise.resolve();
   const current = previous.catch(() => {}).then(task);
 
-  queues.set(queueKey, current);
+  queueMap.set(queueKey, current);
   current
     .finally(() => {
-      if (queues.get(queueKey) === current) queues.delete(queueKey);
+      if (queueMap.get(queueKey) === current) queueMap.delete(queueKey);
     })
     .catch(() => {});
 
   return current;
+}
+
+function enqueueConversation(key, task) {
+  return enqueueOn(queues, key, task);
+}
+
+/**
+ * Serializes only the short durable inbound-claim step for a contact. This is
+ * deliberately independent from enqueueConversation(): a webhook arriving
+ * while an earlier burst is generating an AI reply must not wait behind that
+ * slow network call before its message is saved to Postgres.
+ */
+function enqueueConversationClaim(key, task) {
+  return enqueueOn(claimQueues, key, task);
 }
 
 function normalizeDelay(value) {
@@ -90,5 +107,6 @@ module.exports = {
   MAX_BURST_ITEMS,
   enqueueConversation,
   enqueueConversationBurst,
+  enqueueConversationClaim,
   normalizeDelay,
 };
