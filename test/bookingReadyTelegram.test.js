@@ -36,7 +36,7 @@ test("booking-ready Telegram message is distinct from human escalation", () => {
   });
 
   assert.match(text, /^🔥 Booking Ready/);
-  assert.match(text, /Temperature: Hot/i);
+  assert.match(text, /Temperature: 🔥 Hot/i);
   assert.match(text, /Branch: Puchong/);
   assert.match(text, /confirm the appointment availability/i);
   assert.doesNotMatch(text, /Human Intervention Required/);
@@ -47,6 +47,7 @@ test("booking-ready notification is claimed once using its own alert type", asyn
   const sent = [];
   const service = createTelegramImmediateAlertService({
     env: {
+      TELEGRAM_ALERTS_ENABLED: "true",
       TELEGRAM_BOT_TOKEN: "test-token",
       TELEGRAM_CHAT_ID: "test-chat",
       PUBLIC_BASE_URL: "https://clinic.example",
