@@ -139,6 +139,16 @@ test("structured Booking Ready persists canonical branch/treatment and appointme
     treatment: "HIFU Non-Surgical Facelift",
     appointmentPreference: "Saturday afternoon",
   });
+  const contactUpdate = calls.find(({ sql }) => sql.startsWith("UPDATE contacts"));
+  assert.match(contactUpdate.sql, /latest_booking\.metadata->>'branch' IS DISTINCT FROM \$3/);
+  assert.match(contactUpdate.sql, /latest_booking\.metadata->>'treatment' IS DISTINCT FROM \$4/);
+  assert.match(contactUpdate.sql, /latest_booking\.metadata->>'appointmentPreference' IS DISTINCT FROM \$5/);
+  assert.deepEqual(contactUpdate.params.slice(2), [
+    "Petaling Jaya",
+    "HIFU Non-Surgical Facelift",
+    "Saturday afternoon",
+  ]);
+
   const leadUpdate = calls.find(({ sql }) => sql.startsWith("UPDATE leads"));
   assert.equal(leadUpdate.params[1], "Petaling Jaya");
   assert.equal(leadUpdate.params[2], "HIFU Non-Surgical Facelift");
@@ -197,10 +207,16 @@ test("booking-ready does nothing when the contact is no longer eligible for a fr
     treatment: null,
     appointmentPreference: null,
   });
+  // The atomic eligibility UPDATE is allowed to inspect the current lead, but
+  // once it returns no row there must be no follow-on lead mutation/activity.
   assert.equal(
-    calls.some(({ sql }) => sql.includes("FROM leads")),
+    calls.some(({ sql }) =>
+      sql.startsWith("SELECT id, temperature, temperature_locked, branch_name, treatment_interest FROM leads")
+    ),
     false
   );
+  assert.equal(calls.some(({ sql }) => sql.startsWith("UPDATE leads")), false);
+  assert.equal(calls.some(({ sql }) => sql.startsWith("INSERT INTO lead_activities")), false);
   assert.deepEqual(published, []);
   assert.deepEqual(alerts, []);
 });
