@@ -1278,6 +1278,10 @@ function ThreadView({
   activeContactModeRef.current = contact?.mode;
   const messagingPolicy = whatsappPolicyStatus(contact, policyNow);
   const policyBlocksComposer = messagingPolicy.applies && !messagingPolicy.freeformAllowed;
+  const quietReplyAvailable =
+    messagingPolicy.applies &&
+    messagingPolicy.freeformAllowed &&
+    !messagingPolicy.optedOutAt;
 
   useEffect(() => {
     setPolicyNow(Date.now());
@@ -1740,12 +1744,14 @@ function ThreadView({
           </div>
         )}
         {messagingPolicy.applies && (
-          <div className={`border-t px-3 py-2.5 sm:px-5 ${messagingPolicy.freeformAllowed ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
-            <div className="flex items-start gap-2">
-              <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${messagingPolicy.freeformAllowed ? "bg-emerald-500" : "bg-amber-500"}`} />
+          <div className={`border-t px-3 sm:px-5 ${quietReplyAvailable ? "border-[var(--color-border)] bg-[var(--color-surface)] py-1.5 text-[var(--color-text-muted)]" : "border-amber-200 bg-amber-50 py-2.5 text-amber-900"}`}>
+            <div className={`flex gap-2 ${quietReplyAvailable ? "items-center" : "items-start"}`}>
+              <span className={`${quietReplyAvailable ? "h-1.5 w-1.5 bg-emerald-500" : "mt-1 h-2 w-2 bg-amber-500"} shrink-0 rounded-full`} />
               <div className="min-w-0">
-                <p className="break-words text-[11px] font-semibold">{messagingPolicy.label}</p>
-                <p className="mt-0.5 break-words text-[10px] leading-4 opacity-80">{messagingPolicy.explanation}</p>
+                <p className={`break-words ${quietReplyAvailable ? "text-[10px] font-medium" : "text-[11px] font-semibold"}`}>{messagingPolicy.label}</p>
+                {!messagingPolicy.freeformAllowed && messagingPolicy.explanation && (
+                  <p className="mt-0.5 break-words text-[10px] leading-4 opacity-80">{messagingPolicy.explanation}</p>
+                )}
                 {messagingPolicy.optedOutAt && (
                   <p className="mt-1 text-[10px] font-medium leading-4">
                     Customer opted out of WhatsApp messages on {formatPolicyDate(messagingPolicy.optedOutAt)}.
@@ -1815,11 +1821,6 @@ function ThreadView({
         style={{ paddingBottom: "max(0.625rem, env(safe-area-inset-bottom))" }}
       >
         <div className="mx-auto w-full max-w-4xl">
-          {policyBlocksComposer && (
-            <div aria-live="polite" className="mb-2.5 break-words rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-4 text-amber-900 sm:px-3">
-              <span className="font-semibold">Sending unavailable.</span> {messagingPolicy.explanation}
-            </div>
-          )}
           {isStartingRecording && (
             <div className="mb-2.5 flex items-center gap-3 rounded-xl bg-[var(--color-primary-light)] px-3 py-2.5">
               <Spinner className="text-[var(--color-primary)]" />

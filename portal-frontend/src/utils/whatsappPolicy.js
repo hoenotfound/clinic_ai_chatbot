@@ -78,9 +78,7 @@ export function whatsappPolicyStatus(contact, now = Date.now()) {
     label: freeformAllowed
       ? `Reply available · ${formatReplyTimeRemaining(remainingMs)} remaining`
       : POLICY_COPY[code].label,
-    explanation: freeformAllowed
-      ? "Normal WhatsApp replies can be sent during the active customer-service window."
-      : POLICY_COPY[code].explanation,
+    explanation: freeformAllowed ? null : POLICY_COPY[code].explanation,
     latestCustomerMessageAt: latestInboundValue || null,
     replyWindowExpiresAt: replyWindowExpiresMs == null
       ? null
