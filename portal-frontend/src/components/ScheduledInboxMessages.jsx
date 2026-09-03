@@ -82,6 +82,7 @@ export default function ScheduledInboxMessages() {
   const [items, setItems] = useState([]);
   const [windowEndsAt, setWindowEndsAt] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState(null);
@@ -107,9 +108,12 @@ export default function ScheduledInboxMessages() {
       setItems(data.items || []);
       setWindowEndsAt(data.windowEndsAt || null);
       setStaffMode(data.staffMode === true);
+      setLoadFailed(false);
       setError("");
       return data;
     } catch (err) {
+      setLoadFailed(true);
+      setWindowEndsAt(null);
       setError(err.message || "Couldn't load scheduled messages.");
       return null;
     } finally {
@@ -122,6 +126,7 @@ export default function ScheduledInboxMessages() {
     setWindowEndsAt(null);
     setStaffMode(false);
     setCheckingMode(false);
+    setLoadFailed(false);
     setOpen(false);
     setEditingId(null);
     setContent("");
@@ -375,7 +380,13 @@ export default function ScheduledInboxMessages() {
 
               <div className={`mt-3 flex items-center gap-2 rounded-xl px-3 py-2 text-[11px] ${windowOpen ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-danger-light)] text-[var(--color-danger)]"}`}>
                 <span className={`h-2 w-2 shrink-0 rounded-full ${windowOpen ? "bg-[var(--color-primary)]" : "bg-[var(--color-danger)]"}`} />
-                <span className="font-semibold">{windowOpen ? `Can schedule until ${formatDateTime(windowEndsAt)}` : "Customer reply window is closed"}</span>
+                <span className="font-semibold">
+                  {loadFailed
+                    ? "Unable to check customer reply window — tap Refresh and try again."
+                    : windowOpen
+                    ? `Can schedule until ${formatDateTime(windowEndsAt)}`
+                    : "Customer reply window is closed"}
+                </span>
               </div>
             </div>
 
@@ -410,7 +421,7 @@ export default function ScheduledInboxMessages() {
                 {!editingId && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {[30, 60, 180].map((minutes) => (
-                      <button key={minutes} type="button" onClick={() => applyQuickTime(minutes)} disabled={!staffMode || !windowOpen} className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-[11px] font-semibold text-[var(--color-text-muted)] transition hover:border-[var(--color-primary)]/30 hover:text-[var(--color-primary)] disabled:opacity-40">
+                      <button key={minutes} type="button" onClick={() => applyQuickTime(minutes)} disabled={!staffMode || !windowOpen || loadFailed} className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-[11px] font-semibold text-[var(--color-text-muted)] transition hover:border-[var(--color-primary)]/30 hover:text-[var(--color-primary)] disabled:opacity-40">
                         {minutes < 60 ? `${minutes}m` : `${minutes / 60}h`}
                       </button>
                     ))}
@@ -423,7 +434,7 @@ export default function ScheduledInboxMessages() {
                   {editingId && (
                     <button type="button" onClick={() => resetForm()} disabled={saving} className="rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-xs font-semibold transition hover:bg-[var(--color-bg)] disabled:opacity-40">Cancel edit</button>
                   )}
-                  <button type="submit" disabled={saving || !staffMode || !content.trim() || !scheduledFor || !windowOpen} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40">
+                  <button type="submit" disabled={saving || !staffMode || !content.trim() || !scheduledFor || !windowOpen || loadFailed} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40">
                     {saving ? "Saving…" : editingId ? "Save changes" : "Schedule message"}
                   </button>
                 </div>
@@ -439,7 +450,12 @@ export default function ScheduledInboxMessages() {
                 </div>
 
                 {loading && <p className="py-5 text-center text-xs text-[var(--color-text-muted)]">Loading…</p>}
-                {!loading && items.length === 0 && <p className="rounded-2xl border border-dashed border-[var(--color-border)] px-4 py-7 text-center text-xs text-[var(--color-text-muted)]">No scheduled messages for this conversation.</p>}
+                {!loading && loadFailed && (
+                  <p className="rounded-2xl border border-dashed border-[var(--color-danger)]/30 bg-[var(--color-danger-light)] px-4 py-5 text-center text-xs text-[var(--color-danger)]">
+                    Scheduled messages could not be loaded. Tap Refresh after the server finishes updating.
+                  </p>
+                )}
+                {!loading && !loadFailed && items.length === 0 && <p className="rounded-2xl border border-dashed border-[var(--color-border)] px-4 py-7 text-center text-xs text-[var(--color-text-muted)]">No scheduled messages for this conversation.</p>}
 
                 <div className="space-y-2.5">
                   {items.map((item) => {
