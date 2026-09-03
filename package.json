@@ -5,8 +5,8 @@
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
+    "start": "node -r ./src/services/scheduledMessageBootstrap.js src/server.js",
+    "dev": "node --watch -r ./src/services/scheduledMessageBootstrap.js src/server.js",
     "create-user": "node scripts/createUser.js",
     "test": "node --test"
   },
