@@ -32,6 +32,8 @@ test("setup status UI includes private-credential copy and responsive controls",
   assert.match(page, /View AI key health/);
   assert.match(page, /Fallback keys are only checked when earlier keys cannot complete a reply/);
   assert.match(page, /Last rate limited/);
+  assert.match(page, /Awaiting activity/);
+  assert.match(page, /Latest customer message/);
 });
 
 test("setup status uses clear historical AI labels and accessible mobile controls", () => {
