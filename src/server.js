@@ -11,13 +11,14 @@ const ai = require("./services/aiService");
 const { transcribeAudio } = require("./services/transcriptionService");
 const { convertToMp3 } = require("./services/audioConvertService");
 const { getAiOwnedContact } = require("./services/automaticReplyGuard");
+const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const conversationStore = require("./utils/conversationStore");
 const { getActivePromotion } = require("./utils/activePromotion");
 const clinicConfig = require("./config/clinicConfig");
 const messagesRepo = require("./db/messagesRepo");
 const contactsRepo = require("./db/contactsRepo");
 const pipelineRepo = require("./db/pipelineRepo");
-const { checkKeywordTriggers, extractHandoffSignal } = require("./utils/attentionTriggers");
+const { checkKeywordTriggers, extractAiOutcomeSignals } = require("./utils/attentionTriggers");
 const realtimeEvents = require("./utils/realtimeEvents");
 const { enqueueConversation } = require("./utils/conversationQueue");
 const { verifyWebhookSignature } = require("./middleware/verifyWebhookSignature");
@@ -324,7 +325,11 @@ async function processIncomingMessage(incoming) {
     const history = await conversationStore.getHistoryForContact(contact.id);
     const isFirstMessage = history.length === 1;
     const rawAiReply = await ai.getReply(history, isFirstMessage);
-    const { text: aiReply, flagged } = extractHandoffSignal(rawAiReply);
+    const {
+      text: aiReply,
+      flagged,
+      bookingReady,
+    } = extractAiOutcomeSignals(rawAiReply);
 
     if (flagged) {
       await contactsRepo.setAttention(
@@ -332,6 +337,17 @@ async function processIncomingMessage(incoming) {
         true,
         "AI handed off this conversation."
       );
+    } else if (bookingReady && !keywordReason) {
+      try {
+        await markBookingReadyForContact(contact.id, savedInbound.id);
+      } catch (bookingOutcomeErr) {
+        // Sales bookkeeping/alerts must never prevent the customer from
+        // receiving the AI reply that tells them staff will confirm the slot.
+        console.error(
+          `Failed to apply booking-ready outcome for contact ${contact.id}:`,
+          bookingOutcomeErr
+        );
+      }
     }
 
     const reply = isFirstMessage
