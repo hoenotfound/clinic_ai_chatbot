@@ -24,7 +24,17 @@ async function sendApprovedTemplate(
     };
   }
 
-  const policy = await whatsappPolicy.checkTemplateAllowed(contact);
+  let policy;
+  try {
+    policy = await whatsappPolicy.checkTemplateAllowed(contact);
+  } catch (err) {
+    console.error("Failed to verify WhatsApp template policy state:", err);
+    return whatsappPolicy.blockedSendResult({
+      code: "policy_state_unavailable",
+      message:
+        "WhatsApp template blocked because messaging-policy state could not be verified. Please retry after the connection recovers.",
+    });
+  }
   if (!policy.allowed) {
     return whatsappPolicy.blockedSendResult(policy);
   }
