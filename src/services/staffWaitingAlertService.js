@@ -54,22 +54,24 @@ async function findWaitingStaffOwnedConversations(
        FROM messages m
        WHERE m.contact_id = c.id
          AND m.role = 'assistant'
+         AND m.sent_by_username IS NOT NULL
+         AND m.is_automated_follow_up = false
          AND (
            m.delivery_status IS NULL
            OR m.delivery_status NOT IN ('failed', 'unknown')
          )
        ORDER BY m.created_at DESC, m.id DESC
        LIMIT 1
-     ) last_valid_outbound ON true
+     ) last_valid_staff_outbound ON true
      JOIN LATERAL (
        SELECT m.id, m.created_at
        FROM messages m
        WHERE m.contact_id = c.id
          AND m.role = 'user'
          AND (
-           last_valid_outbound.id IS NULL
+           last_valid_staff_outbound.id IS NULL
            OR (m.created_at, m.id) >
-              (last_valid_outbound.created_at, last_valid_outbound.id)
+              (last_valid_staff_outbound.created_at, last_valid_staff_outbound.id)
          )
        ORDER BY m.created_at ASC, m.id ASC
        LIMIT 1
@@ -80,9 +82,9 @@ async function findWaitingStaffOwnedConversations(
        WHERE m.contact_id = c.id
          AND m.role = 'user'
          AND (
-           last_valid_outbound.id IS NULL
+           last_valid_staff_outbound.id IS NULL
            OR (m.created_at, m.id) >
-              (last_valid_outbound.created_at, last_valid_outbound.id)
+              (last_valid_staff_outbound.created_at, last_valid_staff_outbound.id)
          )
        ORDER BY m.created_at DESC, m.id DESC
        LIMIT 1
@@ -123,6 +125,8 @@ async function isStillWaitingForStaff(
            FROM messages outbound
            WHERE outbound.contact_id = c.id
              AND outbound.role = 'assistant'
+             AND outbound.sent_by_username IS NOT NULL
+             AND outbound.is_automated_follow_up = false
              AND (
                outbound.delivery_status IS NULL
                OR outbound.delivery_status NOT IN ('failed', 'unknown')
@@ -222,9 +226,10 @@ function createStaffWaitingAlertService({
         return { status: "skipped", reason: "contact-not-found" };
       }
 
-      // Re-check immediately before building/sending the alert. A successful
-      // outbound reply resolves the episode. Keeping Staff mode active, or an
-      // outstanding attention flag after Return to AI, keeps it eligible.
+      // Re-check immediately before building/sending the alert. Only an actual
+      // staff-authored outbound resolves the waiting episode; an AI handoff
+      // acknowledgement or automated follow-up must not masquerade as the staff
+      // response this reminder is waiting for.
       if (!await stillWaiting(contactId, waitingSinceMessageId, query)) {
         await client.query("COMMIT");
         transactionStarted = false;
