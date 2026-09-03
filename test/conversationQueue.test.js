@@ -99,3 +99,39 @@ test("a later burst cannot overtake work already running for the conversation", 
   await Promise.all([first, second]);
   assert.deepEqual(order, ["start:one", "finish:first", "second:two"]);
 });
+
+test("new inbound claim work does not wait behind a slow AI burst", async () => {
+  const order = [];
+  let releaseReply;
+  const replyGate = new Promise((resolve) => {
+    releaseReply = resolve;
+  });
+
+  const reply = enqueueConversationBurst(
+    "burst-claim-lane",
+    "older-message",
+    async () => {
+      order.push("reply-start");
+      await replyGate;
+      order.push("reply-finish");
+    },
+    { delayMs: 0 }
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(order, ["reply-start"]);
+
+  const claim = enqueueConversation("burst-claim-lane", async () => {
+    order.push("new-message-durably-claimed");
+  });
+  await claim;
+
+  assert.deepEqual(order, ["reply-start", "new-message-durably-claimed"]);
+  releaseReply();
+  await reply;
+  assert.deepEqual(order, [
+    "reply-start",
+    "new-message-durably-claimed",
+    "reply-finish",
+  ]);
+});
