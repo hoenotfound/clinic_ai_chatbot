@@ -15,7 +15,10 @@ test("high-confidence Chinese safety/handoff phrases trigger staff attention", (
   assert.ok(checkKeywordTriggers("呼吸困难"));
 });
 
-test("ordinary Malay clinic questions are not treated as deterministic emergencies", () => {
+test("ordinary clinic and pre-treatment pain questions are not deterministic emergencies", () => {
   assert.equal(checkKeywordTriggers("berapa harga hifu untuk muka"), null);
   assert.equal(checkKeywordTriggers("boleh buat appointment sabtu petang"), null);
+  assert.equal(checkKeywordTriggers("hifu sakit sangat ke?"), null);
+  assert.equal(checkKeywordTriggers("HIFU会很痛吗？"), null);
+  assert.equal(checkKeywordTriggers("这个会非常痛吗?"), null);
 });
