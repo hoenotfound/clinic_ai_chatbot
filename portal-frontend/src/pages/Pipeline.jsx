@@ -143,6 +143,9 @@ export default function Pipeline() {
 
   const leads = useMemo(() => data?.leads || [], [data?.leads]);
   const stages = useMemo(() => data?.stages || [], [data?.stages]);
+  const availableSources = useMemo(() => [...new Set(
+    leads.map((lead) => lead.source || lead.attribution?.source).filter(Boolean)
+  )].sort(), [leads]);
   const noReplyHours = Number(data?.noReplyHours) || 24;
   const selectedLead = leads.find((lead) => Number(lead.id) === Number(selectedLeadId)) || null;
 
@@ -183,7 +186,7 @@ export default function Pipeline() {
   const sourceFilteredLeads = useMemo(() => {
     if (sourceFilter === "all") return analyticsBaseLeads;
     return analyticsBaseLeads.filter(
-      (lead) => (lead.attribution?.source || lead.source) === sourceFilter
+      (lead) => (lead.source || lead.attribution?.source) === sourceFilter
     );
   }, [analyticsBaseLeads, sourceFilter]);
 
@@ -226,7 +229,11 @@ export default function Pipeline() {
     ])
   ), [drilldownLeads, noReplyHours, now]);
 
-  const metricLeads = hasAnalyticsDrilldown || sourceFilter !== "all" ? drilldownLeads : leads;
+  const metricLeads = hasAnalyticsDrilldown
+  ? drilldownLeads
+  : sourceFilter !== "all"
+    ? sourceFilteredLeads
+    : leads;
   const metricActiveLeads = metricLeads.filter((lead) => !lead.is_closed);
   const pipelineValue = metricActiveLeads.reduce((sum, lead) => sum + (Number(lead.estimated_value) || 0), 0);
   const branchCardBase = sourceFilter !== "all" || hasAnalyticsDrilldown ? sourceFilteredLeads : leads;
@@ -457,7 +464,7 @@ export default function Pipeline() {
             className="h-11 max-w-[13rem] shrink-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-xs font-semibold text-[var(--color-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15"
           >
             <option value="all">All sources</option>
-            {(data?.sources || []).map((source) => (
+            {availableSources.map((source) => (
               <option key={source} value={source}>{sourceLabel(source)}</option>
             ))}
           </select>

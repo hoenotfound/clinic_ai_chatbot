@@ -47,7 +47,7 @@ export default function LeadCard({ lead, now, noReplyHours, onOpen, onDragStart 
         <Badge className="bg-[var(--color-primary-light)] text-[var(--color-primary)]">
           {lead.branch_name || "Unassigned"}
         </Badge>
-        <LeadSourceBadge source={lead.attribution?.source || lead.source} />
+        <LeadSourceBadge source={lead.source || lead.attribution?.source} />
         {noReply && <Badge className="bg-slate-100 text-slate-600">No reply</Badge>}
         {lead.appointment_status === "reschedule" && (
           <Badge className="bg-[var(--color-accent-light)] text-[#8a641f]">Reschedule</Badge>

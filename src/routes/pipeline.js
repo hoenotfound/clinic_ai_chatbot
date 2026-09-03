@@ -26,9 +26,36 @@ function configuredBranchNames() {
   return distinctNames((clinicConfig.branches || []).map((branch) => branch.name));
 }
 
+function publicAttribution(attribution) {
+  if (!attribution) return null;
+  return {
+    source: attribution.source || null,
+    platform: attribution.platform || null,
+    channel: attribution.channel || null,
+    meta_ad_id: attribution.meta_ad_id || null,
+    meta_source_id: attribution.meta_source_id || null,
+    meta_source_type: attribution.meta_source_type || null,
+    referral_ref: attribution.referral_ref || null,
+    referral_source: attribution.referral_source || null,
+    referral_type: attribution.referral_type || null,
+    ctwa_clid: attribution.ctwa_clid || null,
+    source_url: attribution.source_url || null,
+    headline: attribution.headline || null,
+    body: attribution.body || null,
+    media_type: attribution.media_type || null,
+    media_url: attribution.media_url || null,
+    campaign_id: attribution.campaign_id || null,
+    campaign_name: attribution.campaign_name || null,
+    adset_id: attribution.adset_id || null,
+    adset_name: attribution.adset_name || null,
+    ad_name: attribution.ad_name || null,
+    attributed_at: attribution.attributed_at || null,
+  };
+}
+
 function withAttribution(lead, attribution) {
   if (!lead) return lead;
-  return { ...lead, attribution: attribution || null };
+  return { ...lead, attribution: publicAttribution(attribution) };
 }
 
 async function enrichLead(lead) {
@@ -84,9 +111,6 @@ router.get("/", async (req, res) => {
       configuredBranches,
       owners: assignableOwners.map((owner) => owner.username),
       services: distinctNames((clinicConfig.services || []).map((service) => service.name)),
-      sources: distinctNames(
-        leads.map((lead) => lead.attribution?.source || lead.source)
-      ).sort(),
       noReplyHours: pipelineRepo.NO_REPLY_HOURS,
     });
   } catch (err) {

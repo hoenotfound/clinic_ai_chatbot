@@ -34,13 +34,20 @@ export default function LeadAttributionPanel({ lead }) {
 
   const source = attribution?.source || lead.source;
   const adLabel = attribution?.ad_name || attribution?.headline || null;
-  const campaignLabel = attribution?.campaign_name || lead.campaign_name || null;
+  const adFieldLabel = attribution?.ad_name ? "Ad" : attribution?.headline ? "Creative" : "Ad";
+  const campaignLabel = attribution?.campaign_name || null;
+  const sourceOverride = attribution && lead.source && lead.source !== attribution.source
+    ? lead.source
+    : null;
+  const campaignOverride = attribution && lead.campaign_name && lead.campaign_name !== attribution.campaign_name
+    ? lead.campaign_name
+    : null;
 
   return (
     <section className="mb-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Acquisition source</p>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Captured acquisition</p>
           <h3 className="mt-1 font-display text-base font-bold">{sourceLabel(source)}</h3>
         </div>
         <LeadSourceBadge source={source} />
@@ -50,7 +57,7 @@ export default function LeadAttributionPanel({ lead }) {
         <AttributionRow label="Channel" value={formatChannel(attribution?.channel || lead.channel)} />
         <AttributionRow label="Platform" value={attribution?.platform || (source === "meta_ads" ? "Meta" : null)} />
         <AttributionRow
-          label="Ad"
+          label={adFieldLabel}
           value={adLabel || (attribution?.meta_ad_id ? `Meta Ad ${attribution.meta_ad_id}` : null)}
           mutedFallback={source === "meta_ads" ? "Ad name available after Meta Ads API sync" : "—"}
         />
@@ -59,6 +66,8 @@ export default function LeadAttributionPanel({ lead }) {
           value={campaignLabel}
           mutedFallback={source === "meta_ads" ? "Available after Meta Ads API sync" : "—"}
         />
+        {sourceOverride && <AttributionRow label="Source override" value={sourceLabel(sourceOverride)} />}
+        {campaignOverride && <AttributionRow label="Campaign override" value={campaignOverride} />}
         {attribution?.meta_ad_id && <AttributionRow label="Meta Ad ID" value={attribution.meta_ad_id} mono />}
         {attribution?.ctwa_clid && <AttributionRow label="CTWA click ID" value={attribution.ctwa_clid} mono />}
       </div>
