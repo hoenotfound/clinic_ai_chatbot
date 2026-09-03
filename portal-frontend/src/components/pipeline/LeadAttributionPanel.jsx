@@ -45,10 +45,19 @@ export default function LeadAttributionPanel({ lead }) {
     ? lead.campaign_name
     : null;
   const enrichmentStatus = attribution?.enrichment_status || null;
-  const enrichmentMessage = isMetaAds
+  const metaHierarchyFallback = enrichmentStatus === "pending"
+    ? "Pending Meta Ads enrichment"
+    : isMetaAds
+      ? "Not available from this attribution"
+      : "—";
+  const enrichmentMessage = attribution && isMetaAds
     ? enrichmentStatus === "enriched"
       ? `Ad details synced from Meta${attribution?.enriched_at ? ` · ${formatDateTime(attribution.enriched_at)}` : ""}`
-      : "Ad, Ad Set and Campaign names are waiting for Meta Marketing API enrichment."
+      : enrichmentStatus === "pending"
+        ? "Ad, Ad Set and Campaign names are waiting for Meta Marketing API enrichment."
+        : attribution?.meta_ad_id
+          ? "Meta ad hierarchy enrichment is not available for this attribution."
+          : "Meta identified this as ad traffic, but the referral did not include an exact Ad ID, so Ad Set and Campaign enrichment is unavailable."
     : null;
 
   return (
@@ -73,19 +82,19 @@ export default function LeadAttributionPanel({ lead }) {
         <AttributionRow
           label={adFieldLabel}
           value={adLabel || (attribution?.meta_ad_id ? `Meta Ad ${attribution.meta_ad_id}` : null)}
-          mutedFallback={isMetaAds ? "Pending Meta Ads enrichment" : "—"}
+          mutedFallback={isMetaAds ? metaHierarchyFallback : "—"}
         />
         {isMetaAds && (
           <AttributionRow
             label="Ad Set"
             value={attribution?.adset_name || null}
-            mutedFallback="Pending Meta Ads enrichment"
+            mutedFallback={metaHierarchyFallback}
           />
         )}
         <AttributionRow
           label="Campaign"
           value={campaignLabel}
-          mutedFallback={isMetaAds ? "Pending Meta Ads enrichment" : "—"}
+          mutedFallback={isMetaAds ? metaHierarchyFallback : "—"}
         />
         {sourceOverride && <AttributionRow label="Source override" value={sourceLabel(sourceOverride)} />}
         {campaignOverride && <AttributionRow label="Campaign override" value={campaignOverride} />}
