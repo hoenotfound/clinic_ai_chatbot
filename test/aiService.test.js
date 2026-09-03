@@ -17,9 +17,11 @@ test("Gemini key configuration is deduplicated in priority order", () => {
   assert.deepEqual(keys, ["key-a", "key-b", "key-main", "key-c"]);
 });
 
-test("transient quota/network errors are retryable while permanent validation errors are not", () => {
+test("transient provider errors and invalid model output are retryable", () => {
   assert.equal(isRetryableAiError({ status: 429, message: "quota" }), true);
   assert.equal(isRetryableAiError({ code: "ETIMEDOUT" }), true);
+  assert.equal(isRetryableAiError({ code: "INVALID_AI_RESPONSE" }), true);
+  assert.equal(isRetryableAiError({ code: "EMPTY_AI_RESPONSE" }), true);
   assert.equal(isRetryableAiError({ status: 400, message: "bad request" }), false);
 });
 
@@ -54,15 +56,23 @@ test("candidate retries a transient failure and validates structured success", a
   assert.match(raw, /"outcome":"normal"/);
 });
 
-test("malformed structured output fails the candidate instead of being accepted", async () => {
+test("malformed structured output gets one bounded retry before the candidate fails", async () => {
+  let attempts = 0;
   await assert.rejects(
     runCandidate(
-      { label: "bad AI", async run() { return '{"reply":"hello"'; } },
+      {
+        label: "bad AI",
+        async run() {
+          attempts += 1;
+          return '{"reply":"hello"';
+        },
+      },
       [],
       {},
       1000,
-      0
+      1
     ),
     (err) => err.code === "INVALID_AI_RESPONSE"
   );
+  assert.equal(attempts, 2);
 });
