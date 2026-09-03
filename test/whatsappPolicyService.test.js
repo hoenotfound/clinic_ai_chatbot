@@ -87,3 +87,50 @@ test("still blocks service replies when the 24-hour customer window has expired"
   assert.equal(result.allowed, false);
   assert.equal(result.code, "outside_customer_service_window");
 });
+
+test("applies the same standard window to Facebook Messenger", () => {
+  const open = policy.evaluateFreeformState(
+    {
+      channel: "facebook",
+      latest_inbound_at: new Date("2026-09-03T10:00:00.000Z"),
+    },
+    new Date("2026-09-04T09:59:00.000Z")
+  );
+  assert.equal(open.allowed, true);
+
+  const closed = policy.evaluateFreeformState(
+    {
+      channel: "facebook",
+      latest_inbound_at: new Date("2026-09-03T10:00:00.000Z"),
+    },
+    new Date("2026-09-04T10:00:00.000Z")
+  );
+  assert.equal(closed.allowed, false);
+  assert.equal(closed.code, "outside_customer_service_window");
+  assert.match(closed.message, /Facebook Messenger/);
+});
+
+test("Instagram requires a customer message before opening its standard window", () => {
+  const result = policy.evaluateFreeformState(
+    { channel: "instagram", latest_inbound_at: null },
+    new Date("2026-09-03T10:00:00.000Z")
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.code, "no_customer_message");
+  assert.match(result.message, /Instagram/);
+});
+
+test("WhatsApp opt-out fields do not create a social-channel opt-out state", () => {
+  const result = policy.evaluateFreeformState(
+    {
+      channel: "facebook",
+      whatsapp_opt_out_at: new Date("2026-09-03T10:00:00.000Z"),
+      latest_inbound_at: new Date("2026-09-03T11:00:00.000Z"),
+    },
+    new Date("2026-09-03T11:05:00.000Z"),
+    { purpose: "marketing" }
+  );
+
+  assert.equal(result.allowed, true);
+});

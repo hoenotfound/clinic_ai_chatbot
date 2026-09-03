@@ -64,9 +64,7 @@ async function buildWindow(contact) {
   return {
     lastInboundAt: latestInboundAt,
     windowEndsAt: probe.windowEndsAt,
-    policy: (contact.channel || "whatsapp") === "whatsapp"
-      ? schedulePolicy(contact, latestInboundAt)
-      : { allowed: true, code: null, message: null },
+    policy: schedulePolicy(contact, latestInboundAt),
   };
 }
 
@@ -112,15 +110,13 @@ conversationsRouter.post("/:contactId/scheduled-messages", async (req, res) => {
     }
 
     const lastInboundAt = await scheduledRepo.getLatestInboundAt(contactId);
-    if ((contact.channel || "whatsapp") === "whatsapp") {
-      const policy = schedulePolicy(contact, lastInboundAt);
-      if (!policy.allowed) {
-        return res.status(403).json({
-          error: policy.message,
-          code: policy.code,
-          policyBlocked: true,
-        });
-      }
+    const policy = schedulePolicy(contact, lastInboundAt);
+    if (!policy.allowed) {
+      return res.status(403).json({
+        error: policy.message,
+        code: policy.code,
+        policyBlocked: true,
+      });
     }
     const validation = scheduleValidation({
       scheduledFor: req.body?.scheduledFor,
@@ -166,15 +162,13 @@ conversationsRouter.patch("/:contactId/scheduled-messages/:scheduledId", async (
     }
 
     const lastInboundAt = await scheduledRepo.getLatestInboundAt(contactId);
-    if ((contact.channel || "whatsapp") === "whatsapp") {
-      const policy = schedulePolicy(contact, lastInboundAt);
-      if (!policy.allowed) {
-        return res.status(403).json({
-          error: policy.message,
-          code: policy.code,
-          policyBlocked: true,
-        });
-      }
+    const policy = schedulePolicy(contact, lastInboundAt);
+    if (!policy.allowed) {
+      return res.status(403).json({
+        error: policy.message,
+        code: policy.code,
+        policyBlocked: true,
+      });
     }
     const validation = scheduleValidation({
       scheduledFor: req.body?.scheduledFor,

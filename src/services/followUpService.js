@@ -65,7 +65,7 @@ function publishConversationChange(message, reason) {
 function contactForCandidate(candidate) {
   const channel = candidate.channel || "whatsapp";
   return {
-    ...(channel === "whatsapp" ? { id: candidate.contact_id } : {}),
+    id: candidate.contact_id,
     channel,
     whatsapp_number: candidate.whatsapp_number,
     channel_user_id: candidate.channel_user_id,
@@ -77,9 +77,9 @@ function rejectedFollowUpError(channel) {
 }
 
 function deliveryErrorFor(channel, sendResult, rejectedError) {
-  // WhatsApp policy blocks contain a useful reason staff need to see. Keep
-  // Facebook/Instagram's existing channel-specific wording unchanged.
-  return channel === "whatsapp" && sendResult?.error
+  // Policy blocks contain a useful reason staff need to see. Other provider
+  // failures keep the existing channel-specific wording.
+  return sendResult?.policyBlocked && sendResult?.error
     ? sendResult.error
     : rejectedError;
 }
@@ -126,13 +126,20 @@ async function sendSocialImageCompanion(contact, contactId, imageUrl) {
     // image in the same API message. The follow-up text has already been sent
     // and recorded, so this companion must contain only the image. A retry can
     // then resend the image without duplicating the customer-facing text.
-    imageResult = await channelMessaging.sendImageByUrl(contact, imageUrl, undefined);
+    imageResult = await channelMessaging.sendImageByUrl(
+      contact,
+      imageUrl,
+      undefined,
+      { purpose: "marketing" }
+    );
   } catch (err) {
     console.error("Optional social follow-up image send failed:", err);
     imageResult = { success: false, wamid: null, externalMessageId: null };
   }
 
-  const imageError = `${channelMessaging.labelForChannel(contact.channel)} did not accept the optional follow-up graphic. The follow-up text was sent; retry this image from the Inbox if needed.`;
+  const imageError = imageResult?.policyBlocked && imageResult.error
+    ? imageResult.error
+    : `${channelMessaging.labelForChannel(contact.channel)} did not accept the optional follow-up graphic. The follow-up text was sent; retry this image from the Inbox if needed.`;
   const finalImageMessage =
     (await messagesRepo.setDeliveryStatusById(
       imageMessage.id,
@@ -190,7 +197,11 @@ async function sendCandidate(candidate) {
     if (isSocial) {
       // Record the follow-up text separately from an optional image so an image
       // failure/retry can never duplicate a text message Meta already accepted.
-      sendResult = await channelMessaging.sendText(contact, followUpMessage);
+      sendResult = await channelMessaging.sendText(
+        contact,
+        followUpMessage,
+        { purpose: "marketing" }
+      );
     } else {
       const policyOptions = { purpose: "marketing" };
       sendResult = settings.imageUrl

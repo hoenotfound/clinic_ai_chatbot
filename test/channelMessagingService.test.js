@@ -10,16 +10,15 @@ const audioConvert = require("../src/services/audioConvertService");
 const whatsappPolicy = require("../src/services/whatsappPolicyService");
 const messaging = require("../src/services/channelMessagingService");
 
-function allowWhatsappPolicy(t) {
+test.beforeEach((t) => {
   const original = whatsappPolicy.checkFreeformAllowed;
   whatsappPolicy.checkFreeformAllowed = async () => ({ allowed: true });
   t.after(() => {
     whatsappPolicy.checkFreeformAllowed = original;
   });
-}
+});
 
 test("WhatsApp contacts keep using the existing WhatsApp send function after policy approval", async (t) => {
-  allowWhatsappPolicy(t);
   const originalWhatsappSend = whatsapp.sendMessage;
   const originalMetaSend = meta.sendText;
   t.after(() => {
@@ -281,7 +280,6 @@ test("Instagram voice is converted to M4A before temporary URL delivery", async 
 });
 
 test("WhatsApp voice is not delivered if Staff mode ends during media upload", async (t) => {
-  allowWhatsappPolicy(t);
   const originalGetContact = contactsRepo.getContactById;
   const originalUpload = whatsapp.uploadMedia;
   const originalSendVoice = whatsapp.sendVoiceById;
@@ -314,6 +312,51 @@ test("WhatsApp voice is not delivered if Staff mode ends during media upload", a
   assert.equal(result.success, false);
   assert.equal(result.error, "This conversation is no longer in Staff mode.");
   assert.equal(deliveries, 0);
+});
+
+test("Instagram policy rejection blocks media preparation and delivery", async (t) => {
+  const originalPolicy = whatsappPolicy.checkFreeformAllowed;
+  const originalConvert = audioConvert.convertToInstagramAudio;
+  const originalUploadTemporary = mediaStorage.uploadTemporaryMedia;
+  const originalUrlSend = metaAttachments.sendUrlAttachment;
+  t.after(() => {
+    whatsappPolicy.checkFreeformAllowed = originalPolicy;
+    audioConvert.convertToInstagramAudio = originalConvert;
+    mediaStorage.uploadTemporaryMedia = originalUploadTemporary;
+    metaAttachments.sendUrlAttachment = originalUrlSend;
+  });
+
+  whatsappPolicy.checkFreeformAllowed = async () => ({
+    allowed: false,
+    code: "outside_customer_service_window",
+    message: "Instagram reply window closed",
+  });
+  let preparationCalls = 0;
+  audioConvert.convertToInstagramAudio = async () => {
+    preparationCalls += 1;
+    throw new Error("must not convert");
+  };
+  mediaStorage.uploadTemporaryMedia = async () => {
+    preparationCalls += 1;
+    throw new Error("must not upload");
+  };
+  metaAttachments.sendUrlAttachment = async () => {
+    preparationCalls += 1;
+    throw new Error("must not deliver");
+  };
+
+  const result = await messaging.sendAudioBuffer(
+    { id: 99, channel: "instagram", channel_user_id: "igsid-blocked" },
+    Buffer.from("audio"),
+    "audio/mpeg",
+    "voice.mp3"
+  );
+
+  assert.equal(preparationCalls, 0);
+  assert.equal(result.success, false);
+  assert.equal(result.policyBlocked, true);
+  assert.equal(result.policyCode, "outside_customer_service_window");
+  assert.equal(result.error, "Instagram reply window closed");
 });
 
 test("Instagram voice is not delivered if Staff mode ends during temporary upload", async (t) => {

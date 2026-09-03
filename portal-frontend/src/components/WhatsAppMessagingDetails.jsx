@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { whatsappPolicyStatus } from "../utils/whatsappPolicy";
+import { messagingPolicyStatus } from "../utils/whatsappPolicy";
 
 function formatDateTime(value) {
   if (!value) return "";
@@ -42,9 +42,10 @@ export default function WhatsAppMessagingDetails({ contact, className = "" }) {
     return () => clearInterval(timer);
   }, []);
 
-  if ((contact?.channel || "whatsapp") !== "whatsapp") return null;
+  const policy = messagingPolicyStatus(contact, now);
+  if (!policy.applies) return null;
 
-  const policy = whatsappPolicyStatus(contact, now);
+  const isWhatsApp = policy.channel === "whatsapp";
   const optInAt = policyField(contact, "whatsapp_opt_in_at", "whatsappOptInAt");
   const optInSource = policyField(contact, "whatsapp_opt_in_source", "whatsappOptInSource");
   const optOutAt = policyField(contact, "whatsapp_opt_out_at", "whatsappOptOutAt");
@@ -57,9 +58,13 @@ export default function WhatsAppMessagingDetails({ contact, className = "" }) {
     <section className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 sm:p-4 ${className}`}>
       <div className="flex flex-col items-start gap-2 min-[400px]:flex-row min-[400px]:justify-between min-[400px]:gap-3">
         <div className="min-w-0">
-          <h3 className="text-sm font-bold">WhatsApp messaging</h3>
+          <h3 className="text-sm font-bold">
+            {isWhatsApp ? "WhatsApp messaging" : `${policy.channelLabel} reply window`}
+          </h3>
           <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
-            Reply-window status and WhatsApp-specific consent records
+            {isWhatsApp
+              ? "Reply-window status and WhatsApp-specific consent records"
+              : "Standard 24-hour reply-window status"}
           </p>
         </div>
         <span className={`inline-flex shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${statusTone}`}>
@@ -87,10 +92,14 @@ export default function WhatsAppMessagingDetails({ contact, className = "" }) {
       <dl className="mt-3 grid grid-cols-2 gap-2">
         <PolicyDetail label="Latest customer message" value={formatDateTime(policy.latestCustomerMessageAt) || "No customer message"} />
         <PolicyDetail label="Reply window expires" value={formatDateTime(policy.replyWindowExpiresAt) || "Not available"} />
-        <PolicyDetail label="WhatsApp opt-in" value={optInAt ? "Recorded" : "Not recorded"} />
-        <PolicyDetail label="WhatsApp opt-out" value={optOutAt ? "Recorded" : "Not recorded"} />
-        <PolicyDetail className="col-span-2" label="Opt-in date / source" value={optInAt ? `${formatDateTime(optInAt)} · ${sourceLabel(optInSource)}` : "Not recorded"} />
-        <PolicyDetail className="col-span-2" label="Opt-out date / source" value={optOutAt ? `${formatDateTime(optOutAt)} · ${sourceLabel(optOutSource)}` : "Not recorded"} />
+        {isWhatsApp && (
+          <>
+            <PolicyDetail label="WhatsApp opt-in" value={optInAt ? "Recorded" : "Not recorded"} />
+            <PolicyDetail label="WhatsApp opt-out" value={optOutAt ? "Recorded" : "Not recorded"} />
+            <PolicyDetail className="col-span-2" label="Opt-in date / source" value={optInAt ? `${formatDateTime(optInAt)} · ${sourceLabel(optInSource)}` : "Not recorded"} />
+            <PolicyDetail className="col-span-2" label="Opt-out date / source" value={optOutAt ? `${formatDateTime(optOutAt)} · ${sourceLabel(optOutSource)}` : "Not recorded"} />
+          </>
+        )}
       </dl>
     </section>
   );

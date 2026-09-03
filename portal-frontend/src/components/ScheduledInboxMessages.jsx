@@ -41,6 +41,12 @@ function formatDateTime(value) {
   });
 }
 
+function channelLabel(channel) {
+  if (channel === "facebook") return "Facebook Messenger";
+  if (channel === "instagram") return "Instagram";
+  return "WhatsApp";
+}
+
 function ClockIcon({ className = "" }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
@@ -100,7 +106,7 @@ export default function ScheduledInboxMessages() {
 
   const windowEndTime = windowEndsAt ? new Date(windowEndsAt).getTime() : NaN;
   const windowOpen = Number.isFinite(windowEndTime) && windowEndTime > Date.now() + 60 * 1000;
-  const policyBlocked = channel === "whatsapp" && messagingAllowed === false;
+  const policyBlocked = ["whatsapp", "facebook", "instagram"].includes(channel) && messagingAllowed === false;
   const canSchedule = windowOpen && !policyBlocked;
   const maxScheduleValue = windowOpen
     ? toLocalInputValue(new Date(windowEndTime - 60 * 1000))
@@ -340,8 +346,8 @@ export default function ScheduledInboxMessages() {
     ? policyCode === "opted_out"
       ? "Customer opted out of WhatsApp messages. Scheduled sending is unavailable."
       : policyCode === "no_customer_message"
-      ? "The customer must message the business before a normal WhatsApp message can be scheduled."
-      : policyMessage || "The customer must message again before a normal WhatsApp message can be scheduled."
+      ? `The customer must message the business before a normal ${channelLabel(channel)} message can be scheduled.`
+      : policyMessage || `The customer must message again before a normal ${channelLabel(channel)} message can be scheduled.`
     : null;
   const scheduleButtonDisabled = !!mediaDisabledReason || checkingMode || (!!policyDisabledReason && activeItems.length === 0);
 
