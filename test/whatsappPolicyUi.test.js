@@ -15,6 +15,7 @@ test("portal policy state distinguishes open, closed, never-contacted and opted-
   }, now);
   assert.equal(open.freeformAllowed, true);
   assert.match(open.label, /Reply available/);
+  assert.equal(open.explanation, null);
 
   const closed = whatsappPolicyStatus({
     channel: "whatsapp",
@@ -64,7 +65,8 @@ test("Inbox and contact details expose the required WhatsApp policy guidance", (
   const tools = fs.readFileSync(path.join(root, "portal-frontend/src/pages/Tools.jsx"), "utf8");
   const leadDrawer = fs.readFileSync(path.join(root, "portal-frontend/src/components/pipeline/LeadDrawer.jsx"), "utf8");
 
-  assert.match(inbox, /Sending unavailable/);
+  assert.doesNotMatch(inbox, /Sending unavailable\./);
+  assert.match(inbox, /quietReplyAvailable/);
   assert.match(inbox, /Cannot retry/);
   assert.match(inbox, /must message the business before staff can send a normal reply/);
   assert.match(details, /WhatsApp messaging/);

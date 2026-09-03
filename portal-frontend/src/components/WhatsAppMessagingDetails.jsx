@@ -70,7 +70,9 @@ export default function WhatsAppMessagingDetails({ contact, className = "" }) {
       <div className={`mt-3 rounded-xl border px-3 py-2.5 text-xs leading-5 ${statusTone}`}>
         <p className="text-[9px] font-semibold uppercase tracking-[0.08em] opacity-70">Current reply window</p>
         <p className="font-semibold">{policy.label}</p>
-        <p className="mt-0.5 break-words text-[11px] opacity-80">{policy.explanation}</p>
+        {policy.explanation && (
+          <p className="mt-0.5 break-words text-[11px] opacity-80">{policy.explanation}</p>
+        )}
       </div>
 
       {optOutAt && (
