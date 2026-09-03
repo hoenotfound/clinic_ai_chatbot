@@ -65,20 +65,7 @@ function policyError(code, message, extra = {}) {
   };
 }
 
-async function checkFreeformAllowed(contact, now = new Date()) {
-  if ((contact?.channel || "whatsapp") !== "whatsapp") {
-    return { allowed: true, code: null, message: null };
-  }
-
-  const contactId = Number(contact?.id);
-  if (!Number.isSafeInteger(contactId) || contactId <= 0) {
-    return policyError(
-      "missing_contact_id",
-      "WhatsApp send blocked because the contact could not be verified against messaging-policy state."
-    );
-  }
-
-  const state = await getPolicyState(contactId);
+function evaluateFreeformState(state, now = new Date(), { purpose = "service" } = {}) {
   if (!state) {
     return policyError(
       "contact_not_found",
@@ -86,23 +73,38 @@ async function checkFreeformAllowed(contact, now = new Date()) {
     );
   }
 
-  if (state.whatsapp_opt_out_at) {
-    return policyError(
-      "opted_out",
-      "WhatsApp send blocked because this customer opted out of WhatsApp messages. Record a new explicit opt-in before messaging them again."
-    );
+  const lastInboundAt = state.latest_inbound_at
+    ? new Date(state.latest_inbound_at)
+    : null;
+  const optOutAt = state.whatsapp_opt_out_at
+    ? new Date(state.whatsapp_opt_out_at)
+    : null;
+
+  if (optOutAt) {
+    // Opt-out is a hard stop for proactive/marketing sends. A customer is still
+    // allowed to start a later support conversation themselves; in that case a
+    // normal service reply may resume inside the new 24-hour window without
+    // silently turning marketing consent back on.
+    const customerReinitiatedAfterOptOut =
+      lastInboundAt && lastInboundAt.getTime() > optOutAt.getTime();
+    if (purpose !== "service" || !customerReinitiatedAfterOptOut) {
+      return policyError(
+        "opted_out",
+        "WhatsApp send blocked because this customer opted out of WhatsApp messages. Record a new explicit opt-in before sending proactive or marketing messages again."
+      );
+    }
   }
 
-  if (!state.latest_inbound_at) {
+  if (!lastInboundAt) {
     return policyError(
       "no_customer_message",
       "WhatsApp send blocked because this customer has never messaged the business. Use an approved template only after valid WhatsApp opt-in has been recorded."
     );
   }
 
-  const lastInboundAt = new Date(state.latest_inbound_at);
+  const current = now instanceof Date ? now : new Date(now);
   const windowEndsAt = new Date(lastInboundAt.getTime() + CUSTOMER_SERVICE_WINDOW_MS);
-  if (now.getTime() >= windowEndsAt.getTime()) {
+  if (current.getTime() >= windowEndsAt.getTime()) {
     return policyError(
       "outside_customer_service_window",
       "WhatsApp send blocked because the 24-hour customer-service window has closed. Use an approved template only after valid WhatsApp opt-in has been recorded.",
@@ -117,6 +119,27 @@ async function checkFreeformAllowed(contact, now = new Date()) {
     lastInboundAt,
     windowEndsAt,
   };
+}
+
+async function checkFreeformAllowed(
+  contact,
+  now = new Date(),
+  { purpose = "service" } = {}
+) {
+  if ((contact?.channel || "whatsapp") !== "whatsapp") {
+    return { allowed: true, code: null, message: null };
+  }
+
+  const contactId = Number(contact?.id);
+  if (!Number.isSafeInteger(contactId) || contactId <= 0) {
+    return policyError(
+      "missing_contact_id",
+      "WhatsApp send blocked because the contact could not be verified against messaging-policy state."
+    );
+  }
+
+  const state = await getPolicyState(contactId);
+  return evaluateFreeformState(state, now, { purpose });
 }
 
 async function recordOptOut(contactId, source = "customer_message") {
@@ -208,6 +231,7 @@ module.exports = {
   blockedSendResult,
   checkFreeformAllowed,
   checkTemplateAllowed,
+  evaluateFreeformState,
   getPolicyState,
   isOptOutText,
   recordOptIn,
