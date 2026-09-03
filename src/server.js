@@ -20,10 +20,14 @@ const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeSe
 const conversationStore = require("./utils/conversationStore");
 const { getActivePromotion } = require("./utils/activePromotion");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
-const { fallbackHandoffReply } = require("./utils/handoffReply");
+const {
+  fallbackHandoffReply,
+  isUrgentSafetyMessage,
+} = require("./utils/handoffReply");
 const clinicConfig = require("./config/clinicConfig");
 const messagesRepo = require("./db/messagesRepo");
 const contactsRepo = require("./db/contactsRepo");
+const pipelineRepo = require("./db/pipelineRepo");
 const { checkKeywordTriggers } = require("./utils/attentionTriggers");
 const realtimeEvents = require("./utils/realtimeEvents");
 const {
@@ -398,10 +402,10 @@ async function processIncomingMessage(
     } = parsedReply;
 
     // The deterministic keyword layer is a safety backstop, not just a badge.
-    // If it sees a high-confidence human/safety phrase but the model fails to
-    // choose needs_human, force a language-matched handoff. True urgent symptom
-    // phrases receive immediate-care guidance in fallbackHandoffReply().
-    if (keywordReason && !flagged) {
+    // If the model misses the handoff entirely, force one. For high-confidence
+    // urgent symptom phrases, always use the deterministic immediate-care
+    // wording even if the model did choose needs_human but wrote a weak reply.
+    if (keywordReason && (!flagged || isUrgentSafetyMessage(text))) {
       flagged = true;
       bookingReady = false;
       aiReply = fallbackHandoffReply(text, clinicConfig.escalation.handoffMessage);
@@ -829,7 +833,7 @@ async function start() {
 
   // Bring existing conversations into the first pipeline stage on the
   // initial deployment.
-  const backfilledLeadCount = await require("./db/pipelineRepo").backfillLeadsForExistingContacts();
+  const backfilledLeadCount = await pipelineRepo.backfillLeadsForExistingContacts();
   if (backfilledLeadCount > 0) {
     console.log(`Added ${backfilledLeadCount} existing conversation(s) to the lead pipeline.`);
   }
