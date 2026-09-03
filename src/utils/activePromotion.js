@@ -1,13 +1,29 @@
-const DEFAULT_CLINIC_TIMEZONE = process.env.CLINIC_TIMEZONE || "Asia/Kuala_Lumpur";
+const FALLBACK_CLINIC_TIMEZONE = "Asia/Kuala_Lumpur";
+const DEFAULT_CLINIC_TIMEZONE = process.env.CLINIC_TIMEZONE || FALLBACK_CLINIC_TIMEZONE;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
-function localDateString(date, timeZone = DEFAULT_CLINIC_TIMEZONE) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
+function formatLocalDateParts(date, timeZone) {
+  return new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   }).formatToParts(date);
+}
+
+function localDateString(date, timeZone = DEFAULT_CLINIC_TIMEZONE) {
+  let parts;
+  try {
+    parts = formatLocalDateParts(date, timeZone);
+  } catch (err) {
+    // A typo in optional CLINIC_TIMEZONE must not take down AI replies or promo
+    // sending. Fall back to the product's Malaysia default rather than treating
+    // an expired promotion as active or throwing through the webhook path.
+    console.warn(
+      `Invalid CLINIC_TIMEZONE "${timeZone}"; falling back to ${FALLBACK_CLINIC_TIMEZONE}.`
+    );
+    parts = formatLocalDateParts(date, FALLBACK_CLINIC_TIMEZONE);
+  }
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day}`;
 }
@@ -69,6 +85,7 @@ function getActivePromotion(promotions, now = new Date(), options = {}) {
 
 module.exports = {
   DEFAULT_CLINIC_TIMEZONE,
+  FALLBACK_CLINIC_TIMEZONE,
   getActivePromotion,
   getActivePromotions,
   isPromotionActive,
