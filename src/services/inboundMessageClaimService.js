@@ -3,6 +3,7 @@ const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const leadAttributionService = require("./leadAttributionService");
 const conversationStore = require("../utils/conversationStore");
+const whatsappPolicy = require("./whatsappPolicyService");
 
 function initialInboundText(incoming) {
   if (incoming.unsupportedType) {
@@ -21,6 +22,7 @@ function createInboundMessageClaimService({
   pipeline = pipelineRepo,
   attribution = leadAttributionService,
   store = conversationStore,
+  policy = whatsappPolicy,
 } = {}) {
   return async function claimIncomingMessage(incoming) {
     // Messenger/Instagram may send OPEN_THREAD attribution as its own event
@@ -61,6 +63,27 @@ function createInboundMessageClaimService({
       storedInboundId
     );
     if (!savedInbound) return null;
+
+    // A clear stop/unsubscribe request is applied immediately after the durable
+    // inbound claim and before any AI or follow-up work can send another
+    // WhatsApp message. The central outbound guard then fails closed for this
+    // contact until a later explicit opt-in is deliberately recorded.
+    if (
+      channel === "whatsapp" &&
+      incoming.mediaType == null &&
+      policy.isOptOutText(incoming.text)
+    ) {
+      try {
+        await policy.recordOptOut(contact.id, "customer_message");
+        await contacts.setAttention(
+          contact.id,
+          true,
+          "Customer opted out of WhatsApp messages. Do not contact again without a new explicit opt-in."
+        );
+      } catch (err) {
+        console.error(`Failed to record WhatsApp opt-out for contact ${contact.id}:`, err);
+      }
+    }
 
     // Operational bookkeeping is best-effort after the durable message claim.
     // A transient failure here must not turn a successfully stored customer
