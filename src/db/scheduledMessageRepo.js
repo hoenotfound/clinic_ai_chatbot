@@ -50,7 +50,7 @@ function ensureSchema() {
         sent_at TIMESTAMPTZ,
         cancelled_at TIMESTAMPTZ,
         claimed_at TIMESTAMPTZ,
-        message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+        message_id BIGINT REFERENCES messages(id) ON DELETE SET NULL,
         failure_reason TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_scheduled_messages_due
