@@ -226,7 +226,7 @@ export default function Pipeline() {
     ])
   ), [drilldownLeads, noReplyHours, now]);
 
-  const metricLeads = hasAnalyticsDrilldown ? drilldownLeads : leads;
+  const metricLeads = hasAnalyticsDrilldown || sourceFilter !== "all" ? drilldownLeads : leads;
   const metricActiveLeads = metricLeads.filter((lead) => !lead.is_closed);
   const pipelineValue = metricActiveLeads.reduce((sum, lead) => sum + (Number(lead.estimated_value) || 0), 0);
   const branchCardBase = sourceFilter !== "all" || hasAnalyticsDrilldown ? sourceFilteredLeads : leads;

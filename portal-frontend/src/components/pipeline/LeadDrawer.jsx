@@ -313,10 +313,10 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
                     {CONSENT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
                 </Field>
-                <Field label="Lead source">
+                <Field label="Lead source (manual override)">
                   <input className={inputClass} value={form.source} onChange={(event) => update("source", event.target.value)} placeholder="WhatsApp, Meta Ad, Referral…" />
                 </Field>
-                <Field label="Campaign">
+                <Field label="Campaign (manual override)">
                   <input className={inputClass} value={form.campaignName} onChange={(event) => update("campaignName", event.target.value)} placeholder="Optional campaign name" />
                 </Field>
               </div>
