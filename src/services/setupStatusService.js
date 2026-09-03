@@ -74,6 +74,7 @@ async function requestJson(
 
 function definitions(env = process.env) {
   const geminiKeyCount = aiService.getGeminiApiKeys(env).length;
+  const aiCandidates = aiService.getCandidateHealthDescriptors(env);
   const aiProvider = ["gemini", "claude"].includes(text(env.AI_PROVIDER).toLowerCase())
     ? text(env.AI_PROVIDER).toLowerCase()
     : "gemini";
@@ -94,6 +95,7 @@ function definitions(env = process.env) {
         ? Boolean(text(env.ANTHROPIC_API_KEY) || geminiKeyCount)
         : Boolean(geminiKeyCount || text(env.ANTHROPIC_API_KEY)),
       meta: { aiProvider, geminiKeyCount, claudeFallback: Boolean(text(env.ANTHROPIC_API_KEY)) },
+      aiCandidates,
     },
     { key: "whatsapp", group: "Messaging channels", label: "WhatsApp", optional: false, isConfigured: configured(env.WHATSAPP_PHONE_NUMBER_ID, env.WHATSAPP_TOKEN) },
     { key: "whatsapp_webhook", group: "Messaging channels", label: "WhatsApp webhook", optional: false, isConfigured: configured(env.WHATSAPP_APP_SECRET, env.WHATSAPP_VERIFY_TOKEN) },
@@ -173,9 +175,20 @@ function webhookResult(definition, stored, checkedAt) {
   );
 }
 
-function mergeOverview(defs, storedRows, currentResults, env, requestBaseUrl, nowValue) {
+function mergeOverview(
+  defs,
+  storedRows,
+  currentResults,
+  env,
+  requestBaseUrl,
+  nowValue,
+  aiCandidateRows = []
+) {
   const stored = mapStored(storedRows);
   const current = new Map((currentResults || []).map((item) => [item.key, item]));
+  const storedCandidates = new Map(
+    (aiCandidateRows || []).map((row) => [row.candidate_key, row])
+  );
   const checkedAt = iso(nowValue);
   const checks = defs.map((definition) => {
     let item = current.get(definition.key);
@@ -206,7 +219,7 @@ function mergeOverview(defs, storedRows, currentResults, env, requestBaseUrl, no
     }
     item ||= result(definition.key, "warning", "Configured, but not checked yet.", null);
 
-    return {
+    const merged = {
       ...definition.meta,
       key: definition.key,
       group: definition.group,
@@ -217,6 +230,22 @@ function mergeOverview(defs, storedRows, currentResults, env, requestBaseUrl, no
       lastSuccessAt: iso(saved?.last_success_at),
       lastWebhookAt: item.lastWebhookAt || iso(saved?.last_webhook_at),
     };
+    if (definition.key === "ai") {
+      merged.candidateHealth = (definition.aiCandidates || []).map((candidate) => {
+        const savedCandidate = storedCandidates.get(candidate.healthKey);
+        return {
+          provider: candidate.provider,
+          label: candidate.label,
+          status: savedCandidate?.last_status || "not_checked",
+          failureKind: savedCandidate?.last_failure_kind || null,
+          lastAttemptAt: iso(savedCandidate?.last_attempt_at),
+          lastSuccessAt: iso(savedCandidate?.last_success_at),
+          lastFailureAt: iso(savedCandidate?.last_failure_at),
+          lastRateLimitedAt: iso(savedCandidate?.last_rate_limited_at),
+        };
+      });
+    }
+    return merged;
   });
 
   const required = checks.filter((item) => !item.optional);
@@ -280,9 +309,43 @@ function createSetupStatusService({
     }
   }
 
+  async function aiCandidateRows() {
+    let persisted = [];
+    try {
+      if (typeof repository.listAiCandidateHealth === "function") {
+        persisted = await repository.listAiCandidateHealth(database);
+      }
+    } catch {
+      persisted = [];
+    }
+    const runtime = typeof ai.getRuntimeCandidateHealth === "function"
+      ? ai.getRuntimeCandidateHealth()
+      : [];
+    const combined = new Map(persisted.map((row) => [row.candidate_key, row]));
+    for (const row of runtime) {
+      const saved = combined.get(row.candidate_key);
+      if (!saved || new Date(row.last_attempt_at) >= new Date(saved.last_attempt_at)) {
+        combined.set(row.candidate_key, row);
+      }
+    }
+    return [...combined.values()];
+  }
+
   async function getOverview({ requestBaseUrl = null } = {}) {
     const defs = definitions(env);
-    return mergeOverview(defs, await storedRows(), [], env, requestBaseUrl, now());
+    const [savedChecks, savedCandidates] = await Promise.all([
+      storedRows(),
+      aiCandidateRows(),
+    ]);
+    return mergeOverview(
+      defs,
+      savedChecks,
+      [],
+      env,
+      requestBaseUrl,
+      now(),
+      savedCandidates
+    );
   }
 
   async function checkDatabase(checkedAt) {
@@ -510,7 +573,19 @@ function createSetupStatusService({
       }
     }
 
-    return mergeOverview(defs, await storedRows(), results, env, requestBaseUrl, checkedAt);
+    const [savedChecks, savedCandidates] = await Promise.all([
+      storedRows(),
+      aiCandidateRows(),
+    ]);
+    return mergeOverview(
+      defs,
+      savedChecks,
+      results,
+      env,
+      requestBaseUrl,
+      checkedAt,
+      savedCandidates
+    );
   }
 
   return { getOverview, runAll };
