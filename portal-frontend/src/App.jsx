@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Layout from "./components/Layout";
+import ScheduledInboxMessages from "./components/ScheduledInboxMessages";
 import Login from "./pages/Login";
 import Inbox from "./pages/Inbox";
 import Contacts from "./pages/Contacts";
@@ -60,6 +61,15 @@ function NoAccess() {
   );
 }
 
+function InboxPage() {
+  return (
+    <div className="relative h-full min-h-0">
+      <Inbox />
+      <ScheduledInboxMessages />
+    </div>
+  );
+}
+
 const LEAD_VIEW = ["view_assigned_leads", "view_all_leads"];
 
 export default function App() {
@@ -69,7 +79,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
 
-          <Route path="/inbox" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><Inbox /></ProtectedRoute>} />
+          <Route path="/inbox" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><InboxPage /></ProtectedRoute>} />
           <Route path="/contacts" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><Contacts /></ProtectedRoute>} />
           <Route path="/pipeline" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><Pipeline /></ProtectedRoute>} />
           <Route path="/analytics" element={<ProtectedRoute anyCapabilities={["view_analytics"]}><Analytics /></ProtectedRoute>} />
