@@ -362,7 +362,7 @@ export default function ScheduledInboxMessages() {
               : "Schedule this message")
           }
           aria-label="Schedule message"
-          className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:cursor-not-allowed disabled:opacity-35 sm:h-10 sm:w-10 ${
+          className={`relative flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-xl border transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:cursor-not-allowed disabled:opacity-35 ${
             activeItems.length > 0
               ? "border-[var(--color-primary)]/20 bg-[var(--color-primary-light)] text-[var(--color-primary)]"
               : "border-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-primary-light)] hover:text-[var(--color-primary)]"
@@ -389,16 +389,16 @@ export default function ScheduledInboxMessages() {
             if (event.target === event.currentTarget && !saving) setOpen(false);
           }}
         >
-          <div role="dialog" aria-modal="true" aria-labelledby="schedule-message-title" className="max-h-[92vh] w-full overflow-y-auto rounded-t-3xl bg-white shadow-[0_24px_70px_rgba(20,34,28,0.22)] sm:max-w-lg sm:rounded-3xl">
-            <div className="sticky top-0 z-10 border-b border-[var(--color-border)] bg-white/95 px-5 py-4 backdrop-blur sm:px-6">
-              <div className="flex items-start justify-between gap-4">
+          <div role="dialog" aria-modal="true" aria-labelledby="schedule-message-title" className="max-h-[92dvh] w-full overscroll-contain overflow-y-auto rounded-t-3xl bg-white pb-[env(safe-area-inset-bottom)] shadow-[0_24px_70px_rgba(20,34,28,0.22)] sm:max-w-lg sm:rounded-3xl">
+            <div className="sticky top-0 z-10 border-b border-[var(--color-border)] bg-white/95 px-4 py-3.5 backdrop-blur sm:px-6 sm:py-4">
+              <div className="flex items-start justify-between gap-3 sm:gap-4">
                 <div className="flex min-w-0 items-center gap-2.5">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-primary-light)] text-[var(--color-primary)]">
                     <ClockIcon className="h-4 w-4" />
                   </span>
                   <div className="min-w-0">
-                    <h2 id="schedule-message-title" className="font-display text-lg font-bold">{editingId ? "Edit scheduled message" : "Schedule message"}</h2>
-                    <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">Staff mode stays in control until you return this conversation to AI.</p>
+                    <h2 id="schedule-message-title" className="font-display text-base font-bold sm:text-lg">{editingId ? "Edit scheduled message" : "Schedule message"}</h2>
+                    <p className="mt-0.5 text-[10px] leading-4 text-[var(--color-text-muted)] sm:text-[11px]">Staff mode stays in control until you return this conversation to AI.</p>
                   </div>
                 </div>
                 <button type="button" onClick={() => !saving && setOpen(false)} disabled={saving} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] disabled:opacity-40" aria-label="Close scheduler">
@@ -406,9 +406,9 @@ export default function ScheduledInboxMessages() {
                 </button>
               </div>
 
-              <div className={`mt-3 flex items-start gap-2 rounded-xl px-3 py-2 text-[11px] ${canSchedule ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-danger-light)] text-[var(--color-danger)]"}`}>
+              <div aria-live="polite" className={`mt-3 flex items-start gap-2 rounded-xl px-3 py-2 text-[11px] ${canSchedule ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-danger-light)] text-[var(--color-danger)]"}`}>
                 <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${canSchedule ? "bg-[var(--color-primary)]" : "bg-[var(--color-danger)]"}`} />
-                <span className="font-semibold">
+                <span className="min-w-0 break-words font-semibold">
                   {loadFailed
                     ? "Unable to check customer reply window — tap Refresh and try again."
                     : policyBlocked
@@ -420,8 +420,8 @@ export default function ScheduledInboxMessages() {
               </div>
             </div>
 
-            <div className="space-y-5 p-5 sm:p-6">
-              <form onSubmit={save} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]/70 p-4">
+            <div className="space-y-4 p-3 sm:space-y-5 sm:p-6">
+              <form onSubmit={save} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]/70 p-3.5 sm:p-4">
                 <label className="block text-xs font-semibold text-[var(--color-text)]">
                   Message
                   <textarea
@@ -449,9 +449,9 @@ export default function ScheduledInboxMessages() {
                 </label>
 
                 {!editingId && (
-                  <div className="mt-3 flex flex-wrap gap-2">
+                  <div className="mt-3 grid grid-cols-3 gap-2">
                     {[30, 60, 180].map((minutes) => (
-                      <button key={minutes} type="button" onClick={() => applyQuickTime(minutes)} disabled={!staffMode || !canSchedule || loadFailed} className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-[11px] font-semibold text-[var(--color-text-muted)] transition hover:border-[var(--color-primary)]/30 hover:text-[var(--color-primary)] disabled:opacity-40">
+                      <button key={minutes} type="button" onClick={() => applyQuickTime(minutes)} disabled={!staffMode || !canSchedule || loadFailed} className="touch-manipulation rounded-lg border border-[var(--color-border)] bg-white px-2 py-2.5 text-[11px] font-semibold text-[var(--color-text-muted)] transition hover:border-[var(--color-primary)]/30 hover:text-[var(--color-primary)] disabled:opacity-40 sm:px-3 sm:py-1.5">
                         {minutes < 60 ? `${minutes}m` : `${minutes / 60}h`}
                       </button>
                     ))}
@@ -460,11 +460,11 @@ export default function ScheduledInboxMessages() {
 
                 {error && <p className="mt-3 rounded-xl bg-[var(--color-danger-light)] px-3 py-2.5 text-xs font-medium leading-relaxed text-[var(--color-danger)]">{error}</p>}
 
-                <div className="mt-4 flex items-center justify-end gap-2">
+                <div className="mt-4 flex flex-col-reverse gap-2 min-[380px]:flex-row min-[380px]:items-center min-[380px]:justify-end">
                   {editingId && (
-                    <button type="button" onClick={() => resetForm()} disabled={saving} className="rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-xs font-semibold transition hover:bg-[var(--color-bg)] disabled:opacity-40">Cancel edit</button>
+                    <button type="button" onClick={() => resetForm()} disabled={saving} className="touch-manipulation rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-xs font-semibold transition hover:bg-[var(--color-bg)] disabled:opacity-40">Cancel edit</button>
                   )}
-                  <button type="submit" disabled={saving || !staffMode || !content.trim() || !scheduledFor || !canSchedule || loadFailed} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40">
+                  <button type="submit" disabled={saving || !staffMode || !content.trim() || !scheduledFor || !canSchedule || loadFailed} className="inline-flex touch-manipulation items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40">
                     {saving ? "Saving…" : editingId ? "Save changes" : "Schedule message"}
                   </button>
                 </div>
@@ -492,7 +492,7 @@ export default function ScheduledInboxMessages() {
                     const canChange = item.status === "scheduled";
                     const needsReview = item.status === "failed" || item.status === "expired";
                     return (
-                      <div key={item.id} className="rounded-2xl border border-[var(--color-border)] bg-white p-3.5 shadow-sm">
+                      <div key={item.id} className="min-w-0 rounded-2xl border border-[var(--color-border)] bg-white p-3.5 shadow-sm">
                         <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{item.content}</p>
                         <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
                           <span className="font-semibold">{formatDateTime(item.scheduled_for)}</span>

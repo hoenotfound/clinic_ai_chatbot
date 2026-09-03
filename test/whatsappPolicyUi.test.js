@@ -94,3 +94,18 @@ test("staff send routes check WhatsApp policy before automatic takeover", () => 
   assert.match(source, /channelMessaging\.sendText/);
   assert.match(source, /channelMessaging\.sendImageBuffer/);
 });
+
+test("WhatsApp policy surfaces keep responsive mobile affordances", () => {
+  const root = path.join(__dirname, "..");
+  const inbox = fs.readFileSync(path.join(root, "portal-frontend/src/pages/Inbox.jsx"), "utf8");
+  const details = fs.readFileSync(path.join(root, "portal-frontend/src/components/WhatsAppMessagingDetails.jsx"), "utf8");
+  const scheduler = fs.readFileSync(path.join(root, "portal-frontend/src/components/ScheduledInboxMessages.jsx"), "utf8");
+
+  assert.match(inbox, /safe-area-inset-bottom/);
+  assert.match(inbox, /min-\[430px\]:inline/);
+  assert.match(inbox, /touch-manipulation/);
+  assert.match(details, /min-\[400px\]:flex-row/);
+  assert.match(details, /grid grid-cols-2/);
+  assert.match(scheduler, /max-h-\[92dvh\]/);
+  assert.match(scheduler, /pb-\[env\(safe-area-inset-bottom\)\]/);
+});

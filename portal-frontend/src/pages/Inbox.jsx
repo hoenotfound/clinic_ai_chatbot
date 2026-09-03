@@ -1647,7 +1647,7 @@ function ThreadView({
               </div>
             </div>
           </div>
-          <div ref={actionsMenuRef} className="relative flex shrink-0 items-center gap-2">
+          <div ref={actionsMenuRef} className="relative flex shrink-0 items-center gap-1.5 sm:gap-2">
             {contact.mode === "human" ? (
               <button
                 type="button"
@@ -1657,11 +1657,11 @@ function ThreadView({
                 }}
                 disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
                 title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice recording first" : "Return control to AI"}
-                className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50"
+                aria-label="Return control to AI"
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-white px-2.5 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50 sm:h-auto sm:gap-2 sm:px-3 sm:py-2"
               >
-                {actionPending && <Spinner />}
-                <BotIcon className="hidden h-4 w-4 sm:block" />
-                Return to AI
+                {actionPending ? <Spinner /> : <BotIcon className="h-4 w-4" />}
+                <span className="hidden min-[430px]:inline">Return to AI</span>
               </button>
             ) : (
               <button
@@ -1671,11 +1671,11 @@ function ThreadView({
                   onTakeOver();
                 }}
                 disabled={actionPending}
-                className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-[var(--color-primary)] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50"
+                aria-label="Take over conversation"
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-[var(--color-primary)] px-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50 sm:h-auto sm:gap-2 sm:px-3 sm:py-2"
               >
-                {actionPending && <Spinner />}
-                <UserIcon className="hidden h-4 w-4 sm:block" />
-                Take over
+                {actionPending ? <Spinner /> : <UserIcon className="h-4 w-4" />}
+                <span className="hidden min-[430px]:inline">Take over</span>
               </button>
             )}
             <button
@@ -1740,12 +1740,12 @@ function ThreadView({
           </div>
         )}
         {messagingPolicy.applies && (
-          <div className={`border-t px-4 py-2.5 sm:px-5 ${messagingPolicy.freeformAllowed ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+          <div className={`border-t px-3 py-2.5 sm:px-5 ${messagingPolicy.freeformAllowed ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
             <div className="flex items-start gap-2">
               <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${messagingPolicy.freeformAllowed ? "bg-emerald-500" : "bg-amber-500"}`} />
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold">{messagingPolicy.label}</p>
-                <p className="mt-0.5 text-[10px] leading-4 opacity-80">{messagingPolicy.explanation}</p>
+                <p className="break-words text-[11px] font-semibold">{messagingPolicy.label}</p>
+                <p className="mt-0.5 break-words text-[10px] leading-4 opacity-80">{messagingPolicy.explanation}</p>
                 {messagingPolicy.optedOutAt && (
                   <p className="mt-1 text-[10px] font-medium leading-4">
                     Customer opted out of WhatsApp messages on {formatPolicyDate(messagingPolicy.optedOutAt)}.
@@ -1779,7 +1779,7 @@ function ThreadView({
           {loading && <ThreadLoadingSkeleton />}
 
           {!loading && messages.length === 0 && (
-            <div className="py-16 text-center">
+            <div className="mx-auto my-6 max-w-md rounded-2xl border border-dashed border-[var(--color-border)] bg-white/70 px-5 py-8 text-center sm:my-10 sm:px-8 sm:py-10">
               <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-[var(--color-primary)]">
                 <ChatOutlineIcon className="h-5 w-5" />
               </div>
@@ -1809,10 +1809,14 @@ function ThreadView({
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 sm:px-5">
+      <form
+        onSubmit={handleSubmit}
+        className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 pt-2.5 sm:px-5"
+        style={{ paddingBottom: "max(0.625rem, env(safe-area-inset-bottom))" }}
+      >
         <div className="mx-auto w-full max-w-4xl">
           {policyBlocksComposer && (
-            <div className="mb-2.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-900">
+            <div aria-live="polite" className="mb-2.5 break-words rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-4 text-amber-900 sm:px-3">
               <span className="font-semibold">Sending unavailable.</span> {messagingPolicy.explanation}
             </div>
           )}
@@ -1863,9 +1867,9 @@ function ThreadView({
           )}
           <div className="flex items-end gap-1.5 rounded-2xl border border-[var(--color-border)] bg-white p-1.5 transition focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)] sm:gap-2">
             <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFilePicked} className="hidden" />
-            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={sending || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Attach an image"} aria-label="Attach an image" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50 sm:h-10 sm:w-10"><ImageIcon className="h-[18px] w-[18px]" /></button>
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={sending || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Attach an image"} aria-label="Attach an image" className="flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><ImageIcon className="h-[18px] w-[18px]" /></button>
             {contact.mode === "human" && (
-              <button type="button" onClick={startRecording} disabled={sending || isStartingRecording || isRecording || !!voiceBlob || !!imageFile || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Record a voice message"} aria-label="Record a voice message" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50 sm:h-10 sm:w-10"><MicrophoneIcon className="h-[18px] w-[18px]" /></button>
+              <button type="button" onClick={startRecording} disabled={sending || isStartingRecording || isRecording || !!voiceBlob || !!imageFile || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Record a voice message"} aria-label="Record a voice message" className="flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><MicrophoneIcon className="h-[18px] w-[18px]" /></button>
             )}
             <textarea
               ref={textareaRef}
@@ -1880,9 +1884,9 @@ function ThreadView({
               }}
               placeholder={policyBlocksComposer ? "WhatsApp reply unavailable" : imageFile ? "Add a caption…" : contact.mode === "human" ? "Message this patient…" : "Message to take over from AI…"}
               rows={1}
-              className="max-h-32 min-h-9 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-2 py-2 text-sm leading-relaxed outline-none disabled:opacity-50 sm:min-h-10 sm:px-2.5 sm:py-2.5"
+              className="max-h-32 min-h-10 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2.5 text-sm leading-relaxed outline-none disabled:opacity-50 sm:px-2.5"
             />
-            <button type="submit" disabled={(!draft.trim() && !imageFile) || sending || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Send message"} className="flex h-9 shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40 sm:h-10 sm:px-4 sm:text-sm">
+            <button type="submit" disabled={(!draft.trim() && !imageFile) || sending || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Send message"} aria-label="Send message" className="flex h-10 shrink-0 touch-manipulation items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40 sm:px-4 sm:text-sm">
               {sending ? <Spinner /> : <SendIcon className="h-4 w-4" />}
               <span className="hidden sm:inline">{sending ? (imageFile ? "Uploading…" : "Sending…") : "Send"}</span>
             </button>

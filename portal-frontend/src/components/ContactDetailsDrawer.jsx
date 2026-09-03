@@ -58,8 +58,8 @@ export default function ContactDetailsDrawer({ open, contact, onClose }) {
         onClick={onClose}
         aria-label="Close contact details"
       />
-      <aside className="relative flex h-full w-full max-w-[29rem] flex-col border-l border-[var(--color-border)] bg-[var(--color-bg)] shadow-[-18px_0_50px_rgba(24,39,33,0.18)]">
-        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
+      <aside className="relative flex h-[100dvh] w-full max-w-[29rem] flex-col border-l border-[var(--color-border)] bg-[var(--color-bg)] shadow-[-18px_0_50px_rgba(24,39,33,0.18)]">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-4">
           <div className="flex min-w-0 items-center gap-3">
             <ContactAvatar src={photo} channel={contact.channel} size={46} />
             <div className="min-w-0">
@@ -77,7 +77,7 @@ export default function ContactDetailsDrawer({ open, contact, onClose }) {
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+        <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto p-3 sm:p-5">
           <WhatsAppMessagingDetails contact={contact} className="mb-4" />
           <ContactInsights contactId={contactId} />
         </div>
