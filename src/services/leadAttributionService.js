@@ -1,4 +1,5 @@
 const attributionRepo = require("../db/leadAttributionRepo");
+const realtimeEvents = require("../utils/realtimeEvents");
 const {
   normalizeAttribution,
 } = require("../utils/leadAttribution");
@@ -18,7 +19,7 @@ function isReferralAttribution(attribution) {
   );
 }
 
-function createLeadAttributionService(repo = attributionRepo) {
+function createLeadAttributionService(repo = attributionRepo, events = realtimeEvents) {
   async function rememberPendingReferral(incoming) {
     if (!incoming?.attributionOnly || !incoming?.attribution) return false;
     if (!["facebook", "instagram"].includes(incoming.channel)) return false;
@@ -56,11 +57,18 @@ function createLeadAttributionService(repo = attributionRepo) {
 
     if (!attribution) attribution = normalizeAttribution(channel, null);
 
-    return repo.createFirstTouch({
+    const saved = await repo.createFirstTouch({
       leadId: lead.id,
       firstMessageId,
       attribution,
     });
+    if (saved) {
+      events.publish("pipeline_changed", {
+        leadId: lead.id,
+        reason: "lead_attribution_captured",
+      });
+    }
+    return saved;
   }
 
   return {
