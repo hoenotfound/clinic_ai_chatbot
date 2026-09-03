@@ -2,10 +2,10 @@
  * Backup safety-net for flagging conversations that need a human.
  *
  * The primary signal is the AI itself: systemPrompt.js instructs it to
- * prefix its reply with NEEDS_HUMAN_MARKER whenever it uses the clinic's
- * configured handoff message (see clinicConfig.escalation). That's the
- * preferred path because it reuses the clinic's own escalation rules
- * instead of duplicating them here.
+ * prefix replies with an internal marker for actionable conversation outcomes.
+ * NEEDS_HUMAN is the existing escalation path; BOOKING_READY means the customer
+ * has provided enough scheduling preference for staff to confirm availability.
+ * Both markers are stripped before the patient ever sees the reply.
  *
  * This keyword check exists for cases the AI signal can't cover:
  *  - the AI call fails/errors and the fallback message goes out instead
@@ -35,6 +35,8 @@ const TRIGGER_PATTERNS = [
 ];
 
 const NEEDS_HUMAN_MARKER = "[[NEEDS_HUMAN]]";
+const BOOKING_READY_MARKER = "[[BOOKING_READY]]";
+const AI_OUTCOME_MARKERS = [NEEDS_HUMAN_MARKER, BOOKING_READY_MARKER];
 
 /**
  * @param {string} text - inbound patient message
@@ -51,15 +53,54 @@ function checkKeywordTriggers(text) {
 }
 
 /**
- * Strips the AI's NEEDS_HUMAN_MARKER prefix off a reply, if present.
+ * Strips any supported internal outcome markers from the start of an AI reply.
+ * Escalation wins if a model ever emits both markers accidentally.
+ *
  * @param {string} reply
- * @returns {{ text: string, flagged: boolean }}
+ * @returns {{ text: string, flagged: boolean, bookingReady: boolean }}
  */
-function extractHandoffSignal(reply) {
-  if (typeof reply === "string" && reply.trim().startsWith(NEEDS_HUMAN_MARKER)) {
-    return { text: reply.replace(NEEDS_HUMAN_MARKER, "").trim(), flagged: true };
+function extractAiOutcomeSignals(reply) {
+  if (typeof reply !== "string") {
+    return { text: reply, flagged: false, bookingReady: false };
   }
-  return { text: reply, flagged: false };
+
+  let text = reply.trim();
+  let flagged = false;
+  let bookingReady = false;
+  let removedMarker = true;
+
+  while (removedMarker) {
+    removedMarker = false;
+    for (const marker of AI_OUTCOME_MARKERS) {
+      if (!text.startsWith(marker)) continue;
+      if (marker === NEEDS_HUMAN_MARKER) flagged = true;
+      if (marker === BOOKING_READY_MARKER) bookingReady = true;
+      text = text.slice(marker.length).trimStart();
+      removedMarker = true;
+      break;
+    }
+  }
+
+  // A medical/safety/human escalation is always more important than a sales
+  // outcome. Never run booking-ready automation on the same reply.
+  if (flagged) bookingReady = false;
+
+  return { text: text.trim(), flagged, bookingReady };
 }
 
-module.exports = { checkKeywordTriggers, extractHandoffSignal, NEEDS_HUMAN_MARKER };
+/**
+ * Backward-compatible helper kept for existing callers/tests that only care
+ * about the human-handoff signal.
+ */
+function extractHandoffSignal(reply) {
+  const { text, flagged } = extractAiOutcomeSignals(reply);
+  return { text, flagged };
+}
+
+module.exports = {
+  checkKeywordTriggers,
+  extractAiOutcomeSignals,
+  extractHandoffSignal,
+  NEEDS_HUMAN_MARKER,
+  BOOKING_READY_MARKER,
+};
