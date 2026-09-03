@@ -27,23 +27,29 @@ const TRIGGER_PATTERNS = [
   /\bmanager\b/i,
   /\blawyer\b|\blegal action\b/i,
 
-  // Bahasa Malaysia / common Malaysian chat phrasing.
+  // Bahasa Malaysia / common Malaysian chat phrasing. Avoid matching a normal
+  // pre-treatment question such as "sakit sangat ke?" as though it were an
+  // active severe-pain report.
   /\b(nak|mahu) (cakap|bercakap) (dengan )?(staff|orang|manusia|agent|ejen)\b/i,
   /\b(cakap|sambung) (dengan )?(staff|orang sebenar|agent|ejen)\b/i,
   /\brefund( duit)?\b|\bpulangkan duit\b/i,
   /\b(aduan|buat aduan|nak complain)\b/i,
-  /\b(sakit sangat|terlalu sakit|sakit teruk|makin sakit|semakin sakit)\b/i,
+  /\b(terlalu sakit|sakit teruk|makin sakit|semakin sakit|sakit tak tahan)\b/i,
+  /\bsakit sangat\b(?!\s*(?:ke|tak|kah|\?))/i,
   /\b(sesak nafas|susah bernafas|tak boleh bernafas)\b/i,
   /\b(reaksi alergi|alahan teruk|bengkak teruk)\b/i,
   /\b(kecemasan|darurat)\b/i,
 
-  // Simplified/traditional Chinese phrases common in clinic chat.
+  // Simplified/traditional Chinese phrases common in clinic chat. Plain
+  // "很痛吗?" / "非常痛吗?" questions are excluded while actual severe or
+  // worsening pain reports still trigger the safety backstop.
   /(我要|想找|帮我找|转)(真人|人工|客服|工作人员|职员|職員)/u,
   /(真人客服|人工客服|转人工|轉人工|找经理|找經理)/u,
   /(投诉|投訴|我要投诉|我要投訴|退款|退钱|退錢)/u,
   /(呼吸困难|呼吸困難|喘不过气|喘不過氣|不能呼吸)/u,
   /(过敏反应|過敏反應|严重过敏|嚴重過敏)/u,
-  /(很痛|非常痛|剧痛|劇痛|越来越痛|越來越痛)/u,
+  /(剧痛|劇痛|痛得受不了|痛到受不了|越来越痛|越來越痛)/u,
+  /(很痛|非常痛)(?!吗|嗎|么|呢|\?|？)/u,
   /(越来越严重|越來越嚴重|越来越肿|越來越腫)/u,
 ];
 
