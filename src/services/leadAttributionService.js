@@ -30,6 +30,15 @@ function createLeadAttributionService(repo = attributionRepo) {
     return true;
   }
 
+  async function consumePendingForInbound(incoming) {
+    const channel = incoming?.channel || "whatsapp";
+    if (!["facebook", "instagram"].includes(channel) || !incoming?.from) return null;
+    // If the message itself already contains referral data there is no pending
+    // record required for attribution, but consuming any earlier record keeps a
+    // stale OPEN_THREAD click from leaking into a later lead journey.
+    return repo.takePending(channel, incoming.from);
+  }
+
   async function captureForInbound({ lead, incoming, firstMessageId }) {
     if (!lead?.id || !incoming) return null;
 
@@ -38,10 +47,11 @@ function createLeadAttributionService(repo = attributionRepo) {
 
     // Messenger/Instagram OPEN_THREAD referrals can arrive before the message
     // itself. Prefer attribution attached to the message, otherwise consume the
-    // most recent pending referral for this scoped user.
-    if (!isReferralAttribution(attribution) && ["facebook", "instagram"].includes(channel)) {
+    // most recent pending referral for this scoped user. If the message already
+    // carries the referral, still discard any older pending value for this user.
+    if (["facebook", "instagram"].includes(channel)) {
       const pending = await repo.takePending(channel, incoming.from);
-      if (pending) attribution = pending;
+      if (!isReferralAttribution(attribution) && pending) attribution = pending;
     }
 
     if (!attribution) attribution = normalizeAttribution(channel, null);
@@ -56,6 +66,7 @@ function createLeadAttributionService(repo = attributionRepo) {
   return {
     captureForInbound,
     rememberPendingReferral,
+    consumePendingForInbound,
   };
 }
 
