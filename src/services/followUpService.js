@@ -64,6 +64,7 @@ function publishConversationChange(message, reason) {
 
 function contactForCandidate(candidate) {
   return {
+    id: candidate.contact_id,
     channel: candidate.channel || "whatsapp",
     whatsapp_number: candidate.whatsapp_number,
     channel_user_id: candidate.channel_user_id,
@@ -205,7 +206,7 @@ async function sendCandidate(candidate) {
       (await messagesRepo.setDeliveryStatusById(
         saved.id,
         "failed",
-        rejectedError
+        sendResult?.error || rejectedError
       )) || saved;
   } else if (isSocial) {
     // Messenger/Instagram return an accepted send result but do not use the
@@ -220,7 +221,7 @@ async function sendCandidate(candidate) {
   if (!sendResult?.success) {
     await contactsRepo.setDeliveryAttention(
       candidate.contact_id,
-      `Delivery failed: ${rejectedError}`
+      `Delivery failed: ${sendResult?.error || rejectedError}`
     );
     return;
   }
