@@ -20,6 +20,9 @@ const FOLLOW_UP_MESSAGE_COLUMNS = `
 /**
  * Returns conversations whose newest message is a successful outbound
  * message and whose customer has stayed silent for the configured delay.
+ * Conversations already waiting for staff attention are deliberately skipped:
+ * an automated sales nudge must never race a booking-ready or human-handoff
+ * workflow that explicitly asked the clinic team to take over next.
  * All supported Meta messaging channels use the same standard 24-hour
  * customer-response window, so leave a small safety buffer before that limit.
  */
@@ -57,6 +60,7 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
        LIMIT 1
      ) latest_inbound ON true
      WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
+       AND c.needs_attention = false
        AND (
          (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
          OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
@@ -90,8 +94,11 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
 
 /**
  * Atomically claims a follow-up by inserting its Inbox message only if the
- * trigger is still the conversation's newest message. The unique trigger
- * index is the second guard against duplicate sends across server instances.
+ * trigger is still the conversation's newest message and the conversation is
+ * still free of a staff-attention requirement. The second condition is repeated
+ * here so an attention flag raised after candidate discovery still blocks send.
+ * The unique trigger index is the second guard against duplicate sends across
+ * server instances.
  */
 async function saveIfStillEligible({
   contactId,
@@ -131,6 +138,7 @@ async function saveIfStillEligible({
      SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2
      FROM latest, latest_inbound, contacts c
      WHERE c.id = $1
+       AND c.needs_attention = false
        AND c.channel IN ('whatsapp', 'facebook', 'instagram')
        AND (
          (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
