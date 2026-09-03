@@ -398,7 +398,7 @@ function parseIncomingMessages(body) {
         from: String(senderId),
         channel,
         profileName: null,
-        attribution,
+        ...(attribution ? { attribution } : {}),
       };
 
       if (attachmentType === "image") {

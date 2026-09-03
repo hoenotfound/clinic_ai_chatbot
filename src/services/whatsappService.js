@@ -296,7 +296,7 @@ function parseIncomingMessages(body) {
             id: message.id,
             from: message.from,
             profileName,
-            attribution,
+            ...(attribution ? { attribution } : {}),
           };
 
           if (message.type === "text") {
