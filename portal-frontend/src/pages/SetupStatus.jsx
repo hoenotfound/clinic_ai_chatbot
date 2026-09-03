@@ -207,6 +207,12 @@ export default function SetupStatus() {
 
 function ConnectionCard({ check }) {
   const style = STATUS_STYLE[check.status] || STATUS_STYLE.warning;
+  const awaitingActivity = check.status === "warning" && [
+    "facebook",
+    "instagram",
+    "whatsapp_webhook",
+    "meta_webhook",
+  ].includes(check.key);
   return (
     <article className="min-w-0 rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-sm sm:p-5">
       <div className="flex items-start justify-between gap-3">
@@ -215,7 +221,7 @@ function ConnectionCard({ check }) {
           <h3 className="truncate text-sm font-bold">{check.label}</h3>
         </div>
         <span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-bold uppercase tracking-wide ${style.badge}`}>
-          {style.label}
+          {awaitingActivity ? "Awaiting activity" : style.label}
         </span>
       </div>
 
@@ -248,6 +254,12 @@ function ConnectionCard({ check }) {
           <div className="flex items-start justify-between gap-3">
             <dt>Latest webhook</dt>
             <dd className="text-right font-medium text-[var(--color-text)]">{formatTime(check.lastWebhookAt)}</dd>
+          </div>
+        )}
+        {check.lastActivityAt && (
+          <div className="flex items-start justify-between gap-3">
+            <dt>Latest customer message</dt>
+            <dd className="text-right font-medium text-[var(--color-text)]">{formatTime(check.lastActivityAt)}</dd>
           </div>
         )}
         {check.optional && (
@@ -320,7 +332,7 @@ function MetaReviewNote() {
         <ChevronIcon className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" />
       </summary>
       <p className="border-t border-[var(--color-border)] px-3.5 py-3 text-[11px] leading-5 text-[var(--color-text-muted)] sm:text-xs">
-        Facebook and Instagram checks confirm access to configured test assets and signed webhook activity. They cannot confirm that Meta has approved public messaging access.
+        Facebook and Instagram checks confirm configured credentials and real customer messaging activity. They cannot confirm that Meta has approved public messaging access.
       </p>
     </details>
   );
