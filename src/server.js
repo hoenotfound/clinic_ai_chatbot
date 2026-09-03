@@ -390,7 +390,9 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
-    const history = await conversationStore.getHistoryForContact(contact.id);
+    const history = await conversationStore.getHistoryForContact(contact.id, {
+      throughMessageId: savedInbound.id,
+    });
     const isFirstMessage = forceFirstMessage || history.length === 1;
     const rawAiReply = await ai.getReply(history, { isFirstMessage, channel });
     const parsedReply = parseAiReplyResult(rawAiReply);
