@@ -77,6 +77,7 @@ export default function ScheduledInboxMessages() {
   const [composerMount, setComposerMount] = useState(null);
   const [composerMediaBlocked, setComposerMediaBlocked] = useState(false);
   const [staffMode, setStaffMode] = useState(false);
+  const [checkingMode, setCheckingMode] = useState(false);
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState([]);
   const [windowEndsAt, setWindowEndsAt] = useState(null);
@@ -120,6 +121,7 @@ export default function ScheduledInboxMessages() {
     setItems([]);
     setWindowEndsAt(null);
     setStaffMode(false);
+    setCheckingMode(false);
     setOpen(false);
     setEditingId(null);
     setContent("");
@@ -209,20 +211,35 @@ export default function ScheduledInboxMessages() {
   }
 
   async function openScheduler() {
-    if (!contactId || composerMediaBlocked || !staffMode) return;
+    if (!contactId || composerMediaBlocked || checkingMode) return;
+
     const textarea = composerFormRef.current?.querySelector("textarea");
     const draft = textarea?.value || "";
     draftSnapshotRef.current = draft;
     setEditingId(null);
     setContent(draft);
     setError("");
-    setOpen(true);
-    const data = await load();
-    if (data?.staffMode !== true) {
-      setOpen(false);
-      return;
+    setCheckingMode(true);
+
+    try {
+      // Always re-check ownership here. The main Inbox takeover action updates
+      // its own state directly and does not guarantee this companion component
+      // receives a realtime event first.
+      const data = await load();
+      if (!data) {
+        setOpen(true);
+        return;
+      }
+
+      setScheduledFor(getDefaultScheduledFor(data.windowEndsAt || null));
+      setOpen(true);
+
+      if (data.staffMode !== true) {
+        setError("Take over this conversation first, then click Schedule again.");
+      }
+    } finally {
+      setCheckingMode(false);
     }
-    setScheduledFor(getDefaultScheduledFor(data?.windowEndsAt || null));
   }
 
   function startEdit(item) {
@@ -245,7 +262,7 @@ export default function ScheduledInboxMessages() {
 
   async function save(event) {
     event.preventDefault();
-    if (!contactId || !content.trim() || !scheduledFor) return;
+    if (!contactId || !content.trim() || !scheduledFor || !staffMode) return;
     const wasEditing = !!editingId;
     setSaving(true);
     setError("");
@@ -291,9 +308,7 @@ export default function ScheduledInboxMessages() {
 
   if (!contactId) return null;
 
-  const disabledReason = !staffMode
-    ? "Take over this conversation before scheduling a staff message."
-    : composerMediaBlocked
+  const mediaDisabledReason = composerMediaBlocked
     ? "Scheduled messages support text only. Finish or remove the current image or voice message first."
     : null;
 
@@ -302,8 +317,17 @@ export default function ScheduledInboxMessages() {
         <button
           type="button"
           onClick={openScheduler}
-          disabled={!!disabledReason}
-          title={disabledReason || (activeItems.length > 0 ? `${activeItems.length} scheduled message${activeItems.length === 1 ? "" : "s"}` : "Schedule this message")}
+          disabled={!!mediaDisabledReason || checkingMode}
+          title={
+            mediaDisabledReason ||
+            (checkingMode
+              ? "Checking conversation status…"
+              : !staffMode
+              ? "Schedule message — staff takeover may be required"
+              : activeItems.length > 0
+              ? `${activeItems.length} scheduled message${activeItems.length === 1 ? "" : "s"}`
+              : "Schedule this message")
+          }
           aria-label="Schedule message"
           className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:cursor-not-allowed disabled:opacity-35 sm:h-10 sm:w-10 ${
             activeItems.length > 0
@@ -365,7 +389,8 @@ export default function ScheduledInboxMessages() {
                     rows={4}
                     maxLength={4096}
                     placeholder="Type the message to send later…"
-                    className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+                    disabled={!staffMode}
+                    className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)] disabled:cursor-not-allowed disabled:opacity-60"
                   />
                 </label>
 
@@ -377,14 +402,15 @@ export default function ScheduledInboxMessages() {
                     min={toLocalInputValue(new Date(Date.now() + 60 * 1000))}
                     max={maxScheduleValue}
                     onChange={(event) => setScheduledFor(event.target.value)}
-                    className="mt-2 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm font-medium outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+                    disabled={!staffMode}
+                    className="mt-2 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm font-medium outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)] disabled:cursor-not-allowed disabled:opacity-60"
                   />
                 </label>
 
                 {!editingId && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {[30, 60, 180].map((minutes) => (
-                      <button key={minutes} type="button" onClick={() => applyQuickTime(minutes)} disabled={!windowOpen} className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-[11px] font-semibold text-[var(--color-text-muted)] transition hover:border-[var(--color-primary)]/30 hover:text-[var(--color-primary)] disabled:opacity-40">
+                      <button key={minutes} type="button" onClick={() => applyQuickTime(minutes)} disabled={!staffMode || !windowOpen} className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-1.5 text-[11px] font-semibold text-[var(--color-text-muted)] transition hover:border-[var(--color-primary)]/30 hover:text-[var(--color-primary)] disabled:opacity-40">
                         {minutes < 60 ? `${minutes}m` : `${minutes / 60}h`}
                       </button>
                     ))}
@@ -397,7 +423,7 @@ export default function ScheduledInboxMessages() {
                   {editingId && (
                     <button type="button" onClick={() => resetForm()} disabled={saving} className="rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-xs font-semibold transition hover:bg-[var(--color-bg)] disabled:opacity-40">Cancel edit</button>
                   )}
-                  <button type="submit" disabled={saving || !content.trim() || !scheduledFor || !windowOpen} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40">
+                  <button type="submit" disabled={saving || !staffMode || !content.trim() || !scheduledFor || !windowOpen} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40">
                     {saving ? "Saving…" : editingId ? "Save changes" : "Schedule message"}
                   </button>
                 </div>
