@@ -29,12 +29,16 @@ function createBookingReadyOutcomeService({
     try {
       await client.query("BEGIN");
 
+      // This is an AI-owned conversation outcome. If staff took over while the
+      // model was generating, fail closed and leave all lead/attention state to
+      // the staff-owned flow instead of applying a late automatic outcome.
       const contactResult = await client.query(
         `UPDATE contacts
          SET needs_attention = true,
              attention_reason = $1,
              updated_at = now()
          WHERE id = $2
+           AND mode = 'ai'
            AND (
              needs_attention = false
              OR attention_reason IS NULL
@@ -47,63 +51,65 @@ function createBookingReadyOutcomeService({
       );
       contactUpdated = Boolean(contactResult.rows[0]);
 
-      const leadResult = await client.query(
-        `SELECT id, temperature, temperature_locked
-         FROM leads
-         WHERE contact_id = $1 AND is_closed = false
-         ORDER BY created_at DESC, id DESC
-         LIMIT 1
-         FOR UPDATE`,
-        [contactId]
-      );
-      const lead = leadResult.rows[0] || null;
-
-      if (lead) {
-        leadId = lead.id;
-
-        if (!lead.temperature_locked && lead.temperature !== "hot") {
-          const updated = await client.query(
-            `UPDATE leads
-             SET temperature = 'hot',
-                 temperature_source = 'ai',
-                 updated_at = now()
-             WHERE id = $1 AND is_closed = false AND temperature_locked = false
-             RETURNING id`,
-            [lead.id]
-          );
-          leadChanged = Boolean(updated.rows[0]);
-        }
-
-        const metadata = {
-          source: "ai_conversation_outcome",
-          outcome: "booking_ready",
-          ...(capturedMessageId ? { messageId: capturedMessageId } : {}),
-        };
-        const activityResult = await client.query(
-          `INSERT INTO lead_activities (
-             lead_id, activity_type, description, actor, metadata
-           )
-           SELECT $1, 'updated', $2, 'AI outcome', $3
-           WHERE NOT EXISTS (
-             SELECT 1
-             FROM lead_activities existing
-             WHERE existing.lead_id = $1
-               AND existing.activity_type = 'updated'
-               AND existing.metadata->>'outcome' = 'booking_ready'
-               AND (
-                 $4::integer IS NULL
-                 OR existing.metadata->>'messageId' = $4::text
-               )
-           )
-           RETURNING id`,
-          [
-            lead.id,
-            "AI marked this conversation Booking Ready. Staff should verify the requested branch/time and confirm availability before setting the appointment.",
-            metadata,
-            capturedMessageId,
-          ]
+      if (contactUpdated) {
+        const leadResult = await client.query(
+          `SELECT id, temperature, temperature_locked
+           FROM leads
+           WHERE contact_id = $1 AND is_closed = false
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1
+           FOR UPDATE`,
+          [contactId]
         );
-        leadChanged = leadChanged || Boolean(activityResult.rows[0]);
+        const lead = leadResult.rows[0] || null;
+
+        if (lead) {
+          leadId = lead.id;
+
+          if (!lead.temperature_locked && lead.temperature !== "hot") {
+            const updated = await client.query(
+              `UPDATE leads
+               SET temperature = 'hot',
+                   temperature_source = 'ai',
+                   updated_at = now()
+               WHERE id = $1 AND is_closed = false AND temperature_locked = false
+               RETURNING id`,
+              [lead.id]
+            );
+            leadChanged = Boolean(updated.rows[0]);
+          }
+
+          const metadata = {
+            source: "ai_conversation_outcome",
+            outcome: "booking_ready",
+            ...(capturedMessageId ? { messageId: capturedMessageId } : {}),
+          };
+          const activityResult = await client.query(
+            `INSERT INTO lead_activities (
+               lead_id, activity_type, description, actor, metadata
+             )
+             SELECT $1, 'updated', $2, 'AI outcome', $3
+             WHERE NOT EXISTS (
+               SELECT 1
+               FROM lead_activities existing
+               WHERE existing.lead_id = $1
+                 AND existing.activity_type = 'updated'
+                 AND existing.metadata->>'outcome' = 'booking_ready'
+                 AND (
+                   $4::integer IS NULL
+                   OR existing.metadata->>'messageId' = $4::text
+                 )
+             )
+             RETURNING id`,
+            [
+              lead.id,
+              "AI marked this conversation Booking Ready. Staff should verify the requested branch/time and confirm availability before setting the appointment.",
+              metadata,
+              capturedMessageId,
+            ]
+          );
+          leadChanged = leadChanged || Boolean(activityResult.rows[0]);
+        }
       }
 
       await client.query("COMMIT");
