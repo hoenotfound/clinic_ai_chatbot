@@ -1,6 +1,7 @@
 const express = require("express");
 const pipelineRepo = require("../db/pipelineRepo");
 const analyticsRepo = require("../db/analyticsRepo");
+const leadAttributionRepo = require("../db/leadAttributionRepo");
 const contactsRepo = require("../db/contactsRepo");
 const usersRepo = require("../db/usersRepo");
 const clinicConfig = require("../config/clinicConfig");
@@ -23,6 +24,16 @@ function distinctNames(values) {
 
 function configuredBranchNames() {
   return distinctNames((clinicConfig.branches || []).map((branch) => branch.name));
+}
+
+function withAttribution(lead, attribution) {
+  if (!lead) return lead;
+  return { ...lead, attribution: attribution || null };
+}
+
+async function enrichLead(lead) {
+  if (!lead) return null;
+  return withAttribution(lead, await leadAttributionRepo.getForLead(lead.id));
 }
 
 function handlePipelineError(res, err, fallbackMessage) {
@@ -52,11 +63,17 @@ function handlePipelineError(res, err, fallbackMessage) {
 // GET /api/pipeline - complete lightweight board payload.
 router.get("/", async (req, res) => {
   try {
-    const [stages, leads, assignableOwners] = await Promise.all([
+    const [stages, rawLeads, assignableOwners] = await Promise.all([
       pipelineRepo.listStages(),
       pipelineRepo.listLeads(),
       usersRepo.listAssignableLeadOwners(),
     ]);
+    const attributionByLead = await leadAttributionRepo.getForLeadIds(
+      rawLeads.map((lead) => lead.id)
+    );
+    const leads = rawLeads.map((lead) =>
+      withAttribution(lead, attributionByLead.get(Number(lead.id)))
+    );
     const configuredBranches = configuredBranchNames();
     const savedBranches = distinctNames(leads.map((lead) => lead.branch_name));
 
@@ -67,6 +84,9 @@ router.get("/", async (req, res) => {
       configuredBranches,
       owners: assignableOwners.map((owner) => owner.username),
       services: distinctNames((clinicConfig.services || []).map((service) => service.name)),
+      sources: distinctNames(
+        leads.map((lead) => lead.attribution?.source || lead.source)
+      ).sort(),
       noReplyHours: pipelineRepo.NO_REPLY_HOURS,
     });
   } catch (err) {
@@ -106,7 +126,7 @@ router.post("/leads", async (req, res) => {
     const contact = await contactsRepo.getContactById(data.contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
     const result = await pipelineRepo.createLead(data, req.session.username);
-    const lead = await pipelineRepo.getLeadById(result.lead.id);
+    const lead = await enrichLead(await pipelineRepo.getLeadById(result.lead.id));
     res.status(result.created ? 201 : 200).json({ lead, created: result.created });
   } catch (err) {
     handlePipelineError(res, err, "Something went wrong creating the lead.");
@@ -118,7 +138,7 @@ router.patch("/leads/:leadId", async (req, res) => {
     const patch = normalizeLeadPayload(req.body, { partial: true });
     const updated = await pipelineRepo.updateLead(req.params.leadId, patch, req.session.username);
     if (!updated) return res.status(404).json({ error: "Lead not found." });
-    res.json(await pipelineRepo.getLeadById(updated.id));
+    res.json(await enrichLead(await pipelineRepo.getLeadById(updated.id)));
   } catch (err) {
     handlePipelineError(res, err, "Something went wrong updating the lead.");
   }
