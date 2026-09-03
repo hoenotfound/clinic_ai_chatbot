@@ -5,6 +5,7 @@ const {
   createSetupStatusService,
   safeError,
 } = require("../src/services/setupStatusService");
+const { credentialFingerprint } = require("../src/services/aiService");
 const { requireAdministrator } = require("../src/routes/setupStatus");
 
 function response(body, { ok = true, status = 200 } = {}) {
@@ -44,10 +45,14 @@ function completeEnv() {
   };
 }
 
-function memoryRepository(initial = []) {
+function memoryRepository(initial = [], candidateInitial = []) {
   const rows = new Map(initial.map((row) => [row.check_key, { ...row }]));
+  const candidateRows = new Map(
+    candidateInitial.map((row) => [row.candidate_key, { ...row }])
+  );
   return {
     rows,
+    candidateRows,
     async listConnectionHealth() {
       return [...rows.values()];
     },
@@ -64,6 +69,9 @@ function memoryRepository(initial = []) {
             : previous.last_success_at || null,
         });
       }
+    },
+    async listAiCandidateHealth() {
+      return [...candidateRows.values()];
     },
   };
 }
@@ -259,6 +267,35 @@ test("overview reports the persisted last run instead of the page-load time", as
   const status = await service.getOverview();
   assert.equal(status.checkedAt, "2026-09-03T12:00:00.000Z");
   assert.equal(status.lastRunAt, "2026-09-02T08:30:00.000Z");
+});
+
+test("overview exposes masked candidate health without any key material", async () => {
+  const env = completeEnv();
+  const candidateKey = `gemini_${credentialFingerprint(env.GEMINI_API_KEY)}`;
+  const service = createSetupStatusService({
+    env,
+    now: () => new Date("2026-09-03T12:00:00.000Z"),
+    repository: memoryRepository([], [
+      {
+        candidate_key: candidateKey,
+        provider: "gemini",
+        last_status: "rate_limited",
+        last_failure_kind: "rate_limit",
+        last_attempt_at: "2026-09-03T11:30:00.000Z",
+        last_success_at: "2026-09-03T09:00:00.000Z",
+        last_failure_at: "2026-09-03T11:30:00.000Z",
+        last_rate_limited_at: "2026-09-03T11:30:00.000Z",
+      },
+    ]),
+  });
+
+  const status = await service.getOverview();
+  const ai = status.checks.find((check) => check.key === "ai");
+  assert.equal(ai.candidateHealth[0].label, "Gemini key 1");
+  assert.equal(ai.candidateHealth[0].status, "rate_limited");
+  assert.equal(ai.candidateHealth[0].lastRateLimitedAt, "2026-09-03T11:30:00.000Z");
+  assert.equal(JSON.stringify(status).includes(env.GEMINI_API_KEY), false);
+  assert.equal(JSON.stringify(status).includes(candidateKey), false);
 });
 
 test("provider errors redact configured secrets even when echoed without a Bearer prefix", async () => {
