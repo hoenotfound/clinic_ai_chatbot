@@ -68,3 +68,11 @@ test("system prompt uses structured outcomes and keeps Booking Ready separate fr
   assert.match(prompt, /Appointment Set is a staff-confirmed CRM state/i);
   assert.match(prompt, /Legacy tokens such as \[\[NEEDS_HUMAN\]\] and \[\[BOOKING_READY\]\]/i);
 });
+
+test("system prompt makes active promotions override stale promotional wording elsewhere", () => {
+  const prompt = buildSystemPrompt(false);
+  assert.match(prompt, /ACTIVE PROMOTIONS.*ONLY authority/is);
+  assert.match(prompt, /overrides promotion\/discount\/deadline wording in SERVICES, FAQs, SOP/i);
+  assert.match(prompt, /matching deal is not listed in ACTIVE PROMOTIONS, treat that promotional price as stale/i);
+  assert.match(prompt, /Do not quote it as current/i);
+});
