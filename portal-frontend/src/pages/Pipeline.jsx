@@ -10,6 +10,7 @@ import StageManager from "../components/pipeline/StageManager";
 import AddLeadModal from "../components/pipeline/AddLeadModal";
 import StageMoveDialog from "../components/pipeline/StageMoveDialog";
 import { formatMoney, isNoReply, isOverdue } from "../components/pipeline/pipelineUtils";
+import { sourceLabel } from "../components/pipeline/LeadAttributionPanel";
 
 const PIPELINE_CLOCK_INTERVAL_MS = 30 * 1000;
 const TIME_ZONE = "Asia/Kuala_Lumpur";
@@ -56,6 +57,7 @@ export default function Pipeline() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [branchFilter, setBranchFilter] = useState(() => parameterOrNull(searchParams, "branch") || "all");
+  const [sourceFilter, setSourceFilter] = useState(() => parameterOrNull(searchParams, "source_filter") || "all");
   const [categoryFilter, setCategoryFilter] = useState(() => {
     const requested = searchParams.get("category") || "all";
     return CATEGORY_KEYS.has(requested) ? requested : "all";
@@ -104,6 +106,7 @@ export default function Pipeline() {
     const requestedBranch = parameterOrNull(searchParams, "branch") || "all";
     const requestedCategory = searchParams.get("category") || "all";
     setBranchFilter(requestedBranch);
+    setSourceFilter(parameterOrNull(searchParams, "source_filter") || "all");
     setCategoryFilter(CATEGORY_KEYS.has(requestedCategory) ? requestedCategory : "all");
   }, [searchParams]);
 
@@ -177,13 +180,20 @@ export default function Pipeline() {
     });
   }, [analyticsFilters, hasAnalyticsDrilldown, leads]);
 
+  const sourceFilteredLeads = useMemo(() => {
+    if (sourceFilter === "all") return analyticsBaseLeads;
+    return analyticsBaseLeads.filter(
+      (lead) => (lead.attribution?.source || lead.source) === sourceFilter
+    );
+  }, [analyticsBaseLeads, sourceFilter]);
+
   const drilldownLeads = useMemo(() => {
-    return analyticsBaseLeads.filter((lead) => {
+    return sourceFilteredLeads.filter((lead) => {
       if (branchFilter === "unassigned" && lead.branch_name) return false;
       if (branchFilter !== "all" && branchFilter !== "unassigned" && lead.branch_name !== branchFilter) return false;
       return true;
     });
-  }, [analyticsBaseLeads, branchFilter]);
+  }, [sourceFilteredLeads, branchFilter]);
 
   const filteredLeads = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -198,6 +208,9 @@ export default function Pipeline() {
           lead.branch_name,
           lead.owner_username,
           lead.source,
+          lead.attribution?.source,
+          lead.attribution?.headline,
+          lead.attribution?.meta_ad_id,
           lead.campaign_name,
         ].filter(Boolean).join(" ").toLowerCase();
         if (!haystack.includes(term)) return false;
@@ -216,7 +229,7 @@ export default function Pipeline() {
   const metricLeads = hasAnalyticsDrilldown ? drilldownLeads : leads;
   const metricActiveLeads = metricLeads.filter((lead) => !lead.is_closed);
   const pipelineValue = metricActiveLeads.reduce((sum, lead) => sum + (Number(lead.estimated_value) || 0), 0);
-  const branchCardBase = hasAnalyticsDrilldown ? analyticsBaseLeads : leads;
+  const branchCardBase = sourceFilter !== "all" || hasAnalyticsDrilldown ? sourceFilteredLeads : leads;
   const branchCardActive = branchCardBase.filter((lead) => !lead.is_closed);
   const branchCards = useMemo(() => [
     { key: "all", label: "All branches", leads: branchCardActive },
@@ -257,6 +270,11 @@ export default function Pipeline() {
   function selectCategory(value) {
     setCategoryFilter(value);
     updateParam("category", value);
+  }
+
+  function selectSource(value) {
+    setSourceFilter(value);
+    updateParam("source_filter", value);
   }
 
   function clearAnalyticsDrilldown() {
@@ -432,6 +450,17 @@ export default function Pipeline() {
             <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search leads…" className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] pl-9 pr-9 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15" />
             {search && <button type="button" onClick={() => setSearch("")} aria-label="Clear search" className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-sm text-[var(--color-text-muted)] hover:bg-white">✕</button>}
           </div>
+          <select
+            value={sourceFilter}
+            onChange={(event) => selectSource(event.target.value)}
+            aria-label="Filter by lead source"
+            className="h-11 max-w-[13rem] shrink-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-xs font-semibold text-[var(--color-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15"
+          >
+            <option value="all">All sources</option>
+            {(data?.sources || []).map((source) => (
+              <option key={source} value={source}>{sourceLabel(source)}</option>
+            ))}
+          </select>
           <span className="hidden shrink-0 text-[11px] font-medium text-[var(--color-text-muted)] md:block">{filteredLeads.length} shown</span>
         </div>
         <div className="mt-2.5 flex gap-1.5 overflow-x-auto pb-0.5">

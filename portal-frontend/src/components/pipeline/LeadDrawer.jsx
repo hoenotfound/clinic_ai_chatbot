@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../context/AuthContext";
 import ContactAvatar from "../ContactAvatar";
+import LeadAttributionPanel from "./LeadAttributionPanel";
 import Spinner from "../Spinner";
 import {
   APPOINTMENT_OPTIONS,
@@ -214,6 +215,8 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
             {lead.needs_attention && <StatusPill tone="danger">Needs attention</StatusPill>}
             {lead.is_unread && <StatusPill tone="primary">Unread</StatusPill>}
           </div>
+
+          <LeadAttributionPanel lead={lead} />
 
           <form onSubmit={handleSave} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
             <div className="mb-4 flex items-center justify-between gap-3">
