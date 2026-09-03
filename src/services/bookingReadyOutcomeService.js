@@ -32,6 +32,11 @@ function createBookingReadyOutcomeService({
       // This is an AI-owned conversation outcome. If staff took over while the
       // model was generating, fail closed and leave all lead/attention state to
       // the staff-owned flow instead of applying a late automatic outcome.
+      // Also do not re-raise Booking Ready while the first unresolved Booking
+      // Ready attention flag is still active. That prevents a stray repeated
+      // model marker on "ok"/"thanks" from creating duplicate activities and
+      // Telegram alerts. Once staff clears/takes over, a future genuine booking
+      // attempt can create a fresh outcome normally.
       const contactResult = await client.query(
         `UPDATE contacts
          SET needs_attention = true,
@@ -42,7 +47,6 @@ function createBookingReadyOutcomeService({
            AND (
              needs_attention = false
              OR attention_reason IS NULL
-             OR attention_reason LIKE 'Booking ready:%'
              OR attention_reason LIKE 'Delivery failed:%'
              OR attention_reason LIKE 'Delivery unconfirmed:%'
            )
