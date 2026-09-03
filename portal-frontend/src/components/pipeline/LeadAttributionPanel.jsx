@@ -3,8 +3,8 @@ const SOURCE_LABELS = {
   meta_post: "Meta post",
   facebook_referral: "Facebook referral",
   instagram_referral: "Instagram referral",
-  facebook_organic: "Facebook organic",
-  instagram_organic: "Instagram organic",
+  facebook_organic: "Facebook organic / untracked",
+  instagram_organic: "Instagram organic / untracked",
   whatsapp_unattributed: "WhatsApp direct / untracked",
 };
 
