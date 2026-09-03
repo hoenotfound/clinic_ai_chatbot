@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   finalize:
+    if: ${{ github.event.head_commit.message == 'Fix one-shot attribution UI finalizer' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,11 +35,10 @@ jobs:
           text = text.replace('<Field label="Campaign">', '<Field label="Campaign (manual override)">', 1)
           drawer.write_text(text)
           PY
-          git rm .github/workflows/finalize-attribution-ui.yml
-      - name: Commit refinements and remove this one-shot workflow
+      - name: Commit refinements
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add portal-frontend/src/pages/Pipeline.jsx portal-frontend/src/components/pipeline/LeadDrawer.jsx .github/workflows/finalize-attribution-ui.yml
+          git add portal-frontend/src/pages/Pipeline.jsx portal-frontend/src/components/pipeline/LeadDrawer.jsx
           git commit -m "Finalize lead attribution Pipeline UI"
           git push origin HEAD:feature/lead-source-attribution
