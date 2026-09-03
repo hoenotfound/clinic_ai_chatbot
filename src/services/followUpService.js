@@ -192,13 +192,19 @@ async function sendCandidate(candidate) {
       // failure/retry can never duplicate a text message Meta already accepted.
       sendResult = await channelMessaging.sendText(contact, followUpMessage);
     } else {
+      const policyOptions = { purpose: "marketing" };
       sendResult = settings.imageUrl
         ? await channelMessaging.sendImageByUrl(
             contact,
             settings.imageUrl,
-            followUpMessage
+            followUpMessage,
+            policyOptions
           )
-        : await channelMessaging.sendText(contact, followUpMessage);
+        : await channelMessaging.sendText(
+            contact,
+            followUpMessage,
+            policyOptions
+          );
     }
   } catch (err) {
     console.error("Automated follow-up send failed:", err);
