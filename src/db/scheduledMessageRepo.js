@@ -32,32 +32,41 @@ const SCHEDULED_MESSAGE_COLUMNS_WITH_ALIAS = `
   s.failure_reason
 `;
 
-async function ensureSchema() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS scheduled_messages (
-      id BIGSERIAL PRIMARY KEY,
-      contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-      content TEXT NOT NULL,
-      scheduled_for TIMESTAMPTZ NOT NULL,
-      status TEXT NOT NULL DEFAULT 'scheduled'
-        CHECK (status IN ('scheduled', 'processing', 'sent', 'cancelled', 'failed', 'expired')),
-      scheduled_by_username TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      sent_at TIMESTAMPTZ,
-      cancelled_at TIMESTAMPTZ,
-      claimed_at TIMESTAMPTZ,
-      message_id BIGINT REFERENCES messages(id) ON DELETE SET NULL,
-      failure_reason TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_scheduled_messages_due
-      ON scheduled_messages (status, scheduled_for);
-    CREATE INDEX IF NOT EXISTS idx_scheduled_messages_contact
-      ON scheduled_messages (contact_id, status, scheduled_for);
-  `);
+let schemaPromise = null;
+
+function ensureSchema() {
+  if (!schemaPromise) {
+    schemaPromise = pool.query(`
+      CREATE TABLE IF NOT EXISTS scheduled_messages (
+        id BIGSERIAL PRIMARY KEY,
+        contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
+        scheduled_for TIMESTAMPTZ NOT NULL,
+        status TEXT NOT NULL DEFAULT 'scheduled'
+          CHECK (status IN ('scheduled', 'processing', 'sent', 'cancelled', 'failed', 'expired')),
+        scheduled_by_username TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        sent_at TIMESTAMPTZ,
+        cancelled_at TIMESTAMPTZ,
+        claimed_at TIMESTAMPTZ,
+        message_id BIGINT REFERENCES messages(id) ON DELETE SET NULL,
+        failure_reason TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_scheduled_messages_due
+        ON scheduled_messages (status, scheduled_for);
+      CREATE INDEX IF NOT EXISTS idx_scheduled_messages_contact
+        ON scheduled_messages (contact_id, status, scheduled_for);
+    `).catch((err) => {
+      schemaPromise = null;
+      throw err;
+    });
+  }
+  return schemaPromise;
 }
 
 async function getLatestInboundAt(contactId) {
+  await ensureSchema();
   const result = await pool.query(
     `SELECT created_at
      FROM messages
@@ -153,6 +162,7 @@ async function claimDue(limit = 25) {
 }
 
 async function attachMessage(id, messageId) {
+  await ensureSchema();
   const result = await pool.query(
     `UPDATE scheduled_messages
      SET message_id = $2, updated_at = NOW()
@@ -164,6 +174,7 @@ async function attachMessage(id, messageId) {
 }
 
 async function markSent(id) {
+  await ensureSchema();
   const result = await pool.query(
     `UPDATE scheduled_messages
      SET status = 'sent', sent_at = NOW(), updated_at = NOW(), failure_reason = NULL
@@ -175,6 +186,7 @@ async function markSent(id) {
 }
 
 async function markFailed(id, reason) {
+  await ensureSchema();
   const result = await pool.query(
     `UPDATE scheduled_messages
      SET status = 'failed', failure_reason = $2, updated_at = NOW()
@@ -186,6 +198,7 @@ async function markFailed(id, reason) {
 }
 
 async function markExpired(id, reason) {
+  await ensureSchema();
   const result = await pool.query(
     `UPDATE scheduled_messages
      SET status = 'expired', failure_reason = $2, updated_at = NOW()
