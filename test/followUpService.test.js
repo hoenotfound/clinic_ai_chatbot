@@ -8,14 +8,24 @@ const contactsRepo = require("../src/db/contactsRepo");
 const pipelineRepo = require("../src/db/pipelineRepo");
 const realtimeEvents = require("../src/utils/realtimeEvents");
 const whatsapp = require("../src/services/whatsappService");
+const whatsappPolicy = require("../src/services/whatsappPolicyService");
 const {
   STALE_CLAIM_GRACE_MINUTES,
   runAutomatedFollowUps,
 } = require("../src/services/followUpService");
 
+const originalPolicyCheck = whatsappPolicy.checkFreeformAllowed;
+
 test.beforeEach(() => {
   followUpRepo.markStaleClaimsUnconfirmed = async () => [];
   pipelineRepo.markContactedForContact = async () => false;
+  // These tests exercise follow-up timing/language/delivery behavior, not the
+  // policy service's database lookup. Policy behavior has dedicated tests.
+  whatsappPolicy.checkFreeformAllowed = async () => ({ allowed: true });
+});
+
+test.after(() => {
+  whatsappPolicy.checkFreeformAllowed = originalPolicyCheck;
 });
 
 function enableTool() {
