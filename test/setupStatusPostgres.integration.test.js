@@ -31,6 +31,23 @@ test(
     await client.query(
       fs.readFileSync(path.join(__dirname, "..", "src/db/setupStatusSchema.sql"), "utf8")
     );
+    await client.query(`
+      CREATE TABLE contacts (
+        id SERIAL PRIMARY KEY,
+        channel TEXT NOT NULL
+      );
+      CREATE TABLE messages (
+        id SERIAL PRIMARY KEY,
+        contact_id INTEGER NOT NULL REFERENCES contacts(id),
+        role TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL
+      );
+      INSERT INTO contacts (channel) VALUES ('whatsapp'), ('facebook');
+      INSERT INTO messages (contact_id, role, created_at) VALUES
+        (1, 'user', '2026-09-02T06:00:00.000Z'),
+        (1, 'assistant', '2026-09-02T07:00:00.000Z'),
+        (2, 'user', '2026-09-02T08:00:00.000Z');
+    `);
 
     const firstCheck = "2026-09-01T01:00:00.000Z";
     const failedCheck = "2026-09-02T01:00:00.000Z";
@@ -68,6 +85,17 @@ test(
     assert.equal(
       byKey.get("whatsapp_webhook").last_webhook_at.toISOString(),
       "2026-09-02T03:00:00.000Z"
+    );
+
+    const inboundRows = await setupStatusRepo.listLatestInboundActivity(client);
+    const inboundByChannel = new Map(inboundRows.map((row) => [row.channel, row]));
+    assert.equal(
+      inboundByChannel.get("whatsapp").last_inbound_at.toISOString(),
+      "2026-09-02T06:00:00.000Z"
+    );
+    assert.equal(
+      inboundByChannel.get("facebook").last_inbound_at.toISOString(),
+      "2026-09-02T08:00:00.000Z"
     );
 
     const candidateRows = await setupStatusRepo.listAiCandidateHealth(client);
