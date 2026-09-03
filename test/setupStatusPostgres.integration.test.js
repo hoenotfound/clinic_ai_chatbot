@@ -44,6 +44,20 @@ test(
     await setupStatusRepo.recordWebhook("whatsapp_webhook", new Date("2026-09-02T03:00:00.000Z"), client);
     await setupStatusRepo.recordWebhook("whatsapp_webhook", new Date("2026-09-01T03:00:00.000Z"), client);
 
+    await setupStatusRepo.recordAiCandidateOutcome({
+      candidateKey: "gemini_test_fingerprint",
+      provider: "gemini",
+      status: "ready",
+      at: new Date("2026-09-02T04:00:00.000Z"),
+    }, client);
+    await setupStatusRepo.recordAiCandidateOutcome({
+      candidateKey: "gemini_test_fingerprint",
+      provider: "gemini",
+      status: "rate_limited",
+      failureKind: "rate_limit",
+      at: new Date("2026-09-02T05:00:00.000Z"),
+    }, client);
+
     const rows = await setupStatusRepo.listConnectionHealth(client);
     const byKey = new Map(rows.map((row) => [row.check_key, row]));
 
@@ -55,5 +69,13 @@ test(
       byKey.get("whatsapp_webhook").last_webhook_at.toISOString(),
       "2026-09-02T03:00:00.000Z"
     );
+
+    const candidateRows = await setupStatusRepo.listAiCandidateHealth(client);
+    assert.equal(candidateRows.length, 1);
+    assert.equal(candidateRows[0].candidate_key, "gemini_test_fingerprint");
+    assert.equal(candidateRows[0].last_status, "rate_limited");
+    assert.equal(candidateRows[0].last_failure_kind, "rate_limit");
+    assert.equal(candidateRows[0].last_success_at.toISOString(), "2026-09-02T04:00:00.000Z");
+    assert.equal(candidateRows[0].last_rate_limited_at.toISOString(), "2026-09-02T05:00:00.000Z");
   }
 );
