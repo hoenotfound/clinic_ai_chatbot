@@ -1,6 +1,7 @@
 const Anthropic = require("@anthropic-ai/sdk");
 const { GoogleGenAI } = require("@google/genai");
 const clinicConfig = require("../config/clinicConfig");
+const { runWithGeminiKeys } = require("./geminiKeyPool");
 
 const PROVIDER = (process.env.AI_PROVIDER || "gemini").toLowerCase();
 const GEMINI_MODEL = process.env.LEAD_SCORING_GEMINI_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -271,31 +272,30 @@ async function withTransientRetries(
 }
 
 async function scoreWithGemini(input) {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const request = {
-    model: GEMINI_MODEL,
-    contents: buildLeadScorePrompt(input),
-    config: {
-      maxOutputTokens: 700,
-      responseMimeType: "application/json",
-      responseJsonSchema: SCORE_JSON_SCHEMA,
-      thinkingConfig: { thinkingBudget: 0 },
+  const score = await runWithGeminiKeys(
+    async (apiKey) => {
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: buildLeadScorePrompt(input),
+        config: {
+          maxOutputTokens: 700,
+          responseMimeType: "application/json",
+          responseJsonSchema: SCORE_JSON_SCHEMA,
+          thinkingConfig: { thinkingBudget: 0 },
+        },
+      });
+      return parseLeadScore(response.text, input.messages);
     },
-  };
-  const response = await withTransientRetries(
-    () => ai.models.generateContent(request),
     {
-      onRetry: ({ error, delayMs, retryNumber, maxRetries }) => {
-        const status = getErrorStatus(error) || error?.code || "unknown";
-        console.warn(
-          `Gemini lead scoring transient error (${status}); ` +
-          `retry ${retryNumber}/${maxRetries} in ${delayMs}ms.`
-        );
-      },
+      retryCount: GEMINI_TRANSIENT_RETRY_DELAYS_MS.length,
+      retryDelaysMs: GEMINI_TRANSIENT_RETRY_DELAYS_MS,
+      timeoutMs: Number(process.env.AI_REPLY_TIMEOUT_MS) || 18000,
     }
   );
+
   return {
-    ...parseLeadScore(response.text, input.messages),
+    ...score,
     provider: "gemini",
     model: GEMINI_MODEL,
     promptVersion: PROMPT_VERSION,
