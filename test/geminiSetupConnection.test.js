@@ -129,7 +129,7 @@ test("all-key metadata timeouts are bounded independently without generating con
   assert.equal(result.readyCount, 0);
   assert.equal(result.totalCount, 2);
   assert.ok(result.results.every((item) => item.status === "unavailable"));
-  assert.ok(result.results.every((item) => item.failureKind === "temporary_failure"));
+  assert.ok(result.results.every((item) => item.failureKind === "timeout"));
 });
 
 test("Gemini setup check only tries another key when credentials are rejected", async () => {
