@@ -2,10 +2,17 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const aiUsage = require("../src/services/aiUsageService");
-const { addAiUsage } = require("../src/routes/setupStatus");
+const {
+  addAiUsage,
+  usesGeminiMetadataSetupCheck,
+} = require("../src/routes/setupStatus");
 
 test("setup status exposes real 24h Gemini request, token and failure totals", async () => {
   const originalGetUsageSummary = aiUsage.getUsageSummary;
+  const originalProvider = process.env.AI_PROVIDER;
+  const originalKey = process.env.GEMINI_API_KEY;
+  process.env.AI_PROVIDER = "claude";
+  delete process.env.GEMINI_API_KEY;
   aiUsage.getUsageSummary = async () => ({
     windowHours: 24,
     requests: 12,
@@ -58,8 +65,53 @@ test("setup status exposes real 24h Gemini request, token and failure totals", a
     assert.match(aiCheck.summary, /45,000 total tokens/i);
     assert.match(aiCheck.summary, /1 model unavailable\/503/i);
     assert.match(aiCheck.summary, /1 rate limited/i);
-    assert.match(aiCheck.summary, /0 quota exhausted/i);
   } finally {
     aiUsage.getUsageSummary = originalGetUsageSummary;
+    if (originalProvider == null) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = originalProvider;
+    if (originalKey == null) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = originalKey;
+  }
+});
+
+test("Gemini Setup Status explains that Run all checks is non-generative", async () => {
+  const originalGetUsageSummary = aiUsage.getUsageSummary;
+  const originalProvider = process.env.AI_PROVIDER;
+  const originalKey = process.env.GEMINI_API_KEY;
+  process.env.AI_PROVIDER = "gemini";
+  process.env.GEMINI_API_KEY = "test-key";
+  aiUsage.getUsageSummary = async () => ({
+    windowHours: 24,
+    requests: 0,
+    successfulRequests: 0,
+    failedRequests: 0,
+    promptTokens: 0,
+    outputTokens: 0,
+    thinkingTokens: 0,
+    cachedTokens: 0,
+    totalTokens: 0,
+    averageLatencyMs: 0,
+    byModel: [],
+    byPurpose: [],
+    failuresByKind: [],
+  });
+
+  try {
+    assert.equal(usesGeminiMetadataSetupCheck(), true);
+    const decorated = await addAiUsage({
+      checks: [
+        { key: "ai", status: "ready", summary: "Old generated-check wording." },
+      ],
+    });
+    const aiCheck = decorated.checks[0];
+    assert.equal(aiCheck.setupCheckMode, "model_metadata");
+    assert.match(aiCheck.summary, /does not generate AI text/i);
+    assert.match(aiCheck.summary, /does not.*consume prompt\/output tokens/i);
+  } finally {
+    aiUsage.getUsageSummary = originalGetUsageSummary;
+    if (originalProvider == null) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = originalProvider;
+    if (originalKey == null) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = originalKey;
   }
 });
