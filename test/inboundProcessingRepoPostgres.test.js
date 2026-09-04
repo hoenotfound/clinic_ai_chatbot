@@ -70,6 +70,7 @@ test(
       assert.ok(first?.processingJob?.id);
       assert.equal(first.processingJob.status, "pending");
       assert.equal(first.processingJob.incoming_payload.id, incoming.id);
+      assert.equal(first.derivedFirstMessage, true);
 
       const duplicate = await inboundProcessingRepo.storeInboundClaim({
         contactId,
@@ -150,6 +151,8 @@ test(
         channel: "whatsapp",
         incoming: exhaustedIncoming,
       }, client);
+      assert.equal(exhaustedClaim.derivedFirstMessage, false);
+
       const exhaustedLease = await inboundProcessingRepo.claimPendingByMessageId(
         exhaustedClaim.savedInbound.id,
         client
