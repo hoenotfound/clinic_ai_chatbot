@@ -17,26 +17,30 @@ test("main sidebar keeps Team Access and Setup Status nested under Settings", ()
   assert.doesNotMatch(sidebar, /label: "Setup Status"/);
 });
 
-test("configuration sidebar contains Team Access and Setup Status alongside config sections", () => {
+test("configuration sidebar groups Team Access as Administration and Setup Status as System", () => {
   const settings = read("portal-frontend/src/pages/Settings.jsx");
 
   assert.match(settings, /aria-label="Settings sections"/);
   assert.match(settings, /Administration/);
+  assert.match(settings, /System/);
   assert.match(settings, /label: "Team & Access", to: "\/settings\/team"/);
   assert.match(settings, /label: "Setup Status", to: "\/settings\/setup"/);
   assert.match(settings, /permissions\.manage_users/);
   assert.match(settings, /user\?\.role === "admin"/);
+  assert.match(settings, /<optgroup label="Administration">/);
+  assert.match(settings, /<optgroup label="System">/);
   assert.match(settings, /useSearchParams/);
   assert.match(settings, /setSearchParams\(\{ tab: id \}/);
 });
 
-test("nested Settings pages reuse the same configuration sidebar structure", () => {
+test("nested Settings pages reuse the same grouped sidebar structure", () => {
   const settingsLayout = read("portal-frontend/src/components/SettingsSectionLayout.jsx");
 
   assert.match(settingsLayout, /const CONFIG_ITEMS = \[/);
   assert.match(settingsLayout, /General/);
   assert.match(settingsLayout, /Handoff & Rules/);
   assert.match(settingsLayout, /Administration/);
+  assert.match(settingsLayout, /System/);
   assert.match(settingsLayout, /Team & Access/);
   assert.match(settingsLayout, /Setup Status/);
   assert.match(settingsLayout, /\/settings\?tab=/);
