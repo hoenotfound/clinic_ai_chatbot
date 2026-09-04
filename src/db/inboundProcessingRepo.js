@@ -31,6 +31,7 @@ const JOB_COLUMNS = `
   was_first_message,
   claimed_at,
   completed_at,
+  terminal_at,
   last_error,
   created_at,
   updated_at
@@ -99,7 +100,9 @@ async function markPrepared(messageId, wasFirstMessage, database = pool) {
      SET prepared_at = COALESCE(prepared_at, NOW()),
          was_first_message = COALESCE(was_first_message, $2),
          updated_at = NOW()
-     WHERE message_id = $1 AND status <> 'completed'
+     WHERE message_id = $1
+       AND status <> 'completed'
+       AND terminal_at IS NULL
      RETURNING ${JOB_COLUMNS}`,
     [messageId, Boolean(wasFirstMessage)]
   );
@@ -114,7 +117,9 @@ async function claimPendingByMessageId(messageId, database = pool) {
          claimed_at = NOW(),
          last_error = NULL,
          updated_at = NOW()
-     WHERE message_id = $1 AND status = 'pending'
+     WHERE message_id = $1
+       AND status = 'pending'
+       AND terminal_at IS NULL
      RETURNING ${JOB_COLUMNS}`,
     [messageId]
   );
@@ -134,7 +139,8 @@ async function claimRecoverable({
     `WITH eligible AS (
        SELECT id
        FROM inbound_processing_jobs
-       WHERE attempts < $3
+       WHERE terminal_at IS NULL
+         AND attempts < $3
          AND (
            status = 'pending'
            OR status = 'failed'
@@ -161,11 +167,49 @@ async function claimRecoverable({
   return result.rows;
 }
 
+/**
+ * Finds jobs that have exhausted automatic attempts but were never durably
+ * handed to staff. This closes the crash-on-final-attempt gap: a process can
+ * die immediately after attempt N is leased, and the next process will still
+ * surface that stale job instead of leaving it invisible forever.
+ */
+async function listExhausted({
+  limit = 25,
+  staleAfterSeconds = 45,
+  maxAttempts = 5,
+} = {}, database = pool) {
+  const safeLimit = Math.max(1, Math.min(100, Number(limit) || 25));
+  const safeStaleSeconds = Math.max(5, Math.min(3600, Number(staleAfterSeconds) || 45));
+  const safeMaxAttempts = Math.max(1, Math.min(20, Number(maxAttempts) || 5));
+
+  const result = await database.query(
+    `SELECT ${JOB_COLUMNS}
+     FROM inbound_processing_jobs
+     WHERE terminal_at IS NULL
+       AND attempts >= $3
+       AND (
+         status IN ('pending', 'failed')
+         OR (
+           status = 'processing'
+           AND (
+             claimed_at IS NULL
+             OR claimed_at < NOW() - ($2::int * interval '1 second')
+           )
+         )
+       )
+     ORDER BY created_at ASC, id ASC
+     LIMIT $1`,
+    [safeLimit, safeStaleSeconds, safeMaxAttempts]
+  );
+  return result.rows;
+}
+
 async function markCompleted(jobId, database = pool) {
   const result = await database.query(
     `UPDATE inbound_processing_jobs
      SET status = 'completed',
          completed_at = NOW(),
+         terminal_at = NULL,
          last_error = NULL,
          updated_at = NOW()
      WHERE id = $1 AND status <> 'completed'
@@ -180,6 +224,7 @@ async function markCompletedByMessageId(messageId, database = pool) {
     `UPDATE inbound_processing_jobs
      SET status = 'completed',
          completed_at = NOW(),
+         terminal_at = NULL,
          last_error = NULL,
          updated_at = NOW()
      WHERE message_id = $1 AND status <> 'completed'
@@ -196,9 +241,28 @@ async function markFailed(jobId, error, database = pool) {
      SET status = 'failed',
          last_error = $2,
          updated_at = NOW()
-     WHERE id = $1 AND status <> 'completed'
+     WHERE id = $1
+       AND status <> 'completed'
+       AND terminal_at IS NULL
      RETURNING ${JOB_COLUMNS}`,
     [jobId, text]
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Records that an exhausted job has successfully been surfaced to staff. The
+ * failed status and last_error are intentionally preserved for diagnostics.
+ */
+async function markTerminal(jobId, database = pool) {
+  const result = await database.query(
+    `UPDATE inbound_processing_jobs
+     SET status = 'failed',
+         terminal_at = COALESCE(terminal_at, NOW()),
+         updated_at = NOW()
+     WHERE id = $1 AND status <> 'completed'
+     RETURNING ${JOB_COLUMNS}`,
+    [jobId]
   );
   return result.rows[0] || null;
 }
@@ -238,6 +302,7 @@ async function getJobContext(jobId, database = pool) {
       was_first_message: row.was_first_message,
       claimed_at: row.claimed_at,
       completed_at: row.completed_at,
+      terminal_at: row.terminal_at,
       last_error: row.last_error,
       created_at: row.created_at,
       updated_at: row.updated_at,
@@ -251,8 +316,13 @@ async function pruneCompleted({ olderThanHours = 24 } = {}, database = pool) {
   const hours = Math.max(1, Math.min(24 * 30, Number(olderThanHours) || 24));
   const result = await database.query(
     `DELETE FROM inbound_processing_jobs
-     WHERE status = 'completed'
-       AND completed_at < NOW() - ($1::int * interval '1 hour')`,
+     WHERE (
+       status = 'completed'
+       AND completed_at < NOW() - ($1::int * interval '1 hour')
+     ) OR (
+       terminal_at IS NOT NULL
+       AND terminal_at < NOW() - ($1::int * interval '1 hour')
+     )`,
     [hours]
   );
   return result.rowCount || 0;
@@ -263,10 +333,12 @@ module.exports = {
   claimPendingByMessageId,
   claimRecoverable,
   getJobContext,
+  listExhausted,
   markCompleted,
   markCompletedByMessageId,
   markFailed,
   markPrepared,
+  markTerminal,
   pruneCompleted,
   serializeIncoming,
   storeInboundClaim,
