@@ -17,6 +17,24 @@ function configDestination(id) {
   return id === "general" ? "/settings" : `/settings?tab=${encodeURIComponent(id)}`;
 }
 
+function SettingsNavLink({ item }) {
+  return (
+    <NavLink
+      to={item.to}
+      end
+      className={({ isActive }) =>
+        `block min-h-10 w-full rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${
+          isActive
+            ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)]"
+            : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
+        }`
+      }
+    >
+      {item.label}
+    </NavLink>
+  );
+}
+
 export default function SettingsSectionLayout({ children }) {
   const { user, permissions } = useAuth();
   const location = useLocation();
@@ -25,14 +43,13 @@ export default function SettingsSectionLayout({ children }) {
   const isSetup = location.pathname === "/settings/setup";
   const mobileValue = isTeam ? "team" : isSetup ? "setup" : "general";
 
-  const administrationItems = [
-    permissions.manage_users
-      ? { id: "team", to: "/settings/team", label: "Team & Access" }
-      : null,
-    user?.role === "admin"
-      ? { id: "setup", to: "/settings/setup", label: "Setup Status" }
-      : null,
-  ].filter(Boolean);
+  const teamItem = permissions.manage_users
+    ? { id: "team", to: "/settings/team", label: "Team & Access" }
+    : null;
+  const setupItem = user?.role === "admin"
+    ? { id: "setup", to: "/settings/setup", label: "Setup Status" }
+    : null;
+  const destinationItems = [teamItem, setupItem].filter(Boolean);
 
   function handleMobileChange(value) {
     const configItem = CONFIG_ITEMS.find((item) => item.id === value);
@@ -40,8 +57,8 @@ export default function SettingsSectionLayout({ children }) {
       navigate(configDestination(configItem.id));
       return;
     }
-    const adminItem = administrationItems.find((item) => item.id === value);
-    if (adminItem) navigate(adminItem.to);
+    const destination = destinationItems.find((item) => item.id === value);
+    if (destination) navigate(destination.to);
   }
 
   return (
@@ -67,29 +84,21 @@ export default function SettingsSectionLayout({ children }) {
             </div>
           )}
 
-          {administrationItems.length > 0 && (
+          {teamItem && (
             <div className={permissions.manage_settings ? "mt-3 border-t border-[var(--color-border)] pt-3" : ""}>
               <p className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
                 Administration
               </p>
-              <div className="space-y-1">
-                {administrationItems.map((item) => (
-                  <NavLink
-                    key={item.id}
-                    to={item.to}
-                    end
-                    className={({ isActive }) =>
-                      `block min-h-10 w-full rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors ${
-                        isActive
-                          ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)]"
-                          : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
-                      }`
-                    }
-                  >
-                    {item.label}
-                  </NavLink>
-                ))}
-              </div>
+              <SettingsNavLink item={teamItem} />
+            </div>
+          )}
+
+          {setupItem && (
+            <div className={`${permissions.manage_settings || teamItem ? "mt-3 border-t border-[var(--color-border)] pt-3" : ""}`}>
+              <p className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+                System
+              </p>
+              <SettingsNavLink item={setupItem} />
             </div>
           )}
         </nav>
@@ -109,9 +118,8 @@ export default function SettingsSectionLayout({ children }) {
               {permissions.manage_settings && CONFIG_ITEMS.map((item) => (
                 <option key={item.id} value={item.id}>{item.label}</option>
               ))}
-              {administrationItems.map((item) => (
-                <option key={item.id} value={item.id}>{item.label}</option>
-              ))}
+              {teamItem && <option value={teamItem.id}>{teamItem.label}</option>}
+              {setupItem && <option value={setupItem.id}>{setupItem.label}</option>}
             </select>
           </label>
         </header>
