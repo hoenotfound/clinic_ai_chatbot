@@ -141,8 +141,23 @@ function getGeminiReplyPolicy(env = process.env) {
   };
 }
 
+function getEffectiveGeminiMinKeyWindowMs(env, policy) {
+  const keyCount = getGeminiApiKeys(env).length;
+  if (keyCount <= 0 || !(policy?.globalBudgetMs > 0)) {
+    return policy?.minRemainingKeyWindowMs || 0;
+  }
+
+  // The configured reserve is ideal for normal-sized pools (for example five
+  // keys: 25s / 5 still leaves the requested 4s reserve). If a much larger
+  // GEMINI_API_KEYS list is configured, scale the reserve to a fair share of
+  // the same global budget instead of starving early keys with ~1ms attempts.
+  const fairShareMs = Math.max(1, Math.floor(policy.globalBudgetMs / keyCount));
+  return Math.min(policy.minRemainingKeyWindowMs, fairShareMs);
+}
+
 async function runGeminiReply(messages, options, env = process.env) {
   const policy = getGeminiReplyPolicy(env);
+  const effectiveMinKeyWindowMs = getEffectiveGeminiMinKeyWindowMs(env, policy);
   return runWithGeminiKeys(
     async (apiKey) => {
       const raw = await gemini.getReply(messages, options, apiKey);
@@ -155,7 +170,7 @@ async function runGeminiReply(messages, options, env = process.env) {
       globalBudgetMs: policy.globalBudgetMs,
       preferredTimeoutMs: policy.preferredTimeoutMs,
       fallbackTimeoutMs: policy.fallbackTimeoutMs,
-      minRemainingKeyWindowMs: policy.minRemainingKeyWindowMs,
+      minRemainingKeyWindowMs: effectiveMinKeyWindowMs,
       smartRetry: true,
       smartRetryDelayMinMs: 500,
       smartRetryDelayMaxMs: 1000,
@@ -229,6 +244,7 @@ module.exports = {
   classifyCandidateHealthFailure,
   credentialFingerprint,
   getCandidateHealthDescriptors,
+  getEffectiveGeminiMinKeyWindowMs,
   getGeminiApiKeys,
   getGeminiReplyPolicy,
   getRuntimeCandidateHealth,
