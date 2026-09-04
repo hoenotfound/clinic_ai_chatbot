@@ -17,23 +17,66 @@ function usageFromResponse(response) {
   };
 }
 
+function providerErrorCode(error) {
+  for (const value of [
+    error?.error?.code,
+    error?.response?.data?.error?.code,
+    error?.response?.body?.error?.code,
+    error?.details?.error?.code,
+  ]) {
+    const code = String(value || "").trim().toLowerCase();
+    if (code && !/^\d+$/.test(code)) return code;
+  }
+  return "";
+}
+
 function failureKind(error) {
   const status = Number(error?.status ?? error?.statusCode ?? error?.response?.status);
   const providerStatus = String(
     error?.error?.status
       || error?.response?.data?.error?.status
       || error?.response?.body?.error?.status
+      || error?.details?.error?.status
       || ""
   ).toUpperCase();
+  const providerCode = providerErrorCode(error);
   const code = String(error?.code || error?.cause?.code || "").toUpperCase();
   const message = String(error?.message || "").toLowerCase();
 
-  if (status === 503 || providerStatus === "UNAVAILABLE") return "model_unavailable";
-  if (status === 429 || /quota|rate limit|resource exhausted/.test(message)) return "rate_limit";
-  if ([401, 403].includes(status) || /invalid.*api.?key|unauthorized|permission denied/.test(message)) {
+  if (
+    status === 503
+    || providerStatus === "UNAVAILABLE"
+    || /currently experiencing high demand|model[^.]{0,80}(?:high demand|overload|unavailable)/.test(message)
+    || (/\b503\b/.test(message) && /high demand|overload|unavailable|service unavailable/.test(message))
+  ) {
+    return "model_unavailable";
+  }
+  if (
+    providerCode === "quota_exceeded"
+    || /quota_exceeded|requests per day|per-day|per day|daily quota|\brpd\b/.test(message)
+  ) {
+    return "quota_exhausted";
+  }
+  if (
+    status === 429
+    || ["rate_limit_exceeded", "too_many_requests"].includes(providerCode)
+    || /rate limit|resource exhausted|too many requests|\b429\b/.test(message)
+  ) {
+    return "rate_limit";
+  }
+  if (
+    ["authentication", "permission_denied"].includes(providerCode)
+    || [401, 403].includes(status)
+    || /invalid.*api.?key|unauthorized|permission denied/.test(message)
+  ) {
     return "authentication";
   }
-  if ([408, 504].includes(status) || code === "AI_TIMEOUT" || /timeout|timed out/.test(message)) {
+  if (
+    providerCode === "deadline_exceeded"
+    || [408, 504].includes(status)
+    || code === "AI_TIMEOUT"
+    || /timeout|timed out/.test(message)
+  ) {
     return "timeout";
   }
   if (status >= 500 && status <= 599) return "provider_5xx";
@@ -106,6 +149,7 @@ module.exports = {
   failureKind,
   generateGeminiContent,
   getUsageSummary,
+  providerErrorCode,
   queueUsage,
   tokenCount,
   usageFromResponse,
