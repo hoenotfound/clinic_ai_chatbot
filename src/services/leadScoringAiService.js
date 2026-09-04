@@ -290,7 +290,6 @@ async function scoreWithGemini(input) {
     {
       retryCount: GEMINI_TRANSIENT_RETRY_DELAYS_MS.length,
       retryDelaysMs: GEMINI_TRANSIENT_RETRY_DELAYS_MS,
-      timeoutMs: Number(process.env.AI_REPLY_TIMEOUT_MS) || 18000,
     }
   );
 
