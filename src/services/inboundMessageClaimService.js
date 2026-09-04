@@ -1,8 +1,9 @@
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
+const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const leadAttributionService = require("./leadAttributionService");
-const conversationStore = require("../utils/conversationStore");
+const realtimeEvents = require("../utils/realtimeEvents");
 const whatsappPolicy = require("./whatsappPolicyService");
 
 function initialInboundText(incoming) {
@@ -16,54 +17,32 @@ function initialInboundText(incoming) {
   return incoming.text || "[Patient sent an empty message]";
 }
 
+function publishInboundMessage(events, savedInbound) {
+  if (!savedInbound) return;
+  events.publish("conversation_changed", {
+    contactId: savedInbound.contact_id,
+    messageId: savedInbound.id,
+    reason: "message",
+  });
+}
+
 function createInboundMessageClaimService({
   contacts = contactsRepo,
   messages = messagesRepo,
   pipeline = pipelineRepo,
   attribution = leadAttributionService,
-  store = conversationStore,
+  processing = inboundProcessingRepo,
+  events = realtimeEvents,
   policy = whatsappPolicy,
 } = {}) {
-  return async function claimIncomingMessage(incoming) {
-    // Messenger/Instagram may send OPEN_THREAD attribution as its own event
-    // before the customer types. Remember it without creating a fake contact,
-    // lead or message; the next real inbound message consumes it.
-    if (incoming?.attributionOnly) {
-      try {
-        await attribution.rememberPendingReferral(incoming);
-      } catch (err) {
-        console.error(
-          `Failed to remember pending ${incoming.channel || "Meta"} attribution for ${incoming.from}:`,
-          err
-        );
-      }
-      return null;
-    }
-
+  async function prepareStoredInbound({
+    incoming,
+    contact,
+    savedInbound,
+    processingJob,
+    derivedFirstMessage = false,
+  }) {
     const channel = incoming.channel || "whatsapp";
-    const contact = channel === "whatsapp"
-      ? await contacts.getOrCreateContact(incoming.from, incoming.profileName)
-      : await contacts.getOrCreateChannelContact(
-          channel,
-          incoming.from,
-          incoming.profileName,
-          incoming.photoUrl || null
-        );
-
-    // Claim the webhook payload immediately, before any reply debounce, media
-    // download, transcription or AI call. Meta has already received HTTP 200,
-    // so this durable INSERT is what prevents a Render restart during the short
-    // typing debounce from making the customer's message disappear entirely.
-    const storedInboundId = channel === "whatsapp"
-      ? incoming.id
-      : `${channel}:${incoming.id}`;
-    const savedInbound = await store.appendInboundMessageIfNew(
-      contact.id,
-      initialInboundText(incoming),
-      storedInboundId
-    );
-    if (!savedInbound) return null;
-
     const isWhatsappOptOut =
       channel === "whatsapp" &&
       incoming.mediaType == null &&
@@ -71,9 +50,7 @@ function createInboundMessageClaimService({
 
     // A clear stop/unsubscribe request is terminal for this inbound turn. Keep
     // the customer's message durable and visible, mark it unread/attention,
-    // then return without lead scoring, AI generation, promo delivery or an
-    // automated acknowledgement. A later genuine customer-initiated message
-    // can start a new service conversation without restoring marketing consent.
+    // then complete its processing job without generating any outbound reply.
     if (isWhatsappOptOut) {
       try {
         await policy.recordOptOut(contact.id, "customer_message");
@@ -99,12 +76,13 @@ function createInboundMessageClaimService({
         console.error(`Failed to mark opt-out message unread for contact ${contact.id}:`, err);
       }
 
+      await processing.markCompletedByMessageId(savedInbound.id);
       return null;
     }
 
-    // Operational bookkeeping is best-effort after the durable message claim.
-    // A transient failure here must not turn a successfully stored customer
-    // message into an unhandled webhook failure.
+    // Operational bookkeeping is best-effort after the durable message + job
+    // claim. If the process dies anywhere below, prepared_at remains null and
+    // the recovery worker re-runs this idempotent preparation before replying.
     try {
       await contacts.setUnread(contact.id, true);
     } catch (err) {
@@ -126,8 +104,8 @@ function createInboundMessageClaimService({
 
     // First-touch attribution belongs to the start of a lead journey. Do not
     // retrofit an old open lead with a new ad click after this feature is
-    // deployed. A concurrently-created lead is still safe because its stable
-    // journey boundary equals this first inbound message.
+    // deployed. The first-touch repository is uniqueness-protected, so a
+    // recovery pass can safely attempt this again after an interrupted prepare.
     const startsThisJourney = Boolean(
       lead &&
       (
@@ -145,13 +123,13 @@ function createInboundMessageClaimService({
         });
       } catch (err) {
         // Attribution must never block the patient conversation. The raw
-        // message is already durable and can still be handled normally.
+        // message and processing job are already durable.
         console.error(`Failed to capture lead attribution for lead ${lead.id}:`, err);
       }
     } else {
       // A pending social OPEN_THREAD referral belongs to the next actual
-      // message, even when that message is part of an older open journey. Eat
-      // it here so it cannot leak into a future lead after this one is closed.
+      // message. Clear it once the journey decision has been made so it cannot
+      // leak into a future lead after this one is closed.
       try {
         await attribution.consumePendingForInbound?.(incoming);
       } catch (err) {
@@ -162,7 +140,7 @@ function createInboundMessageClaimService({
       }
     }
 
-    let wasFirstMessage = false;
+    let wasFirstMessage = Boolean(derivedFirstMessage);
     try {
       const firstPage = await messages.getMessagePageForContact(contact.id, {
         limit: 2,
@@ -170,24 +148,122 @@ function createInboundMessageClaimService({
       });
       wasFirstMessage = firstPage.rows.length === 1 && !firstPage.hasMore;
     } catch (err) {
-      // This only affects whether a multi-bubble first burst receives the fixed
-      // intro. Do not sacrifice the actual reply if this cosmetic check fails.
+      // Recovery can derive this from durable message ordering. Keep that value
+      // if the cosmetic first-message lookup is temporarily unavailable.
       console.error(`Failed to determine first-message state for contact ${contact.id}:`, err);
     }
+
+    const preparedJob = await processing.markPrepared(
+      savedInbound.id,
+      wasFirstMessage
+    );
 
     return {
       incoming,
       contact,
       savedInbound,
       wasFirstMessage,
+      processingJobId: preparedJob?.id || processingJob?.id || null,
     };
-  };
+  }
+
+  async function claimIncomingMessage(incoming) {
+    // Messenger/Instagram may send OPEN_THREAD attribution as its own event
+    // before the customer types. Remember it without creating a fake contact,
+    // lead, message or reply-processing job.
+    if (incoming?.attributionOnly) {
+      try {
+        await attribution.rememberPendingReferral(incoming);
+      } catch (err) {
+        console.error(
+          `Failed to remember pending ${incoming.channel || "Meta"} attribution for ${incoming.from}:`,
+          err
+        );
+      }
+      return null;
+    }
+
+    const channel = incoming.channel || "whatsapp";
+    const contact = channel === "whatsapp"
+      ? await contacts.getOrCreateContact(incoming.from, incoming.profileName)
+      : await contacts.getOrCreateChannelContact(
+          channel,
+          incoming.from,
+          incoming.profileName,
+          incoming.photoUrl || null
+        );
+
+    const storedInboundId = channel === "whatsapp"
+      ? incoming.id
+      : `${channel}:${incoming.id}`;
+
+    // This is the durability boundary: the customer message and its pending
+    // processing job are one SQL statement. After this succeeds, a Render
+    // restart can delay the reply but cannot make the reply work disappear.
+    const durableClaim = await processing.storeInboundClaim({
+      contactId: contact.id,
+      content: initialInboundText(incoming),
+      storedMessageId: storedInboundId,
+      channel,
+      incoming,
+    });
+    if (!durableClaim) return null;
+
+    publishInboundMessage(events, durableClaim.savedInbound);
+    return prepareStoredInbound({
+      incoming,
+      contact,
+      savedInbound: durableClaim.savedInbound,
+      processingJob: durableClaim.processingJob,
+    });
+  }
+
+  async function resumeProcessingJob(job) {
+    const context = await processing.getJobContext(job.id);
+    if (!context) {
+      throw new Error(`Inbound processing job ${job.id} no longer has its customer message.`);
+    }
+
+    const liveJob = context.job;
+    const incoming = liveJob.incoming_payload;
+    const contact = await contacts.getContactById(liveJob.contact_id);
+    if (!contact) {
+      throw new Error(`Contact ${liveJob.contact_id} no longer exists for inbound job ${job.id}.`);
+    }
+
+    if (liveJob.prepared_at) {
+      return {
+        incoming,
+        contact,
+        savedInbound: context.savedInbound,
+        wasFirstMessage:
+          liveJob.was_first_message == null
+            ? context.derivedFirstMessage
+            : Boolean(liveJob.was_first_message),
+        processingJobId: liveJob.id,
+      };
+    }
+
+    return prepareStoredInbound({
+      incoming,
+      contact,
+      savedInbound: context.savedInbound,
+      processingJob: liveJob,
+      derivedFirstMessage: context.derivedFirstMessage,
+    });
+  }
+
+  claimIncomingMessage.resumeProcessingJob = resumeProcessingJob;
+  claimIncomingMessage.prepareStoredInbound = prepareStoredInbound;
+  return claimIncomingMessage;
 }
 
 const claimIncomingMessage = createInboundMessageClaimService();
+const resumeIncomingProcessingJob = claimIncomingMessage.resumeProcessingJob;
 
 module.exports = {
   createInboundMessageClaimService,
   claimIncomingMessage,
   initialInboundText,
+  resumeIncomingProcessingJob,
 };
