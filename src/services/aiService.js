@@ -1,126 +1,33 @@
-const crypto = require("crypto");
 const gemini = require("./geminiService");
 const claude = require("./claudeService");
 const { parseAiReplyResult } = require("../utils/aiReplyResult");
-const setupStatusRepo = require("../db/setupStatusRepo");
+const {
+  classifyCandidateHealthFailure,
+  credentialFingerprint,
+  getGeminiApiKeys,
+  getRuntimeCandidateHealth,
+  isRetryableAiError,
+  recordCandidateHealth,
+  runWithGeminiKeys,
+} = require("./geminiKeyPool");
 
 const provider = (process.env.AI_PROVIDER || "gemini").toLowerCase();
 if (!new Set(["gemini", "claude"]).has(provider)) {
-  throw new Error(`Unknown AI_PROVIDER "${provider}" — use "claude" or "gemini" in your .env`);
+  throw new Error(`Unknown AI_PROVIDER "${provider}" - use "claude" or "gemini" in your .env`);
 }
 
 const DEFAULT_TIMEOUT_MS = 18 * 1000;
 const DEFAULT_RETRY_COUNT = 1;
-const runtimeCandidateHealth = new Map();
+const DEFAULT_GEMINI_GLOBAL_BUDGET_MS = 25 * 1000;
+const DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS = 8 * 1000;
+const DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS = 5 * 1000;
+const DEFAULT_GEMINI_MIN_KEY_WINDOW_MS = 4 * 1000;
+const DEFAULT_GEMINI_5XX_RETRY_COUNT = 1;
 
 function positiveInt(value, fallback, max = 60_000) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 0) return fallback;
   return Math.min(parsed, max);
-}
-
-function getGeminiApiKeys(env = process.env) {
-  const candidates = [];
-  if (env.GEMINI_API_KEYS) {
-    candidates.push(...String(env.GEMINI_API_KEYS).split(/[\n,;]/));
-  }
-  candidates.push(
-    env.GEMINI_API_KEY,
-    env.GEMINI_API_KEY_1,
-    env.GEMINI_API_KEY_2,
-    env.GEMINI_API_KEY_3,
-    env.GEMINI_API_KEY_4,
-    env.GEMINI_API_KEY_5
-  );
-  return [...new Set(candidates.map((value) => String(value || "").trim()).filter(Boolean))];
-}
-
-function isRetryableAiError(err) {
-  const status = Number(err?.status || err?.statusCode || err?.response?.status);
-  if ([408, 409, 425, 429].includes(status) || status >= 500) return true;
-
-  const code = String(err?.code || "").toUpperCase();
-  if (
-    [
-      "ETIMEDOUT",
-      "ECONNRESET",
-      "EAI_AGAIN",
-      "AI_TIMEOUT",
-      "INVALID_AI_RESPONSE",
-      "EMPTY_AI_RESPONSE",
-    ].includes(code)
-  ) {
-    return true;
-  }
-
-  const message = String(err?.message || "").toLowerCase();
-  return /timeout|timed out|rate limit|quota|resource exhausted|overload|temporar|unavailable|try again|429|500|502|503|504/.test(message);
-}
-
-function credentialFingerprint(value) {
-  return crypto
-    .createHash("sha256")
-    .update(String(value || ""))
-    .digest("hex")
-    .slice(0, 24);
-}
-
-function classifyCandidateHealthFailure(err) {
-  const status = Number(err?.status || err?.statusCode || err?.response?.status);
-  const code = String(err?.code || "").toUpperCase();
-  const message = String(err?.message || "").toLowerCase();
-
-  if (status === 429 || /rate limit|quota|resource exhausted|too many requests/.test(message)) {
-    return { status: "rate_limited", failureKind: "rate_limit" };
-  }
-  if ([401, 403].includes(status) || /api.?key.*invalid|invalid.*api.?key|unauthorized|permission denied/.test(message)) {
-    return { status: "invalid", failureKind: "authentication" };
-  }
-  if (["INVALID_AI_RESPONSE", "EMPTY_AI_RESPONSE"].includes(code)) {
-    return { status: "failed", failureKind: "invalid_response" };
-  }
-  if (code === "AI_TIMEOUT" || /timeout|timed out/.test(message)) {
-    return { status: "unavailable", failureKind: "timeout" };
-  }
-  if (isRetryableAiError(err)) {
-    return { status: "unavailable", failureKind: "temporary_failure" };
-  }
-  return { status: "failed", failureKind: "provider_error" };
-}
-
-function recordCandidateHealth(candidate, outcome) {
-  if (!candidate?.healthKey || !candidate?.provider || !outcome?.status) return;
-  const at = new Date();
-  const previous = runtimeCandidateHealth.get(candidate.healthKey) || {};
-  const failed = outcome.status !== "ready";
-  runtimeCandidateHealth.set(candidate.healthKey, {
-    candidate_key: candidate.healthKey,
-    provider: candidate.provider,
-    last_status: outcome.status,
-    last_failure_kind: failed
-      ? outcome.failureKind || "provider_error"
-      : previous.last_failure_kind || null,
-    last_attempt_at: at,
-    last_success_at: outcome.status === "ready" ? at : previous.last_success_at || null,
-    last_failure_at: failed ? at : previous.last_failure_at || null,
-    last_rate_limited_at: outcome.status === "rate_limited"
-      ? at
-      : previous.last_rate_limited_at || null,
-  });
-
-  setupStatusRepo.recordAiCandidateOutcome({
-    candidateKey: candidate.healthKey,
-    provider: candidate.provider,
-    status: outcome.status,
-    failureKind: outcome.failureKind || null,
-    at,
-  }).catch((err) => {
-    console.warn(`Could not save ${candidate.label} health:`, err?.message || err);
-  });
-}
-
-function getRuntimeCandidateHealth() {
-  return [...runtimeCandidateHealth.values()].map((row) => ({ ...row }));
 }
 
 function withTimeout(promise, timeoutMs, label) {
@@ -147,9 +54,8 @@ async function runCandidate(candidate, messages, options, timeoutMs, retryCount)
         candidate.label
       );
       // Validate the provider response before calling it a success. Empty or
-      // malformed structured output is usually a one-off model formatting
-      // failure, so it gets the same bounded retry as transient provider
-      // failures before rotating to the next key/provider.
+      // malformed structured output gets the same bounded retry as transient
+      // provider failures.
       parseAiReplyResult(raw);
       candidate.reportOutcome?.({ status: "ready", failureKind: null });
       return raw;
@@ -198,11 +104,88 @@ function buildCandidates(env = process.env) {
 }
 
 function getCandidateHealthDescriptors(env = process.env) {
-  return buildCandidates(env).map(({ healthKey, label, provider }) => ({
+  return buildCandidates(env).map(({ healthKey, label, provider: candidateProvider }) => ({
     healthKey,
     label,
-    provider,
+    provider: candidateProvider,
   }));
+}
+
+function getGeminiReplyPolicy(env = process.env) {
+  return {
+    globalBudgetMs: positiveInt(
+      env.GEMINI_REPLY_GLOBAL_BUDGET_MS,
+      DEFAULT_GEMINI_GLOBAL_BUDGET_MS,
+      60_000
+    ),
+    preferredTimeoutMs: positiveInt(
+      env.GEMINI_REPLY_PREFERRED_TIMEOUT_MS,
+      DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS,
+      30_000
+    ),
+    fallbackTimeoutMs: positiveInt(
+      env.GEMINI_REPLY_FALLBACK_TIMEOUT_MS,
+      DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS,
+      30_000
+    ),
+    minRemainingKeyWindowMs: positiveInt(
+      env.GEMINI_REPLY_MIN_KEY_WINDOW_MS,
+      DEFAULT_GEMINI_MIN_KEY_WINDOW_MS,
+      15_000
+    ),
+    retryCount: positiveInt(
+      env.GEMINI_REPLY_5XX_RETRY_COUNT,
+      DEFAULT_GEMINI_5XX_RETRY_COUNT,
+      1
+    ),
+  };
+}
+
+function getEffectiveGeminiMinKeyWindowMs(env, policy) {
+  const keyCount = getGeminiApiKeys(env).length;
+  if (keyCount <= 0 || !(policy?.globalBudgetMs > 0)) {
+    return policy?.minRemainingKeyWindowMs || 0;
+  }
+
+  // The configured reserve is ideal for normal-sized pools (for example five
+  // keys: 25s / 5 still leaves the requested 4s reserve). If a much larger
+  // GEMINI_API_KEYS list is configured, scale the reserve to a fair share of
+  // the same global budget instead of starving early keys with ~1ms attempts.
+  const fairShareMs = Math.max(1, Math.floor(policy.globalBudgetMs / keyCount));
+  return Math.min(policy.minRemainingKeyWindowMs, fairShareMs);
+}
+
+async function runGeminiReply(messages, options, env = process.env) {
+  const policy = getGeminiReplyPolicy(env);
+  const effectiveMinKeyWindowMs = getEffectiveGeminiMinKeyWindowMs(env, policy);
+  return runWithGeminiKeys(
+    async (apiKey) => {
+      const raw = await gemini.getReply(messages, options, apiKey);
+      parseAiReplyResult(raw);
+      return raw;
+    },
+    {
+      env,
+      retryCount: policy.retryCount,
+      globalBudgetMs: policy.globalBudgetMs,
+      preferredTimeoutMs: policy.preferredTimeoutMs,
+      fallbackTimeoutMs: policy.fallbackTimeoutMs,
+      minRemainingKeyWindowMs: effectiveMinKeyWindowMs,
+      smartRetry: true,
+      smartRetryDelayMinMs: 500,
+      smartRetryDelayMaxMs: 1000,
+    }
+  );
+}
+
+async function runClaudeReply(messages, options, timeoutMs, retryCount) {
+  const candidate = buildCandidates().find((item) => item.provider === "claude");
+  if (!candidate) {
+    const err = new Error("ANTHROPIC_API_KEY is not configured.");
+    err.code = "AI_PROVIDER_NOT_CONFIGURED";
+    throw err;
+  }
+  return runCandidate(candidate, messages, options, timeoutMs, retryCount);
 }
 
 async function getReply(messages, optionsOrFirstMessage = false) {
@@ -213,22 +196,35 @@ async function getReply(messages, optionsOrFirstMessage = false) {
         channel: optionsOrFirstMessage?.channel || "whatsapp",
       };
 
+  // AI_REPLY_TIMEOUT_MS / AI_REPLY_RETRY_COUNT remain the fallback-provider
+  // controls. Gemini chat replies use the smarter global-budget policy above.
   const timeoutMs = positiveInt(process.env.AI_REPLY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
   const retryCount = positiveInt(process.env.AI_REPLY_RETRY_COUNT, DEFAULT_RETRY_COUNT, 3);
-  const candidates = buildCandidates();
+  const hasGemini = getGeminiApiKeys().length > 0;
+  const hasClaude = Boolean(process.env.ANTHROPIC_API_KEY);
 
-  if (!candidates.length) {
+  if (!hasGemini && !hasClaude) {
     const err = new Error("No AI provider API key is configured.");
     err.code = "AI_PROVIDER_NOT_CONFIGURED";
     throw err;
   }
 
+  const providerOrder = provider === "claude"
+    ? ["claude", "gemini"]
+    : ["gemini", "claude"];
   const failures = [];
-  for (const candidate of candidates) {
+
+  for (const candidateProvider of providerOrder) {
+    if (candidateProvider === "gemini" && !hasGemini) continue;
+    if (candidateProvider === "claude" && !hasClaude) continue;
+
     try {
-      return await runCandidate(candidate, messages, options, timeoutMs, retryCount);
+      if (candidateProvider === "gemini") {
+        return await runGeminiReply(messages, options);
+      }
+      return await runClaudeReply(messages, options, timeoutMs, retryCount);
     } catch (err) {
-      failures.push(`${candidate.label}: ${err?.message || err}`);
+      failures.push(`${candidateProvider}: ${err?.message || err}`);
     }
   }
 
@@ -240,13 +236,20 @@ async function getReply(messages, optionsOrFirstMessage = false) {
 console.log(`AI provider preference: ${provider}`);
 
 module.exports = {
+  DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS,
+  DEFAULT_GEMINI_GLOBAL_BUDGET_MS,
+  DEFAULT_GEMINI_MIN_KEY_WINDOW_MS,
+  DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS,
   buildCandidates,
   classifyCandidateHealthFailure,
   credentialFingerprint,
   getCandidateHealthDescriptors,
+  getEffectiveGeminiMinKeyWindowMs,
   getGeminiApiKeys,
+  getGeminiReplyPolicy,
   getRuntimeCandidateHealth,
   getReply,
   isRetryableAiError,
   runCandidate,
+  runGeminiReply,
 };
