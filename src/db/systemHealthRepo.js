@@ -11,7 +11,7 @@ async function listAppliedMigrations(queryable = pool) {
 
 async function getInboundProcessingMetrics({ hours = 24 } = {}, queryable = pool) {
   const safeHours = Math.max(1, Math.min(24 * 30, Number(hours) || 24));
-  const [messageJobs, resolutionJobs, recoveries] = await Promise.all([
+  const [messageJobs, resolutionJobs, failures, recoveries] = await Promise.all([
     queryable.query(
       `SELECT
          COUNT(*) FILTER (
@@ -24,16 +24,12 @@ async function getInboundProcessingMetrics({ hours = 24 } = {}, queryable = pool
            WHERE terminal_at IS NULL AND status = 'failed'
          )::int AS retryable_failed_count,
          COUNT(*) FILTER (
-           WHERE last_failed_at >= NOW() - ($1::int * interval '1 hour')
-         )::int AS failed_24h,
-         COUNT(*) FILTER (
            WHERE terminal_at IS NOT NULL
          )::int AS terminal_count,
          MIN(created_at) FILTER (
            WHERE terminal_at IS NULL AND status IN ('pending', 'processing', 'failed')
          ) AS oldest_open_at
-       FROM inbound_processing_jobs`,
-      [safeHours]
+       FROM inbound_processing_jobs`
     ),
     queryable.query(
       `SELECT
@@ -47,15 +43,20 @@ async function getInboundProcessingMetrics({ hours = 24 } = {}, queryable = pool
            WHERE terminal_at IS NULL AND status = 'failed'
          )::int AS retryable_failed_count,
          COUNT(*) FILTER (
-           WHERE last_failed_at >= NOW() - ($1::int * interval '1 hour')
-         )::int AS failed_24h,
-         COUNT(*) FILTER (
            WHERE terminal_at IS NOT NULL
          )::int AS terminal_count,
          MIN(created_at) FILTER (
            WHERE terminal_at IS NULL AND status IN ('pending', 'processing', 'failed')
          ) AS oldest_open_at
-       FROM inbound_meta_resolution_jobs`,
+       FROM inbound_meta_resolution_jobs`
+    ),
+    queryable.query(
+      `SELECT COUNT(*)::int AS failed_jobs
+       FROM (
+         SELECT DISTINCT job_type, job_id
+         FROM inbound_failure_events
+         WHERE failed_at >= NOW() - ($1::int * interval '1 hour')
+       ) recent_failures`,
       [safeHours]
     ),
     queryable.query(
@@ -81,7 +82,7 @@ async function getInboundProcessingMetrics({ hours = 24 } = {}, queryable = pool
     pendingCount: (Number(message.pending_count) || 0) + (Number(resolution.pending_count) || 0),
     processingCount: (Number(message.processing_count) || 0) + (Number(resolution.processing_count) || 0),
     retryableFailedCount: (Number(message.retryable_failed_count) || 0) + (Number(resolution.retryable_failed_count) || 0),
-    failedJobs: (Number(message.failed_24h) || 0) + (Number(resolution.failed_24h) || 0),
+    failedJobs: Number(failures.rows[0]?.failed_jobs) || 0,
     terminalFailures: (Number(message.terminal_count) || 0) + (Number(resolution.terminal_count) || 0),
     restartRecoveries: Number(recoveries.rows[0]?.restart_recoveries) || 0,
     oldestOpenAt,
