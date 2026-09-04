@@ -23,6 +23,9 @@ const DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS = 8 * 1000;
 const DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS = 5 * 1000;
 const DEFAULT_GEMINI_MIN_KEY_WINDOW_MS = 4 * 1000;
 const DEFAULT_GEMINI_5XX_RETRY_COUNT = 1;
+const DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS = 8 * 1000;
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+const DEFAULT_GEMINI_ALTERNATE_MODEL = "gemini-3.7-flash";
 
 function positiveInt(value, fallback, max = 60_000) {
   const parsed = Number(value);
@@ -42,6 +45,10 @@ function withTimeout(promise, timeoutMs, label) {
       }, timeoutMs);
     }),
   ]);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function runCandidate(candidate, messages, options, timeoutMs, retryCount) {
@@ -73,13 +80,99 @@ async function runCandidate(candidate, messages, options, timeoutMs, retryCount)
   throw lastError || new Error(`${candidate.label} failed.`);
 }
 
+function getGeminiReplyModels(env = process.env) {
+  const primary = String(env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL).trim() || DEFAULT_GEMINI_MODEL;
+  const hasExplicitFallback = Object.prototype.hasOwnProperty.call(env, "GEMINI_FALLBACK_MODEL");
+  const fallback = hasExplicitFallback
+    ? String(env.GEMINI_FALLBACK_MODEL || "").trim()
+    : primary === DEFAULT_GEMINI_MODEL
+      ? DEFAULT_GEMINI_ALTERNATE_MODEL
+      : DEFAULT_GEMINI_MODEL;
+
+  return [...new Set([primary, fallback].filter(Boolean))];
+}
+
+function getNumericErrorStatus(err) {
+  for (const value of [err?.status, err?.statusCode, err?.response?.status]) {
+    if (value == null || value === "") continue;
+    const status = Number(value);
+    if (Number.isInteger(status)) return status;
+  }
+  return null;
+}
+
+function isGeminiModelUnavailableError(err) {
+  const status = getNumericErrorStatus(err);
+  const providerStatus = String(
+    err?.error?.status
+      || err?.response?.data?.error?.status
+      || err?.response?.body?.error?.status
+      || err?.details?.error?.status
+      || ""
+  ).trim().toUpperCase();
+  const message = String(err?.message || "").toLowerCase();
+
+  return status === 503
+    || providerStatus === "UNAVAILABLE"
+    || /currently experiencing high demand|model[^.]{0,80}(?:high demand|overload|unavailable)/.test(message)
+    || (/\b503\b/.test(message) && /high demand|overload|unavailable|service unavailable/.test(message));
+}
+
+function createGeminiModelUnavailableError(model, cause) {
+  const err = new Error(`Gemini model ${model} is temporarily unavailable.`);
+  err.code = "GEMINI_MODEL_UNAVAILABLE";
+  // The key-pool must not rotate/cool healthy credentials for a provider/model
+  // capacity problem. aiService will switch to the next Gemini model instead.
+  err.stopGeminiKeyRotation = true;
+  err.model = model;
+  err.cause = cause;
+  return err;
+}
+
+async function runGeminiModelAttempt(
+  messages,
+  options,
+  apiKey,
+  model,
+  {
+    overloadRetryCount = 1,
+    sleepFn = sleep,
+    randomFn = Math.random,
+  } = {}
+) {
+  const boundedRetryCount = Math.max(0, Math.min(Number(overloadRetryCount) || 0, 1));
+
+  for (let attempt = 0; attempt <= boundedRetryCount; attempt += 1) {
+    try {
+      const raw = await gemini.getReply(messages, options, apiKey, model);
+      parseAiReplyResult(raw);
+      return raw;
+    } catch (err) {
+      if (!isGeminiModelUnavailableError(err)) throw err;
+      if (attempt >= boundedRetryCount) {
+        throw createGeminiModelUnavailableError(model, err);
+      }
+
+      // A single short jittered retry is enough for a brief capacity spike. If
+      // it is still unavailable, switching models is more useful than trying
+      // the same overloaded model with every API key.
+      const delayMs = Math.round(500 + 500 * Math.max(0, Math.min(1, randomFn())));
+      console.warn(`Gemini model ${model} is unavailable; retrying once before model fallback.`);
+      await sleepFn(delayMs);
+    }
+  }
+
+  throw createGeminiModelUnavailableError(model, null);
+}
+
 function buildCandidates(env = process.env) {
+  const primaryModel = getGeminiReplyModels(env)[0];
   const geminiCandidates = getGeminiApiKeys(env).map((apiKey, index) => {
     const candidate = {
       label: `Gemini key ${index + 1}`,
       provider: "gemini",
       healthKey: `gemini_${credentialFingerprint(apiKey)}`,
-      run: (messages, options) => gemini.getReply(messages, options, apiKey),
+      run: (messages, options) => gemini.getReply(messages, options, apiKey, primaryModel),
     };
     candidate.reportOutcome = (outcome) => recordCandidateHealth(candidate, outcome);
     return candidate;
@@ -133,6 +226,11 @@ function getGeminiReplyPolicy(env = process.env) {
       DEFAULT_GEMINI_MIN_KEY_WINDOW_MS,
       15_000
     ),
+    fallbackModelReserveMs: positiveInt(
+      env.GEMINI_REPLY_FALLBACK_MODEL_RESERVE_MS,
+      DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS,
+      30_000
+    ),
     retryCount: positiveInt(
       env.GEMINI_REPLY_5XX_RETRY_COUNT,
       DEFAULT_GEMINI_5XX_RETRY_COUNT,
@@ -155,27 +253,99 @@ function getEffectiveGeminiMinKeyWindowMs(env, policy) {
   return Math.min(policy.minRemainingKeyWindowMs, fairShareMs);
 }
 
-async function runGeminiReply(messages, options, env = process.env) {
-  const policy = getGeminiReplyPolicy(env);
-  const effectiveMinKeyWindowMs = getEffectiveGeminiMinKeyWindowMs(env, policy);
-  return runWithGeminiKeys(
-    async (apiKey) => {
-      const raw = await gemini.getReply(messages, options, apiKey);
-      parseAiReplyResult(raw);
-      return raw;
-    },
-    {
-      env,
-      retryCount: policy.retryCount,
-      globalBudgetMs: policy.globalBudgetMs,
-      preferredTimeoutMs: policy.preferredTimeoutMs,
-      fallbackTimeoutMs: policy.fallbackTimeoutMs,
-      minRemainingKeyWindowMs: effectiveMinKeyWindowMs,
-      smartRetry: true,
-      smartRetryDelayMinMs: 500,
-      smartRetryDelayMaxMs: 1000,
-    }
+function computeGeminiModelBudgetMs(remainingBudgetMs, hasLaterModel, reserveMs) {
+  if (!(remainingBudgetMs > 0) || !hasLaterModel) return Math.max(0, remainingBudgetMs);
+  const boundedReserve = Math.min(
+    Math.max(0, reserveMs || 0),
+    Math.max(0, remainingBudgetMs - 1)
   );
+  return Math.max(1, remainingBudgetMs - boundedReserve);
+}
+
+function createGeminiModelsFailedError(failures) {
+  const err = new Error(
+    `All Gemini reply models failed. ${failures
+      .map(({ model, error }) => `${model}: ${error?.message || error}`)
+      .join(" | ")}`
+  );
+  err.code = "ALL_GEMINI_MODELS_FAILED";
+  err.failures = failures.map(({ model, error }) => ({
+    model,
+    code: error?.code || null,
+    message: String(error?.message || "Gemini request failed.").slice(0, 240),
+  }));
+  return err;
+}
+
+async function runGeminiReply(
+  messages,
+  options,
+  env = process.env,
+  {
+    clock = () => Date.now(),
+    sleepFn = sleep,
+    randomFn = Math.random,
+  } = {}
+) {
+  const policy = getGeminiReplyPolicy(env);
+  const models = getGeminiReplyModels(env);
+  const startedAtMs = clock();
+  const failures = [];
+
+  for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
+    const model = models[modelIndex];
+    const elapsedMs = Math.max(0, clock() - startedAtMs);
+    const remainingBudgetMs = policy.globalBudgetMs - elapsedMs;
+    if (remainingBudgetMs <= 0) break;
+
+    const hasLaterModel = modelIndex < models.length - 1;
+    const modelBudgetMs = computeGeminiModelBudgetMs(
+      remainingBudgetMs,
+      hasLaterModel,
+      policy.fallbackModelReserveMs
+    );
+    const modelPolicy = { ...policy, globalBudgetMs: modelBudgetMs };
+    const effectiveMinKeyWindowMs = getEffectiveGeminiMinKeyWindowMs(env, modelPolicy);
+
+    try {
+      return await runWithGeminiKeys(
+        (apiKey) => runGeminiModelAttempt(messages, options, apiKey, model, {
+          overloadRetryCount: policy.retryCount,
+          sleepFn,
+          randomFn,
+        }),
+        {
+          env,
+          retryCount: policy.retryCount,
+          globalBudgetMs: modelBudgetMs,
+          preferredTimeoutMs: policy.preferredTimeoutMs,
+          fallbackTimeoutMs: policy.fallbackTimeoutMs,
+          minRemainingKeyWindowMs: effectiveMinKeyWindowMs,
+          smartRetry: true,
+          smartRetryDelayMinMs: 500,
+          smartRetryDelayMaxMs: 1000,
+          clock,
+          sleepFn,
+          randomFn,
+        }
+      );
+    } catch (err) {
+      failures.push({ model, error: err });
+      if (hasLaterModel) {
+        console.warn(
+          `Gemini model ${model} failed; switching to ${models[modelIndex + 1]} within the same global budget:`,
+          err?.message || err
+        );
+      }
+    }
+  }
+
+  if (!failures.length) {
+    const err = new Error("Gemini reply time budget was exhausted before a model could be attempted.");
+    err.code = "GEMINI_GLOBAL_BUDGET_EXCEEDED";
+    throw err;
+  }
+  throw createGeminiModelsFailedError(failures);
 }
 
 async function runClaudeReply(messages, options, timeoutMs, retryCount) {
@@ -236,20 +406,27 @@ async function getReply(messages, optionsOrFirstMessage = false) {
 console.log(`AI provider preference: ${provider}`);
 
 module.exports = {
+  DEFAULT_GEMINI_ALTERNATE_MODEL,
+  DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS,
   DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS,
   DEFAULT_GEMINI_GLOBAL_BUDGET_MS,
   DEFAULT_GEMINI_MIN_KEY_WINDOW_MS,
+  DEFAULT_GEMINI_MODEL,
   DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS,
   buildCandidates,
   classifyCandidateHealthFailure,
+  computeGeminiModelBudgetMs,
   credentialFingerprint,
   getCandidateHealthDescriptors,
   getEffectiveGeminiMinKeyWindowMs,
   getGeminiApiKeys,
+  getGeminiReplyModels,
   getGeminiReplyPolicy,
   getRuntimeCandidateHealth,
   getReply,
+  isGeminiModelUnavailableError,
   isRetryableAiError,
   runCandidate,
+  runGeminiModelAttempt,
   runGeminiReply,
 };
