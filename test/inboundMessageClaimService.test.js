@@ -39,6 +39,7 @@ function makeService({ duplicate = false, policy = undefined } = {}) {
           incoming_payload: incoming,
           status: "pending",
         },
+        derivedFirstMessage: true,
       };
     },
     async claimPendingByMessageId(messageId) {
@@ -138,12 +139,14 @@ test("durability phase stores message + job without running reply preparation", 
 
   assert.equal(durable.savedInbound.id, 777);
   assert.equal(durable.processingJob.status, "pending");
+  assert.equal(durable.derivedFirstMessage, true);
+  assert.equal(durable.hasDerivedFirstMessage, true);
   assert.deepEqual(calls.map((call) => call[0]), ["contact", "claim", "event"]);
   assert.equal(calls.some((call) => call[0] === "lead"), false);
   assert.equal(calls.some((call) => call[0] === "processing-claim"), false);
 });
 
-test("live preparation leases the durable job before later bookkeeping", async () => {
+test("live preparation leases the durable job and preserves the persistence-time first-message boundary", async () => {
   const { calls, claim } = makeService();
   const durable = await claim.storeIncomingMessage({
     id: "wamid-1",
@@ -165,9 +168,9 @@ test("live preparation leases the durable job before later bookkeeping", async (
     "unread",
     "lead",
     "attribution",
-    "first-message",
     "prepared",
   ]);
+  assert.equal(calls.some((call) => call[0] === "first-message"), false);
 });
 
 test("duplicate webhook claims stop before later side effects", async () => {
