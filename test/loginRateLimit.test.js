@@ -140,7 +140,7 @@ test("parallel burst admits only the configured pair limit", async () => {
   assert.equal(admitted, MAX_ATTEMPTS_BY_SCOPE.pair);
 });
 
-test("normal rejection is counted once and successful cleanup preserves prior IP failures", async () => {
+test("normal rejection is counted once and success rolls back only its own reservation", async () => {
   const calls = [];
   const now = Date.UTC(2026, 8, 4, 9, 0, 0);
   const repository = {
@@ -151,10 +151,6 @@ test("normal rejection is counted once and successful cleanup preserves prior IP
         failures: 1,
         window_started_at: new Date(now),
       }));
-    },
-    async clearKeys(keys) {
-      calls.push(["clear", keys.map((key) => key.scope)]);
-      return keys.length;
     },
     async decrementKeys(keys) {
       calls.push(["decrement", keys.map((key) => key.scope)]);
@@ -182,13 +178,9 @@ test("normal rejection is counted once and successful cleanup preserves prior IP
     "record",
     ["ip", "username", "pair"],
   ]);
-  assert.deepEqual(calls.find((call) => call[0] === "clear"), [
-    "clear",
-    ["username", "pair"],
-  ]);
   assert.deepEqual(calls.find((call) => call[0] === "decrement"), [
     "decrement",
-    ["ip"],
+    ["ip", "username", "pair"],
   ]);
 });
 
