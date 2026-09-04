@@ -112,11 +112,11 @@ router.post("/login", loginRateLimit, async (req, res) => {
   }
 
   try {
-    // Only usernames that could have been created by the portal are allowed to
-    // reach Postgres. Malformed identifiers still take the dummy-bcrypt path
-    // and are recorded as failed authentication below, so validation does not
-    // become an account-enumeration shortcut.
-    const user = USERNAME_RE.test(username)
+    // Bound untrusted login input before it reaches Postgres. Do not impose the
+    // newer portal USERNAME_RE here because older accounts may have been created
+    // through ADMIN_USERNAME or the CLI before that UI rule existed. Oversized
+    // identifiers still take the dummy-bcrypt path and count as a failed login.
+    const user = username.length <= 200
       ? await usersRepo.getUserByUsername(username)
       : null;
     const credentialsValid = await verifyLoginCredentials(user, password);
