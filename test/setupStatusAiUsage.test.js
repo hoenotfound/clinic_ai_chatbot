@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const aiUsage = require("../src/services/aiUsageService");
 const { addAiUsage } = require("../src/routes/setupStatus");
 
-test("setup status exposes real 24h Gemini request and token totals", async () => {
+test("setup status exposes real 24h Gemini request, token and failure totals", async () => {
   const originalGetUsageSummary = aiUsage.getUsageSummary;
   aiUsage.getUsageSummary = async () => ({
     windowHours: 24,
@@ -36,6 +36,10 @@ test("setup status exposes real 24h Gemini request and token totals", async () =
       },
     ],
     byPurpose: [],
+    failuresByKind: [
+      { failureKind: "model_unavailable", requests: 1 },
+      { failureKind: "rate_limit", requests: 1 },
+    ],
   });
 
   try {
@@ -52,6 +56,8 @@ test("setup status exposes real 24h Gemini request and token totals", async () =
     assert.match(aiCheck.summary, /12 requests/i);
     assert.match(aiCheck.summary, /2 failed/i);
     assert.match(aiCheck.summary, /45,000 total tokens/i);
+    assert.match(aiCheck.summary, /1 model unavailable\/503/i);
+    assert.match(aiCheck.summary, /1 rate-limit\/quota/i);
   } finally {
     aiUsage.getUsageSummary = originalGetUsageSummary;
   }
