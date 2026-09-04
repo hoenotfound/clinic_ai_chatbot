@@ -43,9 +43,11 @@ function failureKind(error) {
 
 function queueUsage(event, { database = pool, repository = aiUsageRepo } = {}) {
   if (!process.env.DATABASE_URL && database === pool) return;
-  Promise.resolve(repository.recordAiUsage(event, database)).catch((err) => {
-    console.warn("Could not save AI usage metrics:", err?.message || err);
-  });
+  Promise.resolve()
+    .then(() => repository.recordAiUsage(event, database))
+    .catch((err) => {
+      console.warn("Could not save AI usage metrics:", err?.message || err);
+    });
 }
 
 async function generateGeminiContent(
