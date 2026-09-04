@@ -24,8 +24,10 @@ const DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS = 5 * 1000;
 const DEFAULT_GEMINI_MIN_KEY_WINDOW_MS = 4 * 1000;
 const DEFAULT_GEMINI_5XX_RETRY_COUNT = 1;
 const DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS = 0;
+const DEFAULT_GEMINI_MODEL_UNAVAILABLE_COOLDOWN_MS = 60 * 1000;
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 const DEFAULT_GEMINI_ALTERNATE_MODEL = "gemini-2.5-flash-lite";
+const runtimeGeminiModelHealth = new Map();
 
 function positiveInt(value, fallback, max = 60_000) {
   const parsed = Number(value);
@@ -87,6 +89,66 @@ function getGeminiReplyModels(env = process.env) {
       : DEFAULT_GEMINI_MODEL;
 
   return [...new Set([primary, fallback].filter(Boolean))];
+}
+
+function getGeminiModelUnavailableCooldownMs(env = process.env) {
+  return positiveInt(
+    env.GEMINI_MODEL_UNAVAILABLE_COOLDOWN_MS,
+    DEFAULT_GEMINI_MODEL_UNAVAILABLE_COOLDOWN_MS,
+    10 * 60 * 1000
+  );
+}
+
+function geminiModelHealthKey(model, env = process.env) {
+  const poolFingerprint = getGeminiApiKeys(env)
+    .map(credentialFingerprint)
+    .join(",") || "no_keys";
+  return `${String(model || "unknown")}:${poolFingerprint}`;
+}
+
+function modelCooldownUntilMs(model, env = process.env) {
+  const value = runtimeGeminiModelHealth.get(geminiModelHealthKey(model, env))?.cooldownUntil;
+  const parsed = value ? new Date(value).getTime() : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function markGeminiModelUnavailable(model, env = process.env, nowMs = Date.now()) {
+  const cooldownMs = getGeminiModelUnavailableCooldownMs(env);
+  const healthKey = geminiModelHealthKey(model, env);
+  if (cooldownMs <= 0) {
+    runtimeGeminiModelHealth.delete(healthKey);
+    return null;
+  }
+  const row = {
+    model,
+    status: "unavailable",
+    lastUnavailableAt: new Date(nowMs),
+    cooldownUntil: new Date(nowMs + cooldownMs),
+  };
+  runtimeGeminiModelHealth.set(healthKey, row);
+  return { ...row };
+}
+
+function clearGeminiModelCooldown(model, env = process.env) {
+  runtimeGeminiModelHealth.delete(geminiModelHealthKey(model, env));
+}
+
+function getRuntimeGeminiModelHealth(env = process.env, nowMs = Date.now()) {
+  return getGeminiReplyModels(env).map((model) => {
+    const row = runtimeGeminiModelHealth.get(geminiModelHealthKey(model, env));
+    const cooldownUntil = row?.cooldownUntil || null;
+    const coolingDown = Boolean(cooldownUntil && new Date(cooldownUntil).getTime() > nowMs);
+    return {
+      model,
+      status: coolingDown ? "cooling_down" : "available",
+      lastUnavailableAt: row?.lastUnavailableAt || null,
+      cooldownUntil: coolingDown ? cooldownUntil : null,
+    };
+  });
+}
+
+function resetGeminiModelHealth() {
+  runtimeGeminiModelHealth.clear();
 }
 
 function getNumericErrorStatus(err) {
@@ -265,6 +327,18 @@ function createGeminiModelsFailedError(failures) {
   return err;
 }
 
+function createGeminiModelsCoolingError(models, env, nowMs) {
+  const nextRetryMs = Math.min(
+    ...models
+      .map((model) => modelCooldownUntilMs(model, env))
+      .filter((value) => value > nowMs)
+  );
+  const err = new Error("All configured Gemini reply models are temporarily cooling down after model-capacity failures.");
+  err.code = "ALL_GEMINI_MODELS_COOLING_DOWN";
+  err.nextRetryAt = Number.isFinite(nextRetryMs) ? new Date(nextRetryMs) : null;
+  return err;
+}
+
 async function runGeminiReply(
   messages,
   options,
@@ -276,9 +350,16 @@ async function runGeminiReply(
   } = {}
 ) {
   const policy = getGeminiReplyPolicy(env);
-  const models = getGeminiReplyModels(env);
+  const configuredModels = getGeminiReplyModels(env);
   const startedAtMs = clock();
+  const models = configuredModels.filter(
+    (model) => modelCooldownUntilMs(model, env) <= startedAtMs
+  );
   const failures = [];
+
+  if (!models.length) {
+    throw createGeminiModelsCoolingError(configuredModels, env, startedAtMs);
+  }
 
   for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const model = models[modelIndex];
@@ -296,7 +377,7 @@ async function runGeminiReply(
     const effectiveMinKeyWindowMs = getEffectiveGeminiMinKeyWindowMs(env, modelPolicy);
 
     try {
-      return await runWithGeminiKeys(
+      const reply = await runWithGeminiKeys(
         (apiKey) => runGeminiModelAttempt(messages, options, apiKey, model, {
           overloadRetryCount: policy.retryCount,
           sleepFn,
@@ -317,8 +398,18 @@ async function runGeminiReply(
           randomFn,
         }
       );
+      clearGeminiModelCooldown(model, env);
+      return reply;
     } catch (err) {
       failures.push({ model, error: err });
+      if (err?.code === "GEMINI_MODEL_UNAVAILABLE") {
+        const health = markGeminiModelUnavailable(model, env, clock());
+        if (health?.cooldownUntil) {
+          console.warn(
+            `Gemini model ${model} is cooling down until ${health.cooldownUntil.toISOString()} after repeated capacity failures.`
+          );
+        }
+      }
       if (hasLaterModel) {
         console.warn(
           `Gemini model ${model} failed; switching to ${models[modelIndex + 1]} within the same global budget:`,
@@ -398,20 +489,27 @@ module.exports = {
   DEFAULT_GEMINI_GLOBAL_BUDGET_MS,
   DEFAULT_GEMINI_MIN_KEY_WINDOW_MS,
   DEFAULT_GEMINI_MODEL,
+  DEFAULT_GEMINI_MODEL_UNAVAILABLE_COOLDOWN_MS,
   DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS,
   buildCandidates,
   classifyCandidateHealthFailure,
+  clearGeminiModelCooldown,
   computeGeminiModelBudgetMs,
   credentialFingerprint,
+  geminiModelHealthKey,
   getCandidateHealthDescriptors,
   getEffectiveGeminiMinKeyWindowMs,
   getGeminiApiKeys,
+  getGeminiModelUnavailableCooldownMs,
   getGeminiReplyModels,
   getGeminiReplyPolicy,
   getRuntimeCandidateHealth,
+  getRuntimeGeminiModelHealth,
   getReply,
   isGeminiModelUnavailableError,
   isRetryableAiError,
+  markGeminiModelUnavailable,
+  resetGeminiModelHealth,
   runCandidate,
   runGeminiModelAttempt,
   runGeminiReply,
