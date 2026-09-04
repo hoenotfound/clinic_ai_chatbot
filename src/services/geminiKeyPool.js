@@ -1,7 +1,8 @@
 const crypto = require("crypto");
 const setupStatusRepo = require("../db/setupStatusRepo");
 
-const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 15 * 60 * 1000;
+const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
+const DEFAULT_QUOTA_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_UNAVAILABLE_COOLDOWN_MS = 30 * 1000;
 const DEFAULT_INVALID_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const MAX_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
@@ -38,9 +39,24 @@ function credentialFingerprint(value) {
     .slice(0, 24);
 }
 
+function getErrorStatus(err) {
+  const candidates = [
+    err?.status,
+    err?.statusCode,
+    err?.response?.status,
+    err?.error?.code,
+  ];
+  for (const candidate of candidates) {
+    if (candidate == null || candidate === "") continue;
+    const status = Number(candidate);
+    if (Number.isInteger(status)) return status;
+  }
+  return null;
+}
+
 function isRetryableAiError(err) {
-  const status = Number(err?.status || err?.statusCode || err?.response?.status);
-  if ([408, 409, 425, 429].includes(status) || status >= 500) return true;
+  const status = getErrorStatus(err);
+  if ([408, 409, 425, 429].includes(status) || (status != null && status >= 500)) return true;
 
   const code = String(err?.code || err?.cause?.code || "").toUpperCase();
   if (
@@ -63,13 +79,20 @@ function isRetryableAiError(err) {
   return /timeout|timed out|rate limit|quota|resource exhausted|overload|temporar|unavailable|try again|429|500|502|503|504/.test(message);
 }
 
+function looksLikeDailyQuota(message) {
+  const text = String(message || "").toLowerCase();
+  return /quota_exceeded|requests per day|per-day|per day|daily quota|\brpd\b/.test(text);
+}
+
 function classifyCandidateHealthFailure(err) {
-  const status = Number(err?.status || err?.statusCode || err?.response?.status);
+  const status = getErrorStatus(err);
   const code = String(err?.code || "").toUpperCase();
   const message = String(err?.message || "").toLowerCase();
 
   if (status === 429 || /rate limit|quota|resource exhausted|too many requests/.test(message)) {
-    return { status: "rate_limited", failureKind: "rate_limit" };
+    return looksLikeDailyQuota(message)
+      ? { status: "rate_limited", failureKind: "quota_exhausted" }
+      : { status: "rate_limited", failureKind: "rate_limit" };
   }
   if ([401, 403].includes(status) || /api.?key.*invalid|invalid.*api.?key|unauthorized|permission denied/.test(message)) {
     return { status: "invalid", failureKind: "authentication" };
@@ -89,6 +112,12 @@ function classifyCandidateHealthFailure(err) {
 function cooldownMsForOutcome(candidate, outcome, env = process.env) {
   if (candidate?.provider !== "gemini") return 0;
   if (outcome?.status === "rate_limited") {
+    if (outcome.failureKind === "quota_exhausted") {
+      return positiveInt(
+        env.GEMINI_QUOTA_COOLDOWN_MS,
+        DEFAULT_QUOTA_COOLDOWN_MS
+      );
+    }
     return positiveInt(
       env.GEMINI_RATE_LIMIT_COOLDOWN_MS,
       DEFAULT_RATE_LIMIT_COOLDOWN_MS
@@ -213,6 +242,51 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function computeAttemptTimeoutMs({
+  remainingBudgetMs,
+  candidatePosition,
+  totalCandidates,
+  preferredTimeoutMs,
+  fallbackTimeoutMs,
+  minRemainingKeyWindowMs,
+}) {
+  if (!(remainingBudgetMs > 0)) return 0;
+  const remainingCandidates = Math.max(0, totalCandidates - candidatePosition - 1);
+  const reserveForLaterKeys = remainingCandidates * Math.max(0, minRemainingKeyWindowMs || 0);
+  const baseTimeout = candidatePosition === 0 ? preferredTimeoutMs : fallbackTimeoutMs;
+  const usableNow = Math.max(1, remainingBudgetMs - reserveForLaterKeys);
+  return Math.max(1, Math.min(baseTimeout || remainingBudgetMs, usableNow, remainingBudgetMs));
+}
+
+function shouldRetrySameGeminiKey(err, outcome, { attempt, retryCount, smartRetry = false }) {
+  if (attempt >= retryCount) return false;
+  if (!smartRetry) {
+    return isRetryableAiError(err) && !["rate_limited", "invalid"].includes(outcome.status);
+  }
+
+  if (outcome.failureKind === "invalid_response") return true;
+  const status = getErrorStatus(err);
+  return status != null && status >= 500 && status <= 599;
+}
+
+function smartRetryDelayMs(err, { minMs = 500, maxMs = 1000, randomFn = Math.random } = {}) {
+  const status = getErrorStatus(err);
+  if (!(status != null && status >= 500 && status <= 599)) return 0;
+  const low = Math.max(0, Math.min(minMs, maxMs));
+  const high = Math.max(low, maxMs);
+  return Math.round(low + (high - low) * Math.max(0, Math.min(1, randomFn())));
+}
+
+function createBudgetError(failures) {
+  const err = new Error("Gemini reply time budget was exhausted.");
+  err.code = "GEMINI_GLOBAL_BUDGET_EXCEEDED";
+  err.failures = failures.map(({ label, error }) => ({
+    label,
+    message: String(error?.message || "Gemini request failed.").slice(0, 240),
+  }));
+  return err;
+}
+
 async function runWithGeminiKeys(
   operation,
   {
@@ -220,8 +294,17 @@ async function runWithGeminiKeys(
     retryCount = 1,
     retryDelaysMs = [],
     timeoutMs = 0,
+    globalBudgetMs = 0,
+    preferredTimeoutMs = 0,
+    fallbackTimeoutMs = 0,
+    minRemainingKeyWindowMs = 0,
+    smartRetry = false,
+    smartRetryDelayMinMs = 500,
+    smartRetryDelayMaxMs = 1000,
     persistHealth = true,
     now = () => new Date(),
+    clock = () => Date.now(),
+    randomFn = Math.random,
     sleepFn = sleep,
   } = {}
 ) {
@@ -246,14 +329,34 @@ async function runWithGeminiKeys(
 
   const failures = [];
   const boundedRetryCount = Math.max(0, Math.min(Number(retryCount) || 0, 3));
+  const startedAtMs = clock();
 
-  for (const candidate of available) {
+  for (let candidatePosition = 0; candidatePosition < available.length; candidatePosition += 1) {
+    const candidate = available[candidatePosition];
     let lastError = null;
+
     for (let attempt = 0; attempt <= boundedRetryCount; attempt += 1) {
+      const elapsedMs = Math.max(0, clock() - startedAtMs);
+      const remainingBudgetMs = globalBudgetMs > 0
+        ? globalBudgetMs - elapsedMs
+        : Number.POSITIVE_INFINITY;
+      if (remainingBudgetMs <= 0) throw createBudgetError(failures);
+
+      const attemptTimeoutMs = globalBudgetMs > 0
+        ? computeAttemptTimeoutMs({
+            remainingBudgetMs,
+            candidatePosition,
+            totalCandidates: available.length,
+            preferredTimeoutMs: preferredTimeoutMs || timeoutMs,
+            fallbackTimeoutMs: fallbackTimeoutMs || timeoutMs,
+            minRemainingKeyWindowMs,
+          })
+        : timeoutMs;
+
       try {
         const result = await withTimeout(
           operation(candidate.apiKey, candidate),
-          timeoutMs,
+          attemptTimeoutMs,
           candidate.label
         );
         recordCandidateHealth(
@@ -271,20 +374,38 @@ async function runWithGeminiKeys(
           now,
         });
 
-        const sameKeyRetry = attempt < boundedRetryCount
-          && isRetryableAiError(err)
-          && !["rate_limited", "invalid"].includes(outcome.status);
+        const sameKeyRetry = shouldRetrySameGeminiKey(err, outcome, {
+          attempt,
+          retryCount: boundedRetryCount,
+          smartRetry,
+        });
         console.warn(
           `${candidate.label} attempt ${attempt + 1} failed${sameKeyRetry ? "; retrying" : "; rotating"}:`,
           err?.message || err
         );
         if (!sameKeyRetry) break;
 
-        const delayMs = Number(retryDelaysMs[attempt]) || 0;
+        let delayMs = Number(retryDelaysMs[attempt]) || 0;
+        if (smartRetry && delayMs <= 0) {
+          delayMs = smartRetryDelayMs(err, {
+            minMs: smartRetryDelayMinMs,
+            maxMs: smartRetryDelayMaxMs,
+            randomFn,
+          });
+        }
+        if (globalBudgetMs > 0) {
+          const remainingBeforeDelay = globalBudgetMs - Math.max(0, clock() - startedAtMs);
+          if (remainingBeforeDelay <= 0) throw createBudgetError(failures);
+          delayMs = Math.min(delayMs, Math.max(0, remainingBeforeDelay - 1));
+        }
         if (delayMs > 0) await sleepFn(delayMs);
       }
     }
+
     failures.push({ label: candidate.label, error: lastError });
+    if (globalBudgetMs > 0 && clock() - startedAtMs >= globalBudgetMs) {
+      throw createBudgetError(failures);
+    }
   }
 
   const err = new Error("All available Gemini keys failed.");
@@ -303,9 +424,11 @@ function resetGeminiKeyPoolState() {
 
 module.exports = {
   DEFAULT_INVALID_COOLDOWN_MS,
+  DEFAULT_QUOTA_COOLDOWN_MS,
   DEFAULT_RATE_LIMIT_COOLDOWN_MS,
   DEFAULT_UNAVAILABLE_COOLDOWN_MS,
   classifyCandidateHealthFailure,
+  computeAttemptTimeoutMs,
   cooldownMsForOutcome,
   credentialFingerprint,
   getGeminiApiKeys,
@@ -316,4 +439,6 @@ module.exports = {
   recordCandidateHealth,
   resetGeminiKeyPoolState,
   runWithGeminiKeys,
+  shouldRetrySameGeminiKey,
+  smartRetryDelayMs,
 };
