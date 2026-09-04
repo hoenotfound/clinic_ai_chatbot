@@ -15,9 +15,12 @@ const {
   getPendingAiHandoffContact,
   pauseAiForHumanHandoff,
 } = require("./services/aiHandoffService");
-const { claimIncomingMessage } = require("./services/inboundMessageClaimService");
 const {
-  claimLiveItem,
+  claimIncomingMessage,
+  prepareIncomingClaim,
+  storeIncomingMessage,
+} = require("./services/inboundMessageClaimService");
+const {
   processClaimedBatch,
   startInboundProcessingRecovery,
 } = require("./services/inboundProcessingService");
@@ -157,42 +160,59 @@ async function processIncomingBatch(items) {
 }
 
 /**
- * Persist each webhook message and its durable processing job immediately,
- * then let the short typing debounce decide when to run expensive reply work.
- * The in-memory queue keeps the low-latency happy path; Postgres owns the job
- * state so a Render restart can recover anything that was pending/in-flight.
+ * Store only the durable webhook state. This runs on the short per-contact
+ * claim queue and is safe to await before returning HTTP 200 to Meta because
+ * it does no media download, transcription or AI work.
  */
+async function durablyClaimIncoming(queueKey, incoming) {
+  return enqueueConversation(
+    queueKey,
+    () => storeIncomingMessage(incoming)
+  );
+}
+
+/**
+ * After the webhook has been acknowledged, lease the durable job, complete the
+ * normal bookkeeping and feed it into the existing typing-burst processor.
+ */
+async function scheduleDurableClaim(queueKey, durableClaim) {
+  if (!durableClaim) return null;
+  try {
+    const prepared = await enqueueConversation(
+      queueKey,
+      () => prepareIncomingClaim(durableClaim)
+    );
+    if (!prepared) return null;
+
+    return await enqueueConversationBurst(
+      queueKey,
+      prepared,
+      (items) => processClaimedBatch(items, processIncomingBatch)
+    );
+  } catch (err) {
+    const incoming = durableClaim.incoming || {};
+    console.error(
+      `Failed to prepare/queue incoming ${incoming.channel || "whatsapp"} message ${incoming.id || "without id"}:`,
+      err
+    );
+    return null;
+  }
+}
+
+/** Compatibility helper for resolved Meta edit events and internal callers. */
 async function queueIncomingForReply(queueKey, incoming) {
   try {
-    const claimed = await enqueueConversation(
-      queueKey,
-      () => claimIncomingMessage(incoming)
-    );
-    if (!claimed) {
+    const durableClaim = await durablyClaimIncoming(queueKey, incoming);
+    if (!durableClaim) {
       console.log(
         `Skipping duplicate/retried ${incoming.channel || "whatsapp"} message ${incoming.id}`
       );
       return null;
     }
-
-    const processingItem = await claimLiveItem(claimed);
-    if (!processingItem) {
-      // A recovery sweep can win this tiny race after preparation. In that
-      // case it owns the durable job and will process it; never run it twice.
-      console.log(
-        `Inbound processing job already claimed for ${incoming.channel || "whatsapp"} message ${incoming.id}`
-      );
-      return null;
-    }
-
-    return await enqueueConversationBurst(
-      queueKey,
-      processingItem,
-      (items) => processClaimedBatch(items, processIncomingBatch)
-    );
+    return scheduleDurableClaim(queueKey, durableClaim);
   } catch (err) {
     console.error(
-      `Failed to claim/queue incoming ${incoming.channel || "whatsapp"} message ${incoming.id || "without id"}:`,
+      `Failed to durably claim incoming ${incoming.channel || "whatsapp"} message ${incoming.id || "without id"}:`,
       err
     );
     return null;
@@ -682,20 +702,35 @@ app.get("/webhook", (req, res) => {
 
 // ── Incoming WhatsApp messages and delivery statuses ──
 app.post("/webhook", webhookJsonParser, async (req, res) => {
-  // Respond to Meta immediately — don't make them wait on the AI call,
-  // or Meta may retry/resend the same message.
+  const incomingMessages = whatsapp.parseIncomingMessages(req.body);
+  let durableClaims;
+  try {
+    // Do the small Postgres durability phase before acknowledging Meta. If the
+    // database is unavailable, return a retryable 503 instead of telling Meta
+    // the message was safely accepted when it was not persisted.
+    durableClaims = await Promise.all(
+      incomingMessages.map(async (incoming) => ({
+        queueKey: incoming.from,
+        durableClaim: await durablyClaimIncoming(incoming.from, incoming),
+      }))
+    );
+  } catch (err) {
+    console.error("Failed to durably accept incoming WhatsApp message(s):", err);
+    return res.sendStatus(503);
+  }
+
+  // The expensive work is deliberately after the acknowledgement. Meta waits
+  // only for contact/message/job persistence, never for media or the AI.
   res.sendStatus(200);
-  const webhookActivity = setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
+
+  setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
     console.error("Failed to record WhatsApp webhook activity:", err);
   });
-
-  // The durable message + processing-job claim runs immediately in
-  // queueIncomingForReply(); only expensive media/AI work waits for debounce.
-  const incomingWork = Promise.all(
-    whatsapp.parseIncomingMessages(req.body).map((incoming) =>
-      queueIncomingForReply(incoming.from, incoming)
-    )
-  );
+  for (const { queueKey, durableClaim } of durableClaims) {
+    scheduleDurableClaim(queueKey, durableClaim).catch((err) => {
+      console.error("Failed to schedule durable WhatsApp inbound work:", err);
+    });
+  }
 
   // ── Async WhatsApp delivery-status callbacks (sent/delivered/read/failed) ──
   const statusUpdates = whatsapp.parseStatusUpdates(req.body);
@@ -723,8 +758,6 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
       console.error("Failed to process delivery-status update:", err);
     }
   }
-
-  await Promise.all([incomingWork, webhookActivity]);
 });
 
 // ── Facebook Messenger + Instagram Messaging webhook verification ──
@@ -743,30 +776,53 @@ app.get("/meta-webhook", (req, res) => {
 });
 
 app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
-  // Acknowledge Meta before AI/network work for the same retry protection used
-  // by the existing WhatsApp webhook.
+  const incomingMessages = metaMessaging.parseIncomingMessages(req.body);
+  let durableClaims;
+  try {
+    // Standard Messenger/Instagram message events contain enough data to store
+    // the customer message immediately. Persist those before the 200 ACK just
+    // like WhatsApp. Profile enrichment remains presentation-only/background.
+    durableClaims = await Promise.all(
+      incomingMessages.map(async (incoming) => {
+        const queueKey = `${incoming.channel}:${incoming.from}`;
+        return {
+          queueKey,
+          durableClaim: await durablyClaimIncoming(queueKey, incoming),
+        };
+      })
+    );
+  } catch (err) {
+    console.error("Failed to durably accept incoming Meta message(s):", err);
+    return res.sendStatus(503);
+  }
+
   res.sendStatus(200);
-  const webhookActivity = setupStatusRepo.recordWebhook("meta_webhook").catch((err) => {
+  setupStatusRepo.recordWebhook("meta_webhook").catch((err) => {
     console.error("Failed to record Meta webhook activity:", err);
   });
 
-  const incomingMessages = metaMessaging.parseIncomingMessages(req.body);
-  const resolvedEditMessages = await metaMessaging.resolveMessageEditEvents(req.body);
-  const allIncoming = [...incomingMessages, ...resolvedEditMessages];
+  for (const { queueKey, durableClaim } of durableClaims) {
+    scheduleDurableClaim(queueKey, durableClaim).catch((err) => {
+      console.error("Failed to schedule durable Meta inbound work:", err);
+    });
+  }
 
-  try {
-    await Promise.all([
-      webhookActivity,
-      ...allIncoming.map((incoming) =>
+  // message_edit payloads do not include sender/text, so they require a Graph
+  // lookup before they can become a normal durable message. Resolve them after
+  // the ACK to avoid making Meta wait on its own API, then enter the exact same
+  // durable queue. Direct message events above are already safely persisted.
+  metaMessaging.resolveMessageEditEvents(req.body)
+    .then((resolvedEditMessages) => Promise.all(
+      resolvedEditMessages.map((incoming) =>
         queueIncomingForReply(
           `${incoming.channel}:${incoming.from}`,
           incoming
         )
-      ),
-    ]);
-  } catch (err) {
-    console.error("Failed to process incoming Meta message(s):", err);
-  }
+      )
+    ))
+    .catch((err) => {
+      console.error("Failed to process Meta message-edit event(s):", err);
+    });
 });
 
 // ── Promo graphics uploaded from Settings > Promotions — served publicly.
