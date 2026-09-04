@@ -134,6 +134,60 @@ test(
         maxAttempts: 5,
       }, client);
       assert.deepEqual(nothingLeft, []);
+
+      // Worst-case restart: the process dies immediately after leasing the
+      // fifth/final attempt. The job is no longer retryable, but it must remain
+      // discoverable so the recovery worker can hand it to staff.
+      const exhaustedIncoming = {
+        ...incoming,
+        id: "wamid-durable-exhausted",
+        text: "please help",
+      };
+      const exhaustedClaim = await inboundProcessingRepo.storeInboundClaim({
+        contactId,
+        content: exhaustedIncoming.text,
+        storedMessageId: exhaustedIncoming.id,
+        channel: "whatsapp",
+        incoming: exhaustedIncoming,
+      }, client);
+      const exhaustedLease = await inboundProcessingRepo.claimPendingByMessageId(
+        exhaustedClaim.savedInbound.id,
+        client
+      );
+      await client.query(
+        `UPDATE inbound_processing_jobs
+         SET attempts = 5,
+             status = 'processing',
+             claimed_at = NOW() - interval '2 minutes',
+             last_error = 'simulated final-attempt crash'
+         WHERE id = $1`,
+        [exhaustedLease.id]
+      );
+
+      const exhausted = await inboundProcessingRepo.listExhausted({
+        limit: 10,
+        staleAfterSeconds: 45,
+        maxAttempts: 5,
+      }, client);
+      assert.equal(exhausted.length, 1);
+      assert.equal(exhausted[0].id, exhaustedLease.id);
+      assert.equal(exhausted[0].attempts, 5);
+      assert.equal(exhausted[0].terminal_at, null);
+
+      const terminal = await inboundProcessingRepo.markTerminal(
+        exhaustedLease.id,
+        client
+      );
+      assert.equal(terminal.status, "failed");
+      assert.ok(terminal.terminal_at);
+      assert.equal(terminal.last_error, "simulated final-attempt crash");
+
+      const noLongerUnsurfaced = await inboundProcessingRepo.listExhausted({
+        limit: 10,
+        staleAfterSeconds: 45,
+        maxAttempts: 5,
+      }, client);
+      assert.deepEqual(noLongerUnsurfaced, []);
     } finally {
       await client.query("SET search_path TO public").catch(() => {});
       await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`).catch(() => {});
