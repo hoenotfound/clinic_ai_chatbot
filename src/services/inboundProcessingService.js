@@ -1,7 +1,9 @@
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const contactsRepo = require("../db/contactsRepo");
+const metaMessaging = require("./metaMessagingService");
 const {
   resumeIncomingProcessingJob,
+  storeIncomingMessage,
 } = require("./inboundMessageClaimService");
 const { enqueueReplyConversation } = require("../utils/conversationQueue");
 
@@ -137,11 +139,76 @@ async function flagTerminalFailure(
   }
 }
 
+/**
+ * Resolves pre-ACK durable Meta message_edit placeholders. The resolver only
+ * needs to turn the opaque Meta message id into a normal durable customer
+ * message; the ordinary inbound-processing recovery immediately below then
+ * handles preparation/AI/outbound work in the same sweep.
+ */
+async function recoverMetaResolutionJobs({
+  repository = inboundProcessingRepo,
+  resolveJob = metaMessaging.resolveClaimedMessageEditJob,
+  storeIncoming = storeIncomingMessage,
+} = {}) {
+  if (typeof repository.claimRecoverableMetaResolutions !== "function") return;
+
+  const jobs = await repository.claimRecoverableMetaResolutions({
+    limit: RECOVERY_BATCH_SIZE,
+    staleAfterSeconds: STALE_PROCESSING_SECONDS,
+    maxAttempts: MAX_PROCESSING_ATTEMPTS,
+  });
+
+  for (const job of jobs) {
+    try {
+      const incoming = await resolveJob(job);
+      if (!incoming) {
+        await repository.markMetaResolutionCompleted(job.id);
+        continue;
+      }
+
+      // storeIncomingMessage atomically creates the ordinary customer message
+      // + processing job and then completes this resolution row. If a standard
+      // message webhook already created the same message, its dedupe path still
+      // completes the resolution row without generating duplicate reply work.
+      await storeIncoming(incoming);
+    } catch (err) {
+      console.error(`Failed to recover Meta message resolution job ${job.id}:`, err);
+      const failed = await repository.markMetaResolutionFailed(job.id, err).catch(() => null);
+      if (failed && Number(failed.attempts) >= MAX_PROCESSING_ATTEMPTS) {
+        await repository.markMetaResolutionTerminal(job.id).catch((terminalErr) => {
+          console.error(
+            `Failed to mark exhausted Meta resolution job ${job.id} terminal:`,
+            terminalErr
+          );
+        });
+      }
+    }
+  }
+
+  if (typeof repository.listExhaustedMetaResolutions !== "function") return;
+  const exhausted = await repository.listExhaustedMetaResolutions({
+    limit: RECOVERY_BATCH_SIZE,
+    staleAfterSeconds: STALE_PROCESSING_SECONDS,
+    maxAttempts: MAX_PROCESSING_ATTEMPTS,
+  });
+  for (const job of exhausted) {
+    console.error(
+      `Meta message resolution job ${job.id} exhausted ${job.attempts} attempts; ` +
+      `leaving the durable failure for diagnostics.`
+    );
+    await repository.markMetaResolutionTerminal(job.id).catch((err) => {
+      console.error(`Failed to mark Meta resolution job ${job.id} terminal:`, err);
+    });
+  }
+}
+
 async function runInboundProcessingRecovery({
   repository = inboundProcessingRepo,
   resumeJob = resumeIncomingProcessingJob,
   processBatch,
   contacts = contactsRepo,
+  resolveMetaJob = metaMessaging.resolveClaimedMessageEditJob,
+  storeIncoming = storeIncomingMessage,
 } = {}) {
   if (recoverySweepRunning) return;
   if (typeof processBatch !== "function") {
@@ -150,6 +217,16 @@ async function runInboundProcessingRecovery({
 
   recoverySweepRunning = true;
   try {
+    // Resolve opaque Instagram/Facebook message_edit notifications first. Any
+    // customer messages created here are pending ordinary jobs and are picked
+    // up by claimRecoverable immediately below, so restart recovery remains one
+    // ordered pipeline rather than a second reply path.
+    await recoverMetaResolutionJobs({
+      repository,
+      resolveJob: resolveMetaJob,
+      storeIncoming,
+    });
+
     const jobs = await repository.claimRecoverable({
       limit: RECOVERY_BATCH_SIZE,
       staleAfterSeconds: STALE_PROCESSING_SECONDS,
@@ -245,6 +322,7 @@ module.exports = {
   groupJobsByContact,
   markBatchFailed,
   processClaimedBatch,
+  recoverMetaResolutionJobs,
   replyQueueKeyForRecoveredItems,
   runInboundProcessingRecovery,
   startInboundProcessingRecovery,

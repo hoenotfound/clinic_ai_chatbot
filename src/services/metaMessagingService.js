@@ -4,6 +4,7 @@ const PROFILE_FETCH_TIMEOUT_MS = 5000;
 const PROFILE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const PROFILE_FAILURE_CACHE_TTL_MS = 5 * 60 * 1000;
 const { normalizeSocialReferral } = require("../utils/leadAttribution");
+const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 
 const profileCache = new Map();
 const profileRequests = new Map();
@@ -291,58 +292,166 @@ async function fetchMessageById(channel, mid) {
   }
 }
 
-// Instagram (and possibly Messenger) can deliver a message via a
-// "message_edit" event instead of a plain "message" event — this includes
-// genuine edits, but on some accounts/app configurations has also been
-// observed for brand-new messages. Either way, the event payload itself
-// only contains { mid, num_edit } with no text/sender, so the actual
-// content has to be fetched separately via the Graph API before it can be
-// processed like a normal incoming message.
-async function resolveMessageEditEvents(body) {
-  const channel = body?.object === "page"
+function messageEditChannel(body) {
+  return body?.object === "page"
     ? "facebook"
     : body?.object === "instagram"
       ? "instagram"
       : null;
-  if (!channel) return [];
+}
 
+function extractMessageEditEvents(body) {
+  const channel = messageEditChannel(body);
+  if (!channel) return { channel: null, edits: [] };
   const edits = [];
   for (const entry of body?.entry || []) {
     for (const event of entry?.messaging || []) {
       const mid = event?.message_edit?.mid;
       if (!mid) continue;
-      edits.push({ mid, entryId: entry?.id });
+      edits.push({
+        mid: String(mid),
+        entryId: entry?.id == null ? null : String(entry.id),
+      });
     }
   }
-  if (edits.length === 0) return [];
+  return { channel, edits };
+}
+
+// Instagram (and possibly Messenger) can deliver a message via a
+// "message_edit" event instead of a plain "message" event — this includes
+// genuine edits, but on some accounts/app configurations has also been
+// observed for brand-new messages. The original webhook only has a message id,
+// so the pre-ACK parser stores a durable resolution job and this helper later
+// fetches the real sender/text through Graph API.
+async function resolveMessageEditPayload({
+  channel,
+  mid,
+  entryId = null,
+  resolutionJobId = null,
+}) {
+  let data = await fetchMessageById(channel, mid);
+
+  // The direct by-ID fetch has been observed to return an empty object for some
+  // message_edit events even on a 200 response. Fall back to the most recent
+  // conversation message, retaining the durable original Meta message id for
+  // deduplication in the normal inbound-message table.
+  if (!data?.from?.id || typeof data?.message !== "string") {
+    data = await fetchLatestConversationMessage(channel);
+  }
+
+  const senderId = data?.from?.id;
+  const text = data?.message;
+  if (!senderId || typeof text !== "string") {
+    throw new Error(`Could not resolve Meta message_edit ${channel}:${mid}.`);
+  }
+
+  // Same self-echo guard as parseIncomingMessages. A durable resolution job
+  // for an outgoing edit can be completed with no customer reply work.
+  if (entryId != null && String(senderId) === String(entryId)) return null;
+
+  return {
+    id: mid,
+    from: String(senderId),
+    channel,
+    profileName: null,
+    text,
+    mediaId: null,
+    mediaUrl: null,
+    mediaType: null,
+    unsupportedType: null,
+    ...(resolutionJobId ? { metaResolutionJobId: resolutionJobId } : {}),
+  };
+}
+
+async function resolveClaimedMessageEditJob(job) {
+  if (!job) throw new Error("Missing durable Meta resolution job.");
+  const payload = job.incoming_payload || {};
+  const channel = job.channel || payload.channel;
+  const mid = job.external_message_id || payload.metaMessageId;
+  const entryId = job.entry_id ?? payload.metaEntryId ?? null;
+  if (!channel || !mid) {
+    throw new Error(`Meta resolution job ${job.id || "unknown"} is missing channel/message id.`);
+  }
+  return resolveMessageEditPayload({
+    channel,
+    mid: String(mid),
+    entryId,
+    resolutionJobId: job.id || null,
+  });
+}
+
+async function resolveMessageEditEvents(
+  body,
+  { processing = inboundProcessingRepo } = {}
+) {
+  const { channel, edits } = extractMessageEditEvents(body);
+  if (!channel || edits.length === 0) return [];
 
   const resolved = await Promise.all(
     edits.map(async ({ mid, entryId }) => {
-      let data = await fetchMessageById(channel, mid);
-
-      // The direct by-ID fetch has been observed to return an empty object
-      // for some message_edit events even on a 200 response. Fall back to
-      // pulling the most recent message from the conversations list.
-      if (!data?.from?.id || typeof data?.message !== "string") {
-        data = await fetchLatestConversationMessage(channel);
+      let existingJob = null;
+      try {
+        existingJob = await processing.getMetaResolutionByExternalId(
+          channel,
+          mid
+        );
+      } catch (err) {
+        // The webhook was already ACKed only after the resolution placeholder
+        // was stored. If the DB is temporarily unavailable here, leave that job
+        // for the periodic recovery worker instead of doing undurable work.
+        console.error(
+          `[${channelLabel(channel)}] Failed to inspect durable message_edit ${mid}:`,
+          err
+        );
+        return null;
       }
 
-      const senderId = data?.from?.id;
-      const text = data?.message;
-      if (!senderId || typeof text !== "string") return null;
-      // Same self-echo guard as parseIncomingMessages.
-      if (String(senderId) === String(entryId)) return null;
-      return {
-        id: mid,
-        from: String(senderId),
-        channel,
-        profileName: null,
-        text,
-        mediaId: null,
-        mediaUrl: null,
-        mediaType: null,
-        unsupportedType: null,
-      };
+      let claimedJob = null;
+      if (existingJob) {
+        try {
+          claimedJob = await processing.claimMetaResolutionByExternalId({
+            channel,
+            externalMessageId: mid,
+          });
+        } catch (err) {
+          console.error(
+            `[${channelLabel(channel)}] Failed to claim durable message_edit ${mid}:`,
+            err
+          );
+          return null;
+        }
+
+        // Another worker/recovery sweep already owns it, or it is complete.
+        if (!claimedJob) return null;
+      }
+
+      try {
+        const incoming = await resolveMessageEditPayload({
+          channel,
+          mid,
+          entryId,
+          resolutionJobId: claimedJob?.id || null,
+        });
+
+        if (!incoming && claimedJob) {
+          await processing.markMetaResolutionCompleted(claimedJob.id);
+        }
+        return incoming;
+      } catch (err) {
+        if (claimedJob) {
+          await processing.markMetaResolutionFailed(claimedJob.id, err).catch((markErr) => {
+            console.error(
+              `[${channelLabel(channel)}] Failed to persist message_edit resolution failure ${mid}:`,
+              markErr
+            );
+          });
+        }
+        console.error(
+          `[${channelLabel(channel)}] Failed to resolve message_edit ${mid}:`,
+          err
+        );
+        return null;
+      }
     })
   );
 
@@ -350,16 +459,30 @@ async function resolveMessageEditEvents(body) {
 }
 
 function parseIncomingMessages(body) {
-  const channel = body?.object === "page"
-    ? "facebook"
-    : body?.object === "instagram"
-      ? "instagram"
-      : null;
+  const channel = messageEditChannel(body);
   if (!channel) return [];
 
   const parsed = [];
   for (const entry of body?.entry || []) {
     for (const event of entry?.messaging || []) {
+      const editMid = event?.message_edit?.mid;
+      if (editMid) {
+        // The event has no customer sender/text to turn into a conversation yet.
+        // Store this durable placeholder in the normal pre-ACK phase. The
+        // post-ACK resolver/recovery worker will later replace it with the real
+        // customer message without risking loss during a Render restart.
+        const stableMid = String(editMid);
+        parsed.push({
+          id: `meta-edit:${stableMid}`,
+          from: `meta-edit:${stableMid}`,
+          channel,
+          metaResolutionOnly: true,
+          metaMessageId: stableMid,
+          metaEntryId: entry?.id == null ? null : String(entry.id),
+        });
+        continue;
+      }
+
       const message = event?.message;
       const senderId = event?.sender?.id;
       const attribution = event?.referral
@@ -492,6 +615,7 @@ module.exports = {
   sendText,
   sendImage,
   parseIncomingMessages,
+  resolveClaimedMessageEditJob,
   resolveMessageEditEvents,
   downloadMedia,
 };

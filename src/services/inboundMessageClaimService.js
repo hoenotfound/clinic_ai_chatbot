@@ -180,6 +180,25 @@ function createInboundMessageClaimService({
    * handlers can await it before returning HTTP 200 to Meta.
    */
   async function storeIncomingMessage(incoming) {
+    // message_edit can represent a brand-new Meta message while containing no
+    // sender or text. Persist that unresolved event before the webhook ACK so
+    // a Render restart cannot erase the only notification that the message
+    // exists. The recovery sweep resolves it through Graph API later.
+    if (incoming?.metaResolutionOnly) {
+      const channel = incoming.channel;
+      const externalMessageId = incoming.metaMessageId;
+      if (!channel || !externalMessageId) {
+        throw new Error("Meta resolution placeholder is missing channel/message id.");
+      }
+      await processing.storeMetaResolutionClaim({
+        channel,
+        externalMessageId,
+        entryId: incoming.metaEntryId || null,
+        incoming,
+      });
+      return null;
+    }
+
     // OPEN_THREAD attribution is already persisted in Postgres. Awaiting it in
     // the webhook durability phase means the referral also survives a restart.
     if (incoming?.attributionOnly) {
@@ -208,6 +227,26 @@ function createInboundMessageClaimService({
       channel,
       incoming,
     });
+
+    // A resolved message_edit job is complete only after the normal customer
+    // message + reply-processing job is durable. This is intentionally done
+    // even when storeInboundClaim returns null because that means an equivalent
+    // message already exists (for example a standard message webhook won the
+    // race). Either way, the unresolved Meta event is now safely represented.
+    if (incoming?.metaResolutionJobId) {
+      try {
+        await processing.markMetaResolutionCompleted(incoming.metaResolutionJobId);
+      } catch (err) {
+        // The normal message/job is already durable. Keep processing the
+        // customer turn; a later resolution recovery pass can safely dedupe and
+        // retry this bookkeeping without creating another customer message.
+        console.error(
+          `Failed to complete Meta resolution job ${incoming.metaResolutionJobId}:`,
+          err
+        );
+      }
+    }
+
     if (!durableClaim) return null;
 
     publishInboundMessage(events, durableClaim.savedInbound);
@@ -241,6 +280,9 @@ function createInboundMessageClaimService({
     let processingJob = durableClaim.processingJob;
     if (processingJob?.status === "pending" || !processingJob?.status) {
       processingJob = await processing.claimPendingByMessageId(savedInbound.id);
+      // A newer process may see a fresh predecessor lease from the process that
+      // handled the previous message. Leave this job pending for ordered
+      // recovery instead of overtaking the older customer turn.
       if (!processingJob) return null;
     }
 
