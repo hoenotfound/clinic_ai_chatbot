@@ -60,7 +60,7 @@ test("Gemini customer replies default to a 25s global adaptive budget", () => {
   assert.equal(policy.minRemainingKeyWindowMs, DEFAULT_GEMINI_MIN_KEY_WINDOW_MS);
   assert.equal(policy.minRemainingKeyWindowMs, 4000);
   assert.equal(policy.fallbackModelReserveMs, DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS);
-  assert.equal(policy.fallbackModelReserveMs, 8000);
+  assert.equal(policy.fallbackModelReserveMs, 0);
   assert.equal(policy.retryCount, 1);
 });
 
@@ -83,10 +83,11 @@ test("Gemini customer reply timing can be tuned through environment settings", (
   });
 });
 
-test("primary Gemini model leaves reserved time for a fallback model", () => {
+test("primary Gemini model can reserve time for a fallback model when configured", () => {
   assert.equal(computeGeminiModelBudgetMs(25000, true, 8000), 17000);
   assert.equal(computeGeminiModelBudgetMs(12000, true, 8000), 4000);
   assert.equal(computeGeminiModelBudgetMs(8000, false, 8000), 8000);
+  assert.equal(computeGeminiModelBudgetMs(25000, true, 0), 25000);
 });
 
 test("Gemini model-capacity errors are distinguished from key failures", () => {
