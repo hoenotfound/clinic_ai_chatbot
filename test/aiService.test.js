@@ -31,10 +31,10 @@ test("Gemini key configuration is deduplicated in priority order", () => {
   assert.deepEqual(keys, ["key-a", "key-b", "key-main", "key-c"]);
 });
 
-test("Gemini reply models automatically pair 2.5 Flash and 3.7 Flash", () => {
+test("Gemini reply models default to 2.5 Flash with Flash-Lite capacity fallback", () => {
   assert.deepEqual(
     getGeminiReplyModels({ GEMINI_MODEL: "gemini-2.5-flash" }),
-    ["gemini-2.5-flash", "gemini-3.7-flash"]
+    ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
   );
   assert.deepEqual(
     getGeminiReplyModels({ GEMINI_MODEL: "gemini-3.7-flash" }),
@@ -110,7 +110,7 @@ test("Gemini model-capacity errors are distinguished from key failures", () => {
   );
 });
 
-test("503 model overload switches models without trying every Gemini key", async () => {
+test("503 model overload switches to Flash-Lite without trying every Gemini key", async () => {
   resetGeminiKeyPoolState();
   const originalGetReply = geminiService.getReply;
   const calls = [];
@@ -139,7 +139,7 @@ test("503 model overload switches models without trying every Gemini key", async
       {
         GEMINI_API_KEYS: "key-a,key-b,key-c,key-d,key-e",
         GEMINI_MODEL: "gemini-2.5-flash",
-        GEMINI_FALLBACK_MODEL: "gemini-3.7-flash",
+        GEMINI_FALLBACK_MODEL: "gemini-2.5-flash-lite",
         GEMINI_REPLY_5XX_RETRY_COUNT: "0",
       }
     );
@@ -147,7 +147,7 @@ test("503 model overload switches models without trying every Gemini key", async
     assert.equal(result, validReply);
     assert.deepEqual(calls, [
       { apiKey: "key-a", model: "gemini-2.5-flash" },
-      { apiKey: "key-a", model: "gemini-3.7-flash" },
+      { apiKey: "key-a", model: "gemini-2.5-flash-lite" },
     ]);
   } finally {
     geminiService.getReply = originalGetReply;
