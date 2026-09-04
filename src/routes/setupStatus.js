@@ -4,7 +4,13 @@ const aiService = require("../services/aiService");
 const aiUsage = require("../services/aiUsageService");
 
 const router = express.Router();
-const setupStatus = createSetupStatusService();
+const setupStatusAi = {
+  ...aiService,
+  getReply(messages, options = {}) {
+    return aiService.getReply(messages, { ...options, privateSetupCheck: true });
+  },
+};
+const setupStatus = createSetupStatusService({ ai: setupStatusAi });
 
 function requireAdministrator(req, res, next) {
   if (req.user?.role !== "admin") {
@@ -44,7 +50,7 @@ async function addAiUsage(overview) {
       aiCheck.geminiModelHealth = modelHealth;
       const usageText = usage.requests > 0
         ? `Tracked Gemini usage in the last 24h: ${formatCount(usage.requests)} request${usage.requests === 1 ? "" : "s"}, ${formatCount(usage.failedRequests)} failed, ${formatCount(usage.totalTokens)} total tokens.`
-        : "No tracked Gemini reply/setup usage has been recorded in the last 24h yet.";
+        : "No tracked Gemini usage has been recorded in the last 24h yet.";
       const coolingModels = modelHealth.filter((item) => item.status === "cooling_down");
       const cooldownText = coolingModels.length
         ? ` Model cooldown active: ${coolingModels.map((item) => {
@@ -86,3 +92,4 @@ router.post("/run", async (req, res) => {
 module.exports = router;
 module.exports.addAiUsage = addAiUsage;
 module.exports.requireAdministrator = requireAdministrator;
+module.exports.setupStatusAi = setupStatusAi;
