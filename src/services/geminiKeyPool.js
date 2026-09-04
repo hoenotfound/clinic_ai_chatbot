@@ -410,6 +410,14 @@ async function runWithGeminiKeys(
         );
         return result;
       } catch (err) {
+        // Model/provider capacity failures are not credential failures. The
+        // model-aware layer marks these so we can switch models immediately
+        // without rotating or cooling every healthy API key.
+        if (err?.stopGeminiKeyRotation) {
+          console.warn(`${candidate.label} stopped key rotation:`, err?.message || err);
+          throw err;
+        }
+
         lastError = err;
         const outcome = classifyCandidateHealthFailure(err);
         recordCandidateHealth(candidate, outcome, {
