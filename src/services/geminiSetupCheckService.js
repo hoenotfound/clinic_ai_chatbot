@@ -2,6 +2,7 @@ const { GoogleGenAI } = require("@google/genai");
 const { getGeminiApiKeys } = require("./geminiKeyPool");
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_SETUP_CHECK_TIMEOUT_MS = 8 * 1000;
 
 function errorStatus(error) {
   const value = error?.status ?? error?.statusCode ?? error?.response?.status;
@@ -32,9 +33,30 @@ function isCredentialError(error) {
   return /api.?key.*(invalid|not valid|expired|rejected)|invalid.*api.?key|unauthorized/.test(message);
 }
 
+function boundedTimeoutMs(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SETUP_CHECK_TIMEOUT_MS;
+  return Math.max(100, Math.min(30 * 1000, Math.round(parsed)));
+}
+
+function withTimeout(promise, timeoutMs) {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise).finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(`Gemini model metadata check timed out after ${timeoutMs}ms.`);
+        error.code = "GEMINI_SETUP_CHECK_TIMEOUT";
+        reject(error);
+      }, timeoutMs);
+    }),
+  ]);
+}
+
 async function checkGeminiConnection({
   env = process.env,
   createClient = (apiKey) => new GoogleGenAI({ apiKey }),
+  timeoutMs = DEFAULT_SETUP_CHECK_TIMEOUT_MS,
 } = {}) {
   const keys = getGeminiApiKeys(env);
   if (!keys.length) {
@@ -44,12 +66,13 @@ async function checkGeminiConnection({
   }
 
   const model = String(env.GEMINI_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+  const checkTimeoutMs = boundedTimeoutMs(timeoutMs);
   let lastCredentialError = null;
 
   for (let index = 0; index < keys.length; index += 1) {
     try {
       const ai = createClient(keys[index]);
-      const info = await ai.models.get({ model });
+      const info = await withTimeout(ai.models.get({ model }), checkTimeoutMs);
       if (!info) {
         const error = new Error("Gemini returned no model metadata.");
         error.code = "GEMINI_MODEL_METADATA_EMPTY";
@@ -63,6 +86,9 @@ async function checkGeminiConnection({
         supportedActions: Array.isArray(info.supportedActions) ? info.supportedActions : [],
       };
     } catch (error) {
+      // A rejected credential can be checked with the next configured key.
+      // Provider/model failures and timeouts stop immediately so one Setup
+      // Status click cannot fan out across the whole key pool.
       if (isCredentialError(error) && index < keys.length - 1) {
         lastCredentialError = error;
         continue;
@@ -76,7 +102,10 @@ async function checkGeminiConnection({
 
 module.exports = {
   DEFAULT_MODEL,
+  DEFAULT_SETUP_CHECK_TIMEOUT_MS,
+  boundedTimeoutMs,
   checkGeminiConnection,
   errorStatus,
   isCredentialError,
+  withTimeout,
 };
