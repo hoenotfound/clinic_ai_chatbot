@@ -69,10 +69,7 @@ async function translateWithGemini(message) {
       });
       return parseTranslations(response.text);
     },
-    {
-      retryCount: 1,
-      timeoutMs: Number(process.env.AI_REPLY_TIMEOUT_MS) || 18000,
-    }
+    { retryCount: 1 }
   );
 }
 
