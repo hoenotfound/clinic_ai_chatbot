@@ -16,6 +16,11 @@ const {
   pauseAiForHumanHandoff,
 } = require("./services/aiHandoffService");
 const { claimIncomingMessage } = require("./services/inboundMessageClaimService");
+const {
+  claimLiveItem,
+  processClaimedBatch,
+  startInboundProcessingRecovery,
+} = require("./services/inboundProcessingService");
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const conversationStore = require("./utils/conversationStore");
 const { getActivePromotion } = require("./utils/activePromotion");
@@ -152,10 +157,10 @@ async function processIncomingBatch(items) {
 }
 
 /**
- * Persist each webhook message immediately, then let the short typing debounce
- * decide when to run the expensive reply work. The per-contact queue keeps the
- * durable claims in arrival order even when Meta sends multiple webhook
- * requests close together.
+ * Persist each webhook message and its durable processing job immediately,
+ * then let the short typing debounce decide when to run expensive reply work.
+ * The in-memory queue keeps the low-latency happy path; Postgres owns the job
+ * state so a Render restart can recover anything that was pending/in-flight.
  */
 async function queueIncomingForReply(queueKey, incoming) {
   try {
@@ -169,10 +174,21 @@ async function queueIncomingForReply(queueKey, incoming) {
       );
       return null;
     }
+
+    const processingItem = await claimLiveItem(claimed);
+    if (!processingItem) {
+      // A recovery sweep can win this tiny race after preparation. In that
+      // case it owns the durable job and will process it; never run it twice.
+      console.log(
+        `Inbound processing job already claimed for ${incoming.channel || "whatsapp"} message ${incoming.id}`
+      );
+      return null;
+    }
+
     return await enqueueConversationBurst(
       queueKey,
-      claimed,
-      processIncomingBatch
+      processingItem,
+      (items) => processClaimedBatch(items, processIncomingBatch)
     );
   } catch (err) {
     console.error(
@@ -673,8 +689,8 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
     console.error("Failed to record WhatsApp webhook activity:", err);
   });
 
-  // The durable message claim runs immediately in queueIncomingForReply(); only
-  // the expensive media/AI response work waits for the typing debounce.
+  // The durable message + processing-job claim runs immediately in
+  // queueIncomingForReply(); only expensive media/AI work waits for debounce.
   const incomingWork = Promise.all(
     whatsapp.parseIncomingMessages(req.body).map((incoming) =>
       queueIncomingForReply(incoming.from, incoming)
@@ -809,6 +825,7 @@ async function start() {
   pruneOrphanedPromoImages();
   setInterval(pruneOrphanedPromoImages, PROMO_IMAGE_PRUNE_INTERVAL_MS);
 
+  startInboundProcessingRecovery({ processBatch: processIncomingBatch });
   startAutomatedFollowUps();
   startStaffWaitingAlerts();
   startLeadScoring();
