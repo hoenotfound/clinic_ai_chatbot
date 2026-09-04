@@ -184,7 +184,7 @@ test("WhatsApp opt-out completes its durable job without AI preparation", async 
   assert.equal(calls.some((call) => call[0] === "prepared"), false);
 });
 
-test("an unprepared recovered job reruns preparation from durable payload", async () => {
+test("an unprepared recovered job keeps durable first-message state", async () => {
   const { calls, claim } = makeService();
   const result = await claim.resumeProcessingJob({ id: 91 });
 
@@ -197,7 +197,9 @@ test("an unprepared recovered job reruns preparation from durable payload", asyn
     "unread",
     "lead",
     "attribution",
-    "first-message",
     "prepared",
   ]);
+  assert.equal(calls.some((call) => call[0] === "first-message"), false);
+  const preparedCall = calls.find((call) => call[0] === "prepared");
+  assert.equal(preparedCall[2], true);
 });
