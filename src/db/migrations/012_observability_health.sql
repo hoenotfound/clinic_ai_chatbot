@@ -2,23 +2,23 @@
 -- Keep this focused on low-volume diagnostic state. Retention/cleanup belongs
 -- in the separate retention PR.
 
-ALTER TABLE inbound_processing_jobs
-  ADD COLUMN IF NOT EXISTS last_failed_at TIMESTAMPTZ;
+-- Failure history is kept separately from the durable job row so a job that
+-- later recovers/completes still contributes to the last-24-hour diagnostic.
+-- No customer content or contact identifiers are stored here.
+CREATE TABLE IF NOT EXISTS inbound_failure_events (
+  id BIGSERIAL PRIMARY KEY,
+  job_type TEXT NOT NULL CHECK (job_type IN ('message', 'meta_resolution')),
+  job_id BIGINT NOT NULL,
+  channel TEXT NOT NULL CHECK (channel IN ('whatsapp', 'facebook', 'instagram')),
+  failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
-ALTER TABLE inbound_meta_resolution_jobs
-  ADD COLUMN IF NOT EXISTS last_failed_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_inbound_failure_events_failed_at
+  ON inbound_failure_events (failed_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_inbound_processing_jobs_last_failed
-  ON inbound_processing_jobs (last_failed_at)
-  WHERE last_failed_at IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_inbound_meta_resolution_last_failed
-  ON inbound_meta_resolution_jobs (last_failed_at)
-  WHERE last_failed_at IS NOT NULL;
-
--- Records only stale processing leases that were reclaimed by the recovery
--- sweep. It contains no customer content or identifiers and lets Setup Status
--- distinguish a real restart/crash recovery from an ordinary retry.
+-- Restart recovery events are recorded only for jobs reclaimed by the first
+-- recovery sweep after this process starts. This avoids presenting ordinary
+-- periodic retries as Render restart recoveries.
 CREATE TABLE IF NOT EXISTS inbound_recovery_events (
   id BIGSERIAL PRIMARY KEY,
   job_type TEXT NOT NULL CHECK (job_type IN ('message', 'meta_resolution')),
