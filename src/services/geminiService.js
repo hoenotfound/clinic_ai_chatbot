@@ -64,6 +64,24 @@ function setupCheckContents() {
   }];
 }
 
+function buildGeminiRequest(messages, options, resolvedModel) {
+  const setupCheck = isPrivateSetupCheck(messages);
+  const thinkingConfig = buildThinkingConfig(resolvedModel);
+  return {
+    purpose: setupCheck ? "setup_check" : "customer_reply",
+    request: {
+      model: resolvedModel,
+      contents: setupCheck ? setupCheckContents() : buildContents(messages),
+      config: {
+        ...(setupCheck ? {} : { systemInstruction: buildSystemPrompt(options) }),
+        maxOutputTokens: setupCheck ? 100 : 1200,
+        responseMimeType: "application/json",
+        ...(thinkingConfig ? { thinkingConfig } : {}),
+      },
+    },
+  };
+}
+
 /**
  * Low-level Gemini attempt. aiService.js supplies both the API key and model so
  * it can rotate credentials and switch models without this provider caching
@@ -84,23 +102,9 @@ async function getReply(
     throw err;
   }
 
-  const setupCheck = isPrivateSetupCheck(messages);
-  const thinkingConfig = buildThinkingConfig(resolvedModel);
+  const { purpose, request } = buildGeminiRequest(messages, options, resolvedModel);
   const ai = new GoogleGenAI({ apiKey: resolvedKey });
-  const response = await generateGeminiContent(
-    ai,
-    {
-      model: resolvedModel,
-      contents: setupCheck ? setupCheckContents() : buildContents(messages),
-      config: {
-        ...(setupCheck ? {} : { systemInstruction: buildSystemPrompt(options) }),
-        maxOutputTokens: setupCheck ? 100 : 1200,
-        responseMimeType: "application/json",
-        ...(thinkingConfig ? { thinkingConfig } : {}),
-      },
-    },
-    { purpose: setupCheck ? "setup_check" : "customer_reply" }
-  );
+  const response = await generateGeminiContent(ai, request, { purpose });
 
   const text = response.text?.trim();
   if (!text) {
@@ -114,6 +118,7 @@ async function getReply(
 module.exports = {
   MODEL,
   buildContents,
+  buildGeminiRequest,
   buildThinkingConfig,
   getReply,
   isPrivateSetupCheck,
