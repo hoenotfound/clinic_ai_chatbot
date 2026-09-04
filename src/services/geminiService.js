@@ -1,5 +1,6 @@
 const { GoogleGenAI } = require("@google/genai");
 const { buildSystemPrompt, normalizeOptions } = require("../utils/systemPrompt");
+const { generateGeminiContent } = require("./aiUsageService");
 
 // Keep the long-tested 2.5 Flash default for backward compatibility. The
 // higher-level AI service can choose a different primary/fallback model per
@@ -21,6 +22,14 @@ function buildContents(messages) {
 
     return { role, parts: [{ text: m.content }] };
   });
+}
+
+function isPrivateSetupCheck(messages) {
+  return Array.isArray(messages)
+    && messages.length === 1
+    && messages[0]?.role === "user"
+    && typeof messages[0]?.content === "string"
+    && messages[0].content.startsWith("Private setup check:");
 }
 
 function buildThinkingConfig(model = MODEL, env = process.env) {
@@ -46,6 +55,15 @@ function buildThinkingConfig(model = MODEL, env = process.env) {
   return null;
 }
 
+function setupCheckContents() {
+  return [{
+    role: "user",
+    parts: [{
+      text: "Return only this JSON object with no extra text: {\"reply\":\"OK\",\"outcome\":\"normal\",\"treatment\":null,\"branch\":null,\"appointmentPreference\":null}",
+    }],
+  }];
+}
+
 /**
  * Low-level Gemini attempt. aiService.js supplies both the API key and model so
  * it can rotate credentials and switch models without this provider caching
@@ -66,18 +84,23 @@ async function getReply(
     throw err;
   }
 
+  const setupCheck = isPrivateSetupCheck(messages);
   const thinkingConfig = buildThinkingConfig(resolvedModel);
   const ai = new GoogleGenAI({ apiKey: resolvedKey });
-  const response = await ai.models.generateContent({
-    model: resolvedModel,
-    contents: buildContents(messages),
-    config: {
-      systemInstruction: buildSystemPrompt(options),
-      maxOutputTokens: 1200,
-      responseMimeType: "application/json",
-      ...(thinkingConfig ? { thinkingConfig } : {}),
+  const response = await generateGeminiContent(
+    ai,
+    {
+      model: resolvedModel,
+      contents: setupCheck ? setupCheckContents() : buildContents(messages),
+      config: {
+        ...(setupCheck ? {} : { systemInstruction: buildSystemPrompt(options) }),
+        maxOutputTokens: setupCheck ? 100 : 1200,
+        responseMimeType: "application/json",
+        ...(thinkingConfig ? { thinkingConfig } : {}),
+      },
     },
-  });
+    { purpose: setupCheck ? "setup_check" : "customer_reply" }
+  );
 
   const text = response.text?.trim();
   if (!text) {
@@ -88,4 +111,11 @@ async function getReply(
   return text;
 }
 
-module.exports = { MODEL, buildContents, buildThinkingConfig, getReply };
+module.exports = {
+  MODEL,
+  buildContents,
+  buildThinkingConfig,
+  getReply,
+  isPrivateSetupCheck,
+  setupCheckContents,
+};
