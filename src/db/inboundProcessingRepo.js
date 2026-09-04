@@ -80,7 +80,13 @@ async function storeInboundClaim({
      )
      SELECT
        row_to_json(m.*) AS saved_inbound,
-       row_to_json(j.*) AS processing_job
+       row_to_json(j.*) AS processing_job,
+       NOT EXISTS (
+         SELECT 1
+         FROM messages earlier
+         WHERE earlier.contact_id = m.contact_id
+           AND earlier.id < m.id
+       ) AS derived_first_message
      FROM inserted_message m
      JOIN inserted_job j ON j.message_id = m.id`,
     [contactId, content, storedMessageId, channel, payload]
@@ -91,6 +97,10 @@ async function storeInboundClaim({
   return {
     savedInbound: row.saved_inbound,
     processingJob: row.processing_job,
+    // Capture the journey boundary at persistence time. Later rapid-fire
+    // messages may already exist by the time reply preparation runs, but they
+    // must not make the genuine first message lose its first-contact behavior.
+    derivedFirstMessage: Boolean(row.derived_first_message),
   };
 }
 
