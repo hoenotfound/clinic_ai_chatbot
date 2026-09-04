@@ -38,6 +38,12 @@ function formatMalaysiaTime(value) {
   }).format(date);
 }
 
+function failureCount(usage, kind) {
+  return Number(
+    (usage?.failuresByKind || []).find((item) => item.failureKind === kind)?.requests
+  ) || 0;
+}
+
 async function addAiUsage(overview) {
   try {
     const usage = await aiUsage.getUsageSummary({ hours: 24 });
@@ -51,6 +57,11 @@ async function addAiUsage(overview) {
       const usageText = usage.requests > 0
         ? `Tracked Gemini usage in the last 24h: ${formatCount(usage.requests)} request${usage.requests === 1 ? "" : "s"}, ${formatCount(usage.failedRequests)} failed, ${formatCount(usage.totalTokens)} total tokens.`
         : "No tracked Gemini usage has been recorded in the last 24h yet.";
+      const modelUnavailable = failureCount(usage, "model_unavailable");
+      const rateLimited = failureCount(usage, "rate_limit");
+      const failureText = modelUnavailable || rateLimited
+        ? ` Failures: ${formatCount(modelUnavailable)} model unavailable/503, ${formatCount(rateLimited)} rate-limit/quota.`
+        : "";
       const coolingModels = modelHealth.filter((item) => item.status === "cooling_down");
       const cooldownText = coolingModels.length
         ? ` Model cooldown active: ${coolingModels.map((item) => {
@@ -58,7 +69,7 @@ async function addAiUsage(overview) {
             return `${item.model}${until ? ` until ${until}` : ""}`;
           }).join(", ")}.`
         : "";
-      aiCheck.summary = `${aiCheck.summary} ${usageText}${cooldownText}`;
+      aiCheck.summary = `${aiCheck.summary} ${usageText}${failureText}${cooldownText}`;
     }
     return { ...overview, aiUsage: usage, geminiModelHealth: modelHealth };
   } catch (err) {
@@ -91,5 +102,6 @@ router.post("/run", async (req, res) => {
 
 module.exports = router;
 module.exports.addAiUsage = addAiUsage;
+module.exports.failureCount = failureCount;
 module.exports.requireAdministrator = requireAdministrator;
 module.exports.setupStatusAi = setupStatusAi;
