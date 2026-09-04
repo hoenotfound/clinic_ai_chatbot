@@ -1,4 +1,5 @@
 const { GoogleGenAI } = require("@google/genai");
+const { generateGeminiContent } = require("./aiUsageService");
 const { runWithGeminiKeys } = require("./geminiKeyPool");
 
 // Transcription always goes through Gemini, regardless of AI_PROVIDER. Gemini
@@ -46,28 +47,32 @@ async function runTranscription(audioBuffer, mimeType, prompt) {
     const transcript = await runWithGeminiKeys(
       async (apiKey) => {
         const ai = new GoogleGenAI({ apiKey });
-        const response = await ai.models.generateContent({
-          model: MODEL,
-          contents: [
-            {
-              role: "user",
-              parts: [
-                { text: prompt },
-                {
-                  inlineData: {
-                    // Gemini wants the base mime type without codec params.
-                    mimeType: mimeType.split(";")[0].trim() || "audio/ogg",
-                    data: audioBuffer.toString("base64"),
+        const response = await generateGeminiContent(
+          ai,
+          {
+            model: MODEL,
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  { text: prompt },
+                  {
+                    inlineData: {
+                      // Gemini wants the base mime type without codec params.
+                      mimeType: mimeType.split(";")[0].trim() || "audio/ogg",
+                      data: audioBuffer.toString("base64"),
+                    },
                   },
-                },
-              ],
+                ],
+              },
+            ],
+            config: {
+              maxOutputTokens: 500,
+              thinkingConfig: { thinkingBudget: 0 },
             },
-          ],
-          config: {
-            maxOutputTokens: 500,
-            thinkingConfig: { thinkingBudget: 0 },
           },
-        });
+          { purpose: "voice_transcription" }
+        );
         return response.text?.trim() || "";
       },
       { retryCount: 1 }
