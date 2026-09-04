@@ -70,10 +70,7 @@ async function runTranscription(audioBuffer, mimeType, prompt) {
         });
         return response.text?.trim() || "";
       },
-      {
-        retryCount: 1,
-        timeoutMs: Number(process.env.AI_REPLY_TIMEOUT_MS) || 18000,
-      }
+      { retryCount: 1 }
     );
 
     if (!transcript || transcript === "[UNINTELLIGIBLE]") return null;
