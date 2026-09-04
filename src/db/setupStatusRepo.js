@@ -129,11 +129,54 @@ async function recordAiCandidateOutcome(
   );
 }
 
+async function listAiCandidateSetupChecks(queryable = pool) {
+  const result = await queryable.query(
+    `SELECT candidate_key, provider, last_status, last_failure_kind,
+            last_checked_at, last_success_at
+     FROM setup_ai_candidate_checks
+     ORDER BY provider, candidate_key`
+  );
+  return result.rows;
+}
+
+async function recordAiCandidateSetupCheck(
+  { candidateKey, provider, status, failureKind = null, at = new Date() },
+  queryable = pool
+) {
+  if (!candidateKey || !["gemini", "claude"].includes(provider)) return;
+  if (!["ready", "rate_limited", "unavailable", "invalid", "failed"].includes(status)) return;
+
+  await queryable.query(
+    `INSERT INTO setup_ai_candidate_checks (
+       candidate_key, provider, last_status, last_failure_kind,
+       last_checked_at, last_success_at, updated_at
+     )
+     VALUES (
+       $1, $2, $3, $4, $5,
+       CASE WHEN $3 = 'ready' THEN $5::timestamptz ELSE NULL END,
+       now()
+     )
+     ON CONFLICT (candidate_key) DO UPDATE SET
+       provider = EXCLUDED.provider,
+       last_status = EXCLUDED.last_status,
+       last_failure_kind = EXCLUDED.last_failure_kind,
+       last_checked_at = EXCLUDED.last_checked_at,
+       last_success_at = CASE
+         WHEN EXCLUDED.last_status = 'ready' THEN EXCLUDED.last_checked_at
+         ELSE setup_ai_candidate_checks.last_success_at
+       END,
+       updated_at = now()`,
+    [candidateKey, provider, status, status === "ready" ? null : failureKind, at]
+  );
+}
+
 module.exports = {
   listAiCandidateHealth,
+  listAiCandidateSetupChecks,
   listConnectionHealth,
   listLatestInboundActivity,
   recordAiCandidateOutcome,
+  recordAiCandidateSetupCheck,
   recordWebhook,
   saveCheckResults,
 };

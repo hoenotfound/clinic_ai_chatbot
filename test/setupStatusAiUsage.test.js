@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+const setupStatusRepo = require("../src/db/setupStatusRepo");
 const aiUsage = require("../src/services/aiUsageService");
 const {
   addAiUsage,
@@ -74,8 +75,9 @@ test("setup status exposes real 24h Gemini request, token and failure totals", a
   }
 });
 
-test("Gemini Setup Status explains that Run all checks is non-generative", async () => {
+test("Gemini Setup Status explains that every key check is non-generative", async () => {
   const originalGetUsageSummary = aiUsage.getUsageSummary;
+  const originalListSetupChecks = setupStatusRepo.listAiCandidateSetupChecks;
   const originalProvider = process.env.AI_PROVIDER;
   const originalKey = process.env.GEMINI_API_KEY;
   process.env.AI_PROVIDER = "gemini";
@@ -95,20 +97,23 @@ test("Gemini Setup Status explains that Run all checks is non-generative", async
     byPurpose: [],
     failuresByKind: [],
   });
+  setupStatusRepo.listAiCandidateSetupChecks = async () => [];
 
   try {
     assert.equal(usesGeminiMetadataSetupCheck(), true);
     const decorated = await addAiUsage({
       checks: [
-        { key: "ai", status: "ready", summary: "Old generated-check wording." },
+        { key: "ai", status: "ready", geminiKeyCount: 1, candidateHealth: [], summary: "Old generated-check wording." },
       ],
     });
     const aiCheck = decorated.checks[0];
     assert.equal(aiCheck.setupCheckMode, "model_metadata");
+    assert.match(aiCheck.summary, /metadata/i);
     assert.match(aiCheck.summary, /does not generate AI text/i);
-    assert.match(aiCheck.summary, /does not.*consume prompt\/output tokens/i);
+    assert.match(aiCheck.summary, /consume prompt\/output tokens/i);
   } finally {
     aiUsage.getUsageSummary = originalGetUsageSummary;
+    setupStatusRepo.listAiCandidateSetupChecks = originalListSetupChecks;
     if (originalProvider == null) delete process.env.AI_PROVIDER;
     else process.env.AI_PROVIDER = originalProvider;
     if (originalKey == null) delete process.env.GEMINI_API_KEY;

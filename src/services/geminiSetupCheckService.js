@@ -1,5 +1,9 @@
 const { GoogleGenAI } = require("@google/genai");
-const { getGeminiApiKeys } = require("./geminiKeyPool");
+const {
+  classifyCandidateHealthFailure,
+  getGeminiApiKeys,
+  getGeminiCandidateDescriptors,
+} = require("./geminiKeyPool");
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_SETUP_CHECK_TIMEOUT_MS = 8 * 1000;
@@ -87,8 +91,8 @@ async function checkGeminiConnection({
       };
     } catch (error) {
       // A rejected credential can be checked with the next configured key.
-      // Provider/model failures and timeouts stop immediately so one Setup
-      // Status click cannot fan out across the whole key pool.
+      // Provider/model failures and timeouts stop immediately so this legacy
+      // single-connection helper remains conservative.
       if (isCredentialError(error) && index < keys.length - 1) {
         lastCredentialError = error;
         continue;
@@ -100,10 +104,81 @@ async function checkGeminiConnection({
   throw lastCredentialError || new Error("No configured Gemini key could access the model metadata endpoint.");
 }
 
+/**
+ * Check every configured Gemini credential using model metadata only.
+ *
+ * This intentionally calls models.get() rather than generateContent(). It sends
+ * no prompt and produces no model output, so it consumes 0 prompt/output
+ * generation tokens. Each key is checked independently and in parallel so five
+ * keys still take roughly one metadata timeout window instead of five.
+ *
+ * These results are setup diagnostics only. They must not be fed into the
+ * runtime key-pool health/cooldown state used for customer replies.
+ */
+async function checkAllGeminiConnections({
+  env = process.env,
+  createClient = (apiKey) => new GoogleGenAI({ apiKey }),
+  timeoutMs = DEFAULT_SETUP_CHECK_TIMEOUT_MS,
+  now = () => new Date(),
+} = {}) {
+  const candidates = getGeminiCandidateDescriptors(env);
+  if (!candidates.length) {
+    const error = new Error("No Gemini API key is configured.");
+    error.code = "AI_PROVIDER_NOT_CONFIGURED";
+    throw error;
+  }
+
+  const model = String(env.GEMINI_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+  const checkTimeoutMs = boundedTimeoutMs(timeoutMs);
+
+  const results = await Promise.all(candidates.map(async (candidate) => {
+    const checkedAt = now();
+    try {
+      const ai = createClient(candidate.apiKey);
+      const info = await withTimeout(ai.models.get({ model }), checkTimeoutMs);
+      if (!info) {
+        const error = new Error("Gemini returned no model metadata.");
+        error.code = "GEMINI_MODEL_METADATA_EMPTY";
+        throw error;
+      }
+      return {
+        healthKey: candidate.healthKey,
+        provider: "gemini",
+        label: candidate.label,
+        status: "ready",
+        failureKind: null,
+        checkedAt,
+        modelName: info.name || model,
+      };
+    } catch (error) {
+      const outcome = isCredentialError(error)
+        ? { status: "invalid", failureKind: "authentication" }
+        : classifyCandidateHealthFailure(error);
+      return {
+        healthKey: candidate.healthKey,
+        provider: "gemini",
+        label: candidate.label,
+        status: outcome.status,
+        failureKind: outcome.failureKind,
+        checkedAt,
+      };
+    }
+  }));
+
+  return {
+    provider: "gemini",
+    model,
+    results,
+    readyCount: results.filter((item) => item.status === "ready").length,
+    totalCount: results.length,
+  };
+}
+
 module.exports = {
   DEFAULT_MODEL,
   DEFAULT_SETUP_CHECK_TIMEOUT_MS,
   boundedTimeoutMs,
+  checkAllGeminiConnections,
   checkGeminiConnection,
   errorStatus,
   isCredentialError,

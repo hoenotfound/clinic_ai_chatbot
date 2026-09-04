@@ -25,6 +25,21 @@ CREATE TABLE IF NOT EXISTS setup_ai_candidate_health (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Setup Status metadata checks are kept separate from real runtime candidate
+-- health so pressing "Run all checks" can never change customer-reply routing,
+-- active-key preference, or cooldown state.
+CREATE TABLE IF NOT EXISTS setup_ai_candidate_checks (
+  candidate_key TEXT PRIMARY KEY,
+  provider TEXT NOT NULL CHECK (provider IN ('gemini', 'claude')),
+  last_status TEXT NOT NULL CHECK (
+    last_status IN ('ready', 'rate_limited', 'unavailable', 'invalid', 'failed')
+  ),
+  last_failure_kind TEXT,
+  last_checked_at TIMESTAMPTZ NOT NULL,
+  last_success_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS ai_usage_events (
   id BIGSERIAL PRIMARY KEY,
   provider TEXT NOT NULL,

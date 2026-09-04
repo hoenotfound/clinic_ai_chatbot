@@ -22,6 +22,7 @@ test("setup status UI includes private-credential copy and responsive controls",
   const page = read("portal-frontend/src/pages/SetupStatus.jsx");
   assert.match(page, /Credentials remain on the server/);
   assert.match(page, /never message customers/);
+  assert.match(page, /model metadata only/);
   assert.match(page, /Run all checks/);
   assert.match(page, /w-full.*sm:w-auto/);
   assert.match(page, /sm:grid-cols-2/);
@@ -29,15 +30,23 @@ test("setup status UI includes private-credential copy and responsive controls",
   assert.match(page, /About Meta app review/);
   assert.match(page, /cannot confirm that Meta has approved public messaging access/);
   assert.match(page, /<details/);
-  assert.match(page, /View AI key health/);
-  assert.match(page, /Fallback keys are only checked when earlier keys cannot complete a reply/);
+  assert.match(page, /View AI key checks/);
+  assert.match(page, /Run all checks refreshes every configured Gemini key/);
+  assert.match(page, /does not generate AI text or consume prompt\/output tokens/);
+  assert.match(page, /Runtime history comes from real AI traffic and is kept separately/);
+  assert.match(page, /Last setup check/);
+  assert.match(page, /Last runtime attempt/);
   assert.match(page, /Last rate limited/);
   assert.match(page, /Awaiting activity/);
   assert.match(page, /Latest customer message/);
 });
 
-test("setup status uses clear historical AI labels and accessible mobile controls", () => {
+test("setup status keeps metadata checks distinct from historical AI runtime labels", () => {
   const page = read("portal-frontend/src/pages/SetupStatus.jsx");
+  assert.match(page, /Accessible/);
+  assert.match(page, /Metadata rate limited/);
+  assert.match(page, /Metadata unavailable/);
+  assert.match(page, /Runtime history/);
   assert.match(page, /Succeeded last attempt/);
   assert.match(page, /Rate limited last attempt/);
   assert.match(page, /Credentials rejected/);
@@ -63,6 +72,7 @@ test("setup schema is included in startup and stores no credentials", () => {
   assert.match(schema, /last_success_at/);
   assert.match(schema, /last_webhook_at/);
   assert.match(schema, /setup_ai_candidate_health/);
+  assert.match(schema, /setup_ai_candidate_checks/);
   assert.match(schema, /last_rate_limited_at/);
   assert.doesNotMatch(schema, /access_token|api_key|password/i);
 });

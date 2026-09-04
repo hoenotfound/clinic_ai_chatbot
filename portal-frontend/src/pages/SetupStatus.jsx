@@ -36,6 +36,15 @@ const AI_KEY_STATUS = {
   not_checked: { label: "Not checked", badge: "bg-[var(--color-bg)] text-[var(--color-text-muted)]" },
 };
 
+const SETUP_KEY_STATUS = {
+  ready: { label: "Accessible", badge: "bg-[var(--color-primary-light)] text-[var(--color-primary)]" },
+  rate_limited: { label: "Metadata rate limited", badge: "bg-[var(--color-danger-light)] text-[var(--color-danger)]" },
+  unavailable: { label: "Metadata unavailable", badge: "bg-[var(--color-accent-light)] text-[var(--color-text)]" },
+  invalid: { label: "Credentials rejected", badge: "bg-[var(--color-danger-light)] text-[var(--color-danger)]" },
+  failed: { label: "Metadata check failed", badge: "bg-[var(--color-danger-light)] text-[var(--color-danger)]" },
+  not_checked: { label: "Not checked", badge: "bg-[var(--color-bg)] text-[var(--color-text-muted)]" },
+};
+
 function formatTime(value) {
   if (!value) return "Not checked yet";
   const date = new Date(value);
@@ -164,7 +173,7 @@ export default function SetupStatus() {
           </div>
           <div className="mt-3 flex items-start gap-2 text-[11px] leading-5 text-[var(--color-text-muted)] sm:text-xs">
             <ShieldIcon className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-primary)]" />
-            <p>Credentials remain on the server, and these checks never message customers.</p>
+            <p>Credentials remain on the server, these checks never message customers, and Gemini setup checks use model metadata only.</p>
           </div>
         </div>
       </header>
@@ -234,7 +243,10 @@ function ConnectionCard({ check }) {
             <MiniBadge text={`${check.geminiKeyCount || 0} Gemini key${check.geminiKeyCount === 1 ? "" : "s"}`} />
             {check.claudeFallback && <MiniBadge text="Claude available" />}
           </div>
-          <AiKeyHealth candidates={check.candidateHealth || []} />
+          <AiKeyHealth
+            candidates={check.candidateHealth || []}
+            metadataMode={check.setupCheckMode === "model_metadata"}
+          />
         </>
       )}
       {check.displayValue && <p className="mt-3 truncate rounded-lg bg-[var(--color-bg)] px-2.5 py-2 text-[10px] text-[var(--color-text-muted)]">{check.displayValue}</p>}
@@ -273,48 +285,84 @@ function ConnectionCard({ check }) {
   );
 }
 
-function AiKeyHealth({ candidates }) {
+function AiKeyHealth({ candidates, metadataMode }) {
   if (!candidates.length) return null;
   return (
     <details className="group mt-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]">
       <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-3 py-2 text-xs font-bold text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)]/30 [&::-webkit-details-marker]:hidden">
-        <span>View AI key health</span>
+        <span>View AI key checks</span>
         <ChevronIcon className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" />
       </summary>
       <div className="space-y-2 border-t border-[var(--color-border)] bg-white p-2.5">
         {candidates.map((candidate) => {
-          const style = AI_KEY_STATUS[candidate.status] || AI_KEY_STATUS.not_checked;
+          const runtimeStyle = AI_KEY_STATUS[candidate.status] || AI_KEY_STATUS.not_checked;
+          const setup = candidate.setupCheck || { status: "not_checked" };
+          const setupStyle = SETUP_KEY_STATUS[setup.status] || SETUP_KEY_STATUS.not_checked;
+          const showSetupCheck = metadataMode && candidate.provider === "gemini";
           return (
             <div key={`${candidate.provider}:${candidate.label}`} className="rounded-lg border border-[var(--color-border)]/70 px-2.5 py-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[11px] font-bold text-[var(--color-text)]">{candidate.label}</span>
-                <span className={`max-w-full rounded-full px-2 py-1 text-[11px] font-bold leading-4 ${style.badge}`}>
-                  {style.label}
-                </span>
+                {showSetupCheck && (
+                  <span className={`max-w-full rounded-full px-2 py-1 text-[11px] font-bold leading-4 ${setupStyle.badge}`}>
+                    {setupStyle.label}
+                  </span>
+                )}
               </div>
-              <dl className="mt-2 space-y-1 text-[11px] text-[var(--color-text-muted)]">
-                <div className="flex items-start justify-between gap-2">
-                  <dt>Last attempted</dt>
-                  <dd className="text-right font-medium text-[var(--color-text)]">{formatTime(candidate.lastAttemptAt)}</dd>
+
+              {showSetupCheck && (
+                <div className="mt-2 rounded-lg bg-[var(--color-bg)] px-2.5 py-2">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Setup check</p>
+                  <dl className="mt-1.5 space-y-1 text-[11px] text-[var(--color-text-muted)]">
+                    <div className="flex items-start justify-between gap-2">
+                      <dt>Last setup check</dt>
+                      <dd className="text-right font-medium text-[var(--color-text)]">{formatTime(setup.checkedAt)}</dd>
+                    </div>
+                    {setup.successAt && (
+                      <div className="flex items-start justify-between gap-2">
+                        <dt>Last successful setup check</dt>
+                        <dd className="text-right font-medium text-[var(--color-text)]">{formatTime(setup.successAt)}</dd>
+                      </div>
+                    )}
+                  </dl>
                 </div>
-                {candidate.lastSuccessAt && (
-                  <div className="flex items-start justify-between gap-2">
-                    <dt>Last successful</dt>
-                    <dd className="text-right font-medium text-[var(--color-text)]">{formatTime(candidate.lastSuccessAt)}</dd>
-                  </div>
+              )}
+
+              <div className={showSetupCheck ? "mt-2.5" : "mt-2"}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Runtime history</p>
+                  <span className={`max-w-full rounded-full px-2 py-1 text-[10px] font-bold leading-4 ${runtimeStyle.badge}`}>
+                    {runtimeStyle.label}
+                  </span>
+                </div>
+                {candidate.lastAttemptAt ? (
+                  <dl className="mt-1.5 space-y-1 text-[11px] text-[var(--color-text-muted)]">
+                    <div className="flex items-start justify-between gap-2">
+                      <dt>Last runtime attempt</dt>
+                      <dd className="text-right font-medium text-[var(--color-text)]">{formatTime(candidate.lastAttemptAt)}</dd>
+                    </div>
+                    {candidate.lastSuccessAt && (
+                      <div className="flex items-start justify-between gap-2">
+                        <dt>Last runtime success</dt>
+                        <dd className="text-right font-medium text-[var(--color-text)]">{formatTime(candidate.lastSuccessAt)}</dd>
+                      </div>
+                    )}
+                    {candidate.lastRateLimitedAt && (
+                      <div className="flex items-start justify-between gap-2">
+                        <dt>Last rate limited</dt>
+                        <dd className="text-right font-medium text-[var(--color-danger)]">{formatTime(candidate.lastRateLimitedAt)}</dd>
+                      </div>
+                    )}
+                  </dl>
+                ) : (
+                  <p className="mt-1.5 text-[11px] leading-5 text-[var(--color-text-muted)]">No runtime AI attempt recorded yet.</p>
                 )}
-                {candidate.lastRateLimitedAt && (
-                  <div className="flex items-start justify-between gap-2">
-                    <dt>Last rate limited</dt>
-                    <dd className="text-right font-medium text-[var(--color-danger)]">{formatTime(candidate.lastRateLimitedAt)}</dd>
-                  </div>
-                )}
-              </dl>
+              </div>
             </div>
           );
         })}
         <p className="px-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-          Fallback keys are only checked when earlier keys cannot complete a reply. A Gemini rate limit may be temporary or daily because quota responses do not always identify the exact limit.
+          Run all checks refreshes every configured Gemini key using model metadata only. It does not generate AI text or consume prompt/output tokens. Runtime history comes from real AI traffic and is kept separately.
         </p>
       </div>
     </details>
