@@ -1,5 +1,6 @@
 const gemini = require("./geminiService");
 const claude = require("./claudeService");
+const aiRoutingTelemetry = require("../db/aiRoutingTelemetryRepo");
 const { parseAiReplyResult } = require("../utils/aiReplyResult");
 const {
   classifyCandidateHealthFailure,
@@ -28,6 +29,13 @@ const DEFAULT_GEMINI_MODEL_UNAVAILABLE_COOLDOWN_MS = 60 * 1000;
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 const DEFAULT_GEMINI_ALTERNATE_MODEL = "gemini-2.5-flash-lite";
 const runtimeGeminiModelHealth = new Map();
+
+function recordRoutingEvent(event, options = {}) {
+  if (options.privateSetupCheck) return;
+  aiRoutingTelemetry.recordRoutingEvent(event).catch((err) => {
+    console.warn("Could not save AI routing telemetry:", err?.message || err);
+  });
+}
 
 function positiveInt(value, fallback, max = 60_000) {
   const parsed = Number(value);
@@ -361,6 +369,14 @@ async function runGeminiReply(
     throw createGeminiModelsCoolingError(configuredModels, env, startedAtMs);
   }
 
+  if (models[0] !== configuredModels[0]) {
+    recordRoutingEvent({
+      eventType: "gemini_model_fallback",
+      provider: "gemini",
+      model: models[0],
+    }, options);
+  }
+
   for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
     const model = models[modelIndex];
     const elapsedMs = Math.max(0, clock() - startedAtMs);
@@ -414,6 +430,11 @@ async function runGeminiReply(
         }
       }
       if (hasLaterModel) {
+        recordRoutingEvent({
+          eventType: "gemini_model_fallback",
+          provider: "gemini",
+          model: models[modelIndex + 1],
+        }, options);
         console.warn(
           `Gemini model ${model} failed; switching to ${models[modelIndex + 1]} within the same global budget:`,
           err?.message || err
@@ -457,6 +478,7 @@ async function getReply(messages, optionsOrFirstMessage = false) {
   if (!hasGemini && !hasClaude) {
     const err = new Error("No AI provider API key is configured.");
     err.code = "AI_PROVIDER_NOT_CONFIGURED";
+    recordRoutingEvent({ eventType: "ai_failure" }, options);
     throw err;
   }
 
@@ -473,12 +495,20 @@ async function getReply(messages, optionsOrFirstMessage = false) {
       if (candidateProvider === "gemini") {
         return await runGeminiReply(messages, options);
       }
-      return await runClaudeReply(messages, options, timeoutMs, retryCount);
+      const reply = await runClaudeReply(messages, options, timeoutMs, retryCount);
+      if (provider === "gemini" && failures.some((item) => item.startsWith("gemini:"))) {
+        recordRoutingEvent({
+          eventType: "claude_fallback",
+          provider: "claude",
+        }, options);
+      }
+      return reply;
     } catch (err) {
       failures.push(`${candidateProvider}: ${err?.message || err}`);
     }
   }
 
+  recordRoutingEvent({ eventType: "ai_failure" }, options);
   const err = new Error(`All AI reply attempts failed. ${failures.join(" | ")}`);
   err.code = "ALL_AI_PROVIDERS_FAILED";
   throw err;
