@@ -33,8 +33,17 @@ function makeService({ duplicate = false, policy = undefined } = {}) {
       if (duplicate) return null;
       return {
         savedInbound: { id: 777, contact_id: contactId, content },
-        processingJob: { id: 91, message_id: 777, incoming_payload: incoming },
+        processingJob: {
+          id: 91,
+          message_id: 777,
+          incoming_payload: incoming,
+          status: "pending",
+        },
       };
+    },
+    async claimPendingByMessageId(messageId) {
+      calls.push(["processing-claim", messageId]);
+      return { id: 91, message_id: messageId, status: "processing", attempts: 1 };
     },
     async markPrepared(messageId, wasFirstMessage) {
       calls.push(["prepared", messageId, wasFirstMessage]);
@@ -44,6 +53,10 @@ function makeService({ duplicate = false, policy = undefined } = {}) {
       calls.push(["completed", messageId]);
       completed = true;
       return { id: 91, message_id: messageId, status: "completed" };
+    },
+    async markFailed(jobId, err) {
+      calls.push(["failed", jobId, err?.message]);
+      return { id: jobId, status: "failed" };
     },
     async getJobContext(jobId) {
       calls.push(["job-context", jobId]);
@@ -57,6 +70,7 @@ function makeService({ duplicate = false, policy = undefined } = {}) {
             text: "hello",
             channel: "whatsapp",
           },
+          status: "processing",
           prepared_at: null,
           was_first_message: null,
         },
@@ -112,22 +126,42 @@ function makeService({ duplicate = false, policy = undefined } = {}) {
   };
 }
 
-test("atomically claims message + durable job before later preparation", async () => {
+test("durability phase stores message + job without running reply preparation", async () => {
   const { calls, claim } = makeService();
-  const result = await claim({
-    id: "wamid-1",
+  const durable = await claim.storeIncomingMessage({
+    id: "wamid-pre-ack",
     from: "60123456789",
     profileName: "Patient",
     text: "how much hifu",
     channel: "whatsapp",
   });
 
+  assert.equal(durable.savedInbound.id, 777);
+  assert.equal(durable.processingJob.status, "pending");
+  assert.deepEqual(calls.map((call) => call[0]), ["contact", "claim", "event"]);
+  assert.equal(calls.some((call) => call[0] === "lead"), false);
+  assert.equal(calls.some((call) => call[0] === "processing-claim"), false);
+});
+
+test("live preparation leases the durable job before later bookkeeping", async () => {
+  const { calls, claim } = makeService();
+  const durable = await claim.storeIncomingMessage({
+    id: "wamid-1",
+    from: "60123456789",
+    profileName: "Patient",
+    text: "how much hifu",
+    channel: "whatsapp",
+  });
+  const result = await claim.prepareIncomingClaim(durable);
+
   assert.equal(result.savedInbound.id, 777);
   assert.equal(result.processingJobId, 91);
   assert.equal(result.wasFirstMessage, true);
-  assert.equal(calls[1][0], "claim");
-  assert.deepEqual(calls.slice(2).map((call) => call[0]), [
+  assert.deepEqual(calls.map((call) => call[0]), [
+    "contact",
+    "claim",
     "event",
+    "processing-claim",
     "unread",
     "lead",
     "attribution",
@@ -138,7 +172,7 @@ test("atomically claims message + durable job before later preparation", async (
 
 test("duplicate webhook claims stop before later side effects", async () => {
   const { calls, claim } = makeService({ duplicate: true });
-  const result = await claim({
+  const result = await claim.storeIncomingMessage({
     id: "wamid-duplicate",
     from: "60123456789",
     text: "hello",
@@ -153,7 +187,7 @@ test("WhatsApp opt-out completes its durable job without AI preparation", async 
   const policyCalls = [];
   const policy = {
     isOptOutText(text) {
-      return /^stop$/i.test(text.trim());
+      return /^stop$/i.test(String(text || "").trim());
     },
     async recordOptOut(contactId, source) {
       policyCalls.push([contactId, source]);
@@ -162,12 +196,13 @@ test("WhatsApp opt-out completes its durable job without AI preparation", async 
   };
   const { calls, claim, wasCompleted } = makeService({ policy });
 
-  const result = await claim({
+  const durable = await claim.storeIncomingMessage({
     id: "wamid-stop",
     from: "60123456789",
     text: "STOP",
     channel: "whatsapp",
   });
+  const result = await claim.prepareIncomingClaim(durable);
 
   assert.equal(result, null);
   assert.equal(wasCompleted(), true);
@@ -180,6 +215,7 @@ test("WhatsApp opt-out completes its durable job without AI preparation", async 
     "unread",
     "completed",
   ]);
+  assert.equal(calls.some((call) => call[0] === "processing-claim"), false);
   assert.equal(calls.some((call) => call[0] === "lead"), false);
   assert.equal(calls.some((call) => call[0] === "prepared"), false);
 });
