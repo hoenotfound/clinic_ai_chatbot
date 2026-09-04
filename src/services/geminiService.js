@@ -47,26 +47,16 @@ function buildThinkingConfig(model = MODEL, env = process.env) {
   return null;
 }
 
-function setupCheckContents() {
-  return [{
-    role: "user",
-    parts: [{
-      text: "Return only this JSON object with no extra text: {\"reply\":\"OK\",\"outcome\":\"normal\",\"treatment\":null,\"branch\":null,\"appointmentPreference\":null}",
-    }],
-  }];
-}
-
 function buildGeminiRequest(messages, options, resolvedModel) {
-  const setupCheck = Boolean(options?.privateSetupCheck);
   const thinkingConfig = buildThinkingConfig(resolvedModel);
   return {
-    purpose: setupCheck ? "setup_check" : "customer_reply",
+    purpose: "customer_reply",
     request: {
       model: resolvedModel,
-      contents: setupCheck ? setupCheckContents() : buildContents(messages),
+      contents: buildContents(messages),
       config: {
-        ...(setupCheck ? {} : { systemInstruction: buildSystemPrompt(options) }),
-        maxOutputTokens: setupCheck ? 100 : 1200,
+        systemInstruction: buildSystemPrompt(options),
+        maxOutputTokens: 1200,
         responseMimeType: "application/json",
         ...(thinkingConfig ? { thinkingConfig } : {}),
       },
@@ -75,9 +65,10 @@ function buildGeminiRequest(messages, options, resolvedModel) {
 }
 
 /**
- * Low-level Gemini attempt. aiService.js supplies both the API key and model so
- * it can rotate credentials and switch models without this provider caching
- * either choice at module startup.
+ * Low-level Gemini generation attempt. Setup Status deliberately does not call
+ * this module anymore: its connection check uses the non-generative models.get
+ * metadata endpoint so running health checks does not consume prompt/output
+ * tokens or a generated-response request.
  */
 async function getReply(
   messages,
@@ -85,12 +76,7 @@ async function getReply(
   apiKey = null,
   model = MODEL
 ) {
-  const options = {
-    ...normalizeOptions(optionsOrFirstMessage),
-    privateSetupCheck: Boolean(
-      typeof optionsOrFirstMessage === "object" && optionsOrFirstMessage?.privateSetupCheck
-    ),
-  };
+  const options = normalizeOptions(optionsOrFirstMessage);
   const resolvedKey = apiKey || process.env.GEMINI_API_KEY;
   const resolvedModel = String(model || MODEL).trim() || MODEL;
   if (!resolvedKey) {
@@ -118,5 +104,4 @@ module.exports = {
   buildGeminiRequest,
   buildThinkingConfig,
   getReply,
-  setupCheckContents,
 };
