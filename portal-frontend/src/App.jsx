@@ -92,14 +92,7 @@ export default function App() {
           <Route path="/analytics" element={<ProtectedRoute anyCapabilities={["view_analytics"]}><Analytics /></ProtectedRoute>} />
           <Route path="/tools" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><ToolsRoute /></ProtectedRoute>} />
           <Route path="/tools/lead-distribution" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><Navigate to="/tools?tool=lead-distribution" replace /></ProtectedRoute>} />
-          <Route
-            path="/settings"
-            element={(
-              <ProtectedRoute anyCapabilities={["manage_settings"]}>
-                <SettingsSectionLayout><Settings /></SettingsSectionLayout>
-              </ProtectedRoute>
-            )}
-          />
+          <Route path="/settings" element={<ProtectedRoute anyCapabilities={["manage_settings"]}><Settings /></ProtectedRoute>} />
           <Route
             path="/settings/team"
             element={(
