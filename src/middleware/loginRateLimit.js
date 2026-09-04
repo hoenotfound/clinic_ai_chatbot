@@ -92,9 +92,14 @@ function keysForRequest(req, env = process.env) {
   return keys;
 }
 
+/**
+ * States passed here already include the current request's atomic reservation.
+ * Therefore the configured number is the number of attempts that may proceed;
+ * the next reservation (max + 1) is the first one that receives HTTP 429.
+ */
 function retryAfterForState(state, nowMs) {
   const maxAttempts = MAX_ATTEMPTS_BY_SCOPE[state?.scope];
-  if (!maxAttempts || Number(state?.failures) < maxAttempts) return 0;
+  if (!maxAttempts || Number(state?.failures) <= maxAttempts) return 0;
 
   const startedAt = new Date(state.window_started_at).getTime();
   if (!Number.isFinite(startedAt)) return 0;
@@ -108,10 +113,42 @@ function createLoginRateLimiter({
   now = () => Date.now(),
 } = {}) {
   let lastCleanupAt = 0;
+  const reservationKey = Symbol("login-rate-limit-reservation");
+
+  function maybePrune() {
+    const current = now();
+    if (
+      typeof repository.pruneExpired === "function" &&
+      current - lastCleanupAt >= CLEANUP_INTERVAL_MS
+    ) {
+      lastCleanupAt = current;
+      repository.pruneExpired({ olderThanSeconds: RETENTION_SECONDS }).catch((err) => {
+        console.warn("Failed to prune old login rate-limit rows:", err?.message || err);
+      });
+    }
+  }
+
+  async function reserveAttempt(req) {
+    const existing = req?.[reservationKey];
+    if (existing) return existing;
+
+    const keys = keysForRequest(req, env);
+    const states = await repository.recordFailure(
+      keys,
+      { windowSeconds: WINDOW_SECONDS }
+    );
+    const reservation = { keys, states };
+    if (req) req[reservationKey] = reservation;
+    maybePrune();
+    return reservation;
+  }
 
   async function loginRateLimit(req, res, next) {
     try {
-      const states = await repository.getStates(keysForRequest(req, env));
+      // Reserve/count this request before bcrypt or user lookup. The database
+      // increment is atomic, so a parallel burst cannot all pass based on the
+      // same stale pre-failure counter.
+      const { states } = await reserveAttempt(req);
       const current = now();
       const retryAfter = states.reduce(
         (max, state) => Math.max(max, retryAfterForState(state, current)),
@@ -130,7 +167,7 @@ function createLoginRateLimiter({
     } catch (err) {
       // Authentication depends on Postgres anyway. Fail closed instead of
       // silently disabling brute-force protection during a database outage.
-      console.error("Failed to verify login rate-limit state:", err);
+      console.error("Failed to reserve login rate-limit state:", err);
       res.set("Cache-Control", "no-store");
       return res.status(503).json({
         error: "Login is temporarily unavailable. Please try again shortly.",
@@ -139,32 +176,27 @@ function createLoginRateLimiter({
   }
 
   async function recordFailedAttempt(req) {
-    const result = await repository.recordFailure(
-      keysForRequest(req, env),
-      { windowSeconds: WINDOW_SECONDS }
-    );
-
-    const current = now();
-    if (
-      typeof repository.pruneExpired === "function" &&
-      current - lastCleanupAt >= CLEANUP_INTERVAL_MS
-    ) {
-      lastCleanupAt = current;
-      repository.pruneExpired({ olderThanSeconds: RETENTION_SECONDS }).catch((err) => {
-        console.warn("Failed to prune old login rate-limit rows:", err?.message || err);
-      });
-    }
-
-    return result;
+    // Normal login requests were already counted before credential verification.
+    // Keep this method for the route contract and direct callers without ever
+    // double-counting a rejected password.
+    return reserveAttempt(req).then((reservation) => reservation.states);
   }
 
   async function clearAttempts(req) {
-    // Do not clear the IP-wide bucket on success. Otherwise an attacker who has
-    // one valid account could repeatedly reset protection for a source that is
-    // spraying many other usernames. A successful account does clear its own
-    // username and IP+username history so genuine staff recover immediately.
-    const keys = keysForRequest(req, env).filter((key) => key.scope !== "ip");
-    return repository.clearKeys(keys);
+    const reservation = req?.[reservationKey];
+    const keys = reservation?.keys || keysForRequest(req, env);
+    const accountKeys = keys.filter((key) => key.scope !== "ip");
+    const ipKeys = keys.filter((key) => key.scope === "ip");
+
+    // A valid login clears account-specific history so genuine staff recover,
+    // but it must not erase earlier IP-wide spray failures. Because the current
+    // request was pre-reserved, decrement exactly that one IP reservation while
+    // preserving every previous failed/blocked attempt from the source.
+    const [cleared, decremented] = await Promise.all([
+      repository.clearKeys(accountKeys),
+      repository.decrementKeys(ipKeys),
+    ]);
+    return Number(cleared || 0) + Number(decremented || 0);
   }
 
   return {
