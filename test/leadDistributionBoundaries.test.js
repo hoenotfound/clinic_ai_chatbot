@@ -145,17 +145,19 @@ test("automatic translation refresh preserves manual language edits made after t
   assert.match(tools, /enabledStateChanged = enabled !== savedEnabled/);
 });
 
-test("production schema loads ownership, routing, and social follow-up safeguards", () => {
+test("production migrations load ownership, routing, and social follow-up safeguards", () => {
   const db = read("src/db/db.js");
+  const runner = read("src/db/migrationRunner.js");
   const safetySchema = read("src/db/leadDistributionSafetySchema.sql");
   const followUpSchema = read("src/db/followUpMultiChannelSchema.sql");
 
-  assert.match(db, /followUpMultiChannelSchema\.sql/);
-  assert.match(db, /await pool\.query\(followUpMultiChannelSchema\)/);
+  assert.match(db, /runMigrations\(pool\)/);
+  assert.match(runner, /name: "follow_up_multi_channel"/);
+  assert.match(runner, /file: "followUpMultiChannelSchema\.sql"/);
   assert.match(followUpSchema, /normalize_social_automated_follow_up_retry_status/);
   assert.match(followUpSchema, /c\.channel IN \('facebook', 'instagram'\)/);
-  assert.match(db, /leadDistributionSafetySchema\.sql/);
-  assert.match(db, /await pool\.query\(leadDistributionSafetySchema\)/);
+  assert.match(runner, /name: "lead_distribution_safety"/);
+  assert.match(runner, /file: "leadDistributionSafetySchema\.sql"/);
   assert.match(safetySchema, /lead_distribution_initial/);
   assert.match(safetySchema, /Automatically assigned to %s when the lead was created/);
   assert.match(safetySchema, /choose_lead_distribution_owner/);
