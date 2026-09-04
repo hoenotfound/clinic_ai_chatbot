@@ -1,5 +1,6 @@
 const Anthropic = require("@anthropic-ai/sdk");
 const { GoogleGenAI } = require("@google/genai");
+const { generateGeminiContent } = require("./aiUsageService");
 const { runWithGeminiKeys } = require("./geminiKeyPool");
 
 const provider = (process.env.AI_PROVIDER || "gemini").toLowerCase();
@@ -58,15 +59,19 @@ async function translateWithGemini(message) {
   return runWithGeminiKeys(
     async (apiKey) => {
       const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: buildPrompt(message),
-        config: {
-          maxOutputTokens: 1800,
-          responseMimeType: "application/json",
-          thinkingConfig: { thinkingBudget: 0 },
+      const response = await generateGeminiContent(
+        ai,
+        {
+          model: GEMINI_MODEL,
+          contents: buildPrompt(message),
+          config: {
+            maxOutputTokens: 1800,
+            responseMimeType: "application/json",
+            thinkingConfig: { thinkingBudget: 0 },
+          },
         },
-      });
+        { purpose: "follow_up_translation" }
+      );
       return parseTranslations(response.text);
     },
     { retryCount: 1 }
