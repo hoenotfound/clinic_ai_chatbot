@@ -379,7 +379,10 @@ async function runGeminiReply(
     try {
       const reply = await runWithGeminiKeys(
         (apiKey) => runGeminiModelAttempt(messages, options, apiKey, model, {
-          overloadRetryCount: policy.retryCount,
+          // A provider-level 503 says the model is unavailable, not the key.
+          // When another model is ready, switch immediately rather than spend
+          // a second quota-counting request on the same overloaded model.
+          overloadRetryCount: hasLaterModel ? 0 : policy.retryCount,
           sleepFn,
           randomFn,
         }),
@@ -439,10 +442,11 @@ async function runClaudeReply(messages, options, timeoutMs, retryCount) {
 
 async function getReply(messages, optionsOrFirstMessage = false) {
   const options = typeof optionsOrFirstMessage === "boolean"
-    ? { isFirstMessage: optionsOrFirstMessage, channel: "whatsapp" }
+    ? { isFirstMessage: optionsOrFirstMessage, channel: "whatsapp", privateSetupCheck: false }
     : {
         isFirstMessage: Boolean(optionsOrFirstMessage?.isFirstMessage),
         channel: optionsOrFirstMessage?.channel || "whatsapp",
+        privateSetupCheck: Boolean(optionsOrFirstMessage?.privateSetupCheck),
       };
 
   const timeoutMs = positiveInt(process.env.AI_REPLY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
