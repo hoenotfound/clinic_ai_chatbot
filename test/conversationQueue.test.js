@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   enqueueConversation,
   enqueueConversationBurst,
+  enqueueReplyConversation,
 } = require("../src/utils/conversationQueue");
 
 test("runs work for one conversation in arrival order", async () => {
@@ -134,4 +135,37 @@ test("new inbound claim work does not wait behind a slow AI burst", async () => 
     "new-message-durably-claimed",
     "reply-finish",
   ]);
+});
+
+test("direct recovered reply work shares the same lane as live typing bursts", async () => {
+  const order = [];
+  let releaseLive;
+  const liveGate = new Promise((resolve) => {
+    releaseLive = resolve;
+  });
+
+  const live = enqueueConversationBurst(
+    "60135550000",
+    "live-message",
+    async () => {
+      order.push("live-start");
+      await liveGate;
+      order.push("live-finish");
+    },
+    { delayMs: 0 }
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(order, ["live-start"]);
+
+  const recovered = enqueueReplyConversation("60135550000", async () => {
+    order.push("recovery-start");
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(order, ["live-start"]);
+
+  releaseLive();
+  await Promise.all([live, recovered]);
+  assert.deepEqual(order, ["live-start", "live-finish", "recovery-start"]);
 });
