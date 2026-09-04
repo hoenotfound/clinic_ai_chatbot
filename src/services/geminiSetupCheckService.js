@@ -151,7 +151,9 @@ async function checkAllGeminiConnections({
         modelName: info.name || model,
       };
     } catch (error) {
-      const outcome = classifyCandidateHealthFailure(error);
+      const outcome = isCredentialError(error)
+        ? { status: "invalid", failureKind: "authentication" }
+        : classifyCandidateHealthFailure(error);
       return {
         healthKey: candidate.healthKey,
         provider: "gemini",
