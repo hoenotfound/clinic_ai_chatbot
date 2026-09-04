@@ -25,7 +25,7 @@ const DEFAULT_GEMINI_MIN_KEY_WINDOW_MS = 4 * 1000;
 const DEFAULT_GEMINI_5XX_RETRY_COUNT = 1;
 const DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS = 8 * 1000;
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
-const DEFAULT_GEMINI_ALTERNATE_MODEL = "gemini-3.7-flash";
+const DEFAULT_GEMINI_ALTERNATE_MODEL = "gemini-2.5-flash-lite";
 
 function positiveInt(value, fallback, max = 60_000) {
   const parsed = Number(value);
@@ -60,9 +60,6 @@ async function runCandidate(candidate, messages, options, timeoutMs, retryCount)
         timeoutMs,
         candidate.label
       );
-      // Validate the provider response before calling it a success. Empty or
-      // malformed structured output gets the same bounded retry as transient
-      // provider failures.
       parseAiReplyResult(raw);
       candidate.reportOutcome?.({ status: "ready", failureKind: null });
       return raw;
@@ -121,8 +118,6 @@ function isGeminiModelUnavailableError(err) {
 function createGeminiModelUnavailableError(model, cause) {
   const err = new Error(`Gemini model ${model} is temporarily unavailable.`);
   err.code = "GEMINI_MODEL_UNAVAILABLE";
-  // The key-pool must not rotate/cool healthy credentials for a provider/model
-  // capacity problem. aiService will switch to the next Gemini model instead.
   err.stopGeminiKeyRotation = true;
   err.model = model;
   err.cause = cause;
@@ -153,9 +148,6 @@ async function runGeminiModelAttempt(
         throw createGeminiModelUnavailableError(model, err);
       }
 
-      // A single short jittered retry is enough for a brief capacity spike. If
-      // it is still unavailable, switching models is more useful than trying
-      // the same overloaded model with every API key.
       const delayMs = Math.round(500 + 500 * Math.max(0, Math.min(1, randomFn())));
       console.warn(`Gemini model ${model} is unavailable; retrying once before model fallback.`);
       await sleepFn(delayMs);
@@ -245,10 +237,6 @@ function getEffectiveGeminiMinKeyWindowMs(env, policy) {
     return policy?.minRemainingKeyWindowMs || 0;
   }
 
-  // The configured reserve is ideal for normal-sized pools (for example five
-  // keys: 25s / 5 still leaves the requested 4s reserve). If a much larger
-  // GEMINI_API_KEYS list is configured, scale the reserve to a fair share of
-  // the same global budget instead of starving early keys with ~1ms attempts.
   const fairShareMs = Math.max(1, Math.floor(policy.globalBudgetMs / keyCount));
   return Math.min(policy.minRemainingKeyWindowMs, fairShareMs);
 }
@@ -366,8 +354,6 @@ async function getReply(messages, optionsOrFirstMessage = false) {
         channel: optionsOrFirstMessage?.channel || "whatsapp",
       };
 
-  // AI_REPLY_TIMEOUT_MS / AI_REPLY_RETRY_COUNT remain the fallback-provider
-  // controls. Gemini chat replies use the smarter global-budget policy above.
   const timeoutMs = positiveInt(process.env.AI_REPLY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
   const retryCount = positiveInt(process.env.AI_REPLY_RETRY_COUNT, DEFAULT_RETRY_COUNT, 3);
   const hasGemini = getGeminiApiKeys().length > 0;
