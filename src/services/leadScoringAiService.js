@@ -1,6 +1,7 @@
 const Anthropic = require("@anthropic-ai/sdk");
 const { GoogleGenAI } = require("@google/genai");
 const clinicConfig = require("../config/clinicConfig");
+const { generateGeminiContent } = require("./aiUsageService");
 const { runWithGeminiKeys } = require("./geminiKeyPool");
 
 const PROVIDER = (process.env.AI_PROVIDER || "gemini").toLowerCase();
@@ -275,16 +276,20 @@ async function scoreWithGemini(input) {
   const score = await runWithGeminiKeys(
     async (apiKey) => {
       const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: buildLeadScorePrompt(input),
-        config: {
-          maxOutputTokens: 700,
-          responseMimeType: "application/json",
-          responseJsonSchema: SCORE_JSON_SCHEMA,
-          thinkingConfig: { thinkingBudget: 0 },
+      const response = await generateGeminiContent(
+        ai,
+        {
+          model: GEMINI_MODEL,
+          contents: buildLeadScorePrompt(input),
+          config: {
+            maxOutputTokens: 700,
+            responseMimeType: "application/json",
+            responseJsonSchema: SCORE_JSON_SCHEMA,
+            thinkingConfig: { thinkingBudget: 0 },
+          },
         },
-      });
+        { purpose: "lead_scoring" }
+      );
       return parseLeadScore(response.text, input.messages);
     },
     {
