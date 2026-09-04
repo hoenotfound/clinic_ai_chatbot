@@ -117,3 +117,13 @@ test("failed Gemini requests are counted for quota monitoring without inventing 
   assert.equal(recorded[0].totalTokens, 0);
   assert.equal(failureKind(error), "model_unavailable");
 });
+
+test("usage monitoring distinguishes daily quota exhaustion from short rate limiting", () => {
+  const quotaError = new Error("Quota exceeded: requests per day (RPD) limit reached.");
+  quotaError.error = { code: "quota_exceeded" };
+  assert.equal(failureKind(quotaError), "quota_exhausted");
+
+  const rateError = new Error("Too many requests; please retry shortly.");
+  rateError.status = 429;
+  assert.equal(failureKind(rateError), "rate_limit");
+});
