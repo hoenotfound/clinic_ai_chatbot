@@ -59,8 +59,9 @@ async function addAiUsage(overview) {
         : "No tracked Gemini usage has been recorded in the last 24h yet.";
       const modelUnavailable = failureCount(usage, "model_unavailable");
       const rateLimited = failureCount(usage, "rate_limit");
-      const failureText = modelUnavailable || rateLimited
-        ? ` Failures: ${formatCount(modelUnavailable)} model unavailable/503, ${formatCount(rateLimited)} rate-limit/quota.`
+      const quotaExhausted = failureCount(usage, "quota_exhausted");
+      const failureText = modelUnavailable || rateLimited || quotaExhausted
+        ? ` Failures: ${formatCount(modelUnavailable)} model unavailable/503, ${formatCount(rateLimited)} rate limited, ${formatCount(quotaExhausted)} quota exhausted.`
         : "";
       const coolingModels = modelHealth.filter((item) => item.status === "cooling_down");
       const cooldownText = coolingModels.length
