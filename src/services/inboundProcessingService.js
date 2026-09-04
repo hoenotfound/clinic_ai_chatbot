@@ -5,7 +5,12 @@ const {
 } = require("./inboundMessageClaimService");
 
 const RECOVERY_SWEEP_INTERVAL_MS = 10 * 1000;
-const STALE_PROCESSING_SECONDS = 45;
+// Customer processing can legitimately include media download/transcription,
+// a bounded Gemini/Claude reply chain and an outbound Meta request. Give the
+// live worker a generous lease so recovery never races a healthy slow request.
+// A real restart releases the process immediately; waiting up to three minutes
+// is preferable to producing a duplicate outbound response.
+const STALE_PROCESSING_SECONDS = 3 * 60;
 const RECOVERY_BATCH_SIZE = 25;
 const MAX_PROCESSING_ATTEMPTS = 5;
 const COMPLETED_RETENTION_HOURS = 24;
