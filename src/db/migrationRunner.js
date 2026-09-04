@@ -239,7 +239,7 @@ async function runMigrations(poolLike, options = {}) {
         .query("SELECT pg_advisory_unlock($1, $2)", MIGRATION_LOCK_KEYS)
         .catch((err) => console.error("Failed to release database migration lock:", err));
     }
-    if (typeof client.release === "function") client.release();
+    if (typeof client.release === "function") await client.release();
   }
 }
 
