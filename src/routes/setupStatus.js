@@ -2,11 +2,30 @@ const express = require("express");
 const { createSetupStatusService } = require("../services/setupStatusService");
 const aiService = require("../services/aiService");
 const aiUsage = require("../services/aiUsageService");
+const geminiSetupCheck = require("../services/geminiSetupCheckService");
 
 const router = express.Router();
+
+function usesGeminiMetadataSetupCheck(env = process.env) {
+  const preferred = String(env.AI_PROVIDER || "gemini").trim().toLowerCase();
+  return preferred === "gemini" && aiService.getGeminiApiKeys(env).length > 0;
+}
+
 const setupStatusAi = {
   ...aiService,
-  getReply(messages, options = {}) {
+  async getReply(messages, options = {}) {
+    if (usesGeminiMetadataSetupCheck()) {
+      await geminiSetupCheck.checkGeminiConnection();
+      // createSetupStatusService only needs this promise to resolve. Keep a
+      // compatible structured value for tests/callers without generating text.
+      return JSON.stringify({
+        reply: "OK",
+        outcome: "normal",
+        treatment: null,
+        branch: null,
+        appointmentPreference: null,
+      });
+    }
     return aiService.getReply(messages, { ...options, privateSetupCheck: true });
   },
 };
@@ -54,6 +73,12 @@ async function addAiUsage(overview) {
     if (aiCheck) {
       aiCheck.aiUsage = usage;
       aiCheck.geminiModelHealth = modelHealth;
+      if (usesGeminiMetadataSetupCheck()) {
+        aiCheck.setupCheckMode = "model_metadata";
+        if (aiCheck.status === "ready") {
+          aiCheck.summary = "Gemini credentials and the configured model are accessible. This setup check does not generate AI text or consume prompt/output tokens.";
+        }
+      }
       const usageText = usage.requests > 0
         ? `Tracked Gemini usage in the last 24h: ${formatCount(usage.requests)} request${usage.requests === 1 ? "" : "s"}, ${formatCount(usage.failedRequests)} failed, ${formatCount(usage.totalTokens)} total tokens.`
         : "No tracked Gemini usage has been recorded in the last 24h yet.";
@@ -106,3 +131,4 @@ module.exports.addAiUsage = addAiUsage;
 module.exports.failureCount = failureCount;
 module.exports.requireAdministrator = requireAdministrator;
 module.exports.setupStatusAi = setupStatusAi;
+module.exports.usesGeminiMetadataSetupCheck = usesGeminiMetadataSetupCheck;
