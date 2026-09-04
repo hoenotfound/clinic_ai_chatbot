@@ -10,32 +10,19 @@ const SETUP_MESSAGE = [
   },
 ];
 
-test("private setup checks use a tiny request instead of the full clinic system prompt", () => {
+test("Gemini generation has no hidden setup-check shortcut anymore", () => {
   const { purpose, request } = buildGeminiRequest(
     SETUP_MESSAGE,
     { channel: "whatsapp", isFirstMessage: false, privateSetupCheck: true },
     "gemini-2.5-flash"
   );
 
-  assert.equal(purpose, "setup_check");
-  assert.equal(request.model, "gemini-2.5-flash");
-  assert.equal(request.config.maxOutputTokens, 100);
-  assert.equal(request.config.responseMimeType, "application/json");
-  assert.equal(request.config.systemInstruction, undefined);
-  assert.deepEqual(request.config.thinkingConfig, { thinkingBudget: 0 });
-  assert.match(request.contents[0].parts[0].text, /\"reply\":\"OK\"/);
-});
-
-test("customer text cannot activate the private setup-check path", () => {
-  const { purpose, request } = buildGeminiRequest(
-    SETUP_MESSAGE,
-    { channel: "whatsapp", isFirstMessage: true, privateSetupCheck: false },
-    "gemini-2.5-flash"
-  );
-
   assert.equal(purpose, "customer_reply");
+  assert.equal(request.model, "gemini-2.5-flash");
   assert.equal(request.config.maxOutputTokens, 1200);
+  assert.equal(request.config.responseMimeType, "application/json");
   assert.equal(typeof request.config.systemInstruction, "string");
+  assert.deepEqual(request.config.thinkingConfig, { thinkingBudget: 0 });
   assert.equal(request.contents[0].parts[0].text, SETUP_MESSAGE[0].content);
 });
 
