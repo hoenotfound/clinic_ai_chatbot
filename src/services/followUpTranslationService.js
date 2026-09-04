@@ -1,5 +1,6 @@
 const Anthropic = require("@anthropic-ai/sdk");
 const { GoogleGenAI } = require("@google/genai");
+const { runWithGeminiKeys } = require("./geminiKeyPool");
 
 const provider = (process.env.AI_PROVIDER || "gemini").toLowerCase();
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -26,21 +27,27 @@ function parseTranslations(rawText) {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start < 0 || end <= start) {
-    throw new Error("The AI did not return translated messages in the expected format.");
+    const err = new Error("The AI did not return translated messages in the expected format.");
+    err.code = "INVALID_AI_RESPONSE";
+    throw err;
   }
 
   let parsed;
   try {
     parsed = JSON.parse(text.slice(start, end + 1));
   } catch {
-    throw new Error("The AI returned translations that could not be read.");
+    const err = new Error("The AI returned translations that could not be read.");
+    err.code = "INVALID_AI_RESPONSE";
+    throw err;
   }
 
   const translations = {};
   for (const key of LANGUAGE_KEYS) {
     const value = typeof parsed[key] === "string" ? parsed[key].trim() : "";
     if (!value || value.length > 1000) {
-      throw new Error("One or more translated messages are empty or too long.");
+      const err = new Error("One or more translated messages are empty or too long.");
+      err.code = "INVALID_AI_RESPONSE";
+      throw err;
     }
     translations[key] = value;
   }
@@ -48,17 +55,25 @@ function parseTranslations(rawText) {
 }
 
 async function translateWithGemini(message) {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: buildPrompt(message),
-    config: {
-      maxOutputTokens: 1800,
-      responseMimeType: "application/json",
-      thinkingConfig: { thinkingBudget: 0 },
+  return runWithGeminiKeys(
+    async (apiKey) => {
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: buildPrompt(message),
+        config: {
+          maxOutputTokens: 1800,
+          responseMimeType: "application/json",
+          thinkingConfig: { thinkingBudget: 0 },
+        },
+      });
+      return parseTranslations(response.text);
     },
-  });
-  return parseTranslations(response.text);
+    {
+      retryCount: 1,
+      timeoutMs: Number(process.env.AI_REPLY_TIMEOUT_MS) || 18000,
+    }
+  );
 }
 
 async function translateWithClaude(message) {
