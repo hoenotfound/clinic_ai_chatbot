@@ -185,18 +185,11 @@ function createLoginRateLimiter({
   async function clearAttempts(req) {
     const reservation = req?.[reservationKey];
     const keys = reservation?.keys || keysForRequest(req, env);
-    const accountKeys = keys.filter((key) => key.scope !== "ip");
-    const ipKeys = keys.filter((key) => key.scope === "ip");
 
-    // A valid login clears account-specific history so genuine staff recover,
-    // but it must not erase earlier IP-wide spray failures. Because the current
-    // request was pre-reserved, decrement exactly that one IP reservation while
-    // preserving every previous failed/blocked attempt from the source.
-    const [cleared, decremented] = await Promise.all([
-      repository.clearKeys(accountKeys),
-      repository.decrementKeys(ipKeys),
-    ]);
-    return Number(cleared || 0) + Number(decremented || 0);
+    // A valid login should remove only its own pre-auth reservation. Never
+    // delete the username/pair rows wholesale: another failed login may have
+    // reserved the same bucket concurrently and must remain counted.
+    return repository.decrementKeys(keys);
   }
 
   return {
