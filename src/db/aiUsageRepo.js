@@ -52,7 +52,7 @@ async function getAiUsageSummary(database = pool, { hours = 24 } = {}) {
   const params = [windowHours];
   const windowSql = "created_at >= now() - ($1::int * interval '1 hour')";
 
-  const [totalsResult, modelResult, purposeResult] = await Promise.all([
+  const [totalsResult, modelResult, purposeResult, failureResult] = await Promise.all([
     database.query(
       `SELECT
          COUNT(*)::int AS requests,
@@ -95,6 +95,16 @@ async function getAiUsageSummary(database = pool, { hours = 24 } = {}) {
        ORDER BY COALESCE(SUM(total_tokens), 0) DESC, COUNT(*) DESC, purpose`,
       params
     ),
+    database.query(
+      `SELECT
+         COALESCE(failure_kind, 'unknown') AS failure_kind,
+         COUNT(*)::int AS requests
+       FROM ai_usage_events
+       WHERE ${windowSql} AND status = 'failed'
+       GROUP BY COALESCE(failure_kind, 'unknown')
+       ORDER BY COUNT(*) DESC, COALESCE(failure_kind, 'unknown')`,
+      params
+    ),
   ]);
 
   const totals = totalsResult.rows[0] || {};
@@ -125,6 +135,10 @@ async function getAiUsageSummary(database = pool, { hours = 24 } = {}) {
       successfulRequests: numeric(row.successful_requests),
       failedRequests: numeric(row.failed_requests),
       totalTokens: numeric(row.total_tokens),
+    })),
+    failuresByKind: failureResult.rows.map((row) => ({
+      failureKind: row.failure_kind,
+      requests: numeric(row.requests),
     })),
   };
 }
