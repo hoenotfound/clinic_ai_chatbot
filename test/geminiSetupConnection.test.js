@@ -104,6 +104,34 @@ test("Gemini setup check does not fan out across keys for provider/model failure
   assert.deepEqual(attempted, ["key-one"]);
 });
 
+test("Gemini setup metadata check is bounded and a timeout does not fan out across keys", async () => {
+  const attempted = [];
+  const env = {
+    GEMINI_API_KEY: "key-one",
+    GEMINI_API_KEY_1: "key-two",
+  };
+
+  await assert.rejects(
+    checkGeminiConnection({
+      env,
+      timeoutMs: 100,
+      createClient(apiKey) {
+        return {
+          models: {
+            get() {
+              attempted.push(apiKey);
+              return new Promise(() => {});
+            },
+          },
+        };
+      },
+    }),
+    (error) => error.code === "GEMINI_SETUP_CHECK_TIMEOUT"
+  );
+
+  assert.deepEqual(attempted, ["key-one"]);
+});
+
 test("credential classifier recognizes invalid API-key errors without treating 503 as a bad key", () => {
   const invalid = new Error("API key not valid. Please pass a valid API key.");
   invalid.status = 400;
