@@ -24,14 +24,6 @@ function buildContents(messages) {
   });
 }
 
-function isPrivateSetupCheck(messages) {
-  return Array.isArray(messages)
-    && messages.length === 1
-    && messages[0]?.role === "user"
-    && typeof messages[0]?.content === "string"
-    && messages[0].content.startsWith("Private setup check:");
-}
-
 function buildThinkingConfig(model = MODEL, env = process.env) {
   const normalized = String(model || "").trim().toLowerCase();
 
@@ -65,7 +57,7 @@ function setupCheckContents() {
 }
 
 function buildGeminiRequest(messages, options, resolvedModel) {
-  const setupCheck = isPrivateSetupCheck(messages);
+  const setupCheck = Boolean(options?.privateSetupCheck);
   const thinkingConfig = buildThinkingConfig(resolvedModel);
   return {
     purpose: setupCheck ? "setup_check" : "customer_reply",
@@ -93,7 +85,12 @@ async function getReply(
   apiKey = null,
   model = MODEL
 ) {
-  const options = normalizeOptions(optionsOrFirstMessage);
+  const options = {
+    ...normalizeOptions(optionsOrFirstMessage),
+    privateSetupCheck: Boolean(
+      typeof optionsOrFirstMessage === "object" && optionsOrFirstMessage?.privateSetupCheck
+    ),
+  };
   const resolvedKey = apiKey || process.env.GEMINI_API_KEY;
   const resolvedModel = String(model || MODEL).trim() || MODEL;
   if (!resolvedKey) {
@@ -121,6 +118,5 @@ module.exports = {
   buildGeminiRequest,
   buildThinkingConfig,
   getReply,
-  isPrivateSetupCheck,
   setupCheckContents,
 };
