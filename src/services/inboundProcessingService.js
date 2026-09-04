@@ -78,8 +78,12 @@ function groupJobsByContact(jobs) {
   return [...groups.values()];
 }
 
-async function flagTerminalFailure(job, contacts = contactsRepo) {
-  if (!job || Number(job.attempts) < MAX_PROCESSING_ATTEMPTS) return;
+async function flagTerminalFailure(
+  job,
+  contacts = contactsRepo,
+  repository = inboundProcessingRepo
+) {
+  if (!job || Number(job.attempts) < MAX_PROCESSING_ATTEMPTS) return false;
   try {
     await contacts.setAttention(
       job.contact_id,
@@ -87,10 +91,26 @@ async function flagTerminalFailure(job, contacts = contactsRepo) {
       "A customer message could not be processed after multiple automatic retries. Staff review is required."
     );
   } catch (err) {
+    // Do not mark the job terminal until the staff-attention write succeeds.
+    // That leaves it discoverable so a later sweep can try the handoff again.
     console.error(
       `Failed to flag terminal inbound-processing job ${job.id} for staff attention:`,
       err
     );
+    return false;
+  }
+
+  try {
+    await repository.markTerminal(job.id);
+    return true;
+  } catch (err) {
+    // Staff has already been alerted, so the customer is safe. Leaving
+    // terminal_at unset simply makes a later sweep retry this bookkeeping.
+    console.error(
+      `Failed to mark inbound-processing job ${job.id} terminal after staff handoff:`,
+      err
+    );
+    return false;
   }
 }
 
@@ -124,7 +144,7 @@ async function runInboundProcessingRecovery({
         } catch (err) {
           console.error(`Failed to restore inbound processing job ${job.id}:`, err);
           const failed = await repository.markFailed(job.id, err).catch(() => null);
-          await flagTerminalFailure(failed || job, contacts);
+          await flagTerminalFailure(failed || job, contacts, repository);
         }
       }
 
@@ -141,9 +161,22 @@ async function runInboundProcessingRecovery({
         );
         const failures = err.inboundProcessingFailures || group;
         for (const failed of failures) {
-          await flagTerminalFailure(failed, contacts);
+          await flagTerminalFailure(failed, contacts, repository);
         }
       }
+    }
+
+    // A process can die immediately after leasing the final allowed attempt.
+    // Such a stale job is no longer retryable, so surface it to staff instead
+    // of allowing it to disappear forever just because the crash happened at
+    // the exact retry boundary.
+    const exhaustedJobs = await repository.listExhausted({
+      limit: RECOVERY_BATCH_SIZE,
+      staleAfterSeconds: STALE_PROCESSING_SECONDS,
+      maxAttempts: MAX_PROCESSING_ATTEMPTS,
+    });
+    for (const job of exhaustedJobs) {
+      await flagTerminalFailure(job, contacts, repository);
     }
 
     sweepCount += 1;
@@ -182,6 +215,7 @@ module.exports = {
   RECOVERY_SWEEP_INTERVAL_MS,
   STALE_PROCESSING_SECONDS,
   claimLiveItem,
+  flagTerminalFailure,
   groupJobsByContact,
   markBatchFailed,
   processClaimedBatch,
