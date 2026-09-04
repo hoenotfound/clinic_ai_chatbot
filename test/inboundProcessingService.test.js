@@ -6,8 +6,10 @@ const {
   flagTerminalFailure,
   groupJobsByContact,
   processClaimedBatch,
+  replyQueueKeyForRecoveredItems,
   runInboundProcessingRecovery,
 } = require("../src/services/inboundProcessingService");
+const { enqueueReplyConversation } = require("../src/utils/conversationQueue");
 
 test("live inbound work claims its durable pending job before debounce", async () => {
   const repository = {
@@ -99,6 +101,103 @@ test("recovered jobs are grouped by contact and replayed in message order", () =
   assert.equal(groups.length, 2);
   const contact8 = groups.find((group) => group[0].contact_id === 8);
   assert.deepEqual(contact8.map((job) => job.message_id), [10, 30]);
+});
+
+test("recovery uses the same channel-specific reply queue keys as live traffic", () => {
+  assert.equal(
+    replyQueueKeyForRecoveredItems([
+      { incoming: { channel: "whatsapp", from: "60135550000" }, contact: { id: 1 } },
+    ]),
+    "60135550000"
+  );
+  assert.equal(
+    replyQueueKeyForRecoveredItems([
+      { incoming: { channel: "instagram", from: "igsid-88" }, contact: { id: 2 } },
+    ]),
+    "instagram:igsid-88"
+  );
+  assert.equal(
+    replyQueueKeyForRecoveredItems([
+      { incoming: { channel: "facebook" }, contact: { id: 3 } },
+    ]),
+    "contact:3"
+  );
+});
+
+test("restart recovery cannot run in parallel with a live reply for the same customer", async () => {
+  const order = [];
+  let releaseLive;
+  const liveGate = new Promise((resolve) => {
+    releaseLive = resolve;
+  });
+
+  const live = enqueueReplyConversation("60136660000", async () => {
+    order.push("live-start");
+    await liveGate;
+    order.push("live-finish");
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(order, ["live-start"]);
+
+  const job = {
+    id: 71,
+    contact_id: 12,
+    message_id: 501,
+    status: "processing",
+    attempts: 2,
+  };
+  const repository = {
+    async claimRecoverable() {
+      return [job];
+    },
+    async markCompleted(jobId) {
+      assert.equal(jobId, 71);
+      order.push("recovery-complete");
+      return { ...job, status: "completed" };
+    },
+    async markFailed() {
+      throw new Error("recovery should not fail");
+    },
+    async listExhausted() {
+      return [];
+    },
+    async pruneCompleted() {
+      return 0;
+    },
+  };
+
+  const recovery = runInboundProcessingRecovery({
+    repository,
+    contacts: { async setAttention() {} },
+    async resumeJob() {
+      return {
+        processingJobId: 71,
+        incoming: {
+          id: "wamid-recovered",
+          channel: "whatsapp",
+          from: "60136660000",
+          text: "recovered message",
+        },
+        contact: { id: 12, channel: "whatsapp", mode: "ai" },
+        savedInbound: { id: 501, contact_id: 12, content: "recovered message" },
+      };
+    },
+    async processBatch() {
+      order.push("recovery-start");
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(order, ["live-start"]);
+
+  releaseLive();
+  await Promise.all([live, recovery]);
+  assert.deepEqual(order, [
+    "live-start",
+    "live-finish",
+    "recovery-start",
+    "recovery-complete",
+  ]);
 });
 
 test("a job that crashed on its final attempt is handed to staff instead of disappearing", async () => {
