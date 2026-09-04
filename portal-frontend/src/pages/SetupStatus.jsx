@@ -27,6 +27,33 @@ const STATUS_STYLE = {
   },
 };
 
+const HEALTH_STYLE = {
+  healthy: {
+    label: "Healthy",
+    dot: "bg-[var(--color-primary)]",
+    badge: "bg-[var(--color-primary-light)] text-[var(--color-primary)]",
+    border: "border-[var(--color-primary)]/20",
+  },
+  warning: {
+    label: "Check needed",
+    dot: "bg-[var(--color-accent)]",
+    badge: "bg-[var(--color-accent-light)] text-[var(--color-text)]",
+    border: "border-[var(--color-accent)]/30",
+  },
+  error: {
+    label: "Needs attention",
+    dot: "bg-[var(--color-danger)]",
+    badge: "bg-[var(--color-danger-light)] text-[var(--color-danger)]",
+    border: "border-[var(--color-danger)]/25",
+  },
+  not_configured: {
+    label: "Not configured",
+    dot: "bg-[var(--color-border)]",
+    badge: "bg-[var(--color-bg)] text-[var(--color-text-muted)]",
+    border: "border-[var(--color-border)]",
+  },
+};
+
 const AI_KEY_STATUS = {
   ready: { label: "Succeeded last attempt", badge: "bg-[var(--color-primary-light)] text-[var(--color-primary)]" },
   rate_limited: { label: "Rate limited last attempt", badge: "bg-[var(--color-danger-light)] text-[var(--color-danger)]" },
@@ -45,6 +72,13 @@ const SETUP_KEY_STATUS = {
   not_checked: { label: "Not checked", badge: "bg-[var(--color-bg)] text-[var(--color-text-muted)]" },
 };
 
+const PASSIVE_ACTIVITY_KEYS = new Set([
+  "facebook",
+  "instagram",
+  "whatsapp_webhook",
+  "meta_webhook",
+]);
+
 function formatTime(value) {
   if (!value) return "Not checked yet";
   const date = new Date(value);
@@ -54,6 +88,34 @@ function formatTime(value) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+function formatRelativeTime(value) {
+  if (!value) return "No activity yet";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "No activity yet";
+  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return "Just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days} days ago`;
+  return formatTime(value);
+}
+
+function formatDuration(seconds) {
+  if (seconds == null) return "Unavailable";
+  const value = Math.max(0, Number(seconds) || 0);
+  if (value < 60) return `${Math.floor(value)} sec`;
+  if (value < 3600) return `${Math.floor(value / 60)} min`;
+  return `${Math.floor(value / 3600)}h ${Math.floor((value % 3600) / 60)}m`;
+}
+
+function isPassiveActivityWarning(check) {
+  return check?.status === "warning" && PASSIVE_ACTIVITY_KEYS.has(check.key);
 }
 
 export default function SetupStatus() {
@@ -94,11 +156,13 @@ export default function SetupStatus() {
     try {
       const nextData = await api.runSetupChecks();
       setData(nextData);
-      const attention = Number(nextData?.summary?.attention) || 0;
+      const overall = nextData?.systemHealth?.overall;
       setAnnouncement(
-        attention > 0
-          ? `Connection checks complete. ${attention} ${attention === 1 ? "check needs" : "checks need"} attention.`
-          : "Connection checks complete. No connection issues were found."
+        overall?.status === "error"
+          ? "Connection checks complete. System health needs attention."
+          : overall?.status === "warning"
+            ? "Connection checks complete. System health has something to review."
+            : "Connection checks complete. System health is healthy."
       );
     } catch (err) {
       setError(err.message || "Couldn't run setup checks.");
@@ -129,20 +193,21 @@ export default function SetupStatus() {
   }
 
   const summary = data.summary || {};
-  const allRequiredReady = summary.requiredTotal > 0 && summary.requiredReady === summary.requiredTotal;
+  const systemHealth = data.systemHealth || null;
+  const overall = systemHealth?.overall || null;
+  const overallStyle = HEALTH_STYLE[overall?.status] || HEALTH_STYLE.warning;
   const hasMetaMessaging = (data.checks || []).some(
     (check) => ["facebook", "instagram"].includes(check.key) && check.configured
   );
-  const requiredAttention = (data.checks || []).filter(
-    (check) => !check.optional && ["warning", "error"].includes(check.status)
-  ).length;
-  const optionalAttention = (data.checks || []).filter(
-    (check) => check.optional && ["warning", "error"].includes(check.status)
-  ).length;
+  const actionableChecks = (data.checks || []).filter(
+    (check) => ["warning", "error"].includes(check.status) && !isPassiveActivityWarning(check)
+  );
+  const requiredAttention = actionableChecks.filter((check) => !check.optional).length;
+  const optionalAttention = actionableChecks.filter((check) => check.optional).length;
   const attentionBreakdown = [
     requiredAttention ? `${requiredAttention} required` : null,
     optionalAttention ? `${optionalAttention} optional` : null,
-  ].filter(Boolean).join(" · ") || "Nothing flagged";
+  ].filter(Boolean).join(" · ") || "Nothing actionable";
 
   return (
     <div className="h-full overflow-y-auto overscroll-contain bg-[var(--color-bg)]">
@@ -152,12 +217,12 @@ export default function SetupStatus() {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2.5">
                 <h1 className="font-display text-2xl font-bold sm:text-3xl">Setup status</h1>
-                <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${allRequiredReady ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-accent-light)] text-[var(--color-text)]"}`}>
-                  {allRequiredReady ? "Core setup ready" : "Check setup"}
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${overallStyle.badge}`}>
+                  {overall?.label || "Health loading"}
                 </span>
               </div>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)]">
-                Confirm this clinic's database, AI, messaging channels and supporting services before going live.
+                See whether this client's chatbot is working now, then drill into connection checks only when something needs review.
               </p>
             </div>
             <button
@@ -178,7 +243,7 @@ export default function SetupStatus() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl space-y-5 px-4 py-5 pb-[max(2rem,env(safe-area-inset-bottom))] sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+      <main className="mx-auto max-w-6xl space-y-6 px-4 py-5 pb-[max(2rem,env(safe-area-inset-bottom))] sm:px-6 sm:py-6 lg:px-8 lg:py-8">
         <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
           {announcement}
         </div>
@@ -188,11 +253,54 @@ export default function SetupStatus() {
           </div>
         )}
 
-        <section className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3">
-          <SummaryCard label="Required ready" value={`${summary.requiredReady || 0}/${summary.requiredTotal || 0}`} tone="primary" />
-          <SummaryCard label="Needs attention" value={summary.attention || 0} hint={attentionBreakdown} tone={summary.attention ? "warning" : "neutral"} />
-          <SummaryCard label="Optional not set up" value={summary.optionalNotConfigured || 0} tone="neutral" />
-          <SummaryCard label="Last run" value={data.lastRunAt ? formatTime(data.lastRunAt) : "Not yet"} hint="Malaysia time" compact />
+        <section>
+          <SectionHeading title="System health" subtitle="Live operational signals, not just configuration checks." />
+          {systemHealth ? (
+            <div className="grid gap-3 lg:grid-cols-3">
+              <DatabaseHealthCard health={systemHealth.database} />
+              <InboundHealthCard health={systemHealth.inbound} />
+              <AiHealthCard health={systemHealth.ai} />
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-[var(--color-border)] bg-white p-4 text-sm text-[var(--color-text-muted)] shadow-sm">
+              Operational health metrics are temporarily unavailable. Connection checks below are still usable.
+            </div>
+          )}
+        </section>
+
+        {systemHealth?.messaging?.length > 0 && (
+          <section>
+            <SectionHeading
+              title="Messaging"
+              subtitle="Real inbound and outbound activity is stronger evidence than a superficial connection check. No recent inbound is not an error."
+            />
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {systemHealth.messaging.map((channel) => (
+                <MessagingHealthCard key={channel.channel} health={channel} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        <section>
+          <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
+            <div>
+              <h2 className="font-display text-base font-bold sm:text-lg">Connection checks</h2>
+              <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                Manual setup diagnostics. An inactive but correctly configured channel may show Awaiting activity without being unhealthy.
+              </p>
+            </div>
+            <span className="text-xs font-medium text-[var(--color-text-muted)]">
+              Last run: {data.lastRunAt ? formatTime(data.lastRunAt) : "Not yet"}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3">
+            <SummaryCard label="Required ready" value={`${summary.requiredReady || 0}/${summary.requiredTotal || 0}`} tone="primary" />
+            <SummaryCard label="Needs attention" value={actionableChecks.length} hint={attentionBreakdown} tone={actionableChecks.length ? "warning" : "neutral"} />
+            <SummaryCard label="Optional not set up" value={summary.optionalNotConfigured || 0} tone="neutral" />
+            <SummaryCard label="Health refreshed" value={systemHealth?.checkedAt ? formatTime(systemHealth.checkedAt) : "Unavailable"} hint="Malaysia time" compact />
+          </div>
         </section>
 
         {groups.map((group) => (
@@ -214,14 +322,144 @@ export default function SetupStatus() {
   );
 }
 
+function SectionHeading({ title, subtitle }) {
+  return (
+    <div className="mb-3 px-0.5">
+      <h2 className="font-display text-base font-bold sm:text-lg">{title}</h2>
+      <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{subtitle}</p>
+    </div>
+  );
+}
+
+function HealthHeader({ title, status, label }) {
+  const style = HEALTH_STYLE[status] || HEALTH_STYLE.warning;
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${style.dot}`} />
+        <h3 className="truncate text-sm font-bold">{title}</h3>
+      </div>
+      <span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-bold uppercase tracking-wide ${style.badge}`}>
+        {label || style.label}
+      </span>
+    </div>
+  );
+}
+
+function HealthRow({ label, value, danger = false }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <dt>{label}</dt>
+      <dd className={`text-right font-semibold ${danger ? "text-[var(--color-danger)]" : "text-[var(--color-text)]"}`}>{value}</dd>
+    </div>
+  );
+}
+
+function DatabaseHealthCard({ health }) {
+  const current = health?.currentVersion == null ? "—" : String(health.currentVersion).padStart(3, "0");
+  const expected = health?.expectedVersion == null ? "—" : String(health.expectedVersion).padStart(3, "0");
+  const state = health?.migrationState === "up_to_date"
+    ? "Up to date"
+    : health?.migrationState === "behind"
+      ? "Behind"
+      : health?.migrationState === "incompatible"
+        ? "Incompatible"
+        : "Unavailable";
+  return (
+    <article className="rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-sm sm:p-5">
+      <HealthHeader title="Database" status={health?.status} label={health?.label} />
+      <p className="mt-3 text-xs leading-5 text-[var(--color-text-muted)]">{health?.summary}</p>
+      <dl className="mt-4 space-y-2 border-t border-[var(--color-border)]/70 pt-3 text-[11px] text-[var(--color-text-muted)]">
+        <HealthRow label="Migration version" value={current} />
+        <HealthRow label="Expected version" value={expected} />
+        <HealthRow label="Migration state" value={state} danger={health?.status === "error"} />
+      </dl>
+    </article>
+  );
+}
+
+function InboundHealthCard({ health }) {
+  const openCount = (Number(health?.pending) || 0) + (Number(health?.processing) || 0) + (Number(health?.retrying) || 0);
+  return (
+    <article className="rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-sm sm:p-5">
+      <HealthHeader title="Inbound processing" status={health?.status} label={health?.label} />
+      <p className="mt-3 text-xs leading-5 text-[var(--color-text-muted)]">{health?.summary}</p>
+      <dl className="mt-4 space-y-2 border-t border-[var(--color-border)]/70 pt-3 text-[11px] text-[var(--color-text-muted)]">
+        <HealthRow label="Open jobs" value={health?.pending == null ? "Unavailable" : openCount} />
+        <HealthRow label="Pending" value={health?.pending ?? "—"} />
+        <HealthRow label="Oldest open job" value={openCount ? formatDuration(health?.oldestPendingAgeSeconds) : "None"} danger={health?.status === "error" && openCount > 0} />
+        <HealthRow label="Failed jobs (24h)" value={health?.failedLast24h ?? "—"} />
+        <HealthRow label="Needs staff attention" value={health?.terminalFailures ?? "—"} danger={(health?.terminalFailures || 0) > 0} />
+        <HealthRow label="Restart recoveries (24h)" value={health?.restartRecoveriesLast24h ?? "—"} />
+      </dl>
+    </article>
+  );
+}
+
+function AiHealthCard({ health }) {
+  const keyCooldowns = (health?.keyHealth || []).filter((item) => item.cooldownUntil);
+  return (
+    <article className="rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-sm sm:p-5">
+      <HealthHeader title="AI" status={health?.status} label={health?.label} />
+      <p className="mt-3 text-xs leading-5 text-[var(--color-text-muted)]">{health?.summary}</p>
+      <div className="mt-3 space-y-2">
+        {(health?.geminiModels || []).map((model) => (
+          <ProviderRow
+            key={model.model}
+            name={model.model === "gemini-2.5-flash" ? "Gemini 2.5 Flash" : model.model === "gemini-2.5-flash-lite" ? "Gemini 2.5 Flash-Lite" : model.model}
+            status={model.status}
+            label={model.label}
+            detail={model.cooldownUntil ? `Cooldown until ${formatTime(model.cooldownUntil)}` : null}
+          />
+        ))}
+        <ProviderRow name="Claude fallback" status={health?.claude?.status} label={health?.claude?.label} />
+      </div>
+      <dl className="mt-4 space-y-2 border-t border-[var(--color-border)]/70 pt-3 text-[11px] text-[var(--color-text-muted)]">
+        <HealthRow label="Gemini fallbacks (24h)" value={health?.fallbacksLast24h?.geminiModel ?? "—"} />
+        <HealthRow label="Claude fallbacks (24h)" value={health?.fallbacksLast24h?.claude ?? "—"} />
+        <HealthRow label="Final AI failures (24h)" value={health?.failuresLast24h ?? "—"} danger={(health?.failuresLast24h || 0) > 0} />
+        <HealthRow label="Gemini keys cooling down" value={keyCooldowns.length} />
+      </dl>
+      {keyCooldowns.length > 0 && (
+        <p className="mt-2 text-[10px] leading-4 text-[var(--color-text-muted)]">
+          {keyCooldowns.map((item) => `${item.label} until ${formatTime(item.cooldownUntil)}`).join(" · ")}
+        </p>
+      )}
+    </article>
+  );
+}
+
+function ProviderRow({ name, status, label, detail = null }) {
+  const style = HEALTH_STYLE[status] || HEALTH_STYLE.not_configured;
+  return (
+    <div className="rounded-xl bg-[var(--color-bg)] px-3 py-2.5">
+      <div className="flex items-center justify-between gap-3">
+        <span className="min-w-0 truncate text-[11px] font-bold text-[var(--color-text)]">{name}</span>
+        <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${style.badge}`}>{label || style.label}</span>
+      </div>
+      {detail && <p className="mt-1 text-[10px] leading-4 text-[var(--color-text-muted)]">{detail}</p>}
+    </div>
+  );
+}
+
+function MessagingHealthCard({ health }) {
+  const name = health.channel === "facebook" ? "Messenger" : health.channel === "instagram" ? "Instagram" : "WhatsApp";
+  return (
+    <article className="rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-sm sm:p-5">
+      <HealthHeader title={name} status={health.status} label={health.label} />
+      <p className="mt-3 min-h-10 text-xs leading-5 text-[var(--color-text-muted)]">{health.evidence}</p>
+      <dl className="mt-4 space-y-2 border-t border-[var(--color-border)]/70 pt-3 text-[11px] text-[var(--color-text-muted)]">
+        <HealthRow label="Last inbound" value={formatRelativeTime(health.lastInboundAt)} />
+        <HealthRow label="Last successful outbound" value={health.lastSuccessfulOutboundAt ? formatRelativeTime(health.lastSuccessfulOutboundAt) : "No confirmed outbound yet"} />
+        <HealthRow label="Delivery failures (24h)" value={health.recentDeliveryFailures ?? "—"} danger={(health.recentDeliveryFailures || 0) > 0 && health.status !== "healthy"} />
+      </dl>
+    </article>
+  );
+}
+
 function ConnectionCard({ check }) {
   const style = STATUS_STYLE[check.status] || STATUS_STYLE.warning;
-  const awaitingActivity = check.status === "warning" && [
-    "facebook",
-    "instagram",
-    "whatsapp_webhook",
-    "meta_webhook",
-  ].includes(check.key);
+  const awaitingActivity = isPassiveActivityWarning(check);
   return (
     <article className="min-w-0 rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-sm sm:p-5">
       <div className="flex items-start justify-between gap-3">
@@ -388,13 +626,17 @@ function MetaReviewNote() {
 
 function groupStatusLabel(checks) {
   const ready = checks.filter((check) => check.status === "ready").length;
-  const attention = checks.filter((check) => ["warning", "error"].includes(check.status)).length;
+  const awaiting = checks.filter(isPassiveActivityWarning).length;
+  const attention = checks.filter(
+    (check) => ["warning", "error"].includes(check.status) && !isPassiveActivityWarning(check)
+  ).length;
   const optionalNotSetUp = checks.filter(
     (check) => check.optional && check.status === "not_configured"
   ).length;
   return [
     ready ? `${ready} ready` : null,
     attention ? `${attention} ${attention === 1 ? "needs" : "need"} attention` : null,
+    awaiting ? `${awaiting} awaiting activity` : null,
     optionalNotSetUp ? `${optionalNotSetUp} optional not set up` : null,
   ].filter(Boolean).join(" · ") || "No checks available";
 }
@@ -404,7 +646,7 @@ function SummaryCard({ label, value, hint = null, tone = "neutral", compact = fa
     ? "text-[var(--color-primary)]"
     : tone === "warning"
       ? "text-[var(--color-danger)]"
-    : "text-[var(--color-text)]";
+      : "text-[var(--color-text)]";
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-white p-3.5 shadow-sm sm:p-4">
       <p className="text-[11px] font-semibold leading-4 text-[var(--color-text-muted)] sm:text-xs">{label}</p>
