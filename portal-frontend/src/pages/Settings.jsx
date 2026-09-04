@@ -34,14 +34,13 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState(initialTab);
   const { toasts, showToast, dismissToast } = useToasts();
 
-  const administrationItems = [
-    permissions.manage_users
-      ? { id: "team", label: "Team & Access", to: "/settings/team" }
-      : null,
-    user?.role === "admin"
-      ? { id: "setup", label: "Setup Status", to: "/settings/setup" }
-      : null,
-  ].filter(Boolean);
+  const teamItem = permissions.manage_users
+    ? { id: "team", label: "Team & Access", to: "/settings/team" }
+    : null;
+  const setupItem = user?.role === "admin"
+    ? { id: "setup", label: "Setup Status", to: "/settings/setup" }
+    : null;
+  const destinationItems = [teamItem, setupItem].filter(Boolean);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,7 +96,7 @@ export default function Settings() {
       selectConfigTab(value);
       return;
     }
-    const item = administrationItems.find((entry) => entry.id === value);
+    const item = destinationItems.find((entry) => entry.id === value);
     if (item) navigate(item.to);
   }
 
@@ -153,23 +152,33 @@ export default function Settings() {
             ))}
           </div>
 
-          {administrationItems.length > 0 && (
+          {teamItem && (
             <div className="mt-3 border-t border-[var(--color-border)] pt-3">
               <p className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
                 Administration
               </p>
-              <div className="space-y-1">
-                {administrationItems.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => navigate(item.to)}
-                    className="min-h-10 w-full rounded-xl px-3 text-left text-sm font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
+              <button
+                type="button"
+                onClick={() => navigate(teamItem.to)}
+                className="min-h-10 w-full rounded-xl px-3 text-left text-sm font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
+              >
+                {teamItem.label}
+              </button>
+            </div>
+          )}
+
+          {setupItem && (
+            <div className="mt-3 border-t border-[var(--color-border)] pt-3">
+              <p className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+                System
+              </p>
+              <button
+                type="button"
+                onClick={() => navigate(setupItem.to)}
+                className="min-h-10 w-full rounded-xl px-3 text-left text-sm font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
+              >
+                {setupItem.label}
+              </button>
             </div>
           )}
         </nav>
@@ -186,8 +195,19 @@ export default function Settings() {
               onChange={(event) => handleSectionChange(event.target.value)}
               className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm font-semibold text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
             >
-              {TABS.map((tab) => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
-              {administrationItems.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+              <optgroup label="Clinic & AI">
+                {TABS.map((tab) => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
+              </optgroup>
+              {teamItem && (
+                <optgroup label="Administration">
+                  <option value={teamItem.id}>{teamItem.label}</option>
+                </optgroup>
+              )}
+              {setupItem && (
+                <optgroup label="System">
+                  <option value={setupItem.id}>{setupItem.label}</option>
+                </optgroup>
+              )}
             </select>
           </label>
         </header>
