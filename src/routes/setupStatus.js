@@ -1,5 +1,6 @@
 const express = require("express");
 const { createSetupStatusService } = require("../services/setupStatusService");
+const setupStatusRepo = require("../db/setupStatusRepo");
 const aiService = require("../services/aiService");
 const aiUsage = require("../services/aiUsageService");
 const geminiSetupCheck = require("../services/geminiSetupCheckService");
@@ -11,11 +12,36 @@ function usesGeminiMetadataSetupCheck(env = process.env) {
   return preferred === "gemini" && aiService.getGeminiApiKeys(env).length > 0;
 }
 
+async function runAllGeminiMetadataChecks() {
+  const batch = await geminiSetupCheck.checkAllGeminiConnections();
+
+  // Persist setup diagnostics separately from the runtime key-pool health.
+  // A Setup Status check must never cool a key, change the active key, or
+  // otherwise affect customer-reply routing.
+  await Promise.allSettled(batch.results.map((item) =>
+    setupStatusRepo.recordAiCandidateSetupCheck({
+      candidateKey: item.healthKey,
+      provider: item.provider,
+      status: item.status,
+      failureKind: item.failureKind,
+      at: item.checkedAt,
+    })
+  ));
+
+  if (batch.readyCount <= 0) {
+    const error = new Error("No configured Gemini key could access the configured model metadata.");
+    error.code = "ALL_GEMINI_SETUP_CHECKS_FAILED";
+    throw error;
+  }
+
+  return batch;
+}
+
 const setupStatusAi = {
   ...aiService,
   async getReply(messages, options = {}) {
     if (usesGeminiMetadataSetupCheck()) {
-      await geminiSetupCheck.checkGeminiConnection();
+      await runAllGeminiMetadataChecks();
       // createSetupStatusService only needs this promise to resolve. Keep a
       // compatible structured value for tests/callers without generating text.
       return JSON.stringify({
@@ -63,9 +89,22 @@ function failureCount(usage, kind) {
   ) || 0;
 }
 
+async function loadCandidateSetupChecks() {
+  if (!usesGeminiMetadataSetupCheck()) return [];
+  try {
+    return await setupStatusRepo.listAiCandidateSetupChecks();
+  } catch (err) {
+    console.warn("Could not load AI setup-check history:", err?.message || err);
+    return [];
+  }
+}
+
 async function addAiUsage(overview) {
   try {
-    const usage = await aiUsage.getUsageSummary({ hours: 24 });
+    const [usage, setupCheckRows] = await Promise.all([
+      aiUsage.getUsageSummary({ hours: 24 }),
+      loadCandidateSetupChecks(),
+    ]);
     const aiCheck = (overview?.checks || []).find((check) => check.key === "ai");
     const modelHealth = typeof aiService.getRuntimeGeminiModelHealth === "function"
       ? aiService.getRuntimeGeminiModelHealth()
@@ -73,10 +112,43 @@ async function addAiUsage(overview) {
     if (aiCheck) {
       aiCheck.aiUsage = usage;
       aiCheck.geminiModelHealth = modelHealth;
+
+      const setupByHealthKey = new Map(
+        setupCheckRows.map((row) => [row.candidate_key, row])
+      );
+      const descriptors = typeof aiService.getCandidateHealthDescriptors === "function"
+        ? aiService.getCandidateHealthDescriptors()
+        : [];
+      const healthKeyByDisplay = new Map(
+        descriptors.map((item) => [`${item.provider}:${item.label}`, item.healthKey])
+      );
+
+      aiCheck.candidateHealth = (aiCheck.candidateHealth || []).map((candidate) => {
+        const healthKey = healthKeyByDisplay.get(`${candidate.provider}:${candidate.label}`);
+        const setupRow = healthKey ? setupByHealthKey.get(healthKey) : null;
+        return {
+          ...candidate,
+          setupCheck: {
+            status: setupRow?.last_status || "not_checked",
+            failureKind: setupRow?.last_failure_kind || null,
+            checkedAt: setupRow?.last_checked_at || null,
+            successAt: setupRow?.last_success_at || null,
+          },
+        };
+      });
+
       if (usesGeminiMetadataSetupCheck()) {
         aiCheck.setupCheckMode = "model_metadata";
         if (aiCheck.status === "ready") {
-          aiCheck.summary = "Gemini credentials and the configured model are accessible. This setup check does not generate AI text or consume prompt/output tokens.";
+          const geminiChecks = aiCheck.candidateHealth
+            .filter((candidate) => candidate.provider === "gemini")
+            .map((candidate) => candidate.setupCheck)
+            .filter((item) => item?.checkedAt);
+          const readyChecks = geminiChecks.filter((item) => item.status === "ready").length;
+          const totalKeys = Number(aiCheck.geminiKeyCount) || geminiChecks.length;
+          aiCheck.summary = geminiChecks.length
+            ? `${readyChecks}/${totalKeys} configured Gemini keys passed the latest metadata-only setup check. Run all checks does not generate AI text or consume prompt/output tokens.`
+            : "Gemini credentials and the configured model are accessible. Run all checks uses metadata only and does not generate AI text or consume prompt/output tokens.";
         }
       }
       const usageText = usage.requests > 0
@@ -130,5 +202,6 @@ module.exports = router;
 module.exports.addAiUsage = addAiUsage;
 module.exports.failureCount = failureCount;
 module.exports.requireAdministrator = requireAdministrator;
+module.exports.runAllGeminiMetadataChecks = runAllGeminiMetadataChecks;
 module.exports.setupStatusAi = setupStatusAi;
 module.exports.usesGeminiMetadataSetupCheck = usesGeminiMetadataSetupCheck;
