@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import { useAuth } from "../context/AuthContext";
 import { useToasts, ToastContainer } from "../components/Toast";
 import Spinner from "../components/Spinner";
 
@@ -21,11 +23,25 @@ const textareaClass = `${inputClass} resize-y`;
 const labelClass = "mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]";
 
 export default function Settings() {
+  const { user, permissions } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const initialTab = TABS.some((tab) => tab.id === requestedTab) ? requestedTab : "general";
   const [config, setConfig] = useState(null); // null = loading
   const [loadError, setLoadError] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
-  const [activeTab, setActiveTab] = useState("general");
+  const [activeTab, setActiveTab] = useState(initialTab);
   const { toasts, showToast, dismissToast } = useToasts();
+
+  const administrationItems = [
+    permissions.manage_users
+      ? { id: "team", label: "Team & Access", to: "/settings/team" }
+      : null,
+    user?.role === "admin"
+      ? { id: "setup", label: "Setup Status", to: "/settings/setup" }
+      : null,
+  ].filter(Boolean);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,6 +59,12 @@ export default function Settings() {
     };
   }, [reloadToken]);
 
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    const nextTab = TABS.some((item) => item.id === tab) ? tab : "general";
+    setActiveTab((current) => (current === nextTab ? current : nextTab));
+  }, [searchParams]);
+
   // Called by a tab after it successfully saves — updates the shared config
   // so every other tab reflects the latest server state the next time it's
   // opened, not just the one that just saved.
@@ -59,6 +81,24 @@ export default function Settings() {
     setConfig(null);
     setLoadError(null);
     setReloadToken((value) => value + 1);
+  }
+
+  function selectConfigTab(id) {
+    setActiveTab(id);
+    if (id === "general") {
+      setSearchParams({}, { replace: true });
+    } else {
+      setSearchParams({ tab: id }, { replace: true });
+    }
+  }
+
+  function handleSectionChange(value) {
+    if (TABS.some((tab) => tab.id === value)) {
+      selectConfigTab(value);
+      return;
+    }
+    const item = administrationItems.find((entry) => entry.id === value);
+    if (item) navigate(item.to);
   }
 
   if (loadError) {
@@ -94,22 +134,44 @@ export default function Settings() {
           <h1 className="font-display text-lg font-bold">Settings</h1>
           <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">Bot & clinic configuration</p>
         </div>
-        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2.5 py-3">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              aria-current={activeTab === t.id ? "page" : undefined}
-              onClick={() => setActiveTab(t.id)}
-              className={`min-h-10 w-full rounded-xl px-3 text-left text-sm font-medium transition-colors ${
-                activeTab === t.id
-                  ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)]"
-                  : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
+        <nav aria-label="Settings sections" className="min-h-0 flex-1 overflow-y-auto px-2.5 py-3">
+          <div className="space-y-1">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                aria-current={activeTab === t.id ? "page" : undefined}
+                onClick={() => selectConfigTab(t.id)}
+                className={`min-h-10 w-full rounded-xl px-3 text-left text-sm font-medium transition-colors ${
+                  activeTab === t.id
+                    ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)]"
+                    : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {administrationItems.length > 0 && (
+            <div className="mt-3 border-t border-[var(--color-border)] pt-3">
+              <p className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+                Administration
+              </p>
+              <div className="space-y-1">
+                {administrationItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => navigate(item.to)}
+                    className="min-h-10 w-full rounded-xl px-3 text-left text-sm font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </nav>
       </aside>
 
@@ -121,10 +183,11 @@ export default function Settings() {
             <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Section</span>
             <select
               value={activeTab}
-              onChange={(event) => setActiveTab(event.target.value)}
+              onChange={(event) => handleSectionChange(event.target.value)}
               className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm font-semibold text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
             >
               {TABS.map((tab) => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
+              {administrationItems.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
           </label>
         </header>
