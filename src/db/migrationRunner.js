@@ -145,10 +145,19 @@ async function ensureMigrationTable(client) {
 }
 
 function validateAppliedMigrations(appliedRows, migrations) {
+  const sortedRows = [...appliedRows].sort((a, b) => Number(a.version) - Number(b.version));
   const planByVersion = new Map(migrations.map((migration) => [migration.version, migration]));
 
-  for (const row of appliedRows) {
+  sortedRows.forEach((row, index) => {
     const version = Number(row.version);
+    const expectedVersion = index + 1;
+    if (version !== expectedVersion) {
+      throw new Error(
+        `Database migration history is incomplete: expected version ${expectedVersion}, found ${version}. ` +
+          "Do not skip or manually reorder migrations."
+      );
+    }
+
     const planned = planByVersion.get(version);
     if (!planned) {
       throw new Error(
@@ -167,7 +176,7 @@ function validateAppliedMigrations(appliedRows, migrations) {
           "An applied migration was edited; restore it and create a new migration for the schema change."
       );
     }
-  }
+  });
 }
 
 async function runMigrations(poolLike, options = {}) {
