@@ -18,6 +18,11 @@ if (!new Set(["gemini", "claude"]).has(provider)) {
 
 const DEFAULT_TIMEOUT_MS = 18 * 1000;
 const DEFAULT_RETRY_COUNT = 1;
+const DEFAULT_GEMINI_GLOBAL_BUDGET_MS = 25 * 1000;
+const DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS = 8 * 1000;
+const DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS = 5 * 1000;
+const DEFAULT_GEMINI_MIN_KEY_WINDOW_MS = 4 * 1000;
+const DEFAULT_GEMINI_5XX_RETRY_COUNT = 1;
 
 function positiveInt(value, fallback, max = 60_000) {
   const parsed = Number(value);
@@ -106,7 +111,38 @@ function getCandidateHealthDescriptors(env = process.env) {
   }));
 }
 
-async function runGeminiReply(messages, options, timeoutMs, retryCount) {
+function getGeminiReplyPolicy(env = process.env) {
+  return {
+    globalBudgetMs: positiveInt(
+      env.GEMINI_REPLY_GLOBAL_BUDGET_MS,
+      DEFAULT_GEMINI_GLOBAL_BUDGET_MS,
+      60_000
+    ),
+    preferredTimeoutMs: positiveInt(
+      env.GEMINI_REPLY_PREFERRED_TIMEOUT_MS,
+      DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS,
+      30_000
+    ),
+    fallbackTimeoutMs: positiveInt(
+      env.GEMINI_REPLY_FALLBACK_TIMEOUT_MS,
+      DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS,
+      30_000
+    ),
+    minRemainingKeyWindowMs: positiveInt(
+      env.GEMINI_REPLY_MIN_KEY_WINDOW_MS,
+      DEFAULT_GEMINI_MIN_KEY_WINDOW_MS,
+      15_000
+    ),
+    retryCount: positiveInt(
+      env.GEMINI_REPLY_5XX_RETRY_COUNT,
+      DEFAULT_GEMINI_5XX_RETRY_COUNT,
+      1
+    ),
+  };
+}
+
+async function runGeminiReply(messages, options, env = process.env) {
+  const policy = getGeminiReplyPolicy(env);
   return runWithGeminiKeys(
     async (apiKey) => {
       const raw = await gemini.getReply(messages, options, apiKey);
@@ -114,8 +150,15 @@ async function runGeminiReply(messages, options, timeoutMs, retryCount) {
       return raw;
     },
     {
-      timeoutMs,
-      retryCount,
+      env,
+      retryCount: policy.retryCount,
+      globalBudgetMs: policy.globalBudgetMs,
+      preferredTimeoutMs: policy.preferredTimeoutMs,
+      fallbackTimeoutMs: policy.fallbackTimeoutMs,
+      minRemainingKeyWindowMs: policy.minRemainingKeyWindowMs,
+      smartRetry: true,
+      smartRetryDelayMinMs: 500,
+      smartRetryDelayMaxMs: 1000,
     }
   );
 }
@@ -138,6 +181,8 @@ async function getReply(messages, optionsOrFirstMessage = false) {
         channel: optionsOrFirstMessage?.channel || "whatsapp",
       };
 
+  // AI_REPLY_TIMEOUT_MS / AI_REPLY_RETRY_COUNT remain the fallback-provider
+  // controls. Gemini chat replies use the smarter global-budget policy above.
   const timeoutMs = positiveInt(process.env.AI_REPLY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
   const retryCount = positiveInt(process.env.AI_REPLY_RETRY_COUNT, DEFAULT_RETRY_COUNT, 3);
   const hasGemini = getGeminiApiKeys().length > 0;
@@ -160,7 +205,7 @@ async function getReply(messages, optionsOrFirstMessage = false) {
 
     try {
       if (candidateProvider === "gemini") {
-        return await runGeminiReply(messages, options, timeoutMs, retryCount);
+        return await runGeminiReply(messages, options);
       }
       return await runClaudeReply(messages, options, timeoutMs, retryCount);
     } catch (err) {
@@ -176,11 +221,16 @@ async function getReply(messages, optionsOrFirstMessage = false) {
 console.log(`AI provider preference: ${provider}`);
 
 module.exports = {
+  DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS,
+  DEFAULT_GEMINI_GLOBAL_BUDGET_MS,
+  DEFAULT_GEMINI_MIN_KEY_WINDOW_MS,
+  DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS,
   buildCandidates,
   classifyCandidateHealthFailure,
   credentialFingerprint,
   getCandidateHealthDescriptors,
   getGeminiApiKeys,
+  getGeminiReplyPolicy,
   getRuntimeCandidateHealth,
   getReply,
   isRetryableAiError,
