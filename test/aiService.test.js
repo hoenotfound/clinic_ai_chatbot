@@ -2,9 +2,14 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS,
+  DEFAULT_GEMINI_GLOBAL_BUDGET_MS,
+  DEFAULT_GEMINI_MIN_KEY_WINDOW_MS,
+  DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS,
   classifyCandidateHealthFailure,
   credentialFingerprint,
   getGeminiApiKeys,
+  getGeminiReplyPolicy,
   isRetryableAiError,
   runCandidate,
 } = require("../src/services/aiService");
@@ -19,6 +24,36 @@ test("Gemini key configuration is deduplicated in priority order", () => {
   assert.deepEqual(keys, ["key-a", "key-b", "key-main", "key-c"]);
 });
 
+test("Gemini customer replies default to a 25s global adaptive budget", () => {
+  const policy = getGeminiReplyPolicy({});
+  assert.equal(policy.globalBudgetMs, DEFAULT_GEMINI_GLOBAL_BUDGET_MS);
+  assert.equal(policy.globalBudgetMs, 25000);
+  assert.equal(policy.preferredTimeoutMs, DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS);
+  assert.equal(policy.preferredTimeoutMs, 8000);
+  assert.equal(policy.fallbackTimeoutMs, DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS);
+  assert.equal(policy.fallbackTimeoutMs, 5000);
+  assert.equal(policy.minRemainingKeyWindowMs, DEFAULT_GEMINI_MIN_KEY_WINDOW_MS);
+  assert.equal(policy.minRemainingKeyWindowMs, 4000);
+  assert.equal(policy.retryCount, 1);
+});
+
+test("Gemini customer reply timing can be tuned through environment settings", () => {
+  const policy = getGeminiReplyPolicy({
+    GEMINI_REPLY_GLOBAL_BUDGET_MS: "30000",
+    GEMINI_REPLY_PREFERRED_TIMEOUT_MS: "9000",
+    GEMINI_REPLY_FALLBACK_TIMEOUT_MS: "6000",
+    GEMINI_REPLY_MIN_KEY_WINDOW_MS: "4500",
+    GEMINI_REPLY_5XX_RETRY_COUNT: "0",
+  });
+  assert.deepEqual(policy, {
+    globalBudgetMs: 30000,
+    preferredTimeoutMs: 9000,
+    fallbackTimeoutMs: 6000,
+    minRemainingKeyWindowMs: 4500,
+    retryCount: 0,
+  });
+});
+
 test("transient provider errors and invalid model output are retryable", () => {
   assert.equal(isRetryableAiError({ status: 429, message: "quota" }), true);
   assert.equal(isRetryableAiError({ code: "ETIMEDOUT" }), true);
@@ -31,6 +66,10 @@ test("AI candidate health classifies quota, credential and temporary failures", 
   assert.deepEqual(
     classifyCandidateHealthFailure({ status: 429, message: "Resource exhausted" }),
     { status: "rate_limited", failureKind: "rate_limit" }
+  );
+  assert.deepEqual(
+    classifyCandidateHealthFailure({ status: 429, message: "quota_exceeded: requests per day" }),
+    { status: "rate_limited", failureKind: "quota_exhausted" }
   );
   assert.deepEqual(
     classifyCandidateHealthFailure({ status: 401, message: "Unauthorized" }),
