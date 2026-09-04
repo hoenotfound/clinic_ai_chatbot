@@ -57,7 +57,8 @@ test("setup status exposes real 24h Gemini request, token and failure totals", a
     assert.match(aiCheck.summary, /2 failed/i);
     assert.match(aiCheck.summary, /45,000 total tokens/i);
     assert.match(aiCheck.summary, /1 model unavailable\/503/i);
-    assert.match(aiCheck.summary, /1 rate-limit\/quota/i);
+    assert.match(aiCheck.summary, /1 rate limited/i);
+    assert.match(aiCheck.summary, /0 quota exhausted/i);
   } finally {
     aiUsage.getUsageSummary = originalGetUsageSummary;
   }
