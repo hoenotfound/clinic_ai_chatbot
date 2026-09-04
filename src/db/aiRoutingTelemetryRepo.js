@@ -11,6 +11,10 @@ async function recordRoutingEvent(
   queryable = pool
 ) {
   if (!EVENT_TYPES.has(eventType)) return;
+  // Unit tests and standalone module consumers may intentionally run without a
+  // database. Production always has DATABASE_URL, while explicit fake
+  // queryables still work for repository tests.
+  if (queryable === pool && !process.env.DATABASE_URL) return;
   const safeProvider = ["gemini", "claude"].includes(provider) ? provider : null;
   const safeModel = model == null ? null : String(model).slice(0, 120);
   await queryable.query(
