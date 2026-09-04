@@ -16,7 +16,7 @@ async function makeClient(schemaName) {
 }
 
 test(
-  "login rate limits persist across connections, reset expired windows and clear selected scopes",
+  "login rate limits persist, reserve atomically across connections and reset expired windows",
   { skip: !connectionString },
   async () => {
     const admin = new Client({ connectionString });
@@ -65,9 +65,38 @@ test(
         states = await loginRateLimitRepo.getStates(keys, restarted);
         assert.deepEqual(states.map((row) => row.scope), ["ip"]);
         assert.equal(Number(states[0].failures), 3);
+
+        // Undoing a successful request's pre-reservation subtracts only that
+        // request; previous IP-wide failures remain intact.
+        await loginRateLimitRepo.decrementKeys([keys[0]], restarted);
+        states = await loginRateLimitRepo.getStates([keys[0]], restarted);
+        assert.equal(Number(states[0].failures), 2);
       } finally {
         await restarted.end();
       }
+
+      // Multiple Render instances/processes reserving the same attempt bucket
+      // at once must not lose increments. ON CONFLICT performs the increment
+      // atomically on the row even across independent PostgreSQL connections.
+      const concurrentKey = { scope: "pair", keyHash: "d".repeat(64) };
+      const clients = await Promise.all(
+        Array.from({ length: 6 }, () => makeClient(schemaName))
+      );
+      try {
+        await Promise.all(
+          clients.map((client) =>
+            loginRateLimitRepo.recordFailure(
+              [concurrentKey],
+              { windowSeconds: 900 },
+              client
+            )
+          )
+        );
+      } finally {
+        await Promise.all(clients.map((client) => client.end()));
+      }
+      states = await loginRateLimitRepo.getStates([concurrentKey], admin);
+      assert.equal(Number(states[0].failures), 6);
 
       // Expired fixed windows reset atomically to a fresh failure count of one.
       await admin.query(
@@ -94,7 +123,7 @@ test(
         { olderThanSeconds: 86400 },
         admin
       );
-      assert.equal(pruned, 1);
+      assert.equal(pruned, 2);
     } finally {
       await admin.query("SET search_path TO public").catch(() => {});
       await admin.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`).catch(() => {});
