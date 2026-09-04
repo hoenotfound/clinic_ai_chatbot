@@ -1,6 +1,5 @@
-const path = require("path");
-const fs = require("fs");
 const { Pool } = require("pg");
+const { runMigrations } = require("./migrationRunner");
 
 // Neon (and most managed Postgres hosts) require SSL. Neon connection
 // strings work with the default `ssl: { rejectUnauthorized: false }` — no
@@ -17,61 +16,14 @@ pool.on("error", (err) => {
 });
 
 /**
- * Runs the schema files against the database. Safe to call on every startup.
+ * Applies only missing, versioned database migrations before startup.
+ *
+ * The name is kept as initSchema() for compatibility with the existing server
+ * bootstrap and tests, but schema setup is no longer a blind replay of every
+ * SQL file on every Render restart.
  */
 async function initSchema() {
-  const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
-  const telegramAlertsSchema = fs.readFileSync(
-    path.join(__dirname, "telegramAlertsSchema.sql"),
-    "utf8"
-  );
-  const socialChannelsSchema = fs.readFileSync(
-    path.join(__dirname, "socialChannelsSchema.sql"),
-    "utf8"
-  );
-  const followUpMultiChannelSchema = fs.readFileSync(
-    path.join(__dirname, "followUpMultiChannelSchema.sql"),
-    "utf8"
-  );
-  const accessControlSchema = fs.readFileSync(
-    path.join(__dirname, "accessControlSchema.sql"),
-    "utf8"
-  );
-  const leadDistributionSafetySchema = fs.readFileSync(
-    path.join(__dirname, "leadDistributionSafetySchema.sql"),
-    "utf8"
-  );
-  const leadAttributionSchema = fs.readFileSync(
-    path.join(__dirname, "leadAttributionSchema.sql"),
-    "utf8"
-  );
-  const whatsappPolicySchema = fs.readFileSync(
-    path.join(__dirname, "whatsappPolicySchema.sql"),
-    "utf8"
-  );
-  const setupStatusSchema = fs.readFileSync(
-    path.join(__dirname, "setupStatusSchema.sql"),
-    "utf8"
-  );
-  const inboundProcessingSchema = fs.readFileSync(
-    path.join(__dirname, "inboundProcessingSchema.sql"),
-    "utf8"
-  );
-  const loginRateLimitSchema = fs.readFileSync(
-    path.join(__dirname, "loginRateLimitSchema.sql"),
-    "utf8"
-  );
-  await pool.query(schema);
-  await pool.query(telegramAlertsSchema);
-  await pool.query(socialChannelsSchema);
-  await pool.query(followUpMultiChannelSchema);
-  await pool.query(accessControlSchema);
-  await pool.query(leadDistributionSafetySchema);
-  await pool.query(leadAttributionSchema);
-  await pool.query(whatsappPolicySchema);
-  await pool.query(setupStatusSchema);
-  await pool.query(inboundProcessingSchema);
-  await pool.query(loginRateLimitSchema);
+  return runMigrations(pool);
 }
 
 module.exports = { pool, initSchema };
