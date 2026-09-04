@@ -104,13 +104,21 @@ function touchesLeadServiceEligibility(updates) {
 }
 
 router.post("/login", loginRateLimit, async (req, res) => {
-  const { username, password } = req.body || {};
-  if (!username || !password) {
+  const rawUsername = req.body?.username;
+  const password = req.body?.password;
+  const username = typeof rawUsername === "string" ? rawUsername.trim() : "";
+  if (!username || typeof password !== "string" || !password) {
     return res.status(400).json({ error: "Username and password are required." });
   }
 
   try {
-    const user = await usersRepo.getUserByUsername(username);
+    // Only usernames that could have been created by the portal are allowed to
+    // reach Postgres. Malformed identifiers still take the dummy-bcrypt path
+    // and are recorded as failed authentication below, so validation does not
+    // become an account-enumeration shortcut.
+    const user = USERNAME_RE.test(username)
+      ? await usersRepo.getUserByUsername(username)
+      : null;
     const credentialsValid = await verifyLoginCredentials(user, password);
     if (!credentialsValid) {
       try {
