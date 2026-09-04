@@ -57,6 +57,10 @@ async function initSchema() {
     path.join(__dirname, "inboundProcessingSchema.sql"),
     "utf8"
   );
+  const loginRateLimitSchema = fs.readFileSync(
+    path.join(__dirname, "loginRateLimitSchema.sql"),
+    "utf8"
+  );
   await pool.query(schema);
   await pool.query(telegramAlertsSchema);
   await pool.query(socialChannelsSchema);
@@ -67,6 +71,7 @@ async function initSchema() {
   await pool.query(whatsappPolicySchema);
   await pool.query(setupStatusSchema);
   await pool.query(inboundProcessingSchema);
+  await pool.query(loginRateLimitSchema);
 }
 
 module.exports = { pool, initSchema };
