@@ -72,14 +72,14 @@ test("rate-limit keys cover IP, username and pair without storing raw identifier
   }
 });
 
-test("middleware blocks when any one scope reaches its limit and returns Retry-After", async () => {
+test("middleware atomically reserves the current attempt and blocks max + 1", async () => {
   const now = Date.UTC(2026, 8, 4, 9, 0, 0);
   const repository = {
-    async getStates() {
+    async recordFailure() {
       return [
         {
           scope: "pair",
-          failures: MAX_ATTEMPTS_BY_SCOPE.pair,
+          failures: MAX_ATTEMPTS_BY_SCOPE.pair + 1,
           window_started_at: new Date(now - 60_000),
         },
       ];
@@ -104,18 +104,60 @@ test("middleware blocks when any one scope reaches its limit and returns Retry-A
   assert.match(res.body.error, /Too many login attempts/);
 });
 
-test("failed attempts increment all scopes, while successful login clears username + pair only", async () => {
-  const calls = [];
+test("parallel burst admits only the configured pair limit", async () => {
+  const now = Date.UTC(2026, 8, 4, 9, 0, 0);
+  let reservations = 0;
   const repository = {
-    async getStates() {
-      return [];
+    async recordFailure() {
+      const failures = ++reservations;
+      await new Promise((resolve) => setImmediate(resolve));
+      return [
+        {
+          scope: "pair",
+          failures,
+          window_started_at: new Date(now),
+        },
+      ];
     },
+  };
+  const limiter = createLoginRateLimiter({
+    repository,
+    env: { SESSION_SECRET: "test-secret" },
+    now: () => now,
+  });
+  let admitted = 0;
+
+  await Promise.all(
+    Array.from({ length: 20 }, async () => {
+      const res = response();
+      await limiter.loginRateLimit(request(), res, () => {
+        admitted += 1;
+      });
+    })
+  );
+
+  assert.equal(reservations, 20);
+  assert.equal(admitted, MAX_ATTEMPTS_BY_SCOPE.pair);
+});
+
+test("normal rejection is counted once and successful cleanup preserves prior IP failures", async () => {
+  const calls = [];
+  const now = Date.UTC(2026, 8, 4, 9, 0, 0);
+  const repository = {
     async recordFailure(keys, options) {
       calls.push(["record", keys.map((key) => key.scope), options.windowSeconds]);
-      return [];
+      return keys.map((key) => ({
+        scope: key.scope,
+        failures: 1,
+        window_started_at: new Date(now),
+      }));
     },
     async clearKeys(keys) {
       calls.push(["clear", keys.map((key) => key.scope)]);
+      return keys.length;
+    },
+    async decrementKeys(keys) {
+      calls.push(["decrement", keys.map((key) => key.scope)]);
       return keys.length;
     },
     async pruneExpired() {
@@ -126,25 +168,34 @@ test("failed attempts increment all scopes, while successful login clears userna
   const limiter = createLoginRateLimiter({
     repository,
     env: { SESSION_SECRET: "test-secret" },
-    now: () => Date.UTC(2026, 8, 4, 9, 0, 0),
+    now: () => now,
   });
   const req = request();
+  const res = response();
 
+  await limiter.loginRateLimit(req, res, () => {});
   await limiter.recordFailedAttempt(req);
   await limiter.clearAttempts(req);
 
-  assert.deepEqual(calls[0][0], "record");
-  assert.deepEqual(calls[0][1], ["ip", "username", "pair"]);
+  assert.equal(calls.filter((call) => call[0] === "record").length, 1);
+  assert.deepEqual(calls.find((call) => call[0] === "record").slice(0, 2), [
+    "record",
+    ["ip", "username", "pair"],
+  ]);
   assert.deepEqual(calls.find((call) => call[0] === "clear"), [
     "clear",
     ["username", "pair"],
   ]);
+  assert.deepEqual(calls.find((call) => call[0] === "decrement"), [
+    "decrement",
+    ["ip"],
+  ]);
 });
 
-test("rate limiter fails closed if persistent state cannot be checked", async () => {
+test("rate limiter fails closed if persistent reservation cannot be written", async () => {
   const limiter = createLoginRateLimiter({
     repository: {
-      async getStates() {
+      async recordFailure() {
         throw new Error("database unavailable");
       },
     },
