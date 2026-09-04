@@ -107,7 +107,7 @@ test("failed Gemini requests are counted for quota monitoring without inventing 
       { model: "gemini-2.5-flash", contents: "hello" },
       { purpose: "customer_reply", database, repository }
     ),
-    error
+    (err) => err === error
   );
   await flushPromises();
 
