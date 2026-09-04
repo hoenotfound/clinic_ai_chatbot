@@ -155,7 +155,7 @@ async function claimRecoverable({
          updated_at = NOW()
      FROM eligible
      WHERE j.id = eligible.id
-     RETURNING j.${JOB_COLUMNS.replace(/\n/g, "\n     j.").replace(/^\s*j\.id,/, "id,")}`,
+     RETURNING j.*`,
     [safeLimit, safeStaleSeconds, safeMaxAttempts]
   );
   return result.rows;
@@ -206,7 +206,7 @@ async function markFailed(jobId, error, database = pool) {
 async function getJobContext(jobId, database = pool) {
   const result = await database.query(
     `SELECT
-       j.${JOB_COLUMNS.replace(/\n/g, "\n       j.").replace(/^\s*j\.id,/, "id,")},
+       j.*,
        row_to_json(m.*) AS saved_inbound,
        NOT EXISTS (
          SELECT 1
