@@ -65,10 +65,14 @@ test("legacy public Instagram diagnostic routes were removed", () => {
   assert.doesNotMatch(server, /debug-instagram-conversations/);
 });
 
-test("setup schema is included in startup and stores no credentials", () => {
+test("setup schema is included in startup migrations and stores no credentials", () => {
   const db = read("src/db/db.js");
+  const runner = read("src/db/migrationRunner.js");
   const schema = read("src/db/setupStatusSchema.sql");
-  assert.match(db, /setupStatusSchema\.sql/);
+
+  assert.match(db, /runMigrations\(pool\)/);
+  assert.match(runner, /name: "setup_status"/);
+  assert.match(runner, /file: "setupStatusSchema\.sql"/);
   assert.match(schema, /last_success_at/);
   assert.match(schema, /last_webhook_at/);
   assert.match(schema, /setup_ai_candidate_health/);
