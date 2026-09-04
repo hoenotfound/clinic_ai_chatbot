@@ -44,7 +44,6 @@ function getErrorStatus(err) {
     err?.status,
     err?.statusCode,
     err?.response?.status,
-    err?.error?.code,
   ];
   for (const candidate of candidates) {
     if (candidate == null || candidate === "") continue;
@@ -54,9 +53,35 @@ function getErrorStatus(err) {
   return null;
 }
 
+function getProviderErrorCode(err) {
+  const candidates = [
+    err?.error?.code,
+    err?.response?.data?.error?.code,
+    err?.response?.body?.error?.code,
+    err?.details?.error?.code,
+  ];
+  for (const candidate of candidates) {
+    const code = String(candidate || "").trim().toLowerCase();
+    if (code && !/^\d+$/.test(code)) return code;
+  }
+  return "";
+}
+
 function isRetryableAiError(err) {
   const status = getErrorStatus(err);
+  const providerCode = getProviderErrorCode(err);
   if ([408, 409, 425, 429].includes(status) || (status != null && status >= 500)) return true;
+  if ([
+    "aborted",
+    "rate_limit_exceeded",
+    "too_many_requests",
+    "quota_exceeded",
+    "api_error",
+    "service_unavailable",
+    "deadline_exceeded",
+  ].includes(providerCode)) {
+    return true;
+  }
 
   const code = String(err?.code || err?.cause?.code || "").toUpperCase();
   if (
@@ -86,21 +111,37 @@ function looksLikeDailyQuota(message) {
 
 function classifyCandidateHealthFailure(err) {
   const status = getErrorStatus(err);
+  const providerCode = getProviderErrorCode(err);
   const code = String(err?.code || "").toUpperCase();
   const message = String(err?.message || "").toLowerCase();
 
+  if (providerCode === "quota_exceeded") {
+    return { status: "rate_limited", failureKind: "quota_exhausted" };
+  }
+  if (["rate_limit_exceeded", "too_many_requests"].includes(providerCode)) {
+    return { status: "rate_limited", failureKind: "rate_limit" };
+  }
   if (status === 429 || /rate limit|quota|resource exhausted|too many requests/.test(message)) {
     return looksLikeDailyQuota(message)
       ? { status: "rate_limited", failureKind: "quota_exhausted" }
       : { status: "rate_limited", failureKind: "rate_limit" };
   }
-  if ([401, 403].includes(status) || /api.?key.*invalid|invalid.*api.?key|unauthorized|permission denied/.test(message)) {
+  if (
+    ["authentication", "permission_denied"].includes(providerCode)
+    || [401, 403].includes(status)
+    || /api.?key.*invalid|invalid.*api.?key|unauthorized|permission denied/.test(message)
+  ) {
     return { status: "invalid", failureKind: "authentication" };
   }
   if (["INVALID_AI_RESPONSE", "EMPTY_AI_RESPONSE"].includes(code)) {
     return { status: "failed", failureKind: "invalid_response" };
   }
-  if (code === "AI_TIMEOUT" || /timeout|timed out/.test(message)) {
+  if (
+    providerCode === "deadline_exceeded"
+    || [408, 504].includes(status)
+    || code === "AI_TIMEOUT"
+    || /timeout|timed out/.test(message)
+  ) {
     return { status: "unavailable", failureKind: "timeout" };
   }
   if (isRetryableAiError(err)) {
@@ -265,6 +306,9 @@ function shouldRetrySameGeminiKey(err, outcome, { attempt, retryCount, smartRetr
   }
 
   if (outcome.failureKind === "invalid_response") return true;
+  if (["rate_limit", "quota_exhausted", "authentication", "timeout"].includes(outcome.failureKind)) {
+    return false;
+  }
   const status = getErrorStatus(err);
   return status != null && status >= 500 && status <= 599;
 }
