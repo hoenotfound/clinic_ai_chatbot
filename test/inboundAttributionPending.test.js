@@ -15,9 +15,26 @@ test("old open social journey consumes pending referral without re-attributing t
       },
       async setUnread() {},
     },
-    store: {
-      async appendInboundMessageIfNew() {
-        return { id: 500, contact_id: 12 };
+    processing: {
+      async storeInboundClaim({ contactId, content, incoming }) {
+        return {
+          savedInbound: { id: 500, contact_id: contactId, content },
+          processingJob: {
+            id: 900,
+            message_id: 500,
+            incoming_payload: incoming,
+            status: "pending",
+          },
+        };
+      },
+      async claimPendingByMessageId(messageId) {
+        assert.equal(messageId, 500);
+        return { id: 900, message_id: messageId, status: "processing", attempts: 1 };
+      },
+      async markPrepared(messageId, wasFirstMessage) {
+        assert.equal(messageId, 500);
+        assert.equal(wasFirstMessage, false);
+        return { id: 900, message_id: messageId, prepared_at: new Date() };
       },
     },
     pipeline: {
@@ -40,6 +57,9 @@ test("old open social journey consumes pending referral without re-attributing t
       async getMessagePageForContact() {
         return { rows: [{ id: 500 }, { id: 400 }], hasMore: true };
       },
+    },
+    events: {
+      publish() {},
     },
   });
 

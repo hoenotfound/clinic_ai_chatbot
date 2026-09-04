@@ -16,9 +16,26 @@ function makeClaim({ leadOutcome }) {
     },
     async setUnread() {},
   };
-  const store = {
-    async appendInboundMessageIfNew() {
-      return { id: 101, contact_id: 7, content: "hello" };
+  const processing = {
+    async storeInboundClaim({ contactId, content, incoming }) {
+      return {
+        savedInbound: { id: 101, contact_id: contactId, content },
+        processingJob: {
+          id: 901,
+          message_id: 101,
+          incoming_payload: incoming,
+          status: "pending",
+        },
+      };
+    },
+    async claimPendingByMessageId(messageId) {
+      assert.equal(messageId, 101);
+      return { id: 901, message_id: messageId, status: "processing", attempts: 1 };
+    },
+    async markPrepared(messageId, wasFirstMessage) {
+      assert.equal(messageId, 101);
+      assert.equal(wasFirstMessage, true);
+      return { id: 901, message_id: messageId, prepared_at: new Date() };
     },
   };
   const pipeline = {
@@ -42,10 +59,11 @@ function makeClaim({ leadOutcome }) {
     calls,
     claim: createInboundMessageClaimService({
       contacts,
-      store,
+      processing,
       pipeline,
       attribution,
       messages,
+      events: { publish() {} },
     }),
   };
 }
@@ -112,6 +130,7 @@ test("concurrent lead creation can still attribute when the journey boundary is 
 
 test("attribution-only social referral does not create a contact or message", async () => {
   let contactTouched = false;
+  let processingTouched = false;
   let pendingSaved = false;
   const claim = createInboundMessageClaimService({
     contacts: {
@@ -120,7 +139,9 @@ test("attribution-only social referral does not create a contact or message", as
     },
     messages: {},
     pipeline: {},
-    store: {},
+    processing: {
+      async storeInboundClaim() { processingTouched = true; },
+    },
     attribution: {
       async rememberPendingReferral() { pendingSaved = true; },
     },
@@ -137,4 +158,5 @@ test("attribution-only social referral does not create a contact or message", as
   assert.equal(result, null);
   assert.equal(pendingSaved, true);
   assert.equal(contactTouched, false);
+  assert.equal(processingTouched, false);
 });

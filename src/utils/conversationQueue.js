@@ -39,6 +39,11 @@ function enqueueConversationClaim(key, task) {
   return enqueueConversation(key, task);
 }
 
+/**
+ * Serializes slow reply work for one customer. Live typing bursts and restart
+ * recovery both use this same lane, preventing two AI/outbound reply paths for
+ * the same conversation from running at the same time.
+ */
 function enqueueReplyConversation(key, task) {
   return enqueueOn(replyQueues, key, task);
 }
@@ -112,5 +117,6 @@ module.exports = {
   enqueueConversation,
   enqueueConversationBurst,
   enqueueConversationClaim,
+  enqueueReplyConversation,
   normalizeDelay,
 };

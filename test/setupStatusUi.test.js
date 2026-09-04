@@ -77,11 +77,33 @@ test("setup schema is included in startup and stores no credentials", () => {
   assert.doesNotMatch(schema, /access_token|api_key|password/i);
 });
 
-test("WhatsApp webhook activity updates the dedicated webhook check", () => {
+test("WhatsApp webhook activity is recorded without delaying the durable ACK", () => {
   const server = read("src/server.js");
   const repository = read("src/db/setupStatusRepo.js");
-  assert.match(server, /recordWebhook\("whatsapp_webhook"\)/);
-  assert.match(server, /Promise\.all\(\[incomingWork, webhookActivity\]\)/);
+
+  const handlerStart = server.indexOf('app.post("/webhook"');
+  const handlerEnd = server.indexOf('app.get("/meta-webhook"', handlerStart);
+  assert.ok(handlerStart >= 0, "WhatsApp webhook handler should exist");
+  assert.ok(handlerEnd > handlerStart, "WhatsApp webhook handler should have a bounded source section");
+
+  const handler = server.slice(handlerStart, handlerEnd);
+  const durableClaimIndex = handler.indexOf("durableClaims = await Promise.all(");
+  const ackIndex = handler.indexOf("res.sendStatus(200);");
+  const webhookActivityIndex = handler.indexOf('setupStatusRepo.recordWebhook("whatsapp_webhook")');
+  const scheduleIndex = handler.indexOf("scheduleDurableClaim(queueKey, durableClaim)");
+
+  assert.ok(durableClaimIndex >= 0, "inbound messages should be durably claimed before ACK");
+  assert.ok(ackIndex > durableClaimIndex, "HTTP 200 must wait for durable message/job persistence");
+  assert.ok(
+    webhookActivityIndex > ackIndex,
+    "setup-status bookkeeping must run after HTTP 200 so it cannot delay Meta acknowledgement"
+  );
+  assert.ok(
+    scheduleIndex > ackIndex,
+    "AI/media processing must remain after HTTP 200"
+  );
+  assert.match(handler, /recordWebhook\("whatsapp_webhook"\)\.catch\(/);
+  assert.doesNotMatch(handler, /await\s+setupStatusRepo\.recordWebhook\("whatsapp_webhook"\)/);
   assert.doesNotMatch(server, /recordWebhook\("whatsapp"\)/);
   assert.match(repository, /listLatestInboundActivity/);
   assert.match(repository, /m\.role = 'user'/);
