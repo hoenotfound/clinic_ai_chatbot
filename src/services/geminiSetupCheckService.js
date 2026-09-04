@@ -29,7 +29,7 @@ function isCredentialError(error) {
   if ([401, 403].includes(status)) return true;
   if (["UNAUTHENTICATED", "PERMISSION_DENIED", "API_KEY_INVALID"].includes(providerStatus)) return true;
   if (["UNAUTHENTICATED", "PERMISSION_DENIED", "API_KEY_INVALID"].includes(code)) return true;
-  return /api.?key.*(invalid|expired|rejected)|invalid.*api.?key|unauthorized/.test(message);
+  return /api.?key.*(invalid|not valid|expired|rejected)|invalid.*api.?key|unauthorized/.test(message);
 }
 
 async function checkGeminiConnection({
