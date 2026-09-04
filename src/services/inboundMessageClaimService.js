@@ -35,6 +35,14 @@ function createInboundMessageClaimService({
   events = realtimeEvents,
   policy = whatsappPolicy,
 } = {}) {
+  function isWhatsappOptOut(incoming) {
+    return Boolean(
+      (incoming?.channel || "whatsapp") === "whatsapp" &&
+      incoming?.mediaType == null &&
+      policy.isOptOutText(incoming?.text)
+    );
+  }
+
   async function prepareStoredInbound({
     incoming,
     contact,
@@ -44,15 +52,11 @@ function createInboundMessageClaimService({
     hasDerivedFirstMessage = false,
   }) {
     const channel = incoming.channel || "whatsapp";
-    const isWhatsappOptOut =
-      channel === "whatsapp" &&
-      incoming.mediaType == null &&
-      policy.isOptOutText(incoming.text);
 
     // A clear stop/unsubscribe request is terminal for this inbound turn. Keep
     // the customer's message durable and visible, mark it unread/attention,
     // then complete its processing job without generating any outbound reply.
-    if (isWhatsappOptOut) {
+    if (isWhatsappOptOut(incoming)) {
       try {
         await policy.recordOptOut(contact.id, "customer_message");
       } catch (err) {
@@ -170,19 +174,16 @@ function createInboundMessageClaimService({
     };
   }
 
-  async function claimIncomingMessage(incoming) {
-    // Messenger/Instagram may send OPEN_THREAD attribution as its own event
-    // before the customer types. Remember it without creating a fake contact,
-    // lead, message or reply-processing job.
+  /**
+   * The lightweight webhook durability phase. This intentionally stops before
+   * lead bookkeeping, media downloads, transcription or AI work so webhook
+   * handlers can await it before returning HTTP 200 to Meta.
+   */
+  async function storeIncomingMessage(incoming) {
+    // OPEN_THREAD attribution is already persisted in Postgres. Awaiting it in
+    // the webhook durability phase means the referral also survives a restart.
     if (incoming?.attributionOnly) {
-      try {
-        await attribution.rememberPendingReferral(incoming);
-      } catch (err) {
-        console.error(
-          `Failed to remember pending ${incoming.channel || "Meta"} attribution for ${incoming.from}:`,
-          err
-        );
-      }
+      await attribution.rememberPendingReferral(incoming);
       return null;
     }
 
@@ -200,9 +201,6 @@ function createInboundMessageClaimService({
       ? incoming.id
       : `${channel}:${incoming.id}`;
 
-    // This is the durability boundary: the customer message and its pending
-    // processing job are one SQL statement. After this succeeds, a Render
-    // restart can delay the reply but cannot make the reply work disappear.
     const durableClaim = await processing.storeInboundClaim({
       contactId: contact.id,
       content: initialInboundText(incoming),
@@ -213,12 +211,56 @@ function createInboundMessageClaimService({
     if (!durableClaim) return null;
 
     publishInboundMessage(events, durableClaim.savedInbound);
-    return prepareStoredInbound({
+    return {
       incoming,
       contact,
       savedInbound: durableClaim.savedInbound,
       processingJob: durableClaim.processingJob,
-    });
+    };
+  }
+
+  /**
+   * Starts live processing after the webhook has been acknowledged. Claim the
+   * durable row first so the periodic recovery sweep can never process the same
+   * fresh message concurrently. If the process dies during preparation, the
+   * stale-processing lease makes the job recoverable later.
+   */
+  async function prepareIncomingClaim(durableClaim) {
+    if (!durableClaim) return null;
+    const { incoming, savedInbound } = durableClaim;
+
+    // Opt-outs never enter the outbound-processing lease; they are completed
+    // directly by prepareStoredInbound with no automated response.
+    if (isWhatsappOptOut(incoming)) {
+      return prepareStoredInbound(durableClaim);
+    }
+
+    let processingJob = durableClaim.processingJob;
+    if (processingJob?.status === "pending" || !processingJob?.status) {
+      processingJob = await processing.claimPendingByMessageId(savedInbound.id);
+      if (!processingJob) return null;
+    }
+
+    try {
+      return await prepareStoredInbound({
+        ...durableClaim,
+        processingJob,
+      });
+    } catch (err) {
+      await processing.markFailed(processingJob.id, err).catch((markErr) => {
+        console.error(
+          `Failed to persist preparation failure for inbound job ${processingJob.id}:`,
+          markErr
+        );
+      });
+      throw err;
+    }
+  }
+
+  // Compatibility/direct-call helper: durable store followed by live prepare.
+  async function claimIncomingMessage(incoming) {
+    const durableClaim = await storeIncomingMessage(incoming);
+    return prepareIncomingClaim(durableClaim);
   }
 
   async function resumeProcessingJob(job) {
@@ -257,17 +299,23 @@ function createInboundMessageClaimService({
     });
   }
 
-  claimIncomingMessage.resumeProcessingJob = resumeProcessingJob;
+  claimIncomingMessage.prepareIncomingClaim = prepareIncomingClaim;
   claimIncomingMessage.prepareStoredInbound = prepareStoredInbound;
+  claimIncomingMessage.resumeProcessingJob = resumeProcessingJob;
+  claimIncomingMessage.storeIncomingMessage = storeIncomingMessage;
   return claimIncomingMessage;
 }
 
 const claimIncomingMessage = createInboundMessageClaimService();
+const prepareIncomingClaim = claimIncomingMessage.prepareIncomingClaim;
 const resumeIncomingProcessingJob = claimIncomingMessage.resumeProcessingJob;
+const storeIncomingMessage = claimIncomingMessage.storeIncomingMessage;
 
 module.exports = {
   createInboundMessageClaimService,
   claimIncomingMessage,
   initialInboundText,
+  prepareIncomingClaim,
   resumeIncomingProcessingJob,
+  storeIncomingMessage,
 };
