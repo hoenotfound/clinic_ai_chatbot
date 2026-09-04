@@ -3,8 +3,10 @@ const assert = require("node:assert/strict");
 
 const {
   claimLiveItem,
+  flagTerminalFailure,
   groupJobsByContact,
   processClaimedBatch,
+  runInboundProcessingRecovery,
 } = require("../src/services/inboundProcessingService");
 
 test("live inbound work claims its durable pending job before debounce", async () => {
@@ -97,4 +99,73 @@ test("recovered jobs are grouped by contact and replayed in message order", () =
   assert.equal(groups.length, 2);
   const contact8 = groups.find((group) => group[0].contact_id === 8);
   assert.deepEqual(contact8.map((job) => job.message_id), [10, 30]);
+});
+
+test("a job that crashed on its final attempt is handed to staff instead of disappearing", async () => {
+  const calls = [];
+  const exhausted = {
+    id: 99,
+    contact_id: 42,
+    message_id: 777,
+    status: "processing",
+    attempts: 5,
+  };
+  const repository = {
+    async claimRecoverable(options) {
+      assert.equal(options.maxAttempts, 5);
+      return [];
+    },
+    async listExhausted(options) {
+      assert.equal(options.maxAttempts, 5);
+      return [exhausted];
+    },
+    async markTerminal(jobId) {
+      calls.push(["terminal", jobId]);
+      return { ...exhausted, status: "failed", terminal_at: new Date() };
+    },
+    async pruneCompleted() {
+      return 0;
+    },
+  };
+  const contacts = {
+    async setAttention(contactId, needsAttention, reason) {
+      calls.push(["attention", contactId, needsAttention, reason]);
+    },
+  };
+
+  await runInboundProcessingRecovery({
+    repository,
+    contacts,
+    async resumeJob() {
+      throw new Error("no retryable jobs should be resumed");
+    },
+    async processBatch() {
+      throw new Error("no retryable batch should be processed");
+    },
+  });
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0].slice(0, 3), ["attention", 42, true]);
+  assert.match(calls[0][3], /Staff review is required/);
+  assert.deepEqual(calls[1], ["terminal", 99]);
+});
+
+test("terminal bookkeeping waits until staff attention is safely persisted", async () => {
+  let terminalMarked = false;
+  const result = await flagTerminalFailure(
+    { id: 100, contact_id: 44, attempts: 5 },
+    {
+      async setAttention() {
+        throw new Error("temporary database failure");
+      },
+    },
+    {
+      async markTerminal() {
+        terminalMarked = true;
+      },
+    }
+  );
+
+  assert.equal(result, false);
+  assert.equal(terminalMarked, false);
 });
