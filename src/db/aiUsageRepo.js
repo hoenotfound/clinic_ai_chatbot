@@ -63,7 +63,7 @@ async function getAiUsageSummary(database = pool, { hours = 24 } = {}) {
          COALESCE(SUM(thinking_tokens), 0)::bigint AS thinking_tokens,
          COALESCE(SUM(cached_tokens), 0)::bigint AS cached_tokens,
          COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
-         COALESCE(ROUND(AVG(latency_ms)) FILTER (WHERE latency_ms IS NOT NULL), 0)::bigint AS average_latency_ms
+         COALESCE(ROUND(AVG(latency_ms) FILTER (WHERE latency_ms IS NOT NULL)), 0)::bigint AS average_latency_ms
        FROM ai_usage_events
        WHERE ${windowSql}`,
       params
