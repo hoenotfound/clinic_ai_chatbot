@@ -6,7 +6,7 @@ const {
   isCredentialError,
 } = require("../src/services/geminiSetupCheckService");
 
-test("Gemini setup connection check uses models.get and consumes no generation call", async () => {
+test("Gemini setup connection check uses models.get and never calls generateContent", async () => {
   const calls = [];
   const env = {
     GEMINI_API_KEY: "key-one",
