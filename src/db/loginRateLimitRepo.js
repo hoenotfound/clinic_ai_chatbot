@@ -45,6 +45,10 @@ async function getStates(keys, database = pool) {
 /**
  * Atomically increments every supplied bucket. If its fixed window has already
  * expired, the same statement resets that bucket to a fresh count of one.
+ *
+ * Login middleware uses this as an attempt reservation before bcrypt runs. That
+ * closes the race where many parallel requests could all observe the same old
+ * counter and pass the limiter before any rejected password was recorded.
  */
 async function recordFailure(
   keys,
@@ -89,6 +93,21 @@ async function recordFailure(
   return result.rows;
 }
 
+/** Undo only the current successful request's reservation for selected buckets. */
+async function decrementKeys(keys, database = pool) {
+  const normalized = normalizeKeys(keys);
+  if (!normalized.length) return 0;
+  const tuples = tupleWhere(normalized);
+  const result = await database.query(
+    `UPDATE login_rate_limits
+     SET failures = GREATEST(failures - 1, 0),
+         updated_at = NOW()
+     WHERE (scope, key_hash) IN (${tuples.sql})`,
+    tuples.params
+  );
+  return result.rowCount || 0;
+}
+
 async function clearKeys(keys, database = pool) {
   const normalized = normalizeKeys(keys);
   if (!normalized.length) return 0;
@@ -117,6 +136,7 @@ async function pruneExpired(
 module.exports = {
   VALID_SCOPES,
   clearKeys,
+  decrementKeys,
   getStates,
   normalizeKeys,
   pruneExpired,
