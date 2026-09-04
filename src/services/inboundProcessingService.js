@@ -3,6 +3,7 @@ const contactsRepo = require("../db/contactsRepo");
 const {
   resumeIncomingProcessingJob,
 } = require("./inboundMessageClaimService");
+const { enqueueReplyConversation } = require("../utils/conversationQueue");
 
 const RECOVERY_SWEEP_INTERVAL_MS = 10 * 1000;
 // Customer processing can legitimately include media download/transcription,
@@ -78,6 +79,28 @@ function groupJobsByContact(jobs) {
   return [...groups.values()];
 }
 
+/**
+ * Recovered jobs must use the exact same slow-reply queue key as live webhook
+ * traffic. Otherwise a recovered message and a brand-new message from the same
+ * customer could generate/send replies concurrently after a restart.
+ */
+function replyQueueKeyForRecoveredItems(items) {
+  const first = items?.[0] || {};
+  const incoming = first.incoming || {};
+  const channel = incoming.channel || "whatsapp";
+  const from = String(incoming.from || "").trim();
+
+  if (from) {
+    return channel === "whatsapp" ? from : `${channel}:${from}`;
+  }
+
+  // Valid Meta/WhatsApp inbound payloads always contain `from`, but retaining a
+  // stable contact-id fallback prevents unrelated recovered conversations from
+  // collapsing onto a shared "unknown" queue if an old/corrupt payload lacks it.
+  const contactId = first.contact?.id || first.savedInbound?.contact_id || "unknown";
+  return `contact:${contactId}`;
+}
+
 async function flagTerminalFailure(
   job,
   contacts = contactsRepo,
@@ -151,9 +174,12 @@ async function runInboundProcessingRecovery({
       if (!items.length) continue;
       try {
         // Messages from the same contact are replayed together in message-id
-        // order. This preserves the existing multi-bubble behavior after a
-        // restart instead of generating one AI reply per recovered bubble.
-        await processClaimedBatch(items, processBatch, repository);
+        // order. Use the same reply queue as live typing bursts so restart
+        // recovery can never race a fresh message from this customer.
+        await enqueueReplyConversation(
+          replyQueueKeyForRecoveredItems(items),
+          () => processClaimedBatch(items, processBatch, repository)
+        );
       } catch (err) {
         console.error(
           `Recovered inbound batch for contact ${group[0]?.contact_id} failed:`,
@@ -219,6 +245,7 @@ module.exports = {
   groupJobsByContact,
   markBatchFailed,
   processClaimedBatch,
+  replyQueueKeyForRecoveredItems,
   runInboundProcessingRecovery,
   startInboundProcessingRecovery,
 };
