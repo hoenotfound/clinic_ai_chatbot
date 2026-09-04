@@ -216,6 +216,9 @@ function createInboundMessageClaimService({
       contact,
       savedInbound: durableClaim.savedInbound,
       processingJob: durableClaim.processingJob,
+      derivedFirstMessage: durableClaim.derivedFirstMessage,
+      hasDerivedFirstMessage:
+        typeof durableClaim.derivedFirstMessage === "boolean",
     };
   }
 
