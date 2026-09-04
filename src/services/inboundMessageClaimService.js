@@ -41,6 +41,7 @@ function createInboundMessageClaimService({
     savedInbound,
     processingJob,
     derivedFirstMessage = false,
+    hasDerivedFirstMessage = false,
   }) {
     const channel = incoming.channel || "whatsapp";
     const isWhatsappOptOut =
@@ -141,16 +142,18 @@ function createInboundMessageClaimService({
     }
 
     let wasFirstMessage = Boolean(derivedFirstMessage);
-    try {
-      const firstPage = await messages.getMessagePageForContact(contact.id, {
-        limit: 2,
-        includeMedia: false,
-      });
-      wasFirstMessage = firstPage.rows.length === 1 && !firstPage.hasMore;
-    } catch (err) {
-      // Recovery can derive this from durable message ordering. Keep that value
-      // if the cosmetic first-message lookup is temporarily unavailable.
-      console.error(`Failed to determine first-message state for contact ${contact.id}:`, err);
+    if (!hasDerivedFirstMessage) {
+      try {
+        const firstPage = await messages.getMessagePageForContact(contact.id, {
+          limit: 2,
+          includeMedia: false,
+        });
+        wasFirstMessage = firstPage.rows.length === 1 && !firstPage.hasMore;
+      } catch (err) {
+        // This only controls the fixed intro. It must never sacrifice the real
+        // customer reply if the cosmetic first-message lookup has a DB error.
+        console.error(`Failed to determine first-message state for contact ${contact.id}:`, err);
+      }
     }
 
     const preparedJob = await processing.markPrepared(
@@ -250,6 +253,7 @@ function createInboundMessageClaimService({
       savedInbound: context.savedInbound,
       processingJob: liveJob,
       derivedFirstMessage: context.derivedFirstMessage,
+      hasDerivedFirstMessage: true,
     });
   }
 
