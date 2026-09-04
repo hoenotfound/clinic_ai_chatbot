@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Layout from "./components/Layout";
 import ScheduledInboxMessages from "./components/ScheduledInboxMessages";
+import SettingsSectionLayout from "./components/SettingsSectionLayout";
 import Login from "./pages/Login";
 import Inbox from "./pages/Inbox";
 import Contacts from "./pages/Contacts";
@@ -12,12 +13,13 @@ import Pipeline from "./pages/Pipeline";
 import Analytics from "./pages/Analytics";
 import SetupStatus from "./pages/SetupStatus";
 
-function homeForPermissions(permissions = {}) {
+function homeForPermissions(permissions = {}, user = null) {
   if (permissions.view_all_leads || permissions.view_assigned_leads) return "/inbox";
   if (permissions.view_analytics) return "/analytics";
   if (permissions.manage_tools) return "/tools";
   if (permissions.manage_settings) return "/settings";
   if (permissions.manage_users) return "/settings/team";
+  if (user?.role === "admin") return "/settings/setup";
   return "/no-access";
 }
 
@@ -35,21 +37,21 @@ function ProtectedRoute({ children, anyCapabilities = [], adminOnly = false }) {
   if (!username) return <Navigate to="/login" replace />;
 
   if (adminOnly && user?.role !== "admin") {
-    return <Navigate to={homeForPermissions(permissions)} replace />;
+    return <Navigate to={homeForPermissions(permissions, user)} replace />;
   }
 
   if (anyCapabilities.length > 0 && !anyCapabilities.some((capability) => permissions[capability])) {
-    return <Navigate to={homeForPermissions(permissions)} replace />;
+    return <Navigate to={homeForPermissions(permissions, user)} replace />;
   }
 
   return <Layout>{children}</Layout>;
 }
 
 function DefaultRoute() {
-  const { username, permissions, loading } = useAuth();
+  const { user, username, permissions, loading } = useAuth();
   if (loading) return null;
   if (!username) return <Navigate to="/login" replace />;
-  return <Navigate to={homeForPermissions(permissions)} replace />;
+  return <Navigate to={homeForPermissions(permissions, user)} replace />;
 }
 
 function NoAccess() {
@@ -91,8 +93,23 @@ export default function App() {
           <Route path="/tools" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><ToolsRoute /></ProtectedRoute>} />
           <Route path="/tools/lead-distribution" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><Navigate to="/tools?tool=lead-distribution" replace /></ProtectedRoute>} />
           <Route path="/settings" element={<ProtectedRoute anyCapabilities={["manage_settings"]}><Settings /></ProtectedRoute>} />
-          <Route path="/settings/team" element={<ProtectedRoute anyCapabilities={["manage_users"]}><TeamAccess /></ProtectedRoute>} />
-          <Route path="/setup" element={<ProtectedRoute adminOnly><SetupStatus /></ProtectedRoute>} />
+          <Route
+            path="/settings/team"
+            element={(
+              <ProtectedRoute anyCapabilities={["manage_users"]}>
+                <SettingsSectionLayout><TeamAccess /></SettingsSectionLayout>
+              </ProtectedRoute>
+            )}
+          />
+          <Route
+            path="/settings/setup"
+            element={(
+              <ProtectedRoute adminOnly>
+                <SettingsSectionLayout><SetupStatus /></SettingsSectionLayout>
+              </ProtectedRoute>
+            )}
+          />
+          <Route path="/setup" element={<Navigate to="/settings/setup" replace />} />
           <Route path="/no-access" element={<ProtectedRoute><NoAccess /></ProtectedRoute>} />
 
           <Route path="*" element={<DefaultRoute />} />
