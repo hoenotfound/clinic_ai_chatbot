@@ -1,78 +1,220 @@
+const crypto = require("crypto");
+const loginRateLimitRepo = require("../db/loginRateLimitRepo");
+
+const WINDOW_MS = 15 * 60 * 1000;
+const WINDOW_SECONDS = Math.floor(WINDOW_MS / 1000);
+const CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
+const RETENTION_SECONDS = 24 * 60 * 60;
+
+// Pair is the tightest limit for repeated guesses from one device. Username
+// protects one account from a distributed spray, while the higher IP ceiling
+// slows one source trying many usernames without making a shared clinic/office
+// network easy to lock out because of a few staff typos.
+const MAX_ATTEMPTS_BY_SCOPE = Object.freeze({
+  pair: 8,
+  username: 15,
+  ip: 40,
+});
+
+function normalizeUsername(value) {
+  return String(value || "").trim().toLowerCase().slice(0, 200);
+}
+
+function normalizeIp(value) {
+  let ip = String(value || "unknown").trim();
+  if (ip.startsWith("::ffff:")) ip = ip.slice(7);
+  return ip.slice(0, 200) || "unknown";
+}
+
 /**
- * Basic brute-force protection for POST /api/auth/login.
- *
- * Tracks failed attempts in memory, keyed by IP + the attempted username
- * (so one bad actor guessing many usernames from one IP, or one attacker
- * spraying one username from many IPs, both get slowed down without
- * locking out a whole shared office network over one typo'd password).
- *
- * Deliberately in-memory rather than Postgres-backed: this is a small
- * front-desk portal, not a public-facing consumer login, so a plain
- * per-process counter is enough. If this app is ever run as multiple
- * server instances behind a load balancer, each instance tracks its own
- * counts — an attacker who can spread requests across instances gets a
- * multiple of this limit, which is an acceptable tradeoff for the
- * simplicity here (revisit with a shared store, e.g. Postgres or Redis,
- * if that ever becomes a real deployment shape).
+ * Render documents that it places the real client address first in
+ * X-Forwarded-For. Use that only when Render's own RENDER=true environment flag
+ * is present. Everywhere else, prefer the direct socket peer instead of
+ * trusting an arbitrary forwarded header supplied by an internet client.
  */
+function extractClientIp(req, env = process.env) {
+  const socketIp =
+    req?.socket?.remoteAddress ||
+    req?.connection?.remoteAddress ||
+    "unknown";
 
-const WINDOW_MS = 15 * 60 * 1000; // 15 minutes
-const MAX_ATTEMPTS = 10; // failed attempts allowed per key within the window
-const CLEANUP_INTERVAL_MS = 30 * 60 * 1000; // prune stale entries twice an hour
-
-// key -> { count, firstAttemptAt }
-const attempts = new Map();
-
-function keyFor(req) {
-  const ip = req.ip || req.connection?.remoteAddress || "unknown";
-  const username = String(req.body?.username || "").trim().toLowerCase();
-  return `${ip}::${username}`;
-}
-
-function loginRateLimit(req, res, next) {
-  const key = keyFor(req);
-  const now = Date.now();
-  const entry = attempts.get(key);
-
-  if (entry && now - entry.firstAttemptAt < WINDOW_MS && entry.count >= MAX_ATTEMPTS) {
-    const retryAfterSeconds = Math.ceil((entry.firstAttemptAt + WINDOW_MS - now) / 1000);
-    res.set("Retry-After", String(retryAfterSeconds));
-    return res.status(429).json({
-      error: "Too many login attempts. Please wait a few minutes and try again.",
-    });
+  if (String(env?.RENDER || "").toLowerCase() === "true") {
+    const forwarded = req?.headers?.["x-forwarded-for"];
+    const first = Array.isArray(forwarded)
+      ? String(forwarded[0] || "").split(",")[0]
+      : String(forwarded || "").split(",")[0];
+    if (first.trim()) return normalizeIp(first);
   }
 
-  next();
+  return normalizeIp(socketIp);
 }
 
-/** Called by the login route on a failed login — increments the counter for this key. */
-function recordFailedAttempt(req) {
-  const key = keyFor(req);
-  const now = Date.now();
-  const entry = attempts.get(key);
+function secretForRateLimit(env = process.env) {
+  const configured = String(
+    env?.LOGIN_RATE_LIMIT_SECRET || env?.SESSION_SECRET || ""
+  ).trim();
+  // Production already refuses to start without SESSION_SECRET. The fallback
+  // exists only so isolated unit tests/local imports remain deterministic.
+  return configured || "local-development-login-rate-limit-secret";
+}
 
-  if (!entry || now - entry.firstAttemptAt >= WINDOW_MS) {
-    attempts.set(key, { count: 1, firstAttemptAt: now });
-    return;
+function hashIdentifier(scope, value, secret) {
+  return crypto
+    .createHmac("sha256", secret)
+    .update(`${scope}\n${value}`)
+    .digest("hex");
+}
+
+function keysForRequest(req, env = process.env) {
+  const ip = extractClientIp(req, env);
+  const username = normalizeUsername(req?.body?.username);
+  const secret = secretForRateLimit(env);
+  const keys = [
+    {
+      scope: "ip",
+      keyHash: hashIdentifier("ip", ip, secret),
+    },
+  ];
+
+  if (username) {
+    keys.push(
+      {
+        scope: "username",
+        keyHash: hashIdentifier("username", username, secret),
+      },
+      {
+        scope: "pair",
+        keyHash: hashIdentifier("pair", `${ip}\n${username}`, secret),
+      }
+    );
   }
 
-  entry.count += 1;
+  return keys;
 }
 
-/** Called by the login route on a successful login — clears any history for this key. */
-function clearAttempts(req) {
-  attempts.delete(keyFor(req));
+/**
+ * States passed here already include the current request's atomic reservation.
+ * Therefore the configured number is the number of attempts that may proceed;
+ * the next reservation (max + 1) is the first one that receives HTTP 429.
+ */
+function retryAfterForState(state, nowMs) {
+  const maxAttempts = MAX_ATTEMPTS_BY_SCOPE[state?.scope];
+  if (!maxAttempts || Number(state?.failures) <= maxAttempts) return 0;
+
+  const startedAt = new Date(state.window_started_at).getTime();
+  if (!Number.isFinite(startedAt)) return 0;
+  const remainingMs = startedAt + WINDOW_MS - nowMs;
+  return remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0;
 }
 
-// Best-effort cleanup so memory doesn't grow unbounded with every mistyped
-// login attempt ever made — entries outside the window are just dead weight.
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of attempts) {
-    if (now - entry.firstAttemptAt >= WINDOW_MS) {
-      attempts.delete(key);
+function createLoginRateLimiter({
+  repository = loginRateLimitRepo,
+  env = process.env,
+  now = () => Date.now(),
+} = {}) {
+  let lastCleanupAt = 0;
+  const reservationKey = Symbol("login-rate-limit-reservation");
+
+  function maybePrune() {
+    const current = now();
+    if (
+      typeof repository.pruneExpired === "function" &&
+      current - lastCleanupAt >= CLEANUP_INTERVAL_MS
+    ) {
+      lastCleanupAt = current;
+      repository.pruneExpired({ olderThanSeconds: RETENTION_SECONDS }).catch((err) => {
+        console.warn("Failed to prune old login rate-limit rows:", err?.message || err);
+      });
     }
   }
-}, CLEANUP_INTERVAL_MS).unref();
 
-module.exports = { loginRateLimit, recordFailedAttempt, clearAttempts };
+  async function reserveAttempt(req) {
+    const existing = req?.[reservationKey];
+    if (existing) return existing;
+
+    const keys = keysForRequest(req, env);
+    const states = await repository.recordFailure(
+      keys,
+      { windowSeconds: WINDOW_SECONDS }
+    );
+    const reservation = { keys, states };
+    if (req) req[reservationKey] = reservation;
+    maybePrune();
+    return reservation;
+  }
+
+  async function loginRateLimit(req, res, next) {
+    try {
+      // Reserve/count this request before bcrypt or user lookup. The database
+      // increment is atomic, so a parallel burst cannot all pass based on the
+      // same stale pre-failure counter.
+      const { states } = await reserveAttempt(req);
+      const current = now();
+      const retryAfter = states.reduce(
+        (max, state) => Math.max(max, retryAfterForState(state, current)),
+        0
+      );
+
+      if (retryAfter > 0) {
+        res.set("Retry-After", String(retryAfter));
+        res.set("Cache-Control", "no-store");
+        return res.status(429).json({
+          error: "Too many login attempts. Please wait a few minutes and try again.",
+        });
+      }
+
+      return next();
+    } catch (err) {
+      // Authentication depends on Postgres anyway. Fail closed instead of
+      // silently disabling brute-force protection during a database outage.
+      console.error("Failed to reserve login rate-limit state:", err);
+      res.set("Cache-Control", "no-store");
+      return res.status(503).json({
+        error: "Login is temporarily unavailable. Please try again shortly.",
+      });
+    }
+  }
+
+  async function recordFailedAttempt(req) {
+    // Normal login requests were already counted before credential verification.
+    // Keep this method for the route contract and direct callers without ever
+    // double-counting a rejected password.
+    return reserveAttempt(req).then((reservation) => reservation.states);
+  }
+
+  async function clearAttempts(req) {
+    const reservation = req?.[reservationKey];
+    const keys = reservation?.keys || keysForRequest(req, env);
+
+    // A valid login should remove only its own pre-auth reservation. Never
+    // delete the username/pair rows wholesale: another failed login may have
+    // reserved the same bucket concurrently and must remain counted.
+    return repository.decrementKeys(keys);
+  }
+
+  return {
+    clearAttempts,
+    loginRateLimit,
+    recordFailedAttempt,
+  };
+}
+
+const defaultLimiter = createLoginRateLimiter();
+
+module.exports = {
+  CLEANUP_INTERVAL_MS,
+  MAX_ATTEMPTS_BY_SCOPE,
+  RETENTION_SECONDS,
+  WINDOW_MS,
+  WINDOW_SECONDS,
+  clearAttempts: defaultLimiter.clearAttempts,
+  createLoginRateLimiter,
+  extractClientIp,
+  hashIdentifier,
+  keysForRequest,
+  loginRateLimit: defaultLimiter.loginRateLimit,
+  normalizeIp,
+  normalizeUsername,
+  recordFailedAttempt: defaultLimiter.recordFailedAttempt,
+  retryAfterForState,
+};

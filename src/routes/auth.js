@@ -4,6 +4,7 @@ const usersRepo = require("../db/usersRepo");
 const clinicConfig = require("../config/clinicConfig");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { loginRateLimit, recordFailedAttempt, clearAttempts } = require("../middleware/loginRateLimit");
+const { verifyLoginCredentials } = require("../services/authCredentialService");
 const { requireAuth, requireCapability } = require("../middleware/requireAuth");
 const { ownedLeadContinuityError } = require("../utils/leadOwnerContinuity");
 const {
@@ -17,6 +18,19 @@ const {
 const router = express.Router();
 const USERNAME_RE = /^[A-Za-z0-9._-]{3,60}$/;
 const ROLES = new Set(["admin", "sales"]);
+
+// Authentication responses can contain account/session state and should never
+// be cached by browsers or intermediary proxies. Whenever this router changes a
+// session in production, force the cookie to carry the Secure attribute. The
+// app runs behind Render's TLS-terminating proxy, so the browser still receives
+// the cookie over HTTPS even though Render forwards plain HTTP internally.
+router.use((req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  if (req.sessionOptions && process.env.NODE_ENV === "production") {
+    req.sessionOptions.secure = true;
+  }
+  next();
+});
 
 function validateDisplayName(value) {
   const displayName = typeof value === "string" ? value.trim() : "";
@@ -90,22 +104,53 @@ function touchesLeadServiceEligibility(updates) {
 }
 
 router.post("/login", loginRateLimit, async (req, res) => {
-  const { username, password } = req.body || {};
-  if (!username || !password) {
+  const rawUsername = req.body?.username;
+  const password = req.body?.password;
+  const username = typeof rawUsername === "string" ? rawUsername.trim() : "";
+  if (!username || typeof password !== "string" || !password) {
     return res.status(400).json({ error: "Username and password are required." });
   }
 
   try {
-    const user = await usersRepo.getUserByUsername(username);
-    if (!user || user.is_active === false || !bcrypt.compareSync(password, user.password_hash)) {
-      recordFailedAttempt(req);
+    // Bound untrusted login input before it reaches Postgres. Do not impose the
+    // newer portal USERNAME_RE here because older accounts may have been created
+    // through ADMIN_USERNAME or the CLI before that UI rule existed. Oversized
+    // identifiers still take the dummy-bcrypt path and count as a failed login.
+    const user = username.length <= 200
+      ? await usersRepo.getUserByUsername(username)
+      : null;
+    const credentialsValid = await verifyLoginCredentials(user, password);
+    if (!credentialsValid) {
+      try {
+        await recordFailedAttempt(req);
+      } catch (rateLimitErr) {
+        // Do not allow a persistent limiter outage to silently turn brute-force
+        // protection off. A valid login would also depend on the same database.
+        console.error("Failed to persist rejected login attempt:", rateLimitErr);
+        return res.status(503).json({
+          error: "Login is temporarily unavailable. Please try again shortly.",
+        });
+      }
       return res.status(401).json({ error: "Invalid username or password." });
     }
 
-    clearAttempts(req);
-    req.session.userId = user.id;
-    req.session.username = user.username;
-    req.session.authVersion = Number(user.auth_version) || 0;
+    try {
+      await clearAttempts(req);
+    } catch (rateLimitErr) {
+      // Clearing stale username/pair failures is convenience after a successful
+      // authentication, not a reason to deny a legitimate staff login.
+      console.warn("Failed to clear successful login rate-limit buckets:", rateLimitErr?.message || rateLimitErr);
+    }
+
+    // Replace the entire pre-auth cookie payload rather than mutating whatever
+    // the browser sent. cookie-session is signed client-side state, so this
+    // produces a fresh authenticated cookie containing only server-approved
+    // fields and avoids carrying arbitrary pre-login session properties forward.
+    req.session = {
+      userId: user.id,
+      username: user.username,
+      authVersion: Number(user.auth_version) || 0,
+    };
     return res.json({ username: user.username, user: presentUser(user) });
   } catch (err) {
     console.error("Login failed:", err);
