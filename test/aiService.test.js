@@ -58,13 +58,13 @@ test("Gemini customer replies default to a 25s global adaptive budget", () => {
   assert.equal(policy.globalBudgetMs, DEFAULT_GEMINI_GLOBAL_BUDGET_MS);
   assert.equal(policy.globalBudgetMs, 25000);
   assert.equal(policy.preferredTimeoutMs, DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS);
-  assert.equal(policy.preferredTimeoutMs, 8000);
+  assert.equal(policy.preferredTimeoutMs, 10000);
   assert.equal(policy.fallbackTimeoutMs, DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS);
-  assert.equal(policy.fallbackTimeoutMs, 5000);
+  assert.equal(policy.fallbackTimeoutMs, 8000);
   assert.equal(policy.minRemainingKeyWindowMs, DEFAULT_GEMINI_MIN_KEY_WINDOW_MS);
   assert.equal(policy.minRemainingKeyWindowMs, 4000);
   assert.equal(policy.fallbackModelReserveMs, DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS);
-  assert.equal(policy.fallbackModelReserveMs, 0);
+  assert.equal(policy.fallbackModelReserveMs, 9000);
   assert.equal(policy.retryCount, 1);
 });
 
