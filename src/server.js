@@ -24,6 +24,11 @@ const {
   processClaimedBatch,
   startInboundProcessingRecovery,
 } = require("./services/inboundProcessingService");
+const {
+  processStoredDeliveryStatuses,
+  startWhatsAppDeliveryStatusRecovery,
+  storeDeliveryStatusUpdates,
+} = require("./services/whatsappDeliveryStatusService");
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const conversationStore = require("./utils/conversationStore");
 const { getActivePromotion } = require("./utils/activePromotion");
@@ -703,24 +708,29 @@ app.get("/webhook", (req, res) => {
 // ── Incoming WhatsApp messages and delivery statuses ──
 app.post("/webhook", webhookJsonParser, async (req, res) => {
   const incomingMessages = whatsapp.parseIncomingMessages(req.body);
+  const statusUpdates = whatsapp.parseStatusUpdates(req.body);
   let durableClaims;
+  let durableStatusJobs;
   try {
-    // Do the small Postgres durability phase before acknowledging Meta. If the
-    // database is unavailable, return a retryable 503 instead of telling Meta
-    // the message was safely accepted when it was not persisted.
-    durableClaims = await Promise.all(
-      incomingMessages.map(async (incoming) => ({
-        queueKey: incoming.from,
-        durableClaim: await durablyClaimIncoming(incoming.from, incoming),
-      }))
-    );
+    // Persist both customer messages and delivery-status callbacks before the
+    // ACK. If either durability write fails, return a retryable 503 so Meta can
+    // redeliver the signed webhook. Duplicate retries are safe in both stores.
+    [durableClaims, durableStatusJobs] = await Promise.all([
+      Promise.all(
+        incomingMessages.map(async (incoming) => ({
+          queueKey: incoming.from,
+          durableClaim: await durablyClaimIncoming(incoming.from, incoming),
+        }))
+      ),
+      storeDeliveryStatusUpdates(statusUpdates),
+    ]);
   } catch (err) {
-    console.error("Failed to durably accept incoming WhatsApp message(s):", err);
+    console.error("Failed to durably accept WhatsApp webhook work:", err);
     return res.sendStatus(503);
   }
 
-  // The expensive work is deliberately after the acknowledgement. Meta waits
-  // only for contact/message/job persistence, never for media or the AI.
+  // Expensive/side-effecting work remains after the acknowledgement. Meta only
+  // waits for durable Postgres persistence, never AI/media/status processing.
   res.sendStatus(200);
 
   setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
@@ -732,32 +742,11 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
     });
   }
 
-  // ── Async WhatsApp delivery-status callbacks (sent/delivered/read/failed) ──
-  const statusUpdates = whatsapp.parseStatusUpdates(req.body);
-  for (const update of statusUpdates) {
-    try {
-      const updatedMessage = await messagesRepo.updateDeliveryStatusByWamid(
-        update.wamid,
-        update.status,
-        update.errorMessage || update.errorTitle || null
-      );
-
-      if (!updatedMessage) continue;
-
-      publishDeliveryStatus(updatedMessage);
-
-      if (update.status === "failed") {
-        const reason = update.errorMessage || update.errorTitle || "WhatsApp reported delivery as failed.";
-        console.error(`Delivery failed for message ${update.wamid} (code ${update.errorCode}):`, reason);
-        await contactsRepo.setDeliveryAttention(
-          updatedMessage.contact_id,
-          `Delivery failed: ${reason}`
-        );
-      }
-    } catch (err) {
-      console.error("Failed to process delivery-status update:", err);
-    }
-  }
+  processStoredDeliveryStatuses(durableStatusJobs).catch((err) => {
+    // The rows are already durable. A process crash or unexpected live-path
+    // failure is recovered by the periodic delivery-status worker.
+    console.error("Failed to schedule durable WhatsApp delivery-status work:", err);
+  });
 });
 
 // ── Facebook Messenger + Instagram Messaging webhook verification ──
@@ -882,6 +871,7 @@ async function start() {
   setInterval(pruneOrphanedPromoImages, PROMO_IMAGE_PRUNE_INTERVAL_MS);
 
   startInboundProcessingRecovery({ processBatch: processIncomingBatch });
+  startWhatsAppDeliveryStatusRecovery();
   startAutomatedFollowUps();
   startStaffWaitingAlerts();
   startLeadScoring();
