@@ -31,14 +31,18 @@ test("Gemini key configuration is deduplicated in priority order", () => {
   assert.deepEqual(keys, ["key-a", "key-b", "key-main", "key-c"]);
 });
 
-test("Gemini reply models default to 2.5 Flash with Flash-Lite capacity fallback", () => {
+test("Gemini reply models default to 3.8 Flash with 3.5 Flash-Lite fallback", () => {
+  assert.deepEqual(
+    getGeminiReplyModels({}),
+    ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
+  );
   assert.deepEqual(
     getGeminiReplyModels({ GEMINI_MODEL: "gemini-2.5-flash" }),
-    ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+    ["gemini-2.5-flash", "gemini-3.8-flash"]
   );
   assert.deepEqual(
     getGeminiReplyModels({ GEMINI_MODEL: "gemini-3.7-flash" }),
-    ["gemini-3.7-flash", "gemini-2.5-flash"]
+    ["gemini-3.7-flash", "gemini-3.8-flash"]
   );
   assert.deepEqual(
     getGeminiReplyModels({
