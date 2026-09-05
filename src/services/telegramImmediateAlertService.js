@@ -32,7 +32,8 @@ async function getImmediateAlertContext(contactId, query = pool.query.bind(pool)
        l.id AS lead_id, l.temperature, l.treatment_interest, l.branch_name,
        s.name AS stage_name,
        latest.id AS latest_customer_message_id,
-       latest.content AS latest_customer_message
+       latest.content AS latest_customer_message,
+       latest_failed_outbound.id AS latest_failed_outbound_message_id
      FROM contacts c
      LEFT JOIN LATERAL (
        SELECT * FROM leads
@@ -47,6 +48,14 @@ async function getImmediateAlertContext(contactId, query = pool.query.bind(pool)
        ORDER BY created_at DESC, id DESC
        LIMIT 1
      ) latest ON true
+     LEFT JOIN LATERAL (
+       SELECT id FROM messages
+       WHERE contact_id = c.id
+         AND role = 'assistant'
+         AND delivery_status = 'failed'
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1
+     ) latest_failed_outbound ON true
      WHERE c.id = $1`,
     [contactId]
   );
@@ -132,6 +141,16 @@ function bookingReadyEventKey(context, messageId = null) {
   return `booking-ready:${context.contact_id}:${capturedMessageId}`;
 }
 
+function deliveryFailureEventKey(context) {
+  // Delivery callbacks can be replayed after a Render restart. Tie the alert to
+  // the actual failed outbound row so recovery can safely repeat the attention
+  // update without sending the same Telegram warning twice. Older/non-message
+  // delivery attention paths keep their historical non-deduplicated behavior.
+  const capturedMessageId = Number(context?.latest_failed_outbound_message_id);
+  if (!Number.isSafeInteger(capturedMessageId) || capturedMessageId < 1) return null;
+  return `delivery-failure:${context.contact_id}:${capturedMessageId}`;
+}
+
 function buildImmediateAlertMessage({ type, context, reason, env = process.env }) {
   const isDelivery = type === "delivery_failure";
   const isBookingReady = type === "booking_ready";
@@ -214,6 +233,12 @@ function createTelegramImmediateAlertService({
       }
       const claimed = await claimAlert({ eventKey, type, contactId });
       if (!claimed) return { status: "suppressed" };
+    } else if (type === "delivery_failure") {
+      eventKey = deliveryFailureEventKey(context);
+      if (eventKey) {
+        const claimed = await claimAlert({ eventKey, type, contactId });
+        if (!claimed) return { status: "suppressed" };
+      }
     }
 
     try {
@@ -256,6 +281,7 @@ module.exports = {
   bookingReadyEventKey,
   claimImmediateAlert,
   createTelegramImmediateAlertService,
+  deliveryFailureEventKey,
   getImmediateAlertContext,
   humanInterventionEventKey,
   releaseImmediateAlert,
