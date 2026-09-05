@@ -130,6 +130,41 @@ function buildUploadedAudioPart(uploadedFile, fallbackMimeType) {
   };
 }
 
+function extractTranscriptionText(response) {
+  const parts = Array.isArray(response?.candidates?.[0]?.content?.parts)
+    ? response.candidates[0].content.parts
+    : [];
+
+  // Gemini 3.5 Transcribe can return transcription payloads as structured
+  // non-text parts. Reading the SDK's response.text helper in that case logs a
+  // warning and drops those payloads, so read audioTranscription.text directly.
+  const audioChunks = parts
+    .map((part) => {
+      const value = part?.audioTranscription;
+      if (typeof value === "string") return value;
+      return typeof value?.text === "string" ? value.text : "";
+    })
+    .filter(Boolean);
+  if (audioChunks.length) return audioChunks.join("").trim();
+
+  // Keep compatibility with SDK/model responses that still use ordinary text
+  // parts, without invoking response.text when structured parts are present.
+  const textChunks = parts
+    .map((part) => (typeof part?.text === "string" ? part.text : ""))
+    .filter(Boolean);
+  if (textChunks.length) return textChunks.join("").trim();
+
+  // Legacy/mocked responses may expose only the convenience response.text
+  // property. Use it only when the response has no structured candidate parts,
+  // avoiding the SDK's non-text-part warning on transcription responses.
+  if (!parts.length) {
+    const fallbackText = response?.text;
+    return typeof fallbackText === "string" ? fallbackText.trim() : "";
+  }
+
+  return "";
+}
+
 async function deleteUploadedFile(ai, uploadedFile) {
   const name = String(uploadedFile?.name || "").trim();
   if (!name || !ai?.files?.delete) return;
@@ -195,7 +230,7 @@ async function runTranscription(
             { purpose: "voice_transcription" }
           );
 
-          return response.text?.trim() || "";
+          return extractTranscriptionText(response);
         } finally {
           await deleteUploadedFile(ai, uploadedFile);
         }
@@ -234,6 +269,7 @@ module.exports = {
   LOSSY_WHATSAPP_MIME_TYPES,
   buildUploadedAudioPart,
   deleteUploadedFile,
+  extractTranscriptionText,
   getTranscriptionModel,
   normalizeAudioMimeType,
   normalizeFileState,
