@@ -1,4 +1,5 @@
 const contactsRepo = require("../db/contactsRepo");
+const messagingRuntimeHealthRepo = require("../db/messagingRuntimeHealthRepo");
 const whatsapp = require("./whatsappService");
 const meta = require("./metaMessagingService");
 const metaAttachments = require("./metaAttachmentService");
@@ -35,6 +36,29 @@ function staffModeChangedResult() {
     externalMessageId: null,
     error: "This conversation is no longer in Staff mode.",
   };
+}
+
+function recordAcceptedSocialOutbound(channel, result) {
+  if (!result?.success || !["facebook", "instagram"].includes(channel)) {
+    return result;
+  }
+
+  // Operational telemetry must never become a dependency of message delivery.
+  // The Meta call has already succeeded, so record only the channel + timestamp
+  // on a best-effort basis and never await this write in the customer path.
+  // Unit CI intentionally provides TEST_DATABASE_URL rather than DATABASE_URL,
+  // so ordinary mocked messaging tests do not open an unrelated database pool.
+  if (process.env.DATABASE_URL) {
+    messagingRuntimeHealthRepo.recordOutboundAccepted(channel).catch((err) => {
+      console.error(`Failed to record ${labelForChannel(channel)} outbound health:`, err);
+    });
+  }
+  return result;
+}
+
+async function trackSocialOutbound(channel, operation) {
+  const result = await operation;
+  return recordAcceptedSocialOutbound(channel, result);
 }
 
 async function freeformGuard(contact, purpose = "service") {
@@ -110,7 +134,10 @@ async function sendText(contact, text, options = {}) {
   if (channel === "whatsapp") {
     return whatsapp.sendMessage(contact.whatsapp_number, text);
   }
-  return meta.sendText(channel, recipientFor(contact), text);
+  return trackSocialOutbound(
+    channel,
+    meta.sendText(channel, recipientFor(contact), text)
+  );
 }
 
 async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
@@ -120,7 +147,10 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
   if (channel === "whatsapp") {
     return whatsapp.sendImage(contact.whatsapp_number, imageUrl, caption);
   }
-  return meta.sendImage(channel, recipientFor(contact), imageUrl, caption);
+  return trackSocialOutbound(
+    channel,
+    meta.sendImage(channel, recipientFor(contact), imageUrl, caption)
+  );
 }
 
 async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "image", options = {}) {
@@ -145,7 +175,10 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
   }
 
   if (caption?.trim()) {
-    const captionResult = await meta.sendText(channel, recipientFor(contact), caption.trim());
+    const captionResult = await trackSocialOutbound(
+      channel,
+      meta.sendText(channel, recipientFor(contact), caption.trim())
+    );
     if (!captionResult.success) return captionResult;
   }
 
@@ -154,7 +187,7 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
   // The Send API supports media URLs, so expose only a disposable R2 copy via
   // a short-lived presigned URL. Facebook Messenger keeps its binary upload.
   if (channel === "instagram") {
-    return withTemporaryMediaUrl(contact, buffer, mimeType, (mediaUrl) =>
+    const result = await withTemporaryMediaUrl(contact, buffer, mimeType, (mediaUrl) =>
       metaAttachments.sendUrlAttachment(
         channel,
         recipientFor(contact),
@@ -162,15 +195,19 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
         mediaUrl
       )
     );
+    return recordAcceptedSocialOutbound(channel, result);
   }
 
-  return metaAttachments.sendBuffer(
+  return trackSocialOutbound(
     channel,
-    recipientFor(contact),
-    "image",
-    buffer,
-    mimeType,
-    filename
+    metaAttachments.sendBuffer(
+      channel,
+      recipientFor(contact),
+      "image",
+      buffer,
+      mimeType,
+      filename
+    )
   );
 }
 
@@ -207,7 +244,7 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
       };
     }
 
-    return withTemporaryMediaUrl(
+    const result = await withTemporaryMediaUrl(
       contact,
       instagramAudio.buffer,
       instagramAudio.mimeType,
@@ -225,6 +262,7 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
         );
       }
     );
+    return recordAcceptedSocialOutbound(channel, result);
   }
 
   // Facebook Messenger keeps the attachment upload path. Active Staff sends
@@ -232,13 +270,16 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
   // upload finishes; retries/tests without an active takeover keep the simple
   // generic path.
   if (contact?.mode !== "human" || !contact?.id) {
-    return metaAttachments.sendBuffer(
+    return trackSocialOutbound(
       channel,
-      recipientFor(contact),
-      "audio",
-      buffer,
-      mimeType,
-      filename
+      metaAttachments.sendBuffer(
+        channel,
+        recipientFor(contact),
+        "audio",
+        buffer,
+        mimeType,
+        filename
+      )
     );
   }
 
@@ -262,11 +303,14 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
     return staffModeChangedResult();
   }
 
-  return metaAttachments.sendAttachmentId(
+  return trackSocialOutbound(
     channel,
-    recipientFor(contact),
-    "audio",
-    uploaded.attachmentId
+    metaAttachments.sendAttachmentId(
+      channel,
+      recipientFor(contact),
+      "audio",
+      uploaded.attachmentId
+    )
   );
 }
 
