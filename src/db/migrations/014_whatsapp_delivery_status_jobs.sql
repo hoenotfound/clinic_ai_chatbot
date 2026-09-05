@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_delivery_status_jobs (
     CHECK (processing_status IN ('pending', 'processing', 'failed', 'completed')),
   attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   claimed_at TIMESTAMPTZ,
+  lease_token TEXT,
   completed_at TIMESTAMPTZ,
   terminal_at TIMESTAMPTZ,
   last_error TEXT,
