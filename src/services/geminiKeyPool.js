@@ -391,9 +391,9 @@ async function runWithGeminiKeys(
         ? computeAttemptTimeoutMs({
             remainingBudgetMs,
             candidatePosition,
-            // When a later reply model is available, customer-reply timeouts
-            // switch models instead of spending reserved windows on more keys.
-            totalCandidates: stopKeyRotationOnTimeout ? 1 : available.length,
+            // Customer-facing smart routing is bounded by the global/model
+            // budgets, not by latency reservations for every configured key.
+            totalCandidates: smartRetry ? 1 : available.length,
             preferredTimeoutMs: preferredTimeoutMs || timeoutMs,
             fallbackTimeoutMs: fallbackTimeoutMs || timeoutMs,
             minRemainingKeyWindowMs,
