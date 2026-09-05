@@ -58,6 +58,10 @@ test(
         "INSERT INTO contacts DEFAULT VALUES RETURNING id"
       );
       const ordinaryContactId = ordinaryContact.rows[0].id;
+      const failOpenContact = await client.query(
+        "INSERT INTO contacts DEFAULT VALUES RETURNING id"
+      );
+      const failOpenContactId = failOpenContact.rows[0].id;
 
       const failureClaim = await inboundProcessingRepo.storeInboundClaim({
         contactId: failureContactId,
@@ -134,6 +138,35 @@ test(
         "SELECT COUNT(*)::int AS count FROM inbound_recovery_events"
       );
       assert.equal(recoveryCount.rows[0].count, 1, "a normal pending claim must not look like a restart recovery");
+
+      // Simulate a broken diagnostics sink. A new telemetry row will violate
+      // this NOT VALID constraint, but the durable job update must still commit.
+      await client.query(
+        "ALTER TABLE inbound_failure_events ADD CONSTRAINT reject_future_observability CHECK (false) NOT VALID"
+      );
+      const failOpenClaim = await inboundProcessingRepo.storeInboundClaim({
+        contactId: failOpenContactId,
+        content: "fail-open test",
+        storedMessageId: "observability-fail-open-message",
+        channel: "whatsapp",
+        incoming: { id: "observability-fail-open-message", from: "60110000004", channel: "whatsapp", text: "fail-open test" },
+      }, client);
+      const failOpenLease = await inboundProcessingRepo.claimPendingByMessageId(
+        failOpenClaim.savedInbound.id,
+        client,
+        "fail-open-worker"
+      );
+      const failedDespiteTelemetry = await inboundProcessingRepo.markFailed(
+        failOpenLease.id,
+        new Error("diagnostics must not block this"),
+        client
+      );
+      assert.equal(failedDespiteTelemetry.status, "failed");
+      const durableState = await client.query(
+        "SELECT status FROM inbound_processing_jobs WHERE id = $1",
+        [failOpenLease.id]
+      );
+      assert.equal(durableState.rows[0].status, "failed");
     } finally {
       await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`).catch(() => {});
       await client.end();
