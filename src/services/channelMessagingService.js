@@ -175,9 +175,13 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
   }
 
   if (caption?.trim()) {
-    const captionResult = await trackSocialOutbound(
+    // Do not mark the whole operation healthy from this partial caption send.
+    // If the companion image fails, Setup Status should still show the failure
+    // until a later complete social send succeeds.
+    const captionResult = await meta.sendText(
       channel,
-      meta.sendText(channel, recipientFor(contact), caption.trim())
+      recipientFor(contact),
+      caption.trim()
     );
     if (!captionResult.success) return captionResult;
   }
