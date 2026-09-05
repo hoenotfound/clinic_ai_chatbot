@@ -41,14 +41,33 @@ test("complete emergency 2.5 rollback keeps both customer reply models on 2.5", 
   );
 });
 
-test("voice transcription is isolated on its dedicated model while other background defaults remain unchanged", () => {
+test("background Gemini tasks are isolated from the customer reply model override", () => {
+  const leadScoringSource = source("src/services/leadScoringAiService.js");
   assert.match(
-    source("src/services/leadScoringAiService.js"),
-    /LEAD_SCORING_GEMINI_MODEL \|\| process\.env\.GEMINI_MODEL \|\| "gemini-2\.5-flash"/
+    leadScoringSource,
+    /LEAD_SCORING_GEMINI_MODEL \|\| "gemini-3\.6-flash"/
+  );
+  assert.doesNotMatch(
+    leadScoringSource,
+    /LEAD_SCORING_GEMINI_MODEL \|\| process\.env\.GEMINI_MODEL/
   );
   assert.match(
-    source("src/services/followUpTranslationService.js"),
-    /process\.env\.GEMINI_MODEL \|\| "gemini-2\.5-flash"/
+    leadScoringSource,
+    /thinkingConfig: \{ thinkingLevel: "minimal" \}/
+  );
+
+  const translationSource = source("src/services/followUpTranslationService.js");
+  assert.match(
+    translationSource,
+    /FOLLOW_UP_TRANSLATION_GEMINI_MODEL \|\| "gemini-3\.6-flash"/
+  );
+  assert.doesNotMatch(
+    translationSource,
+    /process\.env\.GEMINI_MODEL \|\| "gemini-/
+  );
+  assert.match(
+    translationSource,
+    /thinkingConfig: \{ thinkingLevel: "minimal" \}/
   );
 
   const transcriptionSource = source("src/services/transcriptionService.js");
