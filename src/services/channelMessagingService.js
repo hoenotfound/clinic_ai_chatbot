@@ -1,5 +1,6 @@
 const contactsRepo = require("../db/contactsRepo");
 const messagingRuntimeHealthRepo = require("../db/messagingRuntimeHealthRepo");
+const promoImagesRepo = require("../db/promoImagesRepo");
 const whatsapp = require("./whatsappService");
 const meta = require("./metaMessagingService");
 const metaAttachments = require("./metaAttachmentService");
@@ -127,6 +128,80 @@ async function withTemporaryMediaUrl(contact, buffer, mimeType, deliver) {
   }
 }
 
+function storedPromoImageId(imageUrl) {
+  const raw = typeof imageUrl === "string" ? imageUrl.trim() : "";
+  if (!raw) return null;
+
+  try {
+    // Settings-generated promotion/follow-up image URLs always point at this
+    // public route. Matching by pathname also keeps existing saved URLs working
+    // if the service hostname changes after a Render/domain migration.
+    const parsed = new URL(raw, "https://stored-promo.invalid");
+    const match = /^\/promo-images\/(\d+)\/?$/.exec(parsed.pathname);
+    if (!match) return null;
+    const id = Number(match[1]);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function storedImageFilename(id, mimeType) {
+  const normalized = String(mimeType || "").toLowerCase();
+  const extension = normalized === "image/png" ? "png" : "jpg";
+  return `promo-${id}.${extension}`;
+}
+
+async function sendStoredFacebookImage(contact, imageUrl, caption) {
+  const imageId = storedPromoImageId(imageUrl);
+  if (!imageId) return null;
+
+  let image;
+  try {
+    image = await promoImagesRepo.getImage(imageId);
+  } catch (err) {
+    console.error(`Failed to load stored promo image ${imageId} for Facebook Messenger:`, err);
+    return temporaryMediaFailure("facebook", err);
+  }
+
+  if (!image?.data || !["image/jpeg", "image/png"].includes(image.mime_type)) {
+    return {
+      success: false,
+      wamid: null,
+      externalMessageId: null,
+      error: "The stored promotion image is missing or invalid. Please upload it again.",
+    };
+  }
+
+  if (caption?.trim()) {
+    // Messenger keeps caption text separate from the media attachment. This is
+    // the same ordering as the URL path: preserve customer context even if the
+    // later binary attachment upload is rejected by Meta.
+    const captionResult = await meta.sendText(
+      "facebook",
+      recipientFor(contact),
+      caption.trim()
+    );
+    if (!captionResult.success) return captionResult;
+  }
+
+  // Do not ask Meta to fetch our /promo-images/:id URL. In production Meta can
+  // reject an otherwise valid Render-hosted image with (#100) Upload failed.
+  // The exact JPG/PNG bytes are already in Postgres, so upload them directly to
+  // Messenger's message_attachments endpoint and send the returned attachment.
+  return trackSocialOutbound(
+    "facebook",
+    metaAttachments.sendBuffer(
+      "facebook",
+      recipientFor(contact),
+      "image",
+      Buffer.from(image.data, "base64"),
+      image.mime_type,
+      storedImageFilename(imageId, image.mime_type)
+    )
+  );
+}
+
 async function sendText(contact, text, options = {}) {
   const channel = channelOf(contact);
   const blocked = await freeformGuard(contact, options.purpose);
@@ -147,6 +222,12 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
   if (channel === "whatsapp") {
     return whatsapp.sendImage(contact.whatsapp_number, imageUrl, caption);
   }
+
+  if (channel === "facebook") {
+    const storedResult = await sendStoredFacebookImage(contact, imageUrl, caption);
+    if (storedResult) return storedResult;
+  }
+
   return trackSocialOutbound(
     channel,
     meta.sendImage(channel, recipientFor(contact), imageUrl, caption)
