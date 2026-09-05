@@ -25,11 +25,13 @@ async function getInboundProcessingMetrics({ hours = 24 } = {}, queryable = pool
          )::int AS retryable_failed_count,
          COUNT(*) FILTER (
            WHERE terminal_at IS NOT NULL
+             AND terminal_at >= NOW() - ($1::int * interval '1 hour')
          )::int AS terminal_count,
          MIN(created_at) FILTER (
            WHERE terminal_at IS NULL AND status IN ('pending', 'processing', 'failed')
          ) AS oldest_open_at
-       FROM inbound_processing_jobs`
+       FROM inbound_processing_jobs`,
+      [safeHours]
     ),
     queryable.query(
       `SELECT
@@ -44,11 +46,13 @@ async function getInboundProcessingMetrics({ hours = 24 } = {}, queryable = pool
          )::int AS retryable_failed_count,
          COUNT(*) FILTER (
            WHERE terminal_at IS NOT NULL
+             AND terminal_at >= NOW() - ($1::int * interval '1 hour')
          )::int AS terminal_count,
          MIN(created_at) FILTER (
            WHERE terminal_at IS NULL AND status IN ('pending', 'processing', 'failed')
          ) AS oldest_open_at
-       FROM inbound_meta_resolution_jobs`
+       FROM inbound_meta_resolution_jobs`,
+      [safeHours]
     ),
     queryable.query(
       `SELECT COUNT(*)::int AS failed_jobs
