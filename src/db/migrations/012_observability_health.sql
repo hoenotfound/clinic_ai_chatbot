@@ -42,20 +42,28 @@ BEGIN
     ELSE 'message'
   END;
 
-  IF NEW.status = 'failed' AND OLD.status IS DISTINCT FROM 'failed' THEN
-    INSERT INTO inbound_failure_events (job_type, job_id, channel, failed_at)
-    VALUES (resolved_job_type, NEW.id, NEW.channel, NOW());
-  END IF;
+  -- Observability must never be allowed to block durable inbound processing.
+  -- Keep telemetry writes inside a fail-open sub-block so an unexpected
+  -- diagnostic-table problem cannot roll back the job update that fired this
+  -- trigger. The queue state remains authoritative even if telemetry is lost.
+  BEGIN
+    IF NEW.status = 'failed' AND OLD.status IS DISTINCT FROM 'failed' THEN
+      INSERT INTO inbound_failure_events (job_type, job_id, channel, failed_at)
+      VALUES (resolved_job_type, NEW.id, NEW.channel, NOW());
+    END IF;
 
-  IF OLD.status = 'processing'
-     AND NEW.status = 'processing'
-     AND NEW.attempts > OLD.attempts
-     AND OLD.lease_owner IS DISTINCT FROM NEW.lease_owner
-     AND OLD.lease_owner IS NOT NULL
-     AND NEW.lease_owner IS NOT NULL THEN
-    INSERT INTO inbound_recovery_events (job_type, job_id, channel, recovered_at)
-    VALUES (resolved_job_type, NEW.id, NEW.channel, NOW());
-  END IF;
+    IF OLD.status = 'processing'
+       AND NEW.status = 'processing'
+       AND NEW.attempts > OLD.attempts
+       AND OLD.lease_owner IS DISTINCT FROM NEW.lease_owner
+       AND OLD.lease_owner IS NOT NULL
+       AND NEW.lease_owner IS NOT NULL THEN
+      INSERT INTO inbound_recovery_events (job_type, job_id, channel, recovered_at)
+      VALUES (resolved_job_type, NEW.id, NEW.channel, NOW());
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'Inbound observability event could not be recorded: %', SQLERRM;
+  END;
 
   RETURN NEW;
 END;
