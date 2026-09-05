@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const messagingRuntimeHealthRepo = require("./messagingRuntimeHealthRepo");
 
 async function listAppliedMigrations(queryable = pool) {
   const result = await queryable.query(
@@ -99,40 +100,58 @@ async function getInboundProcessingMetrics({ hours = 24 } = {}, queryable = pool
   };
 }
 
+function newestTimestamp(...values) {
+  const valid = values
+    .filter(Boolean)
+    .map((value) => new Date(value))
+    .filter((value) => !Number.isNaN(value.getTime()));
+  return valid.length
+    ? new Date(Math.max(...valid.map((value) => value.getTime())))
+    : null;
+}
+
 async function getMessagingMetrics({ hours = 24 } = {}, queryable = pool) {
   const safeHours = Math.max(1, Math.min(24 * 30, Number(hours) || 24));
-  const result = await queryable.query(
-    `SELECT
-       c.channel,
-       MAX(m.created_at) FILTER (WHERE m.role = 'user') AS last_inbound_at,
-       MAX(m.created_at) FILTER (
-         WHERE m.role = 'assistant'
-           AND m.whatsapp_message_id IS NOT NULL
-           AND COALESCE(m.delivery_status, 'pending') <> 'failed'
-       ) AS last_successful_outbound_at,
-       COUNT(*) FILTER (
-         WHERE m.role = 'assistant'
-           AND m.delivery_status = 'failed'
-           AND m.created_at >= NOW() - ($1::int * interval '1 hour')
-       )::int AS recent_delivery_failures,
-       MAX(m.created_at) FILTER (
-         WHERE m.role = 'assistant'
-           AND m.delivery_status = 'failed'
-       ) AS last_delivery_failure_at
-     FROM contacts c
-     LEFT JOIN messages m ON m.contact_id = c.id
-     WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
-     GROUP BY c.channel`,
-    [safeHours]
-  );
+  const [result, runtimeRows] = await Promise.all([
+    queryable.query(
+      `SELECT
+         c.channel,
+         MAX(m.created_at) FILTER (WHERE m.role = 'user') AS last_inbound_at,
+         MAX(m.created_at) FILTER (
+           WHERE m.role = 'assistant'
+             AND m.whatsapp_message_id IS NOT NULL
+             AND COALESCE(m.delivery_status, 'pending') <> 'failed'
+         ) AS last_successful_outbound_at,
+         COUNT(*) FILTER (
+           WHERE m.role = 'assistant'
+             AND m.delivery_status = 'failed'
+             AND m.created_at >= NOW() - ($1::int * interval '1 hour')
+         )::int AS recent_delivery_failures,
+         MAX(m.created_at) FILTER (
+           WHERE m.role = 'assistant'
+             AND m.delivery_status = 'failed'
+         ) AS last_delivery_failure_at
+       FROM contacts c
+       LEFT JOIN messages m ON m.contact_id = c.id
+       WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
+       GROUP BY c.channel`,
+      [safeHours]
+    ),
+    messagingRuntimeHealthRepo.listRuntimeHealth(queryable),
+  ]);
 
   const byChannel = new Map(result.rows.map((row) => [row.channel, row]));
+  const runtimeByChannel = new Map(runtimeRows.map((row) => [row.channel, row]));
   return ["whatsapp", "instagram", "facebook"].map((channel) => {
     const row = byChannel.get(channel) || {};
+    const runtime = runtimeByChannel.get(channel) || {};
     return {
       channel,
       lastInboundAt: row.last_inbound_at || null,
-      lastSuccessfulOutboundAt: row.last_successful_outbound_at || null,
+      lastSuccessfulOutboundAt: newestTimestamp(
+        row.last_successful_outbound_at,
+        runtime.last_outbound_accepted_at
+      ),
       recentDeliveryFailures: Number(row.recent_delivery_failures) || 0,
       lastDeliveryFailureAt: row.last_delivery_failure_at || null,
     };
