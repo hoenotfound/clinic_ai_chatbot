@@ -9,7 +9,7 @@ const repo = require("../src/db/whatsappDeliveryStatusRepo");
 const connectionString = process.env.TEST_DATABASE_URL;
 
 test(
-  "WhatsApp delivery-status jobs dedupe, retry stale work and persist terminal state",
+  "WhatsApp delivery-status jobs dedupe, fence stale leases and persist terminal state",
   { skip: !connectionString },
   async () => {
     const client = new Client({ connectionString });
@@ -52,6 +52,7 @@ test(
       assert.equal(first.length, 1);
       assert.equal(first[0].processing_status, "pending");
       assert.equal(first[0].attempts, 0);
+      assert.equal(first[0].lease_token, null);
 
       const duplicate = await repo.storeBatch([update], query);
       assert.deepEqual(duplicate, []);
@@ -64,8 +65,14 @@ test(
       assert.equal(claimed.length, 1);
       assert.equal(claimed[0].processing_status, "processing");
       assert.equal(claimed[0].attempts, 1);
+      assert.match(claimed[0].lease_token, /^[a-f0-9]{32}$/);
 
-      await repo.markFailed(claimed[0].id, new Error("temporary database failure"), query);
+      await repo.markFailed(
+        claimed[0].id,
+        claimed[0].lease_token,
+        new Error("temporary database failure"),
+        query
+      );
       const retry = await repo.claimRecoverable({
         limit: 10,
         staleAfterSeconds: 45,
@@ -74,8 +81,10 @@ test(
       assert.equal(retry.length, 1);
       assert.equal(retry[0].id, claimed[0].id);
       assert.equal(retry[0].attempts, 2);
+      assert.match(retry[0].lease_token, /^[a-f0-9]{32}$/);
+      assert.notEqual(retry[0].lease_token, claimed[0].lease_token);
 
-      await repo.markCompleted(retry[0].id, query);
+      await repo.markCompleted(retry[0].id, retry[0].lease_token, query);
       const none = await repo.claimRecoverable({
         limit: 10,
         staleAfterSeconds: 45,
@@ -86,16 +95,22 @@ test(
       // A stale worker that wakes up after another process completed this job
       // must not be able to roll the terminal state backward.
       assert.equal(
-        await repo.markFailed(retry[0].id, new Error("late stale-worker failure"), query),
+        await repo.markFailed(
+          retry[0].id,
+          claimed[0].lease_token,
+          new Error("late stale-worker failure"),
+          query
+        ),
         null
       );
       assert.equal(await repo.markTerminal(retry[0].id, query), null);
       const completedRow = await client.query(
-        "SELECT processing_status, terminal_at FROM whatsapp_delivery_status_jobs WHERE id = $1",
+        "SELECT processing_status, lease_token, terminal_at FROM whatsapp_delivery_status_jobs WHERE id = $1",
         [retry[0].id]
       );
       assert.deepEqual(completedRow.rows[0], {
         processing_status: "completed",
+        lease_token: null,
         terminal_at: null,
       });
 
@@ -117,6 +132,38 @@ test(
       assert.equal(staleRecovered.length, 1);
       assert.equal(staleRecovered[0].id, staleClaim[0].id);
       assert.equal(staleRecovered[0].attempts, 2);
+      assert.notEqual(staleRecovered[0].lease_token, staleClaim[0].lease_token);
+
+      // The replaced worker is still alive in this simulation. Its old lease
+      // must not be able to fail or complete the newer worker's active claim.
+      assert.equal(
+        await repo.markFailed(
+          staleClaim[0].id,
+          staleClaim[0].lease_token,
+          new Error("old worker resumed late"),
+          query
+        ),
+        null
+      );
+      assert.equal(
+        await repo.markCompleted(
+          staleClaim[0].id,
+          staleClaim[0].lease_token,
+          query
+        ),
+        null
+      );
+      const replacementLease = await client.query(
+        `SELECT processing_status, attempts, lease_token
+         FROM whatsapp_delivery_status_jobs
+         WHERE id = $1`,
+        [staleClaim[0].id]
+      );
+      assert.deepEqual(replacementLease.rows[0], {
+        processing_status: "processing",
+        attempts: 2,
+        lease_token: staleRecovered[0].lease_token,
+      });
 
       await client.query(
         `UPDATE whatsapp_delivery_status_jobs
@@ -137,13 +184,21 @@ test(
 
       const terminal = await repo.markTerminal(staleClaim[0].id, query);
       assert.ok(terminal.terminal_at);
+      assert.equal(terminal.lease_token, null);
       const noLongerExhausted = await repo.listExhausted({
         limit: 10,
         staleAfterSeconds: 45,
         maxAttempts: 5,
       }, query);
       assert.deepEqual(noLongerExhausted, []);
-      assert.equal(await repo.markCompleted(staleClaim[0].id, query), null);
+      assert.equal(
+        await repo.markCompleted(
+          staleClaim[0].id,
+          staleRecovered[0].lease_token,
+          query
+        ),
+        null
+      );
 
       await client.query(
         `INSERT INTO contacts (id) VALUES (42);
