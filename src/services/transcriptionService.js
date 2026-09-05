@@ -1,79 +1,84 @@
+const { Blob } = require("node:buffer");
 const { GoogleGenAI } = require("@google/genai");
 const { generateGeminiContent } = require("./aiUsageService");
 const { runWithGeminiKeys } = require("./geminiKeyPool");
 
-// Transcription always goes through Gemini, regardless of AI_PROVIDER. Gemini
-// Flash accepts audio natively and handles Malaysian multilingual speech
-// (English / Bahasa Malaysia / Chinese, including mid-sentence code-switching)
-// well. The shared Gemini key pool is used here so voice notes get the same
-// quota failover and cooldown behavior as normal chatbot replies.
-const MODEL = process.env.GEMINI_TRANSCRIBE_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const DEFAULT_TRANSCRIPTION_MODEL = "gemini-3.5-transcribe";
 
-const TRANSCRIBE_PROMPT = `Transcribe this voice message exactly as spoken.
+function getTranscriptionModel(env = process.env) {
+  return String(env.GEMINI_TRANSCRIBE_MODEL || DEFAULT_TRANSCRIPTION_MODEL).trim()
+    || DEFAULT_TRANSCRIPTION_MODEL;
+}
 
-The speaker is a patient messaging a Malaysian aesthetics clinic. They may speak
-English, Bahasa Malaysia, Mandarin/Cantonese, or switch between languages
-mid-sentence (common in Malaysia, sometimes called "Manglish") - this is normal,
-keep it as-is rather than translating or normalizing to one language.
+function normalizeAudioMimeType(mimeType) {
+  return String(mimeType || "audio/ogg").split(";")[0].trim() || "audio/ogg";
+}
 
-Rules:
-- Write Chinese speech in Chinese characters, not pinyin.
-- Do not translate anything - output the same language(s) the speaker used.
-- Do not add commentary, labels, or punctuation guesses beyond natural sentence breaks.
-- If the audio is silent, just noise, or unintelligible, respond with exactly: [UNINTELLIGIBLE]
-- Output only the transcript text, nothing else.`;
-
-const STAFF_TRANSCRIBE_PROMPT = `Transcribe this voice message exactly as spoken.
-
-The speaker is a clinic staff member replying to a patient in Malaysia. They may
-speak English, Bahasa Malaysia, Mandarin/Cantonese, or switch between languages
-mid-sentence - this is normal, keep it as-is rather than translating or
-normalizing to one language.
-
-Rules:
-- Write Chinese speech in Chinese characters, not pinyin.
-- Do not translate anything - output the same language(s) the speaker used.
-- Do not add commentary, labels, or punctuation guesses beyond natural sentence breaks.
-- If the audio is silent, just noise, or unintelligible, respond with exactly: [UNINTELLIGIBLE]
-- Output only the transcript text, nothing else.`;
-
-/**
- * @param {Buffer} audioBuffer - raw audio bytes downloaded from WhatsApp
- * @param {string} mimeType - e.g. "audio/ogg; codecs=opus" (WhatsApp voice notes)
- * @returns {Promise<string|null>} transcribed text, or null if transcription failed/unintelligible
- */
-async function runTranscription(audioBuffer, mimeType, prompt) {
+async function deleteUploadedFile(ai, uploadedFile) {
+  const name = String(uploadedFile?.name || "").trim();
+  if (!name || !ai?.files?.delete) return;
   try {
-    const transcript = await runWithGeminiKeys(
+    await ai.files.delete({ name });
+  } catch (err) {
+    // Cleanup is best-effort. Google also expires Files API uploads after 48h,
+    // so a cleanup failure must never turn a successful transcription into a
+    // failed customer voice note.
+    console.warn("Could not delete Gemini transcription upload:", err?.message || err);
+  }
+}
+
+async function runTranscription(
+  audioBuffer,
+  mimeType,
+  {
+    env = process.env,
+    createClient = (apiKey) => new GoogleGenAI({ apiKey }),
+    generateContent = generateGeminiContent,
+    runWithKeys = runWithGeminiKeys,
+  } = {}
+) {
+  if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) return null;
+
+  const model = getTranscriptionModel(env);
+  const normalizedMimeType = normalizeAudioMimeType(mimeType);
+
+  try {
+    const transcript = await runWithKeys(
       async (apiKey) => {
-        const ai = new GoogleGenAI({ apiKey });
-        const response = await generateGeminiContent(
-          ai,
-          {
-            model: MODEL,
-            contents: [
-              {
-                role: "user",
-                parts: [
-                  { text: prompt },
-                  {
-                    inlineData: {
-                      // Gemini wants the base mime type without codec params.
-                      mimeType: mimeType.split(";")[0].trim() || "audio/ogg",
-                      data: audioBuffer.toString("base64"),
-                    },
-                  },
-                ],
+        const ai = createClient(apiKey);
+        let uploadedFile = null;
+        try {
+          // Gemini 3.5 Transcribe is a dedicated speech-to-text model. The
+          // Files API is Google's recommended path for voice notes longer than
+          // a few seconds and avoids sending a large base64 payload inline.
+          uploadedFile = await ai.files.upload({
+            file: new Blob([audioBuffer], { type: normalizedMimeType }),
+            config: { mimeType: normalizedMimeType },
+          });
+
+          const response = await generateContent(
+            ai,
+            {
+              model,
+              contents: [uploadedFile],
+              config: {
+                maxOutputTokens: 500,
+                audioTranscriptionConfig: {
+                  // Empty language hints enable automatic language detection
+                  // and intra-sentence code switching (English/BM/Chinese).
+                  languageCodes: [],
+                  // Preserve exactly what the customer/staff member said.
+                  mode: "VERBATIM",
+                },
               },
-            ],
-            config: {
-              maxOutputTokens: 500,
-              thinkingConfig: { thinkingBudget: 0 },
             },
-          },
-          { purpose: "voice_transcription" }
-        );
-        return response.text?.trim() || "";
+            { purpose: "voice_transcription" }
+          );
+
+          return response.text?.trim() || "";
+        } finally {
+          await deleteUploadedFile(ai, uploadedFile);
+        }
       },
       { retryCount: 1 }
     );
@@ -86,12 +91,28 @@ async function runTranscription(audioBuffer, mimeType, prompt) {
   }
 }
 
+/**
+ * Convert an inbound customer voice note to text for the AI conversation.
+ * Gemini 3.5 Transcribe automatically detects language and code switching.
+ */
 async function transcribeAudio(audioBuffer, mimeType) {
-  return runTranscription(audioBuffer, mimeType, TRANSCRIBE_PROMPT);
+  return runTranscription(audioBuffer, mimeType);
 }
 
+/**
+ * Convert an outbound staff voice recording to text for conversation context.
+ * Uses the same verbatim speech-to-text path as inbound customer voice notes.
+ */
 async function transcribeStaffAudio(audioBuffer, mimeType) {
-  return runTranscription(audioBuffer, mimeType, STAFF_TRANSCRIBE_PROMPT);
+  return runTranscription(audioBuffer, mimeType);
 }
 
-module.exports = { transcribeAudio, transcribeStaffAudio };
+module.exports = {
+  DEFAULT_TRANSCRIPTION_MODEL,
+  deleteUploadedFile,
+  getTranscriptionModel,
+  normalizeAudioMimeType,
+  runTranscription,
+  transcribeAudio,
+  transcribeStaffAudio,
+};
