@@ -206,6 +206,31 @@ async function findMessageByWamid(wamid, query = pool.query.bind(pool)) {
   return result.rows[0] || null;
 }
 
+// Durable delivery-status recovery must be able to restore the Inbox attention
+// flag without replaying contactsRepo's best-effort Telegram side effect. This
+// mirrors contactsRepo.setDeliveryAttention's precedence rules while keeping the
+// durable database mutation independent from external notification delivery.
+async function setDeliveryAttentionState(
+  contactId,
+  reason,
+  query = pool.query.bind(pool)
+) {
+  const result = await query(
+    `UPDATE contacts
+     SET needs_attention = true, attention_reason = $1, updated_at = now()
+     WHERE id = $2
+       AND (
+         needs_attention = false
+         OR attention_reason IS NULL
+         OR attention_reason LIKE 'Delivery failed:%'
+         OR attention_reason LIKE 'Delivery unconfirmed:%'
+       )
+     RETURNING id`,
+    [reason, contactId]
+  );
+  return result.rows[0] || null;
+}
+
 async function pruneCompleted({ olderThanHours = 24 } = {}, query = pool.query.bind(pool)) {
   const result = await query(
     `DELETE FROM whatsapp_delivery_status_jobs
@@ -227,5 +252,6 @@ module.exports = {
   markFailed,
   markTerminal,
   findMessageByWamid,
+  setDeliveryAttentionState,
   pruneCompleted,
 };
