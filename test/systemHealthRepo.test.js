@@ -42,21 +42,33 @@ test("inbound health metrics combine durable message and Meta-resolution queues"
   assert.equal(metrics.oldestOpenAt.toISOString(), "2026-09-05T00:01:00.000Z");
 });
 
-test("messaging metrics preserve quiet channels instead of treating them as failures", async () => {
+test("messaging metrics preserve quiet channels and include accepted social outbound activity", async () => {
   const queryable = {
-    async query(sql, params) {
-      assert.match(sql, /delivery_status = 'failed'/);
-      assert.match(sql, /MAX\(m\.created_at\).*m\.role = 'user'/s);
-      assert.deepEqual(params, [24]);
-      return {
-        rows: [{
-          channel: "whatsapp",
-          last_inbound_at: new Date("2026-09-05T00:00:00Z"),
-          last_successful_outbound_at: new Date("2026-09-05T00:00:05Z"),
-          recent_delivery_failures: 0,
-          last_delivery_failure_at: null,
-        }],
-      };
+    async query(sql, params = []) {
+      if (/FROM contacts c/.test(sql)) {
+        assert.match(sql, /delivery_status = 'failed'/);
+        assert.match(sql, /MAX\(m\.created_at\).*m\.role = 'user'/s);
+        assert.deepEqual(params, [24]);
+        return {
+          rows: [{
+            channel: "whatsapp",
+            last_inbound_at: new Date("2026-09-05T00:00:00Z"),
+            last_successful_outbound_at: new Date("2026-09-05T00:00:05Z"),
+            recent_delivery_failures: 0,
+            last_delivery_failure_at: null,
+          }],
+        };
+      }
+      if (/FROM messaging_runtime_health/.test(sql)) {
+        assert.deepEqual(params, []);
+        return {
+          rows: [{
+            channel: "instagram",
+            last_outbound_accepted_at: new Date("2026-09-05T00:03:00Z"),
+          }],
+        };
+      }
+      throw new Error(`Unexpected query: ${sql}`);
     },
   };
 
@@ -66,6 +78,10 @@ test("messaging metrics preserve quiet channels instead of treating them as fail
   assert.equal(metrics[0].recentDeliveryFailures, 0);
   assert.equal(metrics[1].channel, "instagram");
   assert.equal(metrics[1].lastInboundAt, null);
+  assert.equal(
+    metrics[1].lastSuccessfulOutboundAt.toISOString(),
+    "2026-09-05T00:03:00.000Z"
+  );
   assert.equal(metrics[2].channel, "facebook");
   assert.equal(metrics[2].lastSuccessfulOutboundAt, null);
 });
