@@ -83,6 +83,22 @@ test(
       }, query);
       assert.deepEqual(none, []);
 
+      // A stale worker that wakes up after another process completed this job
+      // must not be able to roll the terminal state backward.
+      assert.equal(
+        await repo.markFailed(retry[0].id, new Error("late stale-worker failure"), query),
+        null
+      );
+      assert.equal(await repo.markTerminal(retry[0].id, query), null);
+      const completedRow = await client.query(
+        "SELECT processing_status, terminal_at FROM whatsapp_delivery_status_jobs WHERE id = $1",
+        [retry[0].id]
+      );
+      assert.deepEqual(completedRow.rows[0], {
+        processing_status: "completed",
+        terminal_at: null,
+      });
+
       const staleStored = await repo.storeBatch([
         { wamid: "wamid-durable-status-stale", status: "read" },
       ], query);
@@ -127,6 +143,7 @@ test(
         maxAttempts: 5,
       }, query);
       assert.deepEqual(noLongerExhausted, []);
+      assert.equal(await repo.markCompleted(staleClaim[0].id, query), null);
 
       await client.query(
         `INSERT INTO contacts (id) VALUES (42);
@@ -150,6 +167,17 @@ test(
         needs_attention: true,
         attention_reason: "Delivery failed: provider failure",
       });
+
+      // Exact replays should be no-ops so they do not keep bumping contact
+      // timestamps or emitting unnecessary realtime refreshes.
+      assert.equal(
+        await repo.setDeliveryAttentionState(
+          42,
+          "Delivery failed: provider failure",
+          query
+        ),
+        null
+      );
 
       // A durable delivery replay must never replace a more important handoff
       // or safety reason that staff is already looking at.
