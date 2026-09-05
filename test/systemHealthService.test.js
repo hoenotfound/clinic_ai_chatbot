@@ -16,8 +16,10 @@ const {
 
 const REPLY_CHECKS = [
   { key: "whatsapp", configured: true, status: "ready", checkedAt: "2026-09-05T00:00:00.000Z" },
+  { key: "whatsapp_webhook", configured: true, status: "warning", checkedAt: "2026-09-05T00:00:00.000Z" },
   { key: "instagram", configured: true, status: "warning", checkedAt: "2026-09-05T00:00:00.000Z" },
   { key: "facebook", configured: true, status: "warning", checkedAt: "2026-09-05T00:00:00.000Z" },
+  { key: "meta_webhook", configured: true, status: "warning", checkedAt: "2026-09-05T00:00:00.000Z" },
   { key: "ai", configured: true, status: "ready", candidateHealth: [] },
 ];
 
@@ -185,6 +187,44 @@ test("all invalid Gemini keys make AI health urgent when no fallback provider is
   }
 });
 
+test("all Gemini keys or models cooling down are unavailable when Claude is not configured", async () => {
+  const restore = patchHealthDependencies();
+  try {
+    aiService.getCandidateHealthDescriptors = () => [
+      { provider: "gemini", label: "Gemini key 1", healthKey: "private-fingerprint" },
+    ];
+    aiService.getRuntimeCandidateHealth = () => [
+      {
+        candidate_key: "private-fingerprint",
+        provider: "gemini",
+        last_status: "rate_limited",
+        last_failure_kind: "quota_exhausted",
+        cooldown_until: new Date("2026-09-05T01:00:00.000Z"),
+      },
+    ];
+    let health = await getSystemHealth({
+      checks: REPLY_CHECKS,
+      aiUsage: { byModel: [] },
+      nowMs: Date.parse("2026-09-05T00:05:00.000Z"),
+    });
+    assert.equal(health.ai.status, "error");
+
+    aiService.getRuntimeCandidateHealth = () => [];
+    aiService.getRuntimeGeminiModelHealth = () => [
+      { model: "gemini-2.5-flash", status: "cooling_down", cooldownUntil: new Date("2026-09-05T00:06:00.000Z") },
+      { model: "gemini-2.5-flash-lite", status: "cooling_down", cooldownUntil: new Date("2026-09-05T00:06:00.000Z") },
+    ];
+    health = await getSystemHealth({
+      checks: REPLY_CHECKS,
+      aiUsage: { byModel: [] },
+      nowMs: Date.parse("2026-09-05T00:05:00.000Z"),
+    });
+    assert.equal(health.ai.status, "error");
+  } finally {
+    restore();
+  }
+});
+
 test("delayed inbound work warns at 60 seconds and becomes urgent at 180 seconds", async () => {
   const nowMs = Date.parse("2026-09-05T00:10:00.000Z");
   let restore = patchHealthDependencies({
@@ -252,10 +292,37 @@ test("real messaging activity overrides an older failed checker result", () => {
       lastSuccessfulOutboundAt: null,
       recentDeliveryFailures: 0,
       lastDeliveryFailureAt: null,
+    },
+    {
+      configured: true,
+      status: "error",
+      checkedAt: "2026-09-05T00:01:00.000Z",
     }
   );
   assert.equal(health.status, "healthy");
   assert.equal(health.label, "Connected");
+});
+
+test("a configured channel with missing webhook configuration needs attention", async () => {
+  const restore = patchHealthDependencies();
+  try {
+    const checks = REPLY_CHECKS.map((item) => (
+      item.key === "whatsapp_webhook"
+        ? { ...item, configured: false, status: "error" }
+        : item
+    ));
+    const health = await getSystemHealth({
+      checks,
+      aiUsage: { byModel: [] },
+      nowMs: Date.parse("2026-09-05T00:05:00.000Z"),
+    });
+    const whatsapp = health.messaging.find((item) => item.channel === "whatsapp");
+    assert.equal(whatsapp.status, "error");
+    assert.match(whatsapp.evidence, /webhook configuration is incomplete/i);
+    assert.equal(health.overall.status, "error");
+  } finally {
+    restore();
+  }
 });
 
 test("a newer delivery failure warns until a later successful outbound confirms recovery", () => {
