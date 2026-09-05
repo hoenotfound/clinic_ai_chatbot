@@ -1,6 +1,6 @@
 const messagesRepo = require("../db/messagesRepo");
-const contactsRepo = require("../db/contactsRepo");
 const repository = require("../db/whatsappDeliveryStatusRepo");
+const telegramImmediateAlerts = require("./telegramImmediateAlertService");
 const realtimeEvents = require("../utils/realtimeEvents");
 
 const RECOVERY_INTERVAL_MS = 10 * 1000;
@@ -26,6 +26,14 @@ function defaultPublish(message) {
   });
 }
 
+function defaultPublishContact(contactId) {
+  if (!contactId) return;
+  realtimeEvents.publish("conversation_changed", {
+    contactId,
+    reason: "contact_state",
+  });
+}
+
 function retryableMissingWamidError(wamid) {
   const err = new Error(
     `WhatsApp delivery status arrived before message ${wamid} was linked locally.`
@@ -37,8 +45,9 @@ function retryableMissingWamidError(wamid) {
 function createWhatsAppDeliveryStatusService({
   repo = repository,
   messages = messagesRepo,
-  contacts = contactsRepo,
   publish = defaultPublish,
+  publishContact = defaultPublishContact,
+  sendDeliveryFailureAlert = telegramImmediateAlerts.sendDeliveryFailureAlert,
   logger = console,
 } = {}) {
   let recoveryRunning = false;
@@ -48,8 +57,44 @@ function createWhatsAppDeliveryStatusService({
     return repo.storeBatch(updates);
   }
 
+  function publishContactSafely(contactId) {
+    try {
+      publishContact(contactId);
+    } catch (err) {
+      logger.error("Failed to publish durable WhatsApp delivery attention state:", err);
+    }
+  }
+
+  function notifyDeliveryFailureBestEffort(contactId, reason) {
+    try {
+      Promise.resolve(
+        sendDeliveryFailureAlert({ contactId, reason })
+      ).catch((err) => {
+        logger.error(`Telegram delivery failure alert failed for contact ${contactId}:`, err);
+      });
+    } catch (err) {
+      logger.error(`Telegram delivery failure alert failed for contact ${contactId}:`, err);
+    }
+  }
+
+  async function restoreFailureAttention(job, updatedMessage) {
+    if (job.delivery_status !== "failed" || updatedMessage.delivery_status !== "failed") {
+      return null;
+    }
+
+    const reason = deliveryFailureReason(job);
+    const attentionReason = `Delivery failed: ${reason}`;
+    const updatedContact = await repo.setDeliveryAttentionState(
+      updatedMessage.contact_id,
+      attentionReason
+    );
+    if (updatedContact) publishContactSafely(updatedMessage.contact_id);
+    return { reason, attentionReason };
+  }
+
   async function processClaimedJob(job) {
     const errorText = job.error_message || job.error_title || null;
+    let statusAppliedNow = false;
     let updatedMessage = await messages.updateDeliveryStatusByWamid(
       job.wamid,
       job.delivery_status,
@@ -64,6 +109,7 @@ function createWhatsAppDeliveryStatusService({
       updatedMessage = await repo.findMessageByWamid(job.wamid);
       if (!updatedMessage) throw retryableMissingWamidError(job.wamid);
     } else {
+      statusAppliedNow = true;
       try {
         publish(updatedMessage);
       } catch (err) {
@@ -71,20 +117,22 @@ function createWhatsAppDeliveryStatusService({
       }
     }
 
-    if (job.delivery_status === "failed" && updatedMessage.delivery_status === "failed") {
-      const reason = deliveryFailureReason(job);
+    const failure = await restoreFailureAttention(job, updatedMessage);
+    if (failure) {
       logger.error(
         `Delivery failed for message ${job.wamid}${job.error_code ? ` (code ${job.error_code})` : ""}:`,
-        reason
+        failure.reason
       );
-      // If the process dies after the message status update but before this
-      // attention write, replay sees the already-failed message above and runs
-      // this step again. The database update itself is idempotent; Telegram is
-      // best-effort just like the existing delivery-failure path.
-      await contacts.setDeliveryAttention(
-        updatedMessage.contact_id,
-        `Delivery failed: ${reason}`
-      );
+
+      // Match the existing alert semantics: Telegram is a best-effort side
+      // notification for the original status transition. On replay we restore
+      // the durable Inbox attention state but do not emit another Telegram alert.
+      if (statusAppliedNow) {
+        notifyDeliveryFailureBestEffort(
+          updatedMessage.contact_id,
+          failure.attentionReason
+        );
+      }
     }
 
     await repo.markCompleted(job.id);
@@ -129,30 +177,28 @@ function createWhatsAppDeliveryStatusService({
     });
 
     for (const job of exhausted) {
+      // For a failed provider callback, restore the durable Inbox attention
+      // state before terminalizing the job. If this DB step fails, leave the
+      // row non-terminal so a later recovery sweep can try again. This removes
+      // the crash gap where terminal_at could previously be written first.
+      if (job.delivery_status === "failed") {
+        try {
+          const message = await repo.findMessageByWamid(job.wamid);
+          if (message?.delivery_status === "failed") {
+            await restoreFailureAttention(job, message);
+          }
+        } catch (err) {
+          logger.error(`Failed to surface exhausted delivery-status job ${job.id}:`, err);
+          continue;
+        }
+      }
+
       const terminal = await repo.markTerminal(job.id);
       if (!terminal) continue;
       logger.error(
         `WhatsApp delivery-status job ${job.id} exhausted ${job.attempts} attempts ` +
         `for ${job.wamid}/${job.delivery_status}. The durable row was retained for diagnosis.`
       );
-
-      // Failed delivery callbacks are actionable even if the worker exhausted
-      // on a later bookkeeping step. Best-effort surface them to staff once
-      // more before giving up; non-failure delivery states should not create a
-      // human-attention incident merely because bookkeeping failed.
-      if (job.delivery_status === "failed") {
-        try {
-          const message = await repo.findMessageByWamid(job.wamid);
-          if (message) {
-            await contacts.setDeliveryAttention(
-              message.contact_id,
-              `Delivery failed: ${deliveryFailureReason(job)}`
-            );
-          }
-        } catch (err) {
-          logger.error(`Failed to surface exhausted delivery-status job ${job.id}:`, err);
-        }
-      }
     }
   }
 
