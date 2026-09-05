@@ -2,8 +2,11 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  DEFAULT_INLINE_AUDIO_MAX_BYTES,
   DEFAULT_TRANSCRIPTION_MODEL,
+  buildInlineInteractionAudioInput,
   buildInteractionAudioInput,
+  createExactUploadBlob,
   getTranscriptionModel,
   normalizeAudioMimeType,
   prepareAudioForTranscription,
@@ -24,13 +27,18 @@ test("voice transcription defaults to the dedicated Gemini 3.5 Transcribe model"
   );
 });
 
-test("normalizes WhatsApp audio MIME types before upload", () => {
+test("normal voice notes stay safely below the 20 MB inline request ceiling", () => {
+  assert.equal(DEFAULT_INLINE_AUDIO_MAX_BYTES, 14 * 1024 * 1024);
+  assert.ok(Math.ceil(DEFAULT_INLINE_AUDIO_MAX_BYTES / 3) * 4 < 20 * 1024 * 1024);
+});
+
+test("normalizes WhatsApp audio MIME types before transcription", () => {
   assert.equal(normalizeAudioMimeType("audio/ogg; codecs=opus"), "audio/ogg");
   assert.equal(normalizeAudioMimeType("audio/webm;codecs=opus"), "audio/webm");
   assert.equal(normalizeAudioMimeType(""), "audio/ogg");
 });
 
-test("WhatsApp OGG/Opus is converted to a clean MP3 before Gemini upload", async () => {
+test("WhatsApp OGG/Opus is converted to a clean MP3 before Gemini transcription", async () => {
   const source = Buffer.from("raw-whatsapp-ogg");
   let converterInput = null;
   const prepared = await prepareAudioForTranscription(
@@ -76,7 +84,24 @@ test("failed local MP3 normalization falls back to the original provider-support
   assert.equal(prepared.mimeType, "audio/ogg");
 });
 
-test("builds the current Interactions API audio input shape", () => {
+test("builds inline Interactions audio from the exact prepared bytes", () => {
+  const audio = Buffer.from([0, 1, 2, 253, 254, 255]);
+  assert.deepEqual(
+    buildInlineInteractionAudioInput(audio, "audio/mpeg; codecs=mp3"),
+    {
+      type: "audio",
+      data: audio.toString("base64"),
+      mime_type: "audio/mpeg",
+    }
+  );
+
+  assert.throws(
+    () => buildInlineInteractionAudioInput(Buffer.alloc(0), "audio/mpeg"),
+    /empty or invalid/
+  );
+});
+
+test("builds the current Interactions API uploaded-audio input shape", () => {
   assert.deepEqual(
     buildInteractionAudioInput(
       {
@@ -96,6 +121,19 @@ test("builds the current Interactions API audio input shape", () => {
     () => buildInteractionAudioInput({ mimeType: "audio/mpeg" }, "audio/mpeg"),
     /did not return a usable file URI/
   );
+});
+
+test("large-file Blob contains only an offset Buffer view's intended bytes", async () => {
+  const expected = Buffer.from("voice-bytes");
+  const backing = Buffer.alloc(64, 0x7a);
+  expected.copy(backing, 17);
+  const offsetView = backing.subarray(17, 17 + expected.length);
+
+  assert.ok(offsetView.byteOffset > 0);
+  const blob = createExactUploadBlob(offsetView, "audio/mpeg");
+  assert.equal(blob.type, "audio/mpeg");
+  assert.equal(blob.size, expected.length);
+  assert.deepEqual(Buffer.from(await blob.arrayBuffer()), expected);
 });
 
 test("waits for a PROCESSING Gemini upload to become ACTIVE before inference", async () => {
@@ -193,7 +231,75 @@ test("FAILED Gemini file processing stops before model inference", async () => {
   );
 });
 
-test("transcription normalizes once, waits for ACTIVE, uses Interactions API output_text, and cleans up", async () => {
+test("normal transcription uses inline audio and completely skips Files API processing", async () => {
+  const calls = {
+    prepare: 0,
+    interaction: [],
+    files: 0,
+  };
+  const preparedBuffer = Buffer.from("clean-inline-mp3");
+  const ai = {
+    files: {
+      async upload() {
+        calls.files += 1;
+        throw new Error("normal voice note must not use Files API");
+      },
+      async get() {
+        calls.files += 1;
+        throw new Error("normal voice note must not poll Files API");
+      },
+      async delete() {
+        calls.files += 1;
+        throw new Error("normal voice note must not delete a nonexistent upload");
+      },
+    },
+  };
+
+  const transcript = await runTranscription(
+    Buffer.from("fake-voice-note"),
+    "audio/ogg; codecs=opus",
+    {
+      env: {},
+      async prepareAudio() {
+        calls.prepare += 1;
+        return { buffer: preparedBuffer, mimeType: "audio/mpeg" };
+      },
+      createClient(apiKey) {
+        assert.equal(apiKey, "key-a");
+        return ai;
+      },
+      async runWithKeys(operation, options) {
+        assert.deepEqual(options, { retryCount: 1 });
+        return operation("key-a");
+      },
+      async createInteraction(client, request, options) {
+        assert.equal(client, ai);
+        calls.interaction.push({ request, options });
+        return { output_text: "Hi 想问 HIFU price, weekend ada slot tak?" };
+      },
+    }
+  );
+
+  assert.equal(transcript, "Hi 想问 HIFU price, weekend ada slot tak?");
+  assert.equal(calls.prepare, 1);
+  assert.equal(calls.files, 0);
+  assert.equal(calls.interaction.length, 1);
+  assert.deepEqual(calls.interaction[0], {
+    request: {
+      model: "gemini-3.5-transcribe",
+      input: [
+        {
+          type: "audio",
+          data: preparedBuffer.toString("base64"),
+          mime_type: "audio/mpeg",
+        },
+      ],
+    },
+    options: { purpose: "voice_transcription" },
+  });
+});
+
+test("large transcription keeps Files API fallback, waits for ACTIVE, and cleans up", async () => {
   const calls = {
     prepare: 0,
     upload: [],
@@ -230,6 +336,7 @@ test("transcription normalizes once, waits for ACTIVE, uses Interactions API out
     "audio/ogg; codecs=opus",
     {
       env: {},
+      inlineAudioMaxBytes: 0,
       async prepareAudio() {
         calls.prepare += 1;
         return { buffer: preparedBuffer, mimeType: "audio/mpeg" };
@@ -255,6 +362,10 @@ test("transcription normalizes once, waits for ACTIVE, uses Interactions API out
   assert.equal(calls.upload.length, 1);
   assert.equal(calls.upload[0].file.type, "audio/mpeg");
   assert.equal(calls.upload[0].file.size, preparedBuffer.length);
+  assert.deepEqual(
+    Buffer.from(await calls.upload[0].file.arrayBuffer()),
+    preparedBuffer
+  );
   assert.deepEqual(calls.upload[0].config, { mimeType: "audio/mpeg" });
   assert.deepEqual(calls.get, [{ name: "files/voice-test" }]);
 
@@ -279,22 +390,7 @@ test("transcription never reads the legacy GenerateContent response.text getter"
   const transcript = await runTranscription(Buffer.from("voice"), "audio/mpeg", {
     env: {},
     createClient() {
-      return {
-        files: {
-          async upload() {
-            return {
-              name: "files/no-legacy-text",
-              uri: "https://generativelanguage.googleapis.com/v1beta/files/no-legacy-text",
-              mimeType: "audio/mpeg",
-              state: "ACTIVE",
-            };
-          },
-          async get() {
-            throw new Error("get should not be needed for an ACTIVE upload");
-          },
-          async delete() {},
-        },
-      };
+      return { files: {} };
     },
     async runWithKeys(operation) {
       return operation("key-a");
@@ -314,12 +410,13 @@ test("transcription never reads the legacy GenerateContent response.text getter"
   assert.equal(legacyTextRead, false);
 });
 
-test("uploaded-file cleanup failure does not discard a successful transcript", async () => {
+test("uploaded-file cleanup failure does not discard a successful large-file transcript", async () => {
   const transcript = await runTranscription(
     Buffer.from("voice"),
     "audio/mpeg",
     {
       env: {},
+      inlineAudioMaxBytes: 0,
       createClient() {
         return {
           files: {
@@ -352,7 +449,7 @@ test("uploaded-file cleanup failure does not discard a successful transcript", a
   assert.equal(transcript, "boleh book esok?");
 });
 
-test("missing upload URI fails safely instead of sending an invalid interaction input", async () => {
+test("missing large-file upload URI fails safely instead of sending invalid interaction input", async () => {
   let interacted = false;
   let deleted = false;
   const transcript = await runTranscription(
@@ -360,6 +457,7 @@ test("missing upload URI fails safely instead of sending an invalid interaction 
     "audio/mpeg",
     {
       env: {},
+      inlineAudioMaxBytes: 0,
       createClient() {
         return {
           files: {
@@ -394,22 +492,7 @@ test("empty Interactions output returns null without throwing", async () => {
   const transcript = await runTranscription(Buffer.from("voice"), "audio/mpeg", {
     env: {},
     createClient() {
-      return {
-        files: {
-          async upload() {
-            return {
-              name: "files/empty-output",
-              uri: "https://generativelanguage.googleapis.com/v1beta/files/empty-output",
-              mimeType: "audio/mpeg",
-              state: "ACTIVE",
-            };
-          },
-          async get() {
-            throw new Error("get should not be needed for an ACTIVE upload");
-          },
-          async delete() {},
-        },
-      };
+      return { files: {} };
     },
     async runWithKeys(operation) {
       return operation("key-a");
