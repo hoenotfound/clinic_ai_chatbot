@@ -10,9 +10,13 @@ test("inbound health metrics combine durable message and Meta-resolution queues"
   const queryable = {
     async query(sql, params = []) {
       if (/FROM inbound_processing_jobs/.test(sql)) {
+        assert.match(sql, /terminal_at >= NOW\(\) - \(\$1::int \* interval '1 hour'\)/);
+        assert.deepEqual(params, [24]);
         return { rows: [{ pending_count: 1, processing_count: 2, retryable_failed_count: 0, terminal_count: 1, oldest_open_at: new Date("2026-09-05T00:01:00Z") }] };
       }
       if (/FROM inbound_meta_resolution_jobs/.test(sql)) {
+        assert.match(sql, /terminal_at >= NOW\(\) - \(\$1::int \* interval '1 hour'\)/);
+        assert.deepEqual(params, [24]);
         return { rows: [{ pending_count: 2, processing_count: 0, retryable_failed_count: 1, terminal_count: 0, oldest_open_at: new Date("2026-09-05T00:02:00Z") }] };
       }
       if (/FROM inbound_failure_events/.test(sql)) {
