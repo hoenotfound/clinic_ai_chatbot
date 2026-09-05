@@ -39,10 +39,17 @@ function harness({ claimed = [], updateResult = null, existingMessage = null } =
       calls.push(["markFailed", id, err.code || err.message]);
       return { id };
     },
-    markTerminal: async (id) => ({ id }),
+    markTerminal: async (id) => {
+      calls.push(["markTerminal", id]);
+      return { id };
+    },
     findMessageByWamid: async (wamid) => {
       calls.push(["findMessageByWamid", wamid]);
       return existingMessage;
+    },
+    setDeliveryAttentionState: async (contactId, reason) => {
+      calls.push(["setDeliveryAttentionState", contactId, reason]);
+      return { id: contactId };
     },
     pruneCompleted: async () => 0,
   };
@@ -52,12 +59,21 @@ function harness({ claimed = [], updateResult = null, existingMessage = null } =
       return updateResult;
     },
   };
-  const contacts = {
-    setDeliveryAttention: async (...args) => calls.push(["setDeliveryAttention", ...args]),
-  };
   const publish = (message) => calls.push(["publish", message.id]);
+  const publishContact = (contactId) => calls.push(["publishContact", contactId]);
+  const sendDeliveryFailureAlert = async (input) => {
+    calls.push(["sendDeliveryFailureAlert", input.contactId, input.reason]);
+    return { status: "sent" };
+  };
   const logger = { error() {} };
-  const service = createWhatsAppDeliveryStatusService({ repo, messages, contacts, publish, logger });
+  const service = createWhatsAppDeliveryStatusService({
+    repo,
+    messages,
+    publish,
+    publishContact,
+    sendDeliveryFailureAlert,
+    logger,
+  });
   return { calls, repo, service };
 }
 
@@ -83,7 +99,8 @@ test("live durable status is claimed, applied, published and completed", async (
   ]);
   assert.ok(calls.some((call) => call[0] === "publish" && call[1] === 41));
   assert.ok(calls.some((call) => call[0] === "markCompleted" && call[1] === statusJob.id));
-  assert.equal(calls.some((call) => call[0] === "setDeliveryAttention"), false);
+  assert.equal(calls.some((call) => call[0] === "setDeliveryAttentionState"), false);
+  assert.equal(calls.some((call) => call[0] === "sendDeliveryFailureAlert"), false);
 });
 
 test("callback that beats local WAMID persistence stays retryable", async () => {
@@ -99,15 +116,44 @@ test("callback that beats local WAMID persistence stays retryable", async () => 
   assert.equal(calls.some((call) => call[0] === "markCompleted"), false);
 });
 
-test("replayed no-op failed status still restores staff attention before completion", async () => {
+test("new failed status restores Inbox attention and sends one best-effort Telegram alert", async () => {
   const statusJob = job({
     id: 9,
     delivery_status: "failed",
     error_code: "131047",
     error_message: "Message failed at provider",
   });
-  const existing = {
+  const updated = {
     id: 51,
+    contact_id: 12,
+    whatsapp_message_id: statusJob.wamid,
+    delivery_status: "failed",
+    delivery_error: statusJob.error_message,
+  };
+  const { calls, service } = harness({ claimed: [statusJob], updateResult: updated });
+
+  await service.processStoredDeliveryStatuses([{ id: statusJob.id }]);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.ok(calls.some((call) =>
+    call[0] === "setDeliveryAttentionState" &&
+    call[1] === 12 &&
+    call[2] === "Delivery failed: Message failed at provider"
+  ));
+  assert.ok(calls.some((call) => call[0] === "publishContact" && call[1] === 12));
+  assert.equal(calls.filter((call) => call[0] === "sendDeliveryFailureAlert").length, 1);
+  assert.ok(calls.some((call) => call[0] === "markCompleted" && call[1] === statusJob.id));
+});
+
+test("replayed no-op failed status restores durable attention without duplicating Telegram", async () => {
+  const statusJob = job({
+    id: 10,
+    delivery_status: "failed",
+    error_code: "131047",
+    error_message: "Message failed at provider",
+  });
+  const existing = {
+    id: 52,
     contact_id: 12,
     whatsapp_message_id: statusJob.wamid,
     delivery_status: "failed",
@@ -116,22 +162,77 @@ test("replayed no-op failed status still restores staff attention before complet
   const { calls, service } = harness({ claimed: [statusJob], updateResult: null, existingMessage: existing });
 
   await service.processStoredDeliveryStatuses([{ id: statusJob.id }]);
+  await new Promise((resolve) => setImmediate(resolve));
 
   assert.ok(calls.some((call) =>
-    call[0] === "setDeliveryAttention" &&
+    call[0] === "setDeliveryAttentionState" &&
     call[1] === 12 &&
     call[2] === "Delivery failed: Message failed at provider"
   ));
+  assert.equal(calls.some((call) => call[0] === "sendDeliveryFailureAlert"), false);
   assert.ok(calls.some((call) => call[0] === "markCompleted" && call[1] === statusJob.id));
 });
 
-test("recovery claims retryable work and leaves exhausted rows terminal", async () => {
-  const retryJob = job({ id: 10, delivery_status: "read", attempts: 2 });
-  const exhaustedJob = job({ id: 11, delivery_status: "delivered", attempts: 5 });
+test("exhausted failed job restores attention before terminal state", async () => {
+  const exhaustedJob = job({
+    id: 11,
+    delivery_status: "failed",
+    attempts: 5,
+    error_message: "Permanent provider failure",
+  });
+  const existing = {
+    id: 61,
+    contact_id: 13,
+    whatsapp_message_id: exhaustedJob.wamid,
+    delivery_status: "failed",
+    delivery_error: exhaustedJob.error_message,
+  };
+  const { calls, repo, service } = harness({ existingMessage: existing });
+  repo.listExhausted = async () => [exhaustedJob];
+
+  await service.runRecovery();
+
+  const attentionIndex = calls.findIndex((call) => call[0] === "setDeliveryAttentionState");
+  const terminalIndex = calls.findIndex((call) => call[0] === "markTerminal");
+  assert.ok(attentionIndex >= 0);
+  assert.ok(terminalIndex > attentionIndex, "attention must be durable before terminalizing the job");
+  assert.equal(calls.some((call) => call[0] === "sendDeliveryFailureAlert"), false);
+});
+
+test("exhausted failed job stays non-terminal when attention restoration fails", async () => {
+  const exhaustedJob = job({
+    id: 12,
+    delivery_status: "failed",
+    attempts: 5,
+    error_message: "Permanent provider failure",
+  });
+  const existing = {
+    id: 62,
+    contact_id: 14,
+    whatsapp_message_id: exhaustedJob.wamid,
+    delivery_status: "failed",
+    delivery_error: exhaustedJob.error_message,
+  };
+  const { calls, repo, service } = harness({ existingMessage: existing });
+  repo.listExhausted = async () => [exhaustedJob];
+  repo.setDeliveryAttentionState = async () => {
+    calls.push(["setDeliveryAttentionState", 14]);
+    throw new Error("database unavailable");
+  };
+
+  await service.runRecovery();
+
+  assert.ok(calls.some((call) => call[0] === "setDeliveryAttentionState"));
+  assert.equal(calls.some((call) => call[0] === "markTerminal"), false);
+});
+
+test("recovery claims retryable work and terminalizes exhausted non-failure rows", async () => {
+  const retryJob = job({ id: 13, delivery_status: "read", attempts: 2 });
+  const exhaustedJob = job({ id: 14, delivery_status: "delivered", attempts: 5 });
   const { calls, repo, service } = harness({
     updateResult: {
-      id: 61,
-      contact_id: 13,
+      id: 63,
+      contact_id: 15,
       whatsapp_message_id: retryJob.wamid,
       delivery_status: "read",
       delivery_error: null,
@@ -139,10 +240,6 @@ test("recovery claims retryable work and leaves exhausted rows terminal", async 
   });
   repo.claimRecoverable = async () => [retryJob];
   repo.listExhausted = async () => [exhaustedJob];
-  repo.markTerminal = async (id) => {
-    calls.push(["markTerminal", id]);
-    return { id, terminal_at: new Date() };
-  };
 
   await service.runRecovery();
 
