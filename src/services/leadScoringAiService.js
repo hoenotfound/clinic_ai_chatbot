@@ -5,7 +5,7 @@ const { generateGeminiContent } = require("./aiUsageService");
 const { runWithGeminiKeys } = require("./geminiKeyPool");
 
 const PROVIDER = (process.env.AI_PROVIDER || "gemini").toLowerCase();
-const GEMINI_MODEL = process.env.LEAD_SCORING_GEMINI_MODEL || process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_MODEL = process.env.LEAD_SCORING_GEMINI_MODEL || "gemini-3.6-flash";
 const CLAUDE_MODEL = process.env.LEAD_SCORING_CLAUDE_MODEL || "claude-sonnet-5";
 const PROMPT_VERSION = "lead-temperature-v3";
 const MAX_REASON_CHARS = 240;
@@ -285,7 +285,7 @@ async function scoreWithGemini(input) {
             maxOutputTokens: 700,
             responseMimeType: "application/json",
             responseJsonSchema: SCORE_JSON_SCHEMA,
-            thinkingConfig: { thinkingBudget: 0 },
+            thinkingConfig: { thinkingLevel: "minimal" },
           },
         },
         { purpose: "lead_scoring" }
@@ -338,6 +338,7 @@ async function scoreLeadConversation(input) {
 }
 
 module.exports = {
+  GEMINI_MODEL,
   GEMINI_TRANSIENT_RETRY_DELAYS_MS,
   PROMPT_VERSION,
   buildLeadScorePrompt,
