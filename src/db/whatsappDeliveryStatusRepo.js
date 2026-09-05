@@ -9,6 +9,10 @@ function cleanNullable(value) {
   return text || null;
 }
 
+function newLeaseToken() {
+  return crypto.randomBytes(16).toString("hex");
+}
+
 function normalizeUpdate(update) {
   const wamid = cleanNullable(update?.wamid);
   const deliveryStatus = cleanNullable(update?.status)?.toLowerCase() || null;
@@ -70,6 +74,7 @@ async function claimByIds(ids, query = pool.query.bind(pool)) {
     .filter((id) => Number.isSafeInteger(id) && id > 0);
   if (!cleanIds.length) return [];
 
+  const leaseToken = newLeaseToken();
   const result = await query(
     `WITH candidates AS (
        SELECT id
@@ -84,12 +89,13 @@ async function claimByIds(ids, query = pool.query.bind(pool)) {
      SET processing_status = 'processing',
          attempts = job.attempts + 1,
          claimed_at = NOW(),
+         lease_token = $2,
          last_error = NULL,
          updated_at = NOW()
      FROM candidates
      WHERE job.id = candidates.id
      RETURNING job.*`,
-    [cleanIds]
+    [cleanIds, leaseToken]
   );
   return result.rows;
 }
@@ -98,6 +104,7 @@ async function claimRecoverable(
   { limit = 50, staleAfterSeconds = 60, maxAttempts = 5 } = {},
   query = pool.query.bind(pool)
 ) {
+  const leaseToken = newLeaseToken();
   const result = await query(
     `WITH candidates AS (
        SELECT id
@@ -119,12 +126,13 @@ async function claimRecoverable(
      SET processing_status = 'processing',
          attempts = job.attempts + 1,
          claimed_at = NOW(),
+         lease_token = $4,
          last_error = NULL,
          updated_at = NOW()
      FROM candidates
      WHERE job.id = candidates.id
      RETURNING job.*`,
-    [limit, staleAfterSeconds, maxAttempts]
+    [limit, staleAfterSeconds, maxAttempts, leaseToken]
   );
   return result.rows;
 }
@@ -150,36 +158,42 @@ async function listExhausted(
   return result.rows;
 }
 
-async function markCompleted(id, query = pool.query.bind(pool)) {
+async function markCompleted(id, leaseToken, query = pool.query.bind(pool)) {
+  if (!leaseToken) return null;
   const result = await query(
     `UPDATE whatsapp_delivery_status_jobs
      SET processing_status = 'completed',
          completed_at = NOW(),
          claimed_at = NULL,
+         lease_token = NULL,
          last_error = NULL,
          updated_at = NOW()
      WHERE id = $1
+       AND lease_token = $2
        AND terminal_at IS NULL
-       AND processing_status <> 'completed'
+       AND processing_status = 'processing'
      RETURNING *`,
-    [id]
+    [id, leaseToken]
   );
   return result.rows[0] || null;
 }
 
-async function markFailed(id, error, query = pool.query.bind(pool)) {
+async function markFailed(id, leaseToken, error, query = pool.query.bind(pool)) {
+  if (!leaseToken) return null;
   const message = String(error?.message || error || "Delivery-status processing failed.").slice(0, 1000);
   const result = await query(
     `UPDATE whatsapp_delivery_status_jobs
      SET processing_status = 'failed',
          claimed_at = NULL,
-         last_error = $2,
+         lease_token = NULL,
+         last_error = $3,
          updated_at = NOW()
      WHERE id = $1
+       AND lease_token = $2
        AND terminal_at IS NULL
-       AND processing_status <> 'completed'
+       AND processing_status = 'processing'
      RETURNING *`,
-    [id, message]
+    [id, leaseToken, message]
   );
   return result.rows[0] || null;
 }
@@ -189,6 +203,7 @@ async function markTerminal(id, query = pool.query.bind(pool)) {
     `UPDATE whatsapp_delivery_status_jobs
      SET processing_status = 'failed',
          claimed_at = NULL,
+         lease_token = NULL,
          terminal_at = COALESCE(terminal_at, NOW()),
          updated_at = NOW()
      WHERE id = $1
