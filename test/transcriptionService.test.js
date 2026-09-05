@@ -7,6 +7,7 @@ const {
   getTranscriptionModel,
   normalizeAudioMimeType,
   runTranscription,
+  waitForUploadedFileActive,
 } = require("../src/services/transcriptionService");
 
 test("voice transcription defaults to the dedicated Gemini 3.5 Transcribe model", () => {
@@ -51,9 +52,105 @@ test("builds an explicit fileData part compatible with the pinned Gemini SDK", (
   );
 });
 
-test("transcription uploads audio, sends explicit fileData, uses verbatim auto-language detection, and cleans up", async () => {
+test("waits for a PROCESSING Gemini upload to become ACTIVE before inference", async () => {
+  let nowMs = 0;
+  const sleeps = [];
+  const gets = [];
+  const processingFile = {
+    name: "files/processing-test",
+    uri: "https://generativelanguage.googleapis.com/v1beta/files/processing-test",
+    mimeType: "audio/ogg",
+    state: "PROCESSING",
+  };
+  const activeFile = { ...processingFile, state: "ACTIVE" };
+
+  const ready = await waitForUploadedFileActive(
+    {
+      files: {
+        async get(args) {
+          gets.push(args);
+          return activeFile;
+        },
+      },
+    },
+    processingFile,
+    {
+      timeoutMs: 2000,
+      pollIntervalMs: 250,
+      clock: () => nowMs,
+      async sleepFn(ms) {
+        sleeps.push(ms);
+        nowMs += ms;
+      },
+    }
+  );
+
+  assert.equal(ready.state, "ACTIVE");
+  assert.deepEqual(sleeps, [250]);
+  assert.deepEqual(gets, [{ name: "files/processing-test" }]);
+});
+
+test("file-processing timeout stops key rotation because the credential is not at fault", async () => {
+  let nowMs = 0;
+  const processingFile = {
+    name: "files/slow-test",
+    uri: "https://generativelanguage.googleapis.com/v1beta/files/slow-test",
+    mimeType: "audio/ogg",
+    state: "PROCESSING",
+  };
+
+  await assert.rejects(
+    waitForUploadedFileActive(
+      {
+        files: {
+          async get() {
+            return processingFile;
+          },
+        },
+      },
+      processingFile,
+      {
+        timeoutMs: 500,
+        pollIntervalMs: 250,
+        clock: () => nowMs,
+        async sleepFn(ms) {
+          nowMs += ms;
+        },
+      }
+    ),
+    (err) => {
+      assert.equal(err.code, "GEMINI_FILE_PROCESSING_TIMEOUT");
+      assert.equal(err.stopGeminiKeyRotation, true);
+      return true;
+    }
+  );
+});
+
+test("FAILED Gemini file processing stops before model inference", async () => {
+  const failedFile = {
+    name: "files/failed-test",
+    uri: "https://generativelanguage.googleapis.com/v1beta/files/failed-test",
+    mimeType: "audio/ogg",
+    state: "FAILED",
+  };
+
+  await assert.rejects(
+    waitForUploadedFileActive(
+      { files: { async get() { return failedFile; } } },
+      failedFile
+    ),
+    (err) => {
+      assert.equal(err.code, "GEMINI_FILE_PROCESSING_FAILED");
+      assert.equal(err.stopGeminiKeyRotation, true);
+      return true;
+    }
+  );
+});
+
+test("transcription uploads audio, waits for ACTIVE, sends explicit fileData, and cleans up", async () => {
   const calls = {
     upload: [],
+    get: [],
     generate: [],
     delete: [],
   };
@@ -62,12 +159,17 @@ test("transcription uploads audio, sends explicit fileData, uses verbatim auto-l
     uri: "https://generativelanguage.googleapis.com/v1beta/files/voice-test",
     mimeType: "audio/ogg",
   };
+  const activeFile = { ...uploadedFile, state: "ACTIVE" };
 
   const ai = {
     files: {
       async upload(args) {
         calls.upload.push(args);
         return uploadedFile;
+      },
+      async get(args) {
+        calls.get.push(args);
+        return activeFile;
       },
       async delete(args) {
         calls.delete.push(args);
@@ -101,6 +203,7 @@ test("transcription uploads audio, sends explicit fileData, uses verbatim auto-l
   assert.equal(calls.upload[0].file.type, "audio/ogg");
   assert.equal(calls.upload[0].file.size, Buffer.byteLength("fake-voice-note"));
   assert.deepEqual(calls.upload[0].config, { mimeType: "audio/ogg" });
+  assert.deepEqual(calls.get, [{ name: "files/voice-test" }]);
 
   assert.equal(calls.generate.length, 1);
   const { request, options } = calls.generate[0];
@@ -108,7 +211,7 @@ test("transcription uploads audio, sends explicit fileData, uses verbatim auto-l
   assert.deepEqual(request.contents, [
     {
       fileData: {
-        fileUri: uploadedFile.uri,
+        fileUri: activeFile.uri,
         mimeType: "audio/ogg",
       },
     },
@@ -137,7 +240,11 @@ test("uploaded-file cleanup failure does not discard a successful transcript", a
                 name: "files/cleanup-test",
                 uri: "https://generativelanguage.googleapis.com/v1beta/files/cleanup-test",
                 mimeType: "audio/ogg",
+                state: "ACTIVE",
               };
+            },
+            async get() {
+              throw new Error("get should not be needed for an ACTIVE upload");
             },
             async delete() {
               throw new Error("cleanup unavailable");
@@ -169,7 +276,10 @@ test("missing upload URI fails safely instead of sending an empty Gemini content
         return {
           files: {
             async upload() {
-              return { name: "files/no-uri", mimeType: "audio/ogg" };
+              return { name: "files/no-uri", mimeType: "audio/ogg", state: "ACTIVE" };
+            },
+            async get() {
+              throw new Error("get should not be needed for an ACTIVE upload");
             },
             async delete() {
               deleted = true;
@@ -178,11 +288,7 @@ test("missing upload URI fails safely instead of sending an empty Gemini content
         };
       },
       async runWithKeys(operation) {
-        try {
-          return await operation("key-a");
-        } catch (err) {
-          throw err;
-        }
+        return operation("key-a");
       },
       async generateContent() {
         generated = true;
