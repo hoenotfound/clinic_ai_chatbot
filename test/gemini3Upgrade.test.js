@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const geminiService = require("../src/services/geminiService");
 const {
@@ -15,6 +17,10 @@ const {
   checkGeminiConnection,
 } = require("../src/services/geminiSetupCheckService");
 
+function source(file) {
+  return fs.readFileSync(path.join(__dirname, "..", file), "utf8");
+}
+
 test("Gemini 3 production defaults are pinned and require no model env variables", () => {
   assert.equal(DEFAULT_GEMINI_MODEL, "gemini-3.8-flash");
   assert.equal(DEFAULT_GEMINI_ALTERNATE_MODEL, "gemini-3.5-flash-lite");
@@ -22,6 +28,31 @@ test("Gemini 3 production defaults are pinned and require no model env variables
   assert.deepEqual(
     getGeminiReplyModels({}),
     ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
+  );
+});
+
+test("complete emergency 2.5 rollback keeps both customer reply models on 2.5", () => {
+  assert.deepEqual(
+    getGeminiReplyModels({
+      GEMINI_MODEL: "gemini-2.5-flash",
+      GEMINI_FALLBACK_MODEL: "gemini-2.5-flash-lite",
+    }),
+    ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+  );
+});
+
+test("reply model upgrade does not change background Gemini model defaults", () => {
+  assert.match(
+    source("src/services/leadScoringAiService.js"),
+    /LEAD_SCORING_GEMINI_MODEL \|\| process\.env\.GEMINI_MODEL \|\| "gemini-2\.5-flash"/
+  );
+  assert.match(
+    source("src/services/followUpTranslationService.js"),
+    /process\.env\.GEMINI_MODEL \|\| "gemini-2\.5-flash"/
+  );
+  assert.match(
+    source("src/services/transcriptionService.js"),
+    /GEMINI_TRANSCRIBE_MODEL \|\| process\.env\.GEMINI_MODEL \|\| "gemini-2\.5-flash"/
   );
 });
 
