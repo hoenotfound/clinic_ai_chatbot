@@ -64,19 +64,16 @@ test("non-WhatsApp audio bypasses FFmpeg normalization", async () => {
   assert.equal(prepared.mimeType, "audio/mpeg");
 });
 
-test("failed local audio normalization stops before any Gemini key is used", async () => {
-  await assert.rejects(
-    prepareAudioForTranscription(Buffer.from("voice"), "audio/ogg", {
-      async convertToMp3Fn() {
-        return null;
-      },
-    }),
-    (err) => {
-      assert.equal(err.code, "AUDIO_NORMALIZATION_FAILED");
-      assert.equal(err.stopGeminiKeyRotation, true);
-      return true;
-    }
-  );
+test("failed local MP3 normalization falls back to the original provider-supported audio", async () => {
+  const source = Buffer.from("voice");
+  const prepared = await prepareAudioForTranscription(source, "audio/ogg; codecs=opus", {
+    async convertToMp3Fn() {
+      return null;
+    },
+  });
+
+  assert.equal(prepared.buffer, source);
+  assert.equal(prepared.mimeType, "audio/ogg");
 });
 
 test("builds an explicit fileData part compatible with the pinned Gemini SDK", () => {
