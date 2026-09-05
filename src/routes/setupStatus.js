@@ -4,6 +4,7 @@ const setupStatusRepo = require("../db/setupStatusRepo");
 const aiService = require("../services/aiService");
 const aiUsage = require("../services/aiUsageService");
 const geminiSetupCheck = require("../services/geminiSetupCheckService");
+const systemHealthService = require("../services/systemHealthService");
 
 const router = express.Router();
 
@@ -176,12 +177,29 @@ async function addAiUsage(overview) {
   }
 }
 
+async function addSystemHealth(overview) {
+  try {
+    const systemHealth = await systemHealthService.getSystemHealth({
+      checks: overview?.checks || [],
+      aiUsage: overview?.aiUsage || null,
+    });
+    return { ...overview, systemHealth };
+  } catch (err) {
+    console.warn("Could not load operational health summary:", err?.message || err);
+    return overview;
+  }
+}
+
+async function decorateOverview(overview) {
+  return addSystemHealth(await addAiUsage(overview));
+}
+
 router.use(requireAdministrator);
 
 router.get("/", async (req, res) => {
   try {
     const overview = await setupStatus.getOverview({ requestBaseUrl: requestBaseUrl(req) });
-    res.json(await addAiUsage(overview));
+    res.json(await decorateOverview(overview));
   } catch (err) {
     console.error("Failed to load setup status:", err);
     res.status(500).json({ error: "Something went wrong loading setup status." });
@@ -191,7 +209,7 @@ router.get("/", async (req, res) => {
 router.post("/run", async (req, res) => {
   try {
     const overview = await setupStatus.runAll({ requestBaseUrl: requestBaseUrl(req) });
-    res.json(await addAiUsage(overview));
+    res.json(await decorateOverview(overview));
   } catch (err) {
     console.error("Failed to run setup checks:", err);
     res.status(500).json({ error: "Something went wrong running setup checks." });
@@ -200,6 +218,8 @@ router.post("/run", async (req, res) => {
 
 module.exports = router;
 module.exports.addAiUsage = addAiUsage;
+module.exports.addSystemHealth = addSystemHealth;
+module.exports.decorateOverview = decorateOverview;
 module.exports.failureCount = failureCount;
 module.exports.requireAdministrator = requireAdministrator;
 module.exports.runAllGeminiMetadataChecks = runAllGeminiMetadataChecks;
