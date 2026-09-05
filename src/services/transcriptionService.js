@@ -4,6 +4,8 @@ const { generateGeminiContent } = require("./aiUsageService");
 const { runWithGeminiKeys } = require("./geminiKeyPool");
 
 const DEFAULT_TRANSCRIPTION_MODEL = "gemini-3.5-transcribe";
+const DEFAULT_FILE_PROCESSING_TIMEOUT_MS = 10 * 1000;
+const DEFAULT_FILE_PROCESSING_POLL_INTERVAL_MS = 250;
 
 function getTranscriptionModel(env = process.env) {
   return String(env.GEMINI_TRANSCRIBE_MODEL || DEFAULT_TRANSCRIPTION_MODEL).trim()
@@ -12,6 +14,73 @@ function getTranscriptionModel(env = process.env) {
 
 function normalizeAudioMimeType(mimeType) {
   return String(mimeType || "audio/ogg").split(";")[0].trim() || "audio/ogg";
+}
+
+function normalizeFileState(file) {
+  return String(file?.state || "").trim().toUpperCase();
+}
+
+function createFileProcessingError(message, code) {
+  const err = new Error(message);
+  err.code = code;
+  // PROCESSING/FAILED is a property of this uploaded file, not evidence that
+  // the API credential is unhealthy. Do not burn through every Gemini key for
+  // the same file-lifecycle condition.
+  err.stopGeminiKeyRotation = true;
+  return err;
+}
+
+async function waitForUploadedFileActive(
+  ai,
+  uploadedFile,
+  {
+    timeoutMs = DEFAULT_FILE_PROCESSING_TIMEOUT_MS,
+    pollIntervalMs = DEFAULT_FILE_PROCESSING_POLL_INTERVAL_MS,
+    clock = () => Date.now(),
+    sleepFn = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  } = {}
+) {
+  const name = String(uploadedFile?.name || "").trim();
+  if (!name || !ai?.files?.get) {
+    throw createFileProcessingError(
+      "Gemini Files API upload could not be checked for readiness.",
+      "INVALID_AI_RESPONSE"
+    );
+  }
+
+  let currentFile = uploadedFile;
+  const startedAt = clock();
+  let firstFetch = true;
+
+  while (true) {
+    const state = normalizeFileState(currentFile);
+    if (state === "ACTIVE") return currentFile;
+    if (state === "FAILED") {
+      throw createFileProcessingError(
+        `Gemini Files API could not process uploaded audio ${name}.`,
+        "GEMINI_FILE_PROCESSING_FAILED"
+      );
+    }
+
+    const elapsedMs = Math.max(0, clock() - startedAt);
+    if (elapsedMs >= timeoutMs) {
+      throw createFileProcessingError(
+        `Gemini Files API audio ${name} did not become ACTIVE within ${timeoutMs}ms.`,
+        "GEMINI_FILE_PROCESSING_TIMEOUT"
+      );
+    }
+
+    // Some SDK responses omit state on the immediate upload result. In that
+    // case fetch metadata straight away. When Google explicitly says the file
+    // is PROCESSING, give it a short bounded interval before checking again.
+    if (!firstFetch || state === "PROCESSING") {
+      const remainingMs = Math.max(1, timeoutMs - elapsedMs);
+      await sleepFn(Math.min(pollIntervalMs, remainingMs));
+    }
+
+    currentFile = await ai.files.get({ name });
+    firstFetch = false;
+  }
 }
 
 function buildUploadedAudioPart(uploadedFile, fallbackMimeType) {
@@ -65,19 +134,21 @@ async function runTranscription(
         let uploadedFile = null;
         try {
           // Gemini 3.5 Transcribe is a dedicated speech-to-text model. Use the
-          // Files API upload, then pass an explicit fileData part so this works
-          // with the repository's pinned @google/genai 2.17.1 transformer as
-          // well as newer SDK releases.
+          // Files API upload, wait for Google's asynchronous file processing to
+          // reach ACTIVE, then pass an explicit fileData part compatible with
+          // the repository's pinned @google/genai 2.17.1 transformer.
           uploadedFile = await ai.files.upload({
             file: new Blob([audioBuffer], { type: normalizedMimeType }),
             config: { mimeType: normalizedMimeType },
           });
 
+          const readyFile = await waitForUploadedFileActive(ai, uploadedFile);
+
           const response = await generateContent(
             ai,
             {
               model,
-              contents: [buildUploadedAudioPart(uploadedFile, normalizedMimeType)],
+              contents: [buildUploadedAudioPart(readyFile, normalizedMimeType)],
               config: {
                 maxOutputTokens: 500,
                 audioTranscriptionConfig: {
@@ -125,12 +196,16 @@ async function transcribeStaffAudio(audioBuffer, mimeType) {
 }
 
 module.exports = {
+  DEFAULT_FILE_PROCESSING_POLL_INTERVAL_MS,
+  DEFAULT_FILE_PROCESSING_TIMEOUT_MS,
   DEFAULT_TRANSCRIPTION_MODEL,
   buildUploadedAudioPart,
   deleteUploadedFile,
   getTranscriptionModel,
   normalizeAudioMimeType,
+  normalizeFileState,
   runTranscription,
   transcribeAudio,
   transcribeStaffAudio,
+  waitForUploadedFileActive,
 };
