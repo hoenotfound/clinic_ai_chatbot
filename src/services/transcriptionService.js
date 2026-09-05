@@ -7,6 +7,10 @@ const { runWithGeminiKeys } = require("./geminiKeyPool");
 const DEFAULT_TRANSCRIPTION_MODEL = "gemini-3.5-transcribe";
 const DEFAULT_FILE_PROCESSING_TIMEOUT_MS = 10 * 1000;
 const DEFAULT_FILE_PROCESSING_POLL_INTERVAL_MS = 250;
+// Interactions requests allow up to 20 MB total for inline audio. Base64 expands
+// binary data by roughly 4/3, so keep a conservative raw-audio ceiling below
+// that request limit. Normal WhatsApp voice notes are far smaller than this.
+const DEFAULT_INLINE_AUDIO_MAX_BYTES = 14 * 1024 * 1024;
 const LOSSY_WHATSAPP_MIME_TYPES = new Set(["audio/ogg", "audio/opus"]);
 
 function getTranscriptionModel(env = process.env) {
@@ -42,11 +46,9 @@ async function prepareAudioForTranscription(
     return { buffer: audioBuffer, mimeType: normalizedMimeType };
   }
 
-  // WhatsApp voice notes are normally Ogg/Opus. Gemini 3.5 Transcribe supports
-  // OGG/Opus, but real Meta voice-note containers have previously failed Files
-  // API processing. Prefer the app's proven FFmpeg MP3 normalization, while
-  // keeping the original provider-supported audio as a fallback if conversion
-  // cannot be completed locally.
+  // WhatsApp voice notes are normally Ogg/Opus. Normalize them to the app's
+  // proven MP3 representation before transcription so Gemini receives a simple,
+  // consistent speech container regardless of the original Meta voice note.
   const converted = await convertToMp3Fn(audioBuffer);
   if (!converted?.buffer || !Buffer.isBuffer(converted.buffer) || converted.buffer.length === 0) {
     console.warn(
@@ -129,6 +131,34 @@ function buildInteractionAudioInput(uploadedFile, fallbackMimeType) {
   };
 }
 
+function buildInlineInteractionAudioInput(audioBuffer, mimeType) {
+  if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) {
+    const err = new Error("Inline Gemini transcription audio is empty or invalid.");
+    err.code = "INVALID_AI_RESPONSE";
+    throw err;
+  }
+
+  return {
+    type: "audio",
+    data: audioBuffer.toString("base64"),
+    mime_type: normalizeAudioMimeType(mimeType),
+  };
+}
+
+function createExactUploadBlob(audioBuffer, mimeType) {
+  if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) {
+    const err = new Error("Gemini transcription upload audio is empty or invalid.");
+    err.code = "INVALID_AI_RESPONSE";
+    throw err;
+  }
+
+  // Node Buffers can be views into a larger pooled ArrayBuffer. Copy into a
+  // standalone Uint8Array before constructing a Blob so multipart upload never
+  // includes bytes outside this audio Buffer's byteOffset/byteLength window.
+  const exactBytes = Uint8Array.from(audioBuffer);
+  return new Blob([exactBytes], { type: normalizeAudioMimeType(mimeType) });
+}
+
 async function deleteUploadedFile(ai, uploadedFile) {
   const name = String(uploadedFile?.name || "").trim();
   if (!name || !ai?.files?.delete) return;
@@ -151,6 +181,7 @@ async function runTranscription(
     createInteraction = createGeminiInteraction,
     runWithKeys = runWithGeminiKeys,
     prepareAudio = prepareAudioForTranscription,
+    inlineAudioMaxBytes = DEFAULT_INLINE_AUDIO_MAX_BYTES,
   } = {}
 ) {
   if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) return null;
@@ -168,12 +199,31 @@ async function runTranscription(
         const ai = createClient(apiKey);
         let uploadedFile = null;
         try {
-          uploadedFile = await ai.files.upload({
-            file: new Blob([preparedAudio.buffer], { type: preparedAudio.mimeType }),
-            config: { mimeType: preparedAudio.mimeType },
-          });
+          let interactionAudioInput;
 
-          const readyFile = await waitForUploadedFileActive(ai, uploadedFile);
+          // Inline ordinary voice notes directly in the Interactions request.
+          // This removes the asynchronous Files API PROCESSING/FAILED step that
+          // can intermittently reject an otherwise valid short voice message.
+          if (preparedAudio.buffer.length <= Math.max(0, inlineAudioMaxBytes)) {
+            interactionAudioInput = buildInlineInteractionAudioInput(
+              preparedAudio.buffer,
+              preparedAudio.mimeType
+            );
+          } else {
+            // Keep Files API support for unusually large audio. Build the Blob
+            // from an exact byte copy so pooled Node Buffer backing memory can
+            // never corrupt the multipart upload.
+            uploadedFile = await ai.files.upload({
+              file: createExactUploadBlob(preparedAudio.buffer, preparedAudio.mimeType),
+              config: { mimeType: preparedAudio.mimeType },
+            });
+
+            const readyFile = await waitForUploadedFileActive(ai, uploadedFile);
+            interactionAudioInput = buildInteractionAudioInput(
+              readyFile,
+              preparedAudio.mimeType
+            );
+          }
 
           // Google's current Gemini 3.5 Transcribe guide uses the Interactions
           // API. It exposes a plain output_text convenience property and avoids
@@ -183,7 +233,7 @@ async function runTranscription(
             ai,
             {
               model,
-              input: [buildInteractionAudioInput(readyFile, preparedAudio.mimeType)],
+              input: [interactionAudioInput],
             },
             { purpose: "voice_transcription" }
           );
@@ -225,9 +275,12 @@ async function transcribeStaffAudio(audioBuffer, mimeType) {
 module.exports = {
   DEFAULT_FILE_PROCESSING_POLL_INTERVAL_MS,
   DEFAULT_FILE_PROCESSING_TIMEOUT_MS,
+  DEFAULT_INLINE_AUDIO_MAX_BYTES,
   DEFAULT_TRANSCRIPTION_MODEL,
   LOSSY_WHATSAPP_MIME_TYPES,
+  buildInlineInteractionAudioInput,
   buildInteractionAudioInput,
+  createExactUploadBlob,
   deleteUploadedFile,
   getTranscriptionModel,
   normalizeAudioMimeType,
