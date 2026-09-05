@@ -343,6 +343,7 @@ async function runWithGeminiKeys(
     fallbackTimeoutMs = 0,
     minRemainingKeyWindowMs = 0,
     smartRetry = false,
+    stopKeyRotationOnTimeout = false,
     smartRetryDelayMinMs = 500,
     smartRetryDelayMaxMs = 1000,
     persistHealth = true,
@@ -390,10 +391,9 @@ async function runWithGeminiKeys(
         ? computeAttemptTimeoutMs({
             remainingBudgetMs,
             candidatePosition,
-            // Smart customer-reply routing no longer spends time on another
-            // credential just because one generation is slow. Quota and
-            // rate-limit failures are fast and can still rotate normally.
-            totalCandidates: smartRetry ? 1 : available.length,
+            // When a later reply model is available, customer-reply timeouts
+            // switch models instead of spending reserved windows on more keys.
+            totalCandidates: stopKeyRotationOnTimeout ? 1 : available.length,
             preferredTimeoutMs: preferredTimeoutMs || timeoutMs,
             fallbackTimeoutMs: fallbackTimeoutMs || timeoutMs,
             minRemainingKeyWindowMs,
@@ -425,15 +425,23 @@ async function runWithGeminiKeys(
         const outcome = classifyCandidateHealthFailure(err);
 
         // A customer-reply timeout says the generation path was too slow, not
-        // that this API key is unhealthy. Do not poison key health or spend
-        // another request on the same model with a different credential.
+        // that this API key is unhealthy. Never poison key health for it. When
+        // another reply model is ready, switch models immediately; otherwise
+        // another key can still be tried as a last-resort single-model path.
         if (smartRetry && outcome.failureKind === "timeout") {
-          err.stopGeminiKeyRotation = true;
+          if (stopKeyRotationOnTimeout) {
+            err.stopGeminiKeyRotation = true;
+            console.warn(
+              `${candidate.label} timed out; stopping key rotation so the reply can switch models:`,
+              err?.message || err
+            );
+            throw err;
+          }
           console.warn(
-            `${candidate.label} timed out; stopping key rotation so the reply can switch models:`,
+            `${candidate.label} timed out; rotating without cooling the key because no reply-model fallback is available:`,
             err?.message || err
           );
-          throw err;
+          break;
         }
 
         recordCandidateHealth(candidate, outcome, {
