@@ -4,7 +4,7 @@ const { generateGeminiContent } = require("./aiUsageService");
 const { runWithGeminiKeys } = require("./geminiKeyPool");
 
 const provider = (process.env.AI_PROVIDER || "gemini").toLowerCase();
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_MODEL = process.env.FOLLOW_UP_TRANSLATION_GEMINI_MODEL || "gemini-3.6-flash";
 const CLAUDE_MODEL = "claude-sonnet-5";
 const LANGUAGE_KEYS = ["en", "ms", "zh"];
 
@@ -67,7 +67,7 @@ async function translateWithGemini(message) {
           config: {
             maxOutputTokens: 1800,
             responseMimeType: "application/json",
-            thinkingConfig: { thinkingBudget: 0 },
+            thinkingConfig: { thinkingLevel: "minimal" },
           },
         },
         { purpose: "follow_up_translation" }
@@ -95,4 +95,4 @@ async function translateFollowUp(message) {
   throw new Error(`Unsupported AI provider: ${provider}`);
 }
 
-module.exports = { parseTranslations, translateFollowUp };
+module.exports = { GEMINI_MODEL, parseTranslations, translateFollowUp };
