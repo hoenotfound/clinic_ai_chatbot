@@ -8,17 +8,11 @@ const crypto = require("crypto");
 ffmpeg.setFfmpegPath(ffmpegPath);
 const MAX_WHATSAPP_VOICE_SECONDS = 120;
 
-/**
- * Converts an audio buffer to MP3 — WhatsApp voice notes arrive as Ogg/Opus,
- * which Safari (desktop and iOS) cannot decode at all, so playing one back
- * in the Inbox on Safari shows a broken "unsupported format" placeholder.
- * MP3 plays in every major browser. Used only for what gets *stored and
- * played back* in the Inbox — transcription (transcriptionService.js) uses
- * the original Ogg/Opus buffer directly, since Gemini has no trouble with it.
- * @param {Buffer} inputBuffer
- * @returns {Promise<{buffer: Buffer, mimeType: string}|null>} null if conversion fails
- */
-async function convertToMp3(inputBuffer) {
+// Buffers are object keys, so WeakMap lets playback + transcription share one
+// conversion without retaining voice data after the caller releases the source.
+const mp3ConversionCache = new WeakMap();
+
+async function convertToMp3Uncached(inputBuffer) {
   const tmpDir = os.tmpdir();
   const id = crypto.randomUUID();
   const inputPath = path.join(tmpDir, `${id}-in.ogg`);
@@ -48,6 +42,45 @@ async function convertToMp3(inputBuffer) {
     await fs.unlink(inputPath).catch(() => {});
     await fs.unlink(outputPath).catch(() => {});
   }
+}
+
+/**
+ * Converts an audio buffer to MP3. WhatsApp voice notes arrive as Ogg/Opus,
+ * which Safari (desktop and iOS) cannot decode reliably, while Gemini Files
+ * processing is more reliable with the normalized MP3 copy.
+ *
+ * Parallel callers using the same Buffer object share the same in-flight
+ * conversion. This matters for inbound voice notes where Inbox playback and
+ * transcription start together.
+ *
+ * @param {Buffer} inputBuffer
+ * @returns {Promise<{buffer: Buffer, mimeType: string}|null>} null if conversion fails
+ */
+async function convertToMp3(inputBuffer) {
+  if (!Buffer.isBuffer(inputBuffer) || inputBuffer.length === 0) return null;
+
+  const cached = mp3ConversionCache.get(inputBuffer);
+  if (cached) return cached;
+
+  const pending = convertToMp3Uncached(inputBuffer);
+  mp3ConversionCache.set(inputBuffer, pending);
+  const result = await pending;
+
+  // Do not make a local FFmpeg failure sticky. A later explicit retry with the
+  // same Buffer should be allowed to try conversion again.
+  if (!result) mp3ConversionCache.delete(inputBuffer);
+  return result;
+}
+
+function rememberMp3ForSource(sourceBuffer, mp3Result) {
+  if (
+    !Buffer.isBuffer(sourceBuffer)
+    || !Buffer.isBuffer(mp3Result?.buffer)
+    || mp3Result.buffer.length === 0
+  ) {
+    return;
+  }
+  mp3ConversionCache.set(sourceBuffer, Promise.resolve(mp3Result));
 }
 
 function extensionForMimeType(mimeType) {
@@ -191,13 +224,20 @@ async function convertToWhatsAppVoice(inputBuffer, inputMimeType) {
       return null;
     }
 
+    const playback = { buffer: playbackBuffer, mimeType: "audio/mpeg" };
+
+    // Staff transcription receives the generated WhatsApp OGG buffer. Associate
+    // that exact Buffer with the MP3 we already produced so transcription can
+    // reuse it instead of transcoding OGG → MP3 a second time.
+    rememberMp3ForSource(whatsappBuffer, playback);
+
     return {
       whatsapp: {
         buffer: whatsappBuffer,
         mimeType: "audio/ogg",
         filename: "voice.ogg",
       },
-      playback: { buffer: playbackBuffer, mimeType: "audio/mpeg" },
+      playback,
     };
   } catch (err) {
     console.error("Voice-message conversion failed:", err);

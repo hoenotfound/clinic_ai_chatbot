@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  GEMINI_MODEL,
   GEMINI_TRANSIENT_RETRY_DELAYS_MS,
   buildLeadScorePrompt,
   isTransientAiError,
@@ -24,6 +25,10 @@ const summary = {
   chatSummary: "Customer asked about HIFU and then requested a Puchong booking for tomorrow.",
   nextAction: "Confirm an available time for tomorrow at Puchong.",
 };
+
+test("lead scoring defaults to current Gemini 3.6 Flash instead of retired 2.5", () => {
+  assert.equal(GEMINI_MODEL, "gemini-3.6-flash");
+});
 
 test("lead score prompt protects sales definitions and summary grounding", () => {
   const prompt = buildLeadScorePrompt({

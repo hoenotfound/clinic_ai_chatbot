@@ -6,6 +6,7 @@ const {
   buildUploadedAudioPart,
   getTranscriptionModel,
   normalizeAudioMimeType,
+  prepareAudioForTranscription,
   runTranscription,
   waitForUploadedFileActive,
 } = require("../src/services/transcriptionService");
@@ -29,25 +30,71 @@ test("normalizes WhatsApp audio MIME types before upload", () => {
   assert.equal(normalizeAudioMimeType(""), "audio/ogg");
 });
 
+test("WhatsApp OGG/Opus is converted to a clean MP3 before Gemini upload", async () => {
+  const source = Buffer.from("raw-whatsapp-ogg");
+  let converterInput = null;
+  const prepared = await prepareAudioForTranscription(
+    source,
+    "audio/ogg; codecs=opus",
+    {
+      async convertToMp3Fn(buffer) {
+        converterInput = buffer;
+        return { buffer: Buffer.from("clean-mp3"), mimeType: "audio/mpeg" };
+      },
+    }
+  );
+
+  assert.equal(converterInput, source);
+  assert.equal(prepared.buffer.toString(), "clean-mp3");
+  assert.equal(prepared.mimeType, "audio/mpeg");
+});
+
+test("non-WhatsApp audio bypasses FFmpeg normalization", async () => {
+  const source = Buffer.from("already-mp3");
+  let converted = false;
+  const prepared = await prepareAudioForTranscription(source, "audio/mpeg", {
+    async convertToMp3Fn() {
+      converted = true;
+      return null;
+    },
+  });
+
+  assert.equal(converted, false);
+  assert.equal(prepared.buffer, source);
+  assert.equal(prepared.mimeType, "audio/mpeg");
+});
+
+test("failed local MP3 normalization falls back to the original provider-supported audio", async () => {
+  const source = Buffer.from("voice");
+  const prepared = await prepareAudioForTranscription(source, "audio/ogg; codecs=opus", {
+    async convertToMp3Fn() {
+      return null;
+    },
+  });
+
+  assert.equal(prepared.buffer, source);
+  assert.equal(prepared.mimeType, "audio/ogg");
+});
+
 test("builds an explicit fileData part compatible with the pinned Gemini SDK", () => {
   assert.deepEqual(
     buildUploadedAudioPart(
       {
         uri: "https://generativelanguage.googleapis.com/v1beta/files/voice-test",
-        mimeType: "audio/ogg; codecs=opus",
+        mimeType: "audio/mpeg",
       },
-      "audio/webm"
+      "audio/mpeg"
     ),
     {
       fileData: {
         fileUri: "https://generativelanguage.googleapis.com/v1beta/files/voice-test",
-        mimeType: "audio/ogg",
+        mimeType: "audio/mpeg",
       },
     }
   );
 
   assert.throws(
-    () => buildUploadedAudioPart({ mimeType: "audio/ogg" }, "audio/ogg"),
+    () => buildUploadedAudioPart({ mimeType: "audio/mpeg" }, "audio/mpeg"),
     /did not return a usable file URI/
   );
 });
@@ -59,7 +106,7 @@ test("waits for a PROCESSING Gemini upload to become ACTIVE before inference", a
   const processingFile = {
     name: "files/processing-test",
     uri: "https://generativelanguage.googleapis.com/v1beta/files/processing-test",
-    mimeType: "audio/ogg",
+    mimeType: "audio/mpeg",
     state: "PROCESSING",
   };
   const activeFile = { ...processingFile, state: "ACTIVE" };
@@ -95,7 +142,7 @@ test("file-processing timeout stops key rotation because the credential is not a
   const processingFile = {
     name: "files/slow-test",
     uri: "https://generativelanguage.googleapis.com/v1beta/files/slow-test",
-    mimeType: "audio/ogg",
+    mimeType: "audio/mpeg",
     state: "PROCESSING",
   };
 
@@ -130,7 +177,7 @@ test("FAILED Gemini file processing stops before model inference", async () => {
   const failedFile = {
     name: "files/failed-test",
     uri: "https://generativelanguage.googleapis.com/v1beta/files/failed-test",
-    mimeType: "audio/ogg",
+    mimeType: "audio/mpeg",
     state: "FAILED",
   };
 
@@ -147,17 +194,19 @@ test("FAILED Gemini file processing stops before model inference", async () => {
   );
 });
 
-test("transcription uploads audio, waits for ACTIVE, sends explicit fileData, and cleans up", async () => {
+test("transcription normalizes once, waits for ACTIVE, sends MP3 fileData, and cleans up", async () => {
   const calls = {
+    prepare: 0,
     upload: [],
     get: [],
     generate: [],
     delete: [],
   };
+  const preparedBuffer = Buffer.from("clean-mp3");
   const uploadedFile = {
     name: "files/voice-test",
     uri: "https://generativelanguage.googleapis.com/v1beta/files/voice-test",
-    mimeType: "audio/ogg",
+    mimeType: "audio/mpeg",
   };
   const activeFile = { ...uploadedFile, state: "ACTIVE" };
 
@@ -182,6 +231,10 @@ test("transcription uploads audio, waits for ACTIVE, sends explicit fileData, an
     "audio/ogg; codecs=opus",
     {
       env: {},
+      async prepareAudio() {
+        calls.prepare += 1;
+        return { buffer: preparedBuffer, mimeType: "audio/mpeg" };
+      },
       createClient(apiKey) {
         assert.equal(apiKey, "key-a");
         return ai;
@@ -199,10 +252,11 @@ test("transcription uploads audio, waits for ACTIVE, sends explicit fileData, an
   );
 
   assert.equal(transcript, "Hi 想问 HIFU price, weekend ada slot tak?");
+  assert.equal(calls.prepare, 1);
   assert.equal(calls.upload.length, 1);
-  assert.equal(calls.upload[0].file.type, "audio/ogg");
-  assert.equal(calls.upload[0].file.size, Buffer.byteLength("fake-voice-note"));
-  assert.deepEqual(calls.upload[0].config, { mimeType: "audio/ogg" });
+  assert.equal(calls.upload[0].file.type, "audio/mpeg");
+  assert.equal(calls.upload[0].file.size, preparedBuffer.length);
+  assert.deepEqual(calls.upload[0].config, { mimeType: "audio/mpeg" });
   assert.deepEqual(calls.get, [{ name: "files/voice-test" }]);
 
   assert.equal(calls.generate.length, 1);
@@ -212,7 +266,7 @@ test("transcription uploads audio, waits for ACTIVE, sends explicit fileData, an
     {
       fileData: {
         fileUri: activeFile.uri,
-        mimeType: "audio/ogg",
+        mimeType: "audio/mpeg",
       },
     },
   ]);
@@ -229,7 +283,7 @@ test("transcription uploads audio, waits for ACTIVE, sends explicit fileData, an
 test("uploaded-file cleanup failure does not discard a successful transcript", async () => {
   const transcript = await runTranscription(
     Buffer.from("voice"),
-    "audio/ogg",
+    "audio/mpeg",
     {
       env: {},
       createClient() {
@@ -239,7 +293,7 @@ test("uploaded-file cleanup failure does not discard a successful transcript", a
               return {
                 name: "files/cleanup-test",
                 uri: "https://generativelanguage.googleapis.com/v1beta/files/cleanup-test",
-                mimeType: "audio/ogg",
+                mimeType: "audio/mpeg",
                 state: "ACTIVE",
               };
             },
@@ -269,14 +323,14 @@ test("missing upload URI fails safely instead of sending an empty Gemini content
   let deleted = false;
   const transcript = await runTranscription(
     Buffer.from("voice"),
-    "audio/ogg",
+    "audio/mpeg",
     {
       env: {},
       createClient() {
         return {
           files: {
             async upload() {
-              return { name: "files/no-uri", mimeType: "audio/ogg", state: "ACTIVE" };
+              return { name: "files/no-uri", mimeType: "audio/mpeg", state: "ACTIVE" };
             },
             async get() {
               throw new Error("get should not be needed for an ACTIVE upload");
@@ -302,9 +356,14 @@ test("missing upload URI fails safely instead of sending an empty Gemini content
   assert.equal(deleted, true);
 });
 
-test("empty audio is ignored without touching the Gemini key pool", async () => {
+test("empty audio is ignored without normalization or Gemini key usage", async () => {
+  let prepared = false;
   let called = false;
   const transcript = await runTranscription(Buffer.alloc(0), "audio/ogg", {
+    async prepareAudio() {
+      prepared = true;
+      return { buffer: Buffer.from("unexpected"), mimeType: "audio/mpeg" };
+    },
     async runWithKeys() {
       called = true;
       return "unexpected";
@@ -312,5 +371,6 @@ test("empty audio is ignored without touching the Gemini key pool", async () => 
   });
 
   assert.equal(transcript, null);
+  assert.equal(prepared, false);
   assert.equal(called, false);
 });

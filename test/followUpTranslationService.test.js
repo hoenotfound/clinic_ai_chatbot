@@ -1,7 +1,14 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { parseTranslations } = require("../src/services/followUpTranslationService");
+const {
+  GEMINI_MODEL,
+  parseTranslations,
+} = require("../src/services/followUpTranslationService");
+
+test("follow-up translation defaults to current Gemini 3.6 Flash instead of retired 2.5", () => {
+  assert.equal(GEMINI_MODEL, "gemini-3.6-flash");
+});
 
 test("parses the three stored follow-up language versions", () => {
   assert.deepEqual(

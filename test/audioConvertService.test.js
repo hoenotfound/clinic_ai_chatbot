@@ -1,7 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { convertToInstagramAudio } = require("../src/services/audioConvertService");
+const {
+  convertToInstagramAudio,
+  convertToMp3,
+  convertToWhatsAppVoice,
+} = require("../src/services/audioConvertService");
 
 function makeSilentWav({ sampleRate = 8000, durationMs = 100 } = {}) {
   const channels = 1;
@@ -35,4 +39,31 @@ test("Instagram voice conversion produces AAC in an M4A container", async () => 
   assert.equal(result.filename, "voice.m4a");
   assert.ok(result.buffer.length > 12);
   assert.equal(result.buffer.subarray(4, 8).toString("ascii"), "ftyp");
+});
+
+test("parallel playback and transcription callers share one MP3 conversion", async () => {
+  const source = makeSilentWav({ durationMs: 150 });
+  const [first, second] = await Promise.all([
+    convertToMp3(source),
+    convertToMp3(source),
+  ]);
+
+  assert.ok(first, "expected MP3 conversion to succeed");
+  assert.equal(second, first);
+  assert.equal(first.mimeType, "audio/mpeg");
+});
+
+test("staff WhatsApp voice transcription reuses the playback MP3 already produced", async () => {
+  const converted = await convertToWhatsAppVoice(
+    makeSilentWav({ durationMs: 150 }),
+    "audio/wav"
+  );
+
+  assert.ok(converted, "expected WhatsApp voice conversion to succeed");
+  const transcriptionMp3 = await convertToMp3(converted.whatsapp.buffer);
+
+  assert.ok(transcriptionMp3, "expected cached transcription MP3");
+  assert.equal(transcriptionMp3, converted.playback);
+  assert.equal(transcriptionMp3.mimeType, "audio/mpeg");
+  assert.equal(transcriptionMp3.buffer, converted.playback.buffer);
 });
