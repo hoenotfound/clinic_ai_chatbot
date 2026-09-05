@@ -32,14 +32,6 @@ function createFileProcessingError(message, code) {
   return err;
 }
 
-function createAudioNormalizationError(message) {
-  const err = new Error(message);
-  err.code = "AUDIO_NORMALIZATION_FAILED";
-  // A local FFmpeg/media failure is not evidence that any Gemini key is bad.
-  err.stopGeminiKeyRotation = true;
-  return err;
-}
-
 async function prepareAudioForTranscription(
   audioBuffer,
   mimeType,
@@ -52,14 +44,15 @@ async function prepareAudioForTranscription(
 
   // WhatsApp voice notes are normally Ogg/Opus. Gemini 3.5 Transcribe lists
   // OGG/Opus as supported, but real Meta voice-note containers can still fail
-  // asynchronous Files API processing. The app already uses this FFmpeg path
-  // for reliable Inbox playback, so normalize those voice notes to a clean MP3
-  // before upload instead of sending the provider the original container.
+  // asynchronous Files API processing. Prefer the app's proven FFmpeg MP3
+  // normalization, while keeping the original provider-supported audio as a
+  // fallback if local conversion cannot be completed.
   const converted = await convertToMp3Fn(audioBuffer);
   if (!converted?.buffer || !Buffer.isBuffer(converted.buffer) || converted.buffer.length === 0) {
-    throw createAudioNormalizationError(
-      "Could not normalize the voice note into a transcription-safe audio file."
+    console.warn(
+      "Could not normalize voice audio to MP3; falling back to the original audio for transcription."
     );
+    return { buffer: audioBuffer, mimeType: normalizedMimeType };
   }
 
   return {
