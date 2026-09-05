@@ -159,6 +159,8 @@ async function markCompleted(id, query = pool.query.bind(pool)) {
          last_error = NULL,
          updated_at = NOW()
      WHERE id = $1
+       AND terminal_at IS NULL
+       AND processing_status <> 'completed'
      RETURNING *`,
     [id]
   );
@@ -175,6 +177,7 @@ async function markFailed(id, error, query = pool.query.bind(pool)) {
          updated_at = NOW()
      WHERE id = $1
        AND terminal_at IS NULL
+       AND processing_status <> 'completed'
      RETURNING *`,
     [id, message]
   );
@@ -189,6 +192,8 @@ async function markTerminal(id, query = pool.query.bind(pool)) {
          terminal_at = COALESCE(terminal_at, NOW()),
          updated_at = NOW()
      WHERE id = $1
+       AND terminal_at IS NULL
+       AND processing_status <> 'completed'
      RETURNING *`,
     [id]
   );
@@ -224,6 +229,10 @@ async function setDeliveryAttentionState(
          OR attention_reason IS NULL
          OR attention_reason LIKE 'Delivery failed:%'
          OR attention_reason LIKE 'Delivery unconfirmed:%'
+       )
+       AND (
+         needs_attention IS DISTINCT FROM true
+         OR attention_reason IS DISTINCT FROM $1
        )
      RETURNING id`,
     [reason, contactId]
