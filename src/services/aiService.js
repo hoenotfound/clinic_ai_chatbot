@@ -20,11 +20,11 @@ if (!new Set(["gemini", "claude"]).has(provider)) {
 const DEFAULT_TIMEOUT_MS = 18 * 1000;
 const DEFAULT_RETRY_COUNT = 1;
 const DEFAULT_GEMINI_GLOBAL_BUDGET_MS = 25 * 1000;
-const DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS = 8 * 1000;
-const DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS = 5 * 1000;
+const DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS = 10 * 1000;
+const DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS = 8 * 1000;
 const DEFAULT_GEMINI_MIN_KEY_WINDOW_MS = 4 * 1000;
 const DEFAULT_GEMINI_5XX_RETRY_COUNT = 1;
-const DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS = 0;
+const DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS = 9 * 1000;
 const DEFAULT_GEMINI_MODEL_UNAVAILABLE_COOLDOWN_MS = 60 * 1000;
 const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 const DEFAULT_GEMINI_ALTERNATE_MODEL = "gemini-3.5-flash-lite";
@@ -257,7 +257,6 @@ function buildCandidates(env = process.env) {
     ? [...claudeCandidates, ...geminiCandidates]
     : [...geminiCandidates, ...claudeCandidates];
 }
-
 function getCandidateHealthDescriptors(env = process.env) {
   return buildCandidates(env).map(({ healthKey, label, provider: candidateProvider }) => ({
     healthKey,
@@ -425,7 +424,7 @@ async function runGeminiReply(
         const health = markGeminiModelUnavailable(model, env, clock());
         if (health?.cooldownUntil) {
           console.warn(
-            `Gemini model ${model} is cooling down until ${health.cooldownUntil.toISOString()} after repeated capacity failures.`
+            `Gemini model ${model} is cooling down until ${health.cooldownUntil.toISOString()} after a capacity failure.`
           );
         }
       }
@@ -435,8 +434,9 @@ async function runGeminiReply(
           provider: "gemini",
           model: models[modelIndex + 1],
         }, options);
+        const transition = err?.code === "AI_TIMEOUT" ? "timed out" : "failed";
         console.warn(
-          `Gemini model ${model} failed; switching to ${models[modelIndex + 1]} within the same global budget:`,
+          `Gemini model ${model} ${transition}; switching to ${models[modelIndex + 1]} within the same global budget:`,
           err?.message || err
         );
       }
