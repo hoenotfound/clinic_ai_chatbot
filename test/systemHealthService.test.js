@@ -153,6 +153,38 @@ test("a quiet configured client is healthy and migration 012 is current", async 
   }
 });
 
+test("all invalid Gemini keys make AI health urgent when no fallback provider is usable", async () => {
+  const restore = patchHealthDependencies();
+  try {
+    aiService.getCandidateHealthDescriptors = () => [
+      { provider: "gemini", label: "Gemini key 1", healthKey: "private-fingerprint" },
+    ];
+    aiService.getRuntimeCandidateHealth = () => [
+      {
+        candidate_key: "private-fingerprint",
+        provider: "gemini",
+        last_status: "invalid",
+        last_failure_kind: "authentication",
+        last_attempt_at: new Date("2026-09-05T00:04:00.000Z"),
+        last_success_at: null,
+        cooldown_until: new Date("2026-09-06T00:04:00.000Z"),
+      },
+    ];
+
+    const health = await getSystemHealth({
+      checks: REPLY_CHECKS,
+      aiUsage: { byModel: [] },
+      nowMs: Date.parse("2026-09-05T00:05:00.000Z"),
+    });
+
+    assert.equal(health.ai.status, "error");
+    assert.equal(health.ai.label, "Needs attention");
+    assert.equal(health.overall.status, "error");
+  } finally {
+    restore();
+  }
+});
+
 test("delayed inbound work warns at 60 seconds and becomes urgent at 180 seconds", async () => {
   const nowMs = Date.parse("2026-09-05T00:10:00.000Z");
   let restore = patchHealthDependencies({
