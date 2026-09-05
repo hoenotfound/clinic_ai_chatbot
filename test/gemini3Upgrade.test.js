@@ -41,7 +41,7 @@ test("complete emergency 2.5 rollback keeps both customer reply models on 2.5", 
   );
 });
 
-test("reply model upgrade does not change background Gemini model defaults", () => {
+test("voice transcription is isolated on its dedicated model while other background defaults remain unchanged", () => {
   assert.match(
     source("src/services/leadScoringAiService.js"),
     /LEAD_SCORING_GEMINI_MODEL \|\| process\.env\.GEMINI_MODEL \|\| "gemini-2\.5-flash"/
@@ -50,9 +50,15 @@ test("reply model upgrade does not change background Gemini model defaults", () 
     source("src/services/followUpTranslationService.js"),
     /process\.env\.GEMINI_MODEL \|\| "gemini-2\.5-flash"/
   );
+
+  const transcriptionSource = source("src/services/transcriptionService.js");
   assert.match(
-    source("src/services/transcriptionService.js"),
-    /GEMINI_TRANSCRIBE_MODEL \|\| process\.env\.GEMINI_MODEL \|\| "gemini-2\.5-flash"/
+    transcriptionSource,
+    /DEFAULT_TRANSCRIPTION_MODEL = "gemini-3\.5-transcribe"/
+  );
+  assert.doesNotMatch(
+    transcriptionSource,
+    /GEMINI_TRANSCRIBE_MODEL \|\| process\.env\.GEMINI_MODEL/
   );
 });
 
