@@ -10,14 +10,39 @@ const {
   runGeminiReply,
 } = require("../src/services/aiService");
 const { resetGeminiKeyPoolState } = require("../src/services/geminiKeyPool");
+const {
+  DEFAULT_MODEL: DEFAULT_SETUP_CHECK_MODEL,
+  checkGeminiConnection,
+} = require("../src/services/geminiSetupCheckService");
 
 test("Gemini 3 production defaults are pinned and require no model env variables", () => {
   assert.equal(DEFAULT_GEMINI_MODEL, "gemini-3.8-flash");
   assert.equal(DEFAULT_GEMINI_ALTERNATE_MODEL, "gemini-3.5-flash-lite");
+  assert.equal(DEFAULT_SETUP_CHECK_MODEL, DEFAULT_GEMINI_MODEL);
   assert.deepEqual(
     getGeminiReplyModels({}),
     ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
   );
+});
+
+test("Setup Status checks the same 3.8 primary when no model env override exists", async () => {
+  const calls = [];
+  const result = await checkGeminiConnection({
+    env: { GEMINI_API_KEY: "test-key" },
+    createClient() {
+      return {
+        models: {
+          async get(params) {
+            calls.push(params);
+            return { name: "models/gemini-3.8-flash", supportedActions: ["generateContent"] };
+          },
+        },
+      };
+    },
+  });
+
+  assert.deepEqual(calls, [{ model: "gemini-3.8-flash" }]);
+  assert.equal(result.model, "gemini-3.8-flash");
 });
 
 test("both Gemini 3 reply models use low thinking by default", () => {
