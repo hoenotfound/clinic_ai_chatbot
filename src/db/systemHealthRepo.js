@@ -15,22 +15,28 @@ async function getInboundProcessingMetrics({ hours = 24 } = {}, queryable = pool
     queryable.query(
       `SELECT
          COUNT(*) FILTER (
-           WHERE terminal_at IS NULL AND status = 'pending'
+           WHERE j.terminal_at IS NULL AND j.status = 'pending'
          )::int AS pending_count,
          COUNT(*) FILTER (
-           WHERE terminal_at IS NULL AND status = 'processing'
+           WHERE j.terminal_at IS NULL AND j.status = 'processing'
          )::int AS processing_count,
          COUNT(*) FILTER (
-           WHERE terminal_at IS NULL AND status = 'failed'
+           WHERE j.terminal_at IS NULL AND j.status = 'failed'
          )::int AS retryable_failed_count,
          COUNT(*) FILTER (
-           WHERE terminal_at IS NOT NULL
-             AND terminal_at >= NOW() - ($1::int * interval '1 hour')
+           WHERE j.terminal_at IS NOT NULL
+             AND j.terminal_at >= NOW() - ($1::int * interval '1 hour')
+             AND EXISTS (
+               SELECT 1
+               FROM contacts c
+               WHERE c.id = j.contact_id
+                 AND c.needs_attention = true
+             )
          )::int AS terminal_count,
-         MIN(created_at) FILTER (
-           WHERE terminal_at IS NULL AND status IN ('pending', 'processing', 'failed')
+         MIN(j.created_at) FILTER (
+           WHERE j.terminal_at IS NULL AND j.status IN ('pending', 'processing', 'failed')
          ) AS oldest_open_at
-       FROM inbound_processing_jobs`,
+       FROM inbound_processing_jobs j`,
       [safeHours]
     ),
     queryable.query(
