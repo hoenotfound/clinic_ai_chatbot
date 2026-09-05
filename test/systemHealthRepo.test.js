@@ -11,6 +11,7 @@ test("inbound health metrics combine durable message and Meta-resolution queues"
     async query(sql, params = []) {
       if (/FROM inbound_processing_jobs/.test(sql)) {
         assert.match(sql, /terminal_at >= NOW\(\) - \(\$1::int \* interval '1 hour'\)/);
+        assert.match(sql, /c\.needs_attention = true/);
         assert.deepEqual(params, [24]);
         return { rows: [{ pending_count: 1, processing_count: 2, retryable_failed_count: 0, terminal_count: 1, oldest_open_at: new Date("2026-09-05T00:01:00Z") }] };
       }
