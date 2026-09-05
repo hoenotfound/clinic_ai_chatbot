@@ -257,6 +257,7 @@ function buildCandidates(env = process.env) {
     ? [...claudeCandidates, ...geminiCandidates]
     : [...geminiCandidates, ...claudeCandidates];
 }
+
 function getCandidateHealthDescriptors(env = process.env) {
   return buildCandidates(env).map(({ healthKey, label, provider: candidateProvider }) => ({
     healthKey,
@@ -409,6 +410,7 @@ async function runGeminiReply(
           fallbackTimeoutMs: policy.fallbackTimeoutMs,
           minRemainingKeyWindowMs: effectiveMinKeyWindowMs,
           smartRetry: true,
+          stopKeyRotationOnTimeout: hasLaterModel,
           smartRetryDelayMinMs: 500,
           smartRetryDelayMaxMs: 1000,
           clock,
