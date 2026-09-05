@@ -22,6 +22,21 @@ function normalizeAudioMimeType(mimeType) {
   return String(mimeType || "audio/ogg").split(";")[0].trim().toLowerCase() || "audio/ogg";
 }
 
+function needsMp3Normalization(mimeType) {
+  const normalizedMimeType = normalizeAudioMimeType(mimeType);
+
+  // WhatsApp OGG/Opus is normalized for provider reliability. Meta's CDN can
+  // also return Instagram voice-note bytes with a video/mp4 or generic
+  // application/octet-stream Content-Type even though the webhook attachment
+  // itself is explicitly audio. Any non-audio MIME reaching this service is
+  // therefore treated as untrusted transport metadata and normalized locally
+  // before Gemini sees it.
+  return (
+    LOSSY_WHATSAPP_MIME_TYPES.has(normalizedMimeType)
+    || !normalizedMimeType.startsWith("audio/")
+  );
+}
+
 function normalizeFileState(file) {
   return String(file?.state || "").trim().toUpperCase();
 }
@@ -36,21 +51,59 @@ function createFileProcessingError(message, code) {
   return err;
 }
 
+function createAudioNormalizationError(mimeType) {
+  const err = new Error(
+    `Voice attachment reported non-audio MIME ${mimeType || "unknown"} and could not be normalized to MP3.`
+  );
+  err.code = "AUDIO_NORMALIZATION_FAILED";
+  err.stopGeminiKeyRotation = true;
+  return err;
+}
+
+function isDeterministicTranscriptionMediaError(err) {
+  const message = String(err?.message || err || "");
+  return (
+    /0\s+frames?\s+found/i.test(message)
+    || /(?:video|audio).*(?:corrupt|wrong\s+(?:video\s+)?metadata)/i.test(message)
+  );
+}
+
+function markDeterministicTranscriptionMediaError(err) {
+  if (
+    err
+    && typeof err === "object"
+    && isDeterministicTranscriptionMediaError(err)
+  ) {
+    // Replaying identical media against key 2..5 cannot repair corrupt/wrong
+    // media metadata. Keep those keys available for genuine quota/rate-limit
+    // rotation instead of wasting all of them on the same deterministic 400.
+    err.stopGeminiKeyRotation = true;
+  }
+  return err;
+}
+
 async function prepareAudioForTranscription(
   audioBuffer,
   mimeType,
   { convertToMp3Fn = convertToMp3 } = {}
 ) {
   const normalizedMimeType = normalizeAudioMimeType(mimeType);
-  if (!LOSSY_WHATSAPP_MIME_TYPES.has(normalizedMimeType)) {
+  if (!needsMp3Normalization(normalizedMimeType)) {
     return { buffer: audioBuffer, mimeType: normalizedMimeType };
   }
 
-  // WhatsApp voice notes are normally Ogg/Opus. Normalize them to the app's
-  // proven MP3 representation before transcription so Gemini receives a simple,
-  // consistent speech container regardless of the original Meta voice note.
+  // Voice notes should reach Gemini as a simple, known-good speech container.
+  // Besides WhatsApp OGG/Opus, this deliberately catches Instagram audio URLs
+  // whose CDN response is mislabeled as video/mp4 or application/octet-stream.
   const converted = await convertToMp3Fn(audioBuffer);
   if (!converted?.buffer || !Buffer.isBuffer(converted.buffer) || converted.buffer.length === 0) {
+    if (!normalizedMimeType.startsWith("audio/")) {
+      // Do not send a known-audio attachment to Gemini with a video/generic MIME
+      // after local normalization failed. That only produces deterministic media
+      // validation errors and burns provider attempts without any chance of success.
+      throw createAudioNormalizationError(normalizedMimeType);
+    }
+
     console.warn(
       "Could not normalize voice audio to MP3; falling back to the original audio for transcription."
     );
@@ -229,14 +282,19 @@ async function runTranscription(
           // API. It exposes a plain output_text convenience property and avoids
           // the legacy GenerateContent response.text/audioTranscription-part
           // mismatch that caused production transcripts to be dropped.
-          const interaction = await createInteraction(
-            ai,
-            {
-              model,
-              input: [interactionAudioInput],
-            },
-            { purpose: "voice_transcription" }
-          );
+          let interaction;
+          try {
+            interaction = await createInteraction(
+              ai,
+              {
+                model,
+                input: [interactionAudioInput],
+              },
+              { purpose: "voice_transcription" }
+            );
+          } catch (err) {
+            throw markDeterministicTranscriptionMediaError(err);
+          }
 
           return typeof interaction?.output_text === "string"
             ? interaction.output_text.trim()
@@ -280,9 +338,13 @@ module.exports = {
   LOSSY_WHATSAPP_MIME_TYPES,
   buildInlineInteractionAudioInput,
   buildInteractionAudioInput,
+  createAudioNormalizationError,
   createExactUploadBlob,
   deleteUploadedFile,
   getTranscriptionModel,
+  isDeterministicTranscriptionMediaError,
+  markDeterministicTranscriptionMediaError,
+  needsMp3Normalization,
   normalizeAudioMimeType,
   normalizeFileState,
   prepareAudioForTranscription,
