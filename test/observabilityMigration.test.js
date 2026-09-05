@@ -37,5 +37,7 @@ test("migration records inbound failures, stale lease recovery and AI routing wi
   assert.match(sql, /NEW\.status = 'failed'/);
   assert.match(sql, /trg_inbound_processing_health_event/);
   assert.match(sql, /trg_inbound_meta_resolution_health_event/);
+  assert.match(sql, /EXCEPTION WHEN OTHERS THEN/);
+  assert.match(sql, /Observability must never be allowed to block durable inbound processing/);
   assert.doesNotMatch(sql, /access_token|password|api_key|message_content|prompt_text|response_text/i);
 });
