@@ -135,7 +135,10 @@ function createWhatsAppDeliveryStatusService({
       }
     }
 
-    await repo.markCompleted(job.id);
+    // Completion is fenced by the lease token returned by the claim. If a
+    // replacement worker reclaimed this row after the lease became stale, this
+    // older worker can no longer overwrite the replacement worker's state.
+    await repo.markCompleted(job.id, job.lease_token);
     return updatedMessage;
   }
 
@@ -148,10 +151,11 @@ function createWhatsAppDeliveryStatusService({
         err
       );
       try {
-        await repo.markFailed(job.id, err);
+        await repo.markFailed(job.id, job.lease_token, err);
       } catch (markErr) {
         // Leaving the row in processing state is intentional here. The stale
-        // lease recovery path will reclaim it after STALE_AFTER_SECONDS.
+        // lease recovery path will reclaim it after STALE_AFTER_SECONDS. Lease
+        // fencing prevents an older worker from failing a newer worker's claim.
         logger.error(`Failed to mark delivery-status job ${job.id} retryable:`, markErr);
       }
       return null;
