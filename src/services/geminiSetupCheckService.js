@@ -5,7 +5,7 @@ const {
   getGeminiCandidateDescriptors,
 } = require("./geminiKeyPool");
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-3.8-flash";
 const DEFAULT_SETUP_CHECK_TIMEOUT_MS = 8 * 1000;
 
 function errorStatus(error) {
