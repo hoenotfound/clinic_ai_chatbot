@@ -125,7 +125,7 @@ test("health helpers use the intended inbound delay thresholds", () => {
   });
 });
 
-test("a quiet configured client is healthy and migration 012 is current", async () => {
+test("a quiet configured client is healthy and the latest migration is current", async () => {
   const restore = patchHealthDependencies();
   try {
     const health = await getSystemHealth({
@@ -133,10 +133,11 @@ test("a quiet configured client is healthy and migration 012 is current", async 
       aiUsage: { byModel: [] },
       nowMs: Date.parse("2026-09-05T00:05:00.000Z"),
     });
+    const expectedVersion = loadMigrations().at(-1)?.version || 0;
 
     assert.equal(health.overall.status, "healthy");
-    assert.equal(health.database.currentVersion, 12);
-    assert.equal(health.database.expectedVersion, 12);
+    assert.equal(health.database.currentVersion, expectedVersion);
+    assert.equal(health.database.expectedVersion, expectedVersion);
     assert.equal(health.database.migrationState, "up_to_date");
     assert.equal(health.inbound.pending, 0);
     assert.equal(health.inbound.oldestPendingAgeSeconds, 0);
