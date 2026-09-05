@@ -343,6 +343,7 @@ async function runWithGeminiKeys(
     fallbackTimeoutMs = 0,
     minRemainingKeyWindowMs = 0,
     smartRetry = false,
+    stopKeyRotationOnTimeout = false,
     smartRetryDelayMinMs = 500,
     smartRetryDelayMaxMs = 1000,
     persistHealth = true,
@@ -390,7 +391,9 @@ async function runWithGeminiKeys(
         ? computeAttemptTimeoutMs({
             remainingBudgetMs,
             candidatePosition,
-            totalCandidates: available.length,
+            // Customer-facing smart routing is bounded by the global/model
+            // budgets, not by latency reservations for every configured key.
+            totalCandidates: smartRetry ? 1 : available.length,
             preferredTimeoutMs: preferredTimeoutMs || timeoutMs,
             fallbackTimeoutMs: fallbackTimeoutMs || timeoutMs,
             minRemainingKeyWindowMs,
@@ -420,6 +423,27 @@ async function runWithGeminiKeys(
 
         lastError = err;
         const outcome = classifyCandidateHealthFailure(err);
+
+        // A customer-reply timeout says the generation path was too slow, not
+        // that this API key is unhealthy. Never poison key health for it. When
+        // another reply model is ready, switch models immediately; otherwise
+        // another key can still be tried as a last-resort single-model path.
+        if (smartRetry && outcome.failureKind === "timeout") {
+          if (stopKeyRotationOnTimeout) {
+            err.stopGeminiKeyRotation = true;
+            console.warn(
+              `${candidate.label} timed out; stopping key rotation so the reply can switch models:`,
+              err?.message || err
+            );
+            throw err;
+          }
+          console.warn(
+            `${candidate.label} timed out; rotating without cooling the key because no reply-model fallback is available:`,
+            err?.message || err
+          );
+          break;
+        }
+
         recordCandidateHealth(candidate, outcome, {
           env,
           persist: persistHealth,

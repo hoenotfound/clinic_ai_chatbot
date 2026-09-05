@@ -161,7 +161,33 @@ test("smart chat policy retries a 503 once with short jitter then rotates", asyn
   assert.deepEqual(sleeps, [750]);
 });
 
-test("smart chat policy rotates immediately on timeout instead of retrying", async () => {
+test("smart chat policy stops key rotation on timeout without poisoning key health", async () => {
+  resetGeminiKeyPoolState();
+  const calls = [];
+  const env = { GEMINI_API_KEYS: "key-a,key-b" };
+
+  await assert.rejects(
+    () => runWithGeminiKeys(
+      async (apiKey) => {
+        calls.push(apiKey);
+        throw timeoutError();
+      },
+      {
+        env,
+        retryCount: 1,
+        smartRetry: true,
+        stopKeyRotationOnTimeout: true,
+        persistHealth: false,
+      }
+    ),
+    (err) => err.code === "AI_TIMEOUT" && err.stopGeminiKeyRotation === true
+  );
+
+  assert.deepEqual(calls, ["key-a"]);
+  assert.deepEqual(getRuntimeCandidateHealth(), []);
+});
+
+test("smart chat timeout can rotate as a last resort without cooling the timed-out key", async () => {
   resetGeminiKeyPoolState();
   const calls = [];
   const env = { GEMINI_API_KEYS: "key-a,key-b" };
@@ -176,12 +202,20 @@ test("smart chat policy rotates immediately on timeout instead of retrying", asy
       env,
       retryCount: 1,
       smartRetry: true,
+      stopKeyRotationOnTimeout: false,
       persistHealth: false,
     }
   );
 
   assert.equal(result, "reply-from-b");
   assert.deepEqual(calls, ["key-a", "key-b"]);
+  const health = getRuntimeCandidateHealth();
+  assert.equal(health.length, 1);
+  assert.equal(
+    health[0].candidate_key,
+    `gemini_${credentialFingerprint("key-b")}`
+  );
+  assert.equal(health[0].last_status, "ready");
 });
 
 test("adaptive timeout reserves a usable window for later keys", () => {
@@ -215,7 +249,7 @@ test("adaptive timeout reserves a usable window for later keys", () => {
   assert.equal(third, 4000);
 });
 
-test("global budget stops the Gemini chain before another key attempt", async () => {
+test("global budget still stops quota rotation before another key attempt", async () => {
   resetGeminiKeyPoolState();
   let clockMs = 0;
   const calls = [];
@@ -226,7 +260,7 @@ test("global budget stops the Gemini chain before another key attempt", async ()
       async (apiKey) => {
         calls.push(apiKey);
         clockMs += 6000;
-        throw timeoutError();
+        throw quotaError();
       },
       {
         env,
