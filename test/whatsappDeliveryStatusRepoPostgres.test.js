@@ -25,6 +25,12 @@ test(
       await client.query(`CREATE SCHEMA ${schemaName}`);
       await client.query(`SET search_path TO ${schemaName}`);
       await client.query(`
+        CREATE TABLE contacts (
+          id SERIAL PRIMARY KEY,
+          needs_attention BOOLEAN NOT NULL DEFAULT false,
+          attention_reason TEXT,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
         CREATE TABLE messages (
           id SERIAL PRIMARY KEY,
           contact_id INTEGER NOT NULL,
@@ -123,12 +129,48 @@ test(
       assert.deepEqual(noLongerExhausted, []);
 
       await client.query(
-        `INSERT INTO messages (contact_id, whatsapp_message_id, delivery_status, delivery_error)
+        `INSERT INTO contacts (id) VALUES (42);
+         INSERT INTO messages (contact_id, whatsapp_message_id, delivery_status, delivery_error)
          VALUES (42, 'wamid-find-me', 'failed', 'provider failure')`
       );
       const message = await repo.findMessageByWamid("wamid-find-me", query);
       assert.equal(message.contact_id, 42);
       assert.equal(message.delivery_status, "failed");
+
+      const attention = await repo.setDeliveryAttentionState(
+        42,
+        "Delivery failed: provider failure",
+        query
+      );
+      assert.equal(attention.id, 42);
+      const attentionRow = await client.query(
+        "SELECT needs_attention, attention_reason FROM contacts WHERE id = 42"
+      );
+      assert.deepEqual(attentionRow.rows[0], {
+        needs_attention: true,
+        attention_reason: "Delivery failed: provider failure",
+      });
+
+      // A durable delivery replay must never replace a more important handoff
+      // or safety reason that staff is already looking at.
+      await client.query(
+        `UPDATE contacts
+         SET needs_attention = true, attention_reason = 'AI handoff: urgent review'
+         WHERE id = 42`
+      );
+      const protectedAttention = await repo.setDeliveryAttentionState(
+        42,
+        "Delivery failed: later replay",
+        query
+      );
+      assert.equal(protectedAttention, null);
+      const protectedRow = await client.query(
+        "SELECT needs_attention, attention_reason FROM contacts WHERE id = 42"
+      );
+      assert.deepEqual(protectedRow.rows[0], {
+        needs_attention: true,
+        attention_reason: "AI handoff: urgent review",
+      });
     } finally {
       await client.query("SET search_path TO public").catch(() => {});
       await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`).catch(() => {});
