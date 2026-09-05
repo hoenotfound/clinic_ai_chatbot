@@ -1,6 +1,6 @@
 const { Blob } = require("node:buffer");
 const { GoogleGenAI } = require("@google/genai");
-const { generateGeminiContent } = require("./aiUsageService");
+const { createGeminiInteraction } = require("./aiUsageService");
 const { convertToMp3 } = require("./audioConvertService");
 const { runWithGeminiKeys } = require("./geminiKeyPool");
 
@@ -42,11 +42,11 @@ async function prepareAudioForTranscription(
     return { buffer: audioBuffer, mimeType: normalizedMimeType };
   }
 
-  // WhatsApp voice notes are normally Ogg/Opus. Gemini 3.5 Transcribe lists
-  // OGG/Opus as supported, but real Meta voice-note containers can still fail
-  // asynchronous Files API processing. Prefer the app's proven FFmpeg MP3
-  // normalization, while keeping the original provider-supported audio as a
-  // fallback if local conversion cannot be completed.
+  // WhatsApp voice notes are normally Ogg/Opus. Gemini 3.5 Transcribe supports
+  // OGG/Opus, but real Meta voice-note containers have previously failed Files
+  // API processing. Prefer the app's proven FFmpeg MP3 normalization, while
+  // keeping the original provider-supported audio as a fallback if conversion
+  // cannot be completed locally.
   const converted = await convertToMp3Fn(audioBuffer);
   if (!converted?.buffer || !Buffer.isBuffer(converted.buffer) || converted.buffer.length === 0) {
     console.warn(
@@ -114,55 +114,19 @@ async function waitForUploadedFileActive(
   }
 }
 
-function buildUploadedAudioPart(uploadedFile, fallbackMimeType) {
-  const fileUri = String(uploadedFile?.uri || "").trim();
-  if (!fileUri) {
+function buildInteractionAudioInput(uploadedFile, fallbackMimeType) {
+  const uri = String(uploadedFile?.uri || "").trim();
+  if (!uri) {
     const err = new Error("Gemini Files API upload did not return a usable file URI.");
     err.code = "INVALID_AI_RESPONSE";
     throw err;
   }
 
   return {
-    fileData: {
-      fileUri,
-      mimeType: normalizeAudioMimeType(uploadedFile?.mimeType || fallbackMimeType),
-    },
+    type: "audio",
+    uri,
+    mime_type: normalizeAudioMimeType(uploadedFile?.mimeType || fallbackMimeType),
   };
-}
-
-function extractTranscriptionText(response) {
-  const parts = Array.isArray(response?.candidates?.[0]?.content?.parts)
-    ? response.candidates[0].content.parts
-    : [];
-
-  // Gemini 3.5 Transcribe can return transcription payloads as structured
-  // non-text parts. Reading the SDK's response.text helper in that case logs a
-  // warning and drops those payloads, so read audioTranscription.text directly.
-  const audioChunks = parts
-    .map((part) => {
-      const value = part?.audioTranscription;
-      if (typeof value === "string") return value;
-      return typeof value?.text === "string" ? value.text : "";
-    })
-    .filter(Boolean);
-  if (audioChunks.length) return audioChunks.join("").trim();
-
-  // Keep compatibility with SDK/model responses that still use ordinary text
-  // parts, without invoking response.text when structured parts are present.
-  const textChunks = parts
-    .map((part) => (typeof part?.text === "string" ? part.text : ""))
-    .filter(Boolean);
-  if (textChunks.length) return textChunks.join("").trim();
-
-  // Legacy/mocked responses may expose only the convenience response.text
-  // property. Use it only when the response has no structured candidate parts,
-  // avoiding the SDK's non-text-part warning on transcription responses.
-  if (!parts.length) {
-    const fallbackText = response?.text;
-    return typeof fallbackText === "string" ? fallbackText.trim() : "";
-  }
-
-  return "";
 }
 
 async function deleteUploadedFile(ai, uploadedFile) {
@@ -184,7 +148,7 @@ async function runTranscription(
   {
     env = process.env,
     createClient = (apiKey) => new GoogleGenAI({ apiKey }),
-    generateContent = generateGeminiContent,
+    createInteraction = createGeminiInteraction,
     runWithKeys = runWithGeminiKeys,
     prepareAudio = prepareAudioForTranscription,
   } = {}
@@ -211,26 +175,22 @@ async function runTranscription(
 
           const readyFile = await waitForUploadedFileActive(ai, uploadedFile);
 
-          const response = await generateContent(
+          // Google's current Gemini 3.5 Transcribe guide uses the Interactions
+          // API. It exposes a plain output_text convenience property and avoids
+          // the legacy GenerateContent response.text/audioTranscription-part
+          // mismatch that caused production transcripts to be dropped.
+          const interaction = await createInteraction(
             ai,
             {
               model,
-              contents: [buildUploadedAudioPart(readyFile, preparedAudio.mimeType)],
-              config: {
-                maxOutputTokens: 500,
-                audioTranscriptionConfig: {
-                  // Empty language hints enable automatic language detection
-                  // and intra-sentence code switching (English/BM/Chinese).
-                  languageCodes: [],
-                  // Preserve exactly what the customer/staff member said.
-                  mode: "VERBATIM",
-                },
-              },
+              input: [buildInteractionAudioInput(readyFile, preparedAudio.mimeType)],
             },
             { purpose: "voice_transcription" }
           );
 
-          return extractTranscriptionText(response);
+          return typeof interaction?.output_text === "string"
+            ? interaction.output_text.trim()
+            : "";
         } finally {
           await deleteUploadedFile(ai, uploadedFile);
         }
@@ -267,9 +227,8 @@ module.exports = {
   DEFAULT_FILE_PROCESSING_TIMEOUT_MS,
   DEFAULT_TRANSCRIPTION_MODEL,
   LOSSY_WHATSAPP_MIME_TYPES,
-  buildUploadedAudioPart,
+  buildInteractionAudioInput,
   deleteUploadedFile,
-  extractTranscriptionText,
   getTranscriptionModel,
   normalizeAudioMimeType,
   normalizeFileState,

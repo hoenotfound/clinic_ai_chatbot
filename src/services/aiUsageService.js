@@ -17,6 +17,17 @@ function usageFromResponse(response) {
   };
 }
 
+function usageFromInteraction(interaction) {
+  const usage = interaction?.usage || {};
+  return {
+    promptTokens: tokenCount(usage.total_input_tokens ?? usage.totalInputTokens),
+    outputTokens: tokenCount(usage.total_output_tokens ?? usage.totalOutputTokens),
+    thinkingTokens: tokenCount(usage.total_thought_tokens ?? usage.totalThoughtTokens),
+    cachedTokens: tokenCount(usage.total_cached_tokens ?? usage.totalCachedTokens),
+    totalTokens: tokenCount(usage.total_tokens ?? usage.totalTokens),
+  };
+}
+
 function providerErrorCode(error) {
   for (const value of [
     error?.error?.code,
@@ -93,6 +104,22 @@ function queueUsage(event, { database = pool, repository = aiUsageRepo } = {}) {
     });
 }
 
+function failedUsageEvent({ model, purpose, latencyMs, error }) {
+  return {
+    provider: "gemini",
+    model,
+    purpose,
+    status: "failed",
+    failureKind: failureKind(error),
+    latencyMs,
+    promptTokens: 0,
+    outputTokens: 0,
+    thinkingTokens: 0,
+    cachedTokens: 0,
+    totalTokens: 0,
+  };
+}
+
 async function generateGeminiContent(
   ai,
   request,
@@ -122,19 +149,53 @@ async function generateGeminiContent(
     return response;
   } catch (error) {
     queueUsage(
+      failedUsageEvent({
+        model,
+        purpose,
+        latencyMs: Math.max(0, clock() - startedAt),
+        error,
+      }),
+      { database, repository }
+    );
+    throw error;
+  }
+}
+
+async function createGeminiInteraction(
+  ai,
+  request,
+  {
+    purpose = "customer_reply",
+    database = pool,
+    repository = aiUsageRepo,
+    clock = () => Date.now(),
+  } = {}
+) {
+  const model = String(request?.model || "unknown");
+  const startedAt = clock();
+  try {
+    const interaction = await ai.interactions.create(request);
+    queueUsage(
       {
         provider: "gemini",
         model,
         purpose,
-        status: "failed",
-        failureKind: failureKind(error),
+        status: "success",
+        failureKind: null,
         latencyMs: Math.max(0, clock() - startedAt),
-        promptTokens: 0,
-        outputTokens: 0,
-        thinkingTokens: 0,
-        cachedTokens: 0,
-        totalTokens: 0,
+        ...usageFromInteraction(interaction),
       },
+      { database, repository }
+    );
+    return interaction;
+  } catch (error) {
+    queueUsage(
+      failedUsageEvent({
+        model,
+        purpose,
+        latencyMs: Math.max(0, clock() - startedAt),
+        error,
+      }),
       { database, repository }
     );
     throw error;
@@ -146,11 +207,13 @@ async function getUsageSummary({ database = pool, repository = aiUsageRepo, hour
 }
 
 module.exports = {
+  createGeminiInteraction,
   failureKind,
   generateGeminiContent,
   getUsageSummary,
   providerErrorCode,
   queueUsage,
   tokenCount,
+  usageFromInteraction,
   usageFromResponse,
 };
