@@ -176,6 +176,7 @@ test("smart chat policy stops key rotation on timeout without poisoning key heal
         env,
         retryCount: 1,
         smartRetry: true,
+        stopKeyRotationOnTimeout: true,
         persistHealth: false,
       }
     ),
@@ -184,6 +185,37 @@ test("smart chat policy stops key rotation on timeout without poisoning key heal
 
   assert.deepEqual(calls, ["key-a"]);
   assert.deepEqual(getRuntimeCandidateHealth(), []);
+});
+
+test("smart chat timeout can rotate as a last resort without cooling the timed-out key", async () => {
+  resetGeminiKeyPoolState();
+  const calls = [];
+  const env = { GEMINI_API_KEYS: "key-a,key-b" };
+
+  const result = await runWithGeminiKeys(
+    async (apiKey) => {
+      calls.push(apiKey);
+      if (apiKey === "key-a") throw timeoutError();
+      return "reply-from-b";
+    },
+    {
+      env,
+      retryCount: 1,
+      smartRetry: true,
+      stopKeyRotationOnTimeout: false,
+      persistHealth: false,
+    }
+  );
+
+  assert.equal(result, "reply-from-b");
+  assert.deepEqual(calls, ["key-a", "key-b"]);
+  const health = getRuntimeCandidateHealth();
+  assert.equal(health.length, 1);
+  assert.equal(
+    health[0].candidate_key,
+    `gemini_${credentialFingerprint("key-b")}`
+  );
+  assert.equal(health[0].last_status, "ready");
 });
 
 test("adaptive timeout reserves a usable window for later keys", () => {
