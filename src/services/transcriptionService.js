@@ -14,6 +14,22 @@ function normalizeAudioMimeType(mimeType) {
   return String(mimeType || "audio/ogg").split(";")[0].trim() || "audio/ogg";
 }
 
+function buildUploadedAudioPart(uploadedFile, fallbackMimeType) {
+  const fileUri = String(uploadedFile?.uri || "").trim();
+  if (!fileUri) {
+    const err = new Error("Gemini Files API upload did not return a usable file URI.");
+    err.code = "INVALID_AI_RESPONSE";
+    throw err;
+  }
+
+  return {
+    fileData: {
+      fileUri,
+      mimeType: normalizeAudioMimeType(uploadedFile?.mimeType || fallbackMimeType),
+    },
+  };
+}
+
 async function deleteUploadedFile(ai, uploadedFile) {
   const name = String(uploadedFile?.name || "").trim();
   if (!name || !ai?.files?.delete) return;
@@ -48,9 +64,10 @@ async function runTranscription(
         const ai = createClient(apiKey);
         let uploadedFile = null;
         try {
-          // Gemini 3.5 Transcribe is a dedicated speech-to-text model. The
-          // Files API is Google's recommended path for voice notes longer than
-          // a few seconds and avoids sending a large base64 payload inline.
+          // Gemini 3.5 Transcribe is a dedicated speech-to-text model. Use the
+          // Files API upload, then pass an explicit fileData part so this works
+          // with the repository's pinned @google/genai 2.17.1 transformer as
+          // well as newer SDK releases.
           uploadedFile = await ai.files.upload({
             file: new Blob([audioBuffer], { type: normalizedMimeType }),
             config: { mimeType: normalizedMimeType },
@@ -60,7 +77,7 @@ async function runTranscription(
             ai,
             {
               model,
-              contents: [uploadedFile],
+              contents: [buildUploadedAudioPart(uploadedFile, normalizedMimeType)],
               config: {
                 maxOutputTokens: 500,
                 audioTranscriptionConfig: {
@@ -109,6 +126,7 @@ async function transcribeStaffAudio(audioBuffer, mimeType) {
 
 module.exports = {
   DEFAULT_TRANSCRIPTION_MODEL,
+  buildUploadedAudioPart,
   deleteUploadedFile,
   getTranscriptionModel,
   normalizeAudioMimeType,
