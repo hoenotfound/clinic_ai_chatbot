@@ -225,7 +225,13 @@ function aiModelHealth({ checks = [], aiUsage = null } = {}) {
   return { geminiModels, keyHealth, claude };
 }
 
-async function aiHealth({ checks = [], aiUsage = null } = {}) {
+function hasActiveCooldown(item, nowMs = Date.now()) {
+  if (!item?.cooldownUntil) return false;
+  const cooldownMs = new Date(item.cooldownUntil).getTime();
+  return Number.isFinite(cooldownMs) && cooldownMs > nowMs;
+}
+
+async function aiHealth({ checks = [], aiUsage = null, nowMs = Date.now() } = {}) {
   const models = aiModelHealth({ checks, aiUsage });
   let routing;
   try {
@@ -240,13 +246,31 @@ async function aiHealth({ checks = [], aiUsage = null } = {}) {
     };
   }
 
-  const configuredProviders = [
-    ...models.geminiModels.filter((item) => item.configured),
-    ...(models.claude.configured ? [models.claude] : []),
+  const geminiConfigured = models.geminiModels.some((item) => item.configured);
+  const allGeminiKeysInvalid = geminiConfigured
+    && models.keyHealth.length > 0
+    && models.keyHealth.every((item) => item.status === "invalid");
+  const geminiHasDegradedKey = models.keyHealth.some(
+    (item) => item.status === "invalid" || hasActiveCooldown(item, nowMs)
+  );
+  const geminiHasModelWarning = models.geminiModels.some(
+    (item) => item.configured && item.status === "warning"
+  );
+  const geminiProviderStatus = !geminiConfigured
+    ? "not_configured"
+    : allGeminiKeysInvalid
+      ? "error"
+      : geminiHasDegradedKey || geminiHasModelWarning
+        ? "warning"
+        : "healthy";
+
+  const providerStatuses = [
+    ...(geminiConfigured ? [geminiProviderStatus] : []),
+    ...(models.claude.configured ? [models.claude.status] : []),
   ];
-  const allUnavailable = configuredProviders.length === 0
-    || configuredProviders.every((item) => ["error", "not_configured"].includes(item.status));
-  const hasWarning = configuredProviders.some((item) => item.status === "warning")
+  const allUnavailable = providerStatuses.length === 0
+    || providerStatuses.every((status) => status === "error");
+  const hasWarning = providerStatuses.some((status) => status !== "healthy")
     || (Number(routing.aiFailures) || 0) > 0;
   const status = allUnavailable ? "error" : hasWarning ? "warning" : "healthy";
 
@@ -263,7 +287,7 @@ async function aiHealth({ checks = [], aiUsage = null } = {}) {
     summary: allUnavailable
       ? "No configured AI provider is currently available."
       : hasWarning
-        ? "AI is available, with recent fallback or failure activity to review."
+        ? "AI is available, with a provider, key, fallback, or failure signal to review."
         : "AI providers are ready with no final AI failures recorded in the last 24 hours.",
   };
 }
@@ -338,7 +362,7 @@ async function getSystemHealth({ checks = [], aiUsage = null, nowMs = Date.now()
   const [database, inbound, ai, messaging] = await Promise.all([
     databaseHealth(),
     inboundHealth(nowMs),
-    aiHealth({ checks, aiUsage }),
+    aiHealth({ checks, aiUsage, nowMs }),
     messagingHealth(checks),
   ]);
 
