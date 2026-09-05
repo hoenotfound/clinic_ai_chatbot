@@ -246,19 +246,24 @@ async function aiHealth({ checks = [], aiUsage = null, nowMs = Date.now() } = {}
     };
   }
 
-  const geminiConfigured = models.geminiModels.some((item) => item.configured);
-  const allGeminiKeysInvalid = geminiConfigured
+  const configuredGeminiModels = models.geminiModels.filter((item) => item.configured);
+  const geminiConfigured = configuredGeminiModels.length > 0;
+  const allGeminiKeysUnavailable = geminiConfigured
     && models.keyHealth.length > 0
-    && models.keyHealth.every((item) => item.status === "invalid");
+    && models.keyHealth.every(
+      (item) => item.status === "invalid" || hasActiveCooldown(item, nowMs)
+    );
+  const allGeminiModelsCooling = geminiConfigured
+    && configuredGeminiModels.every((item) => hasActiveCooldown(item, nowMs));
   const geminiHasDegradedKey = models.keyHealth.some(
     (item) => item.status === "invalid" || hasActiveCooldown(item, nowMs)
   );
-  const geminiHasModelWarning = models.geminiModels.some(
-    (item) => item.configured && item.status === "warning"
+  const geminiHasModelWarning = configuredGeminiModels.some(
+    (item) => item.status === "warning"
   );
   const geminiProviderStatus = !geminiConfigured
     ? "not_configured"
-    : allGeminiKeysInvalid
+    : allGeminiKeysUnavailable || allGeminiModelsCooling
       ? "error"
       : geminiHasDegradedKey || geminiHasModelWarning
         ? "warning"
@@ -292,7 +297,7 @@ async function aiHealth({ checks = [], aiUsage = null, nowMs = Date.now() } = {}
   };
 }
 
-function channelHealth(check, metrics) {
+function channelHealth(check, metrics, webhookCheck = null) {
   if (!check?.configured) {
     return {
       ...metrics,
@@ -305,8 +310,15 @@ function channelHealth(check, metrics) {
 
   const observedAt = newestTime(metrics.lastInboundAt, metrics.lastSuccessfulOutboundAt);
   const checkedAt = check.checkedAt ? new Date(check.checkedAt) : null;
+  const webhookCheckedAt = webhookCheck?.checkedAt ? new Date(webhookCheck.checkedAt) : null;
   const checkErrorIsNewer = check.status === "error"
     && (!observedAt || (checkedAt && checkedAt.getTime() > observedAt.getTime()));
+  const webhookMissing = Boolean(webhookCheck && webhookCheck.configured === false);
+  const webhookErrorIsNewer = webhookCheck?.status === "error"
+    && (!observedAt || (
+      webhookCheckedAt
+      && webhookCheckedAt.getTime() > observedAt.getTime()
+    ));
   const failureAt = metrics.lastDeliveryFailureAt ? new Date(metrics.lastDeliveryFailureAt) : null;
   const successAfterFailure = Boolean(
     failureAt
@@ -322,10 +334,14 @@ function channelHealth(check, metrics) {
       ? "Configuration check passed. No recent messaging activity is required for this channel to be healthy."
       : "Configured. Waiting for real messaging activity to provide stronger evidence.";
 
-  if (checkErrorIsNewer) {
+  if (webhookMissing) {
     status = "error";
     label = "Needs attention";
-    evidence = "The latest connection check failed and no newer real messaging activity has confirmed recovery.";
+    evidence = "Inbound webhook configuration is incomplete for this channel.";
+  } else if (checkErrorIsNewer || webhookErrorIsNewer) {
+    status = "error";
+    label = "Needs attention";
+    evidence = "The latest connection or webhook check failed and no newer real messaging activity has confirmed recovery.";
   } else if ((metrics.recentDeliveryFailures || 0) > 0 && !successAfterFailure) {
     status = "warning";
     label = "Check delivery";
@@ -355,7 +371,14 @@ async function messagingHealth(checks = []) {
     }));
   }
   const checksByKey = new Map(checks.map((item) => [item.key, item]));
-  return metrics.map((item) => channelHealth(checksByKey.get(item.channel), item));
+  return metrics.map((item) => {
+    const webhookKey = item.channel === "whatsapp" ? "whatsapp_webhook" : "meta_webhook";
+    return channelHealth(
+      checksByKey.get(item.channel),
+      item,
+      checksByKey.get(webhookKey) || null
+    );
+  });
 }
 
 async function getSystemHealth({ checks = [], aiUsage = null, nowMs = Date.now() } = {}) {
