@@ -14,6 +14,7 @@ function job(overrides = {}) {
     error_title: null,
     error_message: null,
     attempts: 1,
+    lease_token: "lease-status-1",
     ...overrides,
   };
 }
@@ -31,12 +32,12 @@ function harness({ claimed = [], updateResult = null, existingMessage = null } =
     },
     claimRecoverable: async () => [],
     listExhausted: async () => [],
-    markCompleted: async (id) => {
-      calls.push(["markCompleted", id]);
+    markCompleted: async (id, leaseToken) => {
+      calls.push(["markCompleted", id, leaseToken]);
       return { id };
     },
-    markFailed: async (id, err) => {
-      calls.push(["markFailed", id, err.code || err.message]);
+    markFailed: async (id, leaseToken, err) => {
+      calls.push(["markFailed", id, leaseToken, err.code || err.message]);
       return { id };
     },
     markTerminal: async (id) => {
@@ -77,7 +78,7 @@ function harness({ claimed = [], updateResult = null, existingMessage = null } =
   return { calls, repo, service };
 }
 
-test("live durable status is claimed, applied, published and completed", async () => {
+test("live durable status is claimed, applied, published and completed with its lease", async () => {
   const statusJob = job();
   const updated = {
     id: 41,
@@ -98,13 +99,17 @@ test("live durable status is claimed, applied, published and completed", async (
     null,
   ]);
   assert.ok(calls.some((call) => call[0] === "publish" && call[1] === 41));
-  assert.ok(calls.some((call) => call[0] === "markCompleted" && call[1] === statusJob.id));
+  assert.ok(calls.some((call) =>
+    call[0] === "markCompleted" &&
+    call[1] === statusJob.id &&
+    call[2] === statusJob.lease_token
+  ));
   assert.equal(calls.some((call) => call[0] === "setDeliveryAttentionState"), false);
   assert.equal(calls.some((call) => call[0] === "sendDeliveryFailureAlert"), false);
 });
 
-test("callback that beats local WAMID persistence stays retryable", async () => {
-  const statusJob = job({ id: 8, delivery_status: "sent" });
+test("callback that beats local WAMID persistence stays retryable under the same lease", async () => {
+  const statusJob = job({ id: 8, delivery_status: "sent", lease_token: "lease-status-8" });
   const { calls, service } = harness({ claimed: [statusJob], updateResult: null, existingMessage: null });
 
   await service.processStoredDeliveryStatuses([{ id: statusJob.id }]);
@@ -112,7 +117,8 @@ test("callback that beats local WAMID persistence stays retryable", async () => 
   const failed = calls.find((call) => call[0] === "markFailed");
   assert.ok(failed);
   assert.equal(failed[1], statusJob.id);
-  assert.equal(failed[2], "DELIVERY_STATUS_MESSAGE_NOT_LINKED");
+  assert.equal(failed[2], statusJob.lease_token);
+  assert.equal(failed[3], "DELIVERY_STATUS_MESSAGE_NOT_LINKED");
   assert.equal(calls.some((call) => call[0] === "markCompleted"), false);
 });
 
