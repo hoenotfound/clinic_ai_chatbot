@@ -2,10 +2,10 @@ const { GoogleGenAI } = require("@google/genai");
 const { buildSystemPrompt, normalizeOptions } = require("../utils/systemPrompt");
 const { generateGeminiContent } = require("./aiUsageService");
 
-// Keep the long-tested 2.5 Flash default for backward compatibility. The
-// higher-level AI service can choose a different primary/fallback model per
-// request without this module caching that choice.
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+// Customer-facing replies default to the current stable Gemini Flash model.
+// The higher-level AI service still owns primary/fallback routing and can pass
+// an explicit model per attempt without this module caching that choice.
+const MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 
 function buildContents(messages) {
   return messages.map((m) => {
@@ -27,9 +27,10 @@ function buildContents(messages) {
 function buildThinkingConfig(model = MODEL, env = process.env) {
   const normalized = String(model || "").trim().toLowerCase();
 
-  // Gemini 3.x uses thinkingLevel rather than the 2.5 thinkingBudget control.
-  // Low is the best fit for a latency-sensitive front-desk chatbot while still
-  // retaining the newer models' reasoning capability.
+  // Gemini 3.x uses thinkingLevel. Low is the production default for this
+  // latency-sensitive front-desk chatbot. It is supported by both the primary
+  // Gemini 3.8 Flash and fallback Gemini 3.5 Flash-Lite models. We deliberately
+  // do not allow "minimal" globally because Gemini 3.8 Flash does not support it.
   if (normalized.startsWith("gemini-3")) {
     const requested = String(env.GEMINI_THINKING_LEVEL || "low").trim().toLowerCase();
     const thinkingLevel = ["low", "medium", "high"].includes(requested)
@@ -38,8 +39,8 @@ function buildThinkingConfig(model = MODEL, env = process.env) {
     return { thinkingLevel };
   }
 
-  // The existing production behavior for 2.5 Flash deliberately disables the
-  // extra thinking budget so visible customer replies stay fast.
+  // Keep the established 2.5 rollback behavior if an older model is explicitly
+  // selected during troubleshooting.
   if (normalized.startsWith("gemini-2.5-flash")) {
     return { thinkingBudget: 0 };
   }

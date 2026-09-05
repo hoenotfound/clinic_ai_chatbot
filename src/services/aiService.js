@@ -26,8 +26,8 @@ const DEFAULT_GEMINI_MIN_KEY_WINDOW_MS = 4 * 1000;
 const DEFAULT_GEMINI_5XX_RETRY_COUNT = 1;
 const DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS = 0;
 const DEFAULT_GEMINI_MODEL_UNAVAILABLE_COOLDOWN_MS = 60 * 1000;
-const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
-const DEFAULT_GEMINI_ALTERNATE_MODEL = "gemini-2.5-flash-lite";
+const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
+const DEFAULT_GEMINI_ALTERNATE_MODEL = "gemini-3.5-flash-lite";
 const runtimeGeminiModelHealth = new Map();
 
 function recordRoutingEvent(event, options = {}) {
