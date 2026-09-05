@@ -43,11 +43,24 @@ test(
       await client.query(read("src/db/inboundProcessingSchema.sql"));
       await client.query(read("src/db/migrations/012_observability_health.sql"));
 
-      const contact = await client.query("INSERT INTO contacts DEFAULT VALUES RETURNING id");
-      const contactId = contact.rows[0].id;
+      // Keep each scenario on its own conversation. A failed predecessor on the
+      // same contact is intentionally supposed to block newer work, so sharing
+      // one contact here would test ordering protection instead of observability.
+      const contacts = await client.query(
+        "INSERT INTO contacts DEFAULT VALUES RETURNING id"
+      );
+      const failureContactId = contacts.rows[0].id;
+      const recoveryContact = await client.query(
+        "INSERT INTO contacts DEFAULT VALUES RETURNING id"
+      );
+      const recoveryContactId = recoveryContact.rows[0].id;
+      const ordinaryContact = await client.query(
+        "INSERT INTO contacts DEFAULT VALUES RETURNING id"
+      );
+      const ordinaryContactId = ordinaryContact.rows[0].id;
 
       const failureClaim = await inboundProcessingRepo.storeInboundClaim({
-        contactId,
+        contactId: failureContactId,
         content: "failure test",
         storedMessageId: "observability-failure-message",
         channel: "whatsapp",
@@ -70,11 +83,11 @@ test(
       }]);
 
       const recoveryClaim = await inboundProcessingRepo.storeInboundClaim({
-        contactId,
+        contactId: recoveryContactId,
         content: "recovery test",
         storedMessageId: "observability-recovery-message",
         channel: "whatsapp",
-        incoming: { id: "observability-recovery-message", from: "60110000001", channel: "whatsapp", text: "recovery test" },
+        incoming: { id: "observability-recovery-message", from: "60110000002", channel: "whatsapp", text: "recovery test" },
       }, client);
       const originalLease = await inboundProcessingRepo.claimPendingByMessageId(
         recoveryClaim.savedInbound.id,
@@ -106,11 +119,11 @@ test(
       }]);
 
       const ordinaryClaim = await inboundProcessingRepo.storeInboundClaim({
-        contactId,
+        contactId: ordinaryContactId,
         content: "normal pending",
         storedMessageId: "observability-normal-message",
         channel: "whatsapp",
-        incoming: { id: "observability-normal-message", from: "60110000001", channel: "whatsapp", text: "normal pending" },
+        incoming: { id: "observability-normal-message", from: "60110000003", channel: "whatsapp", text: "normal pending" },
       }, client);
       await inboundProcessingRepo.claimPendingByMessageId(
         ordinaryClaim.savedInbound.id,
