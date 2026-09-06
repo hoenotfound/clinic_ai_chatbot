@@ -130,6 +130,18 @@ async function cancel(id, contactId) {
   return result.rows[0] || null;
 }
 
+async function getNextScheduledAt() {
+  await ensureSchema();
+  const result = await pool.query(
+    `SELECT scheduled_for
+     FROM scheduled_messages
+     WHERE status = 'scheduled'
+     ORDER BY scheduled_for ASC, id ASC
+     LIMIT 1`
+  );
+  return result.rows[0]?.scheduled_for || null;
+}
+
 async function claimDue(limit = 25) {
   await ensureSchema();
   const client = await pool.connect();
@@ -231,6 +243,7 @@ module.exports = {
   create,
   updateScheduled,
   cancel,
+  getNextScheduledAt,
   claimDue,
   attachMessage,
   markSent,
