@@ -16,6 +16,7 @@ const originalPolicyCheck = whatsappPolicy.checkFreeformAllowed;
 test.beforeEach(() => {
   scheduledRepo.recoverStaleProcessing = async () => [];
   scheduledRepo.claimDue = async () => [];
+  scheduledRepo.getNextScheduledAt = async () => null;
   scheduledRepo.getLatestInboundAt = async () => new Date();
   scheduledRepo.attachMessage = async () => null;
   scheduledRepo.markSent = async () => null;
