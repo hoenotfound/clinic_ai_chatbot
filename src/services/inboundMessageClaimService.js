@@ -196,6 +196,11 @@ function createInboundMessageClaimService({
         entryId: incoming.metaEntryId || null,
         incoming,
       });
+      events.publish("durable_inbound_pending", {
+        channel,
+        externalMessageId,
+        reason: "meta_resolution",
+      });
       return null;
     }
 
@@ -263,9 +268,9 @@ function createInboundMessageClaimService({
 
   /**
    * Starts live processing after the webhook has been acknowledged. Claim the
-   * durable row first so the periodic recovery sweep can never process the same
-   * fresh message concurrently. If the process dies during preparation, the
-   * stale-processing lease makes the job recoverable later.
+   * durable row first so the recovery sweep can never process the same fresh
+   * message concurrently. If the process dies during preparation, the stale
+   * processing lease makes the job recoverable later.
    */
   async function prepareIncomingClaim(durableClaim) {
     if (!durableClaim) return null;
@@ -297,6 +302,11 @@ function createInboundMessageClaimService({
           `Failed to persist preparation failure for inbound job ${processingJob.id}:`,
           markErr
         );
+      });
+      events.publish("durable_inbound_pending", {
+        contactId: savedInbound.contact_id,
+        messageId: savedInbound.id,
+        reason: "prepare_failed",
       });
       throw err;
     }
