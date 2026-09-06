@@ -293,9 +293,22 @@ async function recoverInterruptedFollowUps() {
   return recovered.length;
 }
 
+async function nextInterruptedRecoveryAt() {
+  if (typeof followUpRepo.getNextStaleClaimDueAt !== "function") return null;
+  return followUpRepo.getNextStaleClaimDueAt({
+    olderThanMinutes: STALE_CLAIM_GRACE_MINUTES,
+  });
+}
+
 async function runAutomatedFollowUps() {
   if (sweepRunning) {
-    return { enabled: Boolean(getActiveSettings()), candidateCount: 0, recoveredCount: 0, nextDueAt: null };
+    return {
+      enabled: Boolean(getActiveSettings()),
+      candidateCount: 0,
+      recoveredCount: 0,
+      nextDueAt: null,
+      nextRecoveryAt: null,
+    };
   }
 
   sweepRunning = true;
@@ -307,7 +320,13 @@ async function runAutomatedFollowUps() {
 
     const settings = getActiveSettings();
     if (!settings) {
-      return { enabled: false, candidateCount: 0, recoveredCount, nextDueAt: null };
+      return {
+        enabled: false,
+        candidateCount: 0,
+        recoveredCount,
+        nextDueAt: null,
+        nextRecoveryAt: await nextInterruptedRecoveryAt(),
+      };
     }
 
     const candidates = await followUpRepo.findCandidates({
@@ -336,12 +355,14 @@ async function runAutomatedFollowUps() {
           activatedAt: liveSettings.activatedAt,
         })
       : null;
+    const nextRecoveryAt = await nextInterruptedRecoveryAt();
 
     return {
       enabled: Boolean(liveSettings),
       candidateCount: candidates.length,
       recoveredCount,
       nextDueAt,
+      nextRecoveryAt,
     };
   } catch (err) {
     console.error("Automated follow-up sweep failed:", err);
@@ -351,12 +372,26 @@ async function runAutomatedFollowUps() {
   }
 }
 
+function earliestTimestamp(...values) {
+  let earliest = null;
+  for (const value of values) {
+    if (!value) continue;
+    const timestamp = Date.parse(value);
+    if (Number.isNaN(timestamp)) return NaN;
+    if (earliest === null || timestamp < earliest) earliest = timestamp;
+  }
+  return earliest;
+}
+
 function delayUntilNextFollowUp(result) {
-  if (!result?.enabled || !result.nextDueAt) return null;
-  const timestamp = Date.parse(result.nextDueAt);
+  const timestamp = earliestTimestamp(
+    result?.enabled ? result.nextDueAt : null,
+    result?.nextRecoveryAt
+  );
+  if (timestamp === null) return null;
   if (Number.isNaN(timestamp)) return FOLLOW_UP_CHECK_INTERVAL_MS;
   // Avoid a zero-delay spin if another instance wins a race between candidate
-  // discovery and the atomic claim.
+  // discovery/recovery and the atomic claim.
   return Math.max(1000, timestamp - Date.now());
 }
 
