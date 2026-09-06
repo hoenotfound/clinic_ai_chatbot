@@ -379,6 +379,7 @@ async function runWithGeminiKeys(
 
   for (let candidatePosition = 0; candidatePosition < available.length; candidatePosition += 1) {
     const candidate = available[candidatePosition];
+    const isModelConfirmationAttempt = confirmingModelUnavailable;
     let lastError = null;
 
     for (let attempt = 0; attempt <= boundedRetryCount; attempt += 1) {
@@ -459,6 +460,13 @@ async function runWithGeminiKeys(
         // another reply model is ready, switch models immediately; otherwise
         // another key can still be tried as a last-resort single-model path.
         if (smartRetry && outcome.failureKind === "timeout") {
+          if (isModelConfirmationAttempt) {
+            console.warn(
+              `${candidate.label} confirmation attempt timed out; stopping further key rotation:`,
+              err?.message || err
+            );
+            throw err;
+          }
           if (stopKeyRotationOnTimeout) {
             err.stopGeminiKeyRotation = true;
             console.warn(
@@ -479,6 +487,15 @@ async function runWithGeminiKeys(
           persist: persistHealth,
           now,
         });
+
+        if (isModelConfirmationAttempt) {
+          console.warn(
+            `${candidate.label} confirmation attempt failed without confirming a model-capacity outage; ` +
+            "stopping further key rotation:",
+            err?.message || err
+          );
+          throw err;
+        }
 
         const sameKeyRetry = shouldRetrySameGeminiKey(err, outcome, {
           attempt,
