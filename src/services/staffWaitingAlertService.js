@@ -12,8 +12,8 @@ const {
 } = require("./telegramImmediateAlertService");
 
 const STAFF_WAITING_MINUTES = 10;
-// Retained as the retry delay/export. Normal operation now performs one check
-// when a conversation reaches the waiting threshold instead of polling every minute.
+// Retained as the retry delay/export. Normal operation sleeps until the next
+// conversation can actually reach the waiting threshold instead of polling.
 const STAFF_WAITING_CHECK_INTERVAL_MS = 60 * 1000;
 const STAFF_WAITING_BATCH_SIZE = 10;
 const STAFF_WAITING_MESSAGE_LIMIT = 4000;
@@ -21,7 +21,6 @@ const LATEST_MESSAGE_LIMIT = 600;
 const STAFF_WAITING_LOCK_NAMESPACE = 24683;
 
 let staffWaitingWorker = null;
-let waitingThresholdTimer = null;
 
 function clean(value, fallback = "Not captured") {
   const text = String(value || "").trim();
@@ -38,23 +37,8 @@ function staffWaitingEventKey(contactId, waitingSinceMessageId) {
   return `staff_waiting:${contactId}:${waitingSinceMessageId}`;
 }
 
-async function findWaitingStaffOwnedConversations(
-  {
-    waitMinutes = STAFF_WAITING_MINUTES,
-    limit = STAFF_WAITING_BATCH_SIZE,
-  } = {},
-  query = pool.query.bind(pool)
-) {
-  const result = await query(
-    `SELECT
-       c.id AS contact_id,
-       latest_waiting.id AS waiting_since_message_id,
-       latest_waiting.created_at AS waiting_since,
-       latest_waiting.id AS latest_customer_message_id,
-       GREATEST(
-         1,
-         FLOOR(EXTRACT(EPOCH FROM (now() - latest_waiting.created_at)) / 60)::integer
-       ) AS waiting_minutes
+function staffWaitingCandidateJoins() {
+  return `
      FROM contacts c
      LEFT JOIN LATERAL (
        SELECT m.id, m.created_at
@@ -84,19 +68,58 @@ async function findWaitingStaffOwnedConversations(
        LIMIT 1
      ) latest_waiting ON true
      WHERE (c.mode = 'human' OR c.needs_attention = true)
-       AND latest_waiting.created_at <=
-           now() - ($1::integer * interval '1 minute')
        AND NOT EXISTS (
          SELECT 1
          FROM telegram_immediate_alerts a
          WHERE a.event_key =
            'staff_waiting:' || c.id::text || ':' || latest_waiting.id::text
-       )
+       )`;
+}
+
+async function findWaitingStaffOwnedConversations(
+  {
+    waitMinutes = STAFF_WAITING_MINUTES,
+    limit = STAFF_WAITING_BATCH_SIZE,
+  } = {},
+  query = pool.query.bind(pool)
+) {
+  const result = await query(
+    `SELECT
+       c.id AS contact_id,
+       latest_waiting.id AS waiting_since_message_id,
+       latest_waiting.created_at AS waiting_since,
+       latest_waiting.id AS latest_customer_message_id,
+       GREATEST(
+         1,
+         FLOOR(EXTRACT(EPOCH FROM (now() - latest_waiting.created_at)) / 60)::integer
+       ) AS waiting_minutes
+     ${staffWaitingCandidateJoins()}
+       AND latest_waiting.created_at <=
+           now() - ($1::integer * interval '1 minute')
      ORDER BY latest_waiting.created_at ASC, c.id ASC
      LIMIT $2`,
     [waitMinutes, limit]
   );
   return result.rows;
+}
+
+/**
+ * Returns the first threshold time for any currently unanswered staff-owned
+ * conversation. The worker can then sleep until that exact time instead of
+ * polling Postgres every minute. Activity wakes it immediately to recalculate.
+ */
+async function findNextStaffWaitingDueAt(
+  { waitMinutes = STAFF_WAITING_MINUTES } = {},
+  query = pool.query.bind(pool)
+) {
+  const result = await query(
+    `SELECT MIN(
+       latest_waiting.created_at + ($1::integer * interval '1 minute')
+     ) AS due_at
+     ${staffWaitingCandidateJoins()}`,
+    [waitMinutes]
+  );
+  return result.rows[0]?.due_at || null;
 }
 
 async function isStillWaitingForStaff(
@@ -193,10 +216,6 @@ function createStaffWaitingAlertService({
       await client.query("BEGIN");
       transactionStarted = true;
 
-      // Keep the durable sent marker out of the database until Telegram has
-      // actually accepted the reminder. The transaction-scoped lock serializes
-      // competing app instances for this episode, while a process crash rolls
-      // the transaction back automatically instead of muting the reminder forever.
       await client.query(
         "SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
         [STAFF_WAITING_LOCK_NAMESPACE, waitingSinceMessageId]
@@ -220,10 +239,6 @@ function createStaffWaitingAlertService({
         return { status: "skipped", reason: "contact-not-found" };
       }
 
-      // Re-check immediately before building/sending the alert. Only an actual
-      // staff-authored outbound resolves the waiting episode; an AI handoff
-      // acknowledgement or automated follow-up must not masquerade as the staff
-      // response this reminder is waiting for.
       if (!await stillWaiting(contactId, waitingSinceMessageId, query)) {
         await client.query("COMMIT");
         transactionStarted = false;
@@ -237,9 +252,6 @@ function createStaffWaitingAlertService({
         text,
       });
 
-      // Only a successful Telegram send becomes the permanent one-per-message
-      // marker. If sendMessage throws, ROLLBACK leaves no marker and a later
-      // activity-driven retry can try the reminder again.
       await client.query(
         `INSERT INTO telegram_immediate_alerts (event_key, alert_type, contact_id)
          VALUES ($1, 'staff_waiting', $2)
@@ -264,6 +276,7 @@ const sendStaffWaitingAlert = createStaffWaitingAlertService();
 
 function createStaffWaitingAlertRunner({
   findWaiting = findWaitingStaffOwnedConversations,
+  findNextDue = findNextStaffWaitingDueAt,
   sendAlert = sendStaffWaitingAlert,
   env = process.env,
   scheduleRetry = null,
@@ -271,7 +284,10 @@ function createStaffWaitingAlertRunner({
   let sweepRunning = false;
 
   return async function runStaffWaitingAlerts() {
-    if (sweepRunning || !isTelegramEnabled(env)) return { candidateCount: 0, failedCount: 0 };
+    if (sweepRunning || !isTelegramEnabled(env)) {
+      return { candidateCount: 0, failedCount: 0, nextDueAt: null };
+    }
+
     sweepRunning = true;
     let failedCount = 0;
     try {
@@ -294,16 +310,21 @@ function createStaffWaitingAlertRunner({
           );
         }
       }
+
       if (failedCount > 0 && typeof scheduleRetry === "function") {
         scheduleRetry(STAFF_WAITING_CHECK_INTERVAL_MS);
       }
-      return { candidateCount: candidates.length, failedCount };
+
+      const nextDueAt = failedCount === 0
+        ? await findNextDue({ waitMinutes: STAFF_WAITING_MINUTES })
+        : null;
+      return { candidateCount: candidates.length, failedCount, nextDueAt };
     } catch (err) {
       console.error("Telegram staff-waiting sweep failed:", err);
       if (typeof scheduleRetry === "function") {
         scheduleRetry(STAFF_WAITING_CHECK_INTERVAL_MS);
       }
-      return { candidateCount: 0, failedCount: 1 };
+      return { candidateCount: 0, failedCount: 1, nextDueAt: null };
     } finally {
       sweepRunning = false;
     }
@@ -314,21 +335,11 @@ function wakeStaffWaitingAlerts(delayMs = 0) {
   return staffWaitingWorker?.wake(delayMs) || false;
 }
 
-function clearWaitingThresholdTimer() {
-  if (waitingThresholdTimer) clearTimeout(waitingThresholdTimer);
-  waitingThresholdTimer = null;
-}
-
-function scheduleWaitingThresholdCheck() {
-  clearWaitingThresholdTimer();
-  if (!isTelegramEnabled()) return false;
-
-  waitingThresholdTimer = setTimeout(() => {
-    waitingThresholdTimer = null;
-    wakeStaffWaitingAlerts(0);
-  }, STAFF_WAITING_MINUTES * 60 * 1000);
-  waitingThresholdTimer.unref?.();
-  return true;
+function delayUntilNextStaffWaitingAlert(result) {
+  if (!result?.nextDueAt) return null;
+  const timestamp = Date.parse(result.nextDueAt);
+  if (Number.isNaN(timestamp)) return STAFF_WAITING_CHECK_INTERVAL_MS;
+  return Math.max(1000, timestamp - Date.now());
 }
 
 const runStaffWaitingAlerts = createStaffWaitingAlertRunner({
@@ -338,33 +349,29 @@ const runStaffWaitingAlerts = createStaffWaitingAlertRunner({
 function startStaffWaitingAlerts() {
   if (!isTelegramEnabled()) return () => {};
   if (staffWaitingWorker && !staffWaitingWorker.state().stopped) {
-    return () => {
-      clearWaitingThresholdTimer();
-      staffWaitingWorker.stop();
-    };
+    return () => staffWaitingWorker.stop();
   }
 
   staffWaitingWorker = createAdaptiveWorkerTimer({
     run: runStaffWaitingAlerts,
-    delayForResult: () => null,
+    delayForResult: delayUntilNextStaffWaitingAlert,
     errorRetryDelayMs: STAFF_WAITING_CHECK_INTERVAL_MS,
     label: "Staff waiting alert worker",
   });
-  const stopWorker = staffWaitingWorker.start();
-
-  return () => {
-    clearWaitingThresholdTimer();
-    stopWorker();
-  };
+  return staffWaitingWorker.start();
 }
 
-// A conversation-changing message can start or resolve a staff-waiting episode.
-// Reset a single threshold timer instead of querying every minute. Startup still
-// performs one immediate catch-up sweep for anything that became overdue while
-// Render Free was sleeping.
+// A message or ownership change can start, resolve, or move the next waiting
+// deadline. Recalculate immediately while the database is already active.
+// Startup still performs one catch-up sweep for anything overdue after Render
+// Free wakes from a cold start.
 realtimeEvents.subscribe("conversation_changed", (payload) => {
-  if (payload?.reason === "message" || payload?.reason === "message_updated") {
-    scheduleWaitingThresholdCheck();
+  if (
+    payload?.reason === "message" ||
+    payload?.reason === "message_updated" ||
+    payload?.reason === "contact_state"
+  ) {
+    wakeStaffWaitingAlerts(0);
   }
 });
 
@@ -376,6 +383,8 @@ module.exports = {
   buildStaffWaitingAlertMessage,
   createStaffWaitingAlertRunner,
   createStaffWaitingAlertService,
+  delayUntilNextStaffWaitingAlert,
+  findNextStaffWaitingDueAt,
   findWaitingStaffOwnedConversations,
   isStillWaitingForStaff,
   runStaffWaitingAlerts,
