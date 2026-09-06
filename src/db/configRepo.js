@@ -3,6 +3,7 @@ const clinicConfig = require("../config/clinicConfig");
 const defaultConfig = require("../config/clinicConfig.default");
 const promoImagesRepo = require("./promoImagesRepo");
 const { DEFAULT_LEAD_DISTRIBUTION } = require("../utils/leadDistribution");
+const realtimeEvents = require("../utils/realtimeEvents");
 
 // Every top-level key the Settings page is allowed to read/write. Kept as a
 // single list shared by loadConfig/updateConfig so there's one place to
@@ -126,9 +127,11 @@ function getConfig() {
  */
 async function updateConfig(updates) {
   const nextConfig = { ...clinicConfig };
+  const changedKeys = [];
   for (const key of [...CONFIG_KEYS, ...INTERNAL_CONFIG_KEYS]) {
     if (Object.prototype.hasOwnProperty.call(updates, key)) {
       nextConfig[key] = updates[key];
+      changedKeys.push(key);
     }
   }
 
@@ -151,6 +154,10 @@ async function updateConfig(updates) {
     Object.prototype.hasOwnProperty.call(updates, "automatedFollowUp")
   ) {
     await pruneOrphanedPromoImages();
+  }
+
+  if (changedKeys.length > 0) {
+    realtimeEvents.publish("config_changed", { keys: changedKeys });
   }
 
   return clinicConfig;
