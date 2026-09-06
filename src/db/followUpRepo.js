@@ -147,6 +147,23 @@ async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt })
 }
 
 /**
+ * Returns when the earliest unconfirmed follow-up claim becomes stale enough
+ * to surface to staff. This keeps crash recovery alive without a polling loop:
+ * a fresh claim present at startup gets one exact wake at its grace expiry.
+ */
+async function getNextStaleClaimDueAt({ olderThanMinutes }) {
+  const result = await pool.query(
+    `SELECT MIN(created_at + ($1::integer * interval '1 minute')) AS due_at
+     FROM messages
+     WHERE is_automated_follow_up = true
+       AND whatsapp_message_id IS NULL
+       AND delivery_status IS NULL`,
+    [olderThanMinutes]
+  );
+  return result.rows[0]?.due_at || null;
+}
+
+/**
  * Atomically claims a follow-up by inserting its Inbox message only if the
  * trigger is still the conversation's newest message and the conversation is
  * still free of a staff-attention requirement. The second condition is repeated
@@ -280,6 +297,7 @@ async function markStaleClaimsUnconfirmed({ olderThanMinutes, limit = 25 }) {
 module.exports = {
   findCandidates,
   getNextCandidateDueAt,
+  getNextStaleClaimDueAt,
   saveIfStillEligible,
   saveSocialImageCompanion,
   markStaleClaimsUnconfirmed,
