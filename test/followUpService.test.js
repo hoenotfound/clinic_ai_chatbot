@@ -18,6 +18,7 @@ const originalPolicyCheck = whatsappPolicy.checkFreeformAllowed;
 
 test.beforeEach(() => {
   followUpRepo.markStaleClaimsUnconfirmed = async () => [];
+  followUpRepo.getNextCandidateDueAt = async () => null;
   pipelineRepo.markContactedForContact = async () => false;
   // These tests exercise follow-up timing/language/delivery behavior, not the
   // policy service's database lookup. Policy behavior has dedicated tests.
