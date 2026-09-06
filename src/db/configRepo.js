@@ -35,6 +35,12 @@ const CONFIG_KEYS = [
 // separate activation boundary from the Auto AI Lead Temperature toggle.
 const INTERNAL_CONFIG_KEYS = ["telegramConversationSummary"];
 
+// server.js keeps its old 30-minute housekeeping callback for compatibility,
+// but this guard prevents those callbacks from touching Postgres more than once
+// every six hours. Config changes force an immediate cleanup separately.
+const PROMO_IMAGE_BACKSTOP_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let lastPromoImageBackstopPruneAt = 0;
+
 /**
  * Pulls the numeric row id out of one of our own hosted promo-image URLs
  * (e.g. ".../promo-images/42" -> 42). Returns null for anything else — a
@@ -54,8 +60,20 @@ function extractPromoImageId(url) {
  * promoImagesRepo.pruneUnreferenced for the full explanation). Errors are
  * logged, not thrown: this is best-effort housekeeping and should never be
  * allowed to break a config load or save.
+ *
+ * Background callers are throttled so they cannot keep Neon awake. A settings
+ * change passes force=true because the database is already active and cleanup
+ * should happen immediately after a promotion/follow-up image is replaced.
  */
-async function pruneOrphanedPromoImages() {
+async function pruneOrphanedPromoImages(force = false, now = Date.now()) {
+  if (
+    !force &&
+    lastPromoImageBackstopPruneAt > 0 &&
+    now - lastPromoImageBackstopPruneAt < PROMO_IMAGE_BACKSTOP_PRUNE_INTERVAL_MS
+  ) {
+    return false;
+  }
+
   try {
     const promotionIds = (clinicConfig.promotions || [])
       .map((p) => extractPromoImageId(p.imageUrl))
@@ -67,8 +85,11 @@ async function pruneOrphanedPromoImages() {
       ? promotionIds
       : [...promotionIds, followUpImageId];
     await promoImagesRepo.pruneUnreferenced(referencedIds);
+    lastPromoImageBackstopPruneAt = now;
+    return true;
   } catch (err) {
     console.error("Failed to prune orphaned promo images:", err);
+    return false;
   }
 }
 
@@ -148,12 +169,13 @@ async function updateConfig(updates) {
   // dropped from the config (staff removed a promotion entirely, or
   // replaced/cleared its image via an edit that bypassed the immediate
   // DELETE call in Settings.jsx). Reconcile now rather than waiting for the
-  // next timed sweep.
+  // next timed sweep. This is forced because the DB is already awake for the
+  // config save and staff expects the change to take effect immediately.
   if (
     Object.prototype.hasOwnProperty.call(updates, "promotions") ||
     Object.prototype.hasOwnProperty.call(updates, "automatedFollowUp")
   ) {
-    await pruneOrphanedPromoImages();
+    await pruneOrphanedPromoImages(true);
   }
 
   if (changedKeys.length > 0) {
@@ -163,4 +185,11 @@ async function updateConfig(updates) {
   return clinicConfig;
 }
 
-module.exports = { CONFIG_KEYS, loadConfig, getConfig, updateConfig, pruneOrphanedPromoImages };
+module.exports = {
+  CONFIG_KEYS,
+  PROMO_IMAGE_BACKSTOP_PRUNE_INTERVAL_MS,
+  loadConfig,
+  getConfig,
+  updateConfig,
+  pruneOrphanedPromoImages,
+};
