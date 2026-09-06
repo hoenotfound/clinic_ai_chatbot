@@ -36,9 +36,9 @@ const CONFIG_KEYS = [
 const INTERNAL_CONFIG_KEYS = ["telegramConversationSummary"];
 
 // server.js keeps its old 30-minute housekeeping callback for compatibility,
-// but this guard prevents those callbacks from touching Postgres more than once
-// every six hours. Config changes force an immediate cleanup separately.
-const PROMO_IMAGE_BACKSTOP_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// but this guard makes that callback a no-op unless a full day has elapsed.
+// Config changes force an immediate cleanup while Postgres is already awake.
+const PROMO_IMAGE_BACKSTOP_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 let lastPromoImageBackstopPruneAt = 0;
 
 /**
