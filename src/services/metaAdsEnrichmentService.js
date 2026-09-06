@@ -1,10 +1,11 @@
 const attributionRepo = require("../db/leadAttributionRepo");
+const metaAdsEnrichmentScheduleRepo = require("../db/metaAdsEnrichmentScheduleRepo");
 const metaAdsApi = require("./metaAdsApiService");
 const realtimeEvents = require("../utils/realtimeEvents");
+const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 
-// New attributions already queue an immediate enrichment sweep. This interval
-// is only a durable recovery/backoff safety net, so keep it well beyond Neon's
-// idle suspend window instead of waking the database every five minutes.
+// Kept for configuration/backward compatibility. Normal operation no longer
+// runs a periodic DB sweep: it sleeps until the next pending retry is due.
 const DEFAULT_SWEEP_INTERVAL_MS = 30 * 60 * 1000;
 const MIN_SWEEP_INTERVAL_MS = 60 * 1000;
 const MAX_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
@@ -42,17 +43,30 @@ function safeErrorText(err) {
   return `${message}${code}`.slice(0, 1000);
 }
 
+function delayUntilNextEnrichment(result) {
+  if (!result?.nextDueAt) return null;
+  const timestamp = Date.parse(result.nextDueAt);
+  if (Number.isNaN(timestamp)) return MIN_SWEEP_INTERVAL_MS;
+  return Math.max(1000, timestamp - Date.now());
+}
+
 function createMetaAdsEnrichmentService({
   repo = attributionRepo,
   api = metaAdsApi,
   events = realtimeEvents,
-  setIntervalImpl = setInterval,
   setImmediateImpl = setImmediate,
   logger = console,
+  nextDueGetter,
 } = {}) {
-  let timer = null;
+  let worker = null;
   let sweepRunning = false;
   let immediateSweepQueued = false;
+
+  const getNextDue = typeof nextDueGetter === "function"
+    ? nextDueGetter
+    : repo === attributionRepo
+      ? metaAdsEnrichmentScheduleRepo.getNextMetaEnrichmentDueAt
+      : null;
 
   async function processClaimed(row) {
     if (!row?.id || !row?.meta_ad_id) return { status: "skipped" };
@@ -85,7 +99,11 @@ function createMetaAdsEnrichmentService({
     if (!api.configured()) return { status: "not_configured" };
     const claimed = await repo.claimMetaEnrichmentById(attributionId);
     if (!claimed) return { status: "not_pending" };
-    return processClaimed(claimed);
+    const result = await processClaimed(claimed);
+    if (result.status === "deferred" && worker) {
+      worker.wake(result.delayMs);
+    }
+    return result;
   }
 
   async function runSweep() {
@@ -95,14 +113,18 @@ function createMetaAdsEnrichmentService({
     try {
       const claimed = await repo.claimMetaEnrichmentBatch(batchSize());
       let processed = 0;
+      let configurationError = false;
+
       for (let index = 0; index < claimed.length; index += 1) {
         const row = claimed[index];
         const result = await processClaimed(row);
         processed += 1;
 
         // Token/permission failures are configuration-wide, not ad-specific.
-        // Do not hammer the remaining claimed ads with the same bad credential.
+        // Defer the rest of this claimed batch and also pause the worker for an
+        // hour so unclaimed rows do not immediately hammer the same bad token.
         if (result.configurationError) {
+          configurationError = true;
           for (const remaining of claimed.slice(index + 1)) {
             await repo.markMetaEnrichmentDeferred(
               remaining.id,
@@ -113,7 +135,15 @@ function createMetaAdsEnrichmentService({
           break;
         }
       }
-      return { status: "completed", processed };
+
+      let nextDueAt = null;
+      if (configurationError) {
+        nextDueAt = new Date(Date.now() + CONFIGURATION_ERROR_DELAY_MS).toISOString();
+      } else if (typeof getNextDue === "function") {
+        nextDueAt = await getNextDue();
+      }
+
+      return { status: "completed", processed, nextDueAt };
     } finally {
       sweepRunning = false;
     }
@@ -123,15 +153,14 @@ function createMetaAdsEnrichmentService({
     if (!api.configured() || !attributionId) return false;
     if (immediateSweepQueued) return true;
 
-    // A campaign can generate many first messages at once. Coalesce those
-    // triggers into the same durable batch sweep instead of opening one Meta
-    // request per lead in parallel. The database lease/claim remains the source
-    // of truth, so multiple app instances can still work safely in parallel.
+    // Coalesce bursts of first-touch attributions into one wake. If startup has
+    // not created the adaptive worker yet, retain the old direct-sweep fallback.
     immediateSweepQueued = true;
     const immediate = setImmediateImpl(async () => {
       immediateSweepQueued = false;
       try {
-        await runSweep();
+        if (worker) worker.wake(0);
+        else await runSweep();
       } catch (err) {
         logger.error?.("Failed to run immediate Meta Ads enrichment sweep:", err);
       }
@@ -141,7 +170,7 @@ function createMetaAdsEnrichmentService({
   }
 
   function start() {
-    if (timer) return timer;
+    if (worker && !worker.state().stopped) return worker;
     if (!api.configured()) {
       logger.log?.(
         "Meta Ads enrichment is idle: META_MARKETING_ACCESS_TOKEN is not configured."
@@ -149,17 +178,16 @@ function createMetaAdsEnrichmentService({
       return null;
     }
 
-    runSweep().catch((err) => {
-      logger.error?.("Initial Meta Ads enrichment sweep failed:", err);
+    worker = createAdaptiveWorkerTimer({
+      run: runSweep,
+      delayForResult: delayUntilNextEnrichment,
+      errorRetryDelayMs: MIN_SWEEP_INTERVAL_MS,
+      label: "Meta Ads enrichment worker",
+      logger,
     });
-    timer = setIntervalImpl(() => {
-      runSweep().catch((err) => {
-        logger.error?.("Meta Ads enrichment sweep failed:", err);
-      });
-    }, sweepIntervalMs());
-    timer?.unref?.();
+    worker.start();
     logger.log?.("Meta Ads enrichment worker started.");
-    return timer;
+    return worker;
   }
 
   return {
@@ -180,6 +208,7 @@ module.exports = {
   NON_RETRYABLE_ERROR_DELAY_MS,
   batchSize,
   createMetaAdsEnrichmentService,
+  delayUntilNextEnrichment,
   retryDelayMs,
   safeErrorText,
   sweepIntervalMs,
