@@ -4,14 +4,18 @@ const followUpRepo = require("../db/followUpRepo");
 const contactsRepo = require("../db/contactsRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
+const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
 const channelMessaging = require("./channelMessagingService");
 
+// Retained as the failure-retry delay/export. Normal operation now sleeps until
+// the next actual follow-up is due instead of polling Postgres every minute.
 const FOLLOW_UP_CHECK_INTERVAL_MS = 60 * 1000;
 const FOLLOW_UP_BATCH_SIZE = 25;
 const STALE_CLAIM_GRACE_MINUTES = 10;
 
 let sweepRunning = false;
+let followUpTimer = null;
 
 function getActiveSettings() {
   const settings = clinicConfig.automatedFollowUp;
@@ -286,20 +290,25 @@ async function recoverInterruptedFollowUps() {
       );
     }
   }
+  return recovered.length;
 }
 
 async function runAutomatedFollowUps() {
-  if (sweepRunning) return;
+  if (sweepRunning) {
+    return { enabled: Boolean(getActiveSettings()), candidateCount: 0, recoveredCount: 0, nextDueAt: null };
+  }
 
   sweepRunning = true;
   try {
     // Recovery is independent of the current tool setting. A staff member
     // may disable the tool after a restart, but an already-claimed message
     // must still become visible and retryable in the Inbox.
-    await recoverInterruptedFollowUps();
+    const recoveredCount = await recoverInterruptedFollowUps();
 
     const settings = getActiveSettings();
-    if (!settings) return;
+    if (!settings) {
+      return { enabled: false, candidateCount: 0, recoveredCount, nextDueAt: null };
+    }
 
     const candidates = await followUpRepo.findCandidates({
       delayMinutes: settings.delayMinutes,
@@ -318,22 +327,72 @@ async function runAutomatedFollowUps() {
         );
       }
     }
+
+    const liveSettings = getActiveSettings();
+    const nextDueAt = liveSettings && typeof followUpRepo.getNextCandidateDueAt === "function"
+      ? await followUpRepo.getNextCandidateDueAt({
+          delayMinutes: liveSettings.delayMinutes,
+          triggerMode: liveSettings.triggerMode,
+          activatedAt: liveSettings.activatedAt,
+        })
+      : null;
+
+    return {
+      enabled: Boolean(liveSettings),
+      candidateCount: candidates.length,
+      recoveredCount,
+      nextDueAt,
+    };
   } catch (err) {
     console.error("Automated follow-up sweep failed:", err);
+    throw err;
   } finally {
     sweepRunning = false;
   }
 }
 
-function startAutomatedFollowUps() {
-  runAutomatedFollowUps();
-  const timer = setInterval(runAutomatedFollowUps, FOLLOW_UP_CHECK_INTERVAL_MS);
-  return () => clearInterval(timer);
+function delayUntilNextFollowUp(result) {
+  if (!result?.enabled || !result.nextDueAt) return null;
+  const timestamp = Date.parse(result.nextDueAt);
+  if (Number.isNaN(timestamp)) return FOLLOW_UP_CHECK_INTERVAL_MS;
+  // Avoid a zero-delay spin if another instance wins a race between candidate
+  // discovery and the atomic claim.
+  return Math.max(1000, timestamp - Date.now());
 }
+
+function wakeAutomatedFollowUps(delayMs = 0) {
+  return followUpTimer?.wake(delayMs) || false;
+}
+
+function startAutomatedFollowUps() {
+  if (followUpTimer && !followUpTimer.state().stopped) {
+    return () => followUpTimer.stop();
+  }
+
+  followUpTimer = createAdaptiveWorkerTimer({
+    run: runAutomatedFollowUps,
+    delayForResult: delayUntilNextFollowUp,
+    errorRetryDelayMs: FOLLOW_UP_CHECK_INTERVAL_MS,
+    label: "Automated follow-up worker",
+  });
+  return followUpTimer.start();
+}
+
+// Any conversation change can make an outbound message newly eligible or make
+// an existing candidate ineligible. Recalculate while the database is already
+// active; once the chat becomes quiet the worker sleeps until the exact due time.
+realtimeEvents.subscribe("conversation_changed", () => {
+  wakeAutomatedFollowUps(0);
+});
+
+realtimeEvents.subscribe("config_changed", (payload) => {
+  if (payload?.keys?.includes("automatedFollowUp")) wakeAutomatedFollowUps(0);
+});
 
 module.exports = {
   FOLLOW_UP_CHECK_INTERVAL_MS,
   STALE_CLAIM_GRACE_MINUTES,
   runAutomatedFollowUps,
   startAutomatedFollowUps,
+  wakeAutomatedFollowUps,
 };
