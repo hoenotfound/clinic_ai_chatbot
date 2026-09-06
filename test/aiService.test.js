@@ -15,8 +15,10 @@ const {
   getGeminiApiKeys,
   getGeminiReplyModels,
   getGeminiReplyPolicy,
+  getRuntimeGeminiModelHealth,
   isGeminiModelUnavailableError,
   isRetryableAiError,
+  resetGeminiModelHealth,
   runCandidate,
   runGeminiReply,
 } = require("../src/services/aiService");
@@ -115,10 +117,13 @@ test("Gemini model-capacity errors are distinguished from key failures", () => {
   );
 });
 
-test("503 model overload switches to Flash-Lite without trying every Gemini key", async () => {
+test("503 model overload is confirmed by one extra healthy key before Flash-Lite fallback", async () => {
   resetGeminiKeyPoolState();
+  resetGeminiModelHealth();
   const originalGetReply = geminiService.getReply;
+  const originalWarn = console.warn;
   const calls = [];
+  const warnings = [];
   const validReply = JSON.stringify({
     reply: "hello",
     outcome: "normal",
@@ -136,6 +141,9 @@ test("503 model overload switches to Flash-Lite without trying every Gemini key"
     }
     return validReply;
   };
+  console.warn = (...args) => {
+    warnings.push(args.map((value) => String(value)).join(" "));
+  };
 
   try {
     const result = await runGeminiReply(
@@ -152,11 +160,76 @@ test("503 model overload switches to Flash-Lite without trying every Gemini key"
     assert.equal(result, validReply);
     assert.deepEqual(calls, [
       { apiKey: "key-a", model: "gemini-2.5-flash" },
+      { apiKey: "key-b", model: "gemini-2.5-flash" },
       { apiKey: "key-a", model: "gemini-2.5-flash-lite" },
     ]);
+    assert.ok(
+      warnings.some(
+        (line) => line.includes("confirming with Gemini key 2") && line.includes("high demand")
+      )
+    );
+    assert.ok(
+      warnings.some(
+        (line) => line.includes("confirmed gemini-2.5-flash capacity failure") && line.includes("high demand")
+      )
+    );
   } finally {
+    console.warn = originalWarn;
     geminiService.getReply = originalGetReply;
     resetGeminiKeyPoolState();
+    resetGeminiModelHealth();
+  }
+});
+
+test("a second healthy key can rescue the primary model after a first-key 503", async () => {
+  resetGeminiKeyPoolState();
+  resetGeminiModelHealth();
+  const originalGetReply = geminiService.getReply;
+  const originalWarn = console.warn;
+  const calls = [];
+  const validReply = JSON.stringify({
+    reply: "hello from primary",
+    outcome: "normal",
+    treatment: null,
+    branch: null,
+    appointmentPreference: null,
+  });
+  const env = {
+    GEMINI_API_KEYS: "key-a,key-b,key-c",
+    GEMINI_MODEL: "gemini-3.8-flash",
+    GEMINI_FALLBACK_MODEL: "gemini-3.5-flash-lite",
+    GEMINI_REPLY_5XX_RETRY_COUNT: "0",
+  };
+
+  geminiService.getReply = async (_messages, _options, apiKey, model) => {
+    calls.push({ apiKey, model });
+    if (apiKey === "key-a" && model === "gemini-3.8-flash") {
+      const err = new Error("503 UNAVAILABLE: project-specific capacity pressure");
+      err.status = 503;
+      throw err;
+    }
+    return validReply;
+  };
+  console.warn = () => {};
+
+  try {
+    const result = await runGeminiReply(
+      [{ role: "user", content: "hi" }],
+      { channel: "whatsapp", isFirstMessage: false },
+      env
+    );
+
+    assert.equal(result, validReply);
+    assert.deepEqual(calls, [
+      { apiKey: "key-a", model: "gemini-3.8-flash" },
+      { apiKey: "key-b", model: "gemini-3.8-flash" },
+    ]);
+    assert.equal(getRuntimeGeminiModelHealth(env)[0].status, "available");
+  } finally {
+    console.warn = originalWarn;
+    geminiService.getReply = originalGetReply;
+    resetGeminiKeyPoolState();
+    resetGeminiModelHealth();
   }
 });
 
