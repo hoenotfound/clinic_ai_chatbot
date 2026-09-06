@@ -1,5 +1,7 @@
 const { pool } = require("./db");
 
+const SCHEDULED_PROCESSING_STALE_MINUTES = 10;
+
 const SCHEDULED_MESSAGE_COLUMNS = `
   id,
   contact_id,
@@ -142,6 +144,35 @@ async function getNextScheduledAt() {
   return result.rows[0]?.scheduled_for || null;
 }
 
+/**
+ * Returns the next time the scheduler must wake for either real scheduled work
+ * or recovery of a processing row whose owner may have disappeared. Without
+ * the processing branch, a Render restart inside the stale grace period could
+ * leave a fresh processing row stranded forever once periodic polling is gone.
+ */
+async function getNextWorkerDueAt(
+  olderThanMinutes = SCHEDULED_PROCESSING_STALE_MINUTES
+) {
+  await ensureSchema();
+  const result = await pool.query(
+    `SELECT MIN(due_at) AS due_at
+     FROM (
+       SELECT scheduled_for AS due_at
+       FROM scheduled_messages
+       WHERE status = 'scheduled'
+
+       UNION ALL
+
+       SELECT claimed_at + ($1::text || ' minutes')::interval AS due_at
+       FROM scheduled_messages
+       WHERE status = 'processing'
+         AND claimed_at IS NOT NULL
+     ) due_times`,
+    [olderThanMinutes]
+  );
+  return result.rows[0]?.due_at || null;
+}
+
 async function claimDue(limit = 25) {
   await ensureSchema();
   const client = await pool.connect();
@@ -221,7 +252,9 @@ async function markExpired(id, reason) {
   return result.rows[0] || null;
 }
 
-async function recoverStaleProcessing(olderThanMinutes = 10) {
+async function recoverStaleProcessing(
+  olderThanMinutes = SCHEDULED_PROCESSING_STALE_MINUTES
+) {
   await ensureSchema();
   const result = await pool.query(
     `UPDATE scheduled_messages
@@ -237,6 +270,7 @@ async function recoverStaleProcessing(olderThanMinutes = 10) {
 }
 
 module.exports = {
+  SCHEDULED_PROCESSING_STALE_MINUTES,
   ensureSchema,
   getLatestInboundAt,
   listForContact,
@@ -244,6 +278,7 @@ module.exports = {
   updateScheduled,
   cancel,
   getNextScheduledAt,
+  getNextWorkerDueAt,
   claimDue,
   attachMessage,
   markSent,
