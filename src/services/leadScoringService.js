@@ -2,13 +2,20 @@ const clinicConfig = require("../config/clinicConfig");
 const configRepo = require("../db/configRepo");
 const leadScoringRepo = require("../db/leadScoringRepo");
 const leadScoringFailureRecoveryRepo = require("../db/leadScoringFailureRecoveryRepo");
+const realtimeEvents = require("../utils/realtimeEvents");
+const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { scoreLeadConversation } = require("./leadScoringAiService");
 const telegramAlerts = require("./telegramAlertService");
 
+// Retained for compatibility and short failure retries. The worker no longer
+// polls Postgres every minute while there is no conversation activity.
 const LEAD_SCORING_CHECK_INTERVAL_MS = 60 * 1000;
 const LEAD_SCORING_BATCH_SIZE = 5;
 const MAX_TRANSCRIPT_MESSAGES = 80;
 const MAX_TRANSCRIPT_CHARS = 30_000;
+
+let leadScoringTimer = null;
+let inactivityTimer = null;
 
 function isValidTimestamp(value) {
   return typeof value === "string" && !Number.isNaN(Date.parse(value));
@@ -256,6 +263,14 @@ function createLeadScoringRunner({
             err
           );
 
+          if (
+            failure &&
+            !failure.terminal &&
+            repository === leadScoringRepo
+          ) {
+            wakeLeadScoring(leadScoringRepo.FAILED_RETRY_MINUTES * 60 * 1000);
+          }
+
           // A permanently failed AI score must not make the lead disappear from
           // the sales group's Telegram workflow. Queue a durable manual-review
           // alert for the same transcript boundary. It uses the normal inactivity
@@ -348,11 +363,76 @@ function createLeadScoringRunner({
 
 const runLeadScoring = createLeadScoringRunner();
 
-function startLeadScoring() {
-  runLeadScoring();
-  const timer = setInterval(runLeadScoring, LEAD_SCORING_CHECK_INTERVAL_MS);
-  return () => clearInterval(timer);
+function clearInactivityTimer() {
+  if (inactivityTimer) clearTimeout(inactivityTimer);
+  inactivityTimer = null;
 }
+
+function wakeLeadScoring(delayMs = 0) {
+  return leadScoringTimer?.wake(delayMs) || false;
+}
+
+function scheduleInactivityCheck({ startup = false } = {}) {
+  clearInactivityTimer();
+  const settings = getActiveSettings();
+  if (!settings) return false;
+
+  const inactivityMs = settings.inactivityMinutes * 60 * 1000;
+  const staleRecoveryMs = leadScoringRepo.PROCESSING_STALE_MINUTES * 60 * 1000;
+  const delayMs = startup
+    ? Math.min(inactivityMs, staleRecoveryMs)
+    : inactivityMs;
+
+  inactivityTimer = setTimeout(() => {
+    inactivityTimer = null;
+    wakeLeadScoring(0);
+  }, delayMs);
+  inactivityTimer.unref?.();
+  return true;
+}
+
+function noteLeadScoringActivity() {
+  // Run once now so message-count/time ceilings remain responsive, then one
+  // final time after the configured inactivity window. New chat activity resets
+  // that final timer instead of generating one Postgres query every minute.
+  wakeLeadScoring(0);
+  scheduleInactivityCheck();
+}
+
+function startLeadScoring() {
+  if (leadScoringTimer && !leadScoringTimer.state().stopped) {
+    return () => {
+      clearInactivityTimer();
+      leadScoringTimer.stop();
+    };
+  }
+
+  leadScoringTimer = createAdaptiveWorkerTimer({
+    run: runLeadScoring,
+    delayForResult: () => null,
+    errorRetryDelayMs: LEAD_SCORING_CHECK_INTERVAL_MS,
+    label: "Lead scoring worker",
+  });
+  const stopWorker = leadScoringTimer.start();
+  scheduleInactivityCheck({ startup: true });
+
+  return () => {
+    clearInactivityTimer();
+    stopWorker();
+  };
+}
+
+realtimeEvents.subscribe("conversation_changed", (payload) => {
+  if (payload?.reason === "message" || payload?.reason === "message_updated") {
+    noteLeadScoringActivity();
+  }
+});
+
+realtimeEvents.subscribe("config_changed", (payload) => {
+  if (!payload?.keys?.includes("leadScoring")) return;
+  wakeLeadScoring(0);
+  scheduleInactivityCheck({ startup: true });
+});
 
 module.exports = {
   LEAD_SCORING_BATCH_SIZE,
@@ -363,8 +443,10 @@ module.exports = {
   createLeadScoringRunner,
   ensureConversationAnalysisActivation,
   getActiveSettings,
+  noteLeadScoringActivity,
   runLeadScoring,
   shouldApplyAutomaticTemperature,
   startLeadScoring,
   trimTranscript,
+  wakeLeadScoring,
 };
