@@ -19,6 +19,7 @@ const originalPolicyCheck = whatsappPolicy.checkFreeformAllowed;
 test.beforeEach(() => {
   followUpRepo.markStaleClaimsUnconfirmed = async () => [];
   followUpRepo.getNextCandidateDueAt = async () => null;
+  followUpRepo.getNextStaleClaimDueAt = async () => null;
   pipelineRepo.markContactedForContact = async () => false;
   // These tests exercise follow-up timing/language/delivery behavior, not the
   // policy service's database lookup. Policy behavior has dedicated tests.
@@ -266,6 +267,34 @@ test("does not query conversations while the tool is disabled", async () => {
   await runAutomatedFollowUps();
 
   assert.equal(queryCount, 0);
+});
+
+test("keeps a fresh interrupted follow-up recovery scheduled even while the tool is disabled", async () => {
+  clinicConfig.automatedFollowUp = {
+    ...clinicConfig.automatedFollowUp,
+    enabled: false,
+    activatedAt: null,
+  };
+  const recoveryDueAt = new Date(Date.now() + 7 * 60 * 1000).toISOString();
+  let candidateQueries = 0;
+  let recoveryScheduleInput = null;
+
+  followUpRepo.findCandidates = async () => {
+    candidateQueries += 1;
+    return [];
+  };
+  followUpRepo.getNextStaleClaimDueAt = async (input) => {
+    recoveryScheduleInput = input;
+    return recoveryDueAt;
+  };
+
+  const result = await runAutomatedFollowUps();
+
+  assert.equal(candidateQueries, 0);
+  assert.deepEqual(recoveryScheduleInput, {
+    olderThanMinutes: STALE_CLAIM_GRACE_MINUTES,
+  });
+  assert.equal(result.nextRecoveryAt, recoveryDueAt);
 });
 
 test("recovers an interrupted follow-up even while the tool is disabled", async () => {
