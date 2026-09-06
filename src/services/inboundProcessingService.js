@@ -1,5 +1,7 @@
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const contactsRepo = require("../db/contactsRepo");
+const realtimeEvents = require("../utils/realtimeEvents");
+const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const metaMessaging = require("./metaMessagingService");
 const {
   resumeIncomingProcessingJob,
@@ -7,20 +9,30 @@ const {
 } = require("./inboundMessageClaimService");
 const { enqueueReplyConversation } = require("../utils/conversationQueue");
 
+// Fast retry remains available while there is actual failed/recoverable work.
 const RECOVERY_SWEEP_INTERVAL_MS = 10 * 1000;
+// When completely idle, a very slow safety sweep protects against an unknown
+// edge case without preventing Neon from scaling to zero.
+const IDLE_RECOVERY_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 // Customer processing can legitimately include media download/transcription,
 // a bounded Gemini/Claude reply chain and an outbound Meta request. Give the
 // live worker a generous lease so recovery never races a healthy slow request.
 // A real restart releases the process immediately; waiting up to three minutes
 // is preferable to producing a duplicate outbound response.
 const STALE_PROCESSING_SECONDS = 3 * 60;
+const STALE_RECHECK_GRACE_MS = 5 * 1000;
 const RECOVERY_BATCH_SIZE = 25;
 const MAX_PROCESSING_ATTEMPTS = 5;
 const COMPLETED_RETENTION_HOURS = 24;
-const PRUNE_EVERY_SWEEPS = 360; // about once per hour at the default cadence
+const PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 let recoverySweepRunning = false;
-let sweepCount = 0;
+let lastPrunedAt = Date.now();
+let recoveryTimer = null;
+
+function wakeInboundProcessingRecovery(delayMs = 0) {
+  return recoveryTimer?.wake(delayMs) || false;
+}
 
 async function claimLiveItem(item, repository = inboundProcessingRepo) {
   if (!item?.savedInbound?.id) return null;
@@ -45,6 +57,13 @@ async function markBatchFailed(items, error, repository = inboundProcessingRepo)
         markErr
       );
     }
+  }
+
+  // Live webhook processing uses this same helper outside the recovery timer.
+  // If a real attempt failed, request a fast retry instead of depending on an
+  // always-on 10-second database poll.
+  if (failures.length > 0 && repository === inboundProcessingRepo) {
+    wakeInboundProcessingRecovery(RECOVERY_SWEEP_INTERVAL_MS);
   }
   return failures;
 }
@@ -150,7 +169,7 @@ async function recoverMetaResolutionJobs({
   resolveJob = metaMessaging.resolveClaimedMessageEditJob,
   storeIncoming = storeIncomingMessage,
 } = {}) {
-  if (typeof repository.claimRecoverableMetaResolutions !== "function") return;
+  if (typeof repository.claimRecoverableMetaResolutions !== "function") return 0;
 
   const jobs = await repository.claimRecoverableMetaResolutions({
     limit: RECOVERY_BATCH_SIZE,
@@ -185,7 +204,7 @@ async function recoverMetaResolutionJobs({
     }
   }
 
-  if (typeof repository.listExhaustedMetaResolutions !== "function") return;
+  if (typeof repository.listExhaustedMetaResolutions !== "function") return jobs.length;
   const exhausted = await repository.listExhaustedMetaResolutions({
     limit: RECOVERY_BATCH_SIZE,
     staleAfterSeconds: STALE_PROCESSING_SECONDS,
@@ -200,6 +219,7 @@ async function recoverMetaResolutionJobs({
       console.error(`Failed to mark Meta resolution job ${job.id} terminal:`, err);
     });
   }
+  return jobs.length + exhausted.length;
 }
 
 async function runInboundProcessingRecovery({
@@ -210,18 +230,19 @@ async function runInboundProcessingRecovery({
   resolveMetaJob = metaMessaging.resolveClaimedMessageEditJob,
   storeIncoming = storeIncomingMessage,
 } = {}) {
-  if (recoverySweepRunning) return;
+  if (recoverySweepRunning) return { workCount: 0 };
   if (typeof processBatch !== "function") {
     throw new TypeError("runInboundProcessingRecovery requires processBatch.");
   }
 
   recoverySweepRunning = true;
+  let workCount = 0;
   try {
     // Resolve opaque Instagram/Facebook message_edit notifications first. Any
     // customer messages created here are pending ordinary jobs and are picked
     // up by claimRecoverable immediately below, so restart recovery remains one
     // ordered pipeline rather than a second reply path.
-    await recoverMetaResolutionJobs({
+    workCount += await recoverMetaResolutionJobs({
       repository,
       resolveJob: resolveMetaJob,
       storeIncoming,
@@ -232,6 +253,7 @@ async function runInboundProcessingRecovery({
       staleAfterSeconds: STALE_PROCESSING_SECONDS,
       maxAttempts: MAX_PROCESSING_ATTEMPTS,
     });
+    workCount += jobs.length;
 
     for (const group of groupJobsByContact(jobs)) {
       const items = [];
@@ -278,41 +300,77 @@ async function runInboundProcessingRecovery({
       staleAfterSeconds: STALE_PROCESSING_SECONDS,
       maxAttempts: MAX_PROCESSING_ATTEMPTS,
     });
+    workCount += exhaustedJobs.length;
     for (const job of exhaustedJobs) {
       await flagTerminalFailure(job, contacts, repository);
     }
 
-    sweepCount += 1;
-    if (sweepCount % PRUNE_EVERY_SWEEPS === 0) {
+    if (Date.now() - lastPrunedAt >= PRUNE_INTERVAL_MS) {
+      lastPrunedAt = Date.now();
       await repository.pruneCompleted({
         olderThanHours: COMPLETED_RETENTION_HOURS,
       }).catch((err) => {
         console.warn("Failed to prune completed inbound-processing jobs:", err?.message || err);
       });
     }
+
+    return { workCount };
   } catch (err) {
     console.error("Inbound processing recovery sweep failed:", err);
+    throw err;
   } finally {
     recoverySweepRunning = false;
   }
+}
+
+function recoveryDelayForResult(result, { runCount }) {
+  if (Number(result?.workCount) > 0) return RECOVERY_SWEEP_INTERVAL_MS;
+  // A fresh processing lease from the previous Render instance may not be stale
+  // during the first startup sweep. Recheck once just after the lease window,
+  // then become truly idle.
+  if (runCount === 1) {
+    return STALE_PROCESSING_SECONDS * 1000 + STALE_RECHECK_GRACE_MS;
+  }
+  return IDLE_RECOVERY_SWEEP_INTERVAL_MS;
 }
 
 function startInboundProcessingRecovery({ processBatch } = {}) {
   if (typeof processBatch !== "function") {
     throw new TypeError("startInboundProcessingRecovery requires processBatch.");
   }
+  if (recoveryTimer && !recoveryTimer.state().stopped) {
+    return () => recoveryTimer.stop();
+  }
 
-  runInboundProcessingRecovery({ processBatch });
-  const timer = setInterval(
-    () => runInboundProcessingRecovery({ processBatch }),
-    RECOVERY_SWEEP_INTERVAL_MS
-  );
-  timer.unref?.();
-  return () => clearInterval(timer);
+  recoveryTimer = createAdaptiveWorkerTimer({
+    run: () => runInboundProcessingRecovery({ processBatch }),
+    delayForResult: recoveryDelayForResult,
+    errorRetryDelayMs: RECOVERY_SWEEP_INTERVAL_MS,
+    label: "Inbound processing recovery",
+  });
+  return recoveryTimer.start();
 }
+
+// The durability phase emits this only when a durable job genuinely needs a
+// recovery safety check. Normal webhook replies still use the immediate live
+// path and are never delayed by this timer.
+realtimeEvents.subscribe("durable_inbound_pending", (payload) => {
+  if (payload?.reason === "meta_resolution") {
+    wakeInboundProcessingRecovery(0);
+    return;
+  }
+  if (payload?.reason === "prepare_failed") {
+    wakeInboundProcessingRecovery(RECOVERY_SWEEP_INTERVAL_MS);
+    return;
+  }
+  wakeInboundProcessingRecovery(
+    STALE_PROCESSING_SECONDS * 1000 + STALE_RECHECK_GRACE_MS
+  );
+});
 
 module.exports = {
   COMPLETED_RETENTION_HOURS,
+  IDLE_RECOVERY_SWEEP_INTERVAL_MS,
   MAX_PROCESSING_ATTEMPTS,
   RECOVERY_BATCH_SIZE,
   RECOVERY_SWEEP_INTERVAL_MS,
@@ -326,4 +384,5 @@ module.exports = {
   replyQueueKeyForRecoveredItems,
   runInboundProcessingRecovery,
   startInboundProcessingRecovery,
+  wakeInboundProcessingRecovery,
 };

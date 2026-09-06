@@ -1,4 +1,5 @@
 const clients = new Set();
+const listeners = new Map();
 
 function normalizeAccess(res) {
   const access = res.req?.user?.realtimeAccess;
@@ -17,6 +18,31 @@ function addClient(res) {
   };
   clients.add(client);
   return () => clients.delete(client);
+}
+
+function subscribe(event, listener) {
+  if (typeof listener !== "function") {
+    throw new TypeError("realtime event listener must be a function.");
+  }
+  if (!listeners.has(event)) listeners.set(event, new Set());
+  const bucket = listeners.get(event);
+  bucket.add(listener);
+  return () => {
+    bucket.delete(listener);
+    if (bucket.size === 0) listeners.delete(event);
+  };
+}
+
+function notifyListeners(event, payload) {
+  const bucket = listeners.get(event);
+  if (!bucket) return;
+  for (const listener of [...bucket]) {
+    try {
+      listener(payload);
+    } catch (err) {
+      console.error(`Realtime internal listener failed for ${event}:`, err);
+    }
+  }
 }
 
 function disconnectUser(userId) {
@@ -65,6 +91,11 @@ function writeEvent(client, event, payload) {
 }
 
 function publish(event, payload = {}) {
+  // Runtime workers subscribe here so message/config activity can wake a
+  // sleeping timer without polling Postgres. Listener failures are isolated
+  // from both the customer path and the browser SSE path.
+  notifyListeners(event, payload);
+
   for (const client of clients) {
     if (client.res.destroyed || client.res.writableEnded) {
       clients.delete(client);
@@ -79,4 +110,4 @@ function publish(event, payload = {}) {
   }
 }
 
-module.exports = { addClient, disconnectUser, publish };
+module.exports = { addClient, disconnectUser, publish, subscribe };

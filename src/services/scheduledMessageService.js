@@ -4,14 +4,18 @@ const pipelineRepo = require("../db/pipelineRepo");
 const scheduledRepo = require("../db/scheduledMessageRepo");
 const conversationStore = require("../utils/conversationStore");
 const realtimeEvents = require("../utils/realtimeEvents");
+const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { AI_HANDOFF_OWNER } = require("./aiHandoffService");
 const channelMessaging = require("./channelMessagingService");
 const whatsappPolicy = require("./whatsappPolicyService");
 const { validateScheduledTime, getServiceWindowEndsAt } = require("./scheduledMessageRules");
 
+// Kept as the retry delay/export for compatibility. Normal operation no longer
+// polls every 30 seconds: the worker sleeps until the next scheduled row is due.
 const CHECK_INTERVAL_MS = 30 * 1000;
 const BATCH_SIZE = 25;
 let sweepRunning = false;
+let schedulerTimer = null;
 
 function publishConversationChange(message, reason = "message") {
   if (!message) return;
@@ -168,7 +172,7 @@ async function processScheduledMessage(item) {
 }
 
 async function runScheduledMessages() {
-  if (sweepRunning) return;
+  if (sweepRunning) return { recoveredCount: 0, dueCount: 0, nextScheduledAt: null };
   sweepRunning = true;
   try {
     const recovered = await scheduledRepo.recoverStaleProcessing();
@@ -199,19 +203,59 @@ async function runScheduledMessages() {
         publishScheduleChange(item.contact_id);
       }
     }
+
+    // Include fresh processing leases in the next wake calculation. A Render
+    // restart can happen after claimDue() but before delivery is confirmed; the
+    // row must wake this worker when its existing stale-recovery grace expires.
+    const nextScheduledAt = typeof scheduledRepo.getNextWorkerDueAt === "function"
+      ? await scheduledRepo.getNextWorkerDueAt()
+      : typeof scheduledRepo.getNextScheduledAt === "function"
+        ? await scheduledRepo.getNextScheduledAt()
+        : null;
+    return {
+      recoveredCount: recovered.length,
+      dueCount: due.length,
+      nextScheduledAt,
+    };
   } catch (err) {
     console.error("Scheduled-message sweep failed:", err);
+    throw err;
   } finally {
     sweepRunning = false;
   }
 }
 
-function startScheduledMessages() {
-  runScheduledMessages();
-  const timer = setInterval(runScheduledMessages, CHECK_INTERVAL_MS);
-  timer.unref?.();
-  return () => clearInterval(timer);
+function delayUntilScheduledResult(result) {
+  if (!result?.nextScheduledAt) return null;
+  const timestamp = Date.parse(result.nextScheduledAt);
+  if (Number.isNaN(timestamp)) return CHECK_INTERVAL_MS;
+  return Math.max(0, timestamp - Date.now());
 }
+
+function wakeScheduledMessages(delayMs = 0) {
+  return schedulerTimer?.wake(delayMs) || false;
+}
+
+function startScheduledMessages() {
+  if (schedulerTimer && !schedulerTimer.state().stopped) {
+    return () => schedulerTimer.stop();
+  }
+
+  schedulerTimer = createAdaptiveWorkerTimer({
+    run: runScheduledMessages,
+    delayForResult: delayUntilScheduledResult,
+    errorRetryDelayMs: CHECK_INTERVAL_MS,
+    label: "Scheduled-message worker",
+  });
+  return schedulerTimer.start();
+}
+
+// Create/edit/cancel routes already publish this event after their durable DB
+// write. Recalculate the exact next wake immediately instead of waiting on a
+// polling interval.
+realtimeEvents.subscribe("conversation_changed", (payload) => {
+  if (payload?.reason === "scheduled_message") wakeScheduledMessages(0);
+});
 
 function scheduleValidation({ scheduledFor, lastInboundAt, now = new Date() }) {
   return validateScheduledTime({ scheduledFor, lastInboundAt, now });
@@ -223,5 +267,6 @@ module.exports = {
   processScheduledMessage,
   runScheduledMessages,
   startScheduledMessages,
+  wakeScheduledMessages,
   scheduleValidation,
 };

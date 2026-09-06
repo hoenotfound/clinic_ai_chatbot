@@ -16,6 +16,8 @@ const originalPolicyCheck = whatsappPolicy.checkFreeformAllowed;
 test.beforeEach(() => {
   scheduledRepo.recoverStaleProcessing = async () => [];
   scheduledRepo.claimDue = async () => [];
+  scheduledRepo.getNextScheduledAt = async () => null;
+  scheduledRepo.getNextWorkerDueAt = async () => null;
   scheduledRepo.getLatestInboundAt = async () => new Date();
   scheduledRepo.attachMessage = async () => null;
   scheduledRepo.markSent = async () => null;
@@ -54,6 +56,23 @@ test.beforeEach(() => {
 
 test.after(() => {
   whatsappPolicy.checkFreeformAllowed = originalPolicyCheck;
+});
+
+test("keeps a recovery wake for a fresh processing row after restart", async () => {
+  const recoveryDueAt = new Date(Date.now() + 8 * 60 * 1000).toISOString();
+  let nextWakeQueries = 0;
+
+  scheduledRepo.getNextWorkerDueAt = async () => {
+    nextWakeQueries += 1;
+    return recoveryDueAt;
+  };
+
+  const result = await runScheduledMessages();
+
+  assert.equal(nextWakeQueries, 1);
+  assert.equal(result.nextScheduledAt, recoveryDueAt);
+  assert.equal(result.recoveredCount, 0);
+  assert.equal(result.dueCount, 0);
 });
 
 test("does not send a scheduled staff message after the conversation returns to AI", async () => {

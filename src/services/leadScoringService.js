@@ -2,13 +2,22 @@ const clinicConfig = require("../config/clinicConfig");
 const configRepo = require("../db/configRepo");
 const leadScoringRepo = require("../db/leadScoringRepo");
 const leadScoringFailureRecoveryRepo = require("../db/leadScoringFailureRecoveryRepo");
+const realtimeEvents = require("../utils/realtimeEvents");
+const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { scoreLeadConversation } = require("./leadScoringAiService");
 const telegramAlerts = require("./telegramAlertService");
 
+// Retained for compatibility and short failure retries. The worker no longer
+// polls Postgres every minute while there is no conversation activity.
 const LEAD_SCORING_CHECK_INTERVAL_MS = 60 * 1000;
 const LEAD_SCORING_BATCH_SIZE = 5;
 const MAX_TRANSCRIPT_MESSAGES = 80;
 const MAX_TRANSCRIPT_CHARS = 30_000;
+const STALE_RECOVERY_GRACE_MS = 5 * 1000;
+
+let leadScoringTimer = null;
+let inactivityTimer = null;
+let staleRecoveryTimer = null;
 
 function isValidTimestamp(value) {
   return typeof value === "string" && !Number.isNaN(Date.parse(value));
@@ -256,6 +265,14 @@ function createLeadScoringRunner({
             err
           );
 
+          if (
+            failure &&
+            !failure.terminal &&
+            repository === leadScoringRepo
+          ) {
+            wakeLeadScoring(leadScoringRepo.FAILED_RETRY_MINUTES * 60 * 1000);
+          }
+
           // A permanently failed AI score must not make the lead disappear from
           // the sales group's Telegram workflow. Queue a durable manual-review
           // alert for the same transcript boundary. It uses the normal inactivity
@@ -348,23 +365,118 @@ function createLeadScoringRunner({
 
 const runLeadScoring = createLeadScoringRunner();
 
-function startLeadScoring() {
-  runLeadScoring();
-  const timer = setInterval(runLeadScoring, LEAD_SCORING_CHECK_INTERVAL_MS);
-  return () => clearInterval(timer);
+function clearInactivityTimer() {
+  if (inactivityTimer) clearTimeout(inactivityTimer);
+  inactivityTimer = null;
 }
+
+function clearStaleRecoveryTimer() {
+  if (staleRecoveryTimer) clearTimeout(staleRecoveryTimer);
+  staleRecoveryTimer = null;
+}
+
+function wakeLeadScoring(delayMs = 0) {
+  return leadScoringTimer?.wake(delayMs) || false;
+}
+
+function scheduleInactivityCheck() {
+  clearInactivityTimer();
+  const settings = getActiveSettings();
+  if (!settings) return false;
+
+  const inactivityMs = settings.inactivityMinutes * 60 * 1000;
+  inactivityTimer = setTimeout(() => {
+    inactivityTimer = null;
+    wakeLeadScoring(0);
+  }, inactivityMs);
+  inactivityTimer.unref?.();
+  return true;
+}
+
+/**
+ * A final AI scoring attempt can still look freshly leased during the first
+ * startup sweep after a Render restart. Keep one independent one-shot wake just
+ * beyond that lease window. It must not be replaced by a shorter inactivity
+ * timer, otherwise a 5-minute inactivity check can run too early and leave the
+ * stale 10-minute processing row stranded indefinitely.
+ */
+function scheduleStaleRecoveryCheck() {
+  clearStaleRecoveryTimer();
+  if (!getActiveSettings()) return false;
+
+  const staleRecoveryMs =
+    leadScoringRepo.PROCESSING_STALE_MINUTES * 60 * 1000 +
+    STALE_RECOVERY_GRACE_MS;
+  staleRecoveryTimer = setTimeout(() => {
+    staleRecoveryTimer = null;
+    wakeLeadScoring(0);
+  }, staleRecoveryMs);
+  staleRecoveryTimer.unref?.();
+  return true;
+}
+
+function noteLeadScoringActivity() {
+  // Run once now so message-count/time ceilings remain responsive, then one
+  // final time after the configured inactivity window. New chat activity resets
+  // that final timer instead of generating one Postgres query every minute.
+  wakeLeadScoring(0);
+  scheduleInactivityCheck();
+}
+
+function startLeadScoring() {
+  if (leadScoringTimer && !leadScoringTimer.state().stopped) {
+    return () => {
+      clearInactivityTimer();
+      clearStaleRecoveryTimer();
+      leadScoringTimer.stop();
+    };
+  }
+
+  leadScoringTimer = createAdaptiveWorkerTimer({
+    run: runLeadScoring,
+    delayForResult: () => null,
+    errorRetryDelayMs: LEAD_SCORING_CHECK_INTERVAL_MS,
+    label: "Lead scoring worker",
+  });
+  const stopWorker = leadScoringTimer.start();
+  scheduleInactivityCheck();
+  scheduleStaleRecoveryCheck();
+
+  return () => {
+    clearInactivityTimer();
+    clearStaleRecoveryTimer();
+    stopWorker();
+  };
+}
+
+realtimeEvents.subscribe("conversation_changed", (payload) => {
+  if (payload?.reason === "message" || payload?.reason === "message_updated") {
+    noteLeadScoringActivity();
+  }
+});
+
+realtimeEvents.subscribe("config_changed", (payload) => {
+  if (!payload?.keys?.includes("leadScoring")) return;
+  wakeLeadScoring(0);
+  scheduleInactivityCheck();
+  scheduleStaleRecoveryCheck();
+});
 
 module.exports = {
   LEAD_SCORING_BATCH_SIZE,
   LEAD_SCORING_CHECK_INTERVAL_MS,
   MAX_TRANSCRIPT_CHARS,
   MAX_TRANSCRIPT_MESSAGES,
+  STALE_RECOVERY_GRACE_MS,
   buildScoringFailureFallback,
   createLeadScoringRunner,
   ensureConversationAnalysisActivation,
   getActiveSettings,
+  noteLeadScoringActivity,
   runLeadScoring,
+  scheduleStaleRecoveryCheck,
   shouldApplyAutomaticTemperature,
   startLeadScoring,
   trimTranscript,
+  wakeLeadScoring,
 };

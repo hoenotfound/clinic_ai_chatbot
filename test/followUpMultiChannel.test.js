@@ -12,6 +12,8 @@ const { runAutomatedFollowUps } = require("../src/services/followUpService");
 
 const originals = {
   findCandidates: followUpRepo.findCandidates,
+  getNextCandidateDueAt: followUpRepo.getNextCandidateDueAt,
+  getNextStaleClaimDueAt: followUpRepo.getNextStaleClaimDueAt,
   saveIfStillEligible: followUpRepo.saveIfStillEligible,
   saveSocialImageCompanion: followUpRepo.saveSocialImageCompanion,
   markStaleClaimsUnconfirmed: followUpRepo.markStaleClaimsUnconfirmed,
@@ -27,6 +29,8 @@ const originals = {
 test.after(() => {
   Object.assign(followUpRepo, {
     findCandidates: originals.findCandidates,
+    getNextCandidateDueAt: originals.getNextCandidateDueAt,
+    getNextStaleClaimDueAt: originals.getNextStaleClaimDueAt,
     saveIfStillEligible: originals.saveIfStillEligible,
     saveSocialImageCompanion: originals.saveSocialImageCompanion,
     markStaleClaimsUnconfirmed: originals.markStaleClaimsUnconfirmed,
@@ -61,6 +65,8 @@ function enableTool({ imageUrl = "" } = {}) {
 test.beforeEach(() => {
   enableTool();
   followUpRepo.markStaleClaimsUnconfirmed = async () => [];
+  followUpRepo.getNextCandidateDueAt = async () => null;
+  followUpRepo.getNextStaleClaimDueAt = async () => null;
   followUpRepo.saveSocialImageCompanion = async () => null;
   contactsRepo.setDeliveryAttention = async () => {};
   pipelineRepo.markContactedForContact = async () => false;

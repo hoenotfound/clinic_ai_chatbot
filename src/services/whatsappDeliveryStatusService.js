@@ -2,13 +2,17 @@ const messagesRepo = require("../db/messagesRepo");
 const repository = require("../db/whatsappDeliveryStatusRepo");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
 const realtimeEvents = require("../utils/realtimeEvents");
+const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 
+// Fast retry while a real delivery-status job needs work.
 const RECOVERY_INTERVAL_MS = 10 * 1000;
+const IDLE_RECOVERY_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const STALE_AFTER_SECONDS = 60;
+const STALE_RECHECK_GRACE_MS = 5 * 1000;
 const BATCH_SIZE = 50;
 const MAX_ATTEMPTS = 5;
 const COMPLETED_RETENTION_HOURS = 24;
-const PRUNE_INTERVAL_MS = 5 * 60 * 1000;
+const PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 function deliveryFailureReason(job) {
   return job.error_message || job.error_title || "WhatsApp reported delivery as failed.";
@@ -51,7 +55,12 @@ function createWhatsAppDeliveryStatusService({
   logger = console,
 } = {}) {
   let recoveryRunning = false;
-  let lastPrunedAt = 0;
+  let lastPrunedAt = Date.now();
+  let recoveryTimer = null;
+
+  function wakeRecovery(delayMs = 0) {
+    return recoveryTimer?.wake(delayMs) || false;
+  }
 
   async function storeDeliveryStatusUpdates(updates) {
     return repo.storeBatch(updates);
@@ -152,11 +161,13 @@ function createWhatsAppDeliveryStatusService({
       );
       try {
         await repo.markFailed(job.id, job.lease_token, err);
+        wakeRecovery(RECOVERY_INTERVAL_MS);
       } catch (markErr) {
         // Leaving the row in processing state is intentional here. The stale
         // lease recovery path will reclaim it after STALE_AFTER_SECONDS. Lease
         // fencing prevents an older worker from failing a newer worker's claim.
         logger.error(`Failed to mark delivery-status job ${job.id} retryable:`, markErr);
+        wakeRecovery(STALE_AFTER_SECONDS * 1000 + STALE_RECHECK_GRACE_MS);
       }
       return null;
     }
@@ -204,6 +215,7 @@ function createWhatsAppDeliveryStatusService({
         `for ${job.wamid}/${job.delivery_status}. The durable row was retained for diagnosis.`
       );
     }
+    return exhausted.length;
   }
 
   async function maybePruneCompleted(now = Date.now()) {
@@ -217,7 +229,7 @@ function createWhatsAppDeliveryStatusService({
   }
 
   async function runRecovery() {
-    if (recoveryRunning) return;
+    if (recoveryRunning) return { workCount: 0 };
     recoveryRunning = true;
     try {
       const claimed = await repo.claimRecoverable({
@@ -228,20 +240,39 @@ function createWhatsAppDeliveryStatusService({
       for (const job of claimed) {
         await processOne(job);
       }
-      await surfaceExhaustedJobs();
+      const exhaustedCount = await surfaceExhaustedJobs();
       await maybePruneCompleted();
+      return { workCount: claimed.length + exhaustedCount };
     } catch (err) {
       logger.error("WhatsApp delivery-status recovery sweep failed:", err);
+      throw err;
     } finally {
       recoveryRunning = false;
     }
   }
 
+  function recoveryDelayForResult(result, { runCount }) {
+    if (Number(result?.workCount) > 0) return RECOVERY_INTERVAL_MS;
+    // On startup, a lease held by the previous Render process may still look
+    // fresh. Recheck once after the stale window, then become truly idle.
+    if (runCount === 1) {
+      return STALE_AFTER_SECONDS * 1000 + STALE_RECHECK_GRACE_MS;
+    }
+    return IDLE_RECOVERY_INTERVAL_MS;
+  }
+
   function startWhatsAppDeliveryStatusRecovery() {
-    runRecovery();
-    const timer = setInterval(runRecovery, RECOVERY_INTERVAL_MS);
-    timer.unref?.();
-    return () => clearInterval(timer);
+    if (recoveryTimer && !recoveryTimer.state().stopped) {
+      return () => recoveryTimer.stop();
+    }
+    recoveryTimer = createAdaptiveWorkerTimer({
+      run: runRecovery,
+      delayForResult: recoveryDelayForResult,
+      errorRetryDelayMs: RECOVERY_INTERVAL_MS,
+      logger,
+      label: "WhatsApp delivery-status recovery",
+    });
+    return recoveryTimer.start();
   }
 
   return {
@@ -250,6 +281,7 @@ function createWhatsAppDeliveryStatusService({
     runRecovery,
     startWhatsAppDeliveryStatusRecovery,
     storeDeliveryStatusUpdates,
+    wakeRecovery,
   };
 }
 
@@ -258,6 +290,7 @@ const defaultService = createWhatsAppDeliveryStatusService();
 module.exports = {
   BATCH_SIZE,
   COMPLETED_RETENTION_HOURS,
+  IDLE_RECOVERY_INTERVAL_MS,
   MAX_ATTEMPTS,
   RECOVERY_INTERVAL_MS,
   STALE_AFTER_SECONDS,
