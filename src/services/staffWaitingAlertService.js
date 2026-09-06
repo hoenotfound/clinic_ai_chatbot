@@ -1,4 +1,6 @@
 const { pool } = require("../db/db");
+const realtimeEvents = require("../utils/realtimeEvents");
+const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const {
   formatWhatsappNumber,
   isTelegramEnabled,
@@ -10,11 +12,16 @@ const {
 } = require("./telegramImmediateAlertService");
 
 const STAFF_WAITING_MINUTES = 10;
+// Retained as the retry delay/export. Normal operation now performs one check
+// when a conversation reaches the waiting threshold instead of polling every minute.
 const STAFF_WAITING_CHECK_INTERVAL_MS = 60 * 1000;
 const STAFF_WAITING_BATCH_SIZE = 10;
 const STAFF_WAITING_MESSAGE_LIMIT = 4000;
 const LATEST_MESSAGE_LIMIT = 600;
 const STAFF_WAITING_LOCK_NAMESPACE = 24683;
+
+let staffWaitingWorker = null;
+let waitingThresholdTimer = null;
 
 function clean(value, fallback = "Not captured") {
   const text = String(value || "").trim();
@@ -232,7 +239,7 @@ function createStaffWaitingAlertService({
 
       // Only a successful Telegram send becomes the permanent one-per-message
       // marker. If sendMessage throws, ROLLBACK leaves no marker and a later
-      // sweep can retry the reminder.
+      // activity-driven retry can try the reminder again.
       await client.query(
         `INSERT INTO telegram_immediate_alerts (event_key, alert_type, contact_id)
          VALUES ($1, 'staff_waiting', $2)
@@ -259,12 +266,14 @@ function createStaffWaitingAlertRunner({
   findWaiting = findWaitingStaffOwnedConversations,
   sendAlert = sendStaffWaitingAlert,
   env = process.env,
+  scheduleRetry = null,
 } = {}) {
   let sweepRunning = false;
 
   return async function runStaffWaitingAlerts() {
-    if (sweepRunning || !isTelegramEnabled(env)) return;
+    if (sweepRunning || !isTelegramEnabled(env)) return { candidateCount: 0, failedCount: 0 };
     sweepRunning = true;
+    let failedCount = 0;
     try {
       const candidates = await findWaiting({
         waitMinutes: STAFF_WAITING_MINUTES,
@@ -278,30 +287,86 @@ function createStaffWaitingAlertRunner({
             waitingMinutes: candidate.waiting_minutes,
           });
         } catch (err) {
+          failedCount += 1;
           console.error(
             `Telegram staff-waiting alert failed for contact ${candidate.contact_id}:`,
             err
           );
         }
       }
+      if (failedCount > 0 && typeof scheduleRetry === "function") {
+        scheduleRetry(STAFF_WAITING_CHECK_INTERVAL_MS);
+      }
+      return { candidateCount: candidates.length, failedCount };
     } catch (err) {
       console.error("Telegram staff-waiting sweep failed:", err);
+      if (typeof scheduleRetry === "function") {
+        scheduleRetry(STAFF_WAITING_CHECK_INTERVAL_MS);
+      }
+      return { candidateCount: 0, failedCount: 1 };
     } finally {
       sweepRunning = false;
     }
   };
 }
 
-const runStaffWaitingAlerts = createStaffWaitingAlertRunner();
+function wakeStaffWaitingAlerts(delayMs = 0) {
+  return staffWaitingWorker?.wake(delayMs) || false;
+}
+
+function clearWaitingThresholdTimer() {
+  if (waitingThresholdTimer) clearTimeout(waitingThresholdTimer);
+  waitingThresholdTimer = null;
+}
+
+function scheduleWaitingThresholdCheck() {
+  clearWaitingThresholdTimer();
+  if (!isTelegramEnabled()) return false;
+
+  waitingThresholdTimer = setTimeout(() => {
+    waitingThresholdTimer = null;
+    wakeStaffWaitingAlerts(0);
+  }, STAFF_WAITING_MINUTES * 60 * 1000);
+  waitingThresholdTimer.unref?.();
+  return true;
+}
+
+const runStaffWaitingAlerts = createStaffWaitingAlertRunner({
+  scheduleRetry: wakeStaffWaitingAlerts,
+});
 
 function startStaffWaitingAlerts() {
-  runStaffWaitingAlerts();
-  const timer = setInterval(
-    runStaffWaitingAlerts,
-    STAFF_WAITING_CHECK_INTERVAL_MS
-  );
-  return () => clearInterval(timer);
+  if (!isTelegramEnabled()) return () => {};
+  if (staffWaitingWorker && !staffWaitingWorker.state().stopped) {
+    return () => {
+      clearWaitingThresholdTimer();
+      staffWaitingWorker.stop();
+    };
+  }
+
+  staffWaitingWorker = createAdaptiveWorkerTimer({
+    run: runStaffWaitingAlerts,
+    delayForResult: () => null,
+    errorRetryDelayMs: STAFF_WAITING_CHECK_INTERVAL_MS,
+    label: "Staff waiting alert worker",
+  });
+  const stopWorker = staffWaitingWorker.start();
+
+  return () => {
+    clearWaitingThresholdTimer();
+    stopWorker();
+  };
 }
+
+// A conversation-changing message can start or resolve a staff-waiting episode.
+// Reset a single threshold timer instead of querying every minute. Startup still
+// performs one immediate catch-up sweep for anything that became overdue while
+// Render Free was sleeping.
+realtimeEvents.subscribe("conversation_changed", (payload) => {
+  if (payload?.reason === "message" || payload?.reason === "message_updated") {
+    scheduleWaitingThresholdCheck();
+  }
+});
 
 module.exports = {
   STAFF_WAITING_BATCH_SIZE,
@@ -316,4 +381,5 @@ module.exports = {
   runStaffWaitingAlerts,
   staffWaitingEventKey,
   startStaffWaitingAlerts,
+  wakeStaffWaitingAlerts,
 };
