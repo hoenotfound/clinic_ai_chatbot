@@ -2,7 +2,10 @@ const attributionRepo = require("../db/leadAttributionRepo");
 const metaAdsApi = require("./metaAdsApiService");
 const realtimeEvents = require("../utils/realtimeEvents");
 
-const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+// New attributions already queue an immediate enrichment sweep. This interval
+// is only a durable recovery/backoff safety net, so keep it well beyond Neon's
+// idle suspend window instead of waking the database every five minutes.
+const DEFAULT_SWEEP_INTERVAL_MS = 30 * 60 * 1000;
 const MIN_SWEEP_INTERVAL_MS = 60 * 1000;
 const MAX_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const DEFAULT_BATCH_SIZE = 10;
