@@ -375,6 +375,7 @@ async function runWithGeminiKeys(
   const failures = [];
   const boundedRetryCount = Math.max(0, Math.min(Number(retryCount) || 0, 3));
   const startedAtMs = clock();
+  let confirmingModelUnavailable = false;
 
   for (let candidatePosition = 0; candidatePosition < available.length; candidatePosition += 1) {
     const candidate = available[candidatePosition];
@@ -413,11 +414,40 @@ async function runWithGeminiKeys(
         );
         return result;
       } catch (err) {
-        // Model/provider capacity failures are not credential failures. The
-        // model-aware layer marks these so we can switch models immediately
-        // without rotating or cooling every healthy API key.
+        // Model/provider capacity failures are not credential failures. For
+        // customer replies, confirm the first model-wide 503/UNAVAILABLE with
+        // exactly one other healthy key before cooling the whole model. This
+        // distinguishes a project/key-specific capacity problem from a model-
+        // wide outage without burning through every configured key.
         if (err?.stopGeminiKeyRotation) {
-          console.warn(`${candidate.label} stopped key rotation:`, err?.message || err);
+          const isModelCapacityFailure = err?.code === "GEMINI_MODEL_UNAVAILABLE";
+          const nextCandidate = available[candidatePosition + 1];
+          const providerError = err?.cause?.message || err?.message || err;
+
+          if (
+            smartRetry
+            && isModelCapacityFailure
+            && !confirmingModelUnavailable
+            && nextCandidate
+          ) {
+            confirmingModelUnavailable = true;
+            lastError = err;
+            console.warn(
+              `${candidate.label} received ${err.model || "Gemini model"} capacity failure; ` +
+              `confirming with ${nextCandidate.label} before cooling the model:`,
+              providerError
+            );
+            break;
+          }
+
+          if (isModelCapacityFailure && confirmingModelUnavailable) {
+            console.warn(
+              `${candidate.label} confirmed ${err.model || "Gemini model"} capacity failure; stopping key rotation:`,
+              providerError
+            );
+          } else {
+            console.warn(`${candidate.label} stopped key rotation:`, providerError);
+          }
           throw err;
         }
 
