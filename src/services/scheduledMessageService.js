@@ -204,9 +204,14 @@ async function runScheduledMessages() {
       }
     }
 
-    const nextScheduledAt = typeof scheduledRepo.getNextScheduledAt === "function"
-      ? await scheduledRepo.getNextScheduledAt()
-      : null;
+    // Include fresh processing leases in the next wake calculation. A Render
+    // restart can happen after claimDue() but before delivery is confirmed; the
+    // row must wake this worker when its existing stale-recovery grace expires.
+    const nextScheduledAt = typeof scheduledRepo.getNextWorkerDueAt === "function"
+      ? await scheduledRepo.getNextWorkerDueAt()
+      : typeof scheduledRepo.getNextScheduledAt === "function"
+        ? await scheduledRepo.getNextScheduledAt()
+        : null;
     return {
       recoveredCount: recovered.length,
       dueCount: due.length,
