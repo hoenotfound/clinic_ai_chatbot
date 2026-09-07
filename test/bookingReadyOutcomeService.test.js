@@ -127,7 +127,7 @@ test("booking-ready flags Inbox, makes an unlocked lead Hot, records activity, a
   assert.doesNotMatch(allSql, /stage_id\s*=/i);
 });
 
-test("structured Booking Ready persists canonical branch/treatment and appointment preference metadata", async () => {
+test("structured Booking Ready persists canonical clinic metadata and discards project-only fields", async () => {
   const { database, calls } = fakeDatabase();
   const markBookingReady = createBookingReadyOutcomeService({
     database,
@@ -140,6 +140,9 @@ test("structured Booking Ready persists canonical branch/treatment and appointme
       branch: "Petaling Jaya",
       treatment: "HIFU Non-Surgical Facelift",
       appointmentPreference: "Saturday afternoon",
+      projectLocation: "Cheras",
+      projectSummary: "This stray project data must not enter a clinic outcome.",
+      nextStep: "site_visit",
     },
   });
 
@@ -169,6 +172,9 @@ test("structured Booking Ready persists canonical branch/treatment and appointme
   assert.equal(leadUpdate.params[2], "HIFU Non-Surgical Facelift");
   const activity = calls.find(({ sql }) => sql.startsWith("INSERT INTO lead_activities"));
   assert.equal(activity.params[2].appointmentPreference, "Saturday afternoon");
+  assert.equal(Object.hasOwn(activity.params[2], "projectLocation"), false);
+  assert.equal(Object.hasOwn(activity.params[2], "projectSummary"), false);
+  assert.equal(Object.hasOwn(activity.params[2], "nextStep"), false);
   assert.doesNotMatch(leadUpdate.sql, /appointment_at/i);
 });
 
