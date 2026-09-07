@@ -9,8 +9,8 @@ const DEFAULT_MODEL = "gemini-3.8-flash";
 const DEFAULT_SETUP_CHECK_TIMEOUT_MS = 8 * 1000;
 const DEFAULT_MODEL_DIAGNOSTIC_TIMEOUT_MS = 10 * 1000;
 const DIAGNOSTIC_MODELS = Object.freeze([
-  "gemini-3.5-flash",
   "gemini-3.8-flash",
+  "gemini-3.5-flash-lite",
 ]);
 const DIAGNOSTIC_MAX_KEYS = 5;
 
@@ -263,8 +263,9 @@ async function checkAllGeminiConnections({
 
 /**
  * Run a deliberately tiny real generation on up to the first five configured
- * Gemini keys against Gemini 3.5 Flash and 3.8 Flash. This remains CLI-only
- * because each real generation consumes request quota.
+ * Gemini keys against the production customer-reply chain: Gemini 3.8 Flash
+ * first, then Gemini 3.5 Flash Lite. This remains CLI-only because each real
+ * generation consumes request quota.
  *
  * Each request sends a one-character prompt and caps model output at one token
  * with the lowest supported Gemini 3.x thinking level. Tests are sequential.
@@ -373,7 +374,8 @@ async function runGeminiKeyModelDiagnostic({
     }
   }
 
-  const rateLimited = results.some((item) => item.status === "rate_limited");
+  const rateLimited = results.some((item) => item.failureKind === "rate_limit");
+  const quotaExhausted = results.some((item) => item.failureKind === "quota_exhausted");
   const warnings = [];
   if (allCandidates.length > candidates.length) {
     warnings.push(
@@ -382,7 +384,12 @@ async function runGeminiKeyModelDiagnostic({
   }
   if (rateLimited) {
     warnings.push(
-      "A 429 is project-level and may be caused by the diagnostic plus live chatbot traffic. Do not treat one 429 as proof that a specific key is bad."
+      "A RATE LIMIT result is usually a project-level RPM/TPM limit and may be caused by the diagnostic plus live chatbot traffic. Do not treat one rate-limit result as proof that a specific key is bad."
+    );
+  }
+  if (quotaExhausted) {
+    warnings.push(
+      "A QUOTA EXHAUSTED result indicates Gemini reported a daily/RPD-style quota condition. If multiple keys belong to the same Google project, they share that project quota."
     );
   }
   if (stoppedEarly) {
@@ -401,6 +408,8 @@ async function runGeminiKeyModelDiagnostic({
     requestsAttempted: results.length,
     remainingRequests: Math.max(0, plannedRequests - results.length),
     successfulRequests: results.filter((item) => item.status === "ready").length,
+    rateLimitedRequests: results.filter((item) => item.failureKind === "rate_limit").length,
+    quotaExhaustedRequests: results.filter((item) => item.failureKind === "quota_exhausted").length,
     totalTokens: results.reduce((sum, item) => sum + numericToken(item.totalTokens), 0),
     tokenUsageComplete: !results.some((item) => item.usageUnknown),
     stoppedEarly,
