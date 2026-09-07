@@ -50,9 +50,9 @@ const CONVERSION_PROFILES = Object.freeze({
     notReadyExamples: [
       "How much per foot?",
       "Do you cover Kajang?",
-      "I want kitchen cabinets" without a usable project location or project context.",
-      "Can come site visit?" when the property location or project scope is still unclear.",
-      "Maybe later" or another hesitant/tentative answer.",
+      "Customer says they want kitchen cabinets but has not given a usable project location or project context.",
+      "Customer asks for a site visit while the property location or project scope is still unclear.",
+      "Maybe later or another hesitant/tentative answer.",
     ],
     alertTitle: "🔥 Renovation Lead Ready",
     attentionReason: "Conversion ready: customer wants to proceed with a renovation quotation or site visit and provided usable project details.",
