@@ -179,12 +179,14 @@ function parseStructuredReply(raw) {
     };
   }
 
+  const isProjectMode = conversion.mode === "project";
   const branch = canonicalConfiguredBranch(parsed.branch);
   const treatment = parsed.treatment == null
     ? null
-    : canonicalConfiguredService(parsed.treatment);
+    : isProjectMode
+      ? canonicalConfiguredService(parsed.treatment)
+      : canonicalConfiguredName(parsed.treatment, clinicConfig.services);
   const appointmentPreference = cleanOptionalText(parsed.appointmentPreference);
-  const isProjectMode = conversion.mode === "project";
 
   // Project-only fields must never escape into appointment-mode metadata even
   // when a model accidentally fills optional JSON fields that do not belong to
