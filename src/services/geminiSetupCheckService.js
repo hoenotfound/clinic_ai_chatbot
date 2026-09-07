@@ -74,18 +74,46 @@ function withTimeout(promise, timeoutMs) {
   ]);
 }
 
-function withDiagnosticTimeout(promise, timeoutMs, model, label) {
+function diagnosticTimeoutError(timeoutMs, model, label) {
+  const error = new Error(`${label} ${model} diagnostic timed out after ${timeoutMs}ms.`);
+  error.code = "AI_TIMEOUT";
+  error.stopDiagnostic = true;
+  return error;
+}
+
+async function runDiagnosticGeneration(ai, request, timeoutMs, model, label) {
+  const controller = new AbortController();
   let timer;
-  return Promise.race([
-    Promise.resolve(promise).finally(() => clearTimeout(timer)),
-    new Promise((_, reject) => {
-      timer = setTimeout(() => {
-        const error = new Error(`${label} ${model} diagnostic timed out after ${timeoutMs}ms.`);
-        error.code = "AI_TIMEOUT";
-        reject(error);
-      }, timeoutMs);
-    }),
-  ]);
+  let timedOut = false;
+
+  const generation = Promise.resolve()
+    .then(() => ai.models.generateContent({
+      ...request,
+      config: {
+        ...(request.config || {}),
+        abortSignal: controller.signal,
+      },
+    }))
+    .catch((error) => {
+      if (!timedOut) throw error;
+      const timeoutError = diagnosticTimeoutError(timeoutMs, model, label);
+      timeoutError.cause = error;
+      throw timeoutError;
+    });
+
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(diagnosticTimeoutError(timeoutMs, model, label));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([generation, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function numericToken(value) {
@@ -234,14 +262,16 @@ async function checkAllGeminiConnections({
 }
 
 /**
- * Run a deliberately tiny real generation on the first five configured Gemini
- * keys against Gemini 3.5 Flash and 3.8 Flash. This is separate from normal
- * Setup Status because a real generation consumes request quota even when it
- * uses almost no tokens.
+ * Run a deliberately tiny real generation on up to the first five configured
+ * Gemini keys against Gemini 3.5 Flash and 3.8 Flash. This remains CLI-only
+ * because each real generation consumes request quota.
  *
- * Each successful request sends a one-character prompt and caps model output at
- * one token with the lowest supported Gemini 3.x thinking level. Tests are run
- * sequentially so the diagnostic itself does not create a burst across keys.
+ * Each request sends a one-character prompt and caps model output at one token
+ * with the lowest supported Gemini 3.x thinking level. Tests are sequential.
+ * If one request times out, its AbortSignal is triggered and the diagnostic
+ * stops instead of starting another request while the timed-out service call
+ * may still be finishing remotely.
+ *
  * Runtime key health, active-key preference, cooldowns and AI usage telemetry
  * are not changed by this diagnostic.
  */
@@ -254,12 +284,19 @@ async function runGeminiKeyModelDiagnostic({
   clock = () => Date.now(),
   now = () => new Date(),
 } = {}) {
-  const candidates = getGeminiCandidateDescriptors(env).slice(0, Math.max(1, Number(maxKeys) || DIAGNOSTIC_MAX_KEYS));
-  if (!candidates.length) {
+  const allCandidates = getGeminiCandidateDescriptors(env);
+  if (!allCandidates.length) {
     const error = new Error("No Gemini API key is configured.");
     error.code = "AI_PROVIDER_NOT_CONFIGURED";
     throw error;
   }
+
+  const parsedMaxKeys = Number(maxKeys);
+  const requestedMaxKeys = Number.isFinite(parsedMaxKeys) && parsedMaxKeys > 0
+    ? Math.floor(parsedMaxKeys)
+    : DIAGNOSTIC_MAX_KEYS;
+  const safeMaxKeys = Math.min(DIAGNOSTIC_MAX_KEYS, Math.max(1, requestedMaxKeys));
+  const candidates = allCandidates.slice(0, safeMaxKeys);
 
   const checkedModels = [...new Set(
     (Array.isArray(models) ? models : DIAGNOSTIC_MODELS)
@@ -273,23 +310,28 @@ async function runGeminiKeyModelDiagnostic({
   }
 
   const checkTimeoutMs = boundedDiagnosticTimeoutMs(timeoutMs);
+  const plannedRequests = candidates.length * checkedModels.length;
   const results = [];
+  let stoppedEarly = false;
+  let stopReason = null;
 
+  diagnosticLoop:
   for (const candidate of candidates) {
     const ai = createClient(candidate.apiKey);
     for (const model of checkedModels) {
       const startedAt = clock();
       const checkedAt = now();
       try {
-        const response = await withDiagnosticTimeout(
-          ai.models.generateContent({
+        const response = await runDiagnosticGeneration(
+          ai,
+          {
             model,
             contents: [{ role: "user", parts: [{ text: "." }] }],
             config: {
               maxOutputTokens: 1,
               thinkingConfig: { thinkingLevel: "low" },
             },
-          }),
+          },
           checkTimeoutMs,
           model,
           candidate.label
@@ -304,32 +346,66 @@ async function runGeminiKeyModelDiagnostic({
           providerStatus: null,
           latencyMs: Math.max(0, clock() - startedAt),
           checkedAt,
+          usageUnknown: false,
           ...diagnosticUsage(response),
         });
       } catch (error) {
+        const failure = diagnosticFailure(error);
         results.push({
           label: candidate.label,
           fingerprint: candidate.healthKey.replace(/^gemini_/, "").slice(0, 8),
           model,
-          ...diagnosticFailure(error),
+          ...failure,
           latencyMs: Math.max(0, clock() - startedAt),
           checkedAt,
+          usageUnknown: failure.failureKind === "timeout",
           promptTokens: 0,
           outputTokens: 0,
           thinkingTokens: 0,
           totalTokens: 0,
         });
+        if (failure.failureKind === "timeout" || error?.stopDiagnostic) {
+          stoppedEarly = true;
+          stopReason = "timeout";
+          break diagnosticLoop;
+        }
       }
     }
+  }
+
+  const rateLimited = results.some((item) => item.status === "rate_limited");
+  const warnings = [];
+  if (allCandidates.length > candidates.length) {
+    warnings.push(
+      `Only the first ${candidates.length} of ${allCandidates.length} configured runtime Gemini keys were tested.`
+    );
+  }
+  if (rateLimited) {
+    warnings.push(
+      "A 429 is project-level and may be caused by the diagnostic plus live chatbot traffic. Do not treat one 429 as proof that a specific key is bad."
+    );
+  }
+  if (stoppedEarly) {
+    warnings.push(
+      "The diagnostic stopped after a timeout so it would not start more requests while the timed-out service call may still be finishing remotely. Token usage for that timed-out request is unknown."
+    );
   }
 
   return {
     provider: "gemini",
     models: checkedModels,
+    configuredKeyCount: allCandidates.length,
     keyCount: candidates.length,
+    skippedKeyCount: Math.max(0, allCandidates.length - candidates.length),
+    plannedRequests,
     requestsAttempted: results.length,
+    remainingRequests: Math.max(0, plannedRequests - results.length),
     successfulRequests: results.filter((item) => item.status === "ready").length,
     totalTokens: results.reduce((sum, item) => sum + numericToken(item.totalTokens), 0),
+    tokenUsageComplete: !results.some((item) => item.usageUnknown),
+    stoppedEarly,
+    stopReason,
+    warnings,
     results,
   };
 }
@@ -345,11 +421,12 @@ module.exports = {
   checkAllGeminiConnections,
   checkGeminiConnection,
   diagnosticFailure,
+  diagnosticTimeoutError,
   diagnosticUsage,
   errorStatus,
   isCredentialError,
   providerStatus,
+  runDiagnosticGeneration,
   runGeminiKeyModelDiagnostic,
-  withDiagnosticTimeout,
   withTimeout,
 };
