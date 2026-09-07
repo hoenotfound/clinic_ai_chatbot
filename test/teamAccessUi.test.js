@@ -13,7 +13,10 @@ test("Team Access uses a compact searchable staff directory instead of stacked a
   assert.match(page, /const \[query, setQuery\] = useState\(""\)/);
   assert.match(page, /const \[roleFilter, setRoleFilter\] = useState\("all"\)/);
   assert.match(page, /const \[statusFilter, setStatusFilter\] = useState\("active"\)/);
-  assert.match(page, /Search staff by name, username or branch/);
+  assert.match(
+    page,
+    /placeholder=\{`Search staff by name, username or \$\{ui\.locationSingular\}`\}/
+  );
   assert.match(page, /function StaffDirectoryRow/);
   assert.match(page, /function StaffEditorModal/);
   assert.match(page, /function CreateStaffModal/);
