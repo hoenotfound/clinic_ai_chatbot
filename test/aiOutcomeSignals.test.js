@@ -59,7 +59,7 @@ test("system prompt uses structured outcomes and keeps Booking Ready separate fr
   assert.match(prompt, /currently replying on Instagram/i);
   assert.match(prompt, /RETURN ONLY ONE VALID JSON OBJECT/i);
   assert.match(prompt, /"outcome": "normal \| needs_human \| booking_ready"/i);
-  assert.match(prompt, /specific clinic branch has been chosen/i);
+  assert.match(prompt, /specific configured clinic branch has been chosen or clearly accepted/i);
   assert.match(prompt, /day\/date PLUS a time, time range, or daypart/i);
   assert.match(prompt, /CURRENT booking attempt/i);
   assert.match(prompt, /older completed, cancelled, visited, abandoned/i);
