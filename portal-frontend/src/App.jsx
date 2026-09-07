@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { BusinessConfigProvider } from "./context/BusinessConfigContext";
 import Layout from "./components/Layout";
 import ScheduledInboxMessages from "./components/ScheduledInboxMessages";
 import SettingsSectionLayout from "./components/SettingsSectionLayout";
@@ -83,37 +84,39 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<Login />} />
+        <BusinessConfigProvider>
+          <Routes>
+            <Route path="/login" element={<Login />} />
 
-          <Route path="/inbox" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><InboxPage /></ProtectedRoute>} />
-          <Route path="/contacts" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><Contacts /></ProtectedRoute>} />
-          <Route path="/pipeline" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><Pipeline /></ProtectedRoute>} />
-          <Route path="/analytics" element={<ProtectedRoute anyCapabilities={["view_analytics"]}><Analytics /></ProtectedRoute>} />
-          <Route path="/tools" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><ToolsRoute /></ProtectedRoute>} />
-          <Route path="/tools/lead-distribution" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><Navigate to="/tools?tool=lead-distribution" replace /></ProtectedRoute>} />
-          <Route path="/settings" element={<ProtectedRoute anyCapabilities={["manage_settings"]}><Settings /></ProtectedRoute>} />
-          <Route
-            path="/settings/team"
-            element={(
-              <ProtectedRoute anyCapabilities={["manage_users"]}>
-                <SettingsSectionLayout><TeamAccess /></SettingsSectionLayout>
-              </ProtectedRoute>
-            )}
-          />
-          <Route
-            path="/settings/setup"
-            element={(
-              <ProtectedRoute adminOnly>
-                <SettingsSectionLayout><SetupStatus /></SettingsSectionLayout>
-              </ProtectedRoute>
-            )}
-          />
-          <Route path="/setup" element={<Navigate to="/settings/setup" replace />} />
-          <Route path="/no-access" element={<ProtectedRoute><NoAccess /></ProtectedRoute>} />
+            <Route path="/inbox" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><InboxPage /></ProtectedRoute>} />
+            <Route path="/contacts" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><Contacts /></ProtectedRoute>} />
+            <Route path="/pipeline" element={<ProtectedRoute anyCapabilities={LEAD_VIEW}><Pipeline /></ProtectedRoute>} />
+            <Route path="/analytics" element={<ProtectedRoute anyCapabilities={["view_analytics"]}><Analytics /></ProtectedRoute>} />
+            <Route path="/tools" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><ToolsRoute /></ProtectedRoute>} />
+            <Route path="/tools/lead-distribution" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><Navigate to="/tools?tool=lead-distribution" replace /></ProtectedRoute>} />
+            <Route path="/settings" element={<ProtectedRoute anyCapabilities={["manage_settings"]}><Settings /></ProtectedRoute>} />
+            <Route
+              path="/settings/team"
+              element={(
+                <ProtectedRoute anyCapabilities={["manage_users"]}>
+                  <SettingsSectionLayout><TeamAccess /></SettingsSectionLayout>
+                </ProtectedRoute>
+              )}
+            />
+            <Route
+              path="/settings/setup"
+              element={(
+                <ProtectedRoute adminOnly>
+                  <SettingsSectionLayout><SetupStatus /></SettingsSectionLayout>
+                </ProtectedRoute>
+              )}
+            />
+            <Route path="/setup" element={<Navigate to="/settings/setup" replace />} />
+            <Route path="/no-access" element={<ProtectedRoute><NoAccess /></ProtectedRoute>} />
 
-          <Route path="*" element={<DefaultRoute />} />
-        </Routes>
+            <Route path="*" element={<DefaultRoute />} />
+          </Routes>
+        </BusinessConfigProvider>
       </AuthProvider>
     </BrowserRouter>
   );

@@ -1,4 +1,6 @@
 import { useAuth } from "../../context/AuthContext";
+import { useBusinessConfig } from "../../context/BusinessConfigContext";
+import { getBusinessTerminology } from "../../utils/businessTerminology";
 import ContactAvatar from "../ContactAvatar";
 import { LeadSourceBadge } from "./LeadAttributionPanel";
 import {
@@ -13,6 +15,8 @@ import {
 
 export default function LeadCard({ lead, now, noReplyHours, onOpen, onDragStart }) {
   const { permissions } = useAuth();
+  const { config } = useBusinessConfig();
+  const ui = getBusinessTerminology(config || {});
   const overdue = isOverdue(lead, now);
   const noReply = isNoReply(lead, noReplyHours, now);
   const canMoveLead = permissions.manage_assigned_leads === true && typeof onDragStart === "function";
@@ -44,7 +48,7 @@ export default function LeadCard({ lead, now, noReplyHours, onOpen, onDragStart 
             )}
           </div>
           <p className="mt-0.5 truncate text-[11px] text-[var(--color-text-muted)]">
-            {lead.treatment_interest || "Treatment not selected"}
+            {lead.treatment_interest || ui.serviceInterestFallback}
           </p>
         </div>
       </div>

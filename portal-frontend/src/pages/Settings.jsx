@@ -4,17 +4,18 @@ import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { useToasts, ToastContainer } from "../components/Toast";
 import Spinner from "../components/Spinner";
+import { getBusinessTerminology, getSettingsTabs } from "../utils/businessTerminology";
 
-const TABS = [
-  { id: "general", label: "General" },
-  { id: "branches", label: "Branches" },
-  { id: "hours", label: "Hours & Contact" },
-  { id: "services", label: "Services" },
-  { id: "aliases", label: "Service Terms" },
-  { id: "faqs", label: "FAQs" },
-  { id: "promotions", label: "Promotions" },
-  { id: "aiBehavior", label: "AI Behavior" },
-  { id: "escalation", label: "Handoff & Rules" },
+const TAB_IDS = [
+  "general",
+  "branches",
+  "hours",
+  "services",
+  "aliases",
+  "faqs",
+  "promotions",
+  "aiBehavior",
+  "escalation",
 ];
 
 const inputClass =
@@ -22,12 +23,17 @@ const inputClass =
 const textareaClass = `${inputClass} resize-y`;
 const labelClass = "mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]";
 
+function capitalize(value) {
+  const text = String(value || "").trim();
+  return text ? `${text[0].toUpperCase()}${text.slice(1)}` : text;
+}
+
 export default function Settings() {
   const { user, permissions } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get("tab");
-  const initialTab = TABS.some((tab) => tab.id === requestedTab) ? requestedTab : "general";
+  const initialTab = TAB_IDS.includes(requestedTab) ? requestedTab : "general";
   const [config, setConfig] = useState(null); // null = loading
   const [loadError, setLoadError] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -60,7 +66,7 @@ export default function Settings() {
 
   useEffect(() => {
     const tab = searchParams.get("tab");
-    const nextTab = TABS.some((item) => item.id === tab) ? tab : "general";
+    const nextTab = TAB_IDS.includes(tab) ? tab : "general";
     setActiveTab((current) => (current === nextTab ? current : nextTab));
   }, [searchParams]);
 
@@ -92,7 +98,7 @@ export default function Settings() {
   }
 
   function handleSectionChange(value) {
-    if (TABS.some((tab) => tab.id === value)) {
+    if (TAB_IDS.includes(value)) {
       selectConfigTab(value);
       return;
     }
@@ -126,28 +132,33 @@ export default function Settings() {
     );
   }
 
+  const ui = getBusinessTerminology(config);
+  const tabs = getSettingsTabs(config);
+
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--color-bg)] md:flex-row">
       <aside className="hidden h-full w-60 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] md:flex">
         <div className="border-b border-[var(--color-border)] px-5 py-5">
           <h1 className="font-display text-lg font-bold">Settings</h1>
-          <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">Bot & clinic configuration</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">
+            Bot & {ui.businessNoun} configuration
+          </p>
         </div>
         <nav aria-label="Settings sections" className="min-h-0 flex-1 overflow-y-auto px-2.5 py-3">
           <div className="space-y-1">
-            {TABS.map((t) => (
+            {tabs.map((tab) => (
               <button
-                key={t.id}
+                key={tab.id}
                 type="button"
-                aria-current={activeTab === t.id ? "page" : undefined}
-                onClick={() => selectConfigTab(t.id)}
+                aria-current={activeTab === tab.id ? "page" : undefined}
+                onClick={() => selectConfigTab(tab.id)}
                 className={`min-h-10 w-full rounded-xl px-3 text-left text-sm font-medium transition-colors ${
-                  activeTab === t.id
+                  activeTab === tab.id
                     ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)]"
                     : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
                 }`}
               >
-                {t.label}
+                {tab.label}
               </button>
             ))}
           </div>
@@ -195,8 +206,8 @@ export default function Settings() {
               onChange={(event) => handleSectionChange(event.target.value)}
               className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm font-semibold text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
             >
-              <optgroup label="Clinic & AI">
-                {TABS.map((tab) => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
+              <optgroup label={ui.businessAndAiLabel}>
+                {tabs.map((tab) => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
               </optgroup>
               {teamItem && (
                 <optgroup label="Administration">
@@ -269,7 +280,7 @@ function SaveButton({ saving, onClick, label = "Save changes" }) {
   );
 }
 
-// Generic editor for an array of objects sharing the same fields (branches,
+// Generic editor for an array of objects sharing the same fields (locations,
 // services, FAQs, promotions, service aliases). Each field is a single-line
 // `input`, a `textarea`, or an `image` uploader — see the `fields` prop
 // shape used by each tab below. `onError` is only needed if any field is
@@ -470,6 +481,7 @@ function StringListEditor({ items, onChange, addLabel, placeholder }) {
 // ── Tabs ──
 
 function GeneralTab({ config, onSaved, onError }) {
+  const ui = getBusinessTerminology(config);
   const [form, setForm] = useState({
     clinicName: config.clinicName,
     aiAssistantName: config.aiAssistantName,
@@ -480,7 +492,7 @@ function GeneralTab({ config, onSaved, onError }) {
 
   async function handleSave() {
     if (!form.clinicName.trim() || !form.aiAssistantName.trim() || !form.introMessage.trim()) {
-      onError("Clinic name, assistant name, and intro message can't be empty.");
+      onError(`${ui.businessNameLabel}, assistant name, and intro message can't be empty.`);
       return;
     }
     setSaving(true);
@@ -498,9 +510,9 @@ function GeneralTab({ config, onSaved, onError }) {
     <div>
       <SectionHeading
         title="General"
-        description="Basic identity the AI uses to introduce itself and talk about the clinic."
+        description={`Basic identity the AI uses to introduce itself and talk about the ${ui.businessNoun}.`}
       />
-      <Field label="Clinic name">
+      <Field label={ui.businessNameLabel}>
         <input
           className={inputClass}
           value={form.clinicName}
@@ -516,7 +528,7 @@ function GeneralTab({ config, onSaved, onError }) {
       </Field>
       <Field
         label="Intro message"
-        hint="Sent automatically as the very first line to a brand-new patient conversation — not written by the AI itself."
+        hint={`Sent automatically as the very first line to a brand-new ${ui.customerSingular} conversation — not written by the AI itself.`}
       >
         <textarea
           rows={2}
@@ -546,6 +558,7 @@ const BRANCH_FIELDS = [
 ];
 
 function BranchesTab({ config, onSaved, onError }) {
+  const ui = getBusinessTerminology(config);
   const [items, setItems] = useState(() => (config.branches || []).map((b) => ({ ...b, whatsapp: b.whatsapp || "" })));
   const [saving, setSaving] = useState(false);
 
@@ -559,7 +572,7 @@ function BranchesTab({ config, onSaved, onError }) {
         whatsapp: b.whatsapp.trim() || null,
       }));
     if (cleaned.some((b) => !b.name)) {
-      onError("Every branch needs a name.");
+      onError(`Every ${ui.locationSingular} needs a name.`);
       return;
     }
     setSaving(true);
@@ -568,7 +581,7 @@ function BranchesTab({ config, onSaved, onError }) {
       setItems(cleaned.map((b) => ({ ...b, whatsapp: b.whatsapp || "" })));
       onSaved(updated);
     } catch (err) {
-      onError(err.message || "Couldn't save branches.");
+      onError(err.message || `Couldn't save ${ui.locationPlural}.`);
     } finally {
       setSaving(false);
     }
@@ -577,15 +590,15 @@ function BranchesTab({ config, onSaved, onError }) {
   return (
     <div>
       <SectionHeading
-        title="Branches"
-        description="Locations the AI lists when a patient asks where the clinic is, or which branch to go to."
+        title={ui.locationsLabel}
+        description={`Business locations the AI can share when a ${ui.customerSingular} asks where to go or which location to choose.`}
       />
       <RepeatableListEditor
         items={items}
         fields={BRANCH_FIELDS}
         onChange={setItems}
         emptyItem={{ name: "", address: "", phone: "", whatsapp: "" }}
-        addLabel="Add branch"
+        addLabel={`Add ${ui.locationSingular}`}
       />
       <div className="mt-4">
         <SaveButton saving={saving} onClick={handleSave} />
@@ -650,14 +663,14 @@ function HoursContactTab({ config, onSaved, onError }) {
   );
 }
 
-const SERVICE_FIELDS = [
-  { key: "name", label: "Service name" },
-  { key: "description", label: "Description", type: "textarea", rows: 3 },
-  { key: "priceRange", label: "Price" },
-  { key: "duration", label: "Duration" },
-];
-
 function ServicesTab({ config, onSaved, onError }) {
+  const ui = getBusinessTerminology(config);
+  const serviceFields = [
+    { key: "name", label: `${capitalize(ui.serviceSingular)} name` },
+    { key: "description", label: "Description", type: "textarea", rows: 3 },
+    { key: "priceRange", label: "Price" },
+    { key: "duration", label: "Duration" },
+  ];
   const [items, setItems] = useState(() => config.services || []);
   const [saving, setSaving] = useState(false);
 
@@ -671,7 +684,7 @@ function ServicesTab({ config, onSaved, onError }) {
         duration: s.duration.trim(),
       }));
     if (cleaned.some((s) => !s.name)) {
-      onError("Every service needs a name.");
+      onError(`Every ${ui.serviceSingular} needs a name.`);
       return;
     }
     setSaving(true);
@@ -680,7 +693,7 @@ function ServicesTab({ config, onSaved, onError }) {
       setItems(cleaned);
       onSaved(updated);
     } catch (err) {
-      onError(err.message || "Couldn't save services.");
+      onError(err.message || `Couldn't save ${ui.servicePlural}.`);
     } finally {
       setSaving(false);
     }
@@ -689,15 +702,15 @@ function ServicesTab({ config, onSaved, onError }) {
   return (
     <div>
       <SectionHeading
-        title="Services"
-        description="Keep this list accurate — the AI will only quote what's listed here, so it won't invent prices or treatments."
+        title={ui.servicesLabel}
+        description={`Keep this list accurate — the AI will only quote what's listed here, so it won't invent prices or ${ui.servicePlural}.`}
       />
       <RepeatableListEditor
         items={items}
-        fields={SERVICE_FIELDS}
+        fields={serviceFields}
         onChange={setItems}
         emptyItem={{ name: "", description: "", priceRange: "", duration: "" }}
-        addLabel="Add service"
+        addLabel={`Add ${ui.serviceSingular}`}
       />
       <div className="mt-4">
         <SaveButton saving={saving} onClick={handleSave} />
@@ -707,8 +720,8 @@ function ServicesTab({ config, onSaved, onError }) {
 }
 
 const ALIAS_FIELDS = [
-  { key: "alias", label: "What patients type", placeholder: "e.g. thread lift" },
-  { key: "officialService", label: "Maps to service", placeholder: "e.g. APTOS Thread Lift" },
+  { key: "alias", label: "What customers type", placeholder: "e.g. common shorthand or nickname" },
+  { key: "officialService", label: "Maps to service", placeholder: "e.g. configured service name" },
 ];
 
 function AliasesTab({ config, onSaved, onError }) {
@@ -720,7 +733,7 @@ function AliasesTab({ config, onSaved, onError }) {
       .filter((a) => a.alias.trim() || a.officialService.trim())
       .map((a) => ({ alias: a.alias.trim(), officialService: a.officialService.trim() }));
     if (cleaned.some((a) => !a.alias)) {
-      onError("Every entry needs the term patients actually type.");
+      onError("Every entry needs the term customers actually type.");
       return;
     }
     setSaving(true);
@@ -739,7 +752,7 @@ function AliasesTab({ config, onSaved, onError }) {
     <div>
       <SectionHeading
         title="Service Terms"
-        description="Casual terms patients actually type, mapped to the official service name — so the AI doesn't hand off just because the wording doesn't match exactly."
+        description="Casual terms customers actually type, mapped to the official service name — so the AI doesn't hand off just because the wording doesn't match exactly."
       />
       <RepeatableListEditor
         items={items}
@@ -786,7 +799,7 @@ function FaqsTab({ config, onSaved, onError }) {
 
   return (
     <div>
-      <SectionHeading title="FAQs" description="Common questions patients ask — the AI leans on these before improvising." />
+      <SectionHeading title="FAQs" description="Common questions customers ask — the AI leans on these before improvising." />
       <RepeatableListEditor
         items={items}
         fields={FAQ_FIELDS}
@@ -845,7 +858,7 @@ function PromotionsTab({ config, onSaved, onError }) {
     <div>
       <SectionHeading
         title="Promotions"
-        description="Sent as an image alongside the first reply to a brand-new patient, while a promo is within its valid dates."
+        description="Sent as an image alongside the first reply to a brand-new customer, while a promo is within its valid dates."
       />
       <RepeatableListEditor
         items={items}
@@ -863,6 +876,7 @@ function PromotionsTab({ config, onSaved, onError }) {
 }
 
 function AiBehaviorTab({ config, onSaved, onError }) {
+  const ui = getBusinessTerminology(config);
   const [form, setForm] = useState({
     messagingStyle: config.messagingStyle || "",
     closingPlaybook: config.closingPlaybook || "",
@@ -896,7 +910,7 @@ function AiBehaviorTab({ config, onSaved, onError }) {
           onChange={(e) => setForm({ ...form, messagingStyle: e.target.value })}
         />
       </Field>
-      <Field label="Booking / conversion playbook" hint="How the AI should guide interested patients toward booking a consultation.">
+      <Field label="Conversion playbook" hint={`How the AI should guide interested ${ui.customerPlural} toward the next sensible sales step.`}>
         <textarea
           rows={10}
           className={`${textareaClass} min-h-52 font-mono text-[13px] sm:min-h-72`}
@@ -904,7 +918,7 @@ function AiBehaviorTab({ config, onSaved, onError }) {
           onChange={(e) => setForm({ ...form, closingPlaybook: e.target.value })}
         />
       </Field>
-      <Field label="Standard operating procedures" hint="Internal policy — cancellations, complaints, medical/contraindication rules, etc.">
+      <Field label="Standard operating procedures" hint="Internal business rules, policies, exceptions, and situations that need staff confirmation.">
         <textarea
           rows={10}
           className={`${textareaClass} min-h-52 font-mono text-[13px] sm:min-h-72`}
@@ -918,6 +932,7 @@ function AiBehaviorTab({ config, onSaved, onError }) {
 }
 
 function EscalationTab({ config, onSaved, onError }) {
+  const ui = getBusinessTerminology(config);
   const [form, setForm] = useState({
     escalation: { ...config.escalation, outOfScopeTriggers: [...(config.escalation.outOfScopeTriggers || [])] },
     guardrails: [...(config.guardrails || [])],
@@ -959,7 +974,7 @@ function EscalationTab({ config, onSaved, onError }) {
         title="Handoff & Rules"
         description="When the AI should stop and bring in a human, and hard boundaries it must never cross."
       />
-      <Field label="Hand off to a human when the patient asks about...">
+      <Field label={`Hand off to a human when the ${ui.customerSingular} asks about...`}>
         <StringListEditor
           items={form.escalation.outOfScopeTriggers}
           onChange={(v) => setEscalation("outOfScopeTriggers", v)}
@@ -967,7 +982,7 @@ function EscalationTab({ config, onSaved, onError }) {
           placeholder="e.g. Complaints or refund requests"
         />
       </Field>
-      <Field label="Handoff message" hint="What the AI says to the patient when it hands off.">
+      <Field label="Handoff message" hint={`What the AI says to the ${ui.customerSingular} when it hands off.`}>
         <textarea
           rows={2}
           className={textareaClass}
@@ -975,7 +990,7 @@ function EscalationTab({ config, onSaved, onError }) {
           onChange={(e) => setEscalation("handoffMessage", e.target.value)}
         />
       </Field>
-      <Field label="Internal note" hint="Reminder to staff about how this WhatsApp number is monitored — not shown to patients.">
+      <Field label="Internal note" hint={`Reminder to staff about how this channel is monitored — not shown to ${ui.customerPlural}.`}>
         <input
           className={inputClass}
           value={form.escalation.handoffNote}

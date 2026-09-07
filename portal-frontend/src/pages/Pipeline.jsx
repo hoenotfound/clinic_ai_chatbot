@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
+import { useBusinessConfig } from "../context/BusinessConfigContext";
+import { getBusinessTerminology } from "../utils/businessTerminology";
 import { ToastContainer, useToasts } from "../components/Toast";
 import Spinner from "../components/Spinner";
 import LeadCard from "../components/pipeline/LeadCard";
@@ -49,8 +51,15 @@ function localDate(value) {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
+function capitalized(value) {
+  const text = String(value || "");
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : "";
+}
+
 export default function Pipeline() {
   const { permissions } = useAuth();
+  const { config } = useBusinessConfig();
+  const ui = getBusinessTerminology(config || {});
   const { toasts, showToast, dismissToast } = useToasts();
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState(null);
@@ -230,23 +239,23 @@ export default function Pipeline() {
   ), [drilldownLeads, noReplyHours, now]);
 
   const metricLeads = hasAnalyticsDrilldown
-  ? drilldownLeads
-  : sourceFilter !== "all"
-    ? sourceFilteredLeads
-    : leads;
+    ? drilldownLeads
+    : sourceFilter !== "all"
+      ? sourceFilteredLeads
+      : leads;
   const metricActiveLeads = metricLeads.filter((lead) => !lead.is_closed);
   const pipelineValue = metricActiveLeads.reduce((sum, lead) => sum + (Number(lead.estimated_value) || 0), 0);
   const branchCardBase = sourceFilter !== "all" || hasAnalyticsDrilldown ? sourceFilteredLeads : leads;
   const branchCardActive = branchCardBase.filter((lead) => !lead.is_closed);
   const branchCards = useMemo(() => [
-    { key: "all", label: "All branches", leads: branchCardActive },
+    { key: "all", label: `All ${ui.locationPlural}`, leads: branchCardActive },
     ...(data?.branches || []).map((branch) => ({
       key: branch,
       label: branch,
       leads: branchCardActive.filter((lead) => lead.branch_name === branch),
     })),
     { key: "unassigned", label: "Unassigned", leads: branchCardActive.filter((lead) => !lead.branch_name) },
-  ], [branchCardActive, data?.branches]);
+  ], [branchCardActive, data?.branches, ui.locationPlural]);
 
   const stageCounts = useMemo(() => Object.fromEntries(
     stages.map((stage) => [
@@ -425,7 +434,7 @@ export default function Pipeline() {
             {analyticsFilters.channel && <FilterPill>{analyticsFilters.channel}</FilterPill>}
             {analyticsFilters.source && <FilterPill>Source: {analyticsFilters.source}</FilterPill>}
             {analyticsFilters.campaign && <FilterPill>Campaign: {analyticsFilters.campaign}</FilterPill>}
-            {analyticsFilters.treatment && <FilterPill>Treatment: {analyticsFilters.treatment}</FilterPill>}
+            {analyticsFilters.treatment && <FilterPill>{capitalized(ui.serviceSingular)}: {analyticsFilters.treatment}</FilterPill>}
             {analyticsFilters.owner && <FilterPill>Owner: {analyticsFilters.owner}</FilterPill>}
             <button type="button" onClick={clearAnalyticsDrilldown} className="ml-auto h-9 shrink-0 rounded-lg px-2.5 font-semibold text-[var(--color-primary)] transition hover:bg-white/70">Clear</button>
           </div>
@@ -436,14 +445,17 @@ export default function Pipeline() {
         <div className="flex gap-2.5 overflow-x-auto pb-1 sm:gap-3">
           {branchCards.map((branch) => {
             const hotCount = branch.leads.filter((lead) => lead.temperature === "hot").length;
-            const appointmentCount = branch.leads.filter((lead) => lead.appointment_status === "set").length;
+            const conversionCount = branch.leads.filter((lead) => lead.appointment_status === "set").length;
+            const conversionCountLabel = conversionCount === 1
+              ? ui.conversionCountSingular
+              : ui.conversionCountPlural;
             return (
               <button key={branch.key} type="button" onClick={() => selectBranch(branch.key)} className={`min-w-36 rounded-2xl border px-3 py-2.5 text-left transition sm:min-w-44 sm:p-3 ${branchFilter === branch.key ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] shadow-sm" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-primary)]/40"}`}>
                 <div className="flex items-center justify-between gap-2">
                   <p className="truncate text-xs font-bold">{branch.label}</p>
                   <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-bold text-[var(--color-primary)]">{branch.leads.length}</span>
                 </div>
-                <p className="mt-1.5 truncate text-[9px] text-[var(--color-text-muted)] sm:mt-2 sm:text-[10px]">{hotCount} hot · {appointmentCount} appointments</p>
+                <p className="mt-1.5 truncate text-[9px] text-[var(--color-text-muted)] sm:mt-2 sm:text-[10px]">{hotCount} hot · {conversionCount} {conversionCountLabel}</p>
               </button>
             );
           })}
