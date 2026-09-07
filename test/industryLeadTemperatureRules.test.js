@@ -21,7 +21,7 @@ function classifyRenovation(messageText, extra = {}) {
   });
 }
 
-test("lead temperature rule profiles preserve legacy clinic default and select renovation/generic explicitly", () => {
+test("lead temperature rule profiles preserve legacy clinic default and use the shared industry resolver", () => {
   assert.equal(getLeadTemperatureRuleProfile({}).mode, "appointment");
   assert.equal(
     getLeadTemperatureRuleProfile({ businessType: "aesthetic_clinic" }).mode,
@@ -31,6 +31,8 @@ test("lead temperature rule profiles preserve legacy clinic default and select r
     getLeadTemperatureRuleProfile({ businessType: "home_renovation" }).mode,
     "project"
   );
+  assert.equal(getLeadTemperatureRuleProfile({ businessType: "home-renovation" }).mode, "project");
+  assert.equal(getLeadTemperatureRuleProfile({ businessType: "cabinetry" }).mode, "project");
   assert.equal(getLeadTemperatureRuleProfile({ businessType: "generic" }).mode, "generic");
   assert.equal(getLeadTemperatureRuleProfile({ businessType: "future_unknown" }).mode, "generic");
 });
@@ -60,7 +62,7 @@ test("clear renovation next-step intent becomes Hot in English, Bahasa Malaysia,
   }
 });
 
-test("renovation research, project details, budget, comparison, and uncertainty remain Warm", () => {
+test("renovation research, project details, budget, comparison, uncertainty, and conditional intent remain Warm", () => {
   const examples = [
     "How much per foot?",
     "Do you cover Kajang?",
@@ -73,14 +75,20 @@ test("renovation research, project details, budget, comparison, and uncertainty 
     "Maybe later, I am still comparing quotes.",
     "I don't want a site visit yet.",
     "Saturday doesn't work for me.",
+    "If the quotation is within my budget, I can proceed.",
+    "I can proceed if the final price is okay.",
     "Berapa harga per kaki?",
     "Budget saya RM4500.",
     "Saya masih banding quotation dulu.",
     "Mahal sangat, saya fikir dulu.",
+    "Kalau harga okay, saya boleh teruskan.",
+    "Saya boleh teruskan kalau harga sesuai.",
     "这个报价太贵，我先比较一下。",
     "我的预算是RM4500。",
     "暂时不安排上门量尺。",
     "我还在考虑。",
+    "如果报价合适，我可以继续。",
+    "我可以继续，如果价格合适。",
     "",
   ];
 
@@ -125,6 +133,17 @@ test("renovation explicit rejection becomes Cold while definitive project ending
   }
 });
 
+test("ambiguous renovation decline stays Warm unless the customer rejects the project", () => {
+  for (const messageText of ["No thanks", "No thank you", "Not a site visit for now"]) {
+    assert.equal(classifyRenovation(messageText), null, messageText);
+  }
+
+  assert.equal(
+    classifyRenovation("No thanks, I am not interested.")?.temperature,
+    "cold"
+  );
+});
+
 test("rejecting one renovation service does not incorrectly make the whole lead Cold", () => {
   const examples = [
     "I don't want kitchen cabinets.",
@@ -149,6 +168,18 @@ test("renovation short next-step answers become Hot only in immediate relevant c
       messageText: "Site visit please",
     },
     {
+      previousBusinessMessage: "Would you like us to arrange a site visit or prepare a quotation?",
+      messageText: "No thanks, quotation please",
+    },
+    {
+      previousBusinessMessage: "Would you like us to arrange a site visit or prepare a quotation?",
+      messageText: "No site visit, quotation please",
+    },
+    {
+      previousBusinessMessage: "Would you like us to arrange a site visit or prepare a quotation?",
+      messageText: "I can't do a site visit, quote instead",
+    },
+    {
       previousBusinessMessage: "Which day would work for the site visit?",
       messageText: "Saturday afternoon",
     },
@@ -157,12 +188,24 @@ test("renovation short next-step answers become Hot only in immediate relevant c
       messageText: "Saturday can't, but Sunday works for me.",
     },
     {
+      previousBusinessMessage: "Which day would work for the site visit?",
+      messageText: "星期六不方便，星期日可以。",
+    },
+    {
       previousBusinessMessage: "Nak kami arrange site visit atau sediakan quotation?",
       messageText: "Quotation boleh",
     },
     {
+      previousBusinessMessage: "Nak kami arrange site visit atau sediakan quotation?",
+      messageText: "Tak nak site visit, quotation boleh",
+    },
+    {
       previousBusinessMessage: "需要我们安排上门量尺还是先准备报价？",
       messageText: "先报价",
+    },
+    {
+      previousBusinessMessage: "需要我们安排上门量尺还是先准备报价？",
+      messageText: "不要上门，先报价",
     },
   ];
 
@@ -177,12 +220,77 @@ test("renovation short next-step answers become Hot only in immediate relevant c
   }
 });
 
+test("renovation research questions do not become Hot just because they follow a next-step offer", () => {
+  const previousBusinessMessage =
+    "Would you like us to arrange a site visit or prepare a quotation?";
+  const examples = [
+    "What does the quotation include?",
+    "How much is the quotation?",
+    "What happens during a site visit?",
+    "Do I need a site measurement?",
+    "Quotation 要包括什么？",
+    "报价包括什么？",
+    "上门量尺要收费吗？",
+  ];
+
+  for (const messageText of examples) {
+    assert.equal(
+      classifyRenovation(messageText, { previousBusinessMessage }),
+      null,
+      messageText
+    );
+  }
+});
+
+test("renovation conversation matrix separates selection, research, and rejection", () => {
+  const previousBusinessMessage =
+    "Would you like us to arrange a site visit or prepare a quotation?";
+  const cases = [
+    ["Quotation please", "hot"],
+    ["What does the quotation include?", null],
+    ["No thanks", null],
+    ["No thanks, quotation please", "hot"],
+    ["No thanks, I am not interested.", "cold"],
+    ["Quotation boleh", "hot"],
+    ["Quotation berapa ya?", null],
+    ["Tak nak site visit, quotation boleh", "hot"],
+    ["先报价", "hot"],
+    ["报价包括什么？", null],
+    ["不要上门，先报价", "hot"],
+    ["我不感兴趣，谢谢。", "cold"],
+  ];
+
+  for (const [messageText, expected] of cases) {
+    const result = classifyRenovation(messageText, { previousBusinessMessage });
+    assert.equal(result?.temperature || null, expected, messageText);
+  }
+});
+
 test("renovation property/location answers alone remain Warm even after ordinary qualification prompts", () => {
   const result = classifyRenovation("Cheras", {
     previousBusinessMessage: "Which area is the renovation project in?",
     locationNames: ["Puchong Showroom"],
   });
   assert.equal(result, null);
+});
+
+test("normalized Chinese punctuation works consistently across clinic, renovation, and generic profiles", () => {
+  const clinic = classifyTemperatureMessage({
+    messageText: "我不感兴趣，谢谢。",
+    businessType: "aesthetic_clinic",
+  });
+  const renovation = classifyTemperatureMessage({
+    messageText: "我不感兴趣，谢谢。",
+    businessType: "home_renovation",
+  });
+  const generic = classifyTemperatureMessage({
+    messageText: "我不感兴趣，谢谢。",
+    businessType: "generic",
+  });
+
+  assert.equal(clinic?.temperature, "cold");
+  assert.equal(renovation?.temperature, "cold");
+  assert.equal(generic?.temperature, "cold");
 });
 
 test("generic profile does not inherit clinic or renovation Hot vocabulary", () => {
