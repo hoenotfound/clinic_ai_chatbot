@@ -71,6 +71,30 @@ export default function GeminiDiagnosticPanel() {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    if (!status?.inFlight || running) return undefined;
+
+    let cancelled = false;
+    const refreshStatus = async () => {
+      try {
+        const payload = await api.getGeminiDiagnosticStatus();
+        if (!cancelled) {
+          setStatus(payload);
+          setNowMs(Date.now());
+        }
+      } catch {
+        // Keep the last known protected status. The server still enforces the
+        // in-flight lock and cooldown if the user tries again later.
+      }
+    };
+
+    const timer = window.setInterval(refreshStatus, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [status?.inFlight, running]);
+
   const remainingMs = status?.nextAllowedAt
     ? Math.max(0, new Date(status.nextAllowedAt).getTime() - nowMs)
     : Math.max(0, Number(status?.remainingMs) || 0);
