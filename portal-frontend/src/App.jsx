@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { BusinessConfigProvider } from "./context/BusinessConfigContext";
 import Layout from "./components/Layout";
 import ScheduledInboxMessages from "./components/ScheduledInboxMessages";
 import SettingsSectionLayout from "./components/SettingsSectionLayout";
@@ -44,7 +45,11 @@ function ProtectedRoute({ children, anyCapabilities = [], adminOnly = false }) {
     return <Navigate to={homeForPermissions(permissions, user)} replace />;
   }
 
-  return <Layout>{children}</Layout>;
+  return (
+    <BusinessConfigProvider>
+      <Layout>{children}</Layout>
+    </BusinessConfigProvider>
+  );
 }
 
 function DefaultRoute() {
