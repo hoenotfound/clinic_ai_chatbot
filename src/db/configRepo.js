@@ -11,12 +11,12 @@ const realtimeEvents = require("../utils/realtimeEvents");
 // Every top-level key the Settings page is allowed to read/write. Keep the
 // historical clinicName key during the migration so existing UI/API clients
 // continue to work. businessName is synchronized with it in updateConfig().
+// Profile-owned businessType/terminology/conversion metadata deliberately stays
+// outside this list until there is a dedicated atomic industry-change action.
 const CONFIG_KEYS = [
   "clinicName",
   "businessName",
   "businessDescription",
-  "terminology",
-  "conversion",
   "aiAssistantName",
   "branches",
   "hours",
