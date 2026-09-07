@@ -11,7 +11,10 @@ const source = fs.readFileSync(
 test("stale Sales branches remain visible and can be corrected explicitly", () => {
   assert.match(source, /staleBranch/);
   assert.match(source, /no longer configured/);
-  assert.match(source, /choose a current branch or No fixed branch/i);
+  assert.match(
+    source,
+    /Choose a current \$\{ui\.locationSingular\} or \$\{ui\.noFixedLocationLabel\}/i
+  );
 });
 
 test("unrelated staff profile saves do not resubmit an unchanged stale branch", () => {
@@ -28,6 +31,9 @@ test("unrelated staff profile saves do not resubmit an unchanged stale branch", 
 
 test("Team Access explains branch pools without implying fixed-branch reps leave the global pool", () => {
   assert.match(source, /Every eligible Sales account still participates in the global rotation/i);
-  assert.match(source, /Later branch record changes never move the lead to another owner/i);
+  assert.match(
+    source,
+    /Later \$\{ui\.locationSingular\} record changes never move the lead to another owner/i
+  );
   assert.doesNotMatch(source, /No fixed branch · global fallback pool/);
 });
