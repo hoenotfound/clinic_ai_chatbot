@@ -1,20 +1,29 @@
 const clinicConfig = require("../config/clinicConfig");
+const { getConversionProfile } = require("../config/conversionProfiles");
 const {
   extractAiOutcomeSignals,
   stripInternalOutcomeMarkers,
 } = require("./attentionTriggers");
 
 const VALID_OUTCOMES = new Set(["normal", "needs_human", "booking_ready"]);
+const VALID_PROJECT_NEXT_STEPS = new Set(["site_visit", "quotation_discussion"]);
 const MAX_METADATA_LENGTH = 240;
 
-function bookingReadyEnabled() {
-  return clinicConfig.conversion?.bookingReadyEnabled === true;
+function conversionProfile() {
+  return getConversionProfile(clinicConfig);
 }
 
 function cleanOptionalText(value) {
   if (typeof value !== "string") return null;
   const cleaned = stripInternalOutcomeMarkers(value).trim();
   return cleaned ? cleaned.slice(0, MAX_METADATA_LENGTH) : null;
+}
+
+function cleanNextStep(value) {
+  const cleaned = cleanOptionalText(value);
+  if (!cleaned) return null;
+  const normalized = cleaned.toLowerCase().replace(/[\s-]+/g, "_");
+  return VALID_PROJECT_NEXT_STEPS.has(normalized) ? normalized : null;
 }
 
 function normalizeName(value) {
@@ -82,6 +91,14 @@ function looksLikeStructuredReply(value) {
   return text.startsWith("{") || /^```(?:json)?\s*\{/i.test(text);
 }
 
+function emptyDetails() {
+  return {
+    branch: null,
+    treatment: null,
+    appointmentPreference: null,
+  };
+}
+
 function parseStructuredReply(raw) {
   const candidate = stripJsonFence(raw);
   let parsed;
@@ -111,24 +128,19 @@ function parseStructuredReply(raw) {
     throw invalidResponse("AI structured response is missing a valid reply/outcome.");
   }
 
-  // booking_ready is an executable clinic-specific outcome. Profiles that do
-  // not support the clinic appointment contract must never be able to trigger
-  // its downstream side effects, even if a provider accidentally emits it.
-  // Downgrade before validating clinic branch/time metadata so a renovation or
-  // generic reply cannot cause needless retries simply for using the wrong
-  // control outcome.
-  if (outcome === "booking_ready" && !bookingReadyEnabled()) {
+  const conversion = conversionProfile();
+
+  // booking_ready remains the wire-level compatibility outcome, but whether it
+  // is executable and which metadata it requires now comes from the active
+  // industry's conversion contract.
+  if (outcome === "booking_ready" && !conversion.enabled) {
     return {
       text: reply,
       flagged: false,
       bookingReady: false,
       outcome: "normal",
       structured: true,
-      details: {
-        branch: null,
-        treatment: null,
-        appointmentPreference: null,
-      },
+      details: emptyDetails(),
     };
   }
 
@@ -137,18 +149,40 @@ function parseStructuredReply(raw) {
     ? null
     : canonicalConfiguredName(parsed.treatment, clinicConfig.services);
   const appointmentPreference = cleanOptionalText(parsed.appointmentPreference);
+  const projectLocation = cleanOptionalText(parsed.projectLocation);
+  const projectSummary = cleanOptionalText(parsed.projectSummary);
+  const nextStep = cleanNextStep(parsed.nextStep);
 
-  // A structured Booking Ready response is an executable business outcome, so
-  // don't silently downgrade malformed metadata while still showing the model's
-  // "the team will confirm" reply. Reject it and let the AI orchestrator retry
-  // another key/provider; if all attempts fail, the normal safe staff fallback
-  // takes over. Common unambiguous clinic shorthand such as PJ/SP is resolved
-  // above before this check.
-  if (outcome === "booking_ready" && (!branch || !appointmentPreference)) {
-    throw invalidResponse(
-      "AI booking_ready response did not contain a valid configured branch and appointment preference."
-    );
+  if (outcome === "booking_ready" && conversion.mode === "appointment") {
+    // A clinic Booking Ready response is executable, so do not silently
+    // downgrade malformed branch/time metadata while still showing a model
+    // reply that tells the patient staff will confirm. Reject it so the AI
+    // orchestrator can retry another provider/key and eventually fail safe.
+    if (!branch || !appointmentPreference) {
+      throw invalidResponse(
+        "AI booking_ready response did not contain a valid configured branch and appointment preference."
+      );
+    }
   }
+
+  if (outcome === "booking_ready" && conversion.mode === "project") {
+    // Renovation conversion readiness must describe the customer's project,
+    // not force a customer property into the legacy business-branch field.
+    if (!projectLocation || !projectSummary || !nextStep) {
+      throw invalidResponse(
+        "AI booking_ready response did not contain a project location, project summary, and valid renovation next step."
+      );
+    }
+  }
+
+  const details = {
+    branch,
+    treatment,
+    appointmentPreference,
+  };
+  if (projectLocation) details.projectLocation = projectLocation;
+  if (projectSummary) details.projectSummary = projectSummary;
+  if (nextStep) details.nextStep = nextStep;
 
   return {
     text: reply,
@@ -156,11 +190,7 @@ function parseStructuredReply(raw) {
     bookingReady: outcome === "booking_ready",
     outcome,
     structured: true,
-    details: {
-      branch,
-      treatment,
-      appointmentPreference,
-    },
+    details,
   };
 }
 
@@ -174,12 +204,13 @@ function parseAiReplyResult(raw) {
   const structured = parseStructuredReply(raw);
   if (structured) return structured;
 
-  // Backward-compatible rollout path. If a provider/model ignores the JSON
-  // contract but follows the legacy marker protocol, the existing outcomes
-  // remain safe and patient-visible markers are still removed.
+  // Backward-compatible rollout path. Legacy marker-based booking readiness is
+  // safe only for the existing appointment contract because it carries no
+  // structured project metadata. Renovation must use the JSON contract above.
   const legacy = extractAiOutcomeSignals(raw);
-  const allowBookingReady = bookingReadyEnabled();
-  const bookingReady = allowBookingReady && legacy.bookingReady;
+  const conversion = conversionProfile();
+  const allowLegacyBookingReady = conversion.enabled && conversion.mode === "appointment";
+  const bookingReady = allowLegacyBookingReady && legacy.bookingReady;
   return {
     ...legacy,
     bookingReady,
@@ -189,16 +220,13 @@ function parseAiReplyResult(raw) {
         ? "booking_ready"
         : "normal",
     structured: false,
-    details: {
-      branch: null,
-      treatment: null,
-      appointmentPreference: null,
-    },
+    details: emptyDetails(),
   };
 }
 
 module.exports = {
   VALID_OUTCOMES,
+  VALID_PROJECT_NEXT_STEPS,
   canonicalConfiguredBranch,
   canonicalConfiguredName,
   configuredBranchAliases,
