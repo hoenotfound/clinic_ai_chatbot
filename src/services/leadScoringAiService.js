@@ -7,7 +7,7 @@ const { runWithGeminiKeys } = require("./geminiKeyPool");
 const PROVIDER = (process.env.AI_PROVIDER || "gemini").toLowerCase();
 const GEMINI_MODEL = process.env.LEAD_SCORING_GEMINI_MODEL || "gemini-3.6-flash";
 const CLAUDE_MODEL = process.env.LEAD_SCORING_CLAUDE_MODEL || "claude-sonnet-5";
-const PROMPT_VERSION = "lead-temperature-v3";
+const PROMPT_VERSION = "lead-temperature-v4-industry-neutral";
 const MAX_REASON_CHARS = 240;
 const MAX_EVIDENCE_MESSAGES = 5;
 const GEMINI_TRANSIENT_RETRY_DELAYS_MS = [2000, 5000, 10000];
@@ -21,6 +21,10 @@ const TRANSIENT_NETWORK_CODES = new Set([
   "UND_ERR_SOCKET",
 ]);
 
+// Database column names remain unchanged for backward compatibility. In a
+// non-clinic industry, treatmentInterest means the configured service/product
+// interest, preferredBranch means a selected configured business location, and
+// preferredAppointment means the customer's stated timing for the next step.
 const SUMMARY_LIMITS = {
   treatmentInterest: 160,
   preferredBranch: 120,
@@ -68,6 +72,26 @@ const SCORE_JSON_SCHEMA = {
   required: ["temperature", "confidence", "reason", "evidenceMessageIds", "summary"],
 };
 
+function businessLeadContext() {
+  const terms = {
+    customerSingular: "customer",
+    serviceSingular: "service",
+    servicePlural: "services",
+    locationSingular: "location",
+    locationPlural: "locations",
+    ...(clinicConfig.terminology || {}),
+  };
+  return {
+    businessName: String(clinicConfig.businessName || clinicConfig.clinicName || "the business").trim(),
+    businessType: String(clinicConfig.businessType || "generic").trim(),
+    businessDescription: String(
+      clinicConfig.businessDescription || "a customer-facing business in Malaysia"
+    ).trim(),
+    conversionLabel: String(clinicConfig.conversion?.label || "next sales step").trim(),
+    terms,
+  };
+}
+
 function transcriptForPrompt(messages) {
   return (messages || []).map((message) => ({
     id: Number(message.id),
@@ -75,7 +99,7 @@ function transcriptForPrompt(messages) {
       ? "customer"
       : message.sent_by_username
         ? "staff"
-        : "clinic assistant",
+        : "business assistant",
     text: String(message.content || "").slice(0, 1200),
     sentAt: message.created_at || null,
   }));
@@ -89,18 +113,26 @@ function configuredBranchNames() {
 
 function buildLeadScorePrompt({ messages, lead }) {
   const validBranches = configuredBranchNames();
+  const context = businessLeadContext();
+  const terms = context.terms;
 
-  return `Classify the current sales temperature of a Malaysian clinic lead and create a concise handoff summary from the conversation data.
+  return `Classify the current sales temperature of a Malaysian business lead and create a concise handoff summary from the conversation data.
+
+Business context:
+- Business: ${context.businessName}
+- Industry profile: ${context.businessType}
+- Description: ${context.businessDescription}
+- Primary next sales step: ${context.conversionLabel}
 
 Temperature definitions:
-- hot: The customer currently shows clear intent to book or visit, asks for concrete availability or booking steps, accepts or proposes a branch/date/time, or discusses a booking deposit.
-- warm: The customer shows meaningful interest, asks about price, suitability, results, treatment, location, or promotions, but has not clearly committed. Mixed, uncertain, or insufficient evidence is warm.
-- cold: The customer explicitly rejects the clinic or service, withdraws their overall interest, says this is the wrong contact, or asks not to be contacted.
+- hot: The customer currently shows clear intent to proceed, buy, book, visit, request a concrete quotation/site visit, asks for concrete availability or next-step instructions, or accepts/proposes specific scheduling or transaction details.
+- warm: The customer shows meaningful interest, asks about price, suitability, results, products/services, location, promotions, process, or options, but has not clearly committed. Mixed, uncertain, or insufficient evidence is warm.
+- cold: The customer explicitly rejects the business or service, withdraws their overall interest, says this is the wrong contact, or asks not to be contacted.
 
 Temperature rules:
-- Judge customer intent. Clinic and staff messages are context only.
+- Judge customer intent. Business assistant and staff messages are context only.
 - Silence or the absence of a customer reply is never evidence for cold.
-- Cancelling or rejecting one date or one treatment is not automatically cold.
+- Cancelling or rejecting one proposed date, option, service, product, or quote is not automatically cold.
 - Prefer the customer's newest explicit intent when it conflicts with older messages.
 - If the evidence is ambiguous, choose warm with medium or low confidence.
 - Use high confidence only when the conversation contains direct, unambiguous evidence.
@@ -109,20 +141,20 @@ Temperature rules:
 - Evidence IDs must refer only to customer messages that directly support the classification.
 
 Conversation summary rules:
-- Summarize only facts actually present in the conversation. Never guess missing medical, booking, branch, pricing, or personal details.
+- Summarize only facts actually present in the conversation. Never guess missing service, product, pricing, scheduling, location, quotation, project, medical, or personal details.
 - Use an empty string for a structured field when the detail was not captured.
-- treatmentInterest should name the treatment or service the customer is currently interested in.
-- preferredBranch should contain only the customer's stated clinic branch preference.
-- If the stated branch clearly maps to one configured clinic branch below, return that branch's exact configured name, even when the customer used a common abbreviation or shortened form.
-- Do not infer preferredBranch merely from where the customer lives, works, or mentions a place. If no branch was actually chosen, or the mapping is ambiguous, return an empty string.
-- preferredAppointment should contain the customer's stated or agreed date/time in concise natural language.
-- mainConcern should describe the customer's main stated concern or goal without adding a diagnosis.
+- treatmentInterest is a legacy database field: use it for the configured ${terms.serviceSingular} or product the customer is currently interested in.
+- preferredBranch is a legacy database field: use it only for the customer's explicitly selected configured ${terms.locationSingular}.
+- If the stated location clearly maps to one configured ${terms.locationSingular} below, return that exact configured name, even when the customer used a common abbreviation or shortened form.
+- Do not infer preferredBranch merely from where the customer lives, works, owns a property, or casually mentions a place. If no configured business location was actually chosen, or the mapping is ambiguous, return an empty string.
+- preferredAppointment is a legacy database field: use it for the customer's stated or agreed timing for the next sales step, if any.
+- mainConcern should describe the customer's main stated need, problem, concern, or goal without inventing a diagnosis or hidden requirement.
 - chatSummary should briefly cover what the customer wanted, key information discussed, objections or questions, and where the conversation ended.
 - nextAction should be one practical sales follow-up action based only on unresolved items in the conversation.
 - Keep the summary concise enough for a Telegram sales alert.
 - Return only the required structured result.
 
-Configured clinic branches (preferredBranch must use one of these exact names or an empty string):
+Configured business ${terms.locationPlural} (preferredBranch must use one of these exact names or an empty string):
 ${JSON.stringify(validBranches)}
 
 Current lead:
@@ -342,6 +374,7 @@ module.exports = {
   GEMINI_TRANSIENT_RETRY_DELAYS_MS,
   PROMPT_VERSION,
   buildLeadScorePrompt,
+  businessLeadContext,
   isTransientAiError,
   parseConversationSummary,
   parseLeadScore,
