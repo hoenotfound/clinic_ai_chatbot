@@ -331,16 +331,16 @@ function hydrateBusinessConfig(storedConfig = {}, env = process.env) {
   const businessName = String(
     storedConfig.businessName || storedConfig.clinicName || base.businessName
   ).trim();
-  const compatibilityClinicName = String(
-    storedConfig.clinicName || storedConfig.businessName || base.clinicName || businessName
-  ).trim();
 
   return {
     ...base,
     ...storedConfig,
     businessType,
     businessName,
-    clinicName: compatibilityClinicName,
+    // businessName is the canonical neutral field. Keep the historical alias
+    // synchronized during hydration so old modules can never observe a stale
+    // clinicName after neutral onboarding/settings updates.
+    clinicName: businessName,
     terminology: {
       ...base.terminology,
       ...(storedConfig.terminology || {}),
