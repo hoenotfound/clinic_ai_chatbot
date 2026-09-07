@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+const clinicConfig = require("../src/config/clinicConfig");
 const { parseAiReplyResult } = require("../src/utils/aiReplyResult");
 
 test("parses a structured booking-ready response and keeps booking metadata internal", () => {
@@ -73,4 +74,51 @@ test("legacy markers remain supported during structured-output rollout", () => {
   assert.equal(result.flagged, true);
   assert.equal(result.structured, false);
   assert.equal(result.text, "our team will check this for u");
+});
+
+test("non-clinic profiles downgrade structured booking_ready without validating clinic metadata", (t) => {
+  const originalConversion = clinicConfig.conversion;
+  t.after(() => {
+    clinicConfig.conversion = originalConversion;
+  });
+  clinicConfig.conversion = {
+    ...(originalConversion || {}),
+    bookingReadyEnabled: false,
+  };
+
+  const result = parseAiReplyResult(JSON.stringify({
+    reply: "I can pass these project details to the team for a site visit discussion.",
+    outcome: "booking_ready",
+    branch: null,
+    treatment: null,
+    appointmentPreference: null,
+  }));
+
+  assert.equal(result.bookingReady, false);
+  assert.equal(result.flagged, false);
+  assert.equal(result.outcome, "normal");
+  assert.equal(result.structured, true);
+  assert.deepEqual(result.details, {
+    branch: null,
+    treatment: null,
+    appointmentPreference: null,
+  });
+});
+
+test("non-clinic profiles also suppress legacy booking-ready markers", (t) => {
+  const originalConversion = clinicConfig.conversion;
+  t.after(() => {
+    clinicConfig.conversion = originalConversion;
+  });
+  clinicConfig.conversion = {
+    ...(originalConversion || {}),
+    bookingReadyEnabled: false,
+  };
+
+  const result = parseAiReplyResult("[[BOOKING_READY]] our team will follow up on the quotation");
+  assert.equal(result.bookingReady, false);
+  assert.equal(result.flagged, false);
+  assert.equal(result.outcome, "normal");
+  assert.equal(result.text, "our team will follow up on the quotation");
+  assert.equal(result.structured, false);
 });
