@@ -3,6 +3,35 @@ require("dotenv").config();
 const {
   runGeminiKeyModelDiagnostic,
 } = require("../src/services/geminiSetupCheckService");
+const { credentialFingerprint } = require("../src/services/geminiKeyPool");
+
+function configuredKeySources(env = process.env) {
+  const entries = [];
+  if (env.GEMINI_API_KEYS) {
+    String(env.GEMINI_API_KEYS).split(/[\n,;]/).forEach((value, index) => {
+      entries.push({ value, source: `GEMINI_API_KEYS[${index + 1}]` });
+    });
+  }
+  for (const name of [
+    "GEMINI_API_KEY",
+    "GEMINI_API_KEY_1",
+    "GEMINI_API_KEY_2",
+    "GEMINI_API_KEY_3",
+    "GEMINI_API_KEY_4",
+    "GEMINI_API_KEY_5",
+  ]) {
+    entries.push({ value: env[name], source: name });
+  }
+
+  const sources = new Map();
+  for (const entry of entries) {
+    const value = String(entry.value || "").trim();
+    if (!value) continue;
+    const fingerprint = credentialFingerprint(value).slice(0, 8);
+    if (!sources.has(fingerprint)) sources.set(fingerprint, entry.source);
+  }
+  return sources;
+}
 
 function resultText(item) {
   if (item.status === "ready") {
@@ -20,12 +49,14 @@ async function main() {
   const result = await runGeminiKeyModelDiagnostic({
     timeoutMs: process.env.GEMINI_DIAGNOSTIC_TIMEOUT_MS,
   });
+  const sources = configuredKeySources();
 
   const byKey = new Map();
   for (const item of result.results) {
     if (!byKey.has(item.label)) {
+      const source = sources.get(item.fingerprint) || "configured key";
       byKey.set(item.label, {
-        key: `${item.label} (${item.fingerprint})`,
+        key: `${item.label} · ${source} · ${item.fingerprint}`,
       });
     }
     const row = byKey.get(item.label);
