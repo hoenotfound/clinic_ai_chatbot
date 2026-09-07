@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
+import { useBusinessConfig } from "../../context/BusinessConfigContext";
+import { getBusinessTerminology } from "../../utils/businessTerminology";
 import Spinner from "../Spinner";
 import ContactAvatar from "../ContactAvatar";
 import {
@@ -12,6 +14,9 @@ const inputClass =
   "w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15";
 
 export default function AddLeadModal({ services, onClose, onCreated, onToast }) {
+  const { config } = useBusinessConfig();
+  const ui = getBusinessTerminology(config || {});
+  const locationPlural = ui.locationPlural;
   const [contacts, setContacts] = useState(null);
   const [branchOptions, setBranchOptions] = useState([]);
   const [search, setSearch] = useState("");
@@ -46,14 +51,14 @@ export default function AddLeadModal({ services, onClose, onCreated, onToast }) 
         console.error("Failed to load branch options for lead creation:", err);
         if (!cancelled) {
           setBranchOptions([]);
-          onToast("Couldn't refresh branch options. You can still add an unassigned lead.", "warning");
+          onToast(`Couldn't refresh ${locationPlural}. You can still add an unassigned lead.`, "warning");
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [onToast]);
+  }, [locationPlural, onToast]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -107,7 +112,7 @@ export default function AddLeadModal({ services, onClose, onCreated, onToast }) 
             {contacts === null ? (
               <div className="flex justify-center py-10"><Spinner className="h-5 w-5 text-[var(--color-text-muted)]" /></div>
             ) : filtered.length === 0 ? (
-              <p className="px-4 py-8 text-center text-sm text-[var(--color-text-muted)]">No matching contacts. Add the patient from Contacts first.</p>
+              <p className="px-4 py-8 text-center text-sm text-[var(--color-text-muted)]">No matching contacts. Add the contact from Contacts first.</p>
             ) : filtered.map((contact) => (
               <button key={contact.id} type="button" onClick={() => setContactId(contact.id)} className={`flex w-full items-center gap-3 border-b border-[var(--color-border)] px-4 py-3 text-left last:border-b-0 ${Number(contactId) === Number(contact.id) ? "bg-[var(--color-primary-light)]" : "hover:bg-[var(--color-bg)]"}`}>
                 <ContactAvatar src={contact.photo_url} channel={contact.channel} size={36} />
@@ -131,19 +136,19 @@ export default function AddLeadModal({ services, onClose, onCreated, onToast }) 
               </span>
             </label>
             <label>
-              <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Branch</span>
+              <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{ui.locationLabel}</span>
               <select className={inputClass} value={branchName} onChange={(event) => setBranchName(event.target.value)}>
                 <option value="">Unassigned</option>
                 {branchOptions.map((branch) => <option key={branch} value={branch}>{branch}</option>)}
               </select>
               <span className="mt-1.5 block text-[10px] leading-4 text-[var(--color-text-muted)]">
-                Only branches that currently exist in Clinic Settings can be selected for a new lead.
+                Only {ui.locationPlural} that currently exist in Settings can be selected for a new lead.
               </span>
             </label>
           </div>
 
           <label className="mt-4 block">
-            <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Treatment interest</span>
+            <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{ui.serviceInterestLabel}</span>
             <input className={inputClass} list="new-lead-services" value={treatmentInterest} onChange={(event) => setTreatmentInterest(event.target.value)} placeholder="Optional" />
             <datalist id="new-lead-services">{services.map((service) => <option key={service} value={service} />)}</datalist>
           </label>
