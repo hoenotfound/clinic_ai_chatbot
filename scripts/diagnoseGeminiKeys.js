@@ -33,17 +33,28 @@ function configuredKeySources(env = process.env) {
   return sources;
 }
 
+function failureLabel(item) {
+  if (item.failureKind === "quota_exhausted") return "QUOTA EXHAUSTED";
+  if (item.failureKind === "rate_limit") return "RATE LIMIT";
+  if (item.failureKind === "timeout") return "TIMEOUT";
+  if (item.failureKind === "authentication") return "INVALID KEY";
+  if (item.httpStatus) return String(item.httpStatus);
+  if (item.providerStatus) return String(item.providerStatus).toUpperCase();
+  return String(item.failureKind || item.status || "FAILED").replaceAll("_", " ").toUpperCase();
+}
+
 function resultText(item) {
   if (item.status === "ready") {
     const tokens = item.totalTokens ? `, ${item.totalTokens} token${item.totalTokens === 1 ? "" : "s"}` : "";
     return `OK (${item.latencyMs}ms${tokens})`;
   }
-  const code = item.httpStatus || item.providerStatus || item.failureKind || item.status;
-  return `${String(code).toUpperCase()} (${item.latencyMs}ms)`;
+  const http = item.httpStatus ? `, HTTP ${item.httpStatus}` : "";
+  return `${failureLabel(item)} (${item.latencyMs}ms${http})`;
 }
 
 async function main() {
   console.log("Gemini diagnostic: tiny real generation, max 1 output token per key/model.");
+  console.log("Tests the production reply chain: 3.8 Flash first, then 3.5 Flash Lite.");
   console.log("Run this while chatbot traffic is quiet because real requests share project RPM/RPD quota.\n");
 
   const result = await runGeminiKeyModelDiagnostic({
@@ -78,6 +89,12 @@ async function main() {
     `${result.totalTokens} total token${result.totalTokens === 1 ? "" : "s"} reported by completed Gemini responses.`
   );
 
+  if (result.rateLimitedRequests || result.quotaExhaustedRequests) {
+    console.log(
+      `Limits detected: ${result.rateLimitedRequests} rate-limit result${result.rateLimitedRequests === 1 ? "" : "s"}, ` +
+      `${result.quotaExhaustedRequests} daily/quota-exhausted result${result.quotaExhaustedRequests === 1 ? "" : "s"}.`
+    );
+  }
   if (!result.tokenUsageComplete) {
     console.log("Token usage is incomplete because a timed-out request may still have been processed remotely.");
   }
@@ -92,8 +109,7 @@ async function main() {
   if (failures.length) {
     console.log("\nFailures:");
     for (const item of failures) {
-      const code = item.httpStatus || item.providerStatus || item.failureKind || item.status;
-      console.log(`- ${item.label} ${item.model}: ${code} - ${item.message}`);
+      console.log(`- ${item.label} ${item.model}: ${failureLabel(item)} - ${item.message}`);
     }
   }
 
