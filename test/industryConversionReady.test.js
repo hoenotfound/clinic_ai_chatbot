@@ -29,6 +29,12 @@ function renovationProfile() {
         duration: "Depends on scope",
       },
     ],
+    serviceAliases: [
+      {
+        alias: "kitchen cabinet",
+        officialService: "Kitchen Cabinets",
+      },
+    ],
     branches: [
       {
         name: "Puchong Showroom",
@@ -118,6 +124,49 @@ test("renovation quotation discussion accepts canonical service and project deta
       projectSummary: "Condo kitchen cabinets, customer has floor plan and is targeting renovation next month.",
       nextStep: "quotation_discussion",
     });
+  });
+});
+
+test("renovation conversion-ready resolves a configured service alias to its canonical configured service", () => {
+  withProfile(renovationProfile(), () => {
+    const result = parseAiReplyResult(JSON.stringify({
+      reply: "Can 👍 our team will review the quotation discussion next.",
+      outcome: "booking_ready",
+      treatment: "kitchen cabinet",
+      branch: null,
+      appointmentPreference: null,
+      projectLocation: "Cheras",
+      projectSummary: "Condo kitchen cabinet project with floor plan available.",
+      nextStep: "quotation_discussion",
+    }));
+
+    assert.equal(result.bookingReady, true);
+    assert.equal(result.details.treatment, "Kitchen Cabinets");
+  });
+});
+
+test("configured service alias cannot bypass the requirement for an existing canonical service", () => {
+  const profile = renovationProfile();
+  profile.serviceAliases = [
+    ...profile.serviceAliases,
+    {
+      alias: "bathroom waterproofing",
+      officialService: "Bathroom Waterproofing",
+    },
+  ];
+
+  withProfile(profile, () => {
+    assert.throws(
+      () => parseAiReplyResult(JSON.stringify({
+        reply: "Our team will review the bathroom project for a quotation discussion.",
+        outcome: "booking_ready",
+        treatment: "bathroom waterproofing",
+        projectLocation: "Cheras",
+        projectSummary: "Bathroom waterproofing enquiry for a condo.",
+        nextStep: "quotation_discussion",
+      })),
+      (err) => err.code === "INVALID_AI_RESPONSE" && /treatment/.test(err.message)
+    );
   });
 });
 
