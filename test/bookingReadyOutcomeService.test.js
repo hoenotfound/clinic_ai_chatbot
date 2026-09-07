@@ -96,7 +96,16 @@ test("booking-ready flags Inbox, makes an unlocked lead Hot, records activity, a
     )
   );
   assert.deepEqual(alerts, [
-    { contactId: 42, messageId: 777, reason: BOOKING_READY_REASON },
+    {
+      contactId: 42,
+      messageId: 777,
+      reason: BOOKING_READY_REASON,
+      details: {
+        branch: null,
+        treatment: null,
+        appointmentPreference: null,
+      },
+    },
   ]);
   assert.ok(
     published.some(
@@ -143,10 +152,16 @@ test("structured Booking Ready persists canonical branch/treatment and appointme
   assert.match(contactUpdate.sql, /latest_booking\.metadata->>'branch' IS DISTINCT FROM \$3/);
   assert.match(contactUpdate.sql, /latest_booking\.metadata->>'treatment' IS DISTINCT FROM \$4/);
   assert.match(contactUpdate.sql, /latest_booking\.metadata->>'appointmentPreference' IS DISTINCT FROM \$5/);
+  assert.match(contactUpdate.sql, /latest_booking\.metadata->>'projectLocation' IS DISTINCT FROM \$6/);
+  assert.match(contactUpdate.sql, /latest_booking\.metadata->>'projectSummary' IS DISTINCT FROM \$7/);
+  assert.match(contactUpdate.sql, /latest_booking\.metadata->>'nextStep' IS DISTINCT FROM \$8/);
   assert.deepEqual(contactUpdate.params.slice(2), [
     "Petaling Jaya",
     "HIFU Non-Surgical Facelift",
     "Saturday afternoon",
+    null,
+    null,
+    null,
   ]);
 
   const leadUpdate = calls.find(({ sql }) => sql.startsWith("UPDATE leads"));
