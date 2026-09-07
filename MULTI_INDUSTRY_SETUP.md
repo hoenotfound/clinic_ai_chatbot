@@ -122,13 +122,46 @@ Legacy `[[BOOKING_READY]]` marker-only output remains supported for the clinic a
 
 The generic profile still keeps executable conversion-ready automation disabled until a concrete generic next-step contract is defined.
 
+## Industry-aware rule-based lead temperature
+
+Deterministic Hot/Cold conversation rules now come from `leadTemperatureRuleProfiles` instead of assuming every lead is a clinic patient.
+
+### Aesthetic clinic rules
+
+The existing appointment/booking rules are preserved, including English, Bahasa Malaysia, and Chinese booking intent, scheduling-context confirmations, uncertainty protection, and explicit rejection handling.
+
+### Home renovation rules
+
+A renovation lead can become Hot from clear sales-progress intent such as:
+
+- requesting a quotation;
+- requesting or arranging a site visit/measurement;
+- clearly saying they want to proceed, go ahead, or start the project;
+- asking how to pay a deposit or proceed;
+- confirming a quotation/site-visit next step immediately after the chatbot asks how they want to continue.
+
+Normal qualification/research remains Warm. Price/per-foot questions, service-area questions, materials/design/timeline questions, property/project details, photos/floor plans, a budget amount, comparing quotations, an expensive quote, tentative intent, or a rejected site-visit time do not become Hot by themselves.
+
+Explicit rejection can cool a Warm renovation lead. Definitive project-ending signals such as an explicitly cancelled project or having already hired another contractor/designer are marked `absolute`, along with universal wrong-number/stop-contact signals.
+
+The existing transition safeguards remain unchanged:
+
+- staff-locked temperatures are never changed by rules;
+- Warm can move to Hot or Cold;
+- Cold can recover to Hot;
+- Hot can only move to Cold for an `absolute` rejection;
+- rule writes continue to use `temperature_source = 'rule'` and the existing lead-activity path.
+
+### Generic rules
+
+The generic profile does not inherit clinic booking vocabulary or renovation quotation/site-visit vocabulary. Universal opt-out/wrong-number handling and clear generic rejection remain available, but no industry-specific Hot rule is enabled until a future profile defines one.
+
 ## Recommended next migrations
 
-1. Generalize the rule-based lead-temperature patterns that still contain clinic appointment vocabulary.
-2. Allow industry profiles to supply default pipeline stages and qualification fields, and surface renovation project metadata clearly in the lead drawer.
-3. Add a dedicated onboarding/profile-selection action so industry choice happens atomically instead of through ordinary config PATCH requests.
-4. Connect the profile choice to the internal client provisioner so creating a new Render + Neon instance seeds the correct industry automatically.
-5. Gradually migrate legacy compatibility fields behind neutral domain names before any eventual database-column migration.
+1. Allow industry profiles to supply default pipeline stages and qualification fields, and surface renovation project metadata clearly in the lead drawer.
+2. Add a dedicated onboarding/profile-selection action so industry choice happens atomically instead of through ordinary config PATCH requests.
+3. Connect the profile choice to the internal client provisioner so creating a new Render + Neon instance seeds the correct industry automatically.
+4. Gradually migrate legacy compatibility fields behind neutral domain names before any eventual database-column migration.
 
 ## Deployment model
 
