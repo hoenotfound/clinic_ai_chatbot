@@ -81,10 +81,13 @@ function bookingReadyRules(context) {
   if (conversion.mode === "project") {
     return `Use outcome "booking_ready" as the backward-compatible CONVERSION-READY control ONLY on the turn where ALL of these are true:
 - The ${terms.customerSingular} clearly wants to proceed with ${conversion.label}, not merely ask about pricing, service coverage, materials, or how the process works.
+- The requested work maps clearly to one canonical configured ${terms.serviceSingular}. Do not mark conversion-ready for an unknown, unsupported, or invented service.
 - You have a usable customer PROJECT LOCATION for the renovation job. This is the customer's property/project area, not one of the business's configured ${terms.locationPlural} unless they genuinely chose that business location for the next step.
 - You can write a concise PROJECT SUMMARY that captures the current renovation scope plus useful context already provided, such as property type, rough dimensions, budget, target timing, photos/floor plan, or another detail that helps staff continue. Do not invent missing details.
 - The requested NEXT STEP is clear enough to classify as either "site_visit" or "quotation_discussion".
-- The project location, project summary, and requested next step belong to the ${terms.customerSingular}'s CURRENT enquiry. Do not reuse details from an older completed, abandoned, or clearly separate project discussion.
+- For "quotation_discussion", the configured service, project location, and project summary are required. A timing preference is optional unless the customer already provided one.
+- For "site_visit", the configured service, project location, project summary, AND a usable preferred day/date plus time/range/daypart are required. If timing is still missing, ask for it and keep outcome "normal".
+- The service, project location, project summary, requested next step, and any site-visit timing belong to the ${terms.customerSingular}'s CURRENT enquiry. Do not reuse details from an older completed, abandoned, or clearly separate project discussion.
 - No safety, complaint, or human-handoff condition applies.
 
 Examples that ARE conversion-ready:
@@ -236,11 +239,12 @@ Rules for structured fields:
 - "reply" must contain only what the ${terms.customerSingular} should see. Never put internal outcome names, control tokens, analysis, or JSON instructions inside it.
 - The legacy internal field name "treatment" means the canonical configured ${terms.serviceSingular}; it is kept for backend compatibility while the product is migrated to industry-neutral naming.
 - The legacy internal field name "branch" means a canonical configured ${terms.locationSingular}; it is kept for backend compatibility. For renovation, the customer's property belongs in "projectLocation", not "branch".
-- The legacy internal field name "appointmentPreference" is still used for clinic scheduling and may carry a clearly stated site-visit timing preference for renovation, but renovation conversion readiness does not require it.
+- The legacy internal field name "appointmentPreference" is still used for clinic scheduling. For renovation it carries a clearly stated site-visit timing preference and is REQUIRED when "nextStep" is "site_visit".
 - For appointment-mode booking_ready, "branch" and "appointmentPreference" MUST be non-null and reflect the current attempt. Use the canonical configured location name rather than an abbreviation.
-- For project-mode booking_ready, "projectLocation", "projectSummary", and "nextStep" MUST be non-null and reflect the current project. "nextStep" must be exactly "site_visit" or "quotation_discussion".
-- "treatment" may be null if the ${terms.customerSingular} is proceeding without choosing a specific configured ${terms.serviceSingular}.
-- For normal or needs_human, include structured fields only when clearly known; otherwise use null.
+- For project-mode booking_ready, "treatment" MUST resolve to one canonical configured ${terms.serviceSingular}; "projectLocation", "projectSummary", and "nextStep" MUST also be non-null and reflect the current project.
+- For project-mode "quotation_discussion", the required fields are "treatment", "projectLocation", and "projectSummary". "appointmentPreference" may be null.
+- For project-mode "site_visit", the required fields are "treatment", "projectLocation", "projectSummary", and "appointmentPreference".
+- For normal or needs_human, structured fields may be null unless clearly known. Do not invent a configured service merely to fill "treatment".
 - Legacy tokens such as [[NEEDS_HUMAN]] and [[BOOKING_READY]] are backend compatibility controls only. Do NOT output them when following this JSON contract.
 
 LANGUAGE:
