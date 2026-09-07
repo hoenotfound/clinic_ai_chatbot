@@ -43,6 +43,20 @@ test("home renovation starts neutral and never inherits Beleco treatment data", 
   assert.match(profile.closingPlaybook, /site visit/i);
 });
 
+test("generic starts neutral without clinic or renovation client facts", () => {
+  const profile = getIndustryProfile("generic");
+  const serialized = JSON.stringify(profile).toLowerCase();
+
+  assert.equal(profile.businessType, "generic");
+  assert.equal(profile.conversion.bookingReadyEnabled, false);
+  assert.deepEqual(profile.services, []);
+  assert.deepEqual(profile.branches, []);
+  assert.deepEqual(profile.promotions, []);
+  assert.deepEqual(profile.faqs, []);
+  assert.doesNotMatch(serialized, /beleco/);
+  assert.doesNotMatch(serialized, /hifu/);
+});
+
 test("legacy stored clinic config is inferred as aesthetic clinic and preserved", () => {
   const stored = {
     clinicName: "Existing Clinic",
@@ -67,18 +81,45 @@ test("legacy stored clinic config is inferred as aesthetic clinic and preserved"
   assert.equal(hydrated.conversion.bookingReadyEnabled, true);
 });
 
-test("stored industry wins over deployment env after the database has been seeded", () => {
-  const hydrated = hydrateBusinessConfig(
-    {
-      businessType: "home_renovation",
-      businessName: "ABC Cabinet",
-      clinicName: "ABC Cabinet",
-      services: [],
+test("stored industry and configured values win over deployment defaults", () => {
+  const stored = {
+    businessType: "home_renovation",
+    businessName: "ABC Cabinet",
+    clinicName: "ABC Cabinet",
+    businessDescription: "Custom cabinetry specialist",
+    services: [
+      {
+        name: "Kitchen Cabinets",
+        description: "Custom kitchen cabinetry",
+        priceRange: "Quotation required",
+        duration: "Depends on scope",
+      },
+    ],
+    hours: {
+      general: "Mon-Sat 10am-6pm",
+      closed: "Sunday",
     },
-    { INITIAL_BUSINESS_TYPE: "aesthetic_clinic" }
-  );
+  };
+
+  const hydrated = hydrateBusinessConfig(stored, {
+    INITIAL_BUSINESS_TYPE: "aesthetic_clinic",
+  });
 
   assert.equal(hydrated.businessType, "home_renovation");
   assert.equal(hydrated.businessName, "ABC Cabinet");
+  assert.equal(hydrated.businessDescription, "Custom cabinetry specialist");
+  assert.deepEqual(hydrated.services, stored.services);
+  assert.deepEqual(hydrated.hours, stored.hours);
   assert.equal(hydrated.conversion.bookingReadyEnabled, false);
+});
+
+test("neutral businessName is canonical and repairs a stale legacy clinicName alias", () => {
+  const hydrated = hydrateBusinessConfig({
+    businessType: "home_renovation",
+    businessName: "New Renovation Name",
+    clinicName: "Old Clinic Alias",
+  });
+
+  assert.equal(hydrated.businessName, "New Renovation Name");
+  assert.equal(hydrated.clinicName, "New Renovation Name");
 });
