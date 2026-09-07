@@ -28,7 +28,7 @@ const CAPABILITY_DEFINITIONS = [
   {
     key: "view_all_leads",
     label: "Access all leads",
-    description: "See every clinic lead and conversation. Enabled by default so assignment can be used for workload ownership and filtering; existing reply and lead-management capabilities continue to work across this clinic-wide view.",
+    description: "See every business lead and conversation. Enabled by default so assignment can be used for workload ownership and filtering; existing reply and lead-management capabilities continue to work across this business-wide view.",
     defaults: { admin: true, sales: true },
   },
   {
@@ -46,7 +46,7 @@ const CAPABILITY_DEFINITIONS = [
   {
     key: "view_analytics",
     label: "View Analytics",
-    description: "Open the global Analytics dashboard and view clinic-wide performance.",
+    description: "Open the global Analytics dashboard and view business-wide performance.",
     defaults: { admin: true, sales: false },
   },
   {
@@ -57,8 +57,8 @@ const CAPABILITY_DEFINITIONS = [
   },
   {
     key: "manage_settings",
-    label: "Manage clinic & AI settings",
-    description: "Edit clinic information, services, promotions, AI behavior and handoff rules.",
+    label: "Manage business & AI settings",
+    description: "Edit business information, services, promotions, AI behavior and handoff rules.",
     defaults: { admin: true, sales: false },
   },
   {
