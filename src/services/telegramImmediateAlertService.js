@@ -1,5 +1,7 @@
 const crypto = require("crypto");
 const { pool } = require("../db/db");
+const clinicConfig = require("../config/clinicConfig");
+const { getConversionProfile } = require("../config/conversionProfiles");
 const {
   channelLabel,
   formatContactIdentifier,
@@ -132,14 +134,21 @@ function bookingReadyEventKey(context, messageId = null) {
   return `booking-ready:${context.contact_id}:${capturedMessageId}`;
 }
 
-function buildImmediateAlertMessage({ type, context, reason, env = process.env }) {
+function nextStepLabel(value) {
+  if (value === "site_visit") return "Site visit";
+  if (value === "quotation_discussion") return "Quotation discussion";
+  return clean(value);
+}
+
+function buildImmediateAlertMessage({ type, context, reason, details = {}, env = process.env }) {
   const isDelivery = type === "delivery_failure";
   const isBookingReady = type === "booking_ready";
+  const conversion = getConversionProfile(clinicConfig);
   const platform = channelLabel(context.channel || "whatsapp");
   const title = isDelivery
     ? `⚠️ ${platform} Delivery Failed`
     : isBookingReady
-      ? "🔥 Booking Ready"
+      ? conversion.alertTitle
       : "🚨 Human Intervention Required";
   const name = clean(context.name || context.whatsapp_profile_name, "Unknown contact");
   const lines = [
@@ -150,9 +159,27 @@ function buildImmediateAlertMessage({ type, context, reason, env = process.env }
     `Reason: ${clean(reason)}`,
     `Temperature: ${temperatureLabel(context.temperature)}`,
     `Stage: ${clean(context.stage_name)}`,
-    `Treatment: ${clean(context.treatment_interest)}`,
-    `Branch: ${clean(context.branch_name)}`,
   ];
+
+  if (isBookingReady && conversion.mode === "project") {
+    lines.push(
+      `Service: ${clean(context.treatment_interest)}`,
+      `Project location: ${clean(details.projectLocation)}`,
+      `Project: ${clean(details.projectSummary)}`,
+      `Requested next step: ${nextStepLabel(details.nextStep)}`
+    );
+    if (details.appointmentPreference) {
+      lines.push(`Preferred timing: ${clean(details.appointmentPreference)}`);
+    }
+    if (context.branch_name) {
+      lines.push(`Business location: ${clean(context.branch_name)}`);
+    }
+  } else {
+    lines.push(
+      `Treatment: ${clean(context.treatment_interest)}`,
+      `Branch: ${clean(context.branch_name)}`
+    );
+  }
 
   if (context.latest_customer_message) {
     lines.push(
@@ -165,7 +192,7 @@ function buildImmediateAlertMessage({ type, context, reason, env = process.env }
   const action = isDelivery
     ? "Action: Check the failed message in Inbox and retry or contact the customer manually."
     : isBookingReady
-      ? "Action: Open the conversation, verify the requested branch/time, and confirm the appointment availability with the customer."
+      ? `Action: ${conversion.alertAction}`
       : "Action: Open the conversation and review/respond as soon as possible.";
   lines.push("", action);
 
@@ -185,7 +212,7 @@ function createTelegramImmediateAlertService({
   releaseAlert = releaseImmediateAlert,
   sendMessage = postTelegramMessage,
 } = {}) {
-  async function send(type, { contactId, reason, messageId = null }) {
+  async function send(type, { contactId, reason, messageId = null, details = {} }) {
     if (!isTelegramEnabled(env)) return { status: "disabled" };
 
     const context = await getContext(contactId);
@@ -217,7 +244,7 @@ function createTelegramImmediateAlertService({
     }
 
     try {
-      const text = buildImmediateAlertMessage({ type, context, reason, env });
+      const text = buildImmediateAlertMessage({ type, context, reason, details, env });
       const result = await sendMessage({
         token: env.TELEGRAM_BOT_TOKEN,
         chatId: env.TELEGRAM_CHAT_ID,
