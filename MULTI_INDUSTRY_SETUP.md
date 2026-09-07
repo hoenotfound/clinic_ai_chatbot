@@ -39,30 +39,96 @@ Several historical internal names remain in place temporarily:
 - `appointmentPreference`
 - the `booking_ready` outcome
 
-New code adds `businessName`, business terminology, and conversion metadata while keeping `businessName` and `clinicName` synchronized. This lets existing modules and database columns continue to work while the product is generalized in smaller, safer migrations.
+New code adds `businessName`, business terminology, and an industry-aware conversion contract while keeping the historical fields intact. This lets existing modules and database columns continue to work while the product is generalized in smaller, safer migrations.
 
 Do not delete or rename the compatibility fields yet.
 
-## Why booking_ready is disabled for non-clinic profiles for now
+## Industry-aware conversion-ready flow
 
-The current executable `booking_ready` path assumes that the customer has selected a configured business branch and supplied an appointment time. That is correct for the current clinic flow, but it is not generally correct for industries such as renovation, where the next step may be a site visit at the customer's property or a quotation discussion.
+`booking_ready` remains the wire-level compatibility outcome for now, but it no longer means every industry must behave like a clinic appointment.
 
-Therefore:
+The executable requirements now come from the active industry's conversion contract.
 
-- `aesthetic_clinic`: `booking_ready` remains enabled.
-- `home_renovation`: `booking_ready` is disabled; the AI can still qualify and guide the customer, but staff confirms the site visit/quotation step.
-- `generic`: `booking_ready` is disabled.
+A neutral optional `conversion.conversionReadyEnabled` override is also supported by the domain layer:
 
-This avoids forcing clinic assumptions into other industries before the conversion outcome schema is generalized.
+- omitted: use the industry's normal default and preserve the clinic's historical `bookingReadyEnabled` compatibility behavior;
+- `true`: enable the industry's defined conversion-ready contract;
+- `false`: disable executable conversion-ready outcomes for that deployment.
+
+This neutral override is intentionally backend-only for now. A later onboarding/settings migration can expose it without reusing clinic-specific terminology.
+
+### Aesthetic clinic
+
+Clinic behavior stays compatible with the existing production flow:
+
+- the patient clearly wants to proceed with the consultation;
+- a configured clinic branch is chosen;
+- a usable day/date plus time/range/daypart is captured;
+- staff is alerted to verify the requested branch/time and confirm availability.
+
+The existing `branch_name`, `treatment_interest`, `appointmentPreference`, `booking_ready` activity metadata, Inbox attention behavior, and Hot-lead side effect remain in place.
+
+### Home renovation
+
+Renovation can now reach its own business goal without pretending the customer's property is a clinic branch.
+
+Every renovation conversion-ready outcome must first have:
+
+- clear customer intent to proceed;
+- a canonical configured renovation service in the legacy `treatment` compatibility field;
+- a usable customer project/property location;
+- a concise project summary containing the current scope and useful context already provided by the customer;
+- a next step classified as `quotation_discussion` or `site_visit`;
+- no human-handoff/safety condition taking priority.
+
+An unknown, unsupported, or hallucinated service cannot execute a renovation conversion-ready outcome. It must resolve to one of the configured renovation services first. This also means a fresh renovation profile with no configured services cannot accidentally become conversion-ready.
+
+The two renovation next steps deliberately have different requirements:
+
+#### `quotation_discussion`
+
+Required:
+
+- configured service (`treatment` compatibility field);
+- `projectLocation`;
+- `projectSummary`.
+
+`appointmentPreference` is optional unless the customer already provided useful timing information.
+
+#### `site_visit`
+
+Required:
+
+- configured service (`treatment` compatibility field);
+- `projectLocation`;
+- `projectSummary`;
+- `appointmentPreference` containing the customer's current preferred visit timing.
+
+If a customer asks for a site visit but has not yet provided a usable day/date and time/range/daypart, the bot should ask for that timing and keep the outcome `normal`. Staff is alerted only after the site-visit request is sufficiently qualified for follow-up.
+
+Project-specific details are stored in the existing `lead_activities.metadata` JSON as:
+
+- `projectLocation`
+- `projectSummary`
+- `nextStep`
+
+No new lead columns are introduced in this migration. The legacy `treatment_interest` column stores the canonical configured renovation service when the conversion-ready outcome executes. The legacy `branch_name` column is not used for a customer's project/property location.
+
+Renovation conversion-ready Telegram alerts show the service, project location, summary, requested next step, optional/preferred timing, and the correct quotation/site-visit staff action instead of clinic appointment instructions.
+
+Legacy `[[BOOKING_READY]]` marker-only output remains supported for the clinic appointment flow. Renovation requires structured JSON output because marker-only output cannot carry the project metadata needed to safely execute the conversion outcome.
+
+### Generic
+
+The generic profile still keeps executable conversion-ready automation disabled until a concrete generic next-step contract is defined.
 
 ## Recommended next migrations
 
-1. Make Settings labels industry-aware and expose `businessName` instead of clinic-only wording.
-2. Add a dedicated onboarding/profile-selection action so industry changes happen atomically rather than through ordinary config PATCH requests.
-3. Generalize the booking-ready outcome and CRM metadata into an industry-neutral conversion-ready/next-step model while preserving old data.
-4. Generalize the rule-based lead-temperature patterns that still contain clinic appointment vocabulary.
-5. Allow industry profiles to supply default pipeline stages and qualification fields.
-6. Connect the profile choice to the internal client provisioner so creating a new Render + Neon instance seeds the correct industry automatically.
+1. Generalize the rule-based lead-temperature patterns that still contain clinic appointment vocabulary.
+2. Allow industry profiles to supply default pipeline stages and qualification fields, and surface renovation project metadata clearly in the lead drawer.
+3. Add a dedicated onboarding/profile-selection action so industry choice happens atomically instead of through ordinary config PATCH requests.
+4. Connect the profile choice to the internal client provisioner so creating a new Render + Neon instance seeds the correct industry automatically.
+5. Gradually migrate legacy compatibility fields behind neutral domain names before any eventual database-column migration.
 
 ## Deployment model
 
