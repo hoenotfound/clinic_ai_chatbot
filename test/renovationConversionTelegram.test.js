@@ -59,9 +59,34 @@ test("renovation conversion-ready alert shows project details and quotation acti
     assert.match(text, /Project location: Cheras/);
     assert.match(text, /Project: Condo kitchen cabinets; customer has a floor plan\./);
     assert.match(text, /Requested next step: Quotation discussion/);
+    assert.doesNotMatch(text, /Preferred timing:/);
     assert.match(text, /continue the quotation or site-visit arrangement/i);
     assert.doesNotMatch(text, /confirm the appointment availability/i);
     assert.doesNotMatch(text, /Branch: Not captured/i);
+  });
+});
+
+test("renovation site-visit alert includes the captured preferred timing", async () => {
+  await withProfile(getIndustryProfile("home_renovation"), async () => {
+    const text = buildImmediateAlertMessage({
+      type: "booking_ready",
+      context: {
+        ...context,
+        latest_customer_message: "Saturday afternoon can come Cheras for site visit?",
+      },
+      reason: "Conversion ready: customer wants to proceed with a renovation site visit.",
+      details: {
+        treatment: "Kitchen Cabinets",
+        projectLocation: "Cheras",
+        projectSummary: "Condo kitchen cabinet project; customer requested a site visit.",
+        nextStep: "site_visit",
+        appointmentPreference: "Saturday afternoon",
+      },
+      env: { PUBLIC_BASE_URL: "https://renovation.example" },
+    });
+
+    assert.match(text, /Requested next step: Site visit/);
+    assert.match(text, /Preferred timing: Saturday afternoon/);
   });
 });
 
