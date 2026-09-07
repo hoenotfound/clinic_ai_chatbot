@@ -1,4 +1,5 @@
 const config = require("../config/clinicConfig");
+const { getConversionProfile } = require("../config/conversionProfiles");
 const { getActivePromotions } = require("./activePromotion");
 
 function normalizeOptions(optionsOrFirstMessage = false) {
@@ -46,15 +47,6 @@ function getBusinessContext() {
     servicePlural: "services",
     ...(config.terminology || {}),
   };
-  const conversion = {
-    label: "next step",
-    bookingReadyEnabled: false,
-    guidanceTitle: "THE NEXT SALES STEP",
-    staffConfirmationText: "the team will review the request and follow up",
-    readyExamples: [],
-    notReadyExamples: [],
-    ...(config.conversion || {}),
-  };
 
   return {
     businessName: String(config.businessName || config.clinicName || "the business").trim(),
@@ -62,14 +54,14 @@ function getBusinessContext() {
       config.businessDescription || "a customer-facing business in Malaysia"
     ).trim(),
     terminology,
-    conversion,
+    conversion: getConversionProfile(config),
   };
 }
 
 function bookingReadyRules(context) {
   const { terminology: terms, conversion } = context;
-  if (!conversion.bookingReadyEnabled) {
-    return `BOOKING READY AUTOMATION FOR THIS INDUSTRY PROFILE:
+  if (!conversion.enabled) {
+    return `CONVERSION READY AUTOMATION FOR THIS INDUSTRY PROFILE:
 - Disabled. Never return outcome "booking_ready" for this profile.
 - Continue guiding the ${terms.customerSingular} toward ${conversion.label} using outcome "normal" unless a human handoff is required.
 - Do not claim the next step is confirmed. A human team member must confirm it for now.`;
@@ -85,6 +77,26 @@ function bookingReadyRules(context) {
     (example) => `- ${example}`,
     "No additional not-ready examples configured. Follow the rules above."
   );
+
+  if (conversion.mode === "project") {
+    return `Use outcome "booking_ready" as the backward-compatible CONVERSION-READY control ONLY on the turn where ALL of these are true:
+- The ${terms.customerSingular} clearly wants to proceed with ${conversion.label}, not merely ask about pricing, service coverage, materials, or how the process works.
+- You have a usable customer PROJECT LOCATION for the renovation job. This is the customer's property/project area, not one of the business's configured ${terms.locationPlural} unless they genuinely chose that business location for the next step.
+- You can write a concise PROJECT SUMMARY that captures the current renovation scope plus useful context already provided, such as property type, rough dimensions, budget, target timing, photos/floor plan, or another detail that helps staff continue. Do not invent missing details.
+- The requested NEXT STEP is clear enough to classify as either "site_visit" or "quotation_discussion".
+- The project location, project summary, and requested next step belong to the ${terms.customerSingular}'s CURRENT enquiry. Do not reuse details from an older completed, abandoned, or clearly separate project discussion.
+- No safety, complaint, or human-handoff condition applies.
+
+Examples that ARE conversion-ready:
+${readyExamples}
+
+Examples that are NOT conversion-ready yet:
+${notReadyExamples}
+
+When booking_ready applies, the customer-facing reply should naturally say ${conversion.staffConfirmationText}. NEVER say a site visit, quotation, price, slot, measurement, design, or project start is confirmed unless a connected system or staff member actually confirmed it.
+
+Do not repeat booking_ready on a later "ok", "thanks", or similar acknowledgement after you already told the ${terms.customerSingular} the team will confirm. If both booking_ready and needs_human could apply, use needs_human — safety/human escalation always wins.`;
+  }
 
   return `Use outcome "booking_ready" ONLY on the turn where ALL of these are true:
 - The ${terms.customerSingular} clearly wants to proceed with ${conversion.label}, not merely ask about price, availability, or how the process works.
@@ -213,15 +225,20 @@ STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code f
   "reply": "the exact short customer-facing message",
   "outcome": "normal | needs_human | booking_ready",
   "treatment": "canonical configured service name if clearly known, otherwise null",
-  "branch": "canonical configured location name if clearly chosen for the current booking-ready attempt, otherwise null",
-  "appointmentPreference": "brief current day/date + time/range/daypart preference if clearly known, otherwise null"
+  "branch": "canonical configured business location name if clearly chosen, otherwise null",
+  "appointmentPreference": "brief current day/date + time/range/daypart preference if clearly known, otherwise null",
+  "projectLocation": "customer property/project location for project-based conversion profiles if clearly known, otherwise null",
+  "projectSummary": "concise current project scope/context for project-based conversion profiles if clearly known, otherwise null",
+  "nextStep": "site_visit | quotation_discussion | null"
 }
 
 Rules for structured fields:
 - "reply" must contain only what the ${terms.customerSingular} should see. Never put internal outcome names, control tokens, analysis, or JSON instructions inside it.
 - The legacy internal field name "treatment" means the canonical configured ${terms.serviceSingular}; it is kept for backend compatibility while the product is migrated to industry-neutral naming.
-- The legacy internal field name "branch" means a canonical configured ${terms.locationSingular}; it is kept for backend compatibility.
-- For booking_ready, "branch" and "appointmentPreference" MUST be non-null and reflect the current attempt. Use the canonical configured location name rather than an abbreviation.
+- The legacy internal field name "branch" means a canonical configured ${terms.locationSingular}; it is kept for backend compatibility. For renovation, the customer's property belongs in "projectLocation", not "branch".
+- The legacy internal field name "appointmentPreference" is still used for clinic scheduling and may carry a clearly stated site-visit timing preference for renovation, but renovation conversion readiness does not require it.
+- For appointment-mode booking_ready, "branch" and "appointmentPreference" MUST be non-null and reflect the current attempt. Use the canonical configured location name rather than an abbreviation.
+- For project-mode booking_ready, "projectLocation", "projectSummary", and "nextStep" MUST be non-null and reflect the current project. "nextStep" must be exactly "site_visit" or "quotation_discussion".
 - "treatment" may be null if the ${terms.customerSingular} is proceeding without choosing a specific configured ${terms.serviceSingular}.
 - For normal or needs_human, include structured fields only when clearly known; otherwise use null.
 - Legacy tokens such as [[NEEDS_HUMAN]] and [[BOOKING_READY]] are backend compatibility controls only. Do NOT output them when following this JSON contract.
