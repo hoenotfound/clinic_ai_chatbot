@@ -1,19 +1,18 @@
-const defaultConfig = require("./clinicConfig.default");
+const { getInitialConfig } = require("./industryProfiles");
 
 /**
- * The live clinic config — every module that does
- * `require("../config/clinicConfig")` gets this exact same object
- * reference. That's deliberate: db/configRepo.js updates the *properties*
- * of this object in place (rather than replacing the export), so a save
- * from the portal's Settings page is picked up immediately everywhere it's
- * used (systemPrompt.js, server.js, etc.) with zero restart, since they all
- * read `clinicConfig.whatever` fresh on every message rather than caching
- * values at require-time.
+ * Live business config shared by every module that still imports the historical
+ * `clinicConfig` path. The filename stays in place for backward compatibility
+ * while the product is migrated to industry-neutral naming.
  *
- * Starts out as a copy of the hardcoded defaults so the bot behaves
- * sensibly even in the brief window before configRepo.loadConfig() finishes
- * reading the real value from Postgres at startup.
+ * db/configRepo.js mutates this object's properties in place, so Settings saves
+ * and database loads are visible immediately to every already-required module
+ * without restarting the process.
+ *
+ * Before Postgres has loaded, start from the selected initial industry profile.
+ * Existing deployments with no INITIAL_BUSINESS_TYPE continue to default to the
+ * aesthetic-clinic profile, preserving the current production behavior.
  */
-const clinicConfig = { ...defaultConfig };
+const clinicConfig = getInitialConfig();
 
 module.exports = clinicConfig;
