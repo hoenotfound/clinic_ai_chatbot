@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { useBusinessConfig } from "../context/BusinessConfigContext";
+import { getBusinessTerminology } from "../utils/businessTerminology";
 import Spinner from "./Spinner";
 
 const TEMPERATURE_STYLES = {
@@ -31,17 +33,18 @@ function formatDateTime(value) {
   });
 }
 
-function appointmentDisplay(summaryPreferred, lead) {
+function conversionDisplay(summaryPreferred, lead, ui) {
   const status = lead?.appointmentStatus || "none";
   const formalAppointment = lead?.appointmentAt ? formatDateTime(lead.appointmentAt) : "";
+  const optionLabel = Object.fromEntries(ui.conversionStatusOptions || []);
 
-  if (status === "cancelled") return "Cancelled";
-  if (status === "reschedule") return "Rescheduling";
+  if (status === "cancelled") return optionLabel.cancelled || "Cancelled";
+  if (status === "reschedule") return optionLabel.reschedule || "Needs reschedule";
   if (status === "visited") {
-    return formalAppointment ? `Visited · ${formalAppointment}` : "Visited";
+    return formalAppointment ? `${optionLabel.visited || "Visited"} · ${formalAppointment}` : (optionLabel.visited || "Visited");
   }
   if (status === "set") {
-    return formalAppointment || summaryPreferred || "Appointment set";
+    return formalAppointment || summaryPreferred || optionLabel.set || "Next step set";
   }
   return summaryPreferred || "";
 }
@@ -77,6 +80,8 @@ function DetailItem({ label, value }) {
 }
 
 export default function ContactInsights({ contactId, className = "" }) {
+  const { config } = useBusinessConfig();
+  const ui = getBusinessTerminology(config || {});
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -133,7 +138,7 @@ export default function ContactInsights({ contactId, className = "" }) {
   const summary = insights?.summary || {};
   const treatment = summary.treatmentInterest || lead?.treatmentInterest;
   const branch = summary.preferredBranch || lead?.branchName;
-  const appointment = appointmentDisplay(summary.preferredAppointment, lead);
+  const conversion = conversionDisplay(summary.preferredAppointment, lead, ui);
 
   return (
     <section className={`overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] ${className}`}>
@@ -218,9 +223,9 @@ export default function ContactInsights({ contactId, className = "" }) {
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <DetailItem label="Treatment / Interest" value={treatment} />
-              <DetailItem label="Preferred Branch" value={branch} />
-              <DetailItem label="Appointment" value={appointment} />
+              <DetailItem label={ui.insightsInterestLabel} value={treatment} />
+              <DetailItem label={ui.preferredLocationLabel} value={branch} />
+              <DetailItem label={ui.conversionLabel} value={conversion} />
               <DetailItem label="Main Concern / Goal" value={summary.mainConcern} />
             </div>
 
