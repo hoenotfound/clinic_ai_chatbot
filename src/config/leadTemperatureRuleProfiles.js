@@ -1,3 +1,5 @@
+const { normalizeBusinessType } = require("./industryProfiles");
+
 function frozenPatterns(patterns) {
   return Object.freeze(patterns);
 }
@@ -30,7 +32,7 @@ const DATE_OR_TIME_PATTERNS = frozenPatterns([
 const ALTERNATIVE_SCHEDULING_PATTERNS = frozenPatterns([
   /(?:\b(?:but|however|instead)\b|[,.;])\s*(?:on\s+)?(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|this\s+(?:week|weekend)|next\s+week|weekend|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:[01]?\d|2[0-3])[:.]\d{2}\s*(?:am|pm)?|(?:[1-9]|1[0-2])\s*(?:am|pm))\b.{0,40}\b(?:works?(?:\s+for\s+me)?|is\s+(?:okay|ok|fine|better)|would\s+work|i\s+(?:can|could|prefer)|can\s+(?:come|visit)|available|free)\b/,
   /(?:\b(?:tapi|tetapi|sebaliknya)\b|[,.;])\s*(?:hari\s+)?(?:ini|esok|lusa|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad|minggu\s+ini|minggu\s+depan|hujung\s+minggu|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:[01]?\d|2[0-3])[:.]\d{2}\s*(?:am|pm)?|(?:[1-9]|1[0-2])\s*(?:am|pm))\b.{0,40}\b(?:boleh|sesuai|ok|okay|lapang|free|lebih\s+baik)\b/,
-  /(?:但是|可是|不过|不過|，|。)(?:今天|明天|后天|後天|星期[一二三四五六日天]|周[一二三四五六日天]|週[一二三四五六日天]|这个周末|這個週末|下周|下週|\d{1,2}(?:点|點|时|時)).{0,20}(?:可以|没问题|沒問題|方便|有空|比较好|比較好)/,
+  /(?:但是|可是|不过|不過|[,，]|。)(?:今天|明天|后天|後天|星期[一二三四五六日天]|周[一二三四五六日天]|週[一二三四五六日天]|这个周末|這個週末|下周|下週|\d{1,2}(?:点|點|时|時)).{0,20}(?:可以|没问题|沒問題|方便|有空|比较好|比較好)/,
 ]);
 
 const GENERIC_DECLINE_PATTERNS = frozenPatterns([
@@ -40,7 +42,7 @@ const GENERIC_DECLINE_PATTERNS = frozenPatterns([
   /\b(?:not for me|i(?:'ll| will) pass)\b/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+berminat(?:\s+lagi)?(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
   /^(?:terima kasih,?\s*)?(?:saya\s+)?(?:tak|tidak)\s+nak(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
-  /^(?:我)?(?:不感兴趣|没兴趣|沒有興趣|没有兴趣|不要了|不需要了|不用了|谢谢不用了?|謝謝不用了?)(?:，?(?:谢谢|謝謝))?[。.!！]*$/,
+  /^(?:我)?(?:不感兴趣|没兴趣|沒有興趣|没有兴趣|不要了|不需要了|不用了|谢谢不用了?|謝謝不用了?)(?:[,，]?(?:谢谢|謝謝))?[。.!！]*$/,
 ]);
 
 const GENERIC_POSITIVE_CONTRAST_PATTERNS = frozenPatterns([
@@ -60,7 +62,7 @@ const CLINIC_DECLINE_PATTERNS = frozenPatterns([
   /\b(?:saya\s+)?(?:tak|tidak)\s+akan\s+(?:datang|visit|book|booking|reserve)\b/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+(?:perlu|payah)(?:\s+(?:ini|itu|servis|rawatan))?(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
   /^(?:terima kasih,?\s*)?(?:saya\s+)?(?:tak|tidak)\s+nak(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
-  /^(?:我)?(?:不感兴趣|没兴趣|沒有興趣|没有兴趣|不要了|不需要了|不用了|谢谢不用了?|謝謝不用了?)(?:，?(?:谢谢|謝謝))?[。.!！]*$/,
+  /^(?:我)?(?:不感兴趣|没兴趣|沒有興趣|没有兴趣|不要了|不需要了|不用了|谢谢不用了?|謝謝不用了?)(?:[,，]?(?:谢谢|謝謝))?[。.!！]*$/,
   /^(?:我)?(?:对|對)(?:你们|你們|这项|這項)?(?:服务|服務|疗程|療程)(?:不感兴趣|没兴趣|沒有興趣|没有兴趣)[。.!！]*$/,
   /^(?:我)?(?:不想|不要|不打算)(?:预约|預約|预订|預訂|订位|訂位|去你们|去你們|过去|過去|到店|来|來)(?:诊所|診所|门店|門店)?[。.!！]*$/,
 ]);
@@ -140,7 +142,6 @@ const RENOVATION_DECLINE_PATTERNS = frozenPatterns([
   /\b(?:i|we)?\s*(?:don't|do not)\s+(?:want|need)\s+(?:this|it|that|the project|the renovation|your services?|to\s+(?:proceed|go ahead|continue|start))\b/,
   /\b(?:i|we)(?:'m| are| am)?\s+(?:not|no longer)\s+(?:proceeding|going ahead|moving forward)(?:\s+with\s+(?:this|the project|the renovation))?\b/,
   /\b(?:i|we)(?:\s+)?(?:won't|will not|am not going to|are not going to)\s+(?:proceed|go ahead|continue|start\s+(?:the\s+)?(?:project|renovation))\b/,
-  /\bno\s+thanks?(?:\s+you)?\b/,
   /\b(?:not for me|i(?:'ll| will) pass)\b/,
   /\b(?:saya|kami)?\s*(?:tak|tidak)\s+berminat(?:\s+(?:lagi|dengan\s+(?:servis|renovation|ubah suai)))?(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
   /\b(?:saya|kami)?\s*(?:tak|tidak)\s+(?:nak|mahu)\s+(?:ini|itu|servis\s+(?:ini|anda)|teruskan|proceed|buat\s+(?:renovation|ubah suai))\b/,
@@ -158,9 +159,15 @@ const RENOVATION_POSITIVE_CONTRAST_PATTERNS = frozenPatterns([
 const RENOVATION_UNCLEAR_HOT_PATTERNS = frozenPatterns([
   /\b(?:maybe|perhaps|not ready|not yet|still thinking|need to think|just (?:asking|checking|comparing)|still comparing|compare (?:first|quotes?)|comparing quotes?|maybe later|later on|not now|too expensive|over budget|budget (?:is )?too high)\b/,
   /\b(?:don't|do not)\s+want\s+(?:a\s+)?(?:site visit|quotation|quote|measurement)\s+(?:yet|now)\b/,
+  /\b(?:if|provided|assuming|as long as)\b.{0,80}\b(?:i|we)\s+(?:can|could|will|would|might)\s+(?:proceed|go ahead|move forward|start)\b/,
+  /\b(?:i|we)\s+(?:can|could|will|would|might)\s+(?:proceed|go ahead|move forward|start)\b.{0,80}\b(?:if|provided|assuming|as long as)\b/,
   /\b(?:mungkin|belum (?:bersedia|nak|mahu)|masih fikir|nak fikir dulu|banding dulu|masih banding|compare dulu|nanti dulu|kemudian|mahal sangat|terlalu mahal|over budget|lebih bajet)\b/,
   /\b(?:tak|tidak)\s+nak\s+(?:site visit|quotation|sebut harga|ukur)\s+(?:dulu|lagi|sekarang)\b/,
+  /\b(?:kalau|jika)\b.{0,80}\b(?:saya|kami)\s+(?:boleh|akan|mungkin)\s+(?:teruskan|proceed|mula)\b/,
+  /\b(?:saya|kami)\s+(?:boleh|akan|mungkin)\s+(?:teruskan|proceed|mula)\b.{0,80}\b(?:kalau|jika)\b/,
   /(?:可能|也许|也許|还没决定|還沒決定|再考虑|再考慮|考虑一下|考慮一下|先比较|先比較|还在比较|還在比較|以后再说|以後再說|太贵|太貴|超预算|超預算|暂时不安排(?:上门|上門|量尺|测量|測量)|暫時不安排(?:上門|量尺|測量))/,
+  /(?:如果|要是|只要).{0,30}(?:可以|能|会|會|就).{0,12}(?:继续|繼續|进行|進行|开始|開始)/,
+  /(?:我|我们|我們)?(?:可以|能|会|會)(?:继续|繼續|进行|進行|开始|開始).{0,30}(?:如果|要是|只要)/,
 ]);
 
 const RENOVATION_NEGATED_HOT_PATTERNS = frozenPatterns([
@@ -200,9 +207,11 @@ const RENOVATION_CONTEXT_PROMPT_PATTERNS = frozenPatterns([
 ]);
 
 const RENOVATION_CONTEXT_CHOICE_PATTERNS = frozenPatterns([
-  /\b(?:site visit|site measurement|measurement|quotation|quote)\b/,
-  /\b(?:lawatan tapak|site visit|ukur|ukuran|measurement|quotation|sebut harga)\b/,
-  /(?:上门|上門|量尺|测量|測量|报价|報價|site visit)/,
+  /(?:^|[,.;]\s*)(?:quotation|quote|site visit|site measurement|measurement)(?:\s+(?:please|pls|instead|thanks?))?[.! ]*$/,
+  /^(?:let'?s\s+(?:do|go with)|i(?:'d| would)?\s*(?:prefer|choose|want)|we(?:'d| would)?\s*(?:prefer|choose|want))\s+(?:the\s+)?(?:quotation|quote|site visit|site measurement|measurement)\b/,
+  /(?:^|[,.;]\s*)(?:quotation|quote|sebut harga|site visit|lawatan tapak|ukur|ukuran|measurement)(?:\s+(?:boleh|ya|ok|okay|tolong|instead))?[.! ]*$/,
+  /^(?:saya|kami)\s+(?:pilih|nak|mahu)\s+(?:quotation|quote|sebut harga|site visit|lawatan tapak|ukur|ukuran)\b/,
+  /(?:^|[,，。]\s*)(?:先|就|要|选|選|选择|選擇)?(?:报价|報價|上门|上門|上门量尺|上門量尺|量尺|测量|測量)(?:吧|可以|就好|好了)?[。.!！ ]*$/,
 ]);
 
 const RENOVATION_NON_CONFIRMING_CONTEXT_PATTERNS = frozenPatterns([
@@ -279,27 +288,6 @@ const LEAD_TEMPERATURE_RULE_PROFILES = Object.freeze({
     contextReason: null,
   }),
 });
-
-const BUSINESS_TYPE_ALIASES = Object.freeze({
-  aesthetic_clinic: "aesthetic_clinic",
-  aesthetic: "aesthetic_clinic",
-  clinic: "aesthetic_clinic",
-  medical_aesthetic: "aesthetic_clinic",
-  home_renovation: "home_renovation",
-  renovation: "home_renovation",
-  carpentry: "home_renovation",
-  cabinetry: "home_renovation",
-  generic: "generic",
-  business: "generic",
-});
-
-function normalizeBusinessType(value) {
-  const normalized = String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, "_");
-  return BUSINESS_TYPE_ALIASES[normalized] || null;
-}
 
 function getLeadTemperatureRuleProfile(config = {}) {
   // A missing businessType means a pre-profile clinic runtime. Preserve the
