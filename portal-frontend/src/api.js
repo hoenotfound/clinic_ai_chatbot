@@ -13,6 +13,7 @@ async function request(path, options = {}) {
     error.status = res.status;
     error.code = body.code || null;
     error.policyBlocked = body.policyBlocked === true;
+    error.diagnosticStatus = body.diagnosticStatus || null;
     throw error;
   }
 
@@ -62,8 +63,6 @@ export const api = {
       const body = await res.json().catch(() => ({}));
       const error = new Error(body.error || `Request failed (${res.status})`);
       error.status = res.status;
-      error.code = body.code || null;
-      error.policyBlocked = body.policyBlocked === true;
       throw error;
     }
     return res.json();
@@ -173,6 +172,8 @@ export const api = {
   },
   getSetupStatus: () => request("/setup-status"),
   runSetupChecks: () => request("/setup-status/run", { method: "POST" }),
+  getGeminiDiagnosticStatus: () => request("/setup-status/gemini-diagnostic/status"),
+  runGeminiDiagnostic: () => request("/setup-status/gemini-diagnostic", { method: "POST" }),
   createLead: (data) =>
     request("/pipeline/leads", { method: "POST", body: JSON.stringify(data) }),
   updateLead: (leadId, data) =>
