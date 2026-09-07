@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
+import { useBusinessConfig } from "../context/BusinessConfigContext";
+import { getBusinessTerminology } from "../utils/businessTerminology";
 import { useToasts, ToastContainer } from "../components/Toast";
 import Spinner from "../components/Spinner";
 import ContactAvatar from "../components/ContactAvatar";
@@ -306,6 +308,8 @@ function ContactList({
 
 function ContactProfile({ contact, currentUsername, canManage, canCreateLeads, onEdit, onBack, onToast }) {
   const navigate = useNavigate();
+  const { config } = useBusinessConfig();
+  const ui = getBusinessTerminology(config || {});
   const [notes, setNotes] = useState(null);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -451,7 +455,7 @@ function ContactProfile({ contact, currentUsername, canManage, canCreateLeads, o
             <textarea
               className={`${inputClass} resize-y`}
               rows={2}
-              placeholder="Add a note about this patient. Visible to staff only, never sent or shown to the AI."
+              placeholder={`Add a note about this ${ui.customerSingular}. Visible to staff only, never sent or shown to the AI.`}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
             />
@@ -520,6 +524,8 @@ function MobileBackButton({ onClick, label }) {
 }
 
 function ContactForm({ contact, onSaved, onCancel, onError }) {
+  const { config } = useBusinessConfig();
+  const ui = getBusinessTerminology(config || {});
   const isNew = !contact;
   const isSocial = !isNew && isSocialContact(contact);
   const [name, setName] = useState(contact?.name || "");
@@ -561,10 +567,10 @@ function ContactForm({ contact, onSaved, onCancel, onError }) {
       <h2 className="mb-1 font-display text-lg font-bold">{isNew ? "Add contact" : "Edit contact"}</h2>
       <p className="mb-6 text-sm text-[var(--color-text-muted)]">
         {isNew
-          ? "Manually add a patient who hasn't messaged in yet. If they message this WhatsApp number later, it'll link to this same contact."
+          ? `Manually add a ${ui.customerSingular} who hasn't messaged in yet. If they message this WhatsApp number later, it'll link to this same contact.`
           : isSocial
-          ? `Update this patient's name. Their ${channelLabel(contact.channel)} account identifier is managed by Meta.`
-          : "Update this patient's name or WhatsApp number."}
+          ? `Update this ${ui.customerSingular}'s name. Their ${channelLabel(contact.channel)} account identifier is managed by Meta.`
+          : `Update this ${ui.customerSingular}'s name or WhatsApp number.`}
       </p>
 
       <div className="mb-4">
@@ -592,7 +598,7 @@ function ContactForm({ contact, onSaved, onCancel, onError }) {
             placeholder="e.g. +60 12-345 6789"
           />
           <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-            Any format works. It's normalized to match how WhatsApp identifies the patient.
+            Any format works. It's normalized to match how WhatsApp identifies the {ui.customerSingular}.
           </p>
         </div>
       )}
