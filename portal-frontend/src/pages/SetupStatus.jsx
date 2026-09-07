@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import Spinner from "../components/Spinner";
+import GeminiDiagnosticPanel from "../components/GeminiDiagnosticPanel";
 
 const GROUP_ORDER = ["Core system", "AI", "Messaging channels", "Supporting services"];
 
@@ -599,6 +600,7 @@ function AiKeyHealth({ candidates, metadataMode }) {
             </div>
           );
         })}
+        <GeminiDiagnosticPanel />
         <p className="px-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
           Run all checks refreshes every configured Gemini key using model metadata only. It does not generate AI text or consume prompt/output tokens. Runtime history comes from real AI traffic and is kept separately.
         </p>
