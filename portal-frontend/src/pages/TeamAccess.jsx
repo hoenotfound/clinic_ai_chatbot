@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { useBusinessConfig } from "../context/BusinessConfigContext";
+import { getBusinessTerminology } from "../utils/businessTerminology";
 import { teamApi } from "../teamApi";
 import Spinner from "../components/Spinner";
 import { ToastContainer, useToasts } from "../components/Toast";
@@ -9,6 +11,8 @@ const inputClass =
 
 export default function TeamAccess() {
   const { user: signedInUser, refreshUser } = useAuth();
+  const { config } = useBusinessConfig();
+  const ui = getBusinessTerminology(config || {});
   const { toasts, showToast, dismissToast } = useToasts();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -181,7 +185,7 @@ export default function TeamAccess() {
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search staff by name, username or branch"
+                placeholder={`Search staff by name, username or ${ui.locationSingular}`}
                 className="h-10 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] pl-9 pr-9 text-xs outline-none transition focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)] sm:h-11 sm:text-sm"
               />
               {query && (
@@ -310,6 +314,8 @@ export default function TeamAccess() {
 }
 
 function StaffDirectoryRow({ staff, currentUserId, branches, onOpen }) {
+  const { config } = useBusinessConfig();
+  const ui = getBusinessTerminology(config || {});
   const isCurrent = Number(staff.id) === Number(currentUserId);
   const staleBranch = Boolean(staff.branchName) && !branches.includes(staff.branchName);
   const initials = initialsFor(staff.displayName || staff.username);
@@ -341,7 +347,7 @@ function StaffDirectoryRow({ staff, currentUserId, branches, onOpen }) {
             <>
               <span aria-hidden="true">·</span>
               <span className={staleBranch ? "text-[var(--color-danger)]" : ""}>
-                {staff.branchName}{staleBranch ? " · old branch" : ""}
+                {staff.branchName}{staleBranch ? ` · old ${ui.locationSingular}` : ""}
               </span>
             </>
           )}
@@ -364,6 +370,8 @@ function StaffDirectoryRow({ staff, currentUserId, branches, onOpen }) {
 }
 
 function CreateStaffModal({ branches, onClose, onCreated, onError }) {
+  const { config } = useBusinessConfig();
+  const ui = getBusinessTerminology(config || {});
   const [form, setForm] = useState({
     displayName: "",
     username: "",
@@ -435,13 +443,16 @@ function CreateStaffModal({ branches, onClose, onCreated, onError }) {
         </div>
 
         {form.role === "sales" && (
-          <Field label="Sales branch" hint="Optional. Used for branch-first lead assignment when the branch is already known.">
+          <Field
+            label={ui.staffLocationLabel}
+            hint={`Optional. Used for ${ui.locationSingular}-first lead assignment when the ${ui.locationSingular} is already known.`}
+          >
             <select
               className={inputClass}
               value={form.branchName}
               onChange={(event) => setForm({ ...form, branchName: event.target.value })}
             >
-              <option value="">No fixed branch</option>
+              <option value="">{ui.noFixedLocationLabel}</option>
               {branches.map((branch) => (
                 <option key={branch} value={branch}>{branch}</option>
               ))}
@@ -482,6 +493,8 @@ function StaffEditorModal({
   onRemoved,
   onError,
 }) {
+  const { config } = useBusinessConfig();
+  const ui = getBusinessTerminology(config || {});
   const [displayName, setDisplayName] = useState(staff.displayName || staff.username);
   const [branchName, setBranchName] = useState(staff.branchName || "");
   const [newPassword, setNewPassword] = useState("");
@@ -559,7 +572,9 @@ function StaffEditorModal({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold">Account</h3>
-              <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">Profile, role and branch assignment.</p>
+              <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
+                Profile, role and {ui.locationSingular} assignment.
+              </p>
             </div>
             <div className="flex gap-2">
               <select
@@ -598,16 +613,16 @@ function StaffEditorModal({
             {staff.role === "sales" && (
               <div className="sm:col-span-2">
                 <Field
-                  label="Sales branch"
+                  label={ui.staffLocationLabel}
                   hint={
                     staleBranch
-                      ? "This branch is no longer configured. Choose a current branch or No fixed branch before branch-specific routing can use this account again."
-                      : "Optional. Used for branch-first assignment when the branch is already known. Every eligible Sales account still participates in the global rotation for leads without a known branch. Later branch record changes never move the lead to another owner."
+                      ? `This ${ui.locationSingular} is no longer configured. Choose a current ${ui.locationSingular} or ${ui.noFixedLocationLabel} before ${ui.locationSingular}-specific routing can use this account again.`
+                      : `Optional. Used for ${ui.locationSingular}-first assignment when the ${ui.locationSingular} is already known. Every eligible Sales account still participates in the global rotation for leads without a known ${ui.locationSingular}. Later ${ui.locationSingular} record changes never move the lead to another owner.`
                   }
                   danger={staleBranch}
                 >
                   <select className={inputClass} value={branchName} onChange={(event) => setBranchName(event.target.value)}>
-                    <option value="">No fixed branch</option>
+                    <option value="">{ui.noFixedLocationLabel}</option>
                     {staleBranch && <option value={savedBranchName}>{savedBranchName} · no longer configured</option>}
                     {branches.map((branch) => (
                       <option key={branch} value={branch}>{branch}</option>
