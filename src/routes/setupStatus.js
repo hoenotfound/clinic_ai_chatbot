@@ -216,6 +216,20 @@ router.post("/run", async (req, res) => {
   }
 });
 
+router.post("/gemini-diagnostic", async (req, res) => {
+  try {
+    const result = await geminiSetupCheck.runGeminiKeyModelDiagnostic();
+    res.json(result);
+  } catch (err) {
+    console.error("Failed to run Gemini key/model diagnostic:", err);
+    const status = err?.code === "AI_PROVIDER_NOT_CONFIGURED" ? 400 : 500;
+    res.status(status).json({
+      error: err?.message || "Something went wrong running the Gemini diagnostic.",
+      code: err?.code || null,
+    });
+  }
+});
+
 module.exports = router;
 module.exports.addAiUsage = addAiUsage;
 module.exports.addSystemHealth = addSystemHealth;
