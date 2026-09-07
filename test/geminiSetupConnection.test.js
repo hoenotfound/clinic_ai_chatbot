@@ -233,7 +233,7 @@ test("credential classifier recognizes invalid API-key errors without treating 5
   assert.equal(isCredentialError(unavailable), false);
 });
 
-test("Gemini key/model diagnostic uses a one-character prompt and one output token", async () => {
+test("Gemini key/model diagnostic mirrors the production reply model order with a one-character prompt", async () => {
   const calls = [];
   const env = {
     GEMINI_API_KEY: "key-one",
@@ -265,10 +265,10 @@ test("Gemini key/model diagnostic uses a one-character prompt and one output tok
   assert.deepEqual(
     calls.map((call) => [call.apiKey, call.request.model]),
     [
-      ["key-one", "gemini-3.5-flash"],
       ["key-one", "gemini-3.8-flash"],
-      ["key-two", "gemini-3.5-flash"],
+      ["key-one", "gemini-3.5-flash-lite"],
       ["key-two", "gemini-3.8-flash"],
+      ["key-two", "gemini-3.5-flash-lite"],
     ]
   );
   for (const call of calls) {
@@ -276,6 +276,7 @@ test("Gemini key/model diagnostic uses a one-character prompt and one output tok
     assert.equal(call.request.config.maxOutputTokens, 1);
     assert.deepEqual(call.request.config.thinkingConfig, { thinkingLevel: "low" });
   }
+  assert.deepEqual(result.models, ["gemini-3.8-flash", "gemini-3.5-flash-lite"]);
   assert.equal(result.keyCount, 2);
   assert.equal(result.requestsAttempted, 4);
   assert.equal(result.successfulRequests, 4);
@@ -283,10 +284,11 @@ test("Gemini key/model diagnostic uses a one-character prompt and one output tok
   assert.doesNotMatch(JSON.stringify(result), /key-one|key-two/);
 });
 
-test("Gemini key/model diagnostic distinguishes 503 from rate limiting and still tests both models", async () => {
+test("Gemini key/model diagnostic distinguishes 503, rate limiting and daily quota exhaustion", async () => {
   const env = {
     GEMINI_API_KEY: "key-one",
     GEMINI_API_KEY_1: "key-two",
+    GEMINI_API_KEY_2: "key-three",
   };
 
   const result = await runGeminiKeyModelDiagnostic({
@@ -306,6 +308,11 @@ test("Gemini key/model diagnostic distinguishes 503 from rate limiting and still
               error.status = 429;
               throw error;
             }
+            if (model === "gemini-3.8-flash" && apiKey === "key-three") {
+              const error = new Error("Requests per day quota exceeded for this model.");
+              error.status = 429;
+              throw error;
+            }
             return { usageMetadata: { totalTokenCount: 1 } };
           },
         },
@@ -319,13 +326,24 @@ test("Gemini key/model diagnostic distinguishes 503 from rate limiting and still
   const keyTwo38 = result.results.find(
     (item) => item.label === "Gemini key 2" && item.model === "gemini-3.8-flash"
   );
+  const keyThree38 = result.results.find(
+    (item) => item.label === "Gemini key 3" && item.model === "gemini-3.8-flash"
+  );
 
   assert.equal(keyOne38.status, "unavailable");
   assert.equal(keyOne38.httpStatus, 503);
   assert.equal(keyOne38.providerStatus, "UNAVAILABLE");
   assert.equal(keyTwo38.status, "rate_limited");
+  assert.equal(keyTwo38.failureKind, "rate_limit");
   assert.equal(keyTwo38.httpStatus, 429);
-  assert.equal(result.results.length, 4);
+  assert.equal(keyThree38.status, "rate_limited");
+  assert.equal(keyThree38.failureKind, "quota_exhausted");
+  assert.equal(keyThree38.httpStatus, 429);
+  assert.equal(result.rateLimitedRequests, 1);
+  assert.equal(result.quotaExhaustedRequests, 1);
+  assert.match(result.warnings.join("\n"), /RATE LIMIT/);
+  assert.match(result.warnings.join("\n"), /QUOTA EXHAUSTED/);
+  assert.equal(result.results.length, 6);
 });
 
 test("Gemini key/model diagnostic is capped at the first five configured keys", async () => {
