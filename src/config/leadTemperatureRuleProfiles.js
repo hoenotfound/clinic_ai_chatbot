@@ -147,7 +147,7 @@ const RENOVATION_DECLINE_PATTERNS = frozenPatterns([
   /\b(?:saya|kami)?\s*(?:tak|tidak)\s+akan\s+(?:teruskan|proceed|buat\s+(?:renovation|ubah suai))\b/,
   /^(?:terima kasih,?\s*)?(?:saya|kami)?\s*(?:tak|tidak)\s+nak(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
   /^(?:我|我们|我們)?(?:不感兴趣|沒興趣|没兴趣|不要了|不需要了|不用了|不做了|不继续了|不繼續了)(?:，?(?:谢谢|謝謝))?[。.!！]*$/,
-  /(?:我|我们|我們)?(?:不想|不要|不打算)(?:继续|繼續|进行|進行|装修|裝修|做这个项目|做這個項目|做这个工程|做這個工程)[。.!！]*$/,
+  /(?:我|我们|我們)?(?:不想|不要|不打算)(?:(?:继续|繼續|进行|進行)(?:这个|這個)?(?:装修|裝修|工程|项目|項目)?|装修|裝修|做这个项目|做這個項目|做这个工程|做這個工程)[。.!！]*$/,
 ]);
 
 const RENOVATION_POSITIVE_CONTRAST_PATTERNS = frozenPatterns([
