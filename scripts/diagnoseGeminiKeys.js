@@ -44,12 +44,21 @@ function resultText(item) {
 
 async function main() {
   console.log("Gemini diagnostic: tiny real generation, max 1 output token per key/model.");
-  console.log("This consumes request quota: with 5 keys it makes up to 5 requests per model.\n");
+  console.log("Run this while chatbot traffic is quiet because real requests share project RPM/RPD quota.\n");
 
   const result = await runGeminiKeyModelDiagnostic({
     timeoutMs: process.env.GEMINI_DIAGNOSTIC_TIMEOUT_MS,
   });
   const sources = configuredKeySources();
+
+  console.log(
+    `Configured keys: ${result.configuredKeyCount}. Testing: ${result.keyCount}. ` +
+    `Planned requests: ${result.plannedRequests}.`
+  );
+  if (result.skippedKeyCount > 0) {
+    console.log(`${result.skippedKeyCount} configured key${result.skippedKeyCount === 1 ? " was" : "s were"} not tested because the diagnostic is hard-capped at 5 keys.`);
+  }
+  console.log("");
 
   const byKey = new Map();
   for (const item of result.results) {
@@ -65,9 +74,19 @@ async function main() {
 
   console.table([...byKey.values()]);
   console.log(
-    `\n${result.successfulRequests}/${result.requestsAttempted} requests succeeded; ` +
-    `${result.totalTokens} total token${result.totalTokens === 1 ? "" : "s"} reported by Gemini.`
+    `\n${result.successfulRequests}/${result.requestsAttempted} attempted requests succeeded; ` +
+    `${result.totalTokens} total token${result.totalTokens === 1 ? "" : "s"} reported by completed Gemini responses.`
   );
+
+  if (!result.tokenUsageComplete) {
+    console.log("Token usage is incomplete because a timed-out request may still have been processed remotely.");
+  }
+  if (result.stoppedEarly) {
+    console.log(
+      `Diagnostic stopped early after ${result.requestsAttempted}/${result.plannedRequests} planned requests; ` +
+      `${result.remainingRequests} request${result.remainingRequests === 1 ? "" : "s"} were not started.`
+    );
+  }
 
   const failures = result.results.filter((item) => item.status !== "ready");
   if (failures.length) {
@@ -76,6 +95,11 @@ async function main() {
       const code = item.httpStatus || item.providerStatus || item.failureKind || item.status;
       console.log(`- ${item.label} ${item.model}: ${code} - ${item.message}`);
     }
+  }
+
+  if (result.warnings.length) {
+    console.log("\nNotes:");
+    for (const warning of result.warnings) console.log(`- ${warning}`);
   }
 }
 
