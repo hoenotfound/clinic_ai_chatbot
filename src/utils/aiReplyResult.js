@@ -44,6 +44,34 @@ function canonicalConfiguredName(value, items) {
   return match ? String(match.name).trim() : null;
 }
 
+function canonicalConfiguredService(
+  value,
+  services = clinicConfig.services,
+  aliases = clinicConfig.serviceAliases
+) {
+  const direct = canonicalConfiguredName(value, services);
+  if (direct) return direct;
+
+  const cleaned = cleanOptionalText(value);
+  if (!cleaned) return null;
+  const target = normalizeName(cleaned);
+  if (!target) return null;
+
+  // Accept only configured aliases whose official target also resolves to a
+  // currently configured service. Deduplicate identical targets but fail closed
+  // if bad configuration makes one alias point to multiple canonical services.
+  const resolved = [
+    ...new Set(
+      (aliases || [])
+        .filter((alias) => normalizeName(alias?.alias) === target)
+        .map((alias) => canonicalConfiguredName(alias?.officialService, services))
+        .filter(Boolean)
+    ),
+  ];
+
+  return resolved.length === 1 ? resolved[0] : null;
+}
+
 function configuredBranchAliases(branch) {
   const canonical = String(branch?.name || "").trim();
   if (!canonical) return new Set();
@@ -154,11 +182,23 @@ function parseStructuredReply(raw) {
   const branch = canonicalConfiguredBranch(parsed.branch);
   const treatment = parsed.treatment == null
     ? null
-    : canonicalConfiguredName(parsed.treatment, clinicConfig.services);
+    : canonicalConfiguredService(parsed.treatment);
   const appointmentPreference = cleanOptionalText(parsed.appointmentPreference);
-  const projectLocation = cleanOptionalText(parsed.projectLocation);
-  const projectSummary = cleanOptionalText(parsed.projectSummary);
-  const nextStep = cleanNextStep(parsed.nextStep);
+  const isProjectMode = conversion.mode === "project";
+
+  // Project-only fields must never escape into appointment-mode metadata even
+  // when a model accidentally fills optional JSON fields that do not belong to
+  // the active industry. This prevents false "changed booking" refreshes for
+  // existing clinic deployments.
+  const projectLocation = isProjectMode
+    ? cleanOptionalText(parsed.projectLocation)
+    : null;
+  const projectSummary = isProjectMode
+    ? cleanOptionalText(parsed.projectSummary)
+    : null;
+  const nextStep = isProjectMode
+    ? cleanNextStep(parsed.nextStep)
+    : null;
 
   if (outcome === "booking_ready" && conversion.mode === "appointment") {
     // A clinic Booking Ready response is executable, so do not silently
@@ -172,7 +212,7 @@ function parseStructuredReply(raw) {
     }
   }
 
-  if (outcome === "booking_ready" && conversion.mode === "project") {
+  if (outcome === "booking_ready" && isProjectMode) {
     // Project conversion readiness is driven by the active profile's contract.
     // Canonical service matching is intentionally part of this validation so an
     // unsupported/hallucinated service cannot execute a staff-facing outcome.
@@ -204,9 +244,9 @@ function parseStructuredReply(raw) {
     treatment,
     appointmentPreference,
   };
-  if (projectLocation) details.projectLocation = projectLocation;
-  if (projectSummary) details.projectSummary = projectSummary;
-  if (nextStep) details.nextStep = nextStep;
+  if (isProjectMode && projectLocation) details.projectLocation = projectLocation;
+  if (isProjectMode && projectSummary) details.projectSummary = projectSummary;
+  if (isProjectMode && nextStep) details.nextStep = nextStep;
 
   return {
     text: reply,
@@ -253,6 +293,7 @@ module.exports = {
   VALID_PROJECT_NEXT_STEPS,
   canonicalConfiguredBranch,
   canonicalConfiguredName,
+  canonicalConfiguredService,
   configuredBranchAliases,
   parseAiReplyResult,
   parseStructuredReply,
