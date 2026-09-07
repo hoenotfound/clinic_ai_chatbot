@@ -1,15 +1,22 @@
 const { pool } = require("./db");
 const clinicConfig = require("../config/clinicConfig");
-const defaultConfig = require("../config/clinicConfig.default");
+const {
+  getInitialConfig,
+  hydrateBusinessConfig,
+} = require("../config/industryProfiles");
 const promoImagesRepo = require("./promoImagesRepo");
 const { DEFAULT_LEAD_DISTRIBUTION } = require("../utils/leadDistribution");
 const realtimeEvents = require("../utils/realtimeEvents");
 
-// Every top-level key the Settings page is allowed to read/write. Kept as a
-// single list shared by loadConfig/updateConfig so there's one place to
-// touch if a new config section is ever added.
+// Every top-level key the Settings page is allowed to read/write. Keep the
+// historical clinicName key during the migration so existing UI/API clients
+// continue to work. businessName is synchronized with it in updateConfig().
+// Profile-owned businessType/terminology/conversion metadata deliberately stays
+// outside this list until there is a dedicated atomic industry-change action.
 const CONFIG_KEYS = [
   "clinicName",
+  "businessName",
+  "businessDescription",
   "aiAssistantName",
   "branches",
   "hours",
@@ -30,9 +37,10 @@ const CONFIG_KEYS = [
   "guardrails",
 ];
 
-// Internal runtime state that must survive restarts but must not become a
-// staff-editable Settings API field. Telegram conversation summaries keep a
-// separate activation boundary from the Auto AI Lead Temperature toggle.
+// businessType is intentionally not a normal mutable Settings field yet.
+// Changing industry should eventually go through a dedicated onboarding/profile
+// action that can safely replace all related defaults together, not just flip a
+// label while leaving clinic-specific content behind.
 const INTERNAL_CONFIG_KEYS = ["telegramConversationSummary"];
 
 // server.js keeps its old 30-minute housekeeping callback for compatibility,
@@ -94,37 +102,37 @@ async function pruneOrphanedPromoImages(force = false, now = Date.now()) {
 }
 
 /**
- * Loads the DB-backed config into the shared `clinicConfig` object,
- * mutating its properties in place (not replacing the object — see
- * config/clinicConfig.js for why that matters). Called once at server
- * startup, after initSchema(). On a brand-new database the clinic_config
- * table is empty, so this seeds it from the hardcoded defaults first —
- * same "auto-bootstrap on first run" pattern as bootstrapAdminUser().
+ * Loads DB-backed config into the shared live object. A fresh database is now
+ * seeded from the selected industry profile rather than always copying the
+ * Beleco/aesthetic defaults. Existing pre-profile databases are recognized as
+ * clinic deployments and hydrated with the aesthetic profile for backward
+ * compatibility.
  */
 async function loadConfig() {
   const result = await pool.query("SELECT data FROM clinic_config WHERE id = 1");
 
   if (result.rows.length === 0) {
+    const initialConfig = getInitialConfig();
     const seededConfig = {
-      ...defaultConfig,
+      ...initialConfig,
       leadDistribution: { ...DEFAULT_LEAD_DISTRIBUTION },
     };
     await pool.query("INSERT INTO clinic_config (id, data) VALUES (1, $1)", [seededConfig]);
     Object.assign(clinicConfig, seededConfig);
-    console.log("Seeded clinic_config table from config/clinicConfig.default.js.");
+    console.log(`Seeded clinic_config table from ${seededConfig.businessType} industry profile.`);
     return clinicConfig;
   }
 
   const storedConfig = result.rows[0].data || {};
+  const hydratedConfig = hydrateBusinessConfig(storedConfig);
   Object.assign(clinicConfig, {
-    ...defaultConfig,
-    ...storedConfig,
+    ...hydratedConfig,
     automatedFollowUp: {
-      ...defaultConfig.automatedFollowUp,
+      ...hydratedConfig.automatedFollowUp,
       ...(storedConfig.automatedFollowUp || {}),
     },
     leadScoring: {
-      ...defaultConfig.leadScoring,
+      ...hydratedConfig.leadScoring,
       ...(storedConfig.leadScoring || {}),
     },
     leadDistribution: {
@@ -142,9 +150,9 @@ function getConfig() {
 
 /**
  * Applies a partial update — only recognized top-level keys present in
- * `updates` are touched, everything else in the current config is left
- * alone. Updates both the in-memory object (so the AI picks it up on the
- * very next message, no restart) and the DB row (so it survives one).
+ * `updates` are touched, everything else in the current config is left alone.
+ * During the migration, clinicName and businessName are kept synchronized so
+ * old modules/UI and new industry-neutral code cannot drift to different names.
  */
 async function updateConfig(updates) {
   const nextConfig = { ...clinicConfig };
@@ -154,6 +162,18 @@ async function updateConfig(updates) {
       nextConfig[key] = updates[key];
       changedKeys.push(key);
     }
+  }
+
+  const hasBusinessName = Object.prototype.hasOwnProperty.call(updates, "businessName");
+  const hasClinicName = Object.prototype.hasOwnProperty.call(updates, "clinicName");
+  if (hasBusinessName) {
+    nextConfig.businessName = updates.businessName;
+    nextConfig.clinicName = updates.businessName;
+    if (!changedKeys.includes("clinicName")) changedKeys.push("clinicName");
+  } else if (hasClinicName) {
+    nextConfig.clinicName = updates.clinicName;
+    nextConfig.businessName = updates.clinicName;
+    if (!changedKeys.includes("businessName")) changedKeys.push("businessName");
   }
 
   await pool.query("UPDATE clinic_config SET data = $1, updated_at = now() WHERE id = 1", [

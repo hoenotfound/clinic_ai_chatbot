@@ -50,6 +50,8 @@ function handleImageUpload(req, res, next) {
 // system prompt builder and breaking every reply. See utils/systemPrompt.js
 // for how each of these is read back out.
 const VALIDATORS = {
+  businessName: isNonEmptyString,
+  businessDescription: isString,
   clinicName: isNonEmptyString,
   aiAssistantName: isNonEmptyString,
   introMessage: isNonEmptyString,
