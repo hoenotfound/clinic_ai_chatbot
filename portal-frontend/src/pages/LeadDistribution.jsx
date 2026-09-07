@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
+import { useBusinessConfig } from "../context/BusinessConfigContext";
+import { getBusinessTerminology } from "../utils/businessTerminology";
 import Spinner from "../components/Spinner";
 import { ToastContainer, useToasts } from "../components/Toast";
 
@@ -23,8 +25,15 @@ const DEFAULT_UNASSIGNED = {
   manualUnassignedCount: 0,
 };
 
+function capitalized(value) {
+  const text = String(value || "");
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : "";
+}
+
 export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
   const { permissions } = useAuth();
+  const { config: businessConfig } = useBusinessConfig();
+  const ui = getBusinessTerminology(businessConfig || {});
   const { toasts, showToast, dismissToast } = useToasts();
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [savedSettings, setSavedSettings] = useState(DEFAULT_SETTINGS);
@@ -111,6 +120,7 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
 
   const savedEnabled = savedSettings.enabled === true;
   const savedBranchRouting = savedSettings.assignByBranch !== false;
+  const locationTitle = capitalized(ui.locationSingular);
 
   const attentionItems = [];
   if (accounts.length === 0) {
@@ -130,8 +140,8 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
   if (staleBranchAccounts.length > 0) {
     attentionItems.push({
       tone: settings.assignByBranch ? "danger" : "neutral",
-      title: "Old branch mapping detected",
-      text: `${staleBranchAccounts.map((account) => account.displayName).join(", ")} ${staleBranchAccounts.length === 1 ? "has" : "have"} a branch that is no longer configured.${settings.assignByBranch ? " Fix it before relying on branch routing." : " It does not affect global routing, but should still be cleaned up."}`,
+      title: `Old ${ui.locationSingular} mapping detected`,
+      text: `${staleBranchAccounts.map((account) => account.displayName).join(", ")} ${staleBranchAccounts.length === 1 ? "has" : "have"} a ${ui.locationSingular} that is no longer configured.${settings.assignByBranch ? ` Fix it before relying on ${ui.locationSingular} routing.` : " It does not affect global routing, but should still be cleaned up."}`,
     });
   }
 
@@ -166,7 +176,9 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
       return;
     }
 
-    const routingLabel = savedBranchRouting ? "the saved branch routing rules" : "the global Sales rotation";
+    const routingLabel = savedBranchRouting
+      ? `the saved ${ui.locationSingular} routing rules`
+      : "the global Sales rotation";
     const confirmed = window.confirm(
       `Assign up to ${Math.min(unassigned.recoverableUnassignedCount, 100)} never-owned open leads using ${routingLabel}? Leads manually left unassigned by staff will stay unassigned.`
     );
@@ -223,7 +235,7 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
         !current.enabled
           ? "Automatic lead distribution is paused."
           : current.assignByBranch
-            ? "Lead distribution is active by branch."
+            ? `Lead distribution is active by ${ui.locationSingular}.`
             : "Lead distribution is active across all Sales staff.",
         "info"
       );
@@ -306,9 +318,9 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
               <RoutingChoice
                 checked={settings.assignByBranch}
                 disabled={!canManageDistribution}
-                title="By branch"
-                badge="Branch-aware"
-                description="When the branch is already known, use that branch's Sales team first. If it is unknown or the branch has no eligible salesperson, use the global pool."
+                title={`By ${ui.locationSingular}`}
+                badge={`${locationTitle}-aware`}
+                description={`When the ${ui.locationSingular} is already known, use that ${ui.locationSingular}'s Sales team first. If it is unknown or the ${ui.locationSingular} has no eligible salesperson, use the global pool.`}
                 onChange={() => setSettings((current) => ({ ...current, assignByBranch: true }))}
               />
               <RoutingChoice
@@ -316,12 +328,12 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
                 disabled={!canManageDistribution}
                 title="Across all Sales staff"
                 badge="Global"
-                description="Ignore branch for ownership and rotate every new lead across all eligible Sales staff."
+                description={`Ignore ${ui.locationSingular} for ownership and rotate every new lead across all eligible Sales staff.`}
                 onChange={() => setSettings((current) => ({ ...current, assignByBranch: false }))}
               />
             </div>
             <p className="mt-4 text-[11px] leading-5 text-[var(--color-text-muted)]">
-              The branch is still recorded for CRM, reporting and appointments even when global routing is selected.
+              The {ui.locationSingular} is still recorded for CRM, reporting and {ui.conversionCountPlural} even when global routing is selected.
               {!settings.enabled && " This choice will apply when automatic distribution is turned on."}
             </p>
           </section>
@@ -330,10 +342,10 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
               <HealthItem value={accounts.length} label="eligible Sales" />
               <Separator />
-              <HealthItem value={configuredBranches.length} label={configuredBranches.length === 1 ? "branch" : "branches"} />
+              <HealthItem value={configuredBranches.length} label={configuredBranches.length === 1 ? ui.locationSingular : ui.locationPlural} />
               <Separator />
               <HealthItem value={unassigned.openUnassignedCount} label="open unassigned" attention={unassigned.openUnassignedCount > 0} />
-              <span className="ml-auto text-[11px] font-medium text-[var(--color-text-muted)]">{settings.assignByBranch ? "Branch routing" : "Global routing"}</span>
+              <span className="ml-auto text-[11px] font-medium text-[var(--color-text-muted)]">{settings.assignByBranch ? `${locationTitle} routing` : "Global routing"}</span>
             </div>
           </section>
 
@@ -379,16 +391,16 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
             <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 sm:px-6">
               <div>
                 <h2 className="font-display text-sm font-bold">Sales routing team</h2>
-                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">{accounts.length} eligible Sales across {configuredBranches.length} configured {configuredBranches.length === 1 ? "branch" : "branches"}</p>
+                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">{accounts.length} eligible Sales across {configuredBranches.length} configured {configuredBranches.length === 1 ? ui.locationSingular : ui.locationPlural}</p>
               </div>
-              <span className="text-xs font-semibold text-[var(--color-primary)]">View team & branch pools</span>
+              <span className="text-xs font-semibold text-[var(--color-primary)]">View team & {ui.locationSingular} pools</span>
             </summary>
             <div className="border-t border-[var(--color-border)] px-5 py-5 sm:px-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-[11px] leading-5 text-[var(--color-text-muted)]">
                   {settings.assignByBranch
-                    ? "Known branches use their matching pool first. Global is the fallback."
-                    : "Branch pools are shown for reference, but global routing currently uses every eligible Sales account."}
+                    ? `Known ${ui.locationPlural} use their matching pool first. Global is the fallback.`
+                    : `${locationTitle} pools are shown for reference, but global routing currently uses every eligible Sales account.`}
                 </p>
                 <div className="flex items-center gap-3">
                   {permissions?.manage_users && <Link to="/settings/team" className="text-xs font-semibold text-[var(--color-primary)] hover:underline">Configure team</Link>}
@@ -400,14 +412,14 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
               </div>
 
               <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <PoolSummary name="Global Sales pool" count={accounts.length} active note={settings.assignByBranch ? "Fallback for leads without a usable branch pool." : "Used for every automatically assigned lead."} />
+                <PoolSummary name="Global Sales pool" count={accounts.length} active note={settings.assignByBranch ? `Fallback for leads without a usable ${ui.locationSingular} pool.` : "Used for every automatically assigned lead."} />
                 {branchPools.map((pool) => (
                   <PoolSummary
                     key={pool.branchName}
                     name={pool.branchName}
                     count={pool.accounts.length}
                     active={settings.assignByBranch}
-                    note={!settings.assignByBranch ? "Reference only while global routing is selected." : pool.accounts.length > 1 ? "Round robin within this branch." : pool.accounts.length === 1 ? "Direct assignment for this branch." : "Falls back to the global pool."}
+                    note={!settings.assignByBranch ? "Reference only while global routing is selected." : pool.accounts.length > 1 ? `Round robin within this ${ui.locationSingular}.` : pool.accounts.length === 1 ? `Direct assignment for this ${ui.locationSingular}.` : "Falls back to the global pool."}
                   />
                 ))}
               </div>
@@ -421,8 +433,8 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
                       <p className="mt-0.5 truncate text-[11px] text-[var(--color-text-muted)]">@{account.username}</p>
                     </div>
                     <div className="text-right">
-                      <p className="max-w-44 truncate text-[11px] font-semibold" title={account.branchName || "No fixed branch"}>{account.branchName || "No fixed branch"}</p>
-                      <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{settings.assignByBranch && account.branchName ? "Branch + global pool" : "Global pool"}</p>
+                      <p className="max-w-44 truncate text-[11px] font-semibold" title={account.branchName || ui.noFixedLocationLabel}>{account.branchName || ui.noFixedLocationLabel}</p>
+                      <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{settings.assignByBranch && account.branchName ? `${locationTitle} + global pool` : "Global pool"}</p>
                     </div>
                   </div>
                 )) : (
@@ -439,23 +451,23 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
                 <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Assignment flow</p>
                 <div className="mt-3 space-y-3">
                   <FlowStep number="1" title="New lead arrives" text="The customer message is stored first, then the lead is created." />
-                  <FlowStep number="2" title={settings.assignByBranch ? "Choose the right pool" : "Use the global pool"} text={settings.assignByBranch ? "If the branch is already known, use that branch pool. Otherwise use the global Sales pool." : "Branch does not affect ownership. Round robin uses all eligible Sales accounts."} />
-                  <FlowStep number="3" title="Keep the owner" text="Later branch changes or AI updates never move the lead to another salesperson." />
+                  <FlowStep number="2" title={settings.assignByBranch ? "Choose the right pool" : "Use the global pool"} text={settings.assignByBranch ? `If the ${ui.locationSingular} is already known, use that ${ui.locationSingular} pool. Otherwise use the global Sales pool.` : `${locationTitle} does not affect ownership. Round robin uses all eligible Sales accounts.`} />
+                  <FlowStep number="3" title="Keep the owner" text={`Later ${ui.locationSingular} changes or AI updates never move the lead to another salesperson.`} />
                 </div>
               </section>
 
               <section>
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Branch data</p>
-                    <h3 className="mt-1 text-xs font-semibold text-[var(--color-text)]">AI branch recording</h3>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">{locationTitle} data</p>
+                    <h3 className="mt-1 text-xs font-semibold text-[var(--color-text)]">AI {ui.locationSingular} recording</h3>
                   </div>
                   <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${aiBranchRecording.enabled ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>{aiBranchRecording.enabled ? "Available" : "Off"}</span>
                 </div>
                 <p className="mt-2 text-[11px] leading-5">
                   {aiBranchRecording.enabled
-                    ? "AI can fill a blank branch after the conversation is analyzed. This records CRM data only and never changes the owner."
-                    : "Staff can still edit the branch manually. AI branch recording becomes available through Lead Temperature or Telegram summaries."}
+                    ? `AI can fill a blank ${ui.locationSingular} after the conversation is analyzed. This records CRM data only and never changes the owner.`
+                    : `Staff can still edit the ${ui.locationSingular} manually. AI ${ui.locationSingular} recording becomes available through Lead Temperature or Telegram summaries.`}
                 </p>
                 <div className="mt-3 space-y-2 border-t border-[var(--color-border)] pt-3">
                   <StatusLine label="Lead Temperature" enabled={aiBranchRecording.leadScoringEnabled} />
@@ -471,9 +483,9 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
                 <Rule text="Disabled or ineligible Sales accounts are skipped." />
                 <Rule text="A manually selected owner is never overwritten by automation." />
                 <Rule text="A manually cleared owner stays unassigned until staff changes it." />
-                <Rule text="Branch routing only affects ownership when the branch is already known at lead creation." />
-                <Rule text="If a branch has no eligible salesperson, assignment falls back to the global pool." />
-                <Rule text="Later AI or staff branch corrections never reroute ownership." />
+                <Rule text={`${locationTitle} routing only affects ownership when the ${ui.locationSingular} is already known at lead creation.`} />
+                <Rule text={`If a ${ui.locationSingular} has no eligible salesperson, assignment falls back to the global pool.`} />
+                <Rule text={`Later AI or staff ${ui.locationSingular} corrections never reroute ownership.`} />
                 <Rule text="If nobody is eligible, the chatbot continues and the lead remains recoverable." />
               </div>
             </div>
