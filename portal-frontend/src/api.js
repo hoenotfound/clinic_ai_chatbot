@@ -63,6 +63,8 @@ export const api = {
       const body = await res.json().catch(() => ({}));
       const error = new Error(body.error || `Request failed (${res.status})`);
       error.status = res.status;
+      error.code = body.code || null;
+      error.policyBlocked = body.policyBlocked === true;
       throw error;
     }
     return res.json();
