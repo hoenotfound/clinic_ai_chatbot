@@ -74,7 +74,7 @@ test("Gemini diagnostic aborts locally and stops all later tests after a timeout
   });
 
   assert.deepEqual(attempted, [
-    { apiKey: "key-one", model: "gemini-3.5-flash" },
+    { apiKey: "key-one", model: "gemini-3.8-flash" },
   ]);
   assert.equal(abortObserved, true);
   assert.equal(result.stoppedEarly, true);
@@ -105,7 +105,8 @@ test("Gemini diagnostic warns that a single 429 is not key-specific proof", asyn
   });
 
   assert.equal(result.results[0].status, "rate_limited");
-  assert.match(result.warnings.join("\n"), /429 is project-level/i);
+  assert.equal(result.results[0].failureKind, "rate_limit");
+  assert.match(result.warnings.join("\n"), /RATE LIMIT/);
   assert.match(result.warnings.join("\n"), /live chatbot traffic/i);
 });
 
