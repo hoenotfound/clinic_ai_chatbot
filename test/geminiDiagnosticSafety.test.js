@@ -6,6 +6,9 @@ const path = require("node:path");
 const {
   runGeminiKeyModelDiagnostic,
 } = require("../src/services/geminiSetupCheckService");
+const {
+  createGeminiDiagnosticGuard,
+} = require("../src/routes/setupStatus");
 
 test("Gemini diagnostic hard-caps runtime keys at five and reports skipped credentials", async () => {
   const attempted = [];
@@ -110,10 +113,46 @@ test("Gemini diagnostic warns that a single 429 is not key-specific proof", asyn
   assert.match(result.warnings.join("\n"), /live chatbot traffic/i);
 });
 
-test("real-generation Gemini diagnostic is CLI-only and has no HTTP route", () => {
+test("Gemini diagnostic guard blocks overlap and enforces its server-side cooldown", () => {
+  let nowMs = 1_000_000;
+  const guard = createGeminiDiagnosticGuard({
+    cooldownMs: 10 * 60 * 1000,
+    clock: () => nowMs,
+  });
+
+  assert.equal(guard.status().remainingMs, 0);
+  const lease = guard.start();
+  assert.equal(guard.status().inFlight, true);
+  assert.throws(
+    () => guard.start(),
+    (error) => error.code === "GEMINI_DIAGNOSTIC_IN_PROGRESS"
+  );
+
+  lease.finish();
+  assert.equal(guard.status().inFlight, false);
+  assert.equal(guard.status().remainingMs, 10 * 60 * 1000);
+  assert.throws(
+    () => guard.start(),
+    (error) => error.code === "GEMINI_DIAGNOSTIC_COOLDOWN"
+  );
+
+  nowMs += 10 * 60 * 1000;
+  const secondLease = guard.start();
+  assert.equal(guard.status().inFlight, true);
+  secondLease.finish();
+});
+
+test("real-generation Gemini diagnostic routes are behind setup-status admin middleware", () => {
   const route = fs.readFileSync(
     path.join(__dirname, "..", "src/routes/setupStatus.js"),
     "utf8"
   );
-  assert.doesNotMatch(route, /gemini-diagnostic/);
+  const authIndex = route.indexOf("router.use(requireAdministrator)");
+  const statusIndex = route.indexOf('router.get("/gemini-diagnostic/status"');
+  const runIndex = route.indexOf('router.post("/gemini-diagnostic"');
+
+  assert.ok(authIndex >= 0);
+  assert.ok(statusIndex > authIndex);
+  assert.ok(runIndex > authIndex);
+  assert.match(route, /GEMINI_DIAGNOSTIC_COOLDOWN_MS\s*=\s*10\s*\*\s*60\s*\*\s*1000/);
 });
