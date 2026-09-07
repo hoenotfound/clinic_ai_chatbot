@@ -99,6 +99,13 @@ function emptyDetails() {
   };
 }
 
+function requiredProjectFields(conversion, nextStep) {
+  const requirements = conversion?.requirements;
+  if (!requirements || typeof requirements !== "object") return [];
+  const fields = requirements[nextStep];
+  return Array.isArray(fields) ? fields : [];
+}
+
 function parseStructuredReply(raw) {
   const candidate = stripJsonFence(raw);
   let parsed;
@@ -166,11 +173,28 @@ function parseStructuredReply(raw) {
   }
 
   if (outcome === "booking_ready" && conversion.mode === "project") {
-    // Renovation conversion readiness must describe the customer's project,
-    // not force a customer property into the legacy business-branch field.
-    if (!projectLocation || !projectSummary || !nextStep) {
+    // Project conversion readiness is driven by the active profile's contract.
+    // Canonical service matching is intentionally part of this validation so an
+    // unsupported/hallucinated service cannot execute a staff-facing outcome.
+    if (!nextStep) {
       throw invalidResponse(
-        "AI booking_ready response did not contain a project location, project summary, and valid renovation next step."
+        "AI booking_ready response did not contain a valid renovation next step."
+      );
+    }
+
+    const projectDetails = {
+      treatment,
+      projectLocation,
+      projectSummary,
+      appointmentPreference,
+      nextStep,
+    };
+    const missingFields = requiredProjectFields(conversion, nextStep)
+      .filter((field) => !projectDetails[field]);
+
+    if (missingFields.length) {
+      throw invalidResponse(
+        `AI booking_ready response is missing required ${nextStep} fields: ${missingFields.join(", ")}.`
       );
     }
   }
