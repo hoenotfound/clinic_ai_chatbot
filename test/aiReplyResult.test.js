@@ -23,6 +23,29 @@ test("parses a structured booking-ready response and keeps booking metadata inte
   });
 });
 
+test("clinic booking_ready ignores stray renovation-only fields from structured model output", () => {
+  const result = parseAiReplyResult(JSON.stringify({
+    reply: "can 👍 I'll get the PJ team to check Saturday afternoon for u",
+    outcome: "booking_ready",
+    treatment: "HIFU Non-Surgical Facelift",
+    branch: "Petaling Jaya",
+    appointmentPreference: "Saturday afternoon",
+    projectLocation: "Cheras",
+    projectSummary: "This should not enter clinic booking metadata.",
+    nextStep: "site_visit",
+  }));
+
+  assert.equal(result.bookingReady, true);
+  assert.deepEqual(result.details, {
+    branch: "Petaling Jaya",
+    treatment: "HIFU Non-Surgical Facelift",
+    appointmentPreference: "Saturday afternoon",
+  });
+  assert.equal(Object.hasOwn(result.details, "projectLocation"), false);
+  assert.equal(Object.hasOwn(result.details, "projectSummary"), false);
+  assert.equal(Object.hasOwn(result.details, "nextStep"), false);
+});
+
 test("structured booking_ready missing branch/time is rejected for retry/fallback", () => {
   assert.throws(
     () => parseAiReplyResult(JSON.stringify({
