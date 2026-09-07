@@ -129,21 +129,9 @@ function buildGenericProfile() {
     },
     conversion: {
       label: "next step",
-      // conversionReadyEnabled is the neutral domain switch. The historical
-      // bookingReadyEnabled flag remains synchronized while downstream modules
-      // are migrated in small, backward-compatible steps.
-      conversionReadyEnabled: false,
       bookingReadyEnabled: false,
-      legacyBookingReadyEnabled: false,
-      internalOutcome: "booking_ready",
-      nextSteps: [],
-      requirements: {},
-      locationMode: "free_text",
       guidanceTitle: "THE NEXT SALES STEP",
       staffConfirmationText: "the team will review the request and follow up",
-      readyReason: "Conversion ready: customer has provided the details needed for the next sales step.",
-      activityDescription: "AI marked this conversation Conversion Ready. Staff should review the captured details and continue the requested next step.",
-      readyRules: [],
       readyExamples: [],
       notReadyExamples: [],
     },
@@ -195,44 +183,16 @@ function buildHomeRenovationProfile() {
       servicePlural: "renovation services",
     },
     conversion: {
-      label: "quotation or site visit",
-      conversionReadyEnabled: true,
-      // Compatibility switch for the existing executable outcome path. The
-      // neutral conversion contract below decides whether the outcome is valid;
-      // legacy marker-only Booking Ready is deliberately still disabled.
-      bookingReadyEnabled: true,
-      legacyBookingReadyEnabled: false,
-      internalOutcome: "booking_ready",
-      nextSteps: ["quotation", "site_visit"],
-      requirements: {
-        quotation: ["service", "location"],
-        site_visit: ["service", "location", "timing"],
-      },
-      // Renovation conversion location means the CUSTOMER PROJECT area/address,
-      // not a configured business branch. It must therefore remain free text
-      // and must never be written into the legacy branch field automatically.
-      locationMode: "free_text",
-      guidanceTitle: "QUOTATION / SITE VISIT NEXT STEP",
-      staffConfirmationText: "the team will review the project details and confirm the quotation or site-visit next step",
-      readyReason: "Conversion ready: customer wants a renovation quotation or site visit and provided the required project details.",
-      activityDescription: "AI marked this renovation enquiry Conversion Ready. Staff should review the project details and follow up on the requested quotation or site visit.",
-      readyRules: [
-        "Use quotation only when the customer clearly wants the team to prepare/discuss a quotation, not when they are merely asking a general price question.",
-        "Use site_visit only when the customer clearly wants a site visit and has provided a usable day/date plus time, range, or daypart for that visit.",
-        "The project location is the customer's renovation property area/address. Do not treat a showroom or business branch as the project location unless the customer explicitly says the project is there.",
-        "A configured renovation service/project scope must be clearly known before the enquiry becomes conversion-ready.",
-      ],
-      readyExamples: [
-        "Customer wants Kitchen Cabinets and says: \"Can prepare quotation? My condo is in Cheras.\" → quotation.",
-        "Customer wants a wardrobe project and says: \"Can arrange site visit at Setapak this Saturday morning?\" → site_visit.",
-        "Customer confirms a quotation request after previously giving the configured service and project area in the same current enquiry.",
-      ],
-      notReadyExamples: [
-        "How much per foot?",
-        "Can quote? when the project service/scope or property area is still unknown.",
-        "I want a site visit in Cheras when no usable day/time preference has been provided.",
-        "Maybe renovate next year or another hesitant/tentative enquiry with no clear quotation/site-visit request.",
-      ],
+      label: "site visit or quotation discussion",
+      // The current booking_ready backend assumes a configured clinic branch
+      // plus an appointment preference. Renovation leads often need a customer
+      // property address instead, so keep that executable outcome off until the
+      // outcome schema is generalized in a later migration.
+      bookingReadyEnabled: false,
+      guidanceTitle: "SITE VISIT / QUOTATION NEXT STEP",
+      staffConfirmationText: "the team will review the project details and confirm the next step",
+      readyExamples: [],
+      notReadyExamples: [],
     },
     aiAssistantName: "Alex",
     introMessage: "Hi! Thanks for reaching out about your renovation 😊",
@@ -290,24 +250,9 @@ function buildAestheticClinicProfile() {
     },
     conversion: {
       label: "free consultation",
-      conversionReadyEnabled: true,
       bookingReadyEnabled: true,
-      legacyBookingReadyEnabled: true,
-      internalOutcome: "booking_ready",
-      nextSteps: ["appointment"],
-      requirements: {
-        appointment: ["location", "timing"],
-      },
-      locationMode: "configured",
       guidanceTitle: "BOOKING A FREE CONSULTATION",
       staffConfirmationText: "the team will check availability and follow up shortly",
-      readyReason: "Booking ready: customer provided scheduling preferences; staff should confirm availability.",
-      activityDescription: "AI marked this conversation Booking Ready. Staff should verify the requested branch/time and confirm availability before setting the appointment.",
-      readyRules: [
-        "The patient must clearly want to proceed with the consultation, not merely ask about price, availability, or how booking works.",
-        "The location must map unambiguously to a configured clinic branch.",
-        "The timing must include a usable day/date plus a time, time range, or daypart such as morning/afternoon/evening.",
-      ],
       readyExamples: [
         "Customer already wants HIFU, then says \"Puchong, Saturday afternoon works.\"",
         "Customer says \"yes book me at PJ tomorrow around 3pm.\"",
