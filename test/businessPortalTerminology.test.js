@@ -81,6 +81,32 @@ test("generic and unknown profiles fail toward neutral business wording", async 
   assert.equal(getBusinessTerminology({}).customerSingular, "customer");
 });
 
+test("authenticated staff receive the safe business profile regardless of role permissions", () => {
+  const clinicConfig = require("../src/config/clinicConfig");
+  const { presentUser } = require("../src/utils/permissions");
+  const roles = ["admin", "sales"];
+
+  for (const role of roles) {
+    const presented = presentUser({
+      id: 1,
+      username: `${role}-user`,
+      display_name: `${role} user`,
+      role,
+      permissions: role === "sales" ? { manage_settings: false, manage_tools: false } : {},
+      is_active: true,
+    });
+
+    assert.deepEqual(presented.businessProfile, {
+      businessType: clinicConfig.businessType,
+      terminology: { ...(clinicConfig.terminology || {}) },
+    });
+    assert.deepEqual(Object.keys(presented.businessProfile).sort(), ["businessType", "terminology"]);
+    assert.equal(Object.prototype.hasOwnProperty.call(presented.businessProfile, "branches"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(presented.businessProfile, "services"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(presented.businessProfile, "promotions"), false);
+  }
+});
+
 test("portal shell no longer hard-codes clinic-only global copy", () => {
   const root = path.join(__dirname, "..");
   const html = fs.readFileSync(path.join(root, "portal-frontend", "index.html"), "utf8");

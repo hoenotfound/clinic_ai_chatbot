@@ -1,3 +1,5 @@
+const clinicConfig = require("../config/clinicConfig");
+
 const ROLES = new Set(["admin", "sales"]);
 
 const CAPABILITY_DEFINITIONS = [
@@ -112,6 +114,10 @@ function presentUser(user) {
     branchName: user.branch_name || null,
     isActive: user.is_active !== false,
     permissions: effectivePermissions(user),
+    businessProfile: {
+      businessType: clinicConfig.businessType,
+      terminology: { ...(clinicConfig.terminology || {}) },
+    },
     createdAt: user.created_at || null,
   };
 }

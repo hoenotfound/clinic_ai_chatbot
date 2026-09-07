@@ -50,11 +50,17 @@ test("nested Settings pages reuse the same industry-aware grouped sidebar struct
   assert.match(settingsLayout, /Bot & \{ui\.businessNoun\} configuration/);
 });
 
-test("authenticated portal routes provide the current business profile", () => {
+test("authenticated portal shell provides one shared business profile without refetching full settings", () => {
   const app = read("portal-frontend/src/App.jsx");
+  const businessConfig = read("portal-frontend/src/context/BusinessConfigContext.jsx");
+  const settings = read("portal-frontend/src/pages/Settings.jsx");
 
-  assert.match(app, /BusinessConfigProvider/);
-  assert.match(app, /<BusinessConfigProvider>[\s\S]*<Layout>\{children\}<\/Layout>[\s\S]*<\/BusinessConfigProvider>/);
+  assert.match(app, /<AuthProvider>\s*<BusinessConfigProvider>\s*<Routes>/);
+  assert.match(app, /return <Layout>\{children\}<\/Layout>;/);
+  assert.match(businessConfig, /useAuth/);
+  assert.match(businessConfig, /user\?\.businessProfile/);
+  assert.doesNotMatch(businessConfig, /api\.getConfig/);
+  assert.match(settings, /api\s*\.getConfig\(\)/);
   assert.match(app, /path="\/settings" element=\{<ProtectedRoute anyCapabilities=\{\["manage_settings"\]\}><Settings \/><\/ProtectedRoute>\}/);
   assert.match(app, /path="\/settings\/team"[\s\S]*anyCapabilities=\{\["manage_users"\]\}/);
   assert.match(app, /SettingsSectionLayout><TeamAccess \/><\/SettingsSectionLayout>/);
