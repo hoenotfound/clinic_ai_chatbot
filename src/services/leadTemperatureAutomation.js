@@ -56,8 +56,12 @@ function configuredLocationMatches(text, locationNames) {
 }
 
 function isContextAnswer(text, locationNames, profile) {
-  const alternative = matchesAny(text, profile.alternativeContextPatterns);
-  if (profile.alternativeOverridesNonConfirming && alternative) return true;
+  // A message can reject one proposed slot while clearly offering another
+  // (for example "Saturday can't, but Sunday works"). The historical clinic
+  // classifier treated that as a scheduling answer only when a relevant
+  // assistant question immediately preceded it. Preserve that behavior for
+  // every profile that defines an alternative-context pattern.
+  if (matchesAny(text, profile.alternativeContextPatterns)) return true;
 
   if (
     matchesAny(text, profile.unclearHotPatterns) ||
