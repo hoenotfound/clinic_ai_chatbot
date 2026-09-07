@@ -310,6 +310,10 @@ router.post("/gemini-diagnostic", async (req, res) => {
     });
   } catch (err) {
     console.error("Failed to run Gemini key/model diagnostic:", err);
+    if (lease) {
+      lease.finish();
+      lease = null;
+    }
     const status = err?.code === "AI_PROVIDER_NOT_CONFIGURED" ? 400 : 500;
     return res.status(status).json({
       error: err?.message || "Something went wrong running the Gemini diagnostic.",
