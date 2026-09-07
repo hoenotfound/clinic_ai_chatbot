@@ -57,12 +57,14 @@ function configuredLocationMatches(text, locationNames) {
 
 function isContextAnswer(text, locationNames, profile) {
   const alternative = matchesAny(text, profile.alternativeContextPatterns);
+  const explicitChoice = matchesAny(text, profile.contextChoicePatterns);
 
-  // Renovation can treat a rejected proposed time plus a clear replacement
-  // ("Saturday can't, but Sunday works") as a valid site-visit answer. Clinic
-  // keeps its exact historical ordering, where a non-confirming scheduling
-  // pattern wins before date/time recognition.
-  if (profile.alternativeOverridesNonConfirming && alternative) return true;
+  // Renovation can treat a rejected proposed time or next step plus a clear
+  // replacement ("Saturday can't, but Sunday works" or "quote instead") as a
+  // valid answer. Clinic keeps its exact historical non-confirming ordering.
+  if (profile.alternativeOverridesNonConfirming && (alternative || explicitChoice)) {
+    return true;
+  }
 
   if (
     matchesAny(text, profile.unclearHotPatterns) ||
@@ -75,7 +77,7 @@ function isContextAnswer(text, locationNames, profile) {
     alternative ||
     matchesAny(text, profile.contextConfirmPatterns) ||
     matchesAny(text, profile.contextDetailPatterns) ||
-    matchesAny(text, profile.contextChoicePatterns)
+    explicitChoice
   ) {
     return true;
   }
