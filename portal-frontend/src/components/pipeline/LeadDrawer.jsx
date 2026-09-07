@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../context/AuthContext";
+import { useBusinessConfig } from "../../context/BusinessConfigContext";
+import { getBusinessTerminology } from "../../utils/businessTerminology";
 import ContactAvatar from "../ContactAvatar";
 import LeadAttributionPanel from "./LeadAttributionPanel";
 import Spinner from "../Spinner";
 import {
-  APPOINTMENT_OPTIONS,
   CONSENT_OPTIONS,
   TEMPERATURE_OPTIONS,
   contactIdentifier,
@@ -24,6 +25,8 @@ const labelClass = "mb-1.5 block text-[11px] font-semibold uppercase tracking-wi
 export default function LeadDrawer({ lead, stages, owners, services, now, noReplyHours, onClose, onSaved, onToast }) {
   const navigate = useNavigate();
   const { permissions } = useAuth();
+  const { config } = useBusinessConfig();
+  const ui = getBusinessTerminology(config || {});
   const canManageLeads = permissions.manage_assigned_leads === true;
   const canAssignLeads = permissions.manage_lead_assignment === true;
   const [form, setForm] = useState(() => formFromLead(lead));
@@ -62,13 +65,13 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
         console.error("Failed to load configured branches for lead editing:", err);
         if (!cancelled) {
           setConfiguredBranches([]);
-          onToast("Couldn't refresh current branch options. Existing lead data is unchanged.", "warning");
+          onToast(`Couldn't refresh current ${ui.locationPlural}. Existing lead data is unchanged.`, "warning");
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [lead.id, onToast]);
+  }, [lead.id, onToast, ui.locationPlural]);
 
   useEffect(() => {
     const latest = formFromLead(lead);
@@ -259,7 +262,7 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
                       : `Automatic updates are allowed. Current source: ${temperatureSourceLabel(form.temperatureSource)}.`}
                   </p>
                 </Field>
-                <Field label="Branch">
+                <Field label={ui.locationLabel}>
                   <select className={inputClass} value={form.branchName} onChange={(event) => update("branchName", event.target.value)}>
                     <option value="">Unassigned</option>
                     {staleCurrentBranch && (
@@ -269,11 +272,11 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
                   </select>
                   {staleCurrentBranch ? (
                     <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-danger)]">
-                      This is historical branch data. You can save other lead changes without touching it, but choose a current branch or Unassigned before changing the branch.
+                      This is historical {ui.locationSingular} data. You can save other lead changes without touching it, but choose a current {ui.locationSingular} or Unassigned before changing the {ui.locationSingular}.
                     </p>
                   ) : (
                     <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
-                      Only branches that currently exist in Clinic Settings can be newly selected.
+                      Only {ui.locationPlural} that currently exist in Settings can be newly selected.
                     </p>
                   )}
                 </Field>
@@ -290,19 +293,19 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
                   </select>
                   {canManageLeads && !canAssignLeads && <p className="mt-1.5 text-[10px] text-[var(--color-text-muted)]">Only staff with Assign leads permission can change ownership.</p>}
                 </Field>
-                <Field label="Treatment interest">
-                  <input className={inputClass} list="pipeline-services" value={form.treatmentInterest} onChange={(event) => update("treatmentInterest", event.target.value)} placeholder="e.g. HIFU" />
+                <Field label={ui.serviceInterestLabel}>
+                  <input className={inputClass} list="pipeline-services" value={form.treatmentInterest} onChange={(event) => update("treatmentInterest", event.target.value)} placeholder="Optional" />
                   <datalist id="pipeline-services">{services.map((service) => <option key={service} value={service} />)}</datalist>
                 </Field>
                 <Field label="Estimated value (RM)">
                   <input className={inputClass} type="number" min="0" step="0.01" value={form.estimatedValue} onChange={(event) => update("estimatedValue", event.target.value)} placeholder="0.00" />
                 </Field>
-                <Field label="Appointment status">
+                <Field label={ui.conversionStatusLabel}>
                   <select className={inputClass} value={form.appointmentStatus} onChange={(event) => updateAppointmentStatus(event.target.value)}>
-                    {APPOINTMENT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    {ui.conversionStatusOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
                 </Field>
-                <Field label="Appointment date and time">
+                <Field label={ui.conversionDateTimeLabel}>
                   <input className={inputClass} type="datetime-local" value={form.appointmentAt} onChange={(event) => update("appointmentAt", event.target.value)} />
                 </Field>
                 <Field label="Next follow-up">
@@ -327,7 +330,7 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
               {selectedStage?.stage_type === "lost" && (
                 <div className="mt-4">
                   <Field label="Lost reason">
-                    <input className={inputClass} value={form.lostReason} onChange={(event) => update("lostReason", event.target.value)} placeholder="No budget, unreachable, chose another clinic…" />
+                    <input className={inputClass} value={form.lostReason} onChange={(event) => update("lostReason", event.target.value)} placeholder="No budget, unreachable, chose another provider…" />
                   </Field>
                 </div>
               )}
