@@ -7,6 +7,10 @@ const {
 const VALID_OUTCOMES = new Set(["normal", "needs_human", "booking_ready"]);
 const MAX_METADATA_LENGTH = 240;
 
+function bookingReadyEnabled() {
+  return clinicConfig.conversion?.bookingReadyEnabled === true;
+}
+
 function cleanOptionalText(value) {
   if (typeof value !== "string") return null;
   const cleaned = stripInternalOutcomeMarkers(value).trim();
@@ -107,6 +111,27 @@ function parseStructuredReply(raw) {
     throw invalidResponse("AI structured response is missing a valid reply/outcome.");
   }
 
+  // booking_ready is an executable clinic-specific outcome. Profiles that do
+  // not support the clinic appointment contract must never be able to trigger
+  // its downstream side effects, even if a provider accidentally emits it.
+  // Downgrade before validating clinic branch/time metadata so a renovation or
+  // generic reply cannot cause needless retries simply for using the wrong
+  // control outcome.
+  if (outcome === "booking_ready" && !bookingReadyEnabled()) {
+    return {
+      text: reply,
+      flagged: false,
+      bookingReady: false,
+      outcome: "normal",
+      structured: true,
+      details: {
+        branch: null,
+        treatment: null,
+        appointmentPreference: null,
+      },
+    };
+  }
+
   const branch = canonicalConfiguredBranch(parsed.branch);
   const treatment = parsed.treatment == null
     ? null
@@ -153,11 +178,14 @@ function parseAiReplyResult(raw) {
   // contract but follows the legacy marker protocol, the existing outcomes
   // remain safe and patient-visible markers are still removed.
   const legacy = extractAiOutcomeSignals(raw);
+  const allowBookingReady = bookingReadyEnabled();
+  const bookingReady = allowBookingReady && legacy.bookingReady;
   return {
     ...legacy,
+    bookingReady,
     outcome: legacy.flagged
       ? "needs_human"
-      : legacy.bookingReady
+      : bookingReady
         ? "booking_ready"
         : "normal",
     structured: false,
