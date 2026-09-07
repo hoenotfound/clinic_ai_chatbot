@@ -5,6 +5,7 @@ const {
   checkAllGeminiConnections,
   checkGeminiConnection,
   isCredentialError,
+  runGeminiKeyModelDiagnostic,
 } = require("../src/services/geminiSetupCheckService");
 
 test("Gemini setup connection check uses models.get and never calls generateContent", async () => {
@@ -230,4 +231,130 @@ test("credential classifier recognizes invalid API-key errors without treating 5
   const unavailable = new Error("Model unavailable");
   unavailable.status = 503;
   assert.equal(isCredentialError(unavailable), false);
+});
+
+test("Gemini key/model diagnostic uses a one-character prompt and one output token", async () => {
+  const calls = [];
+  const env = {
+    GEMINI_API_KEY: "key-one",
+    GEMINI_API_KEY_1: "key-two",
+  };
+
+  const result = await runGeminiKeyModelDiagnostic({
+    env,
+    createClient(apiKey) {
+      return {
+        models: {
+          async generateContent(request) {
+            calls.push({ apiKey, request });
+            return {
+              usageMetadata: {
+                promptTokenCount: 1,
+                candidatesTokenCount: 1,
+                thoughtsTokenCount: 0,
+                totalTokenCount: 2,
+              },
+            };
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(calls.length, 4);
+  assert.deepEqual(
+    calls.map((call) => [call.apiKey, call.request.model]),
+    [
+      ["key-one", "gemini-3.5-flash"],
+      ["key-one", "gemini-3.8-flash"],
+      ["key-two", "gemini-3.5-flash"],
+      ["key-two", "gemini-3.8-flash"],
+    ]
+  );
+  for (const call of calls) {
+    assert.equal(call.request.contents[0].parts[0].text, ".");
+    assert.equal(call.request.config.maxOutputTokens, 1);
+    assert.deepEqual(call.request.config.thinkingConfig, { thinkingLevel: "low" });
+  }
+  assert.equal(result.keyCount, 2);
+  assert.equal(result.requestsAttempted, 4);
+  assert.equal(result.successfulRequests, 4);
+  assert.equal(result.totalTokens, 8);
+  assert.doesNotMatch(JSON.stringify(result), /key-one|key-two/);
+});
+
+test("Gemini key/model diagnostic distinguishes 503 from rate limiting and still tests both models", async () => {
+  const env = {
+    GEMINI_API_KEY: "key-one",
+    GEMINI_API_KEY_1: "key-two",
+  };
+
+  const result = await runGeminiKeyModelDiagnostic({
+    env,
+    createClient(apiKey) {
+      return {
+        models: {
+          async generateContent({ model }) {
+            if (model === "gemini-3.8-flash" && apiKey === "key-one") {
+              const error = new Error("The service is currently unavailable.");
+              error.status = 503;
+              error.error = { status: "UNAVAILABLE" };
+              throw error;
+            }
+            if (model === "gemini-3.8-flash" && apiKey === "key-two") {
+              const error = new Error("Too many requests");
+              error.status = 429;
+              throw error;
+            }
+            return { usageMetadata: { totalTokenCount: 1 } };
+          },
+        },
+      };
+    },
+  });
+
+  const keyOne38 = result.results.find(
+    (item) => item.label === "Gemini key 1" && item.model === "gemini-3.8-flash"
+  );
+  const keyTwo38 = result.results.find(
+    (item) => item.label === "Gemini key 2" && item.model === "gemini-3.8-flash"
+  );
+
+  assert.equal(keyOne38.status, "unavailable");
+  assert.equal(keyOne38.httpStatus, 503);
+  assert.equal(keyOne38.providerStatus, "UNAVAILABLE");
+  assert.equal(keyTwo38.status, "rate_limited");
+  assert.equal(keyTwo38.httpStatus, 429);
+  assert.equal(result.results.length, 4);
+});
+
+test("Gemini key/model diagnostic is capped at the first five configured keys", async () => {
+  const attempted = [];
+  const env = {
+    GEMINI_API_KEY: "key-0",
+    GEMINI_API_KEY_1: "key-1",
+    GEMINI_API_KEY_2: "key-2",
+    GEMINI_API_KEY_3: "key-3",
+    GEMINI_API_KEY_4: "key-4",
+    GEMINI_API_KEY_5: "key-5",
+  };
+
+  const result = await runGeminiKeyModelDiagnostic({
+    env,
+    models: ["gemini-3.8-flash"],
+    createClient(apiKey) {
+      return {
+        models: {
+          async generateContent() {
+            attempted.push(apiKey);
+            return { usageMetadata: { totalTokenCount: 1 } };
+          },
+        },
+      };
+    },
+  });
+
+  assert.deepEqual(attempted, ["key-0", "key-1", "key-2", "key-3", "key-4"]);
+  assert.equal(result.keyCount, 5);
+  assert.equal(result.requestsAttempted, 5);
 });
