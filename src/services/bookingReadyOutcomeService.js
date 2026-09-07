@@ -36,17 +36,25 @@ function canonicalConfiguredValue(value, items, key = "name") {
 }
 
 function normalizeBookingDetails(details = {}) {
+  const conversion = getConversionProfile(clinicConfig);
   const normalized = {
     branch: canonicalConfiguredValue(details.branch, clinicConfig.branches),
     treatment: canonicalConfiguredValue(details.treatment, clinicConfig.services),
     appointmentPreference: safeText(details.appointmentPreference),
   };
-  const projectLocation = safeText(details.projectLocation);
-  const projectSummary = safeText(details.projectSummary);
-  const nextStep = safeNextStep(details.nextStep);
-  if (projectLocation) normalized.projectLocation = projectLocation;
-  if (projectSummary) normalized.projectSummary = projectSummary;
-  if (nextStep) normalized.nextStep = nextStep;
+
+  // Project metadata belongs only to project-mode conversion contracts. Keep a
+  // second defensive boundary here so clinic outcomes stay clean even if a
+  // future caller bypasses the AI response parser and passes stray project data.
+  if (conversion.mode === "project") {
+    const projectLocation = safeText(details.projectLocation);
+    const projectSummary = safeText(details.projectSummary);
+    const nextStep = safeNextStep(details.nextStep);
+    if (projectLocation) normalized.projectLocation = projectLocation;
+    if (projectSummary) normalized.projectSummary = projectSummary;
+    if (nextStep) normalized.nextStep = nextStep;
+  }
+
   return normalized;
 }
 
