@@ -17,7 +17,7 @@ function withProfile(profile, callback) {
   }
 }
 
-test("home renovation prompt uses renovation language and disables clinic booking outcome", () => {
+test("home renovation prompt uses renovation language and its own conversion-ready contract", () => {
   withProfile(
     {
       ...getIndustryProfile("home_renovation"),
@@ -39,7 +39,12 @@ test("home renovation prompt uses renovation language and disables clinic bookin
       assert.match(prompt, /home_renovation/);
       assert.match(prompt, /renovation service/i);
       assert.match(prompt, /site visit or quotation discussion/i);
-      assert.match(prompt, /Disabled\. Never return outcome "booking_ready"/);
+      assert.match(prompt, /Use outcome "booking_ready" as the backward-compatible CONVERSION-READY control/i);
+      assert.match(prompt, /PROJECT LOCATION/i);
+      assert.match(prompt, /PROJECT SUMMARY/i);
+      assert.match(prompt, /site_visit/);
+      assert.match(prompt, /quotation_discussion/);
+      assert.match(prompt, /customer's property belongs in "projectLocation"/i);
       assert.match(prompt, /legacy internal field name "treatment"/i);
       assert.doesNotMatch(prompt, /an aesthetics clinic in Malaysia/);
       assert.doesNotMatch(prompt, /guide genuinely interested patients toward booking the free consultation/i);
