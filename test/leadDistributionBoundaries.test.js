@@ -39,7 +39,7 @@ test("new and edited lead branch options are separated from historical branch fi
   assert.match(addLead, /You can still add an unassigned lead/);
   assert.match(leadDrawer, /api\.getConfiguredBranches\(\)/);
   assert.match(leadDrawer, /no longer configured/);
-  assert.match(leadDrawer, /historical branch data/i);
+  assert.match(leadDrawer, /historical \{ui\.locationSingular\} data/i);
   assert.match(safetySchema, /validate_current_lead_branch/);
   assert.match(safetySchema, /no longer configured/);
 });
@@ -96,16 +96,17 @@ test("Automated Follow-up clearly states its three-channel scope and 24-hour bou
   assert.match(toolsRoute, /selectedTool !== "lead-distribution"/);
 });
 
-test("Lead Distribution UI exposes a simple branch/global choice and view-only state", () => {
+test("Lead Distribution UI exposes a simple location/global choice and view-only state", () => {
   const page = read("portal-frontend/src/pages/LeadDistribution.jsx");
+  assert.match(page, /const ui = getBusinessTerminology\(businessConfig \|\| \{\}\)/);
   assert.match(page, /assignByBranch: true/);
   assert.match(page, /How should leads be shared\?/);
-  assert.match(page, /By branch/);
+  assert.match(page, /title=\{`By \$\{ui\.locationSingular\}`\}/);
   assert.match(page, /Across all Sales staff/);
-  assert.match(page, /The branch is still recorded for CRM, reporting and appointments/);
+  assert.match(page, /The \{ui\.locationSingular\} is still recorded for CRM, reporting and \{ui\.conversionCountPlural\}/);
   assert.match(page, /canManageDistribution/);
   assert.match(page, /View only/);
-  assert.match(page, /View team & branch pools/);
+  assert.match(page, /View team & \{ui\.locationSingular\} pools/);
   assert.match(page, /How it works & advanced behavior/);
   assert.doesNotMatch(page, /Back to Tools/);
 });
