@@ -18,6 +18,17 @@ function formatMode(value) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function formatSelectionTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-MY", {
+    timeZone: "Asia/Kuala_Lumpur",
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
 function AlignmentItem({ label, value, detail, warning = false }) {
   return (
     <div className="rounded-xl bg-[var(--color-bg)] px-3 py-3">
@@ -77,6 +88,7 @@ export default function BusinessProfileSetupPanel({ profile }) {
 
   const lockedReason = LOCK_REASON_COPY[selection.lockReason]
     || "The deployment is no longer eligible for industry changes.";
+  const selectedAt = formatSelectionTime(selection.selectedAt);
 
   return (
     <section>
@@ -104,8 +116,10 @@ export default function BusinessProfileSetupPanel({ profile }) {
             </p>
           </div>
           {!selection.selectable && (
-            <div className="rounded-xl bg-[var(--color-bg)] px-3 py-2 text-[10px] font-semibold text-[var(--color-text-muted)]">
-              Source: {formatMode(selection.source)}
+            <div className="rounded-xl bg-[var(--color-bg)] px-3 py-2 text-[10px] font-semibold leading-4 text-[var(--color-text-muted)]">
+              <div>Source: {formatMode(selection.source)}</div>
+              {selection.selectedBy && <div>Confirmed by: {selection.selectedBy}</div>}
+              {selectedAt && <div>Selected: {selectedAt}</div>}
             </div>
           )}
         </div>
