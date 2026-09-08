@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
+import { useBusinessConfig } from "../context/BusinessConfigContext";
+import { getBusinessTerminology } from "../utils/businessTerminology";
 import Spinner from "../components/Spinner";
 
 const TIME_ZONE = "Asia/Kuala_Lumpur";
@@ -11,14 +13,6 @@ const PRESET_OPTIONS = [
   ["custom", "Custom range"],
 ];
 const ADVANCED_FILTERS = ["source", "campaign", "treatment", "owner"];
-const PERFORMANCE_TABS = [
-  ["source", "Source"],
-  ["campaign", "Campaign"],
-  ["treatment", "Treatment"],
-  ["branch", "Branch"],
-  ["channel", "Channel"],
-  ["owner", "Owner"],
-];
 const SOURCE_LABELS = {
   meta_ads: "Meta Ads",
   meta_post: "Meta post",
@@ -114,8 +108,23 @@ function filtersEqual(left, right) {
     .every((key) => left[key] === right[key]);
 }
 
+function buildPerformanceTabs(analyticsUi) {
+  return [
+    ["source", "Source"],
+    ["campaign", "Campaign"],
+    ["treatment", analyticsUi.performanceTabs.treatment],
+    ["branch", analyticsUi.performanceTabs.branch],
+    ["channel", "Channel"],
+    ["owner", "Owner"],
+  ];
+}
+
 export default function Analytics() {
   const navigate = useNavigate();
+  const { config } = useBusinessConfig();
+  const ui = getBusinessTerminology(config || {});
+  const analyticsUi = ui.analytics;
+  const performanceTabs = buildPerformanceTabs(analyticsUi);
   const initial = useMemo(() => initialFilters(), []);
   const [draftFilters, setDraftFilters] = useState(initial);
   const [appliedFilters, setAppliedFilters] = useState(initial);
@@ -210,7 +219,7 @@ export default function Analytics() {
             </div>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[var(--color-text-muted)] sm:text-sm">
               Track lead quality, conversion, response speed and sales outcomes.
-              <span className="hidden sm:inline"> See where enquiries drop off and which channels turn into clinic visits and wins.</span>
+              <span className="hidden sm:inline"> {analyticsUi.descriptionSuffix}</span>
             </p>
           </div>
           <button
@@ -244,7 +253,7 @@ export default function Analytics() {
             </>
           )}
 
-          <FilterSelect label="Branch" value={draftFilters.branch} onChange={(value) => updateDraft("branch", value)} options={filterOptions.branches} />
+          <FilterSelect label={analyticsUi.locationFilterLabel} value={draftFilters.branch} onChange={(value) => updateDraft("branch", value)} options={filterOptions.branches} />
           <FilterSelect label="Channel" value={draftFilters.channel} onChange={(value) => updateDraft("channel", value)} options={filterOptions.channels} format={formatChannel} />
 
           <button
@@ -281,7 +290,7 @@ export default function Analytics() {
           <div className="mt-3 grid grid-cols-2 gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:flex sm:flex-wrap sm:items-end">
             <FilterSelect label="Source" value={draftFilters.source} onChange={(value) => updateDraft("source", value)} options={filterOptions.sources} format={formatSource} />
             <FilterSelect label="Campaign" value={draftFilters.campaign} onChange={(value) => updateDraft("campaign", value)} options={filterOptions.campaigns} />
-            <FilterSelect label="Treatment" value={draftFilters.treatment} onChange={(value) => updateDraft("treatment", value)} options={filterOptions.treatments} />
+            <FilterSelect label={analyticsUi.serviceFilterLabel} value={draftFilters.treatment} onChange={(value) => updateDraft("treatment", value)} options={filterOptions.treatments} />
             <FilterSelect label="Owner" value={draftFilters.owner} onChange={(value) => updateDraft("owner", value)} options={filterOptions.owners} />
           </div>
         )}
@@ -303,20 +312,20 @@ export default function Analytics() {
 
           <section className="grid grid-cols-2 gap-2.5 sm:gap-3 xl:grid-cols-5">
             <MetricCard label="New Leads" value={data.summary.newLeads} delta={data.comparison.deltas.newLeads} detail="Lead journeys started in this period" />
-            <MetricCard label="Appointments" value={data.summary.appointments} delta={data.comparison.deltas.appointments} detail="First appointment stage entered in this period" />
-            <MetricCard label="Clinic Visits" value={data.summary.visits} delta={data.comparison.deltas.visits} detail="First visit stage entered in this period" />
+            <MetricCard label={analyticsUi.primaryMetricLabel} value={data.summary.appointments} delta={data.comparison.deltas.appointments} detail={analyticsUi.primaryMetricDetail} />
+            <MetricCard label={analyticsUi.secondaryMetricLabel} value={data.summary.visits} delta={data.comparison.deltas.visits} detail={analyticsUi.secondaryMetricDetail} />
             <MetricCard label="Won" value={data.summary.won} delta={data.comparison.deltas.won} detail={`Estimated value ${money(data.summary.estimatedWonValue)}`} />
             <MetricCard className="col-span-2 xl:col-span-1" label="Cohort Conversion" value={`${data.summary.conversionRate.toFixed(1)}%`} delta={data.comparison.deltas.conversionRate} deltaType="points" detail="Leads started in period → Won" />
           </section>
 
-          <RateStrip cohort={data.cohort} />
+          <RateStrip cohort={data.cohort} labels={analyticsUi.rates} />
 
           <section className="grid gap-4 sm:gap-5 xl:grid-cols-[0.85fr_1.15fr]">
             <Panel title="Conversion Funnel" subtitle="How the selected lead cohort progresses through the sales journey.">
               <FunnelChart stages={data.funnel} />
             </Panel>
             <Panel title="Activity Over Time" subtitle="Daily activity based on when each event actually happened.">
-              <ActivityTrendChart data={data.trend} />
+              <ActivityTrendChart data={data.trend} labels={analyticsUi} />
             </Panel>
           </section>
 
@@ -329,9 +338,12 @@ export default function Analytics() {
             </Panel>
           </section>
 
-          <Panel title="Performance Breakdown" subtitle="Compare this lead cohort by acquisition, treatment, location, channel or owner.">
+          <Panel title="Performance Breakdown" subtitle={analyticsUi.performanceSubtitle}>
             <PerformanceBreakdown
               performance={data.performance}
+              tabs={performanceTabs}
+              primaryLabel={analyticsUi.primaryTableLabel}
+              secondaryLabel={analyticsUi.secondaryTableLabel}
               activeTab={performanceTab}
               onTabChange={setPerformanceTab}
               onOpen={(dimension, label) => navigate(pipelineUrl({ [dimension]: label }))}
@@ -344,10 +356,10 @@ export default function Analytics() {
                 <SmallStat label="Leads Followed Up" value={data.followUps.leadsFollowedUp} />
                 <SmallStat label="Replied Within 72h" value={data.followUps.leadsReplied72h} />
                 <SmallStat label="Reply Rate" value={`${data.followUps.replyRate72h.toFixed(1)}%`} />
-                <SmallStat label={`Appointments Within ${data.followUps.outcomeWindowDays}d`} value={data.followUps.leadsWithAppointmentAfter} />
+                <SmallStat label={`${analyticsUi.followUpPrimaryLabel} Within ${data.followUps.outcomeWindowDays}d`} value={data.followUps.leadsWithAppointmentAfter} />
                 <SmallStat label={`Wins Within ${data.followUps.outcomeWindowDays}d`} value={data.followUps.leadsWonAfter} />
               </div>
-              <p className="mt-3 text-[10px] leading-relaxed text-[var(--color-text-muted)] sm:text-[11px]">Appointment and win outcomes are counted only when they happen in the same journey within {data.followUps.outcomeWindowDays} days after a follow-up. This shows association, not guaranteed causation.</p>
+              <p className="mt-3 text-[10px] leading-relaxed text-[var(--color-text-muted)] sm:text-[11px]">{analyticsUi.followUpOutcomeNoun} and win outcomes are counted only when they happen in the same journey within {data.followUps.outcomeWindowDays} days after a follow-up. This shows association, not guaranteed causation.</p>
             </Panel>
             <Panel title="Lost Reasons" subtitle="Why leads in this cohort were closed as lost.">
               <LostReasons rows={data.lostReasons} />
@@ -397,12 +409,9 @@ function MetricCard({ label, value, delta, deltaType = "percent", detail, classN
   );
 }
 
-function RateStrip({ cohort }) {
-  const rates = [
-    ["Appointment", cohort.appointmentRate, "Lead → Appt"],
-    ["Show", cohort.showRate, "Appt → Visit"],
-    ["Close", cohort.closeRate, "Visit → Won"],
-  ];
+function RateStrip({ cohort, labels }) {
+  const values = [cohort.appointmentRate, cohort.showRate, cohort.closeRate];
+  const rates = labels.map((item, index) => [item.label, values[index], item.detail]);
   return (
     <section className="rounded-2xl border border-[var(--color-border)] bg-white p-2.5 shadow-sm sm:px-4 sm:py-3">
       <div className="grid grid-cols-3 gap-2 sm:gap-3">
@@ -467,11 +476,11 @@ function FunnelChart({ stages }) {
   );
 }
 
-function ActivityTrendChart({ data }) {
+function ActivityTrendChart({ data, labels }) {
   const metrics = {
     newLeads: { label: "New leads", stroke: "var(--color-primary)" },
-    appointments: { label: "Appointments", stroke: "var(--color-accent)" },
-    visits: { label: "Visits", stroke: "#6a8293" },
+    appointments: { label: labels.primaryTrendLabel, stroke: "var(--color-accent)" },
+    visits: { label: labels.secondaryTrendLabel, stroke: "#6a8293" },
     won: { label: "Won", stroke: "#2f7d4e" },
   };
   const [metric, setMetric] = useState("newLeads");
@@ -619,11 +628,11 @@ function ResponsePerformance({ stats }) {
   );
 }
 
-function PerformanceBreakdown({ performance, activeTab, onTabChange, onOpen }) {
-  const availableTabs = PERFORMANCE_TABS.filter(([key]) => key === "source" || (performance[key] || []).length > 0);
+function PerformanceBreakdown({ performance, tabs, primaryLabel, secondaryLabel, activeTab, onTabChange, onOpen }) {
+  const availableTabs = tabs.filter(([key]) => key === "source" || (performance[key] || []).length > 0);
   const safeTab = availableTabs.some(([key]) => key === activeTab) ? activeTab : availableTabs[0]?.[0] || "source";
   const rows = performance[safeTab] || [];
-  const title = PERFORMANCE_TABS.find(([key]) => key === safeTab)?.[1] || "Source";
+  const title = tabs.find(([key]) => key === safeTab)?.[1] || "Source";
   return (
     <div>
       <div className="mb-4 flex gap-1.5 overflow-x-auto pb-1">
@@ -638,10 +647,10 @@ function PerformanceBreakdown({ performance, activeTab, onTabChange, onOpen }) {
             {rows.map((row) => {
               const canOpen = row.label !== "Unspecified";
               const displayLabel = safeTab === "channel"
-      ? formatChannel(row.label)
-      : safeTab === "source"
-        ? formatSource(row.label)
-        : row.label;
+                ? formatChannel(row.label)
+                : safeTab === "source"
+                  ? formatSource(row.label)
+                  : row.label;
               return (
                 <button
                   key={row.label}
@@ -661,8 +670,8 @@ function PerformanceBreakdown({ performance, activeTab, onTabChange, onOpen }) {
                     </div>
                   </div>
                   <div className="mt-3 grid grid-cols-3 gap-2 border-t border-[var(--color-border)]/70 pt-3 text-center">
-                    <MiniValue label="Appt" value={row.appointments} />
-                    <MiniValue label="Visits" value={row.visits} />
+                    <MiniValue label={primaryLabel} value={row.appointments} />
+                    <MiniValue label={secondaryLabel} value={row.visits} />
                     <MiniValue label="Won" value={row.won} />
                   </div>
                 </button>
@@ -676,8 +685,8 @@ function PerformanceBreakdown({ performance, activeTab, onTabChange, onOpen }) {
                 <tr className="border-b border-[var(--color-border)] text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
                   <th className="pb-2 pr-3 font-bold">{title}</th>
                   <th className="px-2 pb-2 text-right font-bold">Leads</th>
-                  <th className="px-2 pb-2 text-right font-bold">Appt</th>
-                  <th className="px-2 pb-2 text-right font-bold">Visits</th>
+                  <th className="px-2 pb-2 text-right font-bold">{primaryLabel}</th>
+                  <th className="px-2 pb-2 text-right font-bold">{secondaryLabel}</th>
                   <th className="px-2 pb-2 text-right font-bold">Won</th>
                   <th className="pb-2 pl-2 text-right font-bold">Conversion</th>
                 </tr>
