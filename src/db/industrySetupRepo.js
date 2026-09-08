@@ -2,9 +2,11 @@ const { pool } = require("./db");
 const clinicConfig = require("../config/clinicConfig");
 const {
   DEFAULT_BUSINESS_TYPE,
-  getIndustryProfile,
   normalizeBusinessType,
 } = require("../config/industryProfiles");
+const {
+  getOnboardingIndustryProfile,
+} = require("../config/onboardingIndustryProfiles");
 const {
   getBusinessProfileOptions,
   lockIndustrySetup,
@@ -39,14 +41,15 @@ function replaceLiveConfig(nextConfig) {
   Object.assign(clinicConfig, nextConfig);
 }
 
-function buildSelectedConfig(storedConfig, businessType, now = new Date()) {
-  const profile = getIndustryProfile(businessType);
+function buildSelectedConfig(storedConfig, businessType, now = new Date(), actor = null) {
+  const profile = getOnboardingIndustryProfile(businessType);
   const nextConfig = {
     ...profile,
     leadDistribution: { ...DEFAULT_LEAD_DISTRIBUTION },
     industrySetup: lockIndustrySetup(storedConfig?.industrySetup, {
       source: "setup_status",
       reason: "profile_confirmed",
+      actor,
       now,
     }),
   };
@@ -133,6 +136,7 @@ function buildIndustrySetupStatus(config, {
       locked: !selectable,
       source: setup.source,
       selectedAt: setup.selectedAt,
+      selectedBy: setup.selectedBy,
       lockReason,
       hasCustomerData: customerData.hasCustomerData,
     },
@@ -209,7 +213,12 @@ function assertDefaultPipeline(stages, profile) {
   );
 }
 
-async function selectIndustryProfile(requestedType, database = pool, now = new Date()) {
+async function selectIndustryProfile(
+  requestedType,
+  database = pool,
+  now = new Date(),
+  actor = null
+) {
   const businessType = normalizeBusinessType(requestedType);
   if (!businessType) {
     const error = new Error(`Unsupported business type "${requestedType || ""}".`);
@@ -271,7 +280,7 @@ async function selectIndustryProfile(requestedType, database = pool, now = new D
     const stageRows = await loadStageRows(client);
     assertDefaultPipeline(stageRows, currentPipelineProfile);
 
-    nextConfig = buildSelectedConfig(storedConfig, businessType, now);
+    nextConfig = buildSelectedConfig(storedConfig, businessType, now, actor);
     nextPipelineProfile = getPipelineProfile(nextConfig);
     changedConfigKeys = [
       ...new Set([...Object.keys(storedConfig), ...Object.keys(nextConfig)]),
