@@ -93,8 +93,16 @@ test("unsupported industry fails before any provider work", async () => {
   assert.deepEqual(clients.calls, []);
 });
 
-test("runtime env cannot override the industry/database/session provisioning contract", () => {
-  for (const key of ["INITIAL_BUSINESS_TYPE", "BUSINESS_TYPE", "DATABASE_URL", "SESSION_SECRET", "PORT"]) {
+test("runtime env cannot override app or control-plane provisioning values", () => {
+  for (const key of [
+    "INITIAL_BUSINESS_TYPE",
+    "BUSINESS_TYPE",
+    "DATABASE_URL",
+    "SESSION_SECRET",
+    "PORT",
+    "PROVISIONING_NEON_API_KEY",
+    "PROVISIONING_FUTURE_CONTROL",
+  ]) {
     assert.throws(
       () => buildProvisioningPlan({
         clientSlug: "client-one",
