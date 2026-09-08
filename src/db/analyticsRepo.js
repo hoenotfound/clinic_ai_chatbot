@@ -1,4 +1,9 @@
 const { pool } = require("./db");
+const {
+  buildFunnelStages,
+  getAnalyticsPipelineProfile,
+  milestoneTimesCte,
+} = require("./analyticsPipelineProfile");
 
 const TIME_ZONE = "Asia/Kuala_Lumpur";
 const FILTER_CACHE_MS = 5 * 60 * 1000;
@@ -96,52 +101,6 @@ journeys AS (
 )
 `;
 
-const MILESTONE_TIMES_CTE = `
-, milestone_times AS (
-  SELECT
-    h.lead_id,
-    MIN(h.created_at) FILTER (WHERE stage.system_key = 'contacted') AS contacted_at,
-    MIN(h.created_at) FILTER (WHERE stage.system_key = 'appointment_set') AS appointment_at,
-    MIN(h.created_at) FILTER (WHERE stage.system_key = 'visited') AS visited_at,
-    MIN(h.created_at) FILTER (WHERE stage.stage_type = 'won') AS won_at,
-    MIN(h.created_at) FILTER (WHERE stage.stage_type = 'lost') AS lost_at
-  FROM lead_stage_history h
-  JOIN pipeline_stages stage ON stage.id = h.to_stage_id
-  GROUP BY h.lead_id
-),
-journeys_with_milestones AS (
-  SELECT
-    j.*,
-    mt.contacted_at,
-    mt.appointment_at AS milestone_appointment_at,
-    mt.visited_at,
-    mt.won_at,
-    mt.lost_at,
-    (
-      mt.contacted_at IS NOT NULL
-      OR mt.appointment_at IS NOT NULL
-      OR mt.visited_at IS NOT NULL
-      OR mt.won_at IS NOT NULL
-      OR j.appointment_status IN ('set', 'visited')
-    ) AS reached_contacted,
-    (
-      mt.appointment_at IS NOT NULL
-      OR mt.visited_at IS NOT NULL
-      OR mt.won_at IS NOT NULL
-      OR j.appointment_status IN ('set', 'visited')
-    ) AS reached_appointment,
-    (
-      mt.visited_at IS NOT NULL
-      OR mt.won_at IS NOT NULL
-      OR j.appointment_status = 'visited'
-    ) AS reached_visited,
-    (mt.won_at IS NOT NULL OR j.current_stage_type = 'won') AS reached_won,
-    (mt.lost_at IS NOT NULL OR j.current_stage_type = 'lost') AS reached_lost
-  FROM journeys j
-  LEFT JOIN milestone_times mt ON mt.lead_id = j.id
-)
-`;
-
 const FILTER_SQL = `
   ($3::text IS NULL OR j.branch_name = $3)
   AND ($4::text IS NULL OR j.channel = $4)
@@ -224,10 +183,10 @@ function activityRow(row = {}) {
   };
 }
 
-async function getActivitySummary(filters) {
+async function getActivitySummary(filters, analyticsProfile) {
   const result = await analyticsQuery(
     `${JOURNEY_BASE_CTE}
-     ${MILESTONE_TIMES_CTE},
+     ${milestoneTimesCte(analyticsProfile)},
      matching_journeys AS (
        SELECT j.*
        FROM journeys_with_milestones j
@@ -262,6 +221,7 @@ async function getActivitySummary(filters) {
 function cohortSummaryFromRow(row = {}) {
   const newLeads = number(row.new_leads);
   const contacted = number(row.contacted);
+  const qualified = number(row.qualified);
   const appointments = number(row.appointments);
   const visits = number(row.visits);
   const won = number(row.won);
@@ -269,6 +229,7 @@ function cohortSummaryFromRow(row = {}) {
   return {
     newLeads,
     contacted,
+    qualified,
     appointments,
     visits,
     won,
@@ -283,14 +244,8 @@ function cohortSummaryFromRow(row = {}) {
   };
 }
 
-function buildFunnel(cohort) {
-  const raw = [
-    ["New Leads", cohort.newLeads],
-    ["Contacted", cohort.contacted],
-    ["Appointment Set", cohort.appointments],
-    ["Visited Clinic", cohort.visits],
-    ["Converted / Won", cohort.won],
-  ];
+function buildFunnel(cohort, analyticsProfile = getAnalyticsPipelineProfile({ businessType: "aesthetic_clinic" })) {
+  const raw = buildFunnelStages(cohort, analyticsProfile);
   return raw.map(([label, count], index) => {
     const previous = index === 0 ? count : raw[index - 1][1];
     return {
@@ -303,10 +258,10 @@ function buildFunnel(cohort) {
   });
 }
 
-async function getCohortAnalytics(filters) {
+async function getCohortAnalytics(filters, analyticsProfile) {
   const result = await analyticsQuery(
     `${JOURNEY_BASE_CTE}
-     ${MILESTONE_TIMES_CTE},
+     ${milestoneTimesCte(analyticsProfile)},
      matching_journeys AS (
        SELECT j.*
        FROM journeys_with_milestones j
@@ -329,6 +284,7 @@ async function getCohortAnalytics(filters) {
          period,
          COUNT(*)::int AS new_leads,
          COUNT(*) FILTER (WHERE reached_contacted)::int AS contacted,
+         COUNT(*) FILTER (WHERE reached_qualification)::int AS qualified,
          COUNT(*) FILTER (WHERE reached_appointment)::int AS appointments,
          COUNT(*) FILTER (WHERE reached_visited)::int AS visits,
          COUNT(*) FILTER (WHERE reached_won)::int AS won,
@@ -406,16 +362,16 @@ async function getCohortAnalytics(filters) {
   return {
     current,
     previous,
-    funnel: buildFunnel(current),
+    funnel: buildFunnel(current, analyticsProfile),
     temperature,
     lostReasons,
   };
 }
 
-async function getActivityTrend(filters) {
+async function getActivityTrend(filters, analyticsProfile) {
   const result = await analyticsQuery(
     `${JOURNEY_BASE_CTE}
-     ${MILESTONE_TIMES_CTE},
+     ${milestoneTimesCte(analyticsProfile)},
      matching_journeys AS (
        SELECT j.*
        FROM journeys_with_milestones j
@@ -572,7 +528,7 @@ async function getResponseTimes(filters) {
   };
 }
 
-async function getFollowUps(filters) {
+async function getFollowUps(filters, analyticsProfile) {
   const result = await analyticsQuery(
     `${JOURNEY_BASE_CTE},
      matching_journeys AS (
@@ -631,7 +587,7 @@ async function getFollowUps(filters) {
            FROM lead_stage_history history
            JOIN pipeline_stages stage ON stage.id = history.to_stage_id
            WHERE history.lead_id = f.lead_id
-             AND stage.system_key = 'appointment_set'
+             AND stage.system_key = '${analyticsProfile.primarySystemKey}'
              AND history.created_at > f.created_at
              AND history.created_at <= f.created_at + (${FOLLOW_UP_OUTCOME_WINDOW_DAYS} * interval '1 day')
          ) AS appointment_after,
@@ -671,10 +627,10 @@ async function getFollowUps(filters) {
 
 const PERFORMANCE_DIMENSIONS = ["source", "campaign", "treatment", "branch", "channel", "owner"];
 
-async function getPerformance(filters) {
+async function getPerformance(filters, analyticsProfile) {
   const result = await analyticsQuery(
     `${JOURNEY_BASE_CTE}
-     ${MILESTONE_TIMES_CTE},
+     ${milestoneTimesCte(analyticsProfile)},
      cohort AS (
        SELECT j.*
        FROM journeys_with_milestones j
@@ -836,6 +792,7 @@ async function getFilterOptions() {
 }
 
 async function getAnalytics(filters) {
+  const analyticsProfile = getAnalyticsPipelineProfile();
   const [
     activity,
     cohort,
@@ -846,12 +803,12 @@ async function getAnalytics(filters) {
     systemHealth,
     filterOptions,
   ] = await Promise.all([
-    getActivitySummary(filters),
-    getCohortAnalytics(filters),
-    getActivityTrend(filters),
+    getActivitySummary(filters, analyticsProfile),
+    getCohortAnalytics(filters, analyticsProfile),
+    getActivityTrend(filters, analyticsProfile),
     getResponseTimes(filters),
-    getFollowUps(filters),
-    getPerformance(filters),
+    getFollowUps(filters, analyticsProfile),
+    getPerformance(filters, analyticsProfile),
     getSystemHealth(filters),
     getFilterOptions(),
   ]);
