@@ -100,22 +100,50 @@ async function getInboundProcessingMetrics({ hours = 24 } = {}, queryable = pool
   };
 }
 
-function timestamp(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function socialRoundTripAccepted(replyCandidate, runtimeAccepted) {
-  const candidate = timestamp(replyCandidate);
-  const accepted = timestamp(runtimeAccepted);
-  if (!candidate || !accepted) return null;
-  return accepted.getTime() >= candidate.getTime() ? candidate : null;
+function newestTimestamp(...values) {
+  const valid = values
+    .filter(Boolean)
+    .map((value) => new Date(value))
+    .filter((value) => !Number.isNaN(value.getTime()));
+  return valid.length
+    ? new Date(Math.max(...valid.map((value) => value.getTime())))
+    : null;
 }
 
 async function getMessagingMetrics({ hours = 24 } = {}, queryable = pool) {
   const safeHours = Math.max(1, Math.min(24 * 30, Number(hours) || 24));
-  const [result, runtimeRows] = await Promise.all([
+  const [operationalResult, readinessResult, runtimeRows] = await Promise.all([
+    // Preserve the pre-PR106 operational metric exactly. Setup Status uses this
+    // to decide whether any successful outbound (including staff/scheduled) has
+    // recovered from an earlier delivery failure.
+    queryable.query(
+      `SELECT
+         c.channel,
+         MAX(m.created_at) FILTER (WHERE m.role = 'user') AS last_inbound_at,
+         MAX(m.created_at) FILTER (
+           WHERE m.role = 'assistant'
+             AND m.whatsapp_message_id IS NOT NULL
+             AND COALESCE(m.delivery_status, 'pending') <> 'failed'
+         ) AS last_successful_outbound_at,
+         COUNT(*) FILTER (
+           WHERE m.role = 'assistant'
+             AND m.delivery_status = 'failed'
+             AND m.created_at >= NOW() - ($1::int * interval '1 hour')
+         )::int AS recent_delivery_failures,
+         MAX(m.created_at) FILTER (
+           WHERE m.role = 'assistant'
+             AND m.delivery_status = 'failed'
+         ) AS last_delivery_failure_at
+       FROM contacts c
+       LEFT JOIN messages m ON m.contact_id = c.id
+       WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
+       GROUP BY c.channel`,
+      [safeHours]
+    ),
+    // Readiness evidence is intentionally separate from ordinary channel
+    // health. It must belong to the latest inbound contact and to an explicitly
+    // tagged normal AI reply; staff, scheduled, follow-up and system-fallback
+    // sends cannot satisfy this query.
     queryable.query(
       `WITH latest_inbound AS (
          SELECT DISTINCT ON (c.channel)
@@ -128,84 +156,79 @@ async function getMessagingMetrics({ hours = 24 } = {}, queryable = pool) {
          WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
            AND m.role = 'user'
          ORDER BY c.channel, m.created_at DESC, m.id DESC
-       ), correlated_reply AS (
+       ), readiness_evidence AS (
          SELECT
            li.channel,
            li.contact_id,
            li.inbound_message_id,
            li.last_inbound_at,
-           MAX(m.created_at) FILTER (
-             WHERE m.role = 'assistant'
-               AND m.created_at > li.last_inbound_at
-               AND m.sent_by_username IS NULL
-               AND COALESCE(m.is_automated_follow_up, false) = false
-               AND COALESCE(m.delivery_status, 'pending') NOT IN ('failed', 'unknown')
-               AND (
-                 li.channel <> 'whatsapp'
-                 OR m.whatsapp_message_id IS NOT NULL
-               )
-           ) AS last_correlated_outbound_at
+           MAX(e.accepted_at) FILTER (
+             WHERE e.origin = 'ai_reply' AND e.accepted = true
+           ) AS last_verified_ai_reply_at,
+           MAX(e.attempted_at) FILTER (
+             WHERE e.origin = 'ai_reply' AND e.accepted = false
+           ) AS last_ai_reply_failure_at
          FROM latest_inbound li
-         LEFT JOIN messages m ON m.contact_id = li.contact_id
+         LEFT JOIN messages reply
+           ON reply.contact_id = li.contact_id
+          AND reply.role = 'assistant'
+          AND reply.created_at > li.last_inbound_at
+         LEFT JOIN outbound_message_evidence e
+           ON e.message_id = reply.id
+          AND e.contact_id = li.contact_id
+          AND e.channel = li.channel
          GROUP BY li.channel, li.contact_id, li.inbound_message_id, li.last_inbound_at
-       ), channel_failures AS (
-         SELECT
-           c.channel,
-           COUNT(*) FILTER (
-             WHERE m.role = 'assistant'
-               AND m.delivery_status = 'failed'
-               AND m.created_at >= NOW() - ($1::int * interval '1 hour')
-           )::int AS recent_delivery_failures,
-           MAX(m.created_at) FILTER (
-             WHERE m.role = 'assistant'
-               AND m.delivery_status = 'failed'
-           ) AS last_delivery_failure_at
-         FROM contacts c
-         LEFT JOIN messages m ON m.contact_id = c.id
-         WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
-         GROUP BY c.channel
        )
        SELECT
          channels.channel,
-         cr.contact_id AS last_inbound_contact_id,
-         cr.inbound_message_id AS last_inbound_message_id,
-         cr.last_inbound_at,
-         cr.last_correlated_outbound_at,
-         COALESCE(cf.recent_delivery_failures, 0)::int AS recent_delivery_failures,
-         cf.last_delivery_failure_at
+         re.contact_id AS last_inbound_contact_id,
+         re.inbound_message_id AS last_inbound_message_id,
+         re.last_inbound_at,
+         re.last_verified_ai_reply_at,
+         re.last_ai_reply_failure_at
        FROM (VALUES ('whatsapp'), ('instagram'), ('facebook')) AS channels(channel)
-       LEFT JOIN correlated_reply cr ON cr.channel = channels.channel
-       LEFT JOIN channel_failures cf ON cf.channel = channels.channel
-       ORDER BY channels.channel`,
-      [safeHours]
+       LEFT JOIN readiness_evidence re ON re.channel = channels.channel
+       ORDER BY channels.channel`
     ),
     messagingRuntimeHealthRepo.listRuntimeHealth(queryable),
   ]);
 
-  const byChannel = new Map(result.rows.map((row) => [row.channel, row]));
+  const operationalByChannel = new Map(
+    operationalResult.rows.map((row) => [row.channel, row])
+  );
+  const readinessByChannel = new Map(
+    readinessResult.rows.map((row) => [row.channel, row])
+  );
   const runtimeByChannel = new Map(runtimeRows.map((row) => [row.channel, row]));
+
   return ["whatsapp", "instagram", "facebook"].map((channel) => {
-    const row = byChannel.get(channel) || {};
+    const operational = operationalByChannel.get(channel) || {};
+    const readiness = readinessByChannel.get(channel) || {};
     const runtime = runtimeByChannel.get(channel) || {};
-    const correlatedOutbound = channel === "whatsapp"
-      ? timestamp(row.last_correlated_outbound_at)
-      : socialRoundTripAccepted(
-          row.last_correlated_outbound_at,
-          runtime.last_outbound_accepted_at
-        );
     return {
       channel,
-      lastInboundAt: row.last_inbound_at || null,
-      lastInboundContactId: row.last_inbound_contact_id == null
+      // Existing operational fields keep their original meaning for Setup Status.
+      lastInboundAt: operational.last_inbound_at || readiness.last_inbound_at || null,
+      lastSuccessfulOutboundAt: newestTimestamp(
+        operational.last_successful_outbound_at,
+        runtime.last_outbound_accepted_at
+      ),
+      recentDeliveryFailures: Number(operational.recent_delivery_failures) || 0,
+      lastDeliveryFailureAt: operational.last_delivery_failure_at || null,
+
+      // PR106-only go-live evidence. These are exact-message signals and are not
+      // used to redefine ordinary channel health/recovery behavior.
+      lastInboundContactId: readiness.last_inbound_contact_id == null
         ? null
-        : Number(row.last_inbound_contact_id),
-      lastInboundMessageId: row.last_inbound_message_id == null
+        : Number(readiness.last_inbound_contact_id),
+      lastInboundMessageId: readiness.last_inbound_message_id == null
         ? null
-        : Number(row.last_inbound_message_id),
-      lastSuccessfulOutboundAt: correlatedOutbound,
-      roundTripCorrelated: Boolean(row.last_inbound_at && correlatedOutbound),
-      recentDeliveryFailures: Number(row.recent_delivery_failures) || 0,
-      lastDeliveryFailureAt: row.last_delivery_failure_at || null,
+        : Number(readiness.last_inbound_message_id),
+      lastVerifiedAutomatedReplyAt: readiness.last_verified_ai_reply_at || null,
+      lastReadinessDeliveryFailureAt: readiness.last_ai_reply_failure_at || null,
+      roundTripCorrelated: Boolean(
+        readiness.last_inbound_at && readiness.last_verified_ai_reply_at
+      ),
     };
   });
 }
@@ -214,5 +237,5 @@ module.exports = {
   getInboundProcessingMetrics,
   getMessagingMetrics,
   listAppliedMigrations,
-  socialRoundTripAccepted,
+  newestTimestamp,
 };
