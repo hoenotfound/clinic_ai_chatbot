@@ -28,15 +28,73 @@ const GENERIC_DEFAULT_STAGES = Object.freeze([
   Object.freeze({ name: "Lost", sortOrder: 60, color: "#a94b3d", stageType: "lost", systemKey: "lost" }),
 ]);
 
+const CLINIC_ANALYTICS = Object.freeze({
+  qualificationSystemKey: null,
+  primarySystemKey: "appointment_set",
+  secondarySystemKey: "visited",
+  appointmentStatusFallback: true,
+  funnelLabels: Object.freeze({
+    contacted: "Contacted",
+    qualification: null,
+    primary: "Appointment Set",
+    secondary: "Visited Clinic",
+    won: "Converted / Won",
+  }),
+});
+
+const RENOVATION_ANALYTICS = Object.freeze({
+  qualificationSystemKey: "qualified",
+  primarySystemKey: "next_step",
+  secondarySystemKey: "decision",
+  // appointment_status is a legacy column, but renovation deliberately exposes
+  // it as Next-step status. Preserve that staff-entered signal as a fallback
+  // while stage history remains the primary analytics source of truth.
+  appointmentStatusFallback: true,
+  funnelLabels: Object.freeze({
+    contacted: "Contacted",
+    qualification: "Qualified",
+    primary: "Quotation / Site Visit",
+    secondary: "Decision",
+    won: "Won",
+  }),
+});
+
+const GENERIC_ANALYTICS = Object.freeze({
+  qualificationSystemKey: null,
+  primarySystemKey: "qualified",
+  secondarySystemKey: "decision",
+  appointmentStatusFallback: false,
+  funnelLabels: Object.freeze({
+    contacted: "Contacted",
+    qualification: null,
+    primary: "Qualified",
+    secondary: "Decision",
+    won: "Won",
+  }),
+});
+
 const PIPELINE_PROFILES = Object.freeze({
-  aesthetic_clinic: Object.freeze({ defaultStages: CLINIC_DEFAULT_STAGES }),
-  home_renovation: Object.freeze({ defaultStages: RENOVATION_DEFAULT_STAGES }),
-  generic: Object.freeze({ defaultStages: GENERIC_DEFAULT_STAGES }),
+  aesthetic_clinic: Object.freeze({
+    defaultStages: CLINIC_DEFAULT_STAGES,
+    analytics: CLINIC_ANALYTICS,
+  }),
+  home_renovation: Object.freeze({
+    defaultStages: RENOVATION_DEFAULT_STAGES,
+    analytics: RENOVATION_ANALYTICS,
+  }),
+  generic: Object.freeze({
+    defaultStages: GENERIC_DEFAULT_STAGES,
+    analytics: GENERIC_ANALYTICS,
+  }),
 });
 
 function cloneProfile(profile) {
   return {
     defaultStages: profile.defaultStages.map((stage) => ({ ...stage })),
+    analytics: {
+      ...profile.analytics,
+      funnelLabels: { ...profile.analytics.funnelLabels },
+    },
   };
 }
 
@@ -55,9 +113,12 @@ function getPipelineProfile(config = {}) {
 }
 
 module.exports = {
+  CLINIC_ANALYTICS,
   CLINIC_DEFAULT_STAGES,
+  GENERIC_ANALYTICS,
   GENERIC_DEFAULT_STAGES,
   PIPELINE_PROFILES,
+  RENOVATION_ANALYTICS,
   RENOVATION_DEFAULT_STAGES,
   getPipelineProfile,
   resolvePipelineBusinessType,
