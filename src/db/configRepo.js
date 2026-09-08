@@ -186,10 +186,34 @@ async function updateConfig(updates, database = pool) {
         });
         changedKeys.push("industrySetup");
       } else {
-        throw conflict(
-          "INDUSTRY_PROFILE_NOT_CONFIRMED",
-          "Confirm this client's Business Profile in Setup Status before changing client Settings."
+        const stageResult = await client.query(
+          `SELECT id, name, sort_order, color, stage_type, system_key
+           FROM pipeline_stages
+           ORDER BY sort_order ASC, id ASC`
         );
+        const setupStatus = industrySetupRepo.buildIndustrySetupStatus(nextConfig, {
+          customerData,
+          stages: stageResult.rows || [],
+        });
+
+        if (setupStatus.selection.lockReason === "pipeline_customized") {
+          // A stage edit normally writes this metadata immediately. This branch
+          // is a recovery path for a partial failure (or an older process) where
+          // the Pipeline mutation committed but the profile-lock metadata did
+          // not. The customized Pipeline already makes re-profiling unsafe, so
+          // lock the current profile and keep Settings usable instead of leaving
+          // the deployment in an unrecoverable onboarding state.
+          nextConfig.industrySetup = lockIndustrySetup(industrySetup, {
+            source: "pipeline",
+            reason: "pipeline_customized",
+          });
+          changedKeys.push("industrySetup");
+        } else {
+          throw conflict(
+            "INDUSTRY_PROFILE_NOT_CONFIRMED",
+            "Confirm this client's Business Profile in Setup Status before changing client Settings."
+          );
+        }
       }
     }
 
