@@ -288,7 +288,9 @@ router.post("/run", async (req, res) => {
 router.post("/business-profile", async (req, res) => {
   try {
     const businessType = req.body?.businessType;
-    const businessProfile = await configRepo.selectIndustryProfile(businessType);
+    const businessProfile = await configRepo.selectIndustryProfile(businessType, {
+      actor: req.session?.username || null,
+    });
     return res.json({ businessProfile });
   } catch (err) {
     const status = Number(err?.status) || 500;
