@@ -46,7 +46,7 @@ The server rechecks these conditions inside the selection transaction, so a stal
 
 ### 2. Explicit provisioning environment variable
 
-Provisioning can still select the initial profile before the first startup:
+Provisioning can select the initial profile before the first startup:
 
 ```text
 INITIAL_BUSINESS_TYPE=home_renovation
@@ -57,6 +57,21 @@ Accepted aliases include `renovation`, `carpentry`, and `cabinetry`.
 An explicit provisioning choice is treated as authoritative and locked immediately. It is not later exposed as a switchable Setup Status profile. An invalid explicit value fails closed at startup rather than seeding the wrong industry.
 
 Changing `INITIAL_BUSINESS_TYPE` after the database has already been seeded does not silently convert an existing client. The stored `businessType` remains authoritative.
+
+### Internal Render + Neon client provisioner
+
+The preferred repeatable path for a new client is now the internal provisioning CLI documented in `CLIENT_PROVISIONING.md`:
+
+```bash
+npm run provision-client -- \
+  --client acme-cabinets \
+  --industry home_renovation \
+  --render-plan starter
+```
+
+The command is a dry run unless `--execute` is supplied. It requires the industry explicitly, checks Render and Neon for exact resource-name collisions, creates the Neon project, retrieves a pooled database connection, creates the Render service, and injects the canonical `INITIAL_BUSINESS_TYPE` before first startup.
+
+This removes the normal provisioning gap where a Render + Neon pair could be created first and the operator could forget to select the intended industry later. Control-plane API keys stay in the operator environment and are never copied into the client service.
 
 ## Atomic profile alignment
 
@@ -222,9 +237,9 @@ The generic profile does not inherit clinic booking vocabulary or renovation quo
 
 ## Recommended next migrations
 
-1. Connect the profile choice to the internal client provisioner so creating a Render + Neon client instance automatically seeds or confirms the intended industry.
-2. Run end-to-end renovation production hardening across realistic quotation, site-visit, budget, objection, multilingual, Human Takeover, Pipeline and Analytics scenarios.
-3. Gradually migrate legacy compatibility fields behind neutral domain names before any eventual database-column migration.
+1. Run end-to-end renovation production hardening across realistic quotation, site-visit, budget, objection, multilingual, Human Takeover, Pipeline and Analytics scenarios.
+2. Gradually migrate legacy compatibility fields behind neutral domain names before any eventual database-column migration.
+3. If provisioning volume grows, put the same tested provisioning domain layer behind an internal admin surface while keeping Render/Neon control-plane credentials server-side and out of client runtimes.
 
 ## Deployment model
 

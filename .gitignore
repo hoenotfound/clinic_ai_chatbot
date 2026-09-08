@@ -5,3 +5,8 @@ node_modules/
 data/
 portal-frontend/dist/
 portal-frontend/node_modules/
+.provisioning.env
+*.provisioning.env
+.client-runtime.env
+*.client-runtime.env
+.provisioning/

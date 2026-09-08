@@ -9,6 +9,7 @@
     "dev": "node --watch -r ./src/services/scheduledMessageBootstrap.js -r ./src/services/metaAdsEnrichmentBootstrap.js src/server.js",
     "create-user": "node scripts/createUser.js",
     "diagnose:gemini": "node scripts/diagnoseGeminiKeys.js",
+    "provision-client": "node scripts/provisionClient.js",
     "test": "node --test"
   },
   "dependencies": {
