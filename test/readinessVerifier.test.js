@@ -55,7 +55,9 @@ function healthySystemHealth() {
         configured: true,
         status: "healthy",
         lastInboundAt: "2026-09-08T13:00:00.000Z",
-        lastSuccessfulOutboundAt: "2026-09-08T13:00:03.000Z",
+        lastSuccessfulOutboundAt: "2026-09-08T13:00:04.000Z",
+        lastVerifiedAutomatedReplyAt: "2026-09-08T13:00:03.000Z",
+        lastReadinessDeliveryFailureAt: null,
         recentDeliveryFailures: 0,
         lastDeliveryFailureAt: null,
       },
@@ -64,7 +66,9 @@ function healthySystemHealth() {
         configured: true,
         status: "healthy",
         lastInboundAt: "2026-09-08T13:00:00.000Z",
-        lastSuccessfulOutboundAt: "2026-09-08T13:00:03.000Z",
+        lastSuccessfulOutboundAt: "2026-09-08T13:00:04.000Z",
+        lastVerifiedAutomatedReplyAt: "2026-09-08T13:00:03.000Z",
+        lastReadinessDeliveryFailureAt: null,
         recentDeliveryFailures: 0,
         lastDeliveryFailureAt: null,
       },
@@ -73,7 +77,9 @@ function healthySystemHealth() {
         configured: true,
         status: "healthy",
         lastInboundAt: "2026-09-08T13:00:00.000Z",
-        lastSuccessfulOutboundAt: "2026-09-08T13:00:03.000Z",
+        lastSuccessfulOutboundAt: "2026-09-08T13:00:04.000Z",
+        lastVerifiedAutomatedReplyAt: "2026-09-08T13:00:03.000Z",
+        lastReadinessDeliveryFailureAt: null,
         recentDeliveryFailures: 0,
         lastDeliveryFailureAt: null,
       },
@@ -193,14 +199,16 @@ test("a purchased channel stays blocked until its Setup Status evidence is ready
   assert.equal(report.blocking.some((item) => item.key === "meta_webhook"), true);
 });
 
-test("real inbound without a newer successful outbound reply blocks go-live", () => {
+test("real inbound without a newer provider-accepted AI reply blocks go-live", () => {
   const data = overview();
   data.systemHealth.messaging = data.systemHealth.messaging.map((item) =>
     item.channel === "whatsapp"
       ? {
           ...item,
           lastInboundAt: "2026-09-08T13:05:00.000Z",
-          lastSuccessfulOutboundAt: "2026-09-08T13:04:59.000Z",
+          // An ordinary successful outbound may exist, but it is not go-live proof.
+          lastSuccessfulOutboundAt: "2026-09-08T13:05:03.000Z",
+          lastVerifiedAutomatedReplyAt: "2026-09-08T13:04:59.000Z",
         }
       : item
   );
@@ -214,15 +222,17 @@ test("real inbound without a newer successful outbound reply blocks go-live", ()
   assert.equal(report.blocking.some((item) => item.key === "whatsapp_round_trip_outbound"), true);
 });
 
-test("a newer unresolved delivery failure blocks go-live", () => {
+test("a newer exact AI reply failure blocks go-live even if ordinary channel health recovered", () => {
   const data = overview();
   data.systemHealth.messaging = data.systemHealth.messaging.map((item) =>
     item.channel === "whatsapp"
       ? {
           ...item,
-          status: "warning",
-          lastDeliveryFailureAt: "2026-09-08T13:00:05.000Z",
-          lastSuccessfulOutboundAt: "2026-09-08T13:00:03.000Z",
+          status: "healthy",
+          lastSuccessfulOutboundAt: "2026-09-08T13:00:08.000Z",
+          lastVerifiedAutomatedReplyAt: "2026-09-08T13:00:03.000Z",
+          lastReadinessDeliveryFailureAt: "2026-09-08T13:00:05.000Z",
+          lastDeliveryFailureAt: null,
         }
       : item
   );
