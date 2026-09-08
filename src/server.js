@@ -142,7 +142,10 @@ async function sendTrackedText(contact, text, origin = "ai_reply") {
   const sendResult = await channelMessaging.sendText(contact, text);
   const errorText = sendResult.error || channelMessaging.rejectedError(contact.channel);
   const finalMessage = await persistSendOutcome(saved, sendResult, errorText);
-  await recordReadinessSendEvidence(saved, contact, sendResult, origin);
+  // Do not extend the durable inbound critical path after the provider has
+  // already accepted/rejected the customer reply. Missing telemetry fails the
+  // later go-live check closed; it must never delay or duplicate customer work.
+  recordReadinessSendEvidence(saved, contact, sendResult, origin);
 
   if (!sendResult.success) {
     await contactsRepo.setDeliveryAttention(
