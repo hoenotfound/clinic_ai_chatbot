@@ -12,6 +12,7 @@ import StageManager from "../components/pipeline/StageManager";
 import AddLeadModal from "../components/pipeline/AddLeadModal";
 import StageMoveDialog from "../components/pipeline/StageMoveDialog";
 import { formatMoney, isNoReply, isOverdue } from "../components/pipeline/pipelineUtils";
+import { shouldRefreshLeadActivities } from "../components/pipeline/realtimeQualification";
 import { sourceLabel } from "../components/pipeline/LeadAttributionPanel";
 
 const PIPELINE_CLOCK_INTERVAL_MS = 30 * 1000;
@@ -73,11 +74,15 @@ export default function Pipeline() {
   });
   const [mobileStageId, setMobileStageId] = useState(null);
   const [selectedLeadId, setSelectedLeadId] = useState(null);
+  const [activityRefreshToken, setActivityRefreshToken] = useState(0);
   const [showStages, setShowStages] = useState(false);
   const [showAddLead, setShowAddLead] = useState(false);
   const [pendingMove, setPendingMove] = useState(null);
   const [now, setNow] = useState(() => Date.now());
   const refreshTimerRef = useRef(null);
+  const selectedLeadIdRef = useRef(null);
+  const pendingActivityRefreshRef = useRef(false);
+  selectedLeadIdRef.current = selectedLeadId;
 
   const canManageLeads = permissions.manage_assigned_leads === true;
   const canCreateLeads = permissions.create_leads === true;
@@ -126,16 +131,41 @@ export default function Pipeline() {
 
   useEffect(() => {
     const source = new EventSource("/api/conversations/events", { withCredentials: true });
-    function scheduleRefresh() {
+
+    function scheduleRefresh({ refreshActivities = false } = {}) {
+      if (refreshActivities) pendingActivityRefreshRef.current = true;
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-      refreshTimerRef.current = setTimeout(() => refreshPipeline({ quiet: true }), 150);
+      refreshTimerRef.current = setTimeout(() => {
+        refreshTimerRef.current = null;
+        refreshPipeline({ quiet: true });
+        if (pendingActivityRefreshRef.current) {
+          pendingActivityRefreshRef.current = false;
+          setActivityRefreshToken((value) => value + 1);
+        }
+      }, 150);
     }
-    source.addEventListener("pipeline_changed", scheduleRefresh);
-    source.addEventListener("conversation_changed", scheduleRefresh);
+
+    function handlePipelineChanged(event) {
+      const openLeadId = selectedLeadIdRef.current;
+      scheduleRefresh({
+        refreshActivities: Boolean(
+          openLeadId && shouldRefreshLeadActivities(event?.data, openLeadId)
+        ),
+      });
+    }
+
+    function handleConversationChanged() {
+      scheduleRefresh();
+    }
+
+    source.addEventListener("pipeline_changed", handlePipelineChanged);
+    source.addEventListener("conversation_changed", handleConversationChanged);
     return () => {
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-      source.removeEventListener("pipeline_changed", scheduleRefresh);
-      source.removeEventListener("conversation_changed", scheduleRefresh);
+      refreshTimerRef.current = null;
+      pendingActivityRefreshRef.current = false;
+      source.removeEventListener("pipeline_changed", handlePipelineChanged);
+      source.removeEventListener("conversation_changed", handleConversationChanged);
       source.close();
     };
   }, [refreshPipeline]);
@@ -571,7 +601,7 @@ export default function Pipeline() {
         </div>
       </main>
 
-      {selectedLead && <LeadDrawer key={selectedLead.id} lead={selectedLead} stages={stages} branches={data.branches || []} owners={data.owners || []} services={data.services || []} now={now} noReplyHours={noReplyHours} onClose={closeLead} onSaved={mergeLead} onToast={showToast} />}
+      {selectedLead && <LeadDrawer key={selectedLead.id} lead={selectedLead} stages={stages} branches={data.branches || []} owners={data.owners || []} services={data.services || []} now={now} noReplyHours={noReplyHours} activityRefreshToken={activityRefreshToken} onClose={closeLead} onSaved={mergeLead} onToast={showToast} />}
       {canManageStages && showStages && <StageManager stages={stages} onClose={() => setShowStages(false)} onSaveStage={(id, patch) => api.updatePipelineStage(id, patch)} onCreateStage={(payload) => refreshAfterStageChange(() => api.createPipelineStage(payload))} onDeleteStage={(id) => refreshAfterStageChange(() => api.deletePipelineStage(id))} onReorder={(ids) => refreshAfterStageChange(() => api.reorderPipelineStages(ids))} onToast={showToast} />}
       {canCreateLeads && showAddLead && <AddLeadModal branches={data.branches || []} services={data.services || []} onClose={() => setShowAddLead(false)} onCreated={handleLeadCreated} onToast={showToast} />}
       {canManageLeads && pendingMove && <StageMoveDialog lead={pendingMove.lead} stage={pendingMove.stage} onCancel={() => setPendingMove(null)} onConfirm={async (patch) => { const updated = await updateLead(pendingMove.lead.id, patch); if (updated) setPendingMove(null); }} />}
