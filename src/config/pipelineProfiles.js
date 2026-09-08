@@ -46,10 +46,11 @@ const RENOVATION_ANALYTICS = Object.freeze({
   qualificationSystemKey: "qualified",
   primarySystemKey: "next_step",
   secondarySystemKey: "decision",
-  // appointment_status is a legacy column, but renovation deliberately exposes
-  // it as Next-step status. Preserve that staff-entered signal as a fallback
-  // while stage history remains the primary analytics source of truth.
-  appointmentStatusFallback: true,
+  // Renovation analytics are stage-history based. The legacy appointment_status
+  // column is still exposed as staff-facing Next-step status, but it has no
+  // reliable milestone timestamp and must not make cohort/performance counts
+  // disagree with activity trends and follow-up attribution.
+  appointmentStatusFallback: false,
   funnelLabels: Object.freeze({
     contacted: "Contacted",
     qualification: "Qualified",
