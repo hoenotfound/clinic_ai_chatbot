@@ -2,6 +2,7 @@ const clinicConfig = require("../config/clinicConfig");
 const { getPipelineProfile } = require("../config/pipelineProfiles");
 
 const SYSTEM_KEY_PATTERN = /^[a-z0-9_]+$/;
+let runtimeAnalyticsBusinessType = null;
 
 function safeSystemKey(value, label) {
   const key = String(value || "");
@@ -25,12 +26,25 @@ function analyticsFromPipelineProfile(profile, extra = {}) {
   };
 }
 
+function setRuntimeAnalyticsPipelineBusinessType(value) {
+  const profile = getPipelineProfile({ businessType: value });
+  runtimeAnalyticsBusinessType = profile.businessType;
+  return runtimeAnalyticsBusinessType;
+}
+
 function getAnalyticsPipelineProfile(
   config = clinicConfig,
   { availableSystemKeys = null } = {}
 ) {
   const configuredProfile = getPipelineProfile(config);
-  const configured = analyticsFromPipelineProfile(configuredProfile);
+  const effectiveProfile =
+    config === clinicConfig && runtimeAnalyticsBusinessType
+      ? getPipelineProfile({ businessType: runtimeAnalyticsBusinessType })
+      : configuredProfile;
+  const configured = analyticsFromPipelineProfile(effectiveProfile, {
+    configuredBusinessType: configuredProfile.businessType,
+    legacyStageFallback: effectiveProfile.businessType !== configuredProfile.businessType,
+  });
   if (!availableSystemKeys) return configured;
 
   const keys = new Set(
@@ -52,7 +66,7 @@ function getAnalyticsPipelineProfile(
   const clinicProfile = analyticsFromPipelineProfile(
     getPipelineProfile({ businessType: "aesthetic_clinic" }),
     {
-      configuredBusinessType: configured.businessType,
+      configuredBusinessType: configured.configuredBusinessType,
       legacyStageFallback: true,
     }
   );
@@ -160,4 +174,5 @@ module.exports = {
   getAnalyticsPipelineProfile,
   milestoneTimesCte,
   safeSystemKey,
+  setRuntimeAnalyticsPipelineBusinessType,
 };
