@@ -31,7 +31,7 @@ const PROFILE_UI = {
       descriptionSuffix: "See where enquiries drop off and which channels turn into clinic visits and wins.",
       locationFilterLabel: "Branch",
       serviceFilterLabel: "Treatment",
-      performanceSubtitle: "Compare this lead cohort by acquisition, treatment, branch, channel or owner.",
+      performanceSubtitle: "Compare this lead cohort by acquisition, treatment, location, channel or owner.",
       performanceTabs: { treatment: "Treatment", branch: "Branch" },
       primaryMetricLabel: "Appointments",
       primaryMetricDetail: "First appointment stage entered in this period",
@@ -39,6 +39,8 @@ const PROFILE_UI = {
       secondaryMetricDetail: "First visit stage entered in this period",
       primaryTrendLabel: "Appointments",
       secondaryTrendLabel: "Visits",
+      primaryTableLabel: "Appt",
+      secondaryTableLabel: "Visits",
       rates: [
         { label: "Appointment", detail: "Lead → Appt" },
         { label: "Show", detail: "Appt → Visit" },
@@ -93,6 +95,8 @@ const PROFILE_UI = {
       secondaryMetricDetail: "First decision stage entered in this period",
       primaryTrendLabel: "Quotation / Site Visit",
       secondaryTrendLabel: "Decision",
+      primaryTableLabel: "Quote / Site",
+      secondaryTableLabel: "Decision",
       rates: [
         { label: "Next step", detail: "Lead → Quote / Site" },
         { label: "Decision", detail: "Next step → Decision" },
@@ -162,6 +166,8 @@ const PROFILE_UI = {
       secondaryMetricDetail: "First decision stage entered in this period",
       primaryTrendLabel: "Qualified",
       secondaryTrendLabel: "Decision",
+      primaryTableLabel: "Qualified",
+      secondaryTableLabel: "Decision",
       rates: [
         { label: "Qualification", detail: "Lead → Qualified" },
         { label: "Decision", detail: "Qualified → Decision" },
