@@ -10,6 +10,7 @@ import Spinner from "../Spinner";
 import {
   CONSENT_OPTIONS,
   TEMPERATURE_OPTIONS,
+  buildQualificationRows,
   contactIdentifier,
   displayName,
   buildLeadUpdatePayload,
@@ -94,6 +95,10 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
     () => stages.find((stage) => Number(stage.id) === Number(form.stageId)),
     [form.stageId, stages]
   );
+  const qualificationRows = useMemo(
+    () => buildQualificationRows(ui.qualificationView, lead, activities || []),
+    [activities, lead, ui.qualificationView]
+  );
   const staleCurrentBranch = Boolean(form.branchName) && !configuredBranches.includes(form.branchName);
 
   function markDirty(...keys) {
@@ -130,7 +135,7 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
 
   function updateAppointmentStatus(value) {
     if (!canManageLeads) return;
-    const stageKey = value === "set" ? "appointment_set" : value === "visited" ? "visited" : null;
+    const stageKey = ui.conversionStageKeys?.[value] || null;
     const matchingStage = stageKey
       ? stages.find((stage) => stage.system_key === stageKey)
       : null;
@@ -221,6 +226,10 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
 
           <LeadAttributionPanel lead={lead} />
 
+          {ui.qualificationView && (
+            <QualificationPanel view={ui.qualificationView} rows={qualificationRows} />
+          )}
+
           <form onSubmit={handleSave} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
@@ -262,7 +271,7 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
                       : `Automatic updates are allowed. Current source: ${temperatureSourceLabel(form.temperatureSource)}.`}
                   </p>
                 </Field>
-                <Field label={ui.locationLabel}>
+                <Field label={ui.leadLocationLabel || ui.locationLabel}>
                   <select className={inputClass} value={form.branchName} onChange={(event) => update("branchName", event.target.value)}>
                     <option value="">Unassigned</option>
                     {staleCurrentBranch && (
@@ -272,11 +281,11 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
                   </select>
                   {staleCurrentBranch ? (
                     <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-danger)]">
-                      This is historical {ui.locationSingular} data. You can save other lead changes without touching it, but choose a current {ui.locationSingular} or Unassigned before changing the {ui.locationSingular}.
+                      This is historical assignment data. You can save other lead changes without touching it, but choose a current {ui.locationSingular} or Unassigned before changing this assignment.
                     </p>
                   ) : (
                     <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
-                      Only {ui.locationPlural} that currently exist in Settings can be newly selected.
+                      {ui.leadLocationHint || `Only ${ui.locationPlural} that currently exist in Settings can be newly selected.`}
                     </p>
                   )}
                 </Field>
@@ -415,6 +424,27 @@ function temperatureSourceLabel(source) {
     manual: "staff setting",
     system: "default",
   }[source] || "default";
+}
+
+function QualificationPanel({ view, rows }) {
+  return (
+    <section className="mb-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+      <h3 className="font-display text-base font-bold">{view.title}</h3>
+      {view.description && (
+        <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">{view.description}</p>
+      )}
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        {rows.map((row) => (
+          <div key={row.key} className="rounded-xl bg-[var(--color-bg)] px-3 py-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{row.label}</p>
+            <p className={`mt-1 whitespace-pre-wrap text-sm leading-relaxed ${row.hasValue ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+              {row.value || "Not captured yet"}
+            </p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function Field({ label, children }) {
