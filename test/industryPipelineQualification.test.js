@@ -98,6 +98,33 @@ test("fresh renovation pipeline replaces only the untouched legacy clinic seed",
   assert.equal(wasReleased(), true);
 });
 
+test("pipeline default reconciliation locks stage readers and lead writers before safety reads", async () => {
+  const { database, queries } = createPipelineDatabase({
+    stages: CLINIC_DEFAULT_STAGES.map(dbStage),
+  });
+
+  await ensureIndustryPipelineDefaults(
+    { businessType: "home_renovation" },
+    database
+  );
+
+  assert.equal(queries[0].sql, "BEGIN");
+  assert.equal(
+    queries[1].sql,
+    "LOCK TABLE pipeline_stages IN ACCESS EXCLUSIVE MODE"
+  );
+  assert.equal(
+    queries[2].sql,
+    "LOCK TABLE leads IN SHARE ROW EXCLUSIVE MODE"
+  );
+  assert.match(queries[3].sql, /FROM pipeline_stages/);
+  assert.equal(queries[4].sql, "SELECT COUNT(*)::int AS count FROM leads");
+  assert.ok(
+    queries.findIndex(({ sql }) => sql === "LOCK TABLE leads IN SHARE ROW EXCLUSIVE MODE") <
+      queries.findIndex(({ sql }) => sql === "SELECT COUNT(*)::int AS count FROM leads")
+  );
+});
+
 test("an actually empty pipeline receives the selected industry defaults", async () => {
   const { database, queries } = createPipelineDatabase({ stages: [] });
 
@@ -162,7 +189,7 @@ test("clinic fresh pipeline remains byte-for-byte equivalent to the historical d
   assert.equal(queries.some(({ sql }) => /DELETE FROM pipeline_stages|INSERT INTO pipeline_stages/.test(sql)), false);
 });
 
-test("renovation qualification view merges latest relevant project metadata without using branch_name", async () => {
+test("renovation qualification keeps conversion snapshot fields coherent without using branch_name", async () => {
   const { getBusinessTerminology } = await import(
     "../portal-frontend/src/utils/businessTerminology.js"
   );
@@ -183,7 +210,8 @@ test("renovation qualification view merges latest relevant project metadata with
     {
       metadata: {
         outcome: "booking_ready",
-        nextStep: "site_visit",
+        nextStep: "quotation_discussion",
+        projectSummary: "Customer now wants the team to continue with a quotation discussion.",
       },
     },
     {
@@ -198,7 +226,7 @@ test("renovation qualification view merges latest relevant project metadata with
         projectLocation: "Cheras",
         projectSummary: "Condo kitchen cabinets; customer has a floor plan.",
         appointmentPreference: "Saturday afternoon",
-        nextStep: "quotation_discussion",
+        nextStep: "site_visit",
       },
     },
   ];
@@ -209,14 +237,48 @@ test("renovation qualification view merges latest relevant project metadata with
   assert.equal(ui.leadLocationLabel, "Sales location");
   assert.equal(byKey.serviceInterest, "Kitchen Cabinets");
   assert.equal(byKey.projectLocation, "Cheras");
-  assert.equal(byKey.projectSummary, "Condo kitchen cabinets; customer has a floor plan.");
-  assert.equal(byKey.nextStep, "Site visit");
-  assert.equal(byKey.siteVisitTiming, "Saturday afternoon");
+  assert.equal(byKey.projectSummary, "Customer now wants the team to continue with a quotation discussion.");
+  assert.equal(byKey.nextStep, "Quotation discussion");
+  assert.equal(byKey.siteVisitTiming, "");
   assert.equal(byKey.temperature, "Hot");
   assert.equal(byKey.owner, "alice");
   assert.equal(byKey.source, "Meta Ad");
   assert.notEqual(byKey.projectLocation, lead.branch_name);
   assert.match(byKey.estimatedValue, /RM/);
+});
+
+test("latest renovation site-visit timing stays paired with the same conversion snapshot", async () => {
+  const { getBusinessTerminology } = await import(
+    "../portal-frontend/src/utils/businessTerminology.js"
+  );
+  const { buildQualificationRows } = await import(
+    "../portal-frontend/src/components/pipeline/pipelineUtils.js"
+  );
+  const ui = getBusinessTerminology({ businessType: "home_renovation" });
+  const activities = [
+    {
+      metadata: {
+        outcome: "booking_ready",
+        nextStep: "site_visit",
+        appointmentPreference: "Sunday 2-4pm",
+      },
+    },
+    {
+      metadata: {
+        outcome: "booking_ready",
+        nextStep: "site_visit",
+        appointmentPreference: "Saturday afternoon",
+        projectLocation: "Cheras",
+      },
+    },
+  ];
+
+  const rows = buildQualificationRows(ui.qualificationView, {}, activities);
+  const byKey = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+
+  assert.equal(byKey.nextStep, "Site visit");
+  assert.equal(byKey.siteVisitTiming, "Sunday 2-4pm");
+  assert.equal(byKey.projectLocation, "Cheras");
 });
 
 test("clinic drawer profile keeps appointment stage linkage while renovation does not inherit it", async () => {
