@@ -444,8 +444,8 @@ function evaluateSystemHealth(systemHealth, requiredChannels) {
       });
     }
     const inboundAt = timestampMs(runtime.lastInboundAt);
-    const outboundAt = timestampMs(runtime.lastSuccessfulOutboundAt);
-    const failureAt = timestampMs(runtime.lastDeliveryFailureAt);
+    const outboundAt = timestampMs(runtime.lastVerifiedAutomatedReplyAt);
+    const failureAt = timestampMs(runtime.lastReadinessDeliveryFailureAt);
     if (!inboundAt) {
       blocking.push({
         key: `${channel}_round_trip_inbound`,
@@ -457,20 +457,20 @@ function evaluateSystemHealth(systemHealth, requiredChannels) {
       blocking.push({
         key: `${channel}_round_trip_outbound`,
         status: "missing",
-        summary: `No successful outbound ${channel} reply has been observed yet.`,
+        summary: `No provider-accepted AI reply to the latest ${channel} inbound conversation has been verified yet.`,
       });
     } else if (inboundAt && outboundAt < inboundAt) {
       blocking.push({
         key: `${channel}_round_trip_outbound`,
         status: "stale",
-        summary: `The latest ${channel} inbound message does not have a newer successful outbound reply yet.`,
+        summary: `The latest ${channel} inbound message does not have a newer provider-accepted AI reply yet.`,
       });
     }
     if (failureAt && (!outboundAt || failureAt > outboundAt)) {
       blocking.push({
         key: `${channel}_delivery_failure`,
         status: "error",
-        summary: `A ${channel} delivery failure is newer than the last successful outbound reply.`,
+        summary: `An AI ${channel} reply attempt failed after the latest verified provider-accepted AI reply.`,
       });
     } else if (runtime.status !== "healthy") {
       blocking.push({
