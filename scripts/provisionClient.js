@@ -19,11 +19,19 @@ const {
 const {
   ClientReadinessError,
   normalizeRequiredChannels,
+  validateRuntimeReadinessContract,
+  verificationFailureReport,
+  verifyAdminLogin,
   verifyClientReadiness,
 } = require("../src/provisioning/readinessVerifier");
+const {
+  extractRenderCommitSha,
+  finalizeRenderRuntime,
+} = require("../src/provisioning/renderFinalizer");
 
 const PROVISIONING_STATE_DIR = ".provisioning";
 const READINESS_NEEDS_ATTENTION_EXIT_CODE = 3;
+const READINESS_VERIFICATION_FAILED_EXIT_CODE = 4;
 
 function usage() {
   return `
@@ -44,11 +52,11 @@ Safe by default:
   and performs no network calls or cloud mutations.
 
 Options:
-  --execute                   Create Neon + Render, wait for first deploy to be
-                              live, then run authenticated Setup Status checks
+  --execute                   Create Neon + Render, wait for first deploy,
+                              finalize the runtime, then verify production health
   --runtime-env-file <path>   dotenv file containing client runtime variables.
-                              For --execute it must include ADMIN_USERNAME and
-                              ADMIN_PASSWORD so readiness can authenticate.
+                              Execution preflights admin, AI, R2 and purchased
+                              channel credentials before any cloud creation.
   --render-plan <plan>        Render instance plan. Required for --execute
                               unless PROVISIONING_RENDER_PLAN is set.
   --render-region <region>    Default: singapore
@@ -59,16 +67,23 @@ Options:
   --json                      Machine-readable output
   --help                      Show this help
 
-Readiness rules:
-  Core application checks must be ready, the locked business profile must match
-  --industry, and only the channels listed in --channels are mandatory.
-  Messenger/Instagram/WhatsApp webhook checks may require a real inbound test
-  message before the final status becomes READY.
+Go-live rules:
+  Required Setup Status checks must be configured and ready. Database migrations
+  and inbound processing must be healthy. AI runtime errors block go-live while
+  degraded-but-usable AI is reported as READY WITH WARNINGS. Every purchased
+  channel must have real inbound activity, a successful newer outbound reply,
+  and no newer unresolved delivery failure.
+
+Runtime finalization:
+  After the bootstrap admin login succeeds, the provisioner sets PUBLIC_BASE_URL
+  to the actual Render URL, removes ADMIN_PASSWORD from Render, deploys those
+  changes, and verifies the finalized deployment.
 
 Exit codes:
-  0  Provisioned and READY (or dry-run plan)
-  2  Provisioning/input failure
-  3  Infrastructure is live but readiness NEEDS ATTENTION
+  0  Provisioned and READY / READY WITH WARNINGS (or dry-run plan)
+  2  Provisioning/input failure before a usable deployment exists
+  3  Infrastructure is live and verification completed, but NEEDS ATTENTION
+  4  Infrastructure is live, but readiness verification could not complete
 
 Control-plane credentials are read only from the shell environment:
   PROVISIONING_RENDER_API_KEY
@@ -123,8 +138,7 @@ function parseArgs(argv) {
 function loadRuntimeEnv(filePath) {
   if (!filePath) return {};
   const absolute = path.resolve(process.cwd(), filePath);
-  const contents = fs.readFileSync(absolute);
-  return dotenv.parse(contents);
+  return dotenv.parse(fs.readFileSync(absolute));
 }
 
 function ensureProvisioningStateDir(baseDir = process.cwd()) {
@@ -218,14 +232,18 @@ function acquireProvisioningLock(resourceName, {
 
 function buildProvisioningReceipt(result, now = new Date()) {
   return {
-    version: 2,
+    version: 3,
     completedAt: now.toISOString(),
+    lastVerifiedAt: result.readiness?.checkedAt || null,
     clientSlug: result.clientSlug,
     industry: result.industry,
     requiredChannels: [...(result.requiredChannels || [])],
     profileContract: { ...result.profileContract },
     neon: { ...result.neon },
     render: { ...result.render },
+    runtimeFinalization: result.runtimeFinalization
+      ? { ...result.runtimeFinalization }
+      : null,
     readiness: result.readiness ? JSON.parse(JSON.stringify(result.readiness)) : null,
   };
 }
@@ -256,37 +274,34 @@ function requireReadinessAdminCredentials(runtimeEnv) {
 }
 
 function readinessFailureReport(err, { industry, channels } = {}) {
-  return {
-    status: "needs_attention",
-    ready: false,
-    checkedAt: new Date().toISOString(),
+  return verificationFailureReport(err, {
     expectedIndustry: industry || null,
-    actualIndustry: null,
-    requiredChannels: [...(channels || [])],
-    businessProfile: null,
-    applicationChecks: [],
-    channelChecks: [],
-    blocking: [{
-      key: err?.code || "readiness_verification",
-      status: "error",
-      summary: err?.message || "Readiness verification could not be completed.",
-    }],
-    summary: { blocking: 1, applicationReady: 0, applicationTotal: 0, channelReady: 0, channelTotal: 0 },
-  };
+    requiredChannels: channels || [],
+  });
+}
+
+function readinessLabel(readiness) {
+  if (readiness?.status === "ready_with_warnings") return "READY WITH WARNINGS";
+  if (readiness?.status === "verification_failed") return "VERIFICATION FAILED";
+  return readiness?.ready ? "READY" : "NEEDS ATTENTION";
 }
 
 function printReadiness(readiness) {
   console.log("\nReadiness verification");
-  console.log(`Status:         ${readiness.ready ? "READY" : "NEEDS ATTENTION"}`);
+  console.log(`Status:         ${readinessLabel(readiness)}`);
   console.log(`Channels:       ${(readiness.requiredChannels || []).join(", ")}`);
   if (readiness.businessProfile) {
     console.log(`Business type:  ${readiness.actualIndustry || "unknown"} (${readiness.businessProfile.status})`);
   }
   for (const item of readiness.applicationChecks || []) {
-    console.log(`${item.status === "ready" ? "[OK]" : "[!!]"} ${item.label}: ${item.summary}`);
+    console.log(`${item.configured && item.status === "ready" ? "[OK]" : "[!!]"} ${item.label}: ${item.summary}`);
   }
   for (const item of readiness.channelChecks || []) {
-    console.log(`${item.status === "ready" ? "[OK]" : "[!!]"} ${item.label}: ${item.summary}`);
+    console.log(`${item.configured && item.status === "ready" ? "[OK]" : "[!!]"} ${item.label}: ${item.summary}`);
+  }
+  if (readiness.warnings?.length) {
+    console.log("\nWarnings:");
+    for (const item of readiness.warnings) console.log(`- ${item.summary}`);
   }
   if (readiness.blocking?.length) {
     console.log("\nNeeds attention:");
@@ -312,14 +327,21 @@ function printHuman(result) {
     return;
   }
 
-  console.log("Client infrastructure provisioning completed; initial Render deploy is live.\n");
+  console.log("Client infrastructure provisioning completed; Render is live.\n");
   console.log(`Client:         ${result.clientSlug}`);
   console.log(`Industry:       ${result.industry}`);
   console.log(`Neon project:   ${result.neon.projectName} (${result.neon.projectId})`);
   console.log(`Render service: ${result.render.serviceName} (${result.render.serviceId})`);
   if (result.render.url) console.log(`Render URL:     ${result.render.url}`);
   console.log(`Initial deploy: ${result.render.deployId} (${result.render.deployStatus})`);
+  if (result.runtimeFinalization?.deployId) {
+    console.log(`Final deploy:   ${result.runtimeFinalization.deployId} (${result.runtimeFinalization.deployStatus})`);
+  }
+  if (result.render.deployedCommitSha) console.log(`Commit:         ${result.render.deployedCommitSha}`);
   console.log(`Profile lock:   ${result.profileContract.envKey}=${result.profileContract.value}`);
+  if (result.runtimeFinalization?.adminPasswordRemoved) {
+    console.log("Bootstrap secret: ADMIN_PASSWORD removed from Render after verified admin login");
+  }
   printReadiness(result.readiness);
   if (result.receiptPath) console.log(`\nReceipt:        ${result.receiptPath}`);
   if (result.receiptWarning) console.log(`Receipt warning: ${result.receiptWarning}`);
@@ -333,6 +355,15 @@ function safeErrorOutput(err, sensitiveValues = []) {
     partialResources: err.partialResources || null,
     retrySafe: err.retrySafe ?? null,
   };
+}
+
+async function captureInitialCommit(renderClient, result) {
+  try {
+    const deploy = await renderClient.getDeploy(result.render.serviceId, result.render.deployId);
+    return extractRenderCommitSha(deploy);
+  } catch (_) {
+    return null;
+  }
 }
 
 async function main() {
@@ -392,6 +423,7 @@ async function main() {
       };
     } else {
       requireExecutionConfig(plan, process.env);
+      validateRuntimeReadinessContract(runtimeEnv, channels);
       const admin = requireReadinessAdminCredentials(runtimeEnv);
       lock = acquireProvisioningLock(plan.resourceName);
 
@@ -409,9 +441,34 @@ async function main() {
         renderClient,
         neonClient,
       });
+      result = {
+        ...result,
+        requiredChannels: channels,
+        render: {
+          ...result.render,
+          deployedCommitSha: await captureInitialCommit(renderClient, result),
+        },
+      };
 
       let readiness;
+      let runtimeFinalization = null;
       try {
+        await verifyAdminLogin({
+          baseUrl: result.render.url,
+          username: admin.username,
+          password: admin.password,
+        });
+
+        runtimeFinalization = await finalizeRenderRuntime({
+          apiKey: process.env.PROVISIONING_RENDER_API_KEY,
+          serviceId: result.render.serviceId,
+          publicBaseUrl: result.render.url,
+          renderClient,
+        });
+        if (runtimeFinalization.deployedCommitSha) {
+          result.render.deployedCommitSha = runtimeFinalization.deployedCommitSha;
+        }
+
         readiness = await verifyClientReadiness({
           baseUrl: result.render.url,
           username: admin.username,
@@ -423,10 +480,8 @@ async function main() {
         readiness = readinessFailureReport(err, { industry: result.industry, channels });
       }
 
-      result = { ...result, requiredChannels: channels, readiness };
+      result = { ...result, runtimeFinalization, readiness };
 
-      // Cloud provisioning has already succeeded at this point. A local disk
-      // issue must never turn a live client deployment into a false failure.
       try {
         const receipt = writeProvisioningReceipt(result);
         result.receiptPath = path.relative(process.cwd(), receipt.receiptPath) || receipt.receiptPath;
@@ -438,8 +493,12 @@ async function main() {
     if (args.json) console.log(JSON.stringify(result, null, 2));
     else printHuman(result);
 
-    if (result.mode === "executed" && result.readiness?.ready !== true) {
-      process.exitCode = READINESS_NEEDS_ATTENTION_EXIT_CODE;
+    if (result.mode === "executed") {
+      if (result.readiness?.status === "verification_failed") {
+        process.exitCode = READINESS_VERIFICATION_FAILED_EXIT_CODE;
+      } else if (result.readiness?.ready !== true) {
+        process.exitCode = READINESS_NEEDS_ATTENTION_EXIT_CODE;
+      }
     }
   } catch (err) {
     const output = safeErrorOutput(err, sensitiveValues);
@@ -467,8 +526,10 @@ if (require.main === module) main();
 module.exports = {
   PROVISIONING_STATE_DIR,
   READINESS_NEEDS_ATTENTION_EXIT_CODE,
+  READINESS_VERIFICATION_FAILED_EXIT_CODE,
   acquireProvisioningLock,
   buildProvisioningReceipt,
+  captureInitialCommit,
   ensureProvisioningStateDir,
   isProcessRunning,
   loadRuntimeEnv,
