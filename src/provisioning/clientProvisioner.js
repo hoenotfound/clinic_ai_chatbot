@@ -10,6 +10,33 @@ const DEFAULT_NEON_REGION = "aws-ap-southeast-1";
 const DEFAULT_BUILD_COMMAND = "npm ci && npm --prefix portal-frontend ci && npm --prefix portal-frontend run build";
 const DEFAULT_START_COMMAND = "npm start";
 const DEFAULT_RESOURCE_PREFIX = "da-chatbot";
+const DEFAULT_HEALTH_CHECK_PATH = "/";
+
+const RENDER_REGIONS = Object.freeze([
+  "frankfurt",
+  "oregon",
+  "ohio",
+  "singapore",
+  "virginia",
+]);
+
+const RENDER_PLANS = Object.freeze([
+  "starter",
+  "starter_plus",
+  "standard",
+  "standard_plus",
+  "pro",
+  "pro_plus",
+  "pro_max",
+  "pro_ultra",
+  "free",
+  "custom",
+  "starter_legacy",
+  "standard_legacy",
+  "standard_plus_legacy",
+  "pro_legacy",
+  "pro_plus_legacy",
+]);
 
 const RESERVED_RUNTIME_ENV_KEYS = new Set([
   "DATABASE_URL",
@@ -75,6 +102,29 @@ function requireIndustry(value) {
   return normalized;
 }
 
+function requireRenderRegion(value) {
+  const region = String(value || "").trim().toLowerCase();
+  if (!RENDER_REGIONS.includes(region)) {
+    throw new ClientProvisioningError(
+      `Unsupported Render region "${value}". Use one of: ${RENDER_REGIONS.join(", ")}.`,
+      { code: "RENDER_REGION_UNSUPPORTED", stage: "validation" }
+    );
+  }
+  return region;
+}
+
+function normalizeRenderPlan(value) {
+  const plan = String(value || "").trim().toLowerCase();
+  if (!plan) return null;
+  if (!RENDER_PLANS.includes(plan)) {
+    throw new ClientProvisioningError(
+      `Unsupported Render plan "${value}". Use one of: ${RENDER_PLANS.join(", ")}.`,
+      { code: "RENDER_PLAN_UNSUPPORTED", stage: "validation" }
+    );
+  }
+  return plan;
+}
+
 function normalizeRuntimeEnv(runtimeEnv = {}) {
   if (!runtimeEnv || typeof runtimeEnv !== "object" || Array.isArray(runtimeEnv)) {
     throw new ClientProvisioningError("Runtime environment values must be provided as a key/value object.", {
@@ -118,9 +168,16 @@ function buildProvisioningPlan(input = {}, env = process.env) {
   const clientSlug = normalizeClientSlug(input.clientSlug);
   const industry = requireIndustry(input.industry);
   const runtimeEnv = normalizeRuntimeEnv(input.runtimeEnv || {});
-  const prefix = normalizeClientSlug(input.resourcePrefix || env.PROVISIONING_RESOURCE_PREFIX || DEFAULT_RESOURCE_PREFIX);
+  const prefix = normalizeClientSlug(
+    input.resourcePrefix || env.PROVISIONING_RESOURCE_PREFIX || DEFAULT_RESOURCE_PREFIX
+  );
   const name = resourceName(prefix, clientSlug);
-  const renderPlan = String(input.renderPlan || env.PROVISIONING_RENDER_PLAN || "").trim() || null;
+  const renderPlan = normalizeRenderPlan(
+    input.renderPlan || env.PROVISIONING_RENDER_PLAN || ""
+  );
+  const renderRegion = requireRenderRegion(
+    input.renderRegion || env.PROVISIONING_RENDER_REGION || DEFAULT_RENDER_REGION
+  );
 
   return {
     clientSlug,
@@ -136,10 +193,15 @@ function buildProvisioningPlan(input = {}, env = process.env) {
       ownerId: String(input.renderOwnerId || env.PROVISIONING_RENDER_OWNER_ID || "").trim() || null,
       repo: String(input.renderRepo || env.PROVISIONING_RENDER_REPO || DEFAULT_RENDER_REPO).trim(),
       branch: String(input.renderBranch || env.PROVISIONING_RENDER_BRANCH || DEFAULT_RENDER_BRANCH).trim(),
-      region: String(input.renderRegion || env.PROVISIONING_RENDER_REGION || DEFAULT_RENDER_REGION).trim(),
+      region: renderRegion,
       plan: renderPlan,
-      buildCommand: String(input.buildCommand || env.PROVISIONING_RENDER_BUILD_COMMAND || DEFAULT_BUILD_COMMAND).trim(),
-      startCommand: String(input.startCommand || env.PROVISIONING_RENDER_START_COMMAND || DEFAULT_START_COMMAND).trim(),
+      buildCommand: String(
+        input.buildCommand || env.PROVISIONING_RENDER_BUILD_COMMAND || DEFAULT_BUILD_COMMAND
+      ).trim(),
+      startCommand: String(
+        input.startCommand || env.PROVISIONING_RENDER_START_COMMAND || DEFAULT_START_COMMAND
+      ).trim(),
+      healthCheckPath: DEFAULT_HEALTH_CHECK_PATH,
       runtimeEnvKeys: Object.keys(runtimeEnv).sort(),
     },
     runtimeEnv,
@@ -173,9 +235,13 @@ function renderEnvVars(plan, databaseUrl) {
 
 function requireExecutionConfig(plan, env = process.env) {
   const missing = [];
-  if (!String(env.PROVISIONING_RENDER_API_KEY || "").trim()) missing.push("PROVISIONING_RENDER_API_KEY");
+  if (!String(env.PROVISIONING_RENDER_API_KEY || "").trim()) {
+    missing.push("PROVISIONING_RENDER_API_KEY");
+  }
   if (!plan.render.ownerId) missing.push("PROVISIONING_RENDER_OWNER_ID");
-  if (!String(env.PROVISIONING_NEON_API_KEY || "").trim()) missing.push("PROVISIONING_NEON_API_KEY");
+  if (!String(env.PROVISIONING_NEON_API_KEY || "").trim()) {
+    missing.push("PROVISIONING_NEON_API_KEY");
+  }
   if (!plan.render.plan) missing.push("PROVISIONING_RENDER_PLAN or --render-plan");
   if (missing.length) {
     throw new ClientProvisioningError(
@@ -189,7 +255,9 @@ function exactCollisionMessage(plan, renderMatches, neonMatches) {
   const collisions = [];
   if (renderMatches.length) collisions.push(`Render service "${plan.render.serviceName}"`);
   if (neonMatches.length) collisions.push(`Neon project "${plan.neon.projectName}"`);
-  return collisions.length ? `${collisions.join(" and ")} already exists. Provisioning stopped before creating anything.` : null;
+  return collisions.length
+    ? `${collisions.join(" and ")} already exists. Provisioning stopped before creating anything.`
+    : null;
 }
 
 function neonDefaultsFromCreate(response) {
@@ -237,11 +305,14 @@ async function provisionClient(input = {}, {
       neonClient.findProjectsByExactName(plan.neon.projectName),
     ]);
   } catch (err) {
-    throw new ClientProvisioningError(`Could not verify that provisioning names are unused: ${err.message}`, {
-      code: "COLLISION_CHECK_FAILED",
-      stage: "preflight",
-      retrySafe: true,
-    });
+    throw new ClientProvisioningError(
+      `Could not verify that provisioning names are unused: ${err.message}`,
+      {
+        code: "COLLISION_CHECK_FAILED",
+        stage: "preflight",
+        retrySafe: true,
+      }
+    );
   }
 
   const collision = exactCollisionMessage(plan, renderMatches, neonMatches);
@@ -260,6 +331,16 @@ async function provisionClient(input = {}, {
       regionId: plan.neon.region,
     });
   } catch (err) {
+    if (err?.status === 409) {
+      throw new ClientProvisioningError(
+        `Neon reported a resource conflict while creating "${plan.neon.projectName}". Another provisioning attempt may have won the race; inspect Neon before retrying.`,
+        {
+          code: "RESOURCE_NAME_COLLISION",
+          stage: "neon_create",
+          retrySafe: false,
+        }
+      );
+    }
     throw new ClientProvisioningError(
       `Neon project creation failed: ${err.message}. Because create requests are non-idempotent, rerun the command only after the preflight confirms that "${plan.neon.projectName}" does not exist.`,
       {
@@ -319,9 +400,21 @@ async function provisionClient(input = {}, {
       plan: plan.render.plan,
       buildCommand: plan.render.buildCommand,
       startCommand: plan.render.startCommand,
+      healthCheckPath: plan.render.healthCheckPath,
       envVars: renderEnvVars(plan, databaseUrl),
     });
   } catch (err) {
+    if (err?.status === 409) {
+      throw new ClientProvisioningError(
+        `Render reported a resource conflict for "${plan.render.serviceName}" after Neon was created. Another provisioning attempt may have won the race. Neon was left intact for recovery.`,
+        {
+          code: "RENDER_RESOURCE_COLLISION",
+          stage: "render_create",
+          partialResources,
+          retrySafe: false,
+        }
+      );
+    }
     throw new ClientProvisioningError(
       `Render service creation failed after Neon project ${neon.projectId} was created: ${err.message}. Neon was not deleted automatically. Resolve the Render issue, then either complete provisioning deliberately or remove the unused Neon project manually.`,
       {
@@ -334,6 +427,42 @@ async function provisionClient(input = {}, {
   }
 
   const service = renderResponse?.service || renderResponse || {};
+  const serviceId = service.id || null;
+  const deployId = renderResponse?.deployId || null;
+  const renderPartialResources = {
+    ...partialResources,
+    renderServiceId: serviceId,
+    renderServiceName: service.name || plan.render.serviceName,
+    renderDeployId: deployId,
+  };
+
+  if (!serviceId || !deployId) {
+    throw new ClientProvisioningError(
+      "Render created a service but did not return both the service ID and initial deploy ID required to verify that the deployment becomes live.",
+      {
+        code: "RENDER_CREATE_RESPONSE_INCOMPLETE",
+        stage: "render_created",
+        partialResources: renderPartialResources,
+        retrySafe: false,
+      }
+    );
+  }
+
+  let deploy;
+  try {
+    deploy = await renderClient.waitForDeploy(serviceId, deployId);
+  } catch (err) {
+    throw new ClientProvisioningError(
+      `Render service was created but its initial deploy did not become live: ${err.message}. The Render service and Neon project were left intact for inspection/recovery.`,
+      {
+        code: "RENDER_DEPLOY_FAILED",
+        stage: "render_deploy",
+        partialResources: renderPartialResources,
+        retrySafe: false,
+      }
+    );
+  }
+
   return {
     mode: "executed",
     clientSlug: plan.clientSlug,
@@ -344,12 +473,16 @@ async function provisionClient(input = {}, {
       region: plan.neon.region,
     },
     render: {
-      serviceId: service.id || null,
+      serviceId,
       serviceName: service.name || plan.render.serviceName,
       url: service.serviceDetails?.url || service.url || null,
-      deployId: renderResponse?.deployId || null,
+      deployId,
+      deployStatus: String(deploy?.status || "live").toLowerCase(),
       region: plan.render.region,
       plan: plan.render.plan,
+      repo: plan.render.repo,
+      branch: plan.render.branch,
+      healthCheckPath: plan.render.healthCheckPath,
     },
     profileContract: {
       envKey: "INITIAL_BUSINESS_TYPE",
@@ -362,18 +495,23 @@ async function provisionClient(input = {}, {
 module.exports = {
   ClientProvisioningError,
   DEFAULT_BUILD_COMMAND,
+  DEFAULT_HEALTH_CHECK_PATH,
   DEFAULT_NEON_REGION,
   DEFAULT_RENDER_BRANCH,
   DEFAULT_RENDER_REGION,
   DEFAULT_RENDER_REPO,
   DEFAULT_RESOURCE_PREFIX,
   DEFAULT_START_COMMAND,
+  RENDER_PLANS,
+  RENDER_REGIONS,
   RESERVED_RUNTIME_ENV_KEYS,
   buildProvisioningPlan,
   normalizeClientSlug,
+  normalizeRenderPlan,
   normalizeRuntimeEnv,
   provisionClient,
   publicPlan,
   renderEnvVars,
   requireIndustry,
+  requireRenderRegion,
 };
