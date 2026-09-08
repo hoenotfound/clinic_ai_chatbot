@@ -67,6 +67,25 @@ function extractPromoImageId(url) {
   return match ? Number(match[1]) : null;
 }
 
+function hydrateStoredConfig(storedConfig = {}) {
+  const hydratedConfig = hydrateBusinessConfig(storedConfig);
+  return {
+    ...hydratedConfig,
+    automatedFollowUp: {
+      ...hydratedConfig.automatedFollowUp,
+      ...(storedConfig.automatedFollowUp || {}),
+    },
+    leadScoring: {
+      ...hydratedConfig.leadScoring,
+      ...(storedConfig.leadScoring || {}),
+    },
+    leadDistribution: {
+      ...DEFAULT_LEAD_DISTRIBUTION,
+      ...(storedConfig.leadDistribution || {}),
+    },
+  };
+}
+
 /**
  * Deletes any promo_images row that isn't referenced by the current
  * config's promotions and is older than the grace period — cleans up
@@ -133,22 +152,7 @@ async function loadConfig() {
   }
 
   const storedConfig = result.rows[0].data || {};
-  const hydratedConfig = hydrateBusinessConfig(storedConfig);
-  Object.assign(clinicConfig, {
-    ...hydratedConfig,
-    automatedFollowUp: {
-      ...hydratedConfig.automatedFollowUp,
-      ...(storedConfig.automatedFollowUp || {}),
-    },
-    leadScoring: {
-      ...hydratedConfig.leadScoring,
-      ...(storedConfig.leadScoring || {}),
-    },
-    leadDistribution: {
-      ...DEFAULT_LEAD_DISTRIBUTION,
-      ...(storedConfig.leadDistribution || {}),
-    },
-  });
+  industrySetupRepo.replaceLiveConfig(hydrateStoredConfig(storedConfig));
   await pipelineDefaultsRepo.ensureIndustryPipelineDefaults(clinicConfig);
   return clinicConfig;
 }
@@ -164,50 +168,83 @@ function getConfig() {
  * During the migration, clinicName and businessName are kept synchronized so
  * old modules/UI and new industry-neutral code cannot drift to different names.
  *
+ * Every config writer locks the clinic_config row and builds from the value it
+ * reads after that lock is acquired. This serializes Settings with the atomic
+ * industry selector, so a stale request can never overwrite a profile switch
+ * that committed while it was waiting for the row lock.
+ *
  * The first ordinary Settings save also locks a still-selectable default
  * industry seed. Once client-specific facts are being configured, switching the
  * entire industry profile would be destructive and must no longer be allowed.
  */
-async function updateConfig(updates) {
-  const nextConfig = { ...clinicConfig };
+async function updateConfig(updates, database = pool) {
+  const client = await database.connect();
+  let inTransaction = false;
+  let nextConfig;
   const changedKeys = [];
-  for (const key of [...CONFIG_KEYS, ...INTERNAL_CONFIG_KEYS]) {
-    if (Object.prototype.hasOwnProperty.call(updates, key)) {
-      nextConfig[key] = updates[key];
-      changedKeys.push(key);
+
+  try {
+    await client.query("BEGIN");
+    inTransaction = true;
+
+    const result = await client.query(
+      "SELECT data FROM clinic_config WHERE id = 1 FOR UPDATE"
+    );
+    if (!result.rows?.length) {
+      throw new Error("clinic_config row is missing.");
     }
+
+    // Build from the locked database value, not the process-local cache. During
+    // rolling deploys another instance may have committed a profile selection
+    // immediately before this request acquired the row lock.
+    nextConfig = hydrateStoredConfig(result.rows[0].data || {});
+
+    for (const key of [...CONFIG_KEYS, ...INTERNAL_CONFIG_KEYS]) {
+      if (Object.prototype.hasOwnProperty.call(updates, key)) {
+        nextConfig[key] = updates[key];
+        changedKeys.push(key);
+      }
+    }
+
+    const hasBusinessName = Object.prototype.hasOwnProperty.call(updates, "businessName");
+    const hasClinicName = Object.prototype.hasOwnProperty.call(updates, "clinicName");
+    if (hasBusinessName) {
+      nextConfig.businessName = updates.businessName;
+      nextConfig.clinicName = updates.businessName;
+      if (!changedKeys.includes("clinicName")) changedKeys.push("clinicName");
+    } else if (hasClinicName) {
+      nextConfig.clinicName = updates.clinicName;
+      nextConfig.businessName = updates.clinicName;
+      if (!changedKeys.includes("businessName")) changedKeys.push("businessName");
+    }
+
+    const changedPublicSetting = changedKeys.some((key) => CONFIG_KEYS.includes(key));
+    const industrySetup = normalizeIndustrySetup(nextConfig.industrySetup);
+    if (changedPublicSetting && industrySetup.selectable && !industrySetup.locked) {
+      nextConfig.industrySetup = lockIndustrySetup(industrySetup, {
+        source: "settings",
+        reason: "settings_configured",
+      });
+      changedKeys.push("industrySetup");
+    }
+
+    await client.query(
+      "UPDATE clinic_config SET data = $1, updated_at = now() WHERE id = 1",
+      [nextConfig]
+    );
+    await client.query("COMMIT");
+    inTransaction = false;
+  } catch (err) {
+    if (inTransaction) await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
   }
 
-  const hasBusinessName = Object.prototype.hasOwnProperty.call(updates, "businessName");
-  const hasClinicName = Object.prototype.hasOwnProperty.call(updates, "clinicName");
-  if (hasBusinessName) {
-    nextConfig.businessName = updates.businessName;
-    nextConfig.clinicName = updates.businessName;
-    if (!changedKeys.includes("clinicName")) changedKeys.push("clinicName");
-  } else if (hasClinicName) {
-    nextConfig.clinicName = updates.clinicName;
-    nextConfig.businessName = updates.clinicName;
-    if (!changedKeys.includes("businessName")) changedKeys.push("businessName");
-  }
-
-  const changedPublicSetting = changedKeys.some((key) => CONFIG_KEYS.includes(key));
-  const industrySetup = normalizeIndustrySetup(nextConfig.industrySetup);
-  if (changedPublicSetting && industrySetup.selectable && !industrySetup.locked) {
-    nextConfig.industrySetup = lockIndustrySetup(industrySetup, {
-      source: "settings",
-      reason: "settings_configured",
-    });
-    changedKeys.push("industrySetup");
-  }
-
-  await pool.query("UPDATE clinic_config SET data = $1, updated_at = now() WHERE id = 1", [
-    nextConfig,
-  ]);
-
-  // Apply live settings only after Postgres accepts the save. This matters
-  // most for automations: a failed browser save must never briefly enable a
-  // tool that will not survive the next restart.
-  Object.assign(clinicConfig, nextConfig);
+  // Apply live settings only after Postgres accepts the save. Replace rather
+  // than merge so a process whose cache was stale after another instance's
+  // profile selection cannot retain keys from the previous industry profile.
+  industrySetupRepo.replaceLiveConfig(nextConfig);
 
   // If this update touched promotions, some image(s) may have just been
   // dropped from the config (staff removed a promotion entirely, or
@@ -234,6 +271,7 @@ module.exports = {
   PROMO_IMAGE_BACKSTOP_PRUNE_INTERVAL_MS,
   getConfig,
   getIndustrySetupStatus: industrySetupRepo.getIndustrySetupStatus,
+  hydrateStoredConfig,
   loadConfig,
   pruneOrphanedPromoImages,
   selectIndustryProfile: industrySetupRepo.selectIndustryProfile,
