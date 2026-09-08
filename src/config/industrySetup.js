@@ -32,6 +32,7 @@ function createSeedIndustrySetup(env = process.env, now = new Date()) {
     locked: explicit,
     source: explicit ? "environment" : "default",
     selectedAt: explicit ? now.toISOString() : null,
+    selectedBy: null,
     lockReason: explicit ? "environment_selected" : null,
   };
 }
@@ -45,6 +46,7 @@ function normalizeIndustrySetup(value) {
       locked: true,
       source: "legacy",
       selectedAt: null,
+      selectedBy: null,
       lockReason: "legacy_existing_deployment",
     };
   }
@@ -54,6 +56,7 @@ function normalizeIndustrySetup(value) {
     locked: value.locked === true,
     source: String(value.source || "unknown"),
     selectedAt: value.selectedAt || null,
+    selectedBy: value.selectedBy ? String(value.selectedBy) : null,
     lockReason: value.lockReason || null,
   };
 }
@@ -61,6 +64,7 @@ function normalizeIndustrySetup(value) {
 function lockIndustrySetup(value, {
   source = "setup_status",
   reason = "profile_confirmed",
+  actor = null,
   now = new Date(),
 } = {}) {
   const current = normalizeIndustrySetup(value);
@@ -70,6 +74,7 @@ function lockIndustrySetup(value, {
     locked: true,
     source,
     selectedAt: current.selectedAt || now.toISOString(),
+    selectedBy: current.selectedBy || (actor ? String(actor) : null),
     lockReason: reason,
   };
 }
