@@ -122,9 +122,6 @@ function buildPerformanceTabs(analyticsUi) {
 export default function Analytics() {
   const navigate = useNavigate();
   const { config } = useBusinessConfig();
-  const ui = getBusinessTerminology(config || {});
-  const analyticsUi = ui.analytics;
-  const performanceTabs = buildPerformanceTabs(analyticsUi);
   const initial = useMemo(() => initialFilters(), []);
   const [draftFilters, setDraftFilters] = useState(initial);
   const [appliedFilters, setAppliedFilters] = useState(initial);
@@ -136,6 +133,11 @@ export default function Analytics() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const requestIdRef = useRef(0);
+  const effectiveAnalyticsConfig = data?.analyticsBusinessType
+    ? { ...(config || {}), businessType: data.analyticsBusinessType }
+    : (config || {});
+  const analyticsUi = getBusinessTerminology(effectiveAnalyticsConfig).analytics;
+  const performanceTabs = buildPerformanceTabs(analyticsUi);
 
   useEffect(() => {
     const requestId = ++requestIdRef.current;
