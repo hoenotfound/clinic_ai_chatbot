@@ -75,6 +75,69 @@ export function formatDateTime(value, options = {}) {
   });
 }
 
+function hasQualificationValue(value) {
+  return value !== null && value !== undefined && String(value).trim() !== "";
+}
+
+export function latestQualificationMetadata(activities = [], fields = []) {
+  const wantedKeys = new Set(
+    (fields || [])
+      .filter((field) => field?.source === "activity" && field.path)
+      .map((field) => field.path)
+  );
+  const latest = {};
+  if (wantedKeys.size === 0) return latest;
+
+  for (const activity of activities || []) {
+    const metadata = activity?.metadata;
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) continue;
+    // Current conversion-ready persistence keeps this historical outcome key
+    // for compatibility. Restrict qualification reads to those activities so
+    // unrelated notes/scoring metadata cannot accidentally populate project UI.
+    if (metadata.outcome !== "booking_ready") continue;
+
+    for (const key of wantedKeys) {
+      if (!Object.hasOwn(latest, key) && hasQualificationValue(metadata[key])) {
+        latest[key] = metadata[key];
+      }
+    }
+    if ([...wantedKeys].every((key) => Object.hasOwn(latest, key))) break;
+  }
+  return latest;
+}
+
+export function formatQualificationValue(value, format = "text") {
+  if (!hasQualificationValue(value)) return "";
+  if (format === "money") return formatMoney(value);
+  if (format === "dateTime") return formatDateTime(value);
+  if (format === "nextStep") {
+    const text = String(value).trim().replace(/[_-]+/g, " ");
+    return text ? `${text[0].toUpperCase()}${text.slice(1)}` : "";
+  }
+  if (format === "title") {
+    const text = String(value).trim();
+    return text ? `${text[0].toUpperCase()}${text.slice(1)}` : "";
+  }
+  return String(value).trim();
+}
+
+export function buildQualificationRows(qualificationView, lead = {}, activities = []) {
+  const fields = qualificationView?.fields || [];
+  const activityMetadata = latestQualificationMetadata(activities, fields);
+  return fields.map((field) => {
+    const rawValue = field.source === "activity"
+      ? activityMetadata[field.path]
+      : lead?.[field.path];
+    const value = formatQualificationValue(rawValue, field.format);
+    return {
+      key: field.key || field.path,
+      label: field.label || field.key || field.path,
+      value,
+      hasValue: Boolean(value),
+    };
+  });
+}
+
 export function formatRelative(value, now = Date.now()) {
   if (!value) return "No messages";
   const date = new Date(value);
