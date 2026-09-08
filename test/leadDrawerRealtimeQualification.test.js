@@ -19,7 +19,11 @@ test("realtime qualification refresh targets the open lead without leaking restr
   assert.equal(shouldRefreshLeadActivities('{"leadId":42}', null), false);
 });
 
-test("LeadDrawer refreshes activities from pipeline_changed and cleans up its realtime connection", () => {
+test("Pipeline reuses one realtime connection to refresh the open drawer activities", () => {
+  const pipeline = fs.readFileSync(
+    path.join(__dirname, "../portal-frontend/src/pages/Pipeline.jsx"),
+    "utf8"
+  );
   const drawer = fs.readFileSync(
     path.join(
       __dirname,
@@ -28,12 +32,18 @@ test("LeadDrawer refreshes activities from pipeline_changed and cleans up its re
     "utf8"
   );
 
-  assert.match(drawer, /new EventSource\("\/api\/conversations\/events"/);
-  assert.match(drawer, /source\.addEventListener\("pipeline_changed", refreshForPipelineEvent\)/);
-  assert.match(drawer, /shouldRefreshLeadActivities\(event\?\.data, lead\.id\)/);
-  assert.match(drawer, /refreshTimer = setTimeout\(\(\) => \{/);
-  assert.match(drawer, /loadActivities\(\);/);
-  assert.match(drawer, /source\.removeEventListener\("pipeline_changed", refreshForPipelineEvent\)/);
-  assert.match(drawer, /source\.close\(\)/);
-  assert.match(drawer, /version === requestVersion/);
+  assert.equal((pipeline.match(/new EventSource/g) || []).length, 1);
+  assert.equal((drawer.match(/new EventSource/g) || []).length, 0);
+  assert.match(pipeline, /source\.addEventListener\("pipeline_changed", handlePipelineChanged\)/);
+  assert.match(pipeline, /shouldRefreshLeadActivities\(event\?\.data, openLeadId\)/);
+  assert.match(pipeline, /pendingActivityRefreshRef\.current = true/);
+  assert.match(pipeline, /setActivityRefreshToken\(\(value\) => value \+ 1\)/);
+  assert.match(pipeline, /activityRefreshToken=\{activityRefreshToken\}/);
+  assert.match(pipeline, /source\.removeEventListener\("pipeline_changed", handlePipelineChanged\)/);
+  assert.match(pipeline, /source\.close\(\)/);
+
+  assert.match(drawer, /activityRefreshToken = 0/);
+  assert.match(drawer, /api\.listLeadActivities\(lead\.id\)/);
+  assert.match(drawer, /\[activityRefreshToken, lead\.id, onToast\]/);
+  assert.match(drawer, /if \(!cancelled\) setActivities\(data\)/);
 });
