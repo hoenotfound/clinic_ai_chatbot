@@ -281,7 +281,7 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
                   </select>
                   {staleCurrentBranch ? (
                     <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-danger)]">
-                      This is historical assignment data. You can save other lead changes without touching it, but choose a current {ui.locationSingular} or Unassigned before changing this assignment.
+                      Historical {ui.locationSingular} data is retained. You can save other lead changes without touching it, but choose a current {ui.locationSingular} or Unassigned before changing this assignment.
                     </p>
                   ) : (
                     <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
