@@ -527,12 +527,15 @@ function evaluateReadiness(overview, {
   }
   for (const item of [...applicationChecks, ...channelChecks]) {
     if (item.configured !== true || item.status !== "ready") {
+      const missing = item.status === "missing";
       blocking.push({
         key: item.key,
-        status: item.configured !== true ? "not_configured" : item.status,
-        summary: item.configured !== true
-          ? `${item.label} is required but is not fully configured.`
-          : item.summary,
+        status: missing ? "missing" : item.configured !== true ? "not_configured" : item.status,
+        summary: missing
+          ? item.summary
+          : item.configured !== true
+            ? `${item.label} is required but is not fully configured.`
+            : item.summary,
       });
     }
   }
