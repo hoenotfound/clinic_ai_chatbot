@@ -71,8 +71,8 @@ Go-live rules:
   Required Setup Status checks must be configured and ready. Database migrations
   and inbound processing must be healthy. AI runtime errors block go-live while
   degraded-but-usable AI is reported as READY WITH WARNINGS. Every purchased
-  channel must have real inbound activity, a successful newer outbound reply,
-  and no newer unresolved delivery failure.
+  channel must have real inbound activity, a provider-accepted AI reply to that
+  conversation, and no newer failed AI reply attempt.
 
 Runtime finalization:
   After the bootstrap admin login succeeds, the provisioner sets PUBLIC_BASE_URL
@@ -459,12 +459,13 @@ async function main() {
           password: admin.password,
         });
 
-        runtimeFinalization = await finalizeRenderRuntime({
+        const finalized = await finalizeRenderRuntime({
           apiKey: process.env.PROVISIONING_RENDER_API_KEY,
           serviceId: result.render.serviceId,
           publicBaseUrl: result.render.url,
           renderClient,
         });
+        runtimeFinalization = { ...finalized, completed: true, failureCode: null };
         if (runtimeFinalization.deployedCommitSha) {
           result.render.deployedCommitSha = runtimeFinalization.deployedCommitSha;
         }
@@ -477,6 +478,13 @@ async function main() {
           requiredChannels: channels,
         });
       } catch (err) {
+        if (err?.partialFinalization) {
+          runtimeFinalization = {
+            ...err.partialFinalization,
+            completed: false,
+            failureCode: err.code || "RENDER_RUNTIME_FINALIZATION_FAILED",
+          };
+        }
         readiness = readinessFailureReport(err, { industry: result.industry, channels });
       }
 
