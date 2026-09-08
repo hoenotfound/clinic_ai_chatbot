@@ -8,6 +8,10 @@ const {
   metricDelta,
   percent,
 } = require("../src/db/analyticsRepo");
+const {
+  getAnalyticsPipelineProfile,
+  milestoneTimesCte,
+} = require("../src/db/analyticsPipelineProfile");
 
 test("analytics percentage helpers handle empty denominators", () => {
   assert.equal(percent(2, 10), 20);
@@ -48,7 +52,7 @@ test("conversion comparison is expressed as percentage-point movement", () => {
   assert.equal(comparison.deltas.estimatedWonValue, 20);
 });
 
-test("funnel reports stage rates and leads not yet progressed", () => {
+test("clinic funnel preserves historical stages and rates", () => {
   const funnel = buildFunnel({
     newLeads: 100,
     contacted: 80,
@@ -57,12 +61,85 @@ test("funnel reports stage rates and leads not yet progressed", () => {
     won: 12,
   });
 
+  assert.deepEqual(
+    funnel.map((stage) => stage.label),
+    ["New Leads", "Contacted", "Appointment Set", "Visited Clinic", "Converted / Won"]
+  );
   assert.deepEqual(funnel.map((stage) => stage.count), [100, 80, 40, 30, 12]);
   assert.equal(funnel[1].fromPreviousRate, 80);
   assert.equal(funnel[2].fromPreviousRate, 50);
   assert.equal(funnel[2].fromLeadRate, 40);
   assert.equal(funnel[2].dropOff, 40);
   assert.equal(funnel[4].dropOff, 18);
+});
+
+test("renovation analytics use qualified, next-step and decision milestones", () => {
+  const profile = getAnalyticsPipelineProfile({ businessType: "home_renovation" });
+  assert.equal(profile.qualificationSystemKey, "qualified");
+  assert.equal(profile.primarySystemKey, "next_step");
+  assert.equal(profile.secondarySystemKey, "decision");
+
+  const sql = milestoneTimesCte(profile);
+  assert.match(sql, /stage\.system_key = 'qualified'/);
+  assert.match(sql, /stage\.system_key = 'next_step'/);
+  assert.match(sql, /stage\.system_key = 'decision'/);
+  assert.doesNotMatch(sql, /stage\.system_key = 'appointment_set'/);
+
+  const funnel = buildFunnel(
+    {
+      newLeads: 100,
+      contacted: 80,
+      qualified: 60,
+      appointments: 40,
+      visits: 25,
+      won: 10,
+    },
+    profile
+  );
+  assert.deepEqual(
+    funnel.map((stage) => stage.label),
+    ["New Leads", "Contacted", "Qualified", "Quotation / Site Visit", "Decision", "Won"]
+  );
+  assert.deepEqual(funnel.map((stage) => stage.count), [100, 80, 60, 40, 25, 10]);
+});
+
+test("generic analytics stay conservative and do not inherit appointment status semantics", () => {
+  const profile = getAnalyticsPipelineProfile({ businessType: "generic" });
+  assert.equal(profile.qualificationSystemKey, null);
+  assert.equal(profile.primarySystemKey, "qualified");
+  assert.equal(profile.secondarySystemKey, "decision");
+  assert.equal(profile.appointmentStatusFallback, false);
+
+  const sql = milestoneTimesCte(profile);
+  assert.match(sql, /stage\.system_key = 'qualified'/);
+  assert.match(sql, /stage\.system_key = 'decision'/);
+  assert.doesNotMatch(sql, /j\.appointment_status IN \('set', 'visited'\)/);
+
+  const funnel = buildFunnel(
+    { newLeads: 30, contacted: 20, appointments: 14, visits: 8, won: 4 },
+    profile
+  );
+  assert.deepEqual(
+    funnel.map((stage) => stage.label),
+    ["New Leads", "Contacted", "Qualified", "Decision", "Won"]
+  );
+});
+
+test("in-use renovation pipeline falls back to clinic analytics only when legacy stage keys remain", () => {
+  const legacy = getAnalyticsPipelineProfile(
+    { businessType: "home_renovation" },
+    { availableSystemKeys: ["new", "contacted", "appointment_set", "visited", "won", "lost"] }
+  );
+  assert.equal(legacy.businessType, "aesthetic_clinic");
+  assert.equal(legacy.configuredBusinessType, "home_renovation");
+  assert.equal(legacy.legacyStageFallback, true);
+
+  const native = getAnalyticsPipelineProfile(
+    { businessType: "home_renovation" },
+    { availableSystemKeys: ["new", "contacted", "qualified", "next_step", "decision", "won", "lost"] }
+  );
+  assert.equal(native.businessType, "home_renovation");
+  assert.equal(native.legacyStageFallback, false);
 });
 
 test("analytics concurrency limiter never exceeds the configured query cap", async () => {
