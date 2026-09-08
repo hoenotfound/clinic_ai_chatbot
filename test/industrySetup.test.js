@@ -19,9 +19,13 @@ const {
   getPipelineProfile,
 } = require("../src/config/pipelineProfiles");
 const {
+  setRuntimeAnalyticsPipelineBusinessType,
+} = require("../src/db/analyticsPipelineProfile");
+const {
   buildSelectedConfig,
   selectIndustryProfile,
 } = require("../src/db/industrySetupRepo");
+const { CONFIG_KEYS } = require("../src/db/configRepo");
 const { DEFAULT_LEAD_DISTRIBUTION } = require("../src/utils/leadDistribution");
 
 function clone(value) {
@@ -237,6 +241,16 @@ test("atomic industry selection replaces untouched clinic config and Pipeline wi
     assert.equal(status.alignment.leadTemperature.mode, "project");
     assert.equal(status.alignment.analytics.businessType, "home_renovation");
 
+    const lockStatements = fake.queries
+      .map(({ sql }) => sql)
+      .filter((sql) => /^LOCK TABLE/.test(sql));
+    assert.deepEqual(lockStatements, [
+      "LOCK TABLE contacts IN SHARE ROW EXCLUSIVE MODE",
+      "LOCK TABLE messages IN SHARE ROW EXCLUSIVE MODE",
+      "LOCK TABLE leads IN SHARE ROW EXCLUSIVE MODE",
+      "LOCK TABLE pipeline_stages IN ACCESS EXCLUSIVE MODE",
+    ]);
+
     const updateIndex = fake.queries.findIndex(({ sql }) => /UPDATE clinic_config SET data/.test(sql));
     const deleteIndex = fake.queries.findIndex(({ sql }) => sql === "DELETE FROM pipeline_stages");
     const commitIndex = fake.queries.findIndex(({ sql }) => sql === "COMMIT");
@@ -245,6 +259,7 @@ test("atomic industry selection replaces untouched clinic config and Pipeline wi
   } finally {
     for (const key of Object.keys(clinicConfig)) delete clinicConfig[key];
     Object.assign(clinicConfig, snapshot);
+    setRuntimeAnalyticsPipelineBusinessType(snapshot.businessType || "aesthetic_clinic");
   }
 });
 
@@ -283,13 +298,14 @@ test("customized Pipeline and legacy setup metadata both block industry switchin
 });
 
 test("normal Settings cannot patch businessType and the portal exposes only the dedicated Setup Status action", () => {
-  const configRoute = fs.readFileSync(path.join(__dirname, "../src/routes/config.js"), "utf8");
+  const configRepo = fs.readFileSync(path.join(__dirname, "../src/db/configRepo.js"), "utf8");
   const setupRoute = fs.readFileSync(path.join(__dirname, "../src/routes/setupStatus.js"), "utf8");
   const apiSource = fs.readFileSync(path.join(__dirname, "../portal-frontend/src/api.js"), "utf8");
   const setupPage = fs.readFileSync(path.join(__dirname, "../portal-frontend/src/pages/SetupStatus.jsx"), "utf8");
   const panel = fs.readFileSync(path.join(__dirname, "../portal-frontend/src/components/BusinessProfileSetupPanel.jsx"), "utf8");
 
-  assert.doesNotMatch(configRoute, /businessType\s*:/);
+  assert.equal(CONFIG_KEYS.includes("businessType"), false);
+  assert.match(configRepo, /reason:\s*"settings_configured"/);
   assert.match(setupRoute, /router\.post\("\/business-profile"/);
   assert.match(apiSource, /selectBusinessProfile/);
   assert.match(apiSource, /\/setup-status\/business-profile/);
