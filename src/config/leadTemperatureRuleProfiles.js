@@ -159,6 +159,9 @@ const RENOVATION_POSITIVE_CONTRAST_PATTERNS = frozenPatterns([
 const RENOVATION_UNCLEAR_HOT_PATTERNS = frozenPatterns([
   /\b(?:maybe|perhaps|not ready|not yet|still thinking|need to think|just (?:asking|checking|comparing)|still comparing|compare (?:first|quotes?)|comparing quotes?|maybe later|later on|not now|too expensive|over budget|budget (?:is )?too high)\b/,
   /\b(?:don't|do not)\s+want\s+(?:a\s+)?(?:site visit|quotation|quote|measurement)\s+(?:yet|now)\b/,
+  /\b(?:do|does|did)\s+(?:i|we)\s+need\s+(?:a\s+)?(?:site visit|site measurement|measurement|quotation|quote)\b/,
+  /\b(?:perlu|kena)\s+(?:saya|kami)?\s*(?:buat|adakan|arrange)?\s*(?:site visit|lawatan tapak|ukur|ukuran|measurement|quotation|quote|sebut harga)\s*(?:ke|kah)\b/,
+  /(?:需要|要)(?:上门|上門|现场|現場)?(?:测量|測量|量尺|site visit|报价|報價|quotation|quote)吗/,
   /\b(?:if|provided|assuming|as long as)\b.{0,80}\b(?:i|we)\s+(?:can|could|will|would|might)\s+(?:proceed|go ahead|move forward|start)\b/,
   /\b(?:i|we)\s+(?:can|could|will|would|might)\s+(?:proceed|go ahead|move forward|start)\b.{0,80}\b(?:if|provided|assuming|as long as)\b/,
   /\b(?:mungkin|belum (?:bersedia|nak|mahu)|masih fikir|nak fikir dulu|banding dulu|masih banding|compare dulu|nanti dulu|kemudian|mahal sangat|terlalu mahal|over budget|lebih bajet)\b/,
@@ -173,6 +176,7 @@ const RENOVATION_UNCLEAR_HOT_PATTERNS = frozenPatterns([
 const RENOVATION_NEGATED_HOT_PATTERNS = frozenPatterns([
   /\b(?:don't|do not|won't|will not|not going to)\s+(?:want\s+to\s+)?(?:proceed|go ahead|move forward|continue|start|arrange\s+(?:a\s+)?site visit|request\s+(?:a\s+)?(?:quotation|quote))\b/,
   /\b(?:tak|tidak)\s+(?:nak|mahu|akan)\s+(?:teruskan|proceed|mula|buat\s+(?:renovation|ubah suai)|arrange\s+site visit|minta\s+(?:quotation|sebut harga))\b/,
+  /\b(?:tak|tidak)\s+nak\s+(?:site visit|lawatan tapak|site measurement|measurement|ukur|ukuran|quotation|quote|sebut harga)\b/,
   /(?:不想|不要|不打算)(?:继续|繼續|进行|進行|开始|開始|安排上门|安排上門|要求报价|要求報價)/,
 ]);
 
