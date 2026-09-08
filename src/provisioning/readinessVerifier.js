@@ -20,6 +20,14 @@ const CHANNEL_CHECK_KEYS = Object.freeze({
   instagram: ["instagram", "meta_webhook"],
 });
 const ALL_CHANNEL_CHECK_KEYS = new Set(Object.values(CHANNEL_CHECK_KEYS).flat());
+const REQUIRED_CORE_CHECK_KEYS = Object.freeze([
+  "database",
+  "security",
+  "public_url",
+  "admin_account",
+  "ai",
+  "r2",
+]);
 
 class ClientReadinessError extends Error {
   constructor(message, {
@@ -58,7 +66,7 @@ function normalizeBaseUrl(value) {
       stage: "validation",
     });
   }
-  const localHost = ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
+  const localHost = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
   if (parsed.protocol !== "https:" && !localHost) {
     throw new ClientReadinessError(
       "Readiness verification refuses to send administrator credentials over non-HTTPS remote URLs.",
@@ -227,6 +235,16 @@ function evaluateBusinessProfile(profile, expectedIndustry) {
   };
 }
 
+function missingRequiredCheck(key) {
+  return {
+    key,
+    label: key,
+    status: "missing",
+    configured: false,
+    summary: `Required Setup Status check "${key}" was not returned.`,
+  };
+}
+
 function evaluateReadiness(overview, {
   expectedIndustry,
   requiredChannels,
@@ -236,9 +254,22 @@ function evaluateReadiness(overview, {
   const checks = Array.isArray(overview?.checks) ? overview.checks : [];
   const byKey = new Map(checks.map((check) => [check.key, check]));
 
-  const applicationChecks = checks
-    .filter((check) => check.optional !== true && !ALL_CHANNEL_CHECK_KEYS.has(check.key))
-    .map((check) => readinessItem(check));
+  const applicationChecks = [];
+  const seenApplicationKeys = new Set();
+  for (const key of REQUIRED_CORE_CHECK_KEYS) {
+    applicationChecks.push(readinessItem(byKey.get(key) || missingRequiredCheck(key)));
+    seenApplicationKeys.add(key);
+  }
+  for (const check of checks) {
+    if (
+      check.optional !== true &&
+      !ALL_CHANNEL_CHECK_KEYS.has(check.key) &&
+      !seenApplicationKeys.has(check.key)
+    ) {
+      applicationChecks.push(readinessItem(check));
+      seenApplicationKeys.add(check.key);
+    }
+  }
 
   const channelChecks = [];
   const seenKeys = new Set();
@@ -246,7 +277,7 @@ function evaluateReadiness(overview, {
     for (const key of CHANNEL_CHECK_KEYS[channel]) {
       if (seenKeys.has(key)) continue;
       seenKeys.add(key);
-      const check = byKey.get(key) || { key, label: key, status: "missing", configured: false };
+      const check = byKey.get(key) || missingRequiredCheck(key);
       channelChecks.push({ ...readinessItem(check), channel });
     }
   }
@@ -364,6 +395,7 @@ module.exports = {
   CHANNEL_CHECK_KEYS,
   ClientReadinessError,
   DEFAULT_READINESS_TIMEOUT_MS,
+  REQUIRED_CORE_CHECK_KEYS,
   SUPPORTED_CHANNELS,
   cookieHeaderFromResponse,
   evaluateBusinessProfile,
