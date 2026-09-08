@@ -10,6 +10,7 @@
     "create-user": "node scripts/createUser.js",
     "diagnose:gemini": "node scripts/diagnoseGeminiKeys.js",
     "provision-client": "node scripts/provisionClient.js",
+    "verify-client": "node scripts/verifyClientReadiness.js",
     "test": "node --test"
   },
   "dependencies": {
