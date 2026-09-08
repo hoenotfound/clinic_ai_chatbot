@@ -5,6 +5,7 @@ const {
   ClientReadinessError,
   evaluateReadiness,
   normalizeRequiredChannels,
+  validateRuntimeReadinessContract,
   verifyClientReadiness,
 } = require("../src/provisioning/readinessVerifier");
 
@@ -33,6 +34,53 @@ function check(key, status = "ready", optional = false, summary = `${key} is rea
   };
 }
 
+function healthySystemHealth() {
+  return {
+    database: {
+      status: "healthy",
+      migrationState: "up_to_date",
+      summary: "Database is current.",
+    },
+    inbound: {
+      status: "healthy",
+      summary: "Inbound processing is keeping up.",
+    },
+    ai: {
+      status: "healthy",
+      summary: "AI providers are ready.",
+    },
+    messaging: [
+      {
+        channel: "whatsapp",
+        configured: true,
+        status: "healthy",
+        lastInboundAt: "2026-09-08T13:00:00.000Z",
+        lastSuccessfulOutboundAt: "2026-09-08T13:00:03.000Z",
+        recentDeliveryFailures: 0,
+        lastDeliveryFailureAt: null,
+      },
+      {
+        channel: "facebook",
+        configured: true,
+        status: "healthy",
+        lastInboundAt: "2026-09-08T13:00:00.000Z",
+        lastSuccessfulOutboundAt: "2026-09-08T13:00:03.000Z",
+        recentDeliveryFailures: 0,
+        lastDeliveryFailureAt: null,
+      },
+      {
+        channel: "instagram",
+        configured: true,
+        status: "healthy",
+        lastInboundAt: "2026-09-08T13:00:00.000Z",
+        lastSuccessfulOutboundAt: "2026-09-08T13:00:03.000Z",
+        recentDeliveryFailures: 0,
+        lastDeliveryFailureAt: null,
+      },
+    ],
+  };
+}
+
 function overview(overrides = {}) {
   return {
     checkedAt: "2026-09-08T13:00:00.000Z",
@@ -51,6 +99,7 @@ function overview(overrides = {}) {
       check("meta_webhook", "not_configured", true),
       check("telegram", "not_configured", true),
     ],
+    systemHealth: healthySystemHealth(),
     ...overrides,
   };
 }
@@ -106,7 +155,24 @@ test("unpurchased channels do not block an otherwise ready client", () => {
   assert.equal(report.blocking.length, 0);
 });
 
-test("a purchased channel stays blocked until its real messaging evidence is ready", () => {
+test("a required check that reports ready but is not configured still blocks go-live", () => {
+  const data = overview();
+  data.checks = data.checks.map((item) =>
+    item.key === "public_url"
+      ? { ...item, configured: false, status: "ready", summary: "Detected from request only." }
+      : item
+  );
+
+  const report = evaluateReadiness(data, {
+    expectedIndustry: "home_renovation",
+    requiredChannels: ["whatsapp"],
+  });
+
+  assert.equal(report.ready, false);
+  assert.equal(report.blocking.some((item) => item.key === "public_url" && item.status === "not_configured"), true);
+});
+
+test("a purchased channel stays blocked until its Setup Status evidence is ready", () => {
   const data = overview();
   data.checks = data.checks.map((item) =>
     item.key === "instagram"
@@ -125,6 +191,66 @@ test("a purchased channel stays blocked until its real messaging evidence is rea
   assert.equal(report.status, "needs_attention");
   assert.equal(report.blocking.some((item) => item.key === "instagram"), true);
   assert.equal(report.blocking.some((item) => item.key === "meta_webhook"), true);
+});
+
+test("real inbound without a newer successful outbound reply blocks go-live", () => {
+  const data = overview();
+  data.systemHealth.messaging = data.systemHealth.messaging.map((item) =>
+    item.channel === "whatsapp"
+      ? {
+          ...item,
+          lastInboundAt: "2026-09-08T13:05:00.000Z",
+          lastSuccessfulOutboundAt: "2026-09-08T13:04:59.000Z",
+        }
+      : item
+  );
+
+  const report = evaluateReadiness(data, {
+    expectedIndustry: "home_renovation",
+    requiredChannels: ["whatsapp"],
+  });
+
+  assert.equal(report.ready, false);
+  assert.equal(report.blocking.some((item) => item.key === "whatsapp_round_trip_outbound"), true);
+});
+
+test("a newer unresolved delivery failure blocks go-live", () => {
+  const data = overview();
+  data.systemHealth.messaging = data.systemHealth.messaging.map((item) =>
+    item.channel === "whatsapp"
+      ? {
+          ...item,
+          status: "warning",
+          lastDeliveryFailureAt: "2026-09-08T13:00:05.000Z",
+          lastSuccessfulOutboundAt: "2026-09-08T13:00:03.000Z",
+        }
+      : item
+  );
+
+  const report = evaluateReadiness(data, {
+    expectedIndustry: "home_renovation",
+    requiredChannels: ["whatsapp"],
+  });
+
+  assert.equal(report.ready, false);
+  assert.equal(report.blocking.some((item) => item.key === "whatsapp_delivery_failure"), true);
+});
+
+test("degraded but available AI becomes READY WITH WARNINGS", () => {
+  const data = overview();
+  data.systemHealth.ai = {
+    status: "warning",
+    summary: "One Gemini key is cooling down; another provider remains available.",
+  };
+
+  const report = evaluateReadiness(data, {
+    expectedIndustry: "home_renovation",
+    requiredChannels: ["whatsapp"],
+  });
+
+  assert.equal(report.ready, true);
+  assert.equal(report.status, "ready_with_warnings");
+  assert.equal(report.warnings.some((item) => item.key === "system_health_ai"), true);
 });
 
 test("business profile mismatch blocks go-live even when integrations are ready", () => {
@@ -151,6 +277,26 @@ test("a required core application warning blocks readiness", () => {
   });
   assert.equal(report.ready, false);
   assert.equal(report.blocking.some((item) => item.key === "ai"), true);
+});
+
+test("runtime preflight catches deterministic missing purchased-channel/core credentials", () => {
+  assert.throws(
+    () => validateRuntimeReadinessContract({
+      ADMIN_USERNAME: "admin",
+      ADMIN_PASSWORD: "password",
+      GEMINI_API_KEY_1: "gemini-key",
+      R2_ACCOUNT_ID: "r2",
+      R2_ACCESS_KEY_ID: "access",
+      R2_SECRET_ACCESS_KEY: "secret",
+      R2_BUCKET_NAME: "bucket",
+      INSTAGRAM_PAGE_ID: "ig-page",
+      // INSTAGRAM_PAGE_ACCESS_TOKEN intentionally missing
+      META_APP_SECRET: "meta-secret",
+      META_VERIFY_TOKEN: "verify",
+    }, ["instagram"]),
+    (err) => err.code === "READINESS_RUNTIME_CONFIG_MISSING"
+      && /INSTAGRAM_PAGE_ACCESS_TOKEN/.test(err.message)
+  );
 });
 
 test("verifier logs in, carries both signed session cookies, runs Setup Status and logs out", async () => {
@@ -188,6 +334,7 @@ test("verifier logs in, carries both signed session cookies, runs Setup Status a
   });
 
   assert.equal(report.ready, true);
+  assert.equal(report.verificationCompleted, true);
   assert.equal(calls.length, 3);
   assert.equal(JSON.stringify(report).includes(adminPassword), false);
 });
