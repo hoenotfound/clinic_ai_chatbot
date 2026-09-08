@@ -1,6 +1,7 @@
 const express = require("express");
 const pipelineRepo = require("../db/pipelineRepo");
 const analyticsRepo = require("../db/analyticsRepo");
+const { getAnalyticsPipelineProfile } = require("../db/analyticsPipelineProfile");
 const leadAttributionRepo = require("../db/leadAttributionRepo");
 const contactsRepo = require("../db/contactsRepo");
 const usersRepo = require("../db/usersRepo");
@@ -131,7 +132,11 @@ router.get("/configured-branches", (req, res) => {
 router.get("/analytics", async (req, res) => {
   try {
     const filters = normalizeAnalyticsQuery(req.query);
-    res.json(await analyticsRepo.getAnalytics(filters));
+    const analytics = await analyticsRepo.getAnalytics(filters);
+    res.json({
+      ...analytics,
+      analyticsBusinessType: getAnalyticsPipelineProfile().businessType,
+    });
   } catch (err) {
     handlePipelineError(res, err, "Something went wrong loading analytics.");
   }
