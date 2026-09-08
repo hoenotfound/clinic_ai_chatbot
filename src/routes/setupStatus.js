@@ -1,6 +1,7 @@
 const express = require("express");
 const { createSetupStatusService } = require("../services/setupStatusService");
 const setupStatusRepo = require("../db/setupStatusRepo");
+const configRepo = require("../db/configRepo");
 const aiService = require("../services/aiService");
 const aiUsage = require("../services/aiUsageService");
 const geminiSetupCheck = require("../services/geminiSetupCheckService");
@@ -246,8 +247,20 @@ async function addSystemHealth(overview) {
   }
 }
 
+async function addBusinessProfile(overview) {
+  try {
+    const businessProfile = await configRepo.getIndustrySetupStatus();
+    return { ...overview, businessProfile };
+  } catch (err) {
+    // Business-profile diagnostics should never hide the rest of Setup Status.
+    console.warn("Could not load business profile status:", err?.message || err);
+    return { ...overview, businessProfile: null };
+  }
+}
+
 async function decorateOverview(overview) {
-  return addSystemHealth(await addAiUsage(overview));
+  const withHealth = await addSystemHealth(await addAiUsage(overview));
+  return addBusinessProfile(withHealth);
 }
 
 router.use(requireAdministrator);
@@ -269,6 +282,23 @@ router.post("/run", async (req, res) => {
   } catch (err) {
     console.error("Failed to run setup checks:", err);
     res.status(500).json({ error: "Something went wrong running setup checks." });
+  }
+});
+
+router.post("/business-profile", async (req, res) => {
+  try {
+    const businessType = req.body?.businessType;
+    const businessProfile = await configRepo.selectIndustryProfile(businessType);
+    return res.json({ businessProfile });
+  } catch (err) {
+    const status = Number(err?.status) || 500;
+    if (status >= 500) {
+      console.error("Failed to select business profile:", err);
+    }
+    return res.status(status).json({
+      error: err?.message || "Something went wrong selecting the business profile.",
+      code: err?.code || null,
+    });
   }
 });
 
@@ -328,6 +358,7 @@ router.post("/gemini-diagnostic", async (req, res) => {
 module.exports = router;
 module.exports.GEMINI_DIAGNOSTIC_COOLDOWN_MS = GEMINI_DIAGNOSTIC_COOLDOWN_MS;
 module.exports.addAiUsage = addAiUsage;
+module.exports.addBusinessProfile = addBusinessProfile;
 module.exports.addSystemHealth = addSystemHealth;
 module.exports.createGeminiDiagnosticGuard = createGeminiDiagnosticGuard;
 module.exports.decorateOverview = decorateOverview;
