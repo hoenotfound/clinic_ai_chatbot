@@ -174,6 +174,11 @@ export const api = {
   },
   getSetupStatus: () => request("/setup-status"),
   runSetupChecks: () => request("/setup-status/run", { method: "POST" }),
+  selectBusinessProfile: (businessType) =>
+    request("/setup-status/business-profile", {
+      method: "POST",
+      body: JSON.stringify({ businessType }),
+    }),
   getGeminiDiagnosticStatus: () => request("/setup-status/gemini-diagnostic/status"),
   runGeminiDiagnostic: () => request("/setup-status/gemini-diagnostic", { method: "POST" }),
   createLead: (data) =>

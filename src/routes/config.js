@@ -427,8 +427,14 @@ router.patch("/", async (req, res) => {
     const updated = await configRepo.updateConfig(updates);
     res.json(updated);
   } catch (err) {
-    console.error("Failed to update clinic config:", err);
-    res.status(500).json({ error: "Something went wrong saving settings." });
+    const status = Number(err?.status) || 500;
+    if (status >= 500) {
+      console.error("Failed to update clinic config:", err);
+    }
+    res.status(status).json({
+      error: err?.message || "Something went wrong saving settings.",
+      code: err?.code || null,
+    });
   }
 });
 

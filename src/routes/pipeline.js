@@ -1,6 +1,7 @@
 const express = require("express");
 const pipelineRepo = require("../db/pipelineRepo");
 const analyticsRepo = require("../db/analyticsRepo");
+const configRepo = require("../db/configRepo");
 const { getAnalyticsPipelineProfile } = require("../db/analyticsPipelineProfile");
 const leadAttributionRepo = require("../db/leadAttributionRepo");
 const contactsRepo = require("../db/contactsRepo");
@@ -91,6 +92,12 @@ function handlePipelineError(res, err, fallbackMessage) {
   return res.status(500).json({ error: fallbackMessage });
 }
 
+function withStageCustomizationLock(req, work) {
+  return configRepo.withPipelineCustomizationLock(work, {
+    actor: req.session?.username || null,
+  });
+}
+
 // GET /api/pipeline - complete lightweight board payload.
 router.get("/", async (req, res) => {
   try {
@@ -122,13 +129,10 @@ router.get("/", async (req, res) => {
   }
 });
 
-// Lightweight source of truth for branch-editing controls. This avoids loading
-// the full Pipeline board again just to populate one select menu.
 router.get("/configured-branches", (req, res) => {
   res.json({ branches: configuredBranchNames() });
 });
 
-// GET /api/pipeline/analytics - server-side aggregate dashboard payload.
 router.get("/analytics", async (req, res) => {
   try {
     const filters = normalizeAnalyticsQuery(req.query);
@@ -192,7 +196,8 @@ router.post("/leads/:leadId/notes", async (req, res) => {
 router.post("/stages", async (req, res) => {
   try {
     const data = normalizeStagePayload(req.body);
-    res.status(201).json(await pipelineRepo.createStage(data));
+    const created = await withStageCustomizationLock(req, () => pipelineRepo.createStage(data));
+    res.status(201).json(created);
   } catch (err) {
     handlePipelineError(res, err, "Something went wrong creating the stage.");
   }
@@ -201,7 +206,9 @@ router.post("/stages", async (req, res) => {
 router.patch("/stages/:stageId", async (req, res) => {
   try {
     const patch = normalizeStagePayload(req.body, { partial: true });
-    const updated = await pipelineRepo.updateStage(req.params.stageId, patch);
+    const updated = await withStageCustomizationLock(req, () =>
+      pipelineRepo.updateStage(req.params.stageId, patch)
+    );
     if (!updated) return res.status(404).json({ error: "Stage not found." });
     res.json(updated);
   } catch (err) {
@@ -211,7 +218,11 @@ router.patch("/stages/:stageId", async (req, res) => {
 
 router.post("/stages/reorder", async (req, res) => {
   try {
-    res.json(await pipelineRepo.reorderStages(normalizeStageOrder(req.body)));
+    const stageIds = normalizeStageOrder(req.body);
+    const stages = await withStageCustomizationLock(req, () =>
+      pipelineRepo.reorderStages(stageIds)
+    );
+    res.json(stages);
   } catch (err) {
     handlePipelineError(res, err, "Something went wrong reordering stages.");
   }
@@ -219,7 +230,9 @@ router.post("/stages/reorder", async (req, res) => {
 
 router.delete("/stages/:stageId", async (req, res) => {
   try {
-    const deleted = await pipelineRepo.deleteStage(req.params.stageId);
+    const deleted = await withStageCustomizationLock(req, () =>
+      pipelineRepo.deleteStage(req.params.stageId)
+    );
     if (!deleted) return res.status(404).json({ error: "Stage not found." });
     res.json({ deleted: true });
   } catch (err) {
