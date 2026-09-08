@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../context/AuthContext";
@@ -18,13 +18,12 @@ import {
   isNoReply,
   toDateTimeInput,
 } from "./pipelineUtils";
-import { shouldRefreshLeadActivities } from "./realtimeQualification";
 
 const inputClass =
   "w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15 disabled:cursor-not-allowed disabled:bg-[var(--color-bg)] disabled:text-[var(--color-text-muted)]";
 const labelClass = "mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]";
 
-export default function LeadDrawer({ lead, stages, owners, services, now, noReplyHours, onClose, onSaved, onToast }) {
+export default function LeadDrawer({ lead, stages, owners, services, now, noReplyHours, activityRefreshToken = 0, onClose, onSaved, onToast }) {
   const navigate = useNavigate();
   const { permissions } = useAuth();
   const { config } = useBusinessConfig();
@@ -38,47 +37,28 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
   const [note, setNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [configuredBranches, setConfiguredBranches] = useState([]);
+  const activityLeadIdRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
-    let refreshTimer = null;
-    let requestVersion = 0;
+    const leadChanged = Number(activityLeadIdRef.current) !== Number(lead.id);
+    activityLeadIdRef.current = lead.id;
+    if (leadChanged) setActivities(null);
 
-    function loadActivities({ clear = false } = {}) {
-      const version = ++requestVersion;
-      if (clear) setActivities(null);
-      return api.listLeadActivities(lead.id)
-        .then((data) => {
-          if (!cancelled && version === requestVersion) setActivities(data);
-        })
-        .catch((err) => {
-          if (cancelled || version !== requestVersion) return;
-          console.error("Failed to load lead activity:", err);
-          onToast("Couldn't load this lead's activity.", "error");
-        });
-    }
-
-    function refreshForPipelineEvent(event) {
-      if (!shouldRefreshLeadActivities(event?.data, lead.id)) return;
-      if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => {
-        refreshTimer = null;
-        loadActivities();
-      }, 150);
-    }
-
-    loadActivities({ clear: true });
-    const source = new EventSource("/api/conversations/events", { withCredentials: true });
-    source.addEventListener("pipeline_changed", refreshForPipelineEvent);
+    api.listLeadActivities(lead.id)
+      .then((data) => {
+        if (!cancelled) setActivities(data);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("Failed to load lead activity:", err);
+        onToast("Couldn't load this lead's activity.", "error");
+      });
 
     return () => {
       cancelled = true;
-      requestVersion += 1;
-      if (refreshTimer) clearTimeout(refreshTimer);
-      source.removeEventListener("pipeline_changed", refreshForPipelineEvent);
-      source.close();
     };
-  }, [lead.id, onToast]);
+  }, [activityRefreshToken, lead.id, onToast]);
 
   useEffect(() => {
     let cancelled = false;
@@ -348,7 +328,7 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
                 </Field>
                 <Field label="CRM marketing consent">
                   <select className={inputClass} value={form.marketingConsent} onChange={(event) => update("marketingConsent", event.target.value)}>
-                    {CONSENT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    {CONSENT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>) }
                   </select>
                   <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
                     Internal CRM preference only. This does not record the dedicated WhatsApp opt-in used for WhatsApp templates or proactive messages.
