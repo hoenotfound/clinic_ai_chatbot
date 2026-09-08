@@ -100,41 +100,83 @@ async function getInboundProcessingMetrics({ hours = 24 } = {}, queryable = pool
   };
 }
 
-function newestTimestamp(...values) {
-  const valid = values
-    .filter(Boolean)
-    .map((value) => new Date(value))
-    .filter((value) => !Number.isNaN(value.getTime()));
-  return valid.length
-    ? new Date(Math.max(...valid.map((value) => value.getTime())))
-    : null;
+function timestamp(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function socialRoundTripAccepted(replyCandidate, runtimeAccepted) {
+  const candidate = timestamp(replyCandidate);
+  const accepted = timestamp(runtimeAccepted);
+  if (!candidate || !accepted) return null;
+  return accepted.getTime() >= candidate.getTime() ? candidate : null;
 }
 
 async function getMessagingMetrics({ hours = 24 } = {}, queryable = pool) {
   const safeHours = Math.max(1, Math.min(24 * 30, Number(hours) || 24));
   const [result, runtimeRows] = await Promise.all([
     queryable.query(
-      `SELECT
-         c.channel,
-         MAX(m.created_at) FILTER (WHERE m.role = 'user') AS last_inbound_at,
-         MAX(m.created_at) FILTER (
-           WHERE m.role = 'assistant'
-             AND m.whatsapp_message_id IS NOT NULL
-             AND COALESCE(m.delivery_status, 'pending') <> 'failed'
-         ) AS last_successful_outbound_at,
-         COUNT(*) FILTER (
-           WHERE m.role = 'assistant'
-             AND m.delivery_status = 'failed'
-             AND m.created_at >= NOW() - ($1::int * interval '1 hour')
-         )::int AS recent_delivery_failures,
-         MAX(m.created_at) FILTER (
-           WHERE m.role = 'assistant'
-             AND m.delivery_status = 'failed'
-         ) AS last_delivery_failure_at
-       FROM contacts c
-       LEFT JOIN messages m ON m.contact_id = c.id
-       WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
-       GROUP BY c.channel`,
+      `WITH latest_inbound AS (
+         SELECT DISTINCT ON (c.channel)
+           c.channel,
+           m.contact_id,
+           m.id AS inbound_message_id,
+           m.created_at AS last_inbound_at
+         FROM contacts c
+         JOIN messages m ON m.contact_id = c.id
+         WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
+           AND m.role = 'user'
+         ORDER BY c.channel, m.created_at DESC, m.id DESC
+       ), correlated_reply AS (
+         SELECT
+           li.channel,
+           li.contact_id,
+           li.inbound_message_id,
+           li.last_inbound_at,
+           MAX(m.created_at) FILTER (
+             WHERE m.role = 'assistant'
+               AND m.created_at > li.last_inbound_at
+               AND m.sent_by_username IS NULL
+               AND COALESCE(m.is_automated_follow_up, false) = false
+               AND COALESCE(m.delivery_status, 'pending') NOT IN ('failed', 'unknown')
+               AND (
+                 li.channel <> 'whatsapp'
+                 OR m.whatsapp_message_id IS NOT NULL
+               )
+           ) AS last_correlated_outbound_at
+         FROM latest_inbound li
+         LEFT JOIN messages m ON m.contact_id = li.contact_id
+         GROUP BY li.channel, li.contact_id, li.inbound_message_id, li.last_inbound_at
+       ), channel_failures AS (
+         SELECT
+           c.channel,
+           COUNT(*) FILTER (
+             WHERE m.role = 'assistant'
+               AND m.delivery_status = 'failed'
+               AND m.created_at >= NOW() - ($1::int * interval '1 hour')
+           )::int AS recent_delivery_failures,
+           MAX(m.created_at) FILTER (
+             WHERE m.role = 'assistant'
+               AND m.delivery_status = 'failed'
+           ) AS last_delivery_failure_at
+         FROM contacts c
+         LEFT JOIN messages m ON m.contact_id = c.id
+         WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
+         GROUP BY c.channel
+       )
+       SELECT
+         channels.channel,
+         cr.contact_id AS last_inbound_contact_id,
+         cr.inbound_message_id AS last_inbound_message_id,
+         cr.last_inbound_at,
+         cr.last_correlated_outbound_at,
+         COALESCE(cf.recent_delivery_failures, 0)::int AS recent_delivery_failures,
+         cf.last_delivery_failure_at
+       FROM (VALUES ('whatsapp'), ('instagram'), ('facebook')) AS channels(channel)
+       LEFT JOIN correlated_reply cr ON cr.channel = channels.channel
+       LEFT JOIN channel_failures cf ON cf.channel = channels.channel
+       ORDER BY channels.channel`,
       [safeHours]
     ),
     messagingRuntimeHealthRepo.listRuntimeHealth(queryable),
@@ -145,13 +187,23 @@ async function getMessagingMetrics({ hours = 24 } = {}, queryable = pool) {
   return ["whatsapp", "instagram", "facebook"].map((channel) => {
     const row = byChannel.get(channel) || {};
     const runtime = runtimeByChannel.get(channel) || {};
+    const correlatedOutbound = channel === "whatsapp"
+      ? timestamp(row.last_correlated_outbound_at)
+      : socialRoundTripAccepted(
+          row.last_correlated_outbound_at,
+          runtime.last_outbound_accepted_at
+        );
     return {
       channel,
       lastInboundAt: row.last_inbound_at || null,
-      lastSuccessfulOutboundAt: newestTimestamp(
-        row.last_successful_outbound_at,
-        runtime.last_outbound_accepted_at
-      ),
+      lastInboundContactId: row.last_inbound_contact_id == null
+        ? null
+        : Number(row.last_inbound_contact_id),
+      lastInboundMessageId: row.last_inbound_message_id == null
+        ? null
+        : Number(row.last_inbound_message_id),
+      lastSuccessfulOutboundAt: correlatedOutbound,
+      roundTripCorrelated: Boolean(row.last_inbound_at && correlatedOutbound),
       recentDeliveryFailures: Number(row.recent_delivery_failures) || 0,
       lastDeliveryFailureAt: row.last_delivery_failure_at || null,
     };
@@ -162,4 +214,5 @@ module.exports = {
   getInboundProcessingMetrics,
   getMessagingMetrics,
   listAppliedMigrations,
+  socialRoundTripAccepted,
 };
