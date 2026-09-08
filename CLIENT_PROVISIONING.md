@@ -382,7 +382,7 @@ Runtime finalization records:
 completed: true
 ```
 
-when fully successful. If finalization fails after making some Render changes, the receipt preserves the known `partialFinalization` fields as `runtimeFinalization`, adds:
+when fully successful. If finalization fails after making some Render changes, the receipt preserves the known partial-finalization fields as `runtimeFinalization`, adds:
 
 ```text
 completed: false
