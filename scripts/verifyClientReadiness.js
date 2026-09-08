@@ -7,11 +7,13 @@ const dotenv = require("dotenv");
 const {
   ClientReadinessError,
   normalizeRequiredChannels,
+  verificationFailureReport,
   verifyClientReadiness,
 } = require("../src/provisioning/readinessVerifier");
 const { redactSensitiveText } = require("../src/provisioning/providerClients");
 
 const NEEDS_ATTENTION_EXIT_CODE = 3;
+const VERIFICATION_FAILED_EXIT_CODE = 4;
 
 function usage() {
   return `
@@ -31,23 +33,25 @@ Or specify the contract directly:
     --runtime-env-file ./<client>.client-runtime.env
 
 Required credentials:
-  The runtime env file must contain ADMIN_USERNAME and ADMIN_PASSWORD.
-  Passwords are intentionally not accepted as CLI flags so they do not enter
-  shell history.
+  The local runtime env file must contain ADMIN_USERNAME and ADMIN_PASSWORD.
+  ADMIN_PASSWORD can already be removed from Render after provisioning; the
+  local value remains the portal administrator password stored in PostgreSQL.
+  Passwords are intentionally not accepted as CLI flags.
 
 Options:
   --receipt <path>            Secret-free receipt written by provision-client
   --url <url>                 Client portal URL (when not using --receipt)
   --industry <profile>        Expected business profile
   --channels <csv>            Required channels
-  --runtime-env-file <path>   Client runtime dotenv with admin credentials
+  --runtime-env-file <path>   Local client dotenv with admin credentials
   --json                      Machine-readable output
   --help                      Show this help
 
 Exit codes:
-  0  READY
-  2  Verification/input failure
+  0  READY / READY WITH WARNINGS
+  2  Invalid verifier input
   3  Verification completed but client NEEDS ATTENTION
+  4  Client could not be fully verified (login/transport/Setup Status failure)
 `;
 }
 
@@ -107,28 +111,53 @@ function resolveContract(args) {
     code: "READINESS_INDUSTRY_REQUIRED",
     stage: "validation",
   });
-  return { url, industry, channels };
+  return { url, industry, channels, receipt };
 }
 
-function printHuman(report) {
-  console.log(`Client readiness: ${report.ready ? "READY" : "NEEDS ATTENTION"}\n`);
-  console.log(`Industry: ${report.actualIndustry || "unknown"} (expected ${report.expectedIndustry})`);
+function updateReceiptReadiness(receiptPath, receipt, report) {
+  if (!receiptPath || !receipt) return null;
+  const absolute = path.resolve(process.cwd(), receiptPath);
+  const tempPath = `${absolute}.${process.pid}.tmp`;
+  const updated = {
+    ...receipt,
+    version: Math.max(3, Number(receipt.version) || 0),
+    lastVerifiedAt: report.checkedAt || new Date().toISOString(),
+    readiness: JSON.parse(JSON.stringify(report)),
+  };
+  fs.writeFileSync(tempPath, `${JSON.stringify(updated, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(tempPath, absolute);
+  return updated;
+}
+
+function readinessLabel(report) {
+  if (report?.status === "ready_with_warnings") return "READY WITH WARNINGS";
+  if (report?.status === "verification_failed") return "VERIFICATION FAILED";
+  return report?.ready ? "READY" : "NEEDS ATTENTION";
+}
+
+function printHuman(report, receiptWarning = null) {
+  console.log(`Client readiness: ${readinessLabel(report)}\n`);
+  console.log(`Industry: ${report.actualIndustry || "unknown"} (expected ${report.expectedIndustry || "unknown"})`);
   console.log(`Channels: ${(report.requiredChannels || []).join(", ")}`);
 
   if (report.businessProfile) {
     console.log(`${report.businessProfile.status === "ready" ? "[OK]" : "[!!]"} Business profile: ${report.businessProfile.summary}`);
   }
   for (const item of report.applicationChecks || []) {
-    console.log(`${item.status === "ready" ? "[OK]" : "[!!]"} ${item.label}: ${item.summary}`);
+    console.log(`${item.configured && item.status === "ready" ? "[OK]" : "[!!]"} ${item.label}: ${item.summary}`);
   }
   for (const item of report.channelChecks || []) {
-    console.log(`${item.status === "ready" ? "[OK]" : "[!!]"} ${item.label}: ${item.summary}`);
+    console.log(`${item.configured && item.status === "ready" ? "[OK]" : "[!!]"} ${item.label}: ${item.summary}`);
   }
-
+  if (report.warnings?.length) {
+    console.log("\nWarnings:");
+    for (const item of report.warnings) console.log(`- ${item.summary}`);
+  }
   if (report.blocking?.length) {
     console.log("\nNeeds attention:");
     for (const item of report.blocking) console.log(`- ${item.summary}`);
   }
+  if (receiptWarning) console.log(`\nReceipt warning: ${receiptWarning}`);
 }
 
 async function main() {
@@ -147,9 +176,10 @@ async function main() {
   }
 
   let runtimeEnv = {};
+  let contract = null;
   try {
     runtimeEnv = loadRuntimeEnv(args.runtimeEnvFile);
-    const contract = resolveContract(args);
+    contract = resolveContract(args);
     const username = String(runtimeEnv.ADMIN_USERNAME || "").trim();
     const password = runtimeEnv.ADMIN_PASSWORD;
     if (!username || typeof password !== "string" || !password) {
@@ -159,17 +189,47 @@ async function main() {
       );
     }
 
-    const report = await verifyClientReadiness({
-      baseUrl: contract.url,
-      username,
-      password,
-      expectedIndustry: contract.industry,
-      requiredChannels: contract.channels,
-    });
+    let report;
+    try {
+      report = await verifyClientReadiness({
+        baseUrl: contract.url,
+        username,
+        password,
+        expectedIndustry: contract.industry,
+        requiredChannels: contract.channels,
+      });
+    } catch (err) {
+      if (err instanceof ClientReadinessError && err.stage !== "validation") {
+        report = verificationFailureReport(err, {
+          expectedIndustry: contract.industry,
+          requiredChannels: contract.channels,
+        });
+      } else {
+        throw err;
+      }
+    }
 
-    if (args.json) console.log(JSON.stringify(report, null, 2));
-    else printHuman(report);
-    if (!report.ready) process.exitCode = NEEDS_ATTENTION_EXIT_CODE;
+    let receiptWarning = null;
+    if (args.receiptPath && contract.receipt) {
+      try {
+        updateReceiptReadiness(args.receiptPath, contract.receipt, report);
+      } catch (err) {
+        receiptWarning = redactSensitiveText(
+          `Could not update readiness receipt: ${err.message}`,
+          Object.values(runtimeEnv || {}).filter(Boolean)
+        );
+      }
+    }
+
+    const output = receiptWarning ? { ...report, receiptWarning } : report;
+    if (args.json) console.log(JSON.stringify(output, null, 2));
+    else printHuman(report, receiptWarning);
+
+    if (report.status === "verification_failed") {
+      process.exitCode = VERIFICATION_FAILED_EXIT_CODE;
+    } else if (!report.ready) {
+      process.exitCode = NEEDS_ATTENTION_EXIT_CODE;
+    }
   } catch (err) {
     const sensitiveValues = Object.values(runtimeEnv || {}).filter(Boolean);
     const message = redactSensitiveText(err?.message || "Readiness verification failed", sensitiveValues);
@@ -188,8 +248,10 @@ if (require.main === module) main();
 
 module.exports = {
   NEEDS_ATTENTION_EXIT_CODE,
+  VERIFICATION_FAILED_EXIT_CODE,
   loadRuntimeEnv,
   parseArgs,
   readJsonFile,
   resolveContract,
+  updateReceiptReadiness,
 };
