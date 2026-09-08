@@ -89,7 +89,7 @@ R2_BUCKET_NAME=...
 
 The file can contain whichever runtime variables the client actually needs. The provisioner never prints their values.
 
-The following keys are owned by provisioning and are rejected if they appear in the runtime file:
+The following app keys are owned by provisioning and are rejected if they appear in the runtime file:
 
 - `DATABASE_URL`
 - `SESSION_SECRET`
@@ -97,7 +97,9 @@ The following keys are owned by provisioning and are rejected if they appear in 
 - `BUSINESS_TYPE`
 - `PORT`
 
-This prevents a client env file from overriding the database or business-profile contract.
+In addition, **every key beginning with `PROVISIONING_` is rejected** from the client runtime file. Those variables belong to the operator/control plane and must never be copied into a client's Render service.
+
+This prevents a client env file from overriding the database/business-profile contract or leaking Render/Neon provisioning credentials into the client runtime.
 
 Local provisioning/runtime env filename patterns are included in `.gitignore`, but you should still treat these files as secrets and store/remove them appropriately.
 
