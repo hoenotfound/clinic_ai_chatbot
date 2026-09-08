@@ -60,14 +60,7 @@ function buildSelectedConfig(storedConfig, businessType, now = new Date()) {
   return nextConfig;
 }
 
-async function loadCustomerDataState(database = pool) {
-  const result = await database.query(`
-    SELECT
-      EXISTS (SELECT 1 FROM contacts LIMIT 1) AS has_contacts,
-      EXISTS (SELECT 1 FROM messages LIMIT 1) AS has_messages,
-      EXISTS (SELECT 1 FROM leads LIMIT 1) AS has_leads
-  `);
-  const row = result.rows?.[0] || {};
+function normalizeCustomerDataRow(row = {}) {
   return {
     hasContacts: row.has_contacts === true,
     hasMessages: row.has_messages === true,
@@ -77,20 +70,37 @@ async function loadCustomerDataState(database = pool) {
   };
 }
 
-async function getIndustrySetupStatus(database = pool) {
-  const [customerData, stageResult] = await Promise.all([
-    loadCustomerDataState(database),
-    database.query(
-      `SELECT id, name, sort_order, color, stage_type, system_key
-       FROM pipeline_stages
-       ORDER BY sort_order ASC, id ASC`
-    ),
-  ]);
+async function queryCustomerDataState(queryable) {
+  const result = await queryable.query(`
+    SELECT
+      EXISTS (SELECT 1 FROM contacts LIMIT 1) AS has_contacts,
+      EXISTS (SELECT 1 FROM messages LIMIT 1) AS has_messages,
+      EXISTS (SELECT 1 FROM leads LIMIT 1) AS has_leads
+  `);
+  return normalizeCustomerDataRow(result.rows?.[0] || {});
+}
 
-  const config = clinicConfig;
+async function loadCustomerDataState(database = pool) {
+  return queryCustomerDataState(database);
+}
+
+function profileStageRows(profile) {
+  return profile.defaultStages.map((stage, index) => ({
+    id: index + 1,
+    name: stage.name,
+    sort_order: stage.sortOrder,
+    color: stage.color,
+    stage_type: stage.stageType,
+    system_key: stage.systemKey,
+  }));
+}
+
+function buildIndustrySetupStatus(config, {
+  customerData = normalizeCustomerDataRow(),
+  stages = [],
+} = {}) {
   const setup = normalizeIndustrySetup(config.industrySetup);
   const pipelineProfile = getPipelineProfile(config);
-  const stages = stageResult.rows || [];
   const pipelineMatchesDefault = stagesExactlyMatch(stages, pipelineProfile.defaultStages);
   const effectiveAnalytics = getAnalyticsPipelineProfile(config, {
     availableSystemKeys: stages.map((stage) => stage.system_key),
@@ -148,6 +158,22 @@ async function getIndustrySetupStatus(database = pool) {
   };
 }
 
+async function getIndustrySetupStatus(database = pool) {
+  const [customerData, stageResult] = await Promise.all([
+    loadCustomerDataState(database),
+    database.query(
+      `SELECT id, name, sort_order, color, stage_type, system_key
+       FROM pipeline_stages
+       ORDER BY sort_order ASC, id ASC`
+    ),
+  ]);
+
+  return buildIndustrySetupStatus(clinicConfig, {
+    customerData,
+    stages: stageResult.rows || [],
+  });
+}
+
 async function insertStages(client, stages) {
   for (const stage of stages) {
     await client.query(
@@ -156,6 +182,31 @@ async function insertStages(client, stages) {
       [stage.name, stage.sortOrder, stage.color, stage.stageType, stage.systemKey]
     );
   }
+}
+
+async function loadStageRows(queryable) {
+  const result = await queryable.query(
+    `SELECT id, name, sort_order, color, stage_type, system_key
+     FROM pipeline_stages
+     ORDER BY sort_order ASC, id ASC`
+  );
+  return result.rows || [];
+}
+
+function assertNoCustomerData(customerData) {
+  if (!customerData.hasCustomerData) return;
+  throw conflict(
+    "INDUSTRY_PROFILE_HAS_DATA",
+    "This deployment already has customer data, so its business profile can no longer be changed."
+  );
+}
+
+function assertDefaultPipeline(stages, profile) {
+  if (stagesExactlyMatch(stages, profile.defaultStages)) return;
+  throw conflict(
+    "INDUSTRY_PROFILE_PIPELINE_CUSTOMIZED",
+    "The Pipeline has already been customized, so the business profile can no longer be changed."
+  );
 }
 
 async function selectIndustryProfile(requestedType, database = pool, now = new Date()) {
@@ -171,6 +222,8 @@ async function selectIndustryProfile(requestedType, database = pool, now = new D
   let inTransaction = false;
   let nextConfig;
   let nextPipelineProfile;
+  let committedStages = [];
+  let changedConfigKeys = [];
 
   try {
     await client.query("BEGIN");
@@ -186,14 +239,6 @@ async function selectIndustryProfile(requestedType, database = pool, now = new D
       );
     }
 
-    // Block customer writes while the zero-data guard and profile replacement
-    // happen. The lock order follows the customer-message flow, then Pipeline,
-    // to avoid exposing a partially switched industry to a concurrent request.
-    await client.query("LOCK TABLE contacts IN SHARE ROW EXCLUSIVE MODE");
-    await client.query("LOCK TABLE messages IN SHARE ROW EXCLUSIVE MODE");
-    await client.query("LOCK TABLE leads IN SHARE ROW EXCLUSIVE MODE");
-    await client.query("LOCK TABLE pipeline_stages IN ACCESS EXCLUSIVE MODE");
-
     const storedConfig = configResult.rows[0].data || {};
     const setup = normalizeIndustrySetup(storedConfig.industrySetup);
     if (setup.selectable !== true || setup.locked === true) {
@@ -203,46 +248,51 @@ async function selectIndustryProfile(requestedType, database = pool, now = new D
       );
     }
 
-    const customerDataResult = await client.query(`
-      SELECT
-        EXISTS (SELECT 1 FROM contacts LIMIT 1) AS has_contacts,
-        EXISTS (SELECT 1 FROM messages LIMIT 1) AS has_messages,
-        EXISTS (SELECT 1 FROM leads LIMIT 1) AS has_leads
-    `);
-    const customerData = customerDataResult.rows?.[0] || {};
-    if (
-      customerData.has_contacts === true ||
-      customerData.has_messages === true ||
-      customerData.has_leads === true
-    ) {
-      throw conflict(
-        "INDUSTRY_PROFILE_HAS_DATA",
-        "This deployment already has customer data, so its business profile can no longer be changed."
-      );
-    }
-
-    const stageResult = await client.query(
-      `SELECT id, name, sort_order, color, stage_type, system_key
-       FROM pipeline_stages
-       ORDER BY sort_order ASC, id ASC`
-    );
+    // Cheap preflight checks reject established/customized deployments before
+    // taking table-wide locks. These are safety hints only and are repeated
+    // after the strong locks below before any destructive mutation can happen.
     const currentPipelineProfile = getPipelineProfile(storedConfig);
-    if (!stagesExactlyMatch(stageResult.rows || [], currentPipelineProfile.defaultStages)) {
-      throw conflict(
-        "INDUSTRY_PROFILE_PIPELINE_CUSTOMIZED",
-        "The Pipeline has already been customized, so the business profile can no longer be changed."
-      );
-    }
+    assertNoCustomerData(await queryCustomerDataState(client));
+    assertDefaultPipeline(await loadStageRows(client), currentPipelineProfile);
+
+    // Keep shared lock order compatible with startup Pipeline reconciliation:
+    // pipeline_stages must be acquired before leads. contacts/messages come
+    // first so inbound customer writes are also blocked before the final
+    // zero-data recheck. This avoids a Render rolling-deploy deadlock where
+    // startup holds pipeline_stages while a profile switch holds leads.
+    await client.query("LOCK TABLE contacts IN SHARE ROW EXCLUSIVE MODE");
+    await client.query("LOCK TABLE messages IN SHARE ROW EXCLUSIVE MODE");
+    await client.query("LOCK TABLE pipeline_stages IN ACCESS EXCLUSIVE MODE");
+    await client.query("LOCK TABLE leads IN SHARE ROW EXCLUSIVE MODE");
+
+    const customerData = await queryCustomerDataState(client);
+    assertNoCustomerData(customerData);
+
+    const stageRows = await loadStageRows(client);
+    assertDefaultPipeline(stageRows, currentPipelineProfile);
 
     nextConfig = buildSelectedConfig(storedConfig, businessType, now);
     nextPipelineProfile = getPipelineProfile(nextConfig);
+    changedConfigKeys = [
+      ...new Set([...Object.keys(storedConfig), ...Object.keys(nextConfig)]),
+    ];
 
     await client.query(
       "UPDATE clinic_config SET data = $1, updated_at = now() WHERE id = 1",
       [nextConfig]
     );
-    await client.query("DELETE FROM pipeline_stages");
-    await insertStages(client, nextPipelineProfile.defaultStages);
+
+    // Confirming the already-selected default profile only needs to lock the
+    // onboarding metadata. Preserve identical stage rows and their IDs instead
+    // of deleting/reinserting a Pipeline that is already correct.
+    const changingIndustry = businessType !== currentPipelineProfile.businessType;
+    if (changingIndustry) {
+      await client.query("DELETE FROM pipeline_stages");
+      await insertStages(client, nextPipelineProfile.defaultStages);
+      committedStages = profileStageRows(nextPipelineProfile);
+    } else {
+      committedStages = stageRows;
+    }
 
     await client.query("COMMIT");
     inTransaction = false;
@@ -254,22 +304,33 @@ async function selectIndustryProfile(requestedType, database = pool, now = new D
   }
 
   replaceLiveConfig(nextConfig);
-  setAnalyticsProfileForStages(nextPipelineProfile, nextPipelineProfile.defaultStages);
+  setAnalyticsProfileForStages(nextPipelineProfile, committedStages);
   realtimeEvents.publish("config_changed", {
-    keys: ["businessType", "businessName", "terminology", "conversion", "industrySetup"],
+    // Profile selection replaces the whole profile-owned config. Publish the
+    // full top-level key union so workers that subscribe to automatedFollowUp,
+    // leadScoring, or future config sections immediately reconcile their state.
+    keys: changedConfigKeys,
   });
   realtimeEvents.publish("pipeline_changed", {
     reason: "industry_profile_selected",
     businessType,
   });
 
-  return getIndustrySetupStatus(database);
+  // The irreversible transaction has already committed. Return status from the
+  // committed snapshot so a transient diagnostic query cannot turn success into
+  // an apparent 500 that encourages an unsafe retry.
+  return buildIndustrySetupStatus(nextConfig, {
+    customerData: normalizeCustomerDataRow(),
+    stages: committedStages,
+  });
 }
 
 module.exports = {
+  buildIndustrySetupStatus,
   buildSelectedConfig,
   getIndustrySetupStatus,
   loadCustomerDataState,
+  normalizeCustomerDataRow,
   replaceLiveConfig,
   selectIndustryProfile,
 };
