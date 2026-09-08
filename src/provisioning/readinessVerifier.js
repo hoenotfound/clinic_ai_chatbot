@@ -2,7 +2,7 @@ const {
   normalizeBusinessType,
 } = require("../config/industryProfiles");
 
-const DEFAULT_READINESS_TIMEOUT_MS = 15000;
+const DEFAULT_READINESS_TIMEOUT_MS = 60000;
 const SUPPORTED_CHANNELS = Object.freeze(["whatsapp", "facebook", "instagram"]);
 const CHANNEL_ALIASES = Object.freeze({
   wa: "whatsapp",
@@ -57,6 +57,13 @@ function normalizeBaseUrl(value) {
       code: "READINESS_URL_INVALID",
       stage: "validation",
     });
+  }
+  const localHost = ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
+  if (parsed.protocol !== "https:" && !localHost) {
+    throw new ClientReadinessError(
+      "Readiness verification refuses to send administrator credentials over non-HTTPS remote URLs.",
+      { code: "READINESS_HTTPS_REQUIRED", stage: "validation" }
+    );
   }
   return parsed.toString().replace(/\/$/, "");
 }
@@ -295,7 +302,7 @@ async function verifyClientReadiness({
     method: "POST",
     body: credentials,
   });
-  const loginBody = await readJson(loginResponse);
+  await readJson(loginResponse);
   if (!loginResponse.ok) {
     throw new ClientReadinessError(
       loginResponse.status === 401
