@@ -93,9 +93,9 @@ function normalizeRuntimeEnv(runtimeEnv = {}) {
         stage: "validation",
       });
     }
-    if (RESERVED_RUNTIME_ENV_KEYS.has(key)) {
+    if (RESERVED_RUNTIME_ENV_KEYS.has(key) || key.startsWith("PROVISIONING_")) {
       throw new ClientProvisioningError(
-        `${key} is managed by the provisioner and cannot be overridden by runtime environment input.`,
+        `${key} is reserved for provisioning control and cannot be copied into client runtime environment input.`,
         { code: "RUNTIME_ENV_RESERVED", stage: "validation" }
       );
     }
