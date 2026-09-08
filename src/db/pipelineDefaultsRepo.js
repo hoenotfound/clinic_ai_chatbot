@@ -44,9 +44,22 @@ async function insertDefaultStages(client, stages) {
 async function ensureIndustryPipelineDefaults(config = clinicConfig, database = pool) {
   const profile = getPipelineProfile(config);
   const client = await database.connect();
+  let inTransaction = false;
 
   try {
+    // Mature client databases can never be auto-reseeded. Avoid taking strong
+    // startup locks on their live Pipeline at all. A zero-lead result is only a
+    // preflight hint; it is re-checked after the locks below before any stage
+    // can be replaced, so concurrent lead creation remains safe.
+    const preflightLeadResult = await client.query(
+      "SELECT EXISTS (SELECT 1 FROM leads LIMIT 1) AS has_leads"
+    );
+    if (preflightLeadResult.rows?.[0]?.has_leads === true) {
+      return { changed: false, reason: "pipeline_in_use", businessType: profile.businessType };
+    }
+
     await client.query("BEGIN");
+    inTransaction = true;
 
     // Startup can overlap a previous Render instance that is still serving
     // traffic. Lock stages first so an old instance cannot read a stage id that
@@ -69,11 +82,13 @@ async function ensureIndustryPipelineDefaults(config = clinicConfig, database = 
 
     if (leadCount > 0) {
       await client.query("COMMIT");
+      inTransaction = false;
       return { changed: false, reason: "pipeline_in_use", businessType: profile.businessType };
     }
 
     if (stagesExactlyMatch(existingStages, profile.defaultStages)) {
       await client.query("COMMIT");
+      inTransaction = false;
       return { changed: false, reason: "already_correct", businessType: profile.businessType };
     }
 
@@ -85,6 +100,7 @@ async function ensureIndustryPipelineDefaults(config = clinicConfig, database = 
 
     if (!isEmpty && !isUntouchedLegacyClinicDefault) {
       await client.query("COMMIT");
+      inTransaction = false;
       return { changed: false, reason: "customized_pipeline", businessType: profile.businessType };
     }
 
@@ -93,6 +109,7 @@ async function ensureIndustryPipelineDefaults(config = clinicConfig, database = 
     }
     await insertDefaultStages(client, profile.defaultStages);
     await client.query("COMMIT");
+    inTransaction = false;
 
     return {
       changed: true,
@@ -101,7 +118,7 @@ async function ensureIndustryPipelineDefaults(config = clinicConfig, database = 
       stageCount: profile.defaultStages.length,
     };
   } catch (err) {
-    await client.query("ROLLBACK").catch(() => {});
+    if (inTransaction) await client.query("ROLLBACK").catch(() => {});
     throw err;
   } finally {
     client.release();
