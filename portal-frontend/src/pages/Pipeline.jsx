@@ -154,18 +154,14 @@ export default function Pipeline() {
       });
     }
 
-    function handleConversationChanged() {
-      scheduleRefresh();
-    }
-
     source.addEventListener("pipeline_changed", handlePipelineChanged);
-    source.addEventListener("conversation_changed", handleConversationChanged);
+    source.addEventListener("conversation_changed", scheduleRefresh);
     return () => {
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = null;
       pendingActivityRefreshRef.current = false;
       source.removeEventListener("pipeline_changed", handlePipelineChanged);
-      source.removeEventListener("conversation_changed", handleConversationChanged);
+      source.removeEventListener("conversation_changed", scheduleRefresh);
       source.close();
     };
   }, [refreshPipeline]);
