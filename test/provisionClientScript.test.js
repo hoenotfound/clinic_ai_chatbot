@@ -68,7 +68,7 @@ test("execution readiness requires the bootstrap admin credentials that are copi
   );
 });
 
-test("successful provisioning receipt is secret-free and stores readiness/recovery identifiers", (t) => {
+test("successful provisioning receipt is secret-free and stores finalization/readiness identifiers", (t) => {
   const baseDir = tempDir(t);
   const result = {
     mode: "executed",
@@ -86,11 +86,19 @@ test("successful provisioning receipt is secret-free and stores readiness/recove
       url: "https://da-chatbot-acme.onrender.com",
       deployId: "dep-123",
       deployStatus: "live",
+      deployedCommitSha: "abc123",
       region: "singapore",
       plan: "starter",
       repo: "https://github.com/hoenotfound/clinic_ai_chatbot",
       branch: "main",
       healthCheckPath: "/",
+    },
+    runtimeFinalization: {
+      publicBaseUrlConfigured: true,
+      adminPasswordRemoved: true,
+      deployId: "dep-final",
+      deployStatus: "live",
+      deployedCommitSha: "abc123",
     },
     profileContract: {
       envKey: "INITIAL_BUSINESS_TYPE",
@@ -100,6 +108,8 @@ test("successful provisioning receipt is secret-free and stores readiness/recove
     readiness: {
       status: "needs_attention",
       ready: false,
+      verificationCompleted: true,
+      checkedAt: "2026-09-08T12:01:00.000Z",
       requiredChannels: ["whatsapp", "instagram"],
       blocking: [{ key: "instagram", status: "warning", summary: "Send a test message." }],
     },
@@ -111,10 +121,13 @@ test("successful provisioning receipt is secret-free and stores readiness/recove
   });
   const saved = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
 
-  assert.equal(saved.version, 2);
+  assert.equal(saved.version, 3);
   assert.equal(saved.completedAt, "2026-09-08T12:00:00.000Z");
+  assert.equal(saved.lastVerifiedAt, "2026-09-08T12:01:00.000Z");
   assert.equal(saved.render.serviceId, "srv-123");
-  assert.equal(saved.render.deployStatus, "live");
+  assert.equal(saved.render.deployedCommitSha, "abc123");
+  assert.equal(saved.runtimeFinalization.adminPasswordRemoved, true);
+  assert.equal(saved.runtimeFinalization.deployId, "dep-final");
   assert.equal(saved.neon.projectId, "neon-123");
   assert.deepEqual(saved.requiredChannels, ["whatsapp", "instagram"]);
   assert.equal(saved.readiness.status, "needs_attention");
@@ -123,13 +136,14 @@ test("successful provisioning receipt is secret-free and stores readiness/recove
   assert.equal(JSON.stringify(saved).includes("ADMIN_PASSWORD"), false);
 });
 
-test("readiness transport/auth failure becomes needs-attention instead of undoing live infrastructure", () => {
+test("readiness transport/auth failure is classified separately from verified needs-attention", () => {
   const report = readinessFailureReport(
     Object.assign(new Error("Administrator login failed"), { code: "READINESS_LOGIN_REJECTED" }),
     { industry: "home_renovation", channels: ["whatsapp"] }
   );
-  assert.equal(report.status, "needs_attention");
+  assert.equal(report.status, "verification_failed");
   assert.equal(report.ready, false);
+  assert.equal(report.verificationCompleted, false);
   assert.equal(report.blocking[0].key, "READINESS_LOGIN_REJECTED");
 });
 
