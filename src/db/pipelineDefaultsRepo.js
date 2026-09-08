@@ -4,6 +4,10 @@ const {
   CLINIC_DEFAULT_STAGES,
   getPipelineProfile,
 } = require("../config/pipelineProfiles");
+const {
+  getAnalyticsPipelineProfile,
+  setRuntimeAnalyticsPipelineBusinessType,
+} = require("./analyticsPipelineProfile");
 
 function comparableStage(stage) {
   return {
@@ -31,6 +35,19 @@ function stagesExactlyMatch(existingStages, expectedStages) {
   });
 }
 
+function setAnalyticsProfileForStages(profile, stages = []) {
+  const effective = getAnalyticsPipelineProfile(
+    { businessType: profile.businessType },
+    {
+      availableSystemKeys: stages.map(
+        (stage) => stage?.system_key ?? stage?.systemKey ?? null
+      ),
+    }
+  );
+  setRuntimeAnalyticsPipelineBusinessType(effective.businessType);
+  return effective.businessType;
+}
+
 async function insertDefaultStages(client, stages) {
   for (const stage of stages) {
     await client.query(
@@ -55,6 +72,14 @@ async function ensureIndustryPipelineDefaults(config = clinicConfig, database = 
       "SELECT EXISTS (SELECT 1 FROM leads LIMIT 1) AS has_leads"
     );
     if (preflightLeadResult.rows?.[0]?.has_leads === true) {
+      // This read is intentionally non-locking. It only chooses Analytics
+      // semantics and never mutates the Pipeline. Existing renovation/generic
+      // clients that still have the historical clinic stage keys therefore
+      // keep their previous analytics behavior after deployment.
+      const stageKeyResult = await client.query(
+        "SELECT system_key FROM pipeline_stages ORDER BY sort_order ASC, id ASC"
+      );
+      setAnalyticsProfileForStages(profile, stageKeyResult.rows || []);
       return { changed: false, reason: "pipeline_in_use", businessType: profile.businessType };
     }
 
@@ -81,12 +106,14 @@ async function ensureIndustryPipelineDefaults(config = clinicConfig, database = 
     const leadCount = Number(leadResult.rows?.[0]?.count || 0);
 
     if (leadCount > 0) {
+      setAnalyticsProfileForStages(profile, existingStages);
       await client.query("COMMIT");
       inTransaction = false;
       return { changed: false, reason: "pipeline_in_use", businessType: profile.businessType };
     }
 
     if (stagesExactlyMatch(existingStages, profile.defaultStages)) {
+      setAnalyticsProfileForStages(profile, existingStages);
       await client.query("COMMIT");
       inTransaction = false;
       return { changed: false, reason: "already_correct", businessType: profile.businessType };
@@ -99,6 +126,7 @@ async function ensureIndustryPipelineDefaults(config = clinicConfig, database = 
     );
 
     if (!isEmpty && !isUntouchedLegacyClinicDefault) {
+      setAnalyticsProfileForStages(profile, existingStages);
       await client.query("COMMIT");
       inTransaction = false;
       return { changed: false, reason: "customized_pipeline", businessType: profile.businessType };
@@ -108,6 +136,7 @@ async function ensureIndustryPipelineDefaults(config = clinicConfig, database = 
       await client.query("DELETE FROM pipeline_stages");
     }
     await insertDefaultStages(client, profile.defaultStages);
+    setAnalyticsProfileForStages(profile, profile.defaultStages);
     await client.query("COMMIT");
     inTransaction = false;
 
@@ -128,5 +157,6 @@ async function ensureIndustryPipelineDefaults(config = clinicConfig, database = 
 module.exports = {
   comparableStage,
   ensureIndustryPipelineDefaults,
+  setAnalyticsProfileForStages,
   stagesExactlyMatch,
 };
