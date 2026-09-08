@@ -8,6 +8,7 @@ const {
   parseArgs,
   readJsonFile,
   resolveContract,
+  updateReceiptReadiness,
 } = require("../scripts/verifyClientReadiness");
 
 function tempDir(t) {
@@ -43,6 +44,7 @@ test("receipt can supply URL, industry and required channels for repeat verifica
   assert.equal(contract.url, "https://acme.onrender.com");
   assert.equal(contract.industry, "home_renovation");
   assert.deepEqual(contract.channels, ["whatsapp", "instagram"]);
+  assert.equal(contract.receipt.industry, "home_renovation");
 });
 
 test("explicit verification arguments override receipt contract fields", (t) => {
@@ -63,4 +65,34 @@ test("explicit verification arguments override receipt contract fields", (t) => 
   assert.equal(contract.url, "https://new.onrender.com");
   assert.equal(contract.industry, "generic");
   assert.deepEqual(contract.channels, ["instagram"]);
+});
+
+test("standalone verification atomically replaces stale readiness in the receipt", (t) => {
+  const directory = tempDir(t);
+  const receiptPath = path.join(directory, "acme.json");
+  const original = {
+    version: 2,
+    industry: "home_renovation",
+    requiredChannels: ["whatsapp"],
+    render: { url: "https://acme.onrender.com" },
+    readiness: { status: "needs_attention", ready: false },
+  };
+  fs.writeFileSync(receiptPath, JSON.stringify(original));
+
+  const report = {
+    status: "ready",
+    ready: true,
+    verificationCompleted: true,
+    checkedAt: "2026-09-08T14:00:00.000Z",
+    requiredChannels: ["whatsapp"],
+    blocking: [],
+    warnings: [],
+  };
+
+  updateReceiptReadiness(receiptPath, original, report);
+  const saved = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+  assert.equal(saved.version, 3);
+  assert.equal(saved.lastVerifiedAt, "2026-09-08T14:00:00.000Z");
+  assert.equal(saved.readiness.status, "ready");
+  assert.equal(saved.readiness.ready, true);
 });
