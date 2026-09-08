@@ -129,17 +129,33 @@ test("summary-only activation is persisted separately from the staff-editable to
 
 test("config repository persists the internal summary activation without exposing it as a public config key", async (t) => {
   preserveClinicConfig(t);
+  const originalConnect = pool.connect;
   const originalQuery = pool.query;
   t.after(() => {
+    pool.connect = originalConnect;
     pool.query = originalQuery;
   });
 
   let savedConfig = null;
-  pool.query = async (sql, params) => {
-    assert.match(sql, /UPDATE clinic_config SET data/);
-    savedConfig = params[0];
-    return { rows: [] };
+  const query = async (sql, params) => {
+    if (/^BEGIN$|^COMMIT$|^ROLLBACK$/.test(sql)) {
+      return { rows: [] };
+    }
+    if (/SELECT data FROM clinic_config WHERE id = 1 FOR UPDATE/.test(sql)) {
+      return { rows: [{ data: { ...clinicConfig } }] };
+    }
+    if (/UPDATE clinic_config SET data/.test(sql)) {
+      savedConfig = params[0];
+      return { rows: [] };
+    }
+    assert.fail(`Unexpected config repository query: ${sql}`);
   };
+
+  pool.connect = async () => ({
+    query,
+    release: () => {},
+  });
+  pool.query = query;
 
   const activatedAt = "2026-08-30T02:00:00.000Z";
   await configRepo.updateConfig({
