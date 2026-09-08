@@ -11,17 +11,59 @@ function safeSystemKey(value, label) {
   return key;
 }
 
-function getAnalyticsPipelineProfile(config = clinicConfig) {
-  const profile = getPipelineProfile(config);
+function analyticsFromPipelineProfile(profile, extra = {}) {
   const analytics = profile.analytics || {};
   return {
     businessType: profile.businessType,
+    configuredBusinessType: extra.configuredBusinessType || profile.businessType,
+    legacyStageFallback: extra.legacyStageFallback === true,
     qualificationSystemKey: analytics.qualificationSystemKey || null,
     primarySystemKey: safeSystemKey(analytics.primarySystemKey, "primary"),
     secondarySystemKey: safeSystemKey(analytics.secondarySystemKey, "secondary"),
     appointmentStatusFallback: analytics.appointmentStatusFallback === true,
     funnelLabels: { ...(analytics.funnelLabels || {}) },
   };
+}
+
+function getAnalyticsPipelineProfile(
+  config = clinicConfig,
+  { availableSystemKeys = null } = {}
+) {
+  const configuredProfile = getPipelineProfile(config);
+  const configured = analyticsFromPipelineProfile(configuredProfile);
+  if (!availableSystemKeys) return configured;
+
+  const keys = new Set(
+    [...availableSystemKeys]
+      .map((key) => String(key || "").trim())
+      .filter(Boolean)
+  );
+  const configuredKeysPresent =
+    keys.has(configured.primarySystemKey) && keys.has(configured.secondarySystemKey);
+  if (configuredKeysPresent || configured.businessType === "aesthetic_clinic") {
+    return configured;
+  }
+
+  // Existing renovation/generic installations with real leads are deliberately
+  // never auto-reset. If they still carry the historical clinic stage keys,
+  // preserve the old analytics semantics too instead of reporting zero primary
+  // milestones after deployment. Fresh industry-native pipelines use their own
+  // configured profile because those expected keys are present.
+  const clinicProfile = analyticsFromPipelineProfile(
+    getPipelineProfile({ businessType: "aesthetic_clinic" }),
+    {
+      configuredBusinessType: configured.businessType,
+      legacyStageFallback: true,
+    }
+  );
+  if (
+    keys.has(clinicProfile.primarySystemKey) &&
+    keys.has(clinicProfile.secondarySystemKey)
+  ) {
+    return clinicProfile;
+  }
+
+  return configured;
 }
 
 function stageTimeSql(systemKey, alias) {
