@@ -119,11 +119,13 @@ A failure can happen between any of those steps. The error contains `partialFina
 }
 ```
 
+The provisioning result/receipt preserves this as `runtimeFinalization` with `completed: false` and a non-secret `failureCode`. A successful finalization records `completed: true`. This means receipt-based recovery does not lose the state just because the final readiness step failed.
+
 Treat those fields as the recovery source of truth. For example, if `adminPasswordRemoved` is `true`, do not expect the bootstrap password to still be present in Render environment variables. The administrator itself remains stored in PostgreSQL and the local runtime env file remains the credential source used by `verify-client`.
 
 Action:
 
-1. inspect the **existing** Render service named in the provisioning output;
+1. inspect the **existing** Render service named in the provisioning output/receipt;
 2. verify `PUBLIC_BASE_URL` and the current environment state;
 3. inspect/retry the existing final deploy if one was requested;
 4. once that same service is healthy/live, rerun readiness verification;
@@ -160,4 +162,4 @@ Do not rebuild infrastructure just because readiness says:
 
 Fix the reported condition and re-run `verify-client` instead.
 
-For purchased channels, final READY evidence requires the latest real inbound customer message to have a later automated assistant reply on the **same contact**, plus provider-acceptance evidence where required and no newer unresolved delivery failure.
+For purchased channels, final READY evidence is deliberately stricter than the normal Setup Status health card. The latest real inbound customer message must have a later **normal AI reply on the same contact whose exact saved message has provider-acceptance evidence**. System fallbacks, staff replies, scheduled messages, automated follow-ups, promotions, and unrelated successful sends on the same Facebook/Instagram channel cannot satisfy this requirement. A newer failed normal-AI reply attempt blocks readiness until a later exact AI reply succeeds.
