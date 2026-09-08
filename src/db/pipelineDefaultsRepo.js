@@ -48,15 +48,21 @@ async function ensureIndustryPipelineDefaults(config = clinicConfig, database = 
   try {
     await client.query("BEGIN");
 
-    const [stageResult, leadResult] = await Promise.all([
-      client.query(
-        `SELECT id, name, sort_order, color, stage_type, system_key
-         FROM pipeline_stages
-         ORDER BY sort_order ASC, id ASC
-         FOR UPDATE`
-      ),
-      client.query("SELECT COUNT(*)::int AS count FROM leads"),
-    ]);
+    // Startup can overlap a previous Render instance that is still serving
+    // traffic. Lock stages first so an old instance cannot read a stage id that
+    // is about to be replaced, then block lead writes while the zero-lead safety
+    // check and any replacement happen in the same transaction. These table
+    // locks also serialize two new instances starting at the same time without
+    // requiring older code to participate in an advisory-lock convention.
+    await client.query("LOCK TABLE pipeline_stages IN ACCESS EXCLUSIVE MODE");
+    await client.query("LOCK TABLE leads IN SHARE ROW EXCLUSIVE MODE");
+
+    const stageResult = await client.query(
+      `SELECT id, name, sort_order, color, stage_type, system_key
+       FROM pipeline_stages
+       ORDER BY sort_order ASC, id ASC`
+    );
+    const leadResult = await client.query("SELECT COUNT(*)::int AS count FROM leads");
 
     const existingStages = stageResult.rows || [];
     const leadCount = Number(leadResult.rows?.[0]?.count || 0);
