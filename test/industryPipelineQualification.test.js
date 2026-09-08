@@ -11,6 +11,7 @@ const {
   ensureIndustryPipelineDefaults,
   stagesExactlyMatch,
 } = require("../src/db/pipelineDefaultsRepo");
+const { getAnalyticsPipelineProfile } = require("../src/db/analyticsPipelineProfile");
 
 function dbStage(stage, id) {
   return {
@@ -29,6 +30,12 @@ function createPipelineDatabase({ stages = [], leadCount = 0 } = {}) {
   const client = {
     query: async (sql, params) => {
       queries.push({ sql, params });
+      if (/SELECT EXISTS \(SELECT 1 FROM leads LIMIT 1\) AS has_leads/.test(sql)) {
+        return { rows: [{ has_leads: leadCount > 0 }] };
+      }
+      if (/SELECT system_key FROM pipeline_stages/.test(sql)) {
+        return { rows: stages.map((stage) => ({ system_key: stage.system_key })) };
+      }
       if (/SELECT id, name, sort_order, color, stage_type, system_key/.test(sql)) {
         return { rows: stages };
       }
@@ -69,6 +76,14 @@ test("pipeline profiles preserve clinic defaults and give renovation semantic st
   assert.equal(renovation.defaultStages.some((stage) => stage.systemKey === "appointment_set"), false);
   assert.equal(renovation.defaultStages.some((stage) => stage.systemKey === "visited"), false);
   assert.equal(generic.defaultStages.some((stage) => /appointment|clinic|quotation|site visit/i.test(stage.name)), false);
+
+  assert.equal(clinic.analytics.primarySystemKey, "appointment_set");
+  assert.equal(clinic.analytics.secondarySystemKey, "visited");
+  assert.equal(renovation.analytics.qualificationSystemKey, "qualified");
+  assert.equal(renovation.analytics.primarySystemKey, "next_step");
+  assert.equal(renovation.analytics.secondarySystemKey, "decision");
+  assert.equal(generic.analytics.primarySystemKey, "qualified");
+  assert.equal(generic.analytics.secondarySystemKey, "decision");
 });
 
 test("fresh renovation pipeline replaces only the untouched legacy clinic seed", async () => {
@@ -98,7 +113,7 @@ test("fresh renovation pipeline replaces only the untouched legacy clinic seed",
   assert.equal(wasReleased(), true);
 });
 
-test("pipeline default reconciliation locks stage readers and lead writers before safety reads", async () => {
+test("zero-lead reconciliation preflights then locks stage readers and lead writers before safety reads", async () => {
   const { database, queries } = createPipelineDatabase({
     stages: CLINIC_DEFAULT_STAGES.map(dbStage),
   });
@@ -108,21 +123,44 @@ test("pipeline default reconciliation locks stage readers and lead writers befor
     database
   );
 
-  assert.equal(queries[0].sql, "BEGIN");
+  assert.match(queries[0].sql, /SELECT EXISTS \(SELECT 1 FROM leads LIMIT 1\)/);
+  assert.equal(queries[1].sql, "BEGIN");
   assert.equal(
-    queries[1].sql,
+    queries[2].sql,
     "LOCK TABLE pipeline_stages IN ACCESS EXCLUSIVE MODE"
   );
   assert.equal(
-    queries[2].sql,
+    queries[3].sql,
     "LOCK TABLE leads IN SHARE ROW EXCLUSIVE MODE"
   );
-  assert.match(queries[3].sql, /FROM pipeline_stages/);
-  assert.equal(queries[4].sql, "SELECT COUNT(*)::int AS count FROM leads");
+  assert.match(queries[4].sql, /FROM pipeline_stages/);
+  assert.equal(queries[5].sql, "SELECT COUNT(*)::int AS count FROM leads");
   assert.ok(
     queries.findIndex(({ sql }) => sql === "LOCK TABLE leads IN SHARE ROW EXCLUSIVE MODE") <
       queries.findIndex(({ sql }) => sql === "SELECT COUNT(*)::int AS count FROM leads")
   );
+});
+
+test("mature in-use pipelines skip strong startup locks and retain legacy analytics semantics when needed", async () => {
+  const legacyStages = CLINIC_DEFAULT_STAGES.map(dbStage);
+  const inUseDb = createPipelineDatabase({ stages: legacyStages, leadCount: 12 });
+  const result = await ensureIndustryPipelineDefaults(
+    { businessType: "home_renovation" },
+    inUseDb.database
+  );
+
+  assert.deepEqual(result, {
+    changed: false,
+    reason: "pipeline_in_use",
+    businessType: "home_renovation",
+  });
+  assert.equal(inUseDb.queries.some(({ sql }) => sql === "BEGIN"), false);
+  assert.equal(inUseDb.queries.some(({ sql }) => /^LOCK TABLE/.test(sql)), false);
+  assert.equal(inUseDb.queries.some(({ sql }) => /SELECT system_key FROM pipeline_stages/.test(sql)), true);
+
+  const effective = getAnalyticsPipelineProfile();
+  assert.equal(effective.businessType, "aesthetic_clinic");
+  assert.equal(effective.configuredBusinessType, "aesthetic_clinic");
 });
 
 test("an actually empty pipeline receives the selected industry defaults", async () => {
@@ -296,10 +334,15 @@ test("clinic drawer profile keeps appointment stage linkage while renovation doe
     set: "appointment_set",
     visited: "visited",
   });
+  assert.equal(clinic.analytics.primaryMetricLabel, "Appointments");
+  assert.equal(clinic.analytics.secondaryMetricLabel, "Clinic Visits");
   assert.equal(clinic.qualificationView, null);
 
   assert.deepEqual(renovation.conversionStageKeys, {});
   assert.equal(renovation.qualificationView.title, "Project qualification");
+  assert.equal(renovation.analytics.primaryMetricLabel, "Quotation / Site Visit");
+  assert.equal(renovation.analytics.secondaryMetricLabel, "Decision");
+  assert.equal(generic.analytics.primaryMetricLabel, "Qualified");
   assert.equal(generic.qualificationView, null);
 });
 
