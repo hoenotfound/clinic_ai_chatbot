@@ -16,13 +16,15 @@ test("outbound readiness migration stores exact provider evidence per saved mess
   assert.match(sql, /accepted_at TIMESTAMPTZ/);
 });
 
-test("normal AI replies and system fallbacks are tagged separately without changing send success", () => {
+test("normal AI replies and system fallbacks are tagged separately without delaying send completion", () => {
   const server = read("src/server.js");
   assert.match(server, /outboundMessageEvidenceRepo\.recordOutcome/);
   assert.match(server, /function sendTrackedText\(contact, text, origin = "ai_reply"\)/);
   assert.match(server, /sendResult\?\.wamid \|\| sendResult\?\.externalMessageId/);
   assert.match(server, /"system_fallback"/);
   assert.match(server, /Readiness telemetry must never become a dependency of customer delivery/);
+  assert.match(server, /recordReadinessSendEvidence\(saved, contact, sendResult, origin\);/);
+  assert.doesNotMatch(server, /await recordReadinessSendEvidence\(saved, contact, sendResult, origin\)/);
 });
 
 test("strict readiness query uses exact AI message evidence while operational health keeps old success metric", () => {
