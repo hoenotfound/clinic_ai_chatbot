@@ -173,10 +173,24 @@ async function updateConfig(updates, database = pool) {
     const changedPublicSetting = changedKeys.some((key) => CONFIG_KEYS.includes(key));
     const industrySetup = normalizeIndustrySetup(nextConfig.industrySetup);
     if (changedPublicSetting && industrySetup.selectable && !industrySetup.locked) {
-      throw conflict(
-        "INDUSTRY_PROFILE_NOT_CONFIRMED",
-        "Confirm this client's Business Profile in Setup Status before changing client Settings."
-      );
+      const customerData = await industrySetupRepo.loadCustomerDataState(client);
+      if (customerData.hasCustomerData) {
+        // Customer activity makes the currently-running profile authoritative.
+        // Persist that lock before accepting Settings so a client can never get
+        // stuck between "too late to choose an industry" and "Settings blocked
+        // until an industry is chosen". The clinic_config row lock serializes
+        // this transition with an administrator attempting profile selection.
+        nextConfig.industrySetup = lockIndustrySetup(industrySetup, {
+          source: "customer_data",
+          reason: "customer_data_exists",
+        });
+        changedKeys.push("industrySetup");
+      } else {
+        throw conflict(
+          "INDUSTRY_PROFILE_NOT_CONFIRMED",
+          "Confirm this client's Business Profile in Setup Status before changing client Settings."
+        );
+      }
     }
 
     await client.query(
