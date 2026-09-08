@@ -1,6 +1,17 @@
 const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 const DEFAULT_NEON_OPERATION_TIMEOUT_MS = 120000;
 const DEFAULT_NEON_OPERATION_POLL_MS = 1500;
+const DEFAULT_RENDER_DEPLOY_TIMEOUT_MS = 15 * 60 * 1000;
+const DEFAULT_RENDER_DEPLOY_POLL_MS = 5000;
+
+const RENDER_DEPLOY_SUCCESS_STATUSES = new Set(["live"]);
+const RENDER_DEPLOY_FAILURE_STATUSES = new Set([
+  "build_failed",
+  "update_failed",
+  "canceled",
+  "pre_deploy_failed",
+  "deactivated",
+]);
 
 class ProviderApiError extends Error {
   constructor(provider, message, {
@@ -8,6 +19,7 @@ class ProviderApiError extends Error {
     method = null,
     path = null,
     ambiguous = false,
+    resourceStatus = null,
   } = {}) {
     super(`${provider}: ${message}`);
     this.name = "ProviderApiError";
@@ -16,16 +28,41 @@ class ProviderApiError extends Error {
     this.method = method;
     this.path = path;
     this.ambiguous = ambiguous;
+    this.resourceStatus = resourceStatus;
   }
 }
 
-function providerErrorMessage(payload, status) {
+function redactSensitiveText(value, sensitiveValues = []) {
+  let output = String(value || "");
+
+  const candidates = Array.from(new Set(
+    sensitiveValues
+      .map((item) => String(item || ""))
+      .filter((item) => item.length >= 4)
+  )).sort((left, right) => right.length - left.length);
+
+  for (const candidate of candidates) {
+    output = output.split(candidate).join("[REDACTED]");
+  }
+
+  output = output
+    .replace(/postgres(?:ql)?:\/\/[^\s"'<>]+/gi, "[REDACTED_DATABASE_URL]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]");
+
+  return output.slice(0, 500);
+}
+
+function providerErrorMessage(payload, status, sensitiveValues = []) {
   if (payload && typeof payload === "object") {
     const value = payload.message || payload.error || payload.detail || payload.code;
-    if (typeof value === "string" && value.trim()) return value.trim().slice(0, 500);
+    if (typeof value === "string" && value.trim()) {
+      return redactSensitiveText(value.trim(), sensitiveValues);
+    }
     if (value && typeof value === "object") {
       const nested = value.message || value.detail || value.code;
-      if (typeof nested === "string" && nested.trim()) return nested.trim().slice(0, 500);
+      if (typeof nested === "string" && nested.trim()) {
+        return redactSensitiveText(nested.trim(), sensitiveValues);
+      }
     }
   }
   return `request failed with HTTP ${status}`;
@@ -59,11 +96,13 @@ function createJsonRequester({
     method = "GET",
     query,
     body,
+    sensitiveValues = [],
   } = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const url = joinUrl(baseUrl, path, query);
     const upperMethod = method.toUpperCase();
+    const redactions = [token, ...sensitiveValues];
 
     try {
       const response = await fetchImpl(url, {
@@ -88,11 +127,15 @@ function createJsonRequester({
       }
 
       if (!response.ok) {
-        throw new ProviderApiError(provider, providerErrorMessage(payload, response.status), {
-          status: response.status,
-          method: upperMethod,
-          path: url.pathname,
-        });
+        throw new ProviderApiError(
+          provider,
+          providerErrorMessage(payload, response.status, redactions),
+          {
+            status: response.status,
+            method: upperMethod,
+            path: url.pathname,
+          }
+        );
       }
 
       return payload;
@@ -117,12 +160,19 @@ function unwrapRenderService(entry) {
   return entry?.service || entry;
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function createRenderClient({
   apiKey,
   ownerId,
   fetchImpl,
   baseUrl = "https://api.render.com/v1/",
   timeoutMs,
+  deployTimeoutMs = DEFAULT_RENDER_DEPLOY_TIMEOUT_MS,
+  deployPollMs = DEFAULT_RENDER_DEPLOY_POLL_MS,
+  sleep = delay,
 }) {
   if (!apiKey) throw new Error("Render provisioning requires PROVISIONING_RENDER_API_KEY.");
   if (!ownerId) throw new Error("Render provisioning requires PROVISIONING_RENDER_OWNER_ID.");
@@ -134,6 +184,12 @@ function createRenderClient({
     fetchImpl,
     timeoutMs,
   });
+
+  async function getDeploy(serviceId, deployId) {
+    return request(
+      `services/${encodeURIComponent(serviceId)}/deploys/${encodeURIComponent(deployId)}`
+    );
+  }
 
   return {
     async findServicesByExactName(name) {
@@ -155,6 +211,7 @@ function createRenderClient({
       buildCommand,
       startCommand,
       envVars,
+      healthCheckPath = "/",
     }) {
       const payload = {
         type: "web_service",
@@ -169,23 +226,64 @@ function createRenderClient({
           region,
           plan,
           numInstances: 1,
+          healthCheckPath,
           envSpecificDetails: {
             buildCommand,
             startCommand,
           },
         },
       };
-      return request("services", { method: "POST", body: payload });
+      const sensitiveValues = (envVars || [])
+        .map((entry) => entry?.value)
+        .filter((value) => value !== undefined && value !== null);
+      return request("services", {
+        method: "POST",
+        body: payload,
+        sensitiveValues,
+      });
+    },
+
+    getDeploy,
+
+    async waitForDeploy(serviceId, deployId) {
+      const startedAt = Date.now();
+      while (true) {
+        if (Date.now() - startedAt > deployTimeoutMs) {
+          throw new ProviderApiError(
+            "Render",
+            `deploy ${deployId} did not become live within ${deployTimeoutMs}ms`,
+            {
+              method: "GET",
+              path: `/services/${serviceId}/deploys/${deployId}`,
+              resourceStatus: "timeout",
+            }
+          );
+        }
+
+        const deploy = await getDeploy(serviceId, deployId);
+        const status = String(deploy?.status || "").trim().toLowerCase();
+
+        if (RENDER_DEPLOY_SUCCESS_STATUSES.has(status)) return deploy;
+        if (RENDER_DEPLOY_FAILURE_STATUSES.has(status)) {
+          throw new ProviderApiError(
+            "Render",
+            `deploy ${deployId} ended with status ${status}`,
+            {
+              method: "GET",
+              path: `/services/${serviceId}/deploys/${deployId}`,
+              resourceStatus: status,
+            }
+          );
+        }
+
+        await sleep(deployPollMs);
+      }
     },
   };
 }
 
 function unwrapNeonOperation(payload) {
   return payload?.operation || payload;
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function createNeonClient({
@@ -210,11 +308,40 @@ function createNeonClient({
 
   return {
     async findProjectsByExactName(name) {
-      const payload = await request("projects", {
-        query: { search: name, limit: 100, org_id: orgId },
-      });
-      const projects = Array.isArray(payload?.projects) ? payload.projects : [];
-      return projects.filter((project) => project?.name === name);
+      const matches = [];
+      const seenCursors = new Set();
+      let cursor = null;
+
+      do {
+        const payload = await request("projects", {
+          query: {
+            search: name,
+            limit: 400,
+            org_id: orgId,
+            cursor,
+            timeout: 30000,
+          },
+        });
+
+        const unavailable = Array.isArray(payload?.unavailable) ? payload.unavailable : [];
+        if (unavailable.length) {
+          throw new ProviderApiError(
+            "Neon",
+            "project search returned incomplete results; retry the preflight before provisioning",
+            { method: "GET", path: "/projects" }
+          );
+        }
+
+        const projects = Array.isArray(payload?.projects) ? payload.projects : [];
+        matches.push(...projects.filter((project) => project?.name === name));
+
+        const nextCursor = payload?.pagination?.cursor || payload?.pagination?.next || null;
+        if (!nextCursor || nextCursor === cursor || seenCursors.has(nextCursor)) break;
+        if (cursor) seenCursors.add(cursor);
+        cursor = nextCursor;
+      } while (cursor);
+
+      return matches;
     },
 
     async createProject({ name, regionId }) {
@@ -246,7 +373,9 @@ function createNeonClient({
         }
 
         for (const operationId of Array.from(pending)) {
-          const payload = await request(`projects/${encodeURIComponent(projectId)}/operations/${encodeURIComponent(operationId)}`);
+          const payload = await request(
+            `projects/${encodeURIComponent(projectId)}/operations/${encodeURIComponent(operationId)}`
+          );
           const operation = unwrapNeonOperation(payload) || {};
           const status = String(operation.status || "").toLowerCase();
           if (["finished", "completed", "succeeded"].includes(status)) {
@@ -287,9 +416,14 @@ function createNeonClient({
 module.exports = {
   DEFAULT_NEON_OPERATION_POLL_MS,
   DEFAULT_NEON_OPERATION_TIMEOUT_MS,
+  DEFAULT_RENDER_DEPLOY_POLL_MS,
+  DEFAULT_RENDER_DEPLOY_TIMEOUT_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
   ProviderApiError,
+  RENDER_DEPLOY_FAILURE_STATUSES,
+  RENDER_DEPLOY_SUCCESS_STATUSES,
   createJsonRequester,
   createNeonClient,
   createRenderClient,
+  redactSensitiveText,
 };
