@@ -9,3 +9,4 @@ portal-frontend/node_modules/
 *.provisioning.env
 .client-runtime.env
 *.client-runtime.env
+.provisioning/
