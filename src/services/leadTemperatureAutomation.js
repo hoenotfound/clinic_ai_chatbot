@@ -5,24 +5,13 @@ const {
   getLeadTemperatureRuleProfile,
 } = require("../config/leadTemperatureRuleProfiles");
 const {
+  evaluateLeadTemperatureMessage,
+} = require("./leadTemperatureClassifier");
+const {
   isAllowedRuleTemperatureTransition,
 } = require("../utils/leadTemperatureTransitions");
 
 const CONTEXT_MESSAGE_LIMIT = 8;
-const MAX_EVIDENCE_CHARS = 200;
-
-function normalizeText(value) {
-  return String(value || "")
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/[’‘]/g, "'")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function matchesAny(text, patterns = []) {
-  return patterns.some((pattern) => pattern.test(text));
-}
 
 function resolveRuleProfile(ruleProfile, businessType) {
   if (ruleProfile) return ruleProfile;
@@ -30,62 +19,7 @@ function resolveRuleProfile(ruleProfile, businessType) {
   return getLeadTemperatureRuleProfile(clinicConfig);
 }
 
-function isExplicitRejection(text, profile) {
-  if (matchesAny(text, profile.absoluteRejectionPatterns)) return true;
-  return (
-    matchesAny(text, profile.declinePatterns) &&
-    !matchesAny(text, profile.positiveContrastPatterns) &&
-    !matchesAny(text, profile.unclearHotPatterns) &&
-    !matchesAny(text, profile.alternativeContextPatterns)
-  );
-}
-
-function hasHotIntent(text, profile) {
-  return (
-    matchesAny(text, profile.hotIntentPatterns) &&
-    !matchesAny(text, profile.unclearHotPatterns) &&
-    !matchesAny(text, profile.negatedHotPatterns)
-  );
-}
-
-function configuredLocationMatches(text, locationNames) {
-  return (locationNames || []).some((locationName) => {
-    const normalizedLocation = normalizeText(locationName);
-    return normalizedLocation && text.includes(normalizedLocation);
-  });
-}
-
-function isContextAnswer(text, locationNames, profile) {
-  const alternative = matchesAny(text, profile.alternativeContextPatterns);
-  const explicitChoice = matchesAny(text, profile.contextChoicePatterns);
-
-  // Renovation can treat a rejected proposed time or next step plus a clear
-  // replacement ("Saturday can't, but Sunday works" or "quote instead") as a
-  // valid answer. Clinic keeps its exact historical non-confirming ordering.
-  if (profile.alternativeOverridesNonConfirming && (alternative || explicitChoice)) {
-    return true;
-  }
-
-  if (
-    matchesAny(text, profile.unclearHotPatterns) ||
-    matchesAny(text, profile.nonConfirmingContextPatterns)
-  ) {
-    return false;
-  }
-
-  if (
-    alternative ||
-    matchesAny(text, profile.contextConfirmPatterns) ||
-    matchesAny(text, profile.contextDetailPatterns) ||
-    explicitChoice
-  ) {
-    return true;
-  }
-
-  return profile.allowConfiguredLocationAnswers && configuredLocationMatches(text, locationNames);
-}
-
-function classifyTemperatureMessage({
+function evaluateTemperatureMessage({
   messageText,
   previousBusinessMessage = "",
   // Backward-compatible argument name for existing tests/callers while the
@@ -97,51 +31,18 @@ function classifyTemperatureMessage({
   businessType = null,
 }) {
   const profile = resolveRuleProfile(ruleProfile, businessType);
-  const text = normalizeText(messageText);
-  if (!text) return null;
-
-  const absoluteRejection = matchesAny(text, profile.absoluteRejectionPatterns);
-  const rejected = isExplicitRejection(text, profile);
-  const hotIntent = hasHotIntent(text, profile);
-  if (rejected && hotIntent) return null;
-
-  const evidence = String(messageText).trim().slice(0, MAX_EVIDENCE_CHARS);
-  if (rejected) {
-    return {
-      temperature: "cold",
-      matchedRule: "explicit_rejection",
-      rejectionStrength: absoluteRejection ? "absolute" : "standard",
-      reason: "The customer explicitly declined or asked not to be contacted.",
-      evidence,
-    };
-  }
-
-  if (hotIntent && profile.hotMatchedRule) {
-    return {
-      temperature: "hot",
-      matchedRule: profile.hotMatchedRule,
-      reason: profile.hotReason,
-      evidence,
-    };
-  }
-
-  const previous = normalizeText(previousBusinessMessage || previousClinicMessage);
   const configuredLocations = locationNames.length ? locationNames : branchNames;
-  if (
-    previous &&
-    profile.contextMatchedRule &&
-    matchesAny(previous, profile.contextPromptPatterns) &&
-    isContextAnswer(text, configuredLocations, profile)
-  ) {
-    return {
-      temperature: "hot",
-      matchedRule: profile.contextMatchedRule,
-      reason: profile.contextReason,
-      evidence,
-    };
-  }
 
-  return null;
+  return evaluateLeadTemperatureMessage({
+    messageText,
+    previousBusinessMessage: previousBusinessMessage || previousClinicMessage,
+    locationNames: configuredLocations,
+    ruleProfile: profile,
+  });
+}
+
+function classifyTemperatureMessage(input) {
+  return evaluateTemperatureMessage(input).classification;
 }
 
 function createLeadTemperatureReviewer({
@@ -169,19 +70,17 @@ function createLeadTemperatureReviewer({
 
     const ruleProfile = getRuleProfile();
     const locationNames = resolveLocationNames();
-    let classification = classifyTemperatureMessage({
+    let evaluation = evaluateTemperatureMessage({
       messageText,
       locationNames,
       ruleProfile,
     });
+    let classification = evaluation.classification;
 
-    // Short answers such as "Saturday", "Puchong", "quotation", or "site
-    // visit" only become Hot when the immediately preceding assistant message
-    // was the active industry's relevant conversion/scheduling question.
-    if (
-      !classification &&
-      isContextAnswer(normalizeText(messageText), locationNames, ruleProfile)
-    ) {
+    // The pure classifier tells orchestration when the current message looks
+    // like a context-only answer. History is loaded only in that case, so the
+    // automation layer no longer duplicates rule-matching logic.
+    if (!classification && evaluation.shouldLoadContext) {
       const messages = await messagesRepository.getMessagesForContact(
         contactId,
         CONTEXT_MESSAGE_LIMIT,
@@ -209,12 +108,13 @@ function createLeadTemperatureReviewer({
         ? previousMessage.content
         : "";
 
-      classification = classifyTemperatureMessage({
+      evaluation = evaluateTemperatureMessage({
         messageText,
         previousBusinessMessage,
         locationNames,
         ruleProfile,
       });
+      classification = evaluation.classification;
     }
 
     if (!classification) {
@@ -261,5 +161,6 @@ const reviewLeadTemperatureForMessage = createLeadTemperatureReviewer({
 module.exports = {
   classifyTemperatureMessage,
   createLeadTemperatureReviewer,
+  evaluateTemperatureMessage,
   reviewLeadTemperatureForMessage,
 };
