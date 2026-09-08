@@ -17,11 +17,6 @@ const promoImagesRepo = require("./promoImagesRepo");
 const { DEFAULT_LEAD_DISTRIBUTION } = require("../utils/leadDistribution");
 const realtimeEvents = require("../utils/realtimeEvents");
 
-// Every top-level key the Settings page is allowed to read/write. Keep the
-// historical clinicName key during the migration so existing UI/API clients
-// continue to work. businessName is synchronized with it in updateConfig().
-// Profile-owned businessType/terminology/conversion metadata stays outside this
-// list: industry selection goes through the dedicated atomic Setup Status action.
 const CONFIG_KEYS = [
   "clinicName",
   "businessName",
@@ -46,14 +41,7 @@ const CONFIG_KEYS = [
   "guardrails",
 ];
 
-// businessType remains intentionally unavailable through normal Settings PATCH.
-// The dedicated profile selector replaces the complete industry profile and
-// Pipeline together, and only while the deployment is still safe to re-profile.
 const INTERNAL_CONFIG_KEYS = ["telegramConversationSummary"];
-
-// server.js keeps its old 30-minute housekeeping callback for compatibility,
-// but this guard makes that callback a no-op unless a full day has elapsed.
-// Config changes force an immediate cleanup while Postgres is already awake.
 const PROMO_IMAGE_BACKSTOP_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 let lastPromoImageBackstopPruneAt = 0;
 
@@ -64,12 +52,6 @@ function conflict(code, message) {
   return error;
 }
 
-/**
- * Pulls the numeric row id out of one of our own hosted promo-image URLs
- * (e.g. ".../promo-images/42" -> 42). Returns null for anything else — a
- * staff-pasted external URL, an empty imageUrl, etc. — since those have no
- * corresponding row to protect from pruning.
- */
 function extractPromoImageId(url) {
   if (!url) return null;
   const match = String(url).match(/\/promo-images\/(\d+)(?:[/?#]|$)/);
@@ -95,18 +77,6 @@ function hydrateStoredConfig(storedConfig = {}) {
   };
 }
 
-/**
- * Deletes any promo_images row that isn't referenced by the current
- * config's promotions and is older than the grace period — cleans up
- * uploads that were replaced/removed outside the normal flow (see
- * promoImagesRepo.pruneUnreferenced for the full explanation). Errors are
- * logged, not thrown: this is best-effort housekeeping and should never be
- * allowed to break a config load or save.
- *
- * Background callers are throttled so they cannot keep Neon awake. A settings
- * change passes force=true because the database is already active and cleanup
- * should happen immediately after a promotion/follow-up image is replaced.
- */
 async function pruneOrphanedPromoImages(force = false, now = Date.now()) {
   if (
     !force &&
@@ -135,11 +105,6 @@ async function pruneOrphanedPromoImages(force = false, now = Date.now()) {
   }
 }
 
-/**
- * Loads DB-backed config into the shared live object. Fresh client deployments
- * use onboarding-safe industry templates; established databases continue to
- * hydrate from their stored config with the historical clinic fallback intact.
- */
 async function loadConfig() {
   const result = await pool.query("SELECT data FROM clinic_config WHERE id = 1");
 
@@ -163,27 +128,10 @@ async function loadConfig() {
   return clinicConfig;
 }
 
-/** Returns the live, in-memory config object (see config/clinicConfig.js). */
 function getConfig() {
   return clinicConfig;
 }
 
-/**
- * Applies a partial update — only recognized top-level keys present in
- * `updates` are touched, everything else in the current config is left alone.
- * During the migration, clinicName and businessName are kept synchronized so
- * old modules/UI and new industry-neutral code cannot drift to different names.
- *
- * Every config writer locks the clinic_config row and builds from the value it
- * reads after that lock is acquired. This serializes Settings with the atomic
- * industry selector, so a stale request can never overwrite a profile switch
- * that committed while it was waiting for the row lock.
- *
- * Client-facing Settings are refused while the default onboarding profile is
- * still selectable. The administrator must explicitly confirm Clinic or choose
- * another industry in Setup Status first, preventing an accidental Settings save
- * from silently making the default clinic choice irreversible.
- */
 async function updateConfig(updates, database = pool) {
   const client = await database.connect();
   let inTransaction = false;
@@ -201,9 +149,6 @@ async function updateConfig(updates, database = pool) {
       throw new Error("clinic_config row is missing.");
     }
 
-    // Build from the locked database value, not the process-local cache. During
-    // rolling deploys another instance may have committed a profile selection
-    // immediately before this request acquired the row lock.
     nextConfig = hydrateStoredConfig(result.rows[0].data || {});
 
     for (const key of [...CONFIG_KEYS, ...INTERNAL_CONFIG_KEYS]) {
@@ -247,9 +192,6 @@ async function updateConfig(updates, database = pool) {
     client.release();
   }
 
-  // Apply live settings only after Postgres accepts the save. Replace rather
-  // than merge so a process whose cache was stale after another instance's
-  // profile selection cannot retain keys from the previous industry profile.
   industrySetupRepo.replaceLiveConfig(nextConfig);
 
   if (
@@ -267,49 +209,70 @@ async function updateConfig(updates, database = pool) {
 }
 
 /**
- * Permanently closes the one-time industry selector after the first successful
- * Pipeline customization. This is a dedicated metadata write rather than a
- * normal Settings patch because industrySetup is intentionally not public
- * configuration.
+ * Runs a Pipeline stage mutation while holding the clinic_config row lock used
+ * by profile selection and Settings. If the stage operation succeeds, a still-
+ * selectable onboarding profile is permanently locked in the same outer
+ * transaction. If the stage operation fails, the metadata transaction rolls
+ * back and the deployment remains selectable.
+ *
+ * The stage repository uses its own short DB transaction internally. Holding
+ * clinic_config here prevents profile selection from interleaving with it; the
+ * selector's dynamic Pipeline recheck remains a second safety net if the final
+ * metadata update itself ever fails after the stage mutation committed.
  */
-async function lockIndustrySetupForPipelineCustomization({
-  actor = null,
-  database = pool,
-  now = new Date(),
-} = {}) {
+async function withPipelineCustomizationLock(
+  work,
+  {
+    actor = null,
+    database = pool,
+    now = new Date(),
+  } = {}
+) {
+  if (typeof work !== "function") {
+    throw new TypeError("Pipeline customization work must be a function.");
+  }
+
   const client = await database.connect();
   let inTransaction = false;
-  let changed = false;
   let nextStoredConfig = null;
+  let nextIndustrySetup = null;
+  let result;
 
   try {
     await client.query("BEGIN");
     inTransaction = true;
 
-    const result = await client.query(
+    const configResult = await client.query(
       "SELECT data FROM clinic_config WHERE id = 1 FOR UPDATE"
     );
-    if (!result.rows?.length) {
+    if (!configResult.rows?.length) {
       throw new Error("clinic_config row is missing.");
     }
 
-    const storedConfig = result.rows[0].data || {};
-    const setup = normalizeIndustrySetup(storedConfig.industrySetup);
-    if (setup.selectable && !setup.locked) {
-      nextStoredConfig = {
-        ...storedConfig,
-        industrySetup: lockIndustrySetup(setup, {
+    const storedConfig = configResult.rows[0].data || {};
+    result = await work();
+
+    // Null is used by update/delete repositories for "not found" and is not a
+    // successful customization. Other successful results, including arrays,
+    // permanently close the one-time selector.
+    if (result !== null && result !== undefined) {
+      const setup = normalizeIndustrySetup(storedConfig.industrySetup);
+      if (setup.selectable && !setup.locked) {
+        nextIndustrySetup = lockIndustrySetup(setup, {
           source: "pipeline",
           reason: "pipeline_customized",
           actor,
           now,
-        }),
-      };
-      await client.query(
-        "UPDATE clinic_config SET data = $1, updated_at = now() WHERE id = 1",
-        [nextStoredConfig]
-      );
-      changed = true;
+        });
+        nextStoredConfig = {
+          ...storedConfig,
+          industrySetup: nextIndustrySetup,
+        };
+        await client.query(
+          "UPDATE clinic_config SET data = $1, updated_at = now() WHERE id = 1",
+          [nextStoredConfig]
+        );
+      }
     }
 
     await client.query("COMMIT");
@@ -321,12 +284,12 @@ async function lockIndustrySetupForPipelineCustomization({
     client.release();
   }
 
-  if (changed) {
-    industrySetupRepo.replaceLiveConfig(hydrateStoredConfig(nextStoredConfig));
+  if (nextIndustrySetup) {
+    clinicConfig.industrySetup = nextIndustrySetup;
     realtimeEvents.publish("config_changed", { keys: ["industrySetup"] });
   }
 
-  return changed;
+  return result;
 }
 
 function selectIndustryProfile(businessType, {
@@ -349,8 +312,8 @@ module.exports = {
   getIndustrySetupStatus: industrySetupRepo.getIndustrySetupStatus,
   hydrateStoredConfig,
   loadConfig,
-  lockIndustrySetupForPipelineCustomization,
   pruneOrphanedPromoImages,
   selectIndustryProfile,
   updateConfig,
+  withPipelineCustomizationLock,
 };
