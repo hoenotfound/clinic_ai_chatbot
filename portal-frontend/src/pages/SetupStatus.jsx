@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import Spinner from "../components/Spinner";
 import GeminiDiagnosticPanel from "../components/GeminiDiagnosticPanel";
+import BusinessProfileSetupPanel from "../components/BusinessProfileSetupPanel";
 
 const GROUP_ORDER = ["Core system", "AI", "Messaging channels", "Supporting services"];
 
@@ -253,6 +254,8 @@ export default function SetupStatus() {
             {error}
           </div>
         )}
+
+        {data.businessProfile && <BusinessProfileSetupPanel profile={data.businessProfile} />}
 
         <section>
           <SectionHeading title="System health" subtitle="Live operational signals, not just configuration checks." />
