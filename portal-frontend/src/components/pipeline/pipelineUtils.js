@@ -80,14 +80,19 @@ function hasQualificationValue(value) {
 }
 
 export function latestQualificationMetadata(activities = [], fields = []) {
-  const wantedKeys = new Set(
-    (fields || [])
-      .filter((field) => field?.source === "activity" && field.path)
-      .map((field) => field.path)
+  const activityFields = (fields || []).filter(
+    (field) => field?.source === "activity" && field.path
+  );
+  const snapshotKeys = new Set(
+    activityFields.filter((field) => field.snapshot === true).map((field) => field.path)
+  );
+  const rollingKeys = new Set(
+    activityFields.filter((field) => field.snapshot !== true).map((field) => field.path)
   );
   const latest = {};
-  if (wantedKeys.size === 0) return latest;
+  if (snapshotKeys.size === 0 && rollingKeys.size === 0) return latest;
 
+  let snapshotCaptured = false;
   for (const activity of activities || []) {
     const metadata = activity?.metadata;
     if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) continue;
@@ -96,12 +101,33 @@ export function latestQualificationMetadata(activities = [], fields = []) {
     // unrelated notes/scoring metadata cannot accidentally populate project UI.
     if (metadata.outcome !== "booking_ready") continue;
 
-    for (const key of wantedKeys) {
+    // Snapshot-scoped values such as requested next step and its timing must
+    // come from the same newest conversion-ready activity. Never fill a missing
+    // value from an older conversion snapshot or the UI can display a state
+    // that never actually existed (for example, quotation discussion with an
+    // old site-visit time).
+    if (!snapshotCaptured) {
+      snapshotCaptured = true;
+      for (const key of snapshotKeys) {
+        if (hasQualificationValue(metadata[key])) latest[key] = metadata[key];
+      }
+    }
+
+    // Stable project context can still fall back to the newest known non-empty
+    // value because later conversion snapshots may only update the requested
+    // next step while leaving location/summary unchanged.
+    for (const key of rollingKeys) {
       if (!Object.hasOwn(latest, key) && hasQualificationValue(metadata[key])) {
         latest[key] = metadata[key];
       }
     }
-    if ([...wantedKeys].every((key) => Object.hasOwn(latest, key))) break;
+
+    if (
+      snapshotCaptured &&
+      [...rollingKeys].every((key) => Object.hasOwn(latest, key))
+    ) {
+      break;
+    }
   }
   return latest;
 }
