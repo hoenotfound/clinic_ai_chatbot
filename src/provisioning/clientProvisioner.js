@@ -512,6 +512,7 @@ module.exports = {
   provisionClient,
   publicPlan,
   renderEnvVars,
+  requireExecutionConfig,
   requireIndustry,
   requireRenderRegion,
 };
