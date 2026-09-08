@@ -11,7 +11,7 @@ one client
   -> production readiness verification
 ```
 
-The workflow is conservative. Provisioning is a dry run unless `--execute` is supplied. Readiness verification does not delete infrastructure, edit client business settings/Pipeline data, or send customer-facing test messages.
+Provisioning is conservative: it is a dry run unless `--execute` is supplied. Readiness verification never sends a synthetic customer message, deletes infrastructure, or edits client business/Pipeline data.
 
 ## What provisioning automates
 
@@ -19,33 +19,31 @@ For a new client, `provision-client`:
 
 1. requires an explicit business industry;
 2. requires the messaging channels the client actually bought;
-3. validates Render/Neon choices and the required client runtime contract before cloud creation;
+3. validates Render/Neon options and required client runtime credentials before cloud creation;
 4. checks Render and Neon for exact resource-name collisions;
-5. creates a Neon project in the selected region;
-6. waits for Neon's create operations to finish;
-7. retrieves a **pooled** Neon PostgreSQL connection URI;
-8. creates the Render Node web service from this repository;
-9. injects `DATABASE_URL`, a Render-generated `SESSION_SECRET`, and the canonical `INITIAL_BUSINESS_TYPE`;
-10. waits for the initial Render deploy to reach `live`;
-11. records the deployed Git commit when Render exposes it;
-12. verifies the bootstrap administrator can sign in;
-13. sets `PUBLIC_BASE_URL` to the actual Render service URL;
-14. removes `ADMIN_PASSWORD` from Render after the successful bootstrap login;
-15. deploys that finalized runtime and waits for it to become `live`;
-16. runs the authenticated production-readiness verification;
-17. writes a local secret-free v3 provisioning/readiness receipt.
+5. creates Neon in the selected region and waits for create operations;
+6. retrieves the pooled PostgreSQL connection URI;
+7. creates the Render Node web service with `DATABASE_URL`, a generated `SESSION_SECRET`, and canonical `INITIAL_BUSINESS_TYPE`;
+8. waits for the initial Render deployment to become `live`;
+9. records the deployed Git commit when available;
+10. proves the bootstrap administrator can log in;
+11. sets provisioner-owned `PUBLIC_BASE_URL` to the actual Render URL;
+12. removes `ADMIN_PASSWORD` from Render after bootstrap succeeds;
+13. deploys the finalized runtime and waits for it to become `live`;
+14. runs authenticated readiness verification;
+15. writes a secret-free v3 provisioning/readiness receipt.
 
-The final readiness pass uses the application’s protected Setup Status endpoint plus the operational `systemHealth` evidence returned by that endpoint. There is no second customer-facing health-check implementation and no automated test message is sent.
+The final verification reuses protected Setup Status and `systemHealth`. It adds a stricter go-live proof without changing the ordinary Setup Status meaning of “last successful outbound.”
 
 ## Industry contract
 
-Supported canonical profiles are:
+Supported canonical profiles:
 
 - `aesthetic_clinic`
 - `home_renovation`
 - `generic`
 
-Aliases accepted by the production resolver, such as `renovation`, `carpentry`, and `cabinetry`, are normalized before cloud operations.
+Aliases accepted by the production resolver, such as `renovation`, `carpentry`, and `cabinetry`, normalize before cloud operations.
 
 The provisioner injects:
 
@@ -53,9 +51,9 @@ The provisioner injects:
 INITIAL_BUSINESS_TYPE=<canonical profile>
 ```
 
-before first startup, so the deployment seeds and locks the intended profile immediately.
+before first startup so the deployment seeds and locks the intended profile immediately.
 
-## Required messaging channels
+## Purchased messaging channels
 
 Provisioning requires an explicit purchased-channel contract:
 
@@ -65,38 +63,55 @@ Provisioning requires an explicit purchased-channel contract:
 --channels facebook,instagram
 ```
 
-Supported canonical values are:
+Supported canonical values:
 
 - `whatsapp`
-- `facebook` (Facebook Messenger)
+- `facebook` (Messenger)
 - `instagram`
 
-Accepted aliases include `wa`, `fb`, `messenger`, and `ig`.
+Aliases include `wa`, `fb`, `messenger`, and `ig`.
 
-Only channels listed in `--channels` are mandatory for go-live. An unpurchased channel can remain unconfigured without blocking readiness.
+Only purchased channels block go-live. An unpurchased channel may remain unconfigured.
 
-A purchased channel must prove a real application round trip. READY requires:
+### Exact go-live round-trip evidence
 
-- its required Setup Status connection/webhook checks are configured and `ready`;
-- a real customer inbound message has been observed;
-- a successful outbound reply has been observed **after** that inbound message;
-- there is no unresolved delivery failure newer than the last successful outbound reply;
-- runtime messaging health is healthy.
+A purchased channel becomes round-trip ready only after:
 
-The verifier does not manufacture this evidence. After provisioning, send a genuine WhatsApp/Messenger/Instagram test message through each purchased channel and confirm the chatbot replies.
+1. a real customer inbound message is stored;
+2. the normal AI reply path produces an outbound message for the **same contact after that inbound**;
+3. that exact saved AI message has provider-acceptance evidence:
+   - WhatsApp: its WAMID;
+   - Messenger/Instagram: the exact `externalMessageId` returned by Meta;
+4. no newer failed normal-AI reply attempt exists for that conversation;
+5. normal runtime messaging health is healthy.
 
-A newly created deployment can therefore legitimately finish with:
+This proof is stored in `outbound_message_evidence`, keyed by the exact saved message ID. It is telemetry only and does not control delivery.
+
+The following **cannot** satisfy go-live proof:
+
+- staff/manual replies;
+- scheduled messages;
+- automated follow-ups;
+- promotion messages/images;
+- unsupported-media/transcription/processing system fallbacks;
+- an unrelated successful Facebook/Instagram send to another contact.
+
+This strict readiness evidence is intentionally separate from ordinary Setup Status operational health. Setup Status continues to use its broader existing “last successful outbound” metric so a real staff/manual recovery send can still clear an operational delivery warning.
+
+Readiness telemetry is recorded best-effort after provider delivery and is not awaited by the customer reply path. If telemetry cannot be written, customer delivery remains unchanged and readiness fails closed until valid evidence exists.
+
+A new deployment can legitimately finish as:
 
 ```text
 Infrastructure: LIVE
 Client readiness: NEEDS ATTENTION
 ```
 
-until real channel evidence exists. Infrastructure is not rolled back.
+until each purchased channel has a real test conversation.
 
 ## Control-plane credentials
 
-Keep these only in your local shell or secure operator environment:
+Keep these only in the local operator shell/environment:
 
 ```bash
 export PROVISIONING_RENDER_API_KEY="..."
@@ -104,15 +119,10 @@ export PROVISIONING_RENDER_OWNER_ID="..."
 export PROVISIONING_NEON_API_KEY="..."
 # Optional for organization-scoped Neon provisioning.
 export PROVISIONING_NEON_ORG_ID="..."
-```
-
-Choose the Render plan explicitly:
-
-```bash
 export PROVISIONING_RENDER_PLAN="starter"
 ```
 
-Optional operator defaults:
+Optional defaults:
 
 ```bash
 export PROVISIONING_RENDER_REGION="singapore"
@@ -122,19 +132,17 @@ export PROVISIONING_RENDER_BRANCH="main"
 export PROVISIONING_RESOURCE_PREFIX="da-chatbot"
 ```
 
-Render plan/region values are validated before Neon is created so simple input mistakes do not create a partial installation first.
+Provider/CLI errors redact runtime secrets, control-plane tokens, bearer credentials, and PostgreSQL URLs.
 
 ## Client runtime configuration
 
-Client-specific application variables come from a local dotenv file, for example:
+Client application variables come from a local dotenv file, for example:
 
 ```bash
-# acme.client-runtime.env
 AI_PROVIDER=gemini
 GEMINI_API_KEY=...
 ANTHROPIC_API_KEY=...
 
-# Required for bootstrap + later local readiness verification.
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=...
 
@@ -149,18 +157,18 @@ R2_SECRET_ACCESS_KEY=...
 R2_BUCKET_NAME=...
 ```
 
-For `--execute`, provisioning fails **before creating Neon or Render** if the required readiness contract is incomplete. The preflight requires:
+For `--execute`, provisioning fails **before creating Neon or Render** when required readiness credentials are incomplete. Preflight requires:
 
 - `ADMIN_USERNAME` and `ADMIN_PASSWORD`;
-- at least one configured AI credential path (Gemini or Claude fallback credential);
-- the required R2 storage credentials;
-- the credentials required by every purchased channel.
+- at least one AI credential path (Gemini or Claude);
+- required R2 credentials;
+- credentials for every purchased channel.
 
-`ADMIN_PASSWORD` is copied to Render only for bootstrap. After the first successful administrator login, the provisioner removes `ADMIN_PASSWORD` from Render and deploys the finalized runtime. The local runtime file should remain securely stored because `verify-client` still needs that password to authenticate; the administrator password itself is already persisted by the application in PostgreSQL.
+`ADMIN_PASSWORD` exists in Render only for bootstrap. After the first successful administrator login, it is removed and the finalized runtime is deployed. Keep the local runtime file secure because `verify-client` still needs the administrator password; the user account itself is persisted in PostgreSQL.
 
-Passwords are intentionally **not** accepted as CLI flags so they do not enter normal shell history.
+Passwords are not accepted as CLI flags.
 
-The following keys are owned by provisioning and are rejected from client runtime input:
+Provisioning owns and rejects these client-input keys:
 
 - `DATABASE_URL`
 - `SESSION_SECRET`
@@ -169,17 +177,11 @@ The following keys are owned by provisioning and are rejected from client runtim
 - `PUBLIC_BASE_URL`
 - `PORT`
 
-`PUBLIC_BASE_URL` is deliberately provisioner-owned so the final application check cannot be made green with an arbitrary runtime-file value. The provisioner writes the actual Render service URL only after the service exists.
-
-Every key beginning with `PROVISIONING_` is also rejected from the client runtime file.
-
-Provider/CLI errors are redacted against client runtime secrets, control-plane tokens, bearer credentials, and PostgreSQL connection URIs.
-
-Local runtime files and `.provisioning/` state are gitignored, but should still be treated as sensitive operator material.
+Every `PROVISIONING_*` key is also rejected from the client runtime file.
 
 ## 1. Review the dry-run plan
 
-Example for a renovation client using WhatsApp + Instagram:
+Example:
 
 ```bash
 npm run provision-client -- \
@@ -190,26 +192,9 @@ npm run provision-client -- \
   --runtime-env-file ./acme.client-runtime.env
 ```
 
-No Render, Neon, or client-portal request is made in dry-run mode.
+No Render, Neon, or client-portal request is made in dry-run mode. Output contains runtime key names only, never secret values.
 
-Example output includes:
-
-```text
-Client:         acme-cabinets
-Industry:       home_renovation
-Channels:       whatsapp, instagram
-Neon project:   da-chatbot-acme-cabinets (aws-ap-southeast-1)
-Render service: da-chatbot-acme-cabinets (singapore)
-Render plan:    starter
-Health check:   /
-Profile env:    INITIAL_BUSINESS_TYPE=home_renovation
-```
-
-Only runtime **key names** are shown. Secret values are never included in the plan.
-
-## 2. Execute provisioning + verification
-
-Run the same command with `--execute`:
+## 2. Execute provisioning
 
 ```bash
 npm run provision-client -- \
@@ -221,119 +206,109 @@ npm run provision-client -- \
   --execute
 ```
 
-For automation, add `--json`.
+Add `--json` for automation.
 
 ### Exit codes
 
 ```text
 0 = dry run, READY, or READY WITH WARNINGS
 2 = validation/provisioning failure before a usable deployment exists
-3 = infrastructure is live; verification completed; NEEDS ATTENTION
-4 = infrastructure is live; readiness verification could not complete
+3 = infrastructure live; verification completed; NEEDS ATTENTION
+4 = infrastructure live; readiness verification could not complete
 ```
 
-Exit codes `3` and `4` are deliberately different from provisioning failure. Do not delete/recreate a deployment merely because a channel still needs a real test conversation or because a transient verifier/login/transport problem prevented verification.
+Do not delete/recreate infrastructure merely because readiness returns 3 or 4.
 
 ## Readiness states
 
 ### READY
 
-All required business-profile, Setup Status, operational-health, and purchased-channel round-trip checks passed with no warnings.
+Every required profile, Setup Status, operational-health, and purchased-channel exact round-trip check passed without warnings.
 
 ### READY WITH WARNINGS
 
-There are no blocking conditions, but the runtime reported a non-fatal warning such as degraded-but-usable AI health.
+No blocker exists, but a non-fatal warning remains, such as degraded-but-usable AI health.
 
 ### NEEDS ATTENTION
 
-Verification completed and returned trustworthy evidence, but one or more required conditions are not ready.
+Verification completed and trustworthy evidence shows at least one required condition is incomplete/unhealthy.
 
-Missing required Setup Status results fail closed: a missing result remains a `missing` blocker and can never be interpreted as READY.
+Missing required Setup Status results fail closed and remain `missing` blockers.
 
 ### VERIFICATION FAILED
 
-The verifier could not complete a trustworthy check, for example because administrator login, transport, or the protected Setup Status request failed. This is kept separate from NEEDS ATTENTION so operators can distinguish “the deployment is known to be unhealthy/incomplete” from “health could not be verified.”
+A trustworthy verification could not complete, for example because login, transport, or protected Setup Status execution failed.
 
 ## What READY evaluates
 
 ### Business profile
 
-- deployed business type matches the requested industry;
-- profile is locked;
-- Pipeline profile is aligned;
-- conversion profile is aligned;
-- lead-temperature profile is aligned;
-- Analytics profile is aligned without legacy fallback.
+- actual business type matches requested industry;
+- selection is locked;
+- Pipeline profile aligned;
+- conversion profile aligned;
+- lead-temperature profile aligned;
+- Analytics profile aligned without fallback.
 
 ### Core Setup Status
 
-Every required core result must be returned, configured, and `ready`, including:
+Every required core result must be returned, configured, and `ready`:
 
 - database;
-- session/security configuration;
+- session security;
 - actual public URL;
 - administrator account;
-- AI reply engine configuration;
+- AI reply engine;
 - R2/media storage.
 
-Additional returned non-optional, non-channel checks are also treated as required.
+Additional returned non-optional, non-channel checks are also required.
 
 ### Operational system health
 
-The `systemHealth` payload must also show:
+`systemHealth` must show:
 
-- database/runtime health is healthy;
-- database migrations are `up_to_date`;
-- inbound processing is healthy;
-- AI runtime is available.
+- database/runtime healthy;
+- migrations `up_to_date`;
+- inbound processing healthy;
+- AI runtime available.
 
-An AI runtime error blocks go-live. A degraded-but-usable AI warning results in READY WITH WARNINGS when nothing else blocks readiness.
+AI runtime `error` blocks go-live. Degraded-but-usable AI yields READY WITH WARNINGS when nothing else blocks.
 
 ### Purchased channels
 
-Only purchased channels are elevated to mandatory channel checks, but each one must satisfy both setup and runtime evidence.
-
-Examples:
+Each purchased channel requires both its Setup Status checks and exact per-message AI evidence.
 
 ```text
 --channels whatsapp
   -> whatsapp
   -> whatsapp_webhook
-  -> real WhatsApp inbound
-  -> newer successful WhatsApp outbound
-  -> healthy WhatsApp runtime / no newer delivery failure
+  -> latest real WhatsApp inbound
+  -> exact later AI reply message with WAMID
+  -> no newer failed AI reply attempt
+  -> healthy ordinary WhatsApp runtime
 
 --channels instagram
   -> instagram
   -> meta_webhook
-  -> real Instagram inbound
-  -> newer successful Instagram outbound
-  -> healthy Instagram runtime / no newer delivery failure
+  -> latest real Instagram inbound
+  -> exact later AI reply message with Meta externalMessageId
+  -> no newer failed AI reply attempt
+  -> healthy ordinary Instagram runtime
 
 --channels facebook,instagram
-  -> facebook
-  -> instagram
-  -> shared meta_webhook
-  -> a valid round trip for each purchased channel
+  -> each channel proves its own exact round trip
+  -> shared meta_webhook must also be ready
 ```
-
-Warnings/errors in an unpurchased optional channel do not block READY.
 
 ## 3. Complete real channel tests
 
-After infrastructure is live, perform the required real-world channel test for every purchased channel:
+For every purchased channel, send a genuine customer test message and confirm the chatbot’s **normal AI reply** arrives. A webhook, staff reply, scheduled message, follow-up, fallback, or unrelated channel send is not sufficient.
 
-- send a WhatsApp message to the business number and confirm the chatbot receives it and replies;
-- send a Messenger message to the Page and confirm the chatbot receives it and replies;
-- send an Instagram DM and confirm the chatbot receives it and replies.
-
-A webhook alone is not enough for final READY. The successful outbound reply must be newer than the relevant inbound message, and a newer unresolved delivery failure blocks the channel.
+Because readiness evidence is telemetry-only and best-effort, if the reply arrived but a transient telemetry write failed, fix the database/runtime issue and run another clean test conversation rather than treating the original delivery as failed.
 
 ## 4. Re-run readiness without reprovisioning
 
-After fixing credentials, runtime issues, or completing real test messages, do **not** rerun provisioning.
-
-Use the receipt written by `provision-client`:
+Preferred:
 
 ```bash
 npm run verify-client -- \
@@ -341,9 +316,7 @@ npm run verify-client -- \
   --runtime-env-file ./acme.client-runtime.env
 ```
 
-The receipt supplies the Render URL, expected industry, and purchased channels. The runtime file supplies the administrator credentials needed to authenticate.
-
-You can also run verification without a receipt:
+Without a receipt:
 
 ```bash
 npm run verify-client -- \
@@ -353,11 +326,9 @@ npm run verify-client -- \
   --runtime-env-file ./acme.client-runtime.env
 ```
 
-`verify-client` does not create/delete Render or Neon resources and does not modify chatbot settings, Pipeline data, or messaging data. It authenticates, runs the readiness check, then logs out best-effort.
+`verify-client` does not create/delete cloud resources and does not modify chatbot settings, Pipeline data, or messaging data. With `--receipt`, it atomically updates only the secret-free readiness receipt and `lastVerifiedAt`.
 
-When `--receipt` is supplied, the command atomically replaces the receipt with the latest readiness result and updates `lastVerifiedAt`. If the receipt cannot be updated, verification output still reports the real readiness result plus a receipt warning.
-
-Its exit codes are:
+Verifier exit codes:
 
 ```text
 0 = READY / READY WITH WARNINGS
@@ -368,81 +339,73 @@ Its exit codes are:
 
 ## Resource naming and duplicate protection
 
-By default both cloud resources use:
+Default cloud resource name:
 
 ```text
 da-chatbot-<normalized-client-slug>
 ```
 
-Before creation, the command checks Render and Neon for exact name collisions. Neon search is paginated and fails closed if Neon reports incomplete `unavailable` results.
+Before creation, exact Render/Neon collision checks run. Neon search is paginated and fails closed on incomplete `unavailable` results.
 
-Execution also holds a same-machine lock at:
+Execution also holds a same-machine lock:
 
 ```text
 .provisioning/<resource-name>.lock
 ```
 
-Provider-side `409` conflicts remain the second protection layer for races from separate machines.
+Provider `409` conflicts remain a second protection layer for separate-machine races.
 
 ## Provisioning/readiness receipt
 
-After the cloud deployment is live, the CLI writes:
+After infrastructure is live, the CLI writes:
 
 ```text
 .provisioning/<client-slug>.json
 ```
 
-Receipt **version 3** contains recovery/readiness metadata only, including:
+Receipt v3 contains only recovery/readiness metadata, including:
 
-- `completedAt`;
-- `lastVerifiedAt`;
-- client slug;
-- industry;
-- purchased/required channels;
-- Neon project metadata;
-- Render service URL/IDs and deploy metadata;
-- deployed Git commit SHA when available;
-- Render runtime-finalization metadata;
-- industry profile contract;
+- `completedAt` and `lastVerifiedAt`;
+- client/industry/channel contract;
+- Neon identifiers;
+- Render service/deploy metadata;
+- deployed commit SHA when available;
+- runtime-finalization state;
+- profile contract;
 - latest readiness report.
 
-It does **not** contain `DATABASE_URL`, API keys, access tokens, administrator passwords, or copied client runtime values.
+It never contains `DATABASE_URL`, API keys, access tokens, administrator passwords, or copied runtime-env values.
 
-If the local receipt cannot be written after Render is already live, the command reports a receipt warning instead of converting successful cloud provisioning into a false provisioning failure.
+Runtime finalization records:
+
+```text
+completed: true
+```
+
+when fully successful. If finalization fails after making some Render changes, the receipt preserves the known `partialFinalization` fields as `runtimeFinalization`, adds:
+
+```text
+completed: false
+failureCode: RENDER_RUNTIME_FINALIZATION_FAILED
+```
+
+and keeps the existing infrastructure for deliberate recovery.
+
+Receipt-write failure after infrastructure is live is a warning, not a false cloud-provisioning failure.
 
 ## Partial failures
 
-Cloud create requests are non-idempotent and are never blindly retried. The provisioner performs no destructive automatic rollback.
+Cloud create requests are non-idempotent and are never blindly retried. There is no destructive automatic rollback.
 
-### Neon created, Render creation fails
+- Neon created / Render fails: Neon is preserved with recovery identifiers.
+- Render created / deploy fails: known Render + Neon identifiers are preserved.
+- Runtime finalization partially fails: the exact known finalization state is preserved in the result/receipt.
+- NEEDS ATTENTION: fix the reported condition and rerun `verify-client`.
+- VERIFICATION FAILED: fix access/login/transport/Setup Status and rerun `verify-client`.
 
-The Neon project is kept and its identifiers are returned for deliberate recovery.
-
-### Render created, initial or final deploy fails
-
-The command reports the failure and preserves the cloud resources for deliberate recovery. It does not silently create replacement infrastructure.
-
-### Infrastructure live, NEEDS ATTENTION
-
-The command returns the live infrastructure result plus the blocking readiness evidence. Common causes include:
-
-- required Setup Status result missing/not configured/not ready;
-- business-profile mismatch;
-- database migrations not current;
-- unhealthy inbound processing;
-- AI runtime error;
-- purchased channel without a real inbound + newer successful outbound round trip;
-- unresolved delivery failure newer than the latest successful outbound.
-
-Fix the condition and run `verify-client` again.
-
-### Infrastructure live, VERIFICATION FAILED
-
-The deployment exists, but the verifier could not establish trustworthy health because login, transport, or Setup Status execution failed. Fix the verifier/access condition and run `verify-client` again; do not reprovision automatically.
+See `PROVISIONING_RECOVERY.md` for detailed recovery steps.
 
 ## Render build/start/health contract
-
-The defaults match the repository layout:
 
 ```text
 Build: npm ci && npm --prefix portal-frontend ci && npm --prefix portal-frontend run build
@@ -450,12 +413,4 @@ Start: npm start
 Health check: /
 ```
 
-The Render health check answers a different question from client readiness:
-
-- Render `live` = the web process is serving;
-- READY = the required business/profile/core/operational/channel contract is healthy;
-- READY WITH WARNINGS = no blockers, but a non-fatal operational warning remains;
-- NEEDS ATTENTION = verification completed and found a blocker;
-- VERIFICATION FAILED = readiness could not be reliably established.
-
-A client should only be handed over as go-live ready when the final readiness state is READY or READY WITH WARNINGS and any warning is acceptable to the operator.
+Render `live` proves only that the web process serves. Client handover requires READY or READY WITH WARNINGS, with any warning explicitly accepted by the operator.
