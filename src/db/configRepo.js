@@ -4,6 +4,7 @@ const {
   getInitialConfig,
   hydrateBusinessConfig,
 } = require("../config/industryProfiles");
+const pipelineDefaultsRepo = require("./pipelineDefaultsRepo");
 const promoImagesRepo = require("./promoImagesRepo");
 const { DEFAULT_LEAD_DISTRIBUTION } = require("../utils/leadDistribution");
 const realtimeEvents = require("../utils/realtimeEvents");
@@ -119,6 +120,7 @@ async function loadConfig() {
     };
     await pool.query("INSERT INTO clinic_config (id, data) VALUES (1, $1)", [seededConfig]);
     Object.assign(clinicConfig, seededConfig);
+    await pipelineDefaultsRepo.ensureIndustryPipelineDefaults(seededConfig);
     console.log(`Seeded clinic_config table from ${seededConfig.businessType} industry profile.`);
     return clinicConfig;
   }
@@ -140,6 +142,7 @@ async function loadConfig() {
       ...(storedConfig.leadDistribution || {}),
     },
   });
+  await pipelineDefaultsRepo.ensureIndustryPipelineDefaults(clinicConfig);
   return clinicConfig;
 }
 
