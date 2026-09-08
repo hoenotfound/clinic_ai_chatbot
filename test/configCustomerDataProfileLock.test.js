@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const clinicConfig = require("../src/config/clinicConfig");
 const { getOnboardingIndustryProfile } = require("../src/config/onboardingIndustryProfiles");
+const { CLINIC_DEFAULT_STAGES } = require("../src/config/pipelineProfiles");
 const { updateConfig } = require("../src/db/configRepo");
 const { DEFAULT_LEAD_DISTRIBUTION } = require("../src/utils/leadDistribution");
 
@@ -25,9 +26,21 @@ function freshSelectableClinic() {
   };
 }
 
-function createDatabase({ hasCustomerData = false } = {}) {
+function clinicStageRows({ customized = false } = {}) {
+  return CLINIC_DEFAULT_STAGES.map((stage, index) => ({
+    id: index + 1,
+    name: customized && index === 1 ? "Custom Qualification" : stage.name,
+    sort_order: stage.sortOrder,
+    color: stage.color,
+    stage_type: stage.stageType,
+    system_key: stage.systemKey,
+  }));
+}
+
+function createDatabase({ hasCustomerData = false, customizedPipeline = false } = {}) {
   let savedConfig = clone(freshSelectableClinic());
   const queries = [];
+  const stages = clinicStageRows({ customized: customizedPipeline });
 
   const client = {
     async query(sql, params = []) {
@@ -45,11 +58,14 @@ function createDatabase({ hasCustomerData = false } = {}) {
           }],
         };
       }
+      if (/SELECT id, name, sort_order, color, stage_type, system_key/.test(sql)) {
+        return { rows: stages.map((stage) => ({ ...stage })) };
+      }
       if (/UPDATE clinic_config SET data/.test(sql)) {
         savedConfig = clone(params[0]);
         return { rows: [] };
       }
-      throw new Error(`Unexpected SQL in customer-data profile lock test: ${sql}`);
+      throw new Error(`Unexpected SQL in profile lock recovery test: ${sql}`);
     },
     release() {},
   };
@@ -99,6 +115,34 @@ test("customer activity locks the current default profile and Settings remain us
     assert.equal(updated.aiAssistantName, "Taylor");
     assert.equal(updated.industrySetup.locked, true);
     assert.equal(updated.industrySetup.lockReason, "customer_data_exists");
+    assert.equal(fake.queries.includes("COMMIT"), true);
+  } finally {
+    for (const key of Object.keys(clinicConfig)) delete clinicConfig[key];
+    Object.assign(clinicConfig, snapshot);
+  }
+});
+
+test("a customized Pipeline recovers a missing profile lock and keeps Settings usable", async () => {
+  const snapshot = clone(clinicConfig);
+  const fake = createDatabase({
+    hasCustomerData: false,
+    customizedPipeline: true,
+  });
+
+  try {
+    const updated = await updateConfig({ aiAssistantName: "Taylor" }, fake.database);
+    const saved = fake.getSavedConfig();
+
+    assert.equal(saved.businessType, "aesthetic_clinic");
+    assert.equal(saved.aiAssistantName, "Taylor");
+    assert.equal(saved.industrySetup.selectable, false);
+    assert.equal(saved.industrySetup.locked, true);
+    assert.equal(saved.industrySetup.source, "pipeline");
+    assert.equal(saved.industrySetup.lockReason, "pipeline_customized");
+    assert.ok(!Number.isNaN(Date.parse(saved.industrySetup.selectedAt)));
+
+    assert.equal(updated.industrySetup.locked, true);
+    assert.equal(updated.industrySetup.lockReason, "pipeline_customized");
     assert.equal(fake.queries.includes("COMMIT"), true);
   } finally {
     for (const key of Object.keys(clinicConfig)) delete clinicConfig[key];
