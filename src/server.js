@@ -39,6 +39,7 @@ const {
 } = require("./utils/handoffReply");
 const clinicConfig = require("./config/clinicConfig");
 const messagesRepo = require("./db/messagesRepo");
+const outboundMessageEvidenceRepo = require("./db/outboundMessageEvidenceRepo");
 const contactsRepo = require("./db/contactsRepo");
 const pipelineRepo = require("./db/pipelineRepo");
 const { checkKeywordTriggers } = require("./utils/attentionTriggers");
@@ -103,7 +104,36 @@ async function persistSendOutcome(
   return updated || savedMessage;
 }
 
-async function sendTrackedText(contact, text) {
+function providerMessageId(sendResult) {
+  return sendResult?.wamid || sendResult?.externalMessageId || null;
+}
+
+async function recordReadinessSendEvidence(savedMessage, contact, sendResult, origin) {
+  if (!savedMessage?.id || !contact?.id) return;
+  if (!["ai_reply", "system_fallback"].includes(origin)) return;
+
+  const providerId = providerMessageId(sendResult);
+  const accepted = sendResult?.success === true && Boolean(providerId);
+  try {
+    await outboundMessageEvidenceRepo.recordOutcome({
+      messageId: savedMessage.id,
+      contactId: contact.id,
+      channel: contact.channel || "whatsapp",
+      origin,
+      accepted,
+      providerMessageId: accepted ? providerId : null,
+    });
+  } catch (err) {
+    // Readiness telemetry must never become a dependency of customer delivery.
+    // Fail closed for go-live verification by leaving the evidence absent.
+    console.error(
+      `Failed to record ${contact.channel || "whatsapp"} ${origin} readiness evidence for message ${savedMessage.id}:`,
+      err
+    );
+  }
+}
+
+async function sendTrackedText(contact, text, origin = "ai_reply") {
   const saved = await conversationStore.appendMessageForContact(
     contact.id,
     "assistant",
@@ -112,6 +142,7 @@ async function sendTrackedText(contact, text) {
   const sendResult = await channelMessaging.sendText(contact, text);
   const errorText = sendResult.error || channelMessaging.rejectedError(contact.channel);
   const finalMessage = await persistSendOutcome(saved, sendResult, errorText);
+  await recordReadinessSendEvidence(saved, contact, sendResult, origin);
 
   if (!sendResult.success) {
     await contactsRepo.setDeliveryAttention(
@@ -282,7 +313,8 @@ async function processIncomingMessage(
           responseAttempted = true;
           await sendTrackedText(
             contact,
-            "Sorry, I can only read text, voice, or photo messages for now — could you type that out for me? 🙂"
+            "Sorry, I can only read text, voice, or photo messages for now — could you type that out for me? 🙂",
+            "system_fallback"
           );
         }
       }
@@ -334,7 +366,8 @@ async function processIncomingMessage(
             responseAttempted = true;
             await sendTrackedText(
               contact,
-              "Sorry, I couldn't quite catch that voice message — mind typing it out, or sending the voice note again? 🙂"
+              "Sorry, I couldn't quite catch that voice message — mind typing it out, or sending the voice note again? 🙂",
+              "system_fallback"
             );
           }
         }
@@ -370,7 +403,8 @@ async function processIncomingMessage(
             responseAttempted = true;
             await sendTrackedText(
               contact,
-              "Sorry, I couldn't load that photo — mind sending it again? 🙂"
+              "Sorry, I couldn't load that photo — mind sending it again? 🙂",
+              "system_fallback"
             );
           }
         }
@@ -602,7 +636,8 @@ async function processIncomingMessage(
           responseAttempted = true;
           await sendTrackedText(
             pendingHandoff,
-            "Sorry, something went wrong on our end — a team member will follow up with you shortly!"
+            "Sorry, something went wrong on our end — a team member will follow up with you shortly!",
+            "system_fallback"
           );
         }
       } catch (fallbackErr) {
