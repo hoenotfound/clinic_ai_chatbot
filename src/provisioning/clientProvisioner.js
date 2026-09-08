@@ -43,6 +43,7 @@ const RESERVED_RUNTIME_ENV_KEYS = new Set([
   "SESSION_SECRET",
   "INITIAL_BUSINESS_TYPE",
   "BUSINESS_TYPE",
+  "PUBLIC_BASE_URL",
   "PORT",
 ]);
 
@@ -278,62 +279,84 @@ function neonDefaultsFromCreate(response) {
   return { projectId, databaseName, roleName };
 }
 
-async function provisionClient(input = {}, {
-  execute = false,
-  env = process.env,
-  renderClient = null,
-  neonClient = null,
-} = {}) {
-  const plan = buildProvisioningPlan(input, env);
-  if (!execute) {
-    return { mode: "plan", plan: publicPlan(plan) };
-  }
-
-  requireExecutionConfig(plan, env);
-  if (!renderClient || !neonClient) {
-    throw new ClientProvisioningError("Execution requires initialized Render and Neon clients.", {
-      code: "PROVIDER_CLIENTS_REQUIRED",
-      stage: "validation",
-    });
-  }
-
-  let renderMatches;
-  let neonMatches;
-  try {
-    [renderMatches, neonMatches] = await Promise.all([
-      renderClient.findServicesByExactName(plan.render.serviceName),
-      neonClient.findProjectsByExactName(plan.neon.projectName),
-    ]);
-  } catch (err) {
+function renderDefaultsFromCreate(response) {
+  const service = response?.service || response;
+  const serviceId = service?.id;
+  const deployId = response?.deployId || response?.deploy?.id || service?.deployId;
+  const url = service?.serviceDetails?.url || service?.url || null;
+  if (!serviceId || !deployId) {
     throw new ClientProvisioningError(
-      `Could not verify that provisioning names are unused: ${err.message}`,
+      "Render accepted service creation but did not return both the service ID and initial deploy ID required for verification.",
       {
-        code: "COLLISION_CHECK_FAILED",
-        stage: "preflight",
-        retrySafe: true,
+        code: "RENDER_CREATE_RESPONSE_INCOMPLETE",
+        stage: "render_created",
+        partialResources: serviceId ? { renderServiceId: serviceId } : null,
+        retrySafe: false,
       }
     );
   }
+  return { serviceId, deployId, url };
+}
 
+async function provisionClient(
+  input = {},
+  {
+    execute = false,
+    env = process.env,
+    renderClient = null,
+    neonClient = null,
+  } = {}
+) {
+  const plan = buildProvisioningPlan(input, env);
+  if (!execute) return { mode: "plan", plan: publicPlan(plan) };
+  requireExecutionConfig(plan, env);
+
+  if (!renderClient || !neonClient) {
+    throw new ClientProvisioningError("Provisioning provider clients are required for execution.", {
+      code: "PROVIDER_CLIENTS_REQUIRED",
+      stage: "preflight",
+    });
+  }
+
+  const [renderMatches, neonMatches] = await Promise.all([
+    renderClient.findServicesByExactName(plan.render.serviceName),
+    neonClient.findProjectsByExactName(plan.neon.projectName),
+  ]);
   const collision = exactCollisionMessage(plan, renderMatches, neonMatches);
   if (collision) {
     throw new ClientProvisioningError(collision, {
       code: "RESOURCE_NAME_COLLISION",
       stage: "preflight",
-      retrySafe: false,
+      retrySafe: true,
     });
   }
 
-  let neonResponse;
+  let neonProject = null;
   try {
-    neonResponse = await neonClient.createProject({
+    const created = await neonClient.createProject({
       name: plan.neon.projectName,
-      regionId: plan.neon.region,
+      region: plan.neon.region,
+    });
+    const defaults = neonDefaultsFromCreate(created);
+    neonProject = {
+      projectId: defaults.projectId,
+      projectName: plan.neon.projectName,
+      databaseName: defaults.databaseName,
+      roleName: defaults.roleName,
+      region: plan.neon.region,
+    };
+    const operations = Array.isArray(created?.operations) ? created.operations : [];
+    await neonClient.waitForOperations(defaults.projectId, operations);
+    neonProject.connectionUri = await neonClient.getPooledConnectionUri({
+      projectId: defaults.projectId,
+      databaseName: defaults.databaseName,
+      roleName: defaults.roleName,
     });
   } catch (err) {
+    if (err instanceof ClientProvisioningError) throw err;
     if (err?.status === 409) {
       throw new ClientProvisioningError(
-        `Neon reported a resource conflict while creating "${plan.neon.projectName}". Another provisioning attempt may have won the race; inspect Neon before retrying.`,
+        `Neon reported that resource "${plan.neon.projectName}" already exists or was created by a concurrent operator.`,
         {
           code: "RESOURCE_NAME_COLLISION",
           stage: "neon_create",
@@ -341,59 +364,21 @@ async function provisionClient(input = {}, {
         }
       );
     }
-    throw new ClientProvisioningError(
-      `Neon project creation failed: ${err.message}. Because create requests are non-idempotent, rerun the command only after the preflight confirms that "${plan.neon.projectName}" does not exist.`,
-      {
-        code: "NEON_CREATE_FAILED",
-        stage: "neon_create",
-        retrySafe: err?.ambiguous === true ? false : null,
-      }
-    );
-  }
-
-  const neon = neonDefaultsFromCreate(neonResponse);
-  const partialResources = {
-    neonProjectId: neon.projectId,
-    neonProjectName: plan.neon.projectName,
-  };
-
-  try {
-    await neonClient.waitForOperations(neon.projectId, neonResponse.operations || []);
-  } catch (err) {
-    throw new ClientProvisioningError(
-      `Neon project was created but did not become ready: ${err.message}. The project was left intact for inspection/recovery.`,
-      {
-        code: "NEON_NOT_READY",
-        stage: "neon_created",
-        partialResources,
-        retrySafe: true,
-      }
-    );
-  }
-
-  let databaseUrl;
-  try {
-    databaseUrl = await neonClient.getPooledConnectionUri({
-      projectId: neon.projectId,
-      databaseName: neon.databaseName,
-      roleName: neon.roleName,
+    throw new ClientProvisioningError(`Neon provisioning failed: ${err.message}`, {
+      code: "NEON_PROVISIONING_FAILED",
+      stage: neonProject ? "neon_created" : "neon_create",
+      partialResources: neonProject
+        ? { neonProjectId: neonProject.projectId, neonProjectName: neonProject.projectName }
+        : null,
+      retrySafe: !neonProject,
     });
-  } catch (err) {
-    throw new ClientProvisioningError(
-      `Neon project was created but its pooled connection URI could not be retrieved: ${err.message}. The project was left intact for recovery.`,
-      {
-        code: "NEON_CONNECTION_URI_FAILED",
-        stage: "neon_created",
-        partialResources,
-        retrySafe: true,
-      }
-    );
   }
 
-  let renderResponse;
+  let renderCreated;
   try {
-    renderResponse = await renderClient.createWebService({
+    renderCreated = await renderClient.createWebService({
       name: plan.render.serviceName,
+      ownerId: plan.render.ownerId,
       repo: plan.render.repo,
       branch: plan.render.branch,
       region: plan.render.region,
@@ -401,66 +386,64 @@ async function provisionClient(input = {}, {
       buildCommand: plan.render.buildCommand,
       startCommand: plan.render.startCommand,
       healthCheckPath: plan.render.healthCheckPath,
-      envVars: renderEnvVars(plan, databaseUrl),
+      envVars: renderEnvVars(plan, neonProject.connectionUri),
     });
   } catch (err) {
     if (err?.status === 409) {
       throw new ClientProvisioningError(
-        `Render reported a resource conflict for "${plan.render.serviceName}" after Neon was created. Another provisioning attempt may have won the race. Neon was left intact for recovery.`,
+        `Render reported that service "${plan.render.serviceName}" already exists or was created by a concurrent operator.`,
         {
-          code: "RENDER_RESOURCE_COLLISION",
+          code: "RESOURCE_NAME_COLLISION",
           stage: "render_create",
-          partialResources,
+          partialResources: {
+            neonProjectId: neonProject.projectId,
+            neonProjectName: neonProject.projectName,
+          },
           retrySafe: false,
         }
       );
     }
-    throw new ClientProvisioningError(
-      `Render service creation failed after Neon project ${neon.projectId} was created: ${err.message}. Neon was not deleted automatically. Resolve the Render issue, then either complete provisioning deliberately or remove the unused Neon project manually.`,
-      {
-        code: "RENDER_CREATE_FAILED",
-        stage: "render_create",
-        partialResources,
-        retrySafe: false,
-      }
-    );
+    throw new ClientProvisioningError(`Render service creation failed: ${err.message}`, {
+      code: "RENDER_CREATE_FAILED",
+      stage: "render_create",
+      partialResources: {
+        neonProjectId: neonProject.projectId,
+        neonProjectName: neonProject.projectName,
+      },
+      retrySafe: false,
+    });
   }
 
-  const service = renderResponse?.service || renderResponse || {};
-  const serviceId = service.id || null;
-  const deployId = renderResponse?.deployId || null;
-  const renderPartialResources = {
-    ...partialResources,
-    renderServiceId: serviceId,
-    renderServiceName: service.name || plan.render.serviceName,
-    renderDeployId: deployId,
-  };
-
-  if (!serviceId || !deployId) {
-    throw new ClientProvisioningError(
-      "Render created a service but did not return both the service ID and initial deploy ID required to verify that the deployment becomes live.",
-      {
-        code: "RENDER_CREATE_RESPONSE_INCOMPLETE",
-        stage: "render_created",
-        partialResources: renderPartialResources,
-        retrySafe: false,
-      }
-    );
-  }
-
-  let deploy;
+  let renderDefaults;
   try {
-    deploy = await renderClient.waitForDeploy(serviceId, deployId);
+    renderDefaults = renderDefaultsFromCreate(renderCreated);
   } catch (err) {
-    throw new ClientProvisioningError(
-      `Render service was created but its initial deploy did not become live: ${err.message}. The Render service and Neon project were left intact for inspection/recovery.`,
-      {
-        code: "RENDER_DEPLOY_FAILED",
-        stage: "render_deploy",
-        partialResources: renderPartialResources,
-        retrySafe: false,
-      }
-    );
+    if (err instanceof ClientProvisioningError) {
+      err.partialResources = {
+        ...(err.partialResources || {}),
+        neonProjectId: neonProject.projectId,
+        neonProjectName: neonProject.projectName,
+      };
+    }
+    throw err;
+  }
+
+  let liveDeploy;
+  try {
+    liveDeploy = await renderClient.waitForDeploy(renderDefaults.serviceId, renderDefaults.deployId);
+  } catch (err) {
+    throw new ClientProvisioningError(`Render initial deployment failed: ${err.message}`, {
+      code: "RENDER_DEPLOY_FAILED",
+      stage: "render_deploy",
+      partialResources: {
+        neonProjectId: neonProject.projectId,
+        neonProjectName: neonProject.projectName,
+        renderServiceId: renderDefaults.serviceId,
+        renderServiceName: plan.render.serviceName,
+        renderDeployId: renderDefaults.deployId,
+      },
+      retrySafe: false,
+    });
   }
 
   return {
@@ -468,16 +451,18 @@ async function provisionClient(input = {}, {
     clientSlug: plan.clientSlug,
     industry: plan.industry,
     neon: {
-      projectId: neon.projectId,
-      projectName: plan.neon.projectName,
-      region: plan.neon.region,
+      projectId: neonProject.projectId,
+      projectName: neonProject.projectName,
+      databaseName: neonProject.databaseName,
+      roleName: neonProject.roleName,
+      region: neonProject.region,
     },
     render: {
-      serviceId,
-      serviceName: service.name || plan.render.serviceName,
-      url: service.serviceDetails?.url || service.url || null,
-      deployId,
-      deployStatus: String(deploy?.status || "live").toLowerCase(),
+      serviceId: renderDefaults.serviceId,
+      serviceName: plan.render.serviceName,
+      url: renderDefaults.url,
+      deployId: renderDefaults.deployId,
+      deployStatus: liveDeploy?.status || "live",
       region: plan.render.region,
       plan: plan.render.plan,
       repo: plan.render.repo,
@@ -501,7 +486,6 @@ module.exports = {
   DEFAULT_RENDER_REGION,
   DEFAULT_RENDER_REPO,
   DEFAULT_RESOURCE_PREFIX,
-  DEFAULT_START_COMMAND,
   RENDER_PLANS,
   RENDER_REGIONS,
   RESERVED_RUNTIME_ENV_KEYS,
@@ -515,4 +499,5 @@ module.exports = {
   requireExecutionConfig,
   requireIndustry,
   requireRenderRegion,
+  resourceName,
 };
