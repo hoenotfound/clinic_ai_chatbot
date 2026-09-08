@@ -1,9 +1,11 @@
 const { pool } = require("./db");
 const clinicConfig = require("../config/clinicConfig");
 const {
-  getInitialConfig,
   hydrateBusinessConfig,
 } = require("../config/industryProfiles");
+const {
+  getInitialOnboardingConfig,
+} = require("../config/onboardingIndustryProfiles");
 const {
   createSeedIndustrySetup,
   lockIndustrySetup,
@@ -54,6 +56,13 @@ const INTERNAL_CONFIG_KEYS = ["telegramConversationSummary"];
 // Config changes force an immediate cleanup while Postgres is already awake.
 const PROMO_IMAGE_BACKSTOP_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 let lastPromoImageBackstopPruneAt = 0;
+
+function conflict(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  error.status = 409;
+  return error;
+}
 
 /**
  * Pulls the numeric row id out of one of our own hosted promo-image URLs
@@ -127,27 +136,24 @@ async function pruneOrphanedPromoImages(force = false, now = Date.now()) {
 }
 
 /**
- * Loads DB-backed config into the shared live object. A fresh database is seeded
- * from the requested industry when one was explicitly provisioned. With no
- * industry environment variable, Aesthetic Clinic remains the default and the
- * untouched seed stays selectable from Setup Status until configuration begins.
- * Existing pre-profile databases remain clinic-compatible and fail closed for
- * profile changes because they do not carry selectable industrySetup metadata.
+ * Loads DB-backed config into the shared live object. Fresh client deployments
+ * use onboarding-safe industry templates; established databases continue to
+ * hydrate from their stored config with the historical clinic fallback intact.
  */
 async function loadConfig() {
   const result = await pool.query("SELECT data FROM clinic_config WHERE id = 1");
 
   if (result.rows.length === 0) {
-    const initialConfig = getInitialConfig();
+    const initialConfig = getInitialOnboardingConfig();
     const seededConfig = {
       ...initialConfig,
       leadDistribution: { ...DEFAULT_LEAD_DISTRIBUTION },
       industrySetup: createSeedIndustrySetup(),
     };
     await pool.query("INSERT INTO clinic_config (id, data) VALUES (1, $1)", [seededConfig]);
-    Object.assign(clinicConfig, seededConfig);
+    industrySetupRepo.replaceLiveConfig(seededConfig);
     await pipelineDefaultsRepo.ensureIndustryPipelineDefaults(seededConfig);
-    console.log(`Seeded clinic_config table from ${seededConfig.businessType} industry profile.`);
+    console.log(`Seeded clinic_config table from ${seededConfig.businessType} onboarding profile.`);
     return clinicConfig;
   }
 
@@ -173,9 +179,10 @@ function getConfig() {
  * industry selector, so a stale request can never overwrite a profile switch
  * that committed while it was waiting for the row lock.
  *
- * The first ordinary Settings save also locks a still-selectable default
- * industry seed. Once client-specific facts are being configured, switching the
- * entire industry profile would be destructive and must no longer be allowed.
+ * Client-facing Settings are refused while the default onboarding profile is
+ * still selectable. The administrator must explicitly confirm Clinic or choose
+ * another industry in Setup Status first, preventing an accidental Settings save
+ * from silently making the default clinic choice irreversible.
  */
 async function updateConfig(updates, database = pool) {
   const client = await database.connect();
@@ -221,11 +228,10 @@ async function updateConfig(updates, database = pool) {
     const changedPublicSetting = changedKeys.some((key) => CONFIG_KEYS.includes(key));
     const industrySetup = normalizeIndustrySetup(nextConfig.industrySetup);
     if (changedPublicSetting && industrySetup.selectable && !industrySetup.locked) {
-      nextConfig.industrySetup = lockIndustrySetup(industrySetup, {
-        source: "settings",
-        reason: "settings_configured",
-      });
-      changedKeys.push("industrySetup");
+      throw conflict(
+        "INDUSTRY_PROFILE_NOT_CONFIRMED",
+        "Confirm this client's Business Profile in Setup Status before changing client Settings."
+      );
     }
 
     await client.query(
@@ -246,12 +252,6 @@ async function updateConfig(updates, database = pool) {
   // profile selection cannot retain keys from the previous industry profile.
   industrySetupRepo.replaceLiveConfig(nextConfig);
 
-  // If this update touched promotions, some image(s) may have just been
-  // dropped from the config (staff removed a promotion entirely, or
-  // replaced/cleared its image via an edit that bypassed the immediate
-  // DELETE call in Settings.jsx). Reconcile now rather than waiting for the
-  // next timed sweep. This is forced because the DB is already awake for the
-  // config save and staff expects the change to take effect immediately.
   if (
     Object.prototype.hasOwnProperty.call(updates, "promotions") ||
     Object.prototype.hasOwnProperty.call(updates, "automatedFollowUp")
@@ -266,6 +266,82 @@ async function updateConfig(updates, database = pool) {
   return clinicConfig;
 }
 
+/**
+ * Permanently closes the one-time industry selector after the first successful
+ * Pipeline customization. This is a dedicated metadata write rather than a
+ * normal Settings patch because industrySetup is intentionally not public
+ * configuration.
+ */
+async function lockIndustrySetupForPipelineCustomization({
+  actor = null,
+  database = pool,
+  now = new Date(),
+} = {}) {
+  const client = await database.connect();
+  let inTransaction = false;
+  let changed = false;
+  let nextStoredConfig = null;
+
+  try {
+    await client.query("BEGIN");
+    inTransaction = true;
+
+    const result = await client.query(
+      "SELECT data FROM clinic_config WHERE id = 1 FOR UPDATE"
+    );
+    if (!result.rows?.length) {
+      throw new Error("clinic_config row is missing.");
+    }
+
+    const storedConfig = result.rows[0].data || {};
+    const setup = normalizeIndustrySetup(storedConfig.industrySetup);
+    if (setup.selectable && !setup.locked) {
+      nextStoredConfig = {
+        ...storedConfig,
+        industrySetup: lockIndustrySetup(setup, {
+          source: "pipeline",
+          reason: "pipeline_customized",
+          actor,
+          now,
+        }),
+      };
+      await client.query(
+        "UPDATE clinic_config SET data = $1, updated_at = now() WHERE id = 1",
+        [nextStoredConfig]
+      );
+      changed = true;
+    }
+
+    await client.query("COMMIT");
+    inTransaction = false;
+  } catch (err) {
+    if (inTransaction) await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  if (changed) {
+    industrySetupRepo.replaceLiveConfig(hydrateStoredConfig(nextStoredConfig));
+    realtimeEvents.publish("config_changed", { keys: ["industrySetup"] });
+  }
+
+  return changed;
+}
+
+function selectIndustryProfile(businessType, {
+  actor = null,
+  database = pool,
+  now = new Date(),
+} = {}) {
+  return industrySetupRepo.selectIndustryProfile(
+    businessType,
+    database,
+    now,
+    actor
+  );
+}
+
 module.exports = {
   CONFIG_KEYS,
   PROMO_IMAGE_BACKSTOP_PRUNE_INTERVAL_MS,
@@ -273,7 +349,8 @@ module.exports = {
   getIndustrySetupStatus: industrySetupRepo.getIndustrySetupStatus,
   hydrateStoredConfig,
   loadConfig,
+  lockIndustrySetupForPipelineCustomization,
   pruneOrphanedPromoImages,
-  selectIndustryProfile: industrySetupRepo.selectIndustryProfile,
+  selectIndustryProfile,
   updateConfig,
 };
