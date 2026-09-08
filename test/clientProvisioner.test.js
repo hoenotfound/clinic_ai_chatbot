@@ -33,6 +33,10 @@ function fakeClients(overrides = {}) {
         deployId: "dep-123",
       };
     },
+    async waitForDeploy(serviceId, deployId) {
+      calls.push(["render.wait", serviceId, deployId]);
+      return { id: deployId, status: "live" };
+    },
     ...overrides.renderClient,
   };
   const neonClient = {
@@ -77,6 +81,7 @@ test("industry aliases normalize to the canonical profile contract", () => {
   assert.equal(plan.clientSlug, "acme-cabinets");
   assert.equal(plan.industry, "home_renovation");
   assert.equal(plan.resourceName, "da-chatbot-acme-cabinets");
+  assert.equal(plan.render.healthCheckPath, "/");
 });
 
 test("unsupported industry fails before any provider work", async () => {
@@ -91,6 +96,30 @@ test("unsupported industry fails before any provider work", async () => {
     (err) => err.code === "INDUSTRY_UNSUPPORTED"
   );
   assert.deepEqual(clients.calls, []);
+});
+
+test("invalid Render region and plan fail locally before any provider work", async () => {
+  for (const input of [
+    { renderRegion: "singpore", expected: "RENDER_REGION_UNSUPPORTED" },
+    { renderPlan: "statrer", expected: "RENDER_PLAN_UNSUPPORTED" },
+  ]) {
+    const clients = fakeClients();
+    await assert.rejects(
+      provisionClient({
+        clientSlug: "client-one",
+        industry: "generic",
+        renderRegion: input.renderRegion,
+        renderPlan: input.renderPlan,
+      }, {
+        execute: true,
+        env: EXEC_ENV,
+        renderClient: clients.renderClient,
+        neonClient: clients.neonClient,
+      }),
+      (err) => err.code === input.expected
+    );
+    assert.deepEqual(clients.calls, []);
+  }
 });
 
 test("runtime env cannot override app or control-plane provisioning values", () => {
@@ -168,7 +197,7 @@ test("preflight name collision stops before either cloud resource is created", a
   assert.equal(clients.calls.some(([name]) => name === "render.create"), false);
 });
 
-test("successful provisioning wires the pooled Neon URL and exact industry into Render", async () => {
+test("successful provisioning waits for Render to become live before returning success", async () => {
   const clients = fakeClients();
   const result = await provisionClient({
     clientSlug: "reno-alpha",
@@ -188,8 +217,10 @@ test("successful provisioning wires the pooled Neon URL and exact industry into 
   assert.equal(result.mode, "executed");
   assert.equal(result.industry, "home_renovation");
   assert.equal(result.profileContract.value, "home_renovation");
+  assert.equal(result.render.deployStatus, "live");
 
   const renderCreate = clients.calls.find(([name]) => name === "render.create")[1];
+  assert.equal(renderCreate.healthCheckPath, "/");
   const byKey = new Map(renderCreate.envVars.map((entry) => [entry.key, entry]));
   assert.deepEqual(byKey.get("INITIAL_BUSINESS_TYPE"), {
     key: "INITIAL_BUSINESS_TYPE",
@@ -199,13 +230,17 @@ test("successful provisioning wires the pooled Neon URL and exact industry into 
   assert.deepEqual(byKey.get("SESSION_SECRET"), { key: "SESSION_SECRET", generateValue: true });
   assert.equal(byKey.get("GEMINI_API_KEY").value, "gemini-secret");
 
+  const createIndex = clients.calls.findIndex(([name]) => name === "render.create");
+  const waitIndex = clients.calls.findIndex(([name]) => name === "render.wait");
+  assert.equal(waitIndex > createIndex, true);
+
   const publicResult = JSON.stringify(result);
   assert.equal(publicResult.includes("gemini-secret"), false);
   assert.equal(publicResult.includes("admin-secret"), false);
   assert.equal(publicResult.includes("postgresql://"), false);
 });
 
-test("Render failure preserves and reports the already-created Neon project", async () => {
+test("Render create failure preserves and reports the already-created Neon project", async () => {
   const clients = fakeClients({
     renderClient: {
       async createWebService(payload) {
@@ -231,6 +266,78 @@ test("Render failure preserves and reports the already-created Neon project", as
       });
       return true;
     }
+  );
+});
+
+test("Render deploy failure preserves both Render and Neon recovery identifiers", async () => {
+  const clients = fakeClients({
+    renderClient: {
+      async waitForDeploy(serviceId, deployId) {
+        clients.calls.push(["render.wait", serviceId, deployId]);
+        throw new Error("deploy dep-123 ended with status build_failed");
+      },
+    },
+  });
+
+  await assert.rejects(
+    provisionClient({ clientSlug: "client-one", industry: "generic" }, {
+      execute: true,
+      env: EXEC_ENV,
+      renderClient: clients.renderClient,
+      neonClient: clients.neonClient,
+    }),
+    (err) => {
+      assert.equal(err.code, "RENDER_DEPLOY_FAILED");
+      assert.equal(err.stage, "render_deploy");
+      assert.equal(err.partialResources.renderServiceId, "srv-123");
+      assert.equal(err.partialResources.renderDeployId, "dep-123");
+      assert.equal(err.partialResources.neonProjectId, "neon-project-123");
+      return true;
+    }
+  );
+});
+
+test("incomplete Render create response cannot be reported as successful provisioning", async () => {
+  const clients = fakeClients({
+    renderClient: {
+      async createWebService(payload) {
+        clients.calls.push(["render.create", payload]);
+        return { service: { id: "srv-123", name: payload.name } };
+      },
+    },
+  });
+
+  await assert.rejects(
+    provisionClient({ clientSlug: "client-one", industry: "generic" }, {
+      execute: true,
+      env: EXEC_ENV,
+      renderClient: clients.renderClient,
+      neonClient: clients.neonClient,
+    }),
+    (err) => err.code === "RENDER_CREATE_RESPONSE_INCOMPLETE" && err.retrySafe === false
+  );
+  assert.equal(clients.calls.some(([name]) => name === "render.wait"), false);
+});
+
+test("provider 409 after preflight is classified as a race/collision instead of a normal retry", async () => {
+  const clients = fakeClients({
+    neonClient: {
+      async createProject() {
+        const err = new Error("conflict");
+        err.status = 409;
+        throw err;
+      },
+    },
+  });
+
+  await assert.rejects(
+    provisionClient({ clientSlug: "client-one", industry: "generic" }, {
+      execute: true,
+      env: EXEC_ENV,
+      renderClient: clients.renderClient,
+      neonClient: clients.neonClient,
+    }),
+    (err) => err.code === "RESOURCE_NAME_COLLISION" && err.retrySafe === false
   );
 });
 
