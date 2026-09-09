@@ -102,14 +102,12 @@ jobs:
       - name: Portal build
         working-directory: portal-frontend
         run: npm run build
-      - name: Commit verified PR117 wiring and remove temporary workflow
+      - name: Commit verified PR117 wiring and remove temporary build files
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f .github/workflows/pr117-build.yml
+          git rm -f .github/workflows/pr117-build.yml scripts/buildPr117.py src/services/goLiveSnapshotService.js src/services/opsTokenService.js
           git add -A
           git diff --cached --check
           git commit -m "Wire multi-client ops registry"
           git push origin HEAD:feature/multi-client-ops-registry
-
-# Triggered to complete the interrupted PR117 build.
