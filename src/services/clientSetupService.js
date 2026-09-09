@@ -60,10 +60,16 @@ function isPlaceholderBusinessName(value) {
 }
 
 function protectedGuardrails(config) {
+  const activeGuardrails = new Set(
+    (Array.isArray(config?.guardrails) ? config.guardrails : [])
+      .map((item) => text(item))
+      .filter(Boolean),
+  );
+
   try {
     return (getIndustryProfile(config?.businessType || "generic").guardrails || [])
       .map((item) => text(item))
-      .filter(Boolean);
+      .filter((item) => item && activeGuardrails.has(item));
   } catch {
     return [];
   }
