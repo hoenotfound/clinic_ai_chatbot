@@ -1,3 +1,5 @@
+const { getIndustryProfile } = require("../config/industryProfiles");
+
 const PLACEHOLDER_BUSINESS_NAMES = new Set([
   "Your Clinic",
   "Your Renovation Business",
@@ -54,6 +56,16 @@ function contactConfigured(config) {
 
 function isPlaceholderBusinessName(value) {
   return PLACEHOLDER_BUSINESS_NAMES.has(text(value));
+}
+
+function protectedGuardrails(config) {
+  try {
+    return (getIndustryProfile(config?.businessType || "generic").guardrails || [])
+      .map((item) => text(item))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 function sectionState({ required, configured, missing }) {
@@ -206,6 +218,7 @@ function evaluateClientSetup(config = {}) {
     optionalTotal: sections.length - requiredSections.length,
     requiredComplete: incompleteRequired.length === 0,
     incompleteRequired,
+    protectedGuardrails: protectedGuardrails(config),
   };
 }
 
@@ -222,4 +235,5 @@ module.exports = {
   evaluateClientSetup,
   isFreshClientSetupCandidate,
   isPlaceholderBusinessName,
+  protectedGuardrails,
 };
