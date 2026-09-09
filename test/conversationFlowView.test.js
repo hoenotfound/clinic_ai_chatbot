@@ -13,7 +13,7 @@ async function loadFlowBuilder() {
   return import(pathToFileURL(file).href);
 }
 
-test("conversation flow presents a chat-first client view", () => {
+test("conversation flow keeps the client view simple and chat-first", () => {
   const app = read("portal-frontend/src/App.jsx");
   const sidebar = read("portal-frontend/src/components/Sidebar.jsx");
   const page = read("portal-frontend/src/pages/ConversationFlow.jsx");
@@ -23,10 +23,16 @@ test("conversation flow presents a chat-first client view", () => {
   assert.match(app, /anyCapabilities=\{\["manage_settings"\]\}/);
   assert.match(sidebar, /to: "\/conversation-flow", label: "Conversation Flow"/);
   assert.match(page, /api\s*\.getConfig\(\)/);
-  assert.match(page, /See how your AI replies to enquiries/);
-  assert.match(page, /Example customer journey/);
-  assert.match(page, /Choose a step to see an example chat/);
-  assert.doesNotMatch(page, /real chat example/i);
+  assert.match(page, /See how your AI handles an enquiry/);
+  assert.match(page, /How your AI handles a chat/);
+  assert.match(page, /Choose a step to see an example/);
+  assert.match(page, /useState\("answer-from-knowledge"\)/);
+  assert.match(page, /AI replies/);
+  assert.match(page, /AI asks what's missing/);
+  assert.match(page, /AI decides next step/);
+  assert.match(page, /Keep chatting/);
+  assert.match(page, /Ready to proceed/);
+  assert.match(page, /Human handoff/);
   assert.match(page, /Example chat/);
   assert.match(page, /Show another example/);
   assert.match(page, /ChatExample/);
@@ -35,10 +41,11 @@ test("conversation flow presents a chat-first client view", () => {
   assert.match(page, /Why this happens/);
   assert.match(page, /Adapts to each conversation/);
   assert.match(page, /Examples illustrate typical behaviour/);
+  assert.match(page, /Edit in \{settingsLabel/);
+  assert.doesNotMatch(page, /function SummaryPill/);
+  assert.doesNotMatch(page, /real chat example/i);
   assert.match(page, /matchMedia\("\(max-width: 1279px\)"\)/);
   assert.match(page, /scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
-  assert.match(page, /\/settings\?tab=aiBehavior/);
-  assert.match(page, /\/settings\?tab=escalation/);
 });
 
 test("renovation flow uses short client-friendly stages and configuration-aware examples", async () => {

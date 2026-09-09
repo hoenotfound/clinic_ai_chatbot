@@ -16,11 +16,25 @@ function settingsLabel(tab, ui) {
   return "Settings";
 }
 
+function displayNodeTitle(node) {
+  const titles = {
+    "customer-message": "Customer asks",
+    "understand-intent": "AI understands",
+    "answer-from-knowledge": "AI replies",
+    "qualify-naturally": "AI asks what's missing",
+    "choose-next-path": "AI decides next step",
+    "ask-next-question": "Keep chatting",
+    "conversion-next-step": "Ready to proceed",
+    "human-handoff": "Human handoff",
+  };
+  return titles[node?.id] || node?.title || "Conversation step";
+}
+
 export default function ConversationFlow() {
   const [config, setConfig] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
-  const [selectedId, setSelectedId] = useState("customer-message");
+  const [selectedId, setSelectedId] = useState("answer-from-knowledge");
   const [exampleIndex, setExampleIndex] = useState(0);
   const detailRef = useRef(null);
   const flow = useMemo(() => buildConversationFlow(config || {}), [config]);
@@ -28,6 +42,12 @@ export default function ConversationFlow() {
   const selectedNode = flow.allNodes.find((node) => node.id === selectedId) || flow.mainNodes[0];
   const examples = selectedNode.examples || [];
   const selectedExample = examples.length > 0 ? examples[exampleIndex % examples.length] : null;
+  const knowledgeLine = [
+    `${flow.knowledgeCounts.services} ${flow.knowledgeCounts.services === 1 ? ui.serviceSingular : ui.servicePlural}`,
+    `${flow.knowledgeCounts.faqs} ${flow.knowledgeCounts.faqs === 1 ? "FAQ" : "FAQs"}`,
+    `${flow.knowledgeCounts.promotions} ${flow.knowledgeCounts.promotions === 1 ? "promotion" : "promotions"}`,
+    `${flow.handoffCount} ${flow.handoffCount === 1 ? "handoff rule" : "handoff rules"}`,
+  ].join(" · ");
 
   useEffect(() => {
     let cancelled = false;
@@ -101,14 +121,9 @@ export default function ConversationFlow() {
           </div>
           <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">Conversation Flow</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--color-text-muted)]">
-            See how your AI replies to enquiries, collects useful details, and knows when to involve your team.
+            See how your AI handles an enquiry from first message to next step.
           </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <SummaryPill>{flow.knowledgeCounts.services} {flow.knowledgeCounts.services === 1 ? ui.serviceSingular : ui.servicePlural}</SummaryPill>
-            <SummaryPill>{flow.knowledgeCounts.faqs} {flow.knowledgeCounts.faqs === 1 ? "FAQ" : "FAQs"}</SummaryPill>
-            <SummaryPill>{flow.knowledgeCounts.promotions} {flow.knowledgeCounts.promotions === 1 ? "promotion" : "promotions"}</SummaryPill>
-            <SummaryPill>{flow.handoffCount} {flow.handoffCount === 1 ? "handoff trigger" : "handoff triggers"}</SummaryPill>
-          </div>
+          <p className="mt-2 text-xs font-medium text-[var(--color-text-muted)]">{knowledgeLine}</p>
         </header>
 
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_23rem]">
@@ -122,8 +137,8 @@ export default function ConversationFlow() {
             >
               <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Example customer journey</p>
-                  <p className="mt-0.5 text-xs leading-5 text-[var(--color-text-muted)]">Choose a step to see an example chat.</p>
+                  <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">How your AI handles a chat</p>
+                  <p className="mt-0.5 text-xs leading-5 text-[var(--color-text-muted)]">Choose a step to see an example.</p>
                 </div>
                 <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
                   <span aria-hidden="true">↻</span>
@@ -164,30 +179,20 @@ export default function ConversationFlow() {
                 ))}
               </div>
 
-              <div className="mt-4 flex flex-col gap-2 border-t border-[var(--color-border)] pt-3 text-[11px] leading-5 text-[var(--color-text-muted)] sm:flex-row sm:items-center sm:justify-between">
-                <span>Examples illustrate typical behaviour. Your saved settings remain the source of truth.</span>
-                <div className="flex flex-wrap gap-x-4 gap-y-1">
-                  <Link to="/settings?tab=services" className="font-semibold text-[var(--color-primary)] hover:underline">{ui.servicesLabel}</Link>
-                  <Link to="/settings?tab=aiBehavior" className="font-semibold text-[var(--color-primary)] hover:underline">AI behaviour</Link>
-                  <Link to="/settings?tab=escalation" className="font-semibold text-[var(--color-primary)] hover:underline">Handoff rules</Link>
-                </div>
-              </div>
+              <p className="mt-4 border-t border-[var(--color-border)] pt-3 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                Examples illustrate typical behaviour. The AI adapts to context and your saved settings.
+              </p>
             </div>
           </section>
 
           <aside ref={detailRef} className="min-w-0 scroll-mt-4 xl:sticky xl:top-6 xl:self-start">
             <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm sm:p-6">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-primary-light)] text-[var(--color-primary)]">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-primary-light)] text-[var(--color-primary)]">
                   <NodeIcon kind={selectedNode.kind} className="h-5 w-5" />
                 </div>
-                <span className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                  {selectedNode.kind}
-                </span>
+                <h2 className="font-display text-xl font-bold">{displayNodeTitle(selectedNode)}</h2>
               </div>
-
-              <h2 className="mt-4 font-display text-xl font-bold">{selectedNode.title}</h2>
-              <p className="mt-1.5 text-sm leading-6 text-[var(--color-text-muted)]">{selectedNode.summary}</p>
 
               <div className="mt-5">
                 <div className="flex items-center justify-between gap-3">
@@ -217,31 +222,20 @@ export default function ConversationFlow() {
                   <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{selectedNode.shortNote}</p>
                 </div>
               )}
+
               {selectedNode.settingsTab && (
                 <Link
                   to={settingsDestination(selectedNode.settingsTab)}
-                  className="mt-4 inline-flex min-h-10 w-full items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm font-semibold transition-colors hover:bg-[var(--color-primary-light)] hover:text-[var(--color-primary)]"
+                  className="mt-4 inline-flex text-xs font-semibold text-[var(--color-primary)] hover:underline"
                 >
-                  Open {settingsLabel(selectedNode.settingsTab, ui)} settings
+                  Edit in {settingsLabel(selectedNode.settingsTab, ui)} →
                 </Link>
               )}
-
-              <p className="mt-4 text-center text-[10px] leading-4 text-[var(--color-text-muted)]">
-                {flow.flexibilityNote}
-              </p>
             </div>
           </aside>
         </div>
       </div>
     </main>
-  );
-}
-
-function SummaryPill({ children }) {
-  return (
-    <span className="inline-flex min-h-8 items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-text-muted)] shadow-sm">
-      {children}
-    </span>
   );
 }
 
@@ -265,13 +259,14 @@ function ChatExample({ example }) {
 }
 
 function FlowNode({ node, step, selected, onSelect }) {
+  const title = displayNodeTitle(node);
   return (
     <button
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      aria-label={`Step ${step}: ${node.title}`}
-      className={`group flex min-h-[62px] w-full items-center gap-3 rounded-2xl border px-3 py-2.5 text-left shadow-sm transition-all sm:px-3.5 ${
+      aria-label={`Step ${step}: ${title}`}
+      className={`group flex min-h-[54px] w-full items-center gap-3 rounded-2xl border px-3 py-2 text-left shadow-sm transition-all sm:px-3.5 ${
         selected
           ? "border-[var(--color-primary)] bg-[var(--color-surface)] ring-2 ring-[var(--color-primary)]/10"
           : "border-[var(--color-border)] bg-[var(--color-surface)] hover:-translate-y-0.5 hover:border-[var(--color-primary)]/40 hover:shadow-md"
@@ -282,10 +277,7 @@ function FlowNode({ node, step, selected, onSelect }) {
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--color-primary)]">Step {step}</p>
-        <div className="mt-0.5 flex flex-col gap-0.5 lg:flex-row lg:items-baseline lg:gap-2.5">
-          <h3 className="shrink-0 text-sm font-bold leading-5">{node.title}</h3>
-          <p className="line-clamp-2 text-[11px] leading-[1.5] text-[var(--color-text-muted)] lg:line-clamp-1">{node.summary}</p>
-        </div>
+        <h3 className="mt-0.5 text-sm font-bold leading-5">{title}</h3>
       </div>
       <span className="text-sm text-[var(--color-text-muted)]" aria-hidden="true">›</span>
     </button>
@@ -335,25 +327,23 @@ function outcomeStyles(kind) {
 
 function OutcomeNode({ node, selected, onSelect }) {
   const styles = outcomeStyles(node.kind);
+  const title = displayNodeTitle(node);
   return (
     <button
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      className={`min-h-28 rounded-2xl border bg-[var(--color-surface)] p-3 text-left transition-all sm:p-3.5 ${
+      aria-label={title}
+      className={`flex min-h-16 items-center gap-2.5 rounded-2xl border bg-[var(--color-surface)] p-3 text-left transition-all ${
         selected
           ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/10"
           : `${styles.card} hover:-translate-y-0.5 hover:shadow-md`
       }`}
     >
-      <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">{node.branchLabel}</p>
-      <div className="mt-2 flex items-center gap-2.5">
-        <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${styles.icon}`}>
-          <NodeIcon kind={node.kind} className="h-4 w-4" />
-        </div>
-        <h3 className="text-sm font-bold leading-5">{node.title}</h3>
+      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${styles.icon}`}>
+        <NodeIcon kind={node.kind} className="h-4 w-4" />
       </div>
-      <p className="mt-2 line-clamp-2 text-[11px] leading-[1.55] text-[var(--color-text-muted)]">{node.summary}</p>
+      <h3 className="text-sm font-bold leading-5">{title}</h3>
     </button>
   );
 }
