@@ -1,26 +1,68 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useBusinessConfig } from "../context/BusinessConfigContext";
+import { api } from "../api";
 import { buildConversationFlow } from "../utils/conversationFlow";
-
-const SETTINGS_LABELS = {
-  general: "General",
-  services: "Services",
-  aiBehavior: "AI Behavior",
-  escalation: "Handoff & Rules",
-};
+import { getBusinessTerminology } from "../utils/businessTerminology";
 
 function settingsDestination(tab) {
   return tab === "general" ? "/settings" : `/settings?tab=${encodeURIComponent(tab)}`;
 }
 
+function settingsLabel(tab, ui) {
+  if (tab === "general") return "General";
+  if (tab === "services") return ui.servicesLabel;
+  if (tab === "aiBehavior") return "AI Behavior";
+  if (tab === "escalation") return "Handoff & Rules";
+  return "Settings";
+}
+
 export default function ConversationFlow() {
-  const { config, loading } = useBusinessConfig();
-  const flow = useMemo(() => buildConversationFlow(config || {}), [config]);
+  const [config, setConfig] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [reloadToken, setReloadToken] = useState(0);
   const [selectedId, setSelectedId] = useState("customer-message");
+  const flow = useMemo(() => buildConversationFlow(config || {}), [config]);
+  const ui = useMemo(() => getBusinessTerminology(config || {}), [config]);
   const selectedNode = flow.allNodes.find((node) => node.id === selectedId) || flow.mainNodes[0];
 
-  if (loading || !config) {
+  useEffect(() => {
+    let cancelled = false;
+    setLoadError(null);
+    api
+      .getConfig()
+      .then((data) => {
+        if (!cancelled) setConfig(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(err.message || "Failed to load the conversation flow.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken]);
+
+  if (loadError && !config) {
+    return (
+      <div className="flex h-full items-center justify-center bg-[var(--color-bg)] px-4">
+        <div className="w-full max-w-md rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center shadow-sm sm:p-8">
+          <h1 className="font-display text-lg font-bold">Couldn't load conversation flow</h1>
+          <p className="mt-2 text-sm leading-6 text-[var(--color-danger)]">{loadError}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setConfig(null);
+              setReloadToken((value) => value + 1);
+            }}
+            className="mt-5 h-11 rounded-xl bg-[var(--color-primary)] px-4 text-sm font-semibold text-white transition-colors hover:bg-[var(--color-primary-hover)]"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!config) {
     return (
       <div className="flex h-full items-center justify-center bg-[var(--color-bg)] px-4">
         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-muted)] shadow-sm">
@@ -32,30 +74,28 @@ export default function ConversationFlow() {
 
   return (
     <main className="h-full overflow-y-auto bg-[var(--color-bg)]">
-      <div className="mx-auto w-full max-w-[1540px] px-3.5 py-5 sm:px-5 sm:py-7 lg:px-8 lg:py-8">
-        <header className="mb-5 flex flex-col gap-4 sm:mb-6 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <span className="inline-flex min-h-7 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-[11px] font-semibold text-[var(--color-text-muted)]">
-                {flow.industryLabel}
-              </span>
-              <span className="inline-flex min-h-7 items-center gap-1.5 rounded-full bg-[var(--color-primary-light)] px-2.5 text-[11px] font-semibold text-[var(--color-primary)]">
-                <span aria-hidden="true">●</span>
-                Read-only preview
-              </span>
-            </div>
-            <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">Conversation Flow</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--color-text-muted)]">
-              See how the AI normally handles an enquiry from the first customer message to the next sales step or human handoff.
-            </p>
+      <div className="mx-auto w-full max-w-[1480px] px-3.5 py-5 sm:px-5 sm:py-7 lg:px-8 lg:py-8">
+        <header className="mb-5 sm:mb-6">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className="inline-flex min-h-7 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-[11px] font-semibold text-[var(--color-text-muted)]">
+              {flow.industryLabel}
+            </span>
+            <span className="inline-flex min-h-7 items-center gap-1.5 rounded-full bg-[var(--color-primary-light)] px-2.5 text-[11px] font-semibold text-[var(--color-primary)]">
+              <span aria-hidden="true">●</span>
+              Synced with current settings
+            </span>
           </div>
-          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 shadow-sm">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Current setup</p>
-            <p className="mt-1 text-sm font-semibold">{flow.knowledgeSummary}</p>
+          <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">Conversation Flow</h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--color-text-muted)]">
+            A simple view of how your AI handles a typical enquiry, from the first message to a sales next step or human handoff.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <SetupPill>{flow.knowledgeSummary}</SetupPill>
+            <SetupPill>{flow.handoffCount} {flow.handoffCount === 1 ? "handoff trigger" : "handoff triggers"}</SetupPill>
           </div>
         </header>
 
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_21rem]">
           <section className="min-w-0 rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-sm sm:p-4 lg:p-5">
             <div
               className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:p-4 lg:p-5"
@@ -64,35 +104,40 @@ export default function ConversationFlow() {
                 backgroundSize: "18px 18px",
               }}
             >
-              <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Normal enquiry path</p>
+                  <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Typical AI journey</p>
                   <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                    The AI can answer questions at any point. These cards show the usual decision process, not a rigid script.
+                    Click any stage to see the rules and information behind it.
                   </p>
                 </div>
+                <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
+                  <span aria-hidden="true">↻</span>
+                  Flexible, not scripted
+                </span>
               </div>
 
-              <div className="flex flex-col items-stretch gap-0 xl:flex-row xl:items-center">
+              <div className="mx-auto w-full max-w-3xl">
                 {flow.mainNodes.map((node, index) => (
-                  <div key={node.id} className="contents">
+                  <div key={node.id}>
                     <FlowNode
                       node={node}
+                      step={index + 1}
                       selected={selectedNode.id === node.id}
                       onSelect={() => setSelectedId(node.id)}
                     />
-                    {index < flow.mainNodes.length - 1 && <FlowConnector />}
+                    {index < flow.mainNodes.length - 1 && <VerticalConnector />}
                   </div>
                 ))}
               </div>
 
-              <div className="mx-auto my-4 flex w-full max-w-2xl items-center gap-3 sm:my-5">
-                <div className="h-px flex-1 bg-[var(--color-border)]" />
-                <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+              <div className="my-4 text-center sm:my-5">
+                <span className="inline-flex rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
                   Possible next paths
                 </span>
-                <div className="h-px flex-1 bg-[var(--color-border)]" />
               </div>
+
+              <BranchRail />
 
               <div className="grid gap-3 md:grid-cols-3">
                 {flow.outcomes.map((node) => (
@@ -104,27 +149,15 @@ export default function ConversationFlow() {
                   />
                 ))}
               </div>
-            </div>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              <SourceCard
-                title="Business knowledge"
-                description="Services, FAQs, promotions and factual business information shape what the AI can safely answer."
-                to="/settings?tab=services"
-                linkLabel="Review services"
-              />
-              <SourceCard
-                title="Conversation behaviour"
-                description="Texting style, qualification and conversion instructions control how the AI moves the chat forward."
-                to="/settings?tab=aiBehavior"
-                linkLabel="Review AI behaviour"
-              />
-              <SourceCard
-                title="Human boundaries"
-                description="Handoff triggers and guardrails decide when automation should stop and staff should take over."
-                to="/settings?tab=escalation"
-                linkLabel="Review handoff rules"
-              />
+              <div className="mt-4 flex flex-col gap-2 border-t border-[var(--color-border)] pt-4 text-[11px] leading-5 text-[var(--color-text-muted)] sm:flex-row sm:items-center sm:justify-between">
+                <span>Generated from the current business configuration.</span>
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  <Link to="/settings?tab=services" className="font-semibold text-[var(--color-primary)] hover:underline">{ui.servicesLabel}</Link>
+                  <Link to="/settings?tab=aiBehavior" className="font-semibold text-[var(--color-primary)] hover:underline">AI behaviour</Link>
+                  <Link to="/settings?tab=escalation" className="font-semibold text-[var(--color-primary)] hover:underline">Handoff rules</Link>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -165,16 +198,14 @@ export default function ConversationFlow() {
                   to={settingsDestination(selectedNode.settingsTab)}
                   className="mt-5 inline-flex min-h-10 w-full items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm font-semibold transition-colors hover:bg-[var(--color-primary-light)] hover:text-[var(--color-primary)]"
                 >
-                  Edit in {SETTINGS_LABELS[selectedNode.settingsTab] || "Settings"}
+                  Open {settingsLabel(selectedNode.settingsTab, ui)} settings
                 </Link>
               )}
-            </div>
 
-            <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-xs leading-5 text-[var(--color-text-muted)] shadow-sm">
-              <p className="font-bold text-[var(--color-text)]">This is not a fixed script</p>
-              <p className="mt-1.5">
-                Customers can provide several details in one message, change topic, ask questions or request staff at any time. The AI uses the current conversation instead of forcing every card in order.
-              </p>
+              <div className="mt-4 rounded-2xl bg-[var(--color-primary-light)] p-3.5 text-[11px] leading-5 text-[var(--color-primary)]">
+                <p className="font-bold">AI does not force this order</p>
+                <p className="mt-1">{flow.flexibilityNote}</p>
+              </div>
             </div>
           </aside>
         </div>
@@ -183,77 +214,109 @@ export default function ConversationFlow() {
   );
 }
 
-function FlowNode({ node, selected, onSelect }) {
+function SetupPill({ children }) {
+  return (
+    <span className="inline-flex min-h-8 items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-medium text-[var(--color-text-muted)] shadow-sm">
+      {children}
+    </span>
+  );
+}
+
+function FlowNode({ node, step, selected, onSelect }) {
   return (
     <button
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      className={`group min-h-36 w-full rounded-2xl border p-4 text-left shadow-sm transition-all xl:min-h-44 xl:min-w-0 xl:flex-1 ${
+      aria-label={`Step ${step}: ${node.title}`}
+      className={`group flex min-h-[72px] w-full items-start gap-3 rounded-2xl border p-3 text-left shadow-sm transition-all sm:p-3.5 ${
         selected
           ? "border-[var(--color-primary)] bg-[var(--color-surface)] ring-2 ring-[var(--color-primary)]/10"
-          : "border-[var(--color-border)] bg-[var(--color-surface)] hover:-translate-y-0.5 hover:border-[var(--color-primary)]/40"
+          : "border-[var(--color-border)] bg-[var(--color-surface)] hover:-translate-y-0.5 hover:border-[var(--color-primary)]/40 hover:shadow-md"
       }`}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--color-primary-light)] text-[var(--color-primary)]">
-          <NodeIcon kind={node.kind} className="h-[18px] w-[18px]" />
-        </div>
-        <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-          {node.kind}
-        </span>
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-primary-light)] text-[var(--color-primary)]">
+        <NodeIcon kind={node.kind} className="h-[18px] w-[18px]" />
       </div>
-      <h3 className="mt-3 text-sm font-bold leading-5">{node.title}</h3>
-      <p className="mt-1.5 line-clamp-3 text-[11px] leading-[1.55] text-[var(--color-text-muted)]">{node.summary}</p>
-      {node.meta && <p className="mt-2 text-[10px] font-semibold text-[var(--color-primary)]">{node.meta}</p>}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--color-primary)]">Step {step}</span>
+          <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
+            {node.kind}
+          </span>
+        </div>
+        <h3 className="mt-0.5 text-sm font-bold leading-5">{node.title}</h3>
+        <p className="mt-0.5 line-clamp-2 text-[11px] leading-[1.5] text-[var(--color-text-muted)]">{node.summary}</p>
+        {node.meta && <p className="mt-1 text-[10px] font-semibold text-[var(--color-primary)]">{node.meta}</p>}
+      </div>
     </button>
   );
+}
+
+function VerticalConnector() {
+  return (
+    <div aria-hidden="true" className="flex h-4 justify-center">
+      <div className="relative h-3.5 w-px bg-[var(--color-border)]">
+        <span className="absolute -bottom-0.5 -left-[3px] h-2 w-2 rotate-45 border-b border-r border-[var(--color-text-muted)]" />
+      </div>
+    </div>
+  );
+}
+
+function BranchRail() {
+  return (
+    <div aria-hidden="true" className="relative mx-[16.6667%] hidden h-7 md:block">
+      <div className="absolute left-1/2 top-0 h-3 w-px -translate-x-1/2 bg-[var(--color-border)]" />
+      <div className="absolute left-0 right-0 top-3 h-px bg-[var(--color-border)]" />
+      <div className="absolute left-0 top-3 h-3.5 w-px bg-[var(--color-border)]" />
+      <div className="absolute left-1/2 top-3 h-3.5 w-px -translate-x-1/2 bg-[var(--color-border)]" />
+      <div className="absolute right-0 top-3 h-3.5 w-px bg-[var(--color-border)]" />
+    </div>
+  );
+}
+
+function outcomeStyles(kind) {
+  if (kind === "Conversion") {
+    return {
+      card: "border-[var(--color-primary)]/35",
+      icon: "bg-[var(--color-primary-light)] text-[var(--color-primary)]",
+    };
+  }
+  if (kind === "Human") {
+    return {
+      card: "border-[var(--color-accent)]/50",
+      icon: "bg-[var(--color-accent-light)] text-[var(--color-accent)]",
+    };
+  }
+  return {
+    card: "border-[var(--color-border)]",
+    icon: "bg-[var(--color-primary-light)] text-[var(--color-primary)]",
+  };
 }
 
 function OutcomeNode({ node, selected, onSelect }) {
+  const styles = outcomeStyles(node.kind);
   return (
     <button
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      className={`rounded-2xl border p-4 text-left transition-all ${
+      className={`min-h-36 rounded-2xl border bg-[var(--color-surface)] p-3.5 text-left transition-all sm:p-4 ${
         selected
-          ? "border-[var(--color-primary)] bg-[var(--color-surface)] ring-2 ring-[var(--color-primary)]/10"
-          : "border-[var(--color-border)] bg-[var(--color-surface)] hover:-translate-y-0.5 hover:border-[var(--color-primary)]/40"
+          ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/10"
+          : `${styles.card} hover:-translate-y-0.5 hover:shadow-md`
       }`}
     >
-      <div className="flex items-center gap-2.5">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--color-primary-light)] text-[var(--color-primary)]">
+      <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">{node.branchLabel}</p>
+      <div className="mt-2.5 flex items-center gap-2.5">
+        <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${styles.icon}`}>
           <NodeIcon kind={node.kind} className="h-4 w-4" />
         </div>
-        <div className="min-w-0">
-          <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">{node.kind}</p>
-          <h3 className="truncate text-sm font-bold">{node.title}</h3>
-        </div>
+        <h3 className="text-sm font-bold leading-5">{node.title}</h3>
       </div>
-      <p className="mt-3 text-[11px] leading-[1.55] text-[var(--color-text-muted)]">{node.summary}</p>
+      <p className="mt-2.5 line-clamp-3 text-[11px] leading-[1.55] text-[var(--color-text-muted)]">{node.summary}</p>
       {node.meta && <p className="mt-2 text-[10px] font-semibold text-[var(--color-primary)]">{node.meta}</p>}
     </button>
-  );
-}
-
-function FlowConnector() {
-  return (
-    <div aria-hidden="true" className="flex h-9 shrink-0 items-center justify-center text-[var(--color-text-muted)] xl:h-auto xl:w-8">
-      <span className="rotate-90 text-lg font-light xl:rotate-0">→</span>
-    </div>
-  );
-}
-
-function SourceCard({ title, description, to, linkLabel }) {
-  return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-      <p className="text-sm font-bold">{title}</p>
-      <p className="mt-1.5 text-[11px] leading-5 text-[var(--color-text-muted)]">{description}</p>
-      <Link to={to} className="mt-3 inline-flex text-xs font-semibold text-[var(--color-primary)] hover:underline">
-        {linkLabel} →
-      </Link>
-    </div>
   );
 }
 
