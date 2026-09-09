@@ -33,16 +33,20 @@ export default function SettingsSectionLayout({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
   const isTeam = location.pathname === "/settings/team";
+  const isClientSetup = location.pathname === "/settings/client-setup";
   const isSetup = location.pathname === "/settings/setup";
-  const mobileValue = isTeam ? "team" : isSetup ? "setup" : "general";
+  const mobileValue = isTeam ? "team" : isClientSetup ? "clientSetup" : isSetup ? "setup" : "general";
 
   const teamItem = permissions.manage_users
     ? { id: "team", to: "/settings/team", label: "Team & Access" }
     : null;
+  const clientSetupItem = user?.role === "admin"
+    ? { id: "clientSetup", to: "/settings/client-setup", label: "Client Setup" }
+    : null;
   const setupItem = user?.role === "admin"
     ? { id: "setup", to: "/settings/setup", label: "Setup Status" }
     : null;
-  const destinationItems = [teamItem, setupItem].filter(Boolean);
+  const destinationItems = [teamItem, clientSetupItem, setupItem].filter(Boolean);
 
   function handleMobileChange(value) {
     const configItem = configItems.find((item) => item.id === value);
@@ -88,12 +92,15 @@ export default function SettingsSectionLayout({ children }) {
             </div>
           )}
 
-          {setupItem && (
+          {(clientSetupItem || setupItem) && (
             <div className={`${permissions.manage_settings || teamItem ? "mt-3 border-t border-[var(--color-border)] pt-3" : ""}`}>
               <p className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
                 System
               </p>
-              <SettingsNavLink item={setupItem} />
+              <div className="space-y-1">
+                {clientSetupItem && <SettingsNavLink item={clientSetupItem} />}
+                {setupItem && <SettingsNavLink item={setupItem} />}
+              </div>
             </div>
           )}
         </nav>
@@ -114,6 +121,7 @@ export default function SettingsSectionLayout({ children }) {
                 <option key={item.id} value={item.id}>{item.label}</option>
               ))}
               {teamItem && <option value={teamItem.id}>{teamItem.label}</option>}
+              {clientSetupItem && <option value={clientSetupItem.id}>{clientSetupItem.label}</option>}
               {setupItem && <option value={setupItem.id}>{setupItem.label}</option>}
             </select>
           </label>
