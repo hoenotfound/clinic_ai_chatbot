@@ -23,6 +23,7 @@ const CONFIG_KEYS = [
   "businessDescription",
   "aiAssistantName",
   "branches",
+  "serviceAreas",
   "hours",
   "contact",
   "introMessage",
@@ -175,11 +176,6 @@ async function updateConfig(updates, database = pool) {
     if (changedPublicSetting && industrySetup.selectable && !industrySetup.locked) {
       const customerData = await industrySetupRepo.loadCustomerDataState(client);
       if (customerData.hasCustomerData) {
-        // Customer activity makes the currently-running profile authoritative.
-        // Persist that lock before accepting Settings so a client can never get
-        // stuck between "too late to choose an industry" and "Settings blocked
-        // until an industry is chosen". The clinic_config row lock serializes
-        // this transition with an administrator attempting profile selection.
         nextConfig.industrySetup = lockIndustrySetup(industrySetup, {
           source: "customer_data",
           reason: "customer_data_exists",
@@ -197,12 +193,6 @@ async function updateConfig(updates, database = pool) {
         });
 
         if (setupStatus.selection.lockReason === "pipeline_customized") {
-          // A stage edit normally writes this metadata immediately. This branch
-          // is a recovery path for a partial failure (or an older process) where
-          // the Pipeline mutation committed but the profile-lock metadata did
-          // not. The customized Pipeline already makes re-profiling unsafe, so
-          // lock the current profile and keep Settings usable instead of leaving
-          // the deployment in an unrecoverable onboarding state.
           nextConfig.industrySetup = lockIndustrySetup(industrySetup, {
             source: "pipeline",
             reason: "pipeline_customized",
@@ -246,18 +236,6 @@ async function updateConfig(updates, database = pool) {
   return clinicConfig;
 }
 
-/**
- * Runs a Pipeline stage mutation while holding the clinic_config row lock used
- * by profile selection and Settings. If the stage operation succeeds, a still-
- * selectable onboarding profile is permanently locked in the same outer
- * transaction. If the stage operation fails, the metadata transaction rolls
- * back and the deployment remains selectable.
- *
- * The stage repository uses its own short DB transaction internally. Holding
- * clinic_config here prevents profile selection from interleaving with it; the
- * selector's dynamic Pipeline recheck remains a second safety net if the final
- * metadata update itself ever fails after the stage mutation committed.
- */
 async function withPipelineCustomizationLock(
   work,
   {
@@ -290,9 +268,6 @@ async function withPipelineCustomizationLock(
     const storedConfig = configResult.rows[0].data || {};
     result = await work();
 
-    // Null is used by update/delete repositories for "not found" and is not a
-    // successful customization. Other successful results, including arrays,
-    // permanently close the one-time selector.
     if (result !== null && result !== undefined) {
       const setup = normalizeIndustrySetup(storedConfig.industrySetup);
       if (setup.selectable && !setup.locked) {

@@ -11,6 +11,17 @@ const DEFAULT_BUILD_COMMAND = "npm ci && npm --prefix portal-frontend ci && npm 
 const DEFAULT_START_COMMAND = "npm start";
 const DEFAULT_RESOURCE_PREFIX = "da-chatbot";
 const DEFAULT_HEALTH_CHECK_PATH = "/";
+const SUPPORTED_PURCHASED_CHANNELS = Object.freeze(["whatsapp", "facebook", "instagram"]);
+const PURCHASED_CHANNEL_ALIASES = Object.freeze({
+  wa: "whatsapp",
+  whatsapp: "whatsapp",
+  fb: "facebook",
+  facebook: "facebook",
+  messenger: "facebook",
+  facebook_messenger: "facebook",
+  ig: "instagram",
+  instagram: "instagram",
+});
 
 const RENDER_REGIONS = Object.freeze([
   "frankfurt",
@@ -43,6 +54,7 @@ const RESERVED_RUNTIME_ENV_KEYS = new Set([
   "SESSION_SECRET",
   "INITIAL_BUSINESS_TYPE",
   "BUSINESS_TYPE",
+  "PURCHASED_CHANNELS",
   "PUBLIC_BASE_URL",
   "PORT",
 ]);
@@ -101,6 +113,27 @@ function requireIndustry(value) {
     );
   }
   return normalized;
+}
+
+function normalizePurchasedChannels(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(",");
+  const channels = [];
+  for (const item of raw) {
+    const key = String(item || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, "_");
+    if (!key) continue;
+    const canonical = PURCHASED_CHANNEL_ALIASES[key];
+    if (!canonical || !SUPPORTED_PURCHASED_CHANNELS.includes(canonical)) {
+      throw new ClientProvisioningError(
+        `Unsupported purchased channel "${item}". Use: ${SUPPORTED_PURCHASED_CHANNELS.join(", ")}.`,
+        { code: "PURCHASED_CHANNEL_UNSUPPORTED", stage: "validation" }
+      );
+    }
+    if (!channels.includes(canonical)) channels.push(canonical);
+  }
+  return channels;
 }
 
 function requireRenderRegion(value) {
@@ -168,6 +201,7 @@ function resourceName(prefix, slug) {
 function buildProvisioningPlan(input = {}, env = process.env) {
   const clientSlug = normalizeClientSlug(input.clientSlug);
   const industry = requireIndustry(input.industry);
+  const requiredChannels = normalizePurchasedChannels(input.requiredChannels || []);
   const runtimeEnv = normalizeRuntimeEnv(input.runtimeEnv || {});
   const prefix = normalizeClientSlug(
     input.resourcePrefix || env.PROVISIONING_RESOURCE_PREFIX || DEFAULT_RESOURCE_PREFIX
@@ -183,6 +217,7 @@ function buildProvisioningPlan(input = {}, env = process.env) {
   return {
     clientSlug,
     industry,
+    requiredChannels,
     resourceName: name,
     neon: {
       projectName: name,
@@ -213,6 +248,7 @@ function publicPlan(plan) {
   return {
     clientSlug: plan.clientSlug,
     industry: plan.industry,
+    requiredChannels: [...plan.requiredChannels],
     resourceName: plan.resourceName,
     neon: { ...plan.neon },
     render: { ...plan.render },
@@ -221,6 +257,10 @@ function publicPlan(plan) {
       value: plan.industry,
       lockedOnFirstStartup: true,
     },
+    channelContract: {
+      envKey: "PURCHASED_CHANNELS",
+      value: plan.requiredChannels.join(","),
+    },
   };
 }
 
@@ -228,6 +268,7 @@ function renderEnvVars(plan, databaseUrl) {
   const custom = Object.entries(plan.runtimeEnv).map(([key, value]) => ({ key, value }));
   return [
     { key: "INITIAL_BUSINESS_TYPE", value: plan.industry },
+    { key: "PURCHASED_CHANNELS", value: plan.requiredChannels.join(",") },
     { key: "DATABASE_URL", value: databaseUrl },
     { key: "SESSION_SECRET", generateValue: true },
     ...custom,
@@ -468,6 +509,7 @@ async function provisionClient(input = {}, {
     mode: "executed",
     clientSlug: plan.clientSlug,
     industry: plan.industry,
+    requiredChannels: [...plan.requiredChannels],
     neon: {
       projectId: neon.projectId,
       projectName: plan.neon.projectName,
@@ -492,6 +534,10 @@ async function provisionClient(input = {}, {
       value: plan.industry,
       lockedOnFirstStartup: true,
     },
+    channelContract: {
+      envKey: "PURCHASED_CHANNELS",
+      value: plan.requiredChannels.join(","),
+    },
   };
 }
 
@@ -505,11 +551,14 @@ module.exports = {
   DEFAULT_RENDER_REPO,
   DEFAULT_RESOURCE_PREFIX,
   DEFAULT_START_COMMAND,
+  PURCHASED_CHANNEL_ALIASES,
   RENDER_PLANS,
   RENDER_REGIONS,
   RESERVED_RUNTIME_ENV_KEYS,
+  SUPPORTED_PURCHASED_CHANNELS,
   buildProvisioningPlan,
   normalizeClientSlug,
+  normalizePurchasedChannels,
   normalizeRenderPlan,
   normalizeRuntimeEnv,
   provisionClient,
