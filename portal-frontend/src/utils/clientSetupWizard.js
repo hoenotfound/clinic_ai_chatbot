@@ -46,11 +46,6 @@ function emptyCompletion() {
   };
 }
 
-function profileConfirmed(config) {
-  const setup = config?.industrySetup;
-  return setup?.locked === true && setup?.selectable !== true;
-}
-
 export function isPlaceholderBusinessName(value) {
   return PLACEHOLDER_BUSINESS_NAMES.has(text(value));
 }
@@ -69,11 +64,16 @@ export function getClientSetupCompletion(config = {}) {
 }
 
 export function isFreshClientSetupCandidate(config = {}) {
-  const source = text(config?.industrySetup?.source);
+  const setup = config?.industrySetup || {};
+  const source = text(setup.source);
   const completion = getClientSetupCompletion(config);
-  if (!profileConfirmed(config)) return false;
-  if (!["environment", "setup_status"].includes(source)) return false;
   if (!isPlaceholderBusinessName(config.businessName || config.clinicName)) return false;
+  if (source === "legacy") return false;
+  const freshSelectable = source === "default" && setup.selectable === true && setup.locked !== true;
+  const freshLocked = ["environment", "setup_status"].includes(source)
+    && setup.locked === true
+    && setup.selectable !== true;
+  if (!freshSelectable && !freshLocked) return false;
   return !completion.requiredComplete;
 }
 
