@@ -74,8 +74,8 @@ export default function ConversationFlow() {
 
   return (
     <main className="h-full overflow-y-auto bg-[var(--color-bg)]">
-      <div className="mx-auto w-full max-w-[1480px] px-3.5 py-5 sm:px-5 sm:py-7 lg:px-8 lg:py-8">
-        <header className="mb-5 sm:mb-6">
+      <div className="mx-auto w-full max-w-[1480px] px-3.5 py-5 sm:px-5 sm:py-6 lg:px-8 lg:py-7">
+        <header className="mb-4 sm:mb-5">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <span className="inline-flex min-h-7 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-[11px] font-semibold text-[var(--color-text-muted)]">
               {flow.industryLabel}
@@ -86,28 +86,30 @@ export default function ConversationFlow() {
             </span>
           </div>
           <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">Conversation Flow</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--color-text-muted)]">
-            A simple view of how your AI handles a typical enquiry, from the first message to a sales next step or human handoff.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <SetupPill>{flow.knowledgeSummary}</SetupPill>
-            <SetupPill>{flow.handoffCount} {flow.handoffCount === 1 ? "handoff trigger" : "handoff triggers"}</SetupPill>
+          <div className="mt-2 flex flex-col gap-2.5 lg:flex-row lg:items-end lg:justify-between">
+            <p className="max-w-3xl text-sm leading-6 text-[var(--color-text-muted)]">
+              A simple view of how your AI handles a typical enquiry, from the first message to a sales next step or human handoff.
+            </p>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <SetupPill>{flow.knowledgeSummary}</SetupPill>
+              <SetupPill>{flow.handoffCount} {flow.handoffCount === 1 ? "handoff trigger" : "handoff triggers"}</SetupPill>
+            </div>
           </div>
         </header>
 
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_21rem]">
           <section className="min-w-0 rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-sm sm:p-4 lg:p-5">
             <div
-              className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:p-4 lg:p-5"
+              className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:p-4"
               style={{
                 backgroundImage: "radial-gradient(var(--color-border) 1px, transparent 1px)",
                 backgroundSize: "18px 18px",
               }}
             >
-              <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Typical AI journey</p>
-                  <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                  <p className="mt-0.5 text-xs leading-5 text-[var(--color-text-muted)]">
                     Click any stage to see the rules and information behind it.
                   </p>
                 </div>
@@ -131,7 +133,7 @@ export default function ConversationFlow() {
                 ))}
               </div>
 
-              <div className="my-4 text-center sm:my-5">
+              <div className="my-3 text-center sm:my-4">
                 <span className="inline-flex rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
                   Possible next paths
                 </span>
@@ -150,7 +152,7 @@ export default function ConversationFlow() {
                 ))}
               </div>
 
-              <div className="mt-4 flex flex-col gap-2 border-t border-[var(--color-border)] pt-4 text-[11px] leading-5 text-[var(--color-text-muted)] sm:flex-row sm:items-center sm:justify-between">
+              <div className="mt-3 flex flex-col gap-2 border-t border-[var(--color-border)] pt-3 text-[11px] leading-5 text-[var(--color-text-muted)] sm:flex-row sm:items-center sm:justify-between">
                 <span>Generated from the current business configuration.</span>
                 <div className="flex flex-wrap gap-x-4 gap-y-1">
                   <Link to="/settings?tab=services" className="font-semibold text-[var(--color-primary)] hover:underline">{ui.servicesLabel}</Link>
@@ -229,7 +231,7 @@ function FlowNode({ node, step, selected, onSelect }) {
       onClick={onSelect}
       aria-pressed={selected}
       aria-label={`Step ${step}: ${node.title}`}
-      className={`group flex min-h-[72px] w-full items-start gap-3 rounded-2xl border p-3 text-left shadow-sm transition-all sm:p-3.5 ${
+      className={`group flex min-h-[66px] w-full items-start gap-3 rounded-2xl border px-3 py-2.5 text-left shadow-sm transition-all sm:px-3.5 ${
         selected
           ? "border-[var(--color-primary)] bg-[var(--color-surface)] ring-2 ring-[var(--color-primary)]/10"
           : "border-[var(--color-border)] bg-[var(--color-surface)] hover:-translate-y-0.5 hover:border-[var(--color-primary)]/40 hover:shadow-md"
@@ -245,9 +247,11 @@ function FlowNode({ node, step, selected, onSelect }) {
             {node.kind}
           </span>
         </div>
-        <h3 className="mt-0.5 text-sm font-bold leading-5">{node.title}</h3>
-        <p className="mt-0.5 line-clamp-2 text-[11px] leading-[1.5] text-[var(--color-text-muted)]">{node.summary}</p>
-        {node.meta && <p className="mt-1 text-[10px] font-semibold text-[var(--color-primary)]">{node.meta}</p>}
+        <div className="mt-0.5 flex flex-col gap-0.5 lg:flex-row lg:items-baseline lg:gap-2.5">
+          <h3 className="shrink-0 text-sm font-bold leading-5">{node.title}</h3>
+          <p className="line-clamp-2 text-[11px] leading-[1.5] text-[var(--color-text-muted)] lg:line-clamp-1">{node.summary}</p>
+        </div>
+        {node.meta && <p className="mt-0.5 text-[10px] font-semibold text-[var(--color-primary)]">{node.meta}</p>}
       </div>
     </button>
   );
@@ -255,8 +259,8 @@ function FlowNode({ node, step, selected, onSelect }) {
 
 function VerticalConnector() {
   return (
-    <div aria-hidden="true" className="flex h-4 justify-center">
-      <div className="relative h-3.5 w-px bg-[var(--color-border)]">
+    <div aria-hidden="true" className="flex h-3 justify-center">
+      <div className="relative h-2.5 w-px bg-[var(--color-border)]">
         <span className="absolute -bottom-0.5 -left-[3px] h-2 w-2 rotate-45 border-b border-r border-[var(--color-text-muted)]" />
       </div>
     </div>
@@ -265,12 +269,12 @@ function VerticalConnector() {
 
 function BranchRail() {
   return (
-    <div aria-hidden="true" className="relative mx-[16.6667%] hidden h-7 md:block">
-      <div className="absolute left-1/2 top-0 h-3 w-px -translate-x-1/2 bg-[var(--color-border)]" />
-      <div className="absolute left-0 right-0 top-3 h-px bg-[var(--color-border)]" />
-      <div className="absolute left-0 top-3 h-3.5 w-px bg-[var(--color-border)]" />
-      <div className="absolute left-1/2 top-3 h-3.5 w-px -translate-x-1/2 bg-[var(--color-border)]" />
-      <div className="absolute right-0 top-3 h-3.5 w-px bg-[var(--color-border)]" />
+    <div aria-hidden="true" className="relative mx-[16.6667%] hidden h-6 md:block">
+      <div className="absolute left-1/2 top-0 h-2.5 w-px -translate-x-1/2 bg-[var(--color-border)]" />
+      <div className="absolute left-0 right-0 top-2.5 h-px bg-[var(--color-border)]" />
+      <div className="absolute left-0 top-2.5 h-3.5 w-px bg-[var(--color-border)]" />
+      <div className="absolute left-1/2 top-2.5 h-3.5 w-px -translate-x-1/2 bg-[var(--color-border)]" />
+      <div className="absolute right-0 top-2.5 h-3.5 w-px bg-[var(--color-border)]" />
     </div>
   );
 }
@@ -301,21 +305,21 @@ function OutcomeNode({ node, selected, onSelect }) {
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      className={`min-h-36 rounded-2xl border bg-[var(--color-surface)] p-3.5 text-left transition-all sm:p-4 ${
+      className={`min-h-32 rounded-2xl border bg-[var(--color-surface)] p-3 text-left transition-all sm:p-3.5 ${
         selected
           ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/10"
           : `${styles.card} hover:-translate-y-0.5 hover:shadow-md`
       }`}
     >
       <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">{node.branchLabel}</p>
-      <div className="mt-2.5 flex items-center gap-2.5">
+      <div className="mt-2 flex items-center gap-2.5">
         <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${styles.icon}`}>
           <NodeIcon kind={node.kind} className="h-4 w-4" />
         </div>
         <h3 className="text-sm font-bold leading-5">{node.title}</h3>
       </div>
-      <p className="mt-2.5 line-clamp-3 text-[11px] leading-[1.55] text-[var(--color-text-muted)]">{node.summary}</p>
-      {node.meta && <p className="mt-2 text-[10px] font-semibold text-[var(--color-primary)]">{node.meta}</p>}
+      <p className="mt-2 line-clamp-2 text-[11px] leading-[1.55] text-[var(--color-text-muted)]">{node.summary}</p>
+      {node.meta && <p className="mt-1.5 text-[10px] font-semibold text-[var(--color-primary)]">{node.meta}</p>}
     </button>
   );
 }
