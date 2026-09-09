@@ -72,13 +72,16 @@ export default function ConversationFlow() {
     };
   }, [reloadToken]);
 
-  function selectNode(id) {
+  function selectNode(id, { scrollToDetail = false } = {}) {
     setSelectedId(id);
     setExampleIndex(0);
-    if (typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches) {
-      window.requestAnimationFrame(() => {
-        detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
+    if (typeof window !== "undefined") {
+      const isCompact = window.matchMedia("(max-width: 1279px)").matches;
+      if (scrollToDetail || isCompact) {
+        window.requestAnimationFrame(() => {
+          detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
     }
   }
 
@@ -209,7 +212,11 @@ export default function ConversationFlow() {
 
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             {flow.outcomes.map((node) => (
-              <OutcomeOverviewCard key={node.id} node={node} onSelect={() => selectNode(node.id)} />
+              <OutcomeOverviewCard
+                key={node.id}
+                node={node}
+                onSelect={() => selectNode(node.id, { scrollToDetail: true })}
+              />
             ))}
           </div>
         </section>
@@ -372,7 +379,7 @@ function FirstGlanceStep({ step, number, last }) {
     <div className="relative rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3.5">
       <div className="flex items-start gap-3">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-primary-light)] text-[var(--color-primary)]">
-          <NodeIcon kind={step.kind} className="h-4.5 w-4.5" />
+          <NodeIcon kind={step.kind} className="h-[18px] w-[18px]" />
         </div>
         <div className="min-w-0">
           <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-primary)]">Step {number}</p>
@@ -416,6 +423,7 @@ function OutcomeOverviewCard({ node, onSelect }) {
     <button
       type="button"
       onClick={onSelect}
+      aria-label={`${copy.title}: ${copy.eyebrow}`}
       className={`rounded-2xl border bg-[var(--color-bg)] p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${styles.card}`}
     >
       <div className="flex items-start justify-between gap-3">
