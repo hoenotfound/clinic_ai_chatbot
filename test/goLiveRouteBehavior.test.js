@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const express = require("express");
 const { createGoLiveRouter } = require("../src/routes/goLive");
+const { requireAuth } = require("../src/middleware/requireAuth");
 
 async function withServer(role, loadGate, callback) {
   const app = express();
@@ -21,6 +22,31 @@ async function withServer(role, loadGate, callback) {
     await new Promise((resolve) => server.close(resolve));
   }
 }
+
+test("requireAuth rejects an unauthenticated go-live request with 401", async () => {
+  const req = { session: null };
+  let statusCode = null;
+  let body = null;
+  let nextCalled = false;
+  const res = {
+    status(code) {
+      statusCode = code;
+      return this;
+    },
+    json(value) {
+      body = value;
+      return this;
+    },
+  };
+
+  await requireAuth(req, res, () => {
+    nextCalled = true;
+  });
+
+  assert.equal(statusCode, 401);
+  assert.match(body?.error || "", /not logged in/i);
+  assert.equal(nextCalled, false);
+});
 
 test("go-live route rejects non-admin users with 403", async () => {
   let calls = 0;
