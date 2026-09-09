@@ -40,7 +40,39 @@ jobs:
           node-version: 22
       - name: Apply hardening patch
         run: |
-          sed -i 's/fullyReadyOverview()/overview()/g' scripts/pr116Hardening.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/pr116Hardening.py")
+          text = path.read_text()
+          old = '''test("readiness preserves structured Setup Status reason codes", () => {
+            const overview = fullyReadyOverview();
+            overview.checks = overview.checks.map((item) =>
+              item.key === "whatsapp_webhook"
+                ? { ...item, status: "warning", configured: true, reason: "live_evidence_pending" }
+                : item
+            );
+            const report = evaluateReadiness(overview, {
+              expectedIndustry: "aesthetic_clinic",
+              requiredChannels: ["whatsapp"],
+            });'''
+          new = '''test("readiness preserves structured Setup Status reason codes", () => {
+            const data = overview();
+            data.checks = data.checks.map((item) =>
+              item.key === "whatsapp_webhook"
+                ? { ...item, status: "warning", configured: true, reason: "live_evidence_pending" }
+                : item
+            );
+            const report = evaluateReadiness(data, {
+              expectedIndustry: "home_renovation",
+              requiredChannels: ["whatsapp"],
+            });'''
+          if old not in text:
+              raise SystemExit("structured reason-code test template was not found exactly once")
+          if text.count(old) != 1:
+              raise SystemExit(f"structured reason-code test template matched {text.count(old)} times")
+          path.write_text(text.replace(old, new, 1))
+          PY
           python3 scripts/pr116Hardening.py
       - name: Backend install
         run: npm ci
