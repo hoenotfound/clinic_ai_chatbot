@@ -13,7 +13,7 @@ async function loadFlowBuilder() {
   return import(pathToFileURL(file).href);
 }
 
-test("conversation flow explains the chatbot at first glance before showing details", () => {
+test("conversation flow presents a chat-first client view", () => {
   const app = read("portal-frontend/src/App.jsx");
   const sidebar = read("portal-frontend/src/components/Sidebar.jsx");
   const page = read("portal-frontend/src/pages/ConversationFlow.jsx");
@@ -23,29 +23,7 @@ test("conversation flow explains the chatbot at first glance before showing deta
   assert.match(app, /anyCapabilities=\{\["manage_settings"\]\}/);
   assert.match(sidebar, /to: "\/conversation-flow", label: "Conversation Flow"/);
   assert.match(page, /api\s*\.getConfig\(\)/);
-
-  assert.match(page, /Understand in seconds how your AI handles a customer/);
-  assert.match(page, /Your AI currently knows/);
-  assert.match(page, /How your AI works/);
-  assert.match(page, /Four things happen in every good conversation/);
-  assert.match(page, /Understands the request/);
-  assert.match(page, /Answers from your business info/);
-  assert.match(page, /Asks only what's missing/);
-  assert.match(page, /Chooses what happens next/);
-  assert.match(page, /It remembers what the customer already said/);
-  assert.match(page, /Not a fixed script/);
-
-  assert.match(page, /See it in action/);
-  assert.match(page, /Understands the question/);
-  assert.match(page, /Keeps context/);
-  assert.match(page, /actual reply adapts to the conversation/i);
-
-  assert.match(page, /Every conversation ends up in one of three paths/);
-  assert.match(page, /Keep helping/);
-  assert.match(page, /Move to the next step/);
-  assert.match(page, /Pass to your team/);
-  assert.match(page, /Explore each step/);
-
+  assert.match(page, /See how your AI replies to enquiries/);
   assert.match(page, /Example customer journey/);
   assert.match(page, /Choose a step to see an example chat/);
   assert.doesNotMatch(page, /real chat example/i);
