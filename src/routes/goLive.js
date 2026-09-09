@@ -1,11 +1,6 @@
 const express = require("express");
-const configRepo = require("../db/configRepo");
-const { evaluateClientSetup } = require("../services/clientSetupService");
-const { evaluateGoLiveGate } = require("../services/goLiveGateService");
-const {
-  decorateOverview,
-  setupStatus,
-} = require("../services/setupStatusOverviewService");
+const { loadGoLiveGate } = require("../services/goLiveGateLoaderService");
+const { setupStatus } = require("../services/setupStatusOverviewService");
 
 function requireAdministrator(req, res, next) {
   if (req.user?.role !== "admin") {
@@ -16,21 +11,6 @@ function requireAdministrator(req, res, next) {
 
 function requestBaseUrl(req) {
   return `${req.protocol}://${req.get("host")}`;
-}
-
-async function loadGoLiveGate({ runChecks = false, baseUrl } = {}) {
-  const rawOverview = runChecks
-    ? await setupStatus.runAll({ requestBaseUrl: baseUrl })
-    : await setupStatus.getOverview({ requestBaseUrl: baseUrl });
-  const setupOverview = await decorateOverview(rawOverview);
-  const config = configRepo.getConfig();
-  const clientSetup = evaluateClientSetup(config);
-
-  return evaluateGoLiveGate({
-    config,
-    clientSetup,
-    setupOverview,
-  });
 }
 
 function createGoLiveRouter({ loadGate = loadGoLiveGate } = {}) {
