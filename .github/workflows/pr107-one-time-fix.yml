@@ -1,0 +1,39 @@
+name: PR107 one-time fix
+
+on:
+  push:
+    branches:
+      - feature/first-run-client-setup-wizard
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feature/first-run-client-setup-wizard
+      - name: Patch wizard guardrail source
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('portal-frontend/src/pages/ClientSetupWizard.jsx')
+          source = path.read_text()
+          old = 'setProtectedGuardrails(cleanStrings(loaded.guardrails));'
+          new = 'setProtectedGuardrails(cleanStrings(loaded.clientSetup?.protectedGuardrails || []));'
+          count = source.count(old)
+          if count != 2:
+              raise SystemExit(f'Expected 2 wizard guardrail assignments, found {count}')
+          path.write_text(source.replace(old, new))
+          PY
+      - name: Commit focused fix and remove runner
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/pr107-one-time-fix.yml
+          git add portal-frontend/src/pages/ClientSetupWizard.jsx
+          git commit -m "Fix client setup protected guardrails"
+          git push origin HEAD:feature/first-run-client-setup-wizard
