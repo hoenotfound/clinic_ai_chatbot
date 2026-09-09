@@ -55,6 +55,15 @@ const QUALIFICATION_BY_INDUSTRY = {
   ],
 };
 
+const FLEXIBILITY_NOTE_BY_INDUSTRY = {
+  aesthetic_clinic:
+    "If a patient already provides the treatment, branch and useful timing details in one message, the AI can skip those questions and move forward.",
+  home_renovation:
+    "If a customer already provides the project, location and budget in one message, the AI can skip those questions instead of asking again.",
+  generic:
+    "If a customer already provides the details needed for the next step, the AI can skip those questions instead of asking again.",
+};
+
 function list(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -72,6 +81,11 @@ function titleCase(value) {
   return String(value || "")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function displayConversionTitle(value) {
+  const text = compact(value, "next step").replace(/\s+or\s+/gi, " / ");
+  return `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
 }
 
 export function buildConversationFlow(config = {}) {
@@ -100,7 +114,7 @@ export function buildConversationFlow(config = {}) {
       id: "customer-message",
       kind: "Customer",
       title: "Customer message",
-      summary: `A new ${customerSingular} message enters the AI conversation flow.`,
+      summary: `A new ${customerSingular} message enters from a connected messaging channel.`,
       details: [
         "The same business rules are used across connected WhatsApp, Messenger and Instagram channels.",
         `Configured first-message intro: ${introMessage}`,
@@ -111,7 +125,7 @@ export function buildConversationFlow(config = {}) {
       id: "understand-intent",
       kind: "AI",
       title: "Understand intent",
-      summary: "The AI reads the latest message together with the conversation context before deciding what to do next.",
+      summary: "The AI reads the latest message with the conversation context, language and details already provided.",
       details: [
         "Keeps the customer's language and conversation context in mind.",
         "Recognises questions, buying intent, useful details already supplied and requests for human help.",
@@ -123,7 +137,7 @@ export function buildConversationFlow(config = {}) {
       id: "answer-from-knowledge",
       kind: "Knowledge",
       title: "Answer what they asked",
-      summary: "The AI answers from configured business information before asking for the next useful detail.",
+      summary: "The AI uses configured business information before asking for the next useful detail.",
       details: [
         knowledgeSummary,
         "Prices, services, policies and business facts must come from the configured information instead of being invented.",
@@ -135,16 +149,16 @@ export function buildConversationFlow(config = {}) {
       id: "qualify-naturally",
       kind: "Qualification",
       title: "Qualify naturally",
-      summary: `When useful, the AI collects the information needed to move the ${customerSingular} forward one question at a time.`,
+      summary: `Only missing details are collected when they help move the ${customerSingular} forward.`,
       details: qualification.map((item) => `${item.label}: ${item.detail}`),
-      meta: `${qualification.length} possible details`,
+      meta: `${qualification.length} possible ${businessType === "home_renovation" ? "project " : ""}details`,
       settingsTab: "aiBehavior",
     },
     {
       id: "choose-next-path",
       kind: "Decision",
       title: "Choose the next path",
-      summary: "The AI decides whether to keep helping, move toward the sales next step, or bring in a human.",
+      summary: "The AI decides whether to continue, guide the customer toward a next step, or bring in staff.",
       details: [
         "Missing useful information → ask one sensible follow-up question.",
         `Clear intent to proceed → guide toward ${conversionLabel}.`,
@@ -158,6 +172,7 @@ export function buildConversationFlow(config = {}) {
     {
       id: "ask-next-question",
       kind: "Continue",
+      branchLabel: "Needs more info",
       title: "Ask one useful question",
       summary: "Collect only the missing detail that helps the conversation progress, then continue assisting.",
       details: [
@@ -171,7 +186,8 @@ export function buildConversationFlow(config = {}) {
     {
       id: "conversion-next-step",
       kind: "Conversion",
-      title: titleCase(conversionLabel),
+      branchLabel: "Ready to proceed",
+      title: displayConversionTitle(conversionLabel),
       summary: `Guide a genuinely interested ${customerSingular} toward ${conversionLabel} without claiming it is confirmed too early.`,
       details: [
         compact(
@@ -182,14 +198,15 @@ export function buildConversationFlow(config = {}) {
           ? "Booking-ready logic only becomes true when the required scheduling details are actually present."
           : "The AI can guide the next step, but staff still confirms the real arrangement.",
       ],
-      meta: "Human confirmation remains authoritative",
+      meta: "Staff confirmation remains authoritative",
       settingsTab: "aiBehavior",
     },
     {
       id: "human-handoff",
       kind: "Human",
+      branchLabel: "Needs staff",
       title: "Human handoff",
-      summary: "The AI stops trying to resolve the case when staff judgment or direct human help is required.",
+      summary: "Automation stops when direct staff help or human judgment is required.",
       details: handoffTriggers.length > 0
         ? handoffTriggers
         : ["No handoff triggers are currently configured."],
@@ -205,6 +222,13 @@ export function buildConversationFlow(config = {}) {
     conversionLabel,
     qualification,
     knowledgeSummary,
+    knowledgeCounts: {
+      services: services.length,
+      faqs: faqs.length,
+      promotions: promotions.length,
+    },
+    handoffCount: handoffTriggers.length,
+    flexibilityNote: FLEXIBILITY_NOTE_BY_INDUSTRY[businessType] || FLEXIBILITY_NOTE_BY_INDUSTRY.generic,
     mainNodes,
     outcomes,
     allNodes: [...mainNodes, ...outcomes],
