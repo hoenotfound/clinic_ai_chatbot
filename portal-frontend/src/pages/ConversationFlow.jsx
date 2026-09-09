@@ -21,10 +21,13 @@ export default function ConversationFlow() {
   const [loadError, setLoadError] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [selectedId, setSelectedId] = useState("customer-message");
+  const [exampleIndex, setExampleIndex] = useState(0);
   const detailRef = useRef(null);
   const flow = useMemo(() => buildConversationFlow(config || {}), [config]);
   const ui = useMemo(() => getBusinessTerminology(config || {}), [config]);
   const selectedNode = flow.allNodes.find((node) => node.id === selectedId) || flow.mainNodes[0];
+  const examples = selectedNode.examples || [];
+  const selectedExample = examples.length > 0 ? examples[exampleIndex % examples.length] : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -44,6 +47,7 @@ export default function ConversationFlow() {
 
   function selectNode(id) {
     setSelectedId(id);
+    setExampleIndex(0);
     if (typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches) {
       window.requestAnimationFrame(() => {
         detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -85,7 +89,7 @@ export default function ConversationFlow() {
   return (
     <main className="h-full overflow-y-auto bg-[var(--color-bg)]">
       <div className="mx-auto w-full max-w-[1480px] px-3.5 py-5 sm:px-5 sm:py-6 lg:px-8 lg:py-7">
-        <header className="mb-4 sm:mb-5">
+        <header className="mb-5">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <span className="inline-flex min-h-7 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-[11px] font-semibold text-[var(--color-text-muted)]">
               {flow.industryLabel}
@@ -96,18 +100,18 @@ export default function ConversationFlow() {
             </span>
           </div>
           <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">Conversation Flow</h1>
-          <div className="mt-2 flex flex-col gap-2.5 lg:flex-row lg:items-end lg:justify-between">
-            <p className="max-w-3xl text-sm leading-6 text-[var(--color-text-muted)]">
-              A simple view of how your AI handles a typical enquiry. Current knowledge, conversion and handoff settings are shown directly, while qualification areas are an industry guide.
-            </p>
-            <div className="flex shrink-0 flex-wrap gap-2">
-              <SetupPill label="Business knowledge">{flow.knowledgeSummary}</SetupPill>
-              <SetupPill label="Human handoff">{flow.handoffCount} {flow.handoffCount === 1 ? "trigger" : "triggers"}</SetupPill>
-            </div>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--color-text-muted)]">
+            See how your AI replies to enquiries, collects useful details, and knows when to involve your team.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <SummaryPill>{flow.knowledgeCounts.services} {flow.knowledgeCounts.services === 1 ? ui.serviceSingular : ui.servicePlural}</SummaryPill>
+            <SummaryPill>{flow.knowledgeCounts.faqs} {flow.knowledgeCounts.faqs === 1 ? "FAQ" : "FAQs"}</SummaryPill>
+            <SummaryPill>{flow.knowledgeCounts.promotions} {flow.knowledgeCounts.promotions === 1 ? "promotion" : "promotions"}</SummaryPill>
+            <SummaryPill>{flow.handoffCount} {flow.handoffCount === 1 ? "handoff trigger" : "handoff triggers"}</SummaryPill>
           </div>
         </header>
 
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_21rem]">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_23rem]">
           <section className="min-w-0 rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-sm sm:p-4 lg:p-5">
             <div
               className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:p-4"
@@ -116,16 +120,14 @@ export default function ConversationFlow() {
                 backgroundSize: "18px 18px",
               }}
             >
-              <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Typical AI journey</p>
-                  <p className="mt-0.5 text-xs leading-5 text-[var(--color-text-muted)]">
-                    Click any stage to see what comes from current settings and what is typical industry guidance.
-                  </p>
+                  <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Typical customer journey</p>
+                  <p className="mt-0.5 text-xs leading-5 text-[var(--color-text-muted)]">Choose a step to see a real chat example.</p>
                 </div>
                 <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
                   <span aria-hidden="true">↻</span>
-                  Flexible, not scripted
+                  Adapts to each conversation
                 </span>
               </div>
 
@@ -143,9 +145,9 @@ export default function ConversationFlow() {
                 ))}
               </div>
 
-              <div className="my-3 text-center sm:my-4">
+              <div className="my-4 text-center">
                 <span className="inline-flex rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                  Possible next paths
+                  What happens next
                 </span>
               </div>
 
@@ -162,8 +164,8 @@ export default function ConversationFlow() {
                 ))}
               </div>
 
-              <div className="mt-3 flex flex-col gap-2 border-t border-[var(--color-border)] pt-3 text-[11px] leading-5 text-[var(--color-text-muted)] sm:flex-row sm:items-center sm:justify-between">
-                <span>Built from current business configuration plus clearly labelled industry guidance.</span>
+              <div className="mt-4 flex flex-col gap-2 border-t border-[var(--color-border)] pt-3 text-[11px] leading-5 text-[var(--color-text-muted)] sm:flex-row sm:items-center sm:justify-between">
+                <span>Examples illustrate typical behaviour. Your saved settings remain the source of truth.</span>
                 <div className="flex flex-wrap gap-x-4 gap-y-1">
                   <Link to="/settings?tab=services" className="font-semibold text-[var(--color-primary)] hover:underline">{ui.servicesLabel}</Link>
                   <Link to="/settings?tab=aiBehavior" className="font-semibold text-[var(--color-primary)] hover:underline">AI behaviour</Link>
@@ -185,46 +187,49 @@ export default function ConversationFlow() {
               </div>
 
               <h2 className="mt-4 font-display text-xl font-bold">{selectedNode.title}</h2>
-              <p className="mt-2 text-sm leading-6 text-[var(--color-text-muted)]">{selectedNode.summary}</p>
+              <p className="mt-1.5 text-sm leading-6 text-[var(--color-text-muted)]">{selectedNode.summary}</p>
 
-              {selectedNode.meta && (
-                <div className="mt-4 rounded-xl bg-[var(--color-bg)] px-3.5 py-3 text-xs font-semibold text-[var(--color-text-muted)]">
-                  {selectedNode.meta}
+              <div className="mt-5">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Example chat</p>
+                  {examples.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => setExampleIndex((value) => (value + 1) % examples.length)}
+                      className="text-[11px] font-semibold text-[var(--color-primary)] hover:underline"
+                    >
+                      Show another example
+                    </button>
+                  )}
                 </div>
-              )}
-
-              {selectedNode.sourceNote && (
-                <div className="mt-3 rounded-xl border border-[var(--color-accent)]/35 bg-[var(--color-accent-light)] px-3.5 py-3 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  <p className="font-bold text-[var(--color-text)]">How this stage is sourced</p>
-                  <p className="mt-1">{selectedNode.sourceNote}</p>
+                <div className="mt-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3.5">
+                  {selectedExample ? (
+                    <ChatExample example={selectedExample} />
+                  ) : (
+                    <p className="text-xs text-[var(--color-text-muted)]">No example is available for this step.</p>
+                  )}
                 </div>
-              )}
-
-              <div className="mt-5 border-t border-[var(--color-border)] pt-5">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">What happens here</p>
-                <ul className="mt-3 space-y-3">
-                  {selectedNode.details.map((detail, index) => (
-                    <li key={`${selectedNode.id}-${index}`} className="flex gap-2.5 text-xs leading-5 text-[var(--color-text-muted)]">
-                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-primary)]" />
-                      <span>{detail}</span>
-                    </li>
-                  ))}
-                </ul>
               </div>
+
+              {selectedNode.shortNote && (
+                <div className="mt-4 rounded-2xl bg-[var(--color-primary-light)] p-3.5">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-primary)]">Why this happens</p>
+                  <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{selectedNode.shortNote}</p>
+                </div>
+              )}
 
               {selectedNode.settingsTab && (
                 <Link
                   to={settingsDestination(selectedNode.settingsTab)}
-                  className="mt-5 inline-flex min-h-10 w-full items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm font-semibold transition-colors hover:bg-[var(--color-primary-light)] hover:text-[var(--color-primary)]"
+                  className="mt-4 inline-flex min-h-10 w-full items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm font-semibold transition-colors hover:bg-[var(--color-primary-light)] hover:text-[var(--color-primary)]"
                 >
                   Open {settingsLabel(selectedNode.settingsTab, ui)} settings
                 </Link>
               )}
 
-              <div className="mt-4 rounded-2xl bg-[var(--color-primary-light)] p-3.5 text-[11px] leading-5 text-[var(--color-primary)]">
-                <p className="font-bold">AI does not force this order</p>
-                <p className="mt-1">{flow.flexibilityNote}</p>
-              </div>
+              <p className="mt-4 text-center text-[10px] leading-4 text-[var(--color-text-muted)]">
+                {flow.flexibilityNote}
+              </p>
             </div>
           </aside>
         </div>
@@ -233,12 +238,30 @@ export default function ConversationFlow() {
   );
 }
 
-function SetupPill({ label, children }) {
+function SummaryPill({ children }) {
   return (
-    <span className="inline-flex min-h-8 items-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs text-[var(--color-text-muted)] shadow-sm">
-      <span className="font-semibold text-[var(--color-text)]">{label}:</span>
-      <span>{children}</span>
+    <span className="inline-flex min-h-8 items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold text-[var(--color-text-muted)] shadow-sm">
+      {children}
     </span>
+  );
+}
+
+function ChatExample({ example }) {
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="mb-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Customer</p>
+        <div className="mr-8 rounded-2xl rounded-tl-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 text-xs leading-5 text-[var(--color-text)]">
+          {example.customer}
+        </div>
+      </div>
+      <div className="flex flex-col items-end">
+        <p className="mb-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-primary)]">AI</p>
+        <div className="ml-8 rounded-2xl rounded-tr-md bg-[var(--color-primary-light)] px-3.5 py-2.5 text-xs leading-5 text-[var(--color-text)]">
+          {example.ai}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -249,7 +272,7 @@ function FlowNode({ node, step, selected, onSelect }) {
       onClick={onSelect}
       aria-pressed={selected}
       aria-label={`Step ${step}: ${node.title}`}
-      className={`group flex min-h-[66px] w-full items-start gap-3 rounded-2xl border px-3 py-2.5 text-left shadow-sm transition-all sm:px-3.5 ${
+      className={`group flex min-h-[62px] w-full items-center gap-3 rounded-2xl border px-3 py-2.5 text-left shadow-sm transition-all sm:px-3.5 ${
         selected
           ? "border-[var(--color-primary)] bg-[var(--color-surface)] ring-2 ring-[var(--color-primary)]/10"
           : "border-[var(--color-border)] bg-[var(--color-surface)] hover:-translate-y-0.5 hover:border-[var(--color-primary)]/40 hover:shadow-md"
@@ -259,18 +282,13 @@ function FlowNode({ node, step, selected, onSelect }) {
         <NodeIcon kind={node.kind} className="h-[18px] w-[18px]" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--color-primary)]">Step {step}</span>
-          <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--color-text-muted)]">
-            {node.kind}
-          </span>
-        </div>
+        <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--color-primary)]">Step {step}</p>
         <div className="mt-0.5 flex flex-col gap-0.5 lg:flex-row lg:items-baseline lg:gap-2.5">
           <h3 className="shrink-0 text-sm font-bold leading-5">{node.title}</h3>
           <p className="line-clamp-2 text-[11px] leading-[1.5] text-[var(--color-text-muted)] lg:line-clamp-1">{node.summary}</p>
         </div>
-        {node.meta && <p className="mt-0.5 text-[10px] font-semibold text-[var(--color-primary)]">{node.meta}</p>}
       </div>
+      <span className="text-sm text-[var(--color-text-muted)]" aria-hidden="true">›</span>
     </button>
   );
 }
@@ -323,7 +341,7 @@ function OutcomeNode({ node, selected, onSelect }) {
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      className={`min-h-32 rounded-2xl border bg-[var(--color-surface)] p-3 text-left transition-all sm:p-3.5 ${
+      className={`min-h-28 rounded-2xl border bg-[var(--color-surface)] p-3 text-left transition-all sm:p-3.5 ${
         selected
           ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/10"
           : `${styles.card} hover:-translate-y-0.5 hover:shadow-md`
@@ -337,7 +355,6 @@ function OutcomeNode({ node, selected, onSelect }) {
         <h3 className="text-sm font-bold leading-5">{node.title}</h3>
       </div>
       <p className="mt-2 line-clamp-2 text-[11px] leading-[1.55] text-[var(--color-text-muted)]">{node.summary}</p>
-      {node.meta && <p className="mt-1.5 text-[10px] font-semibold text-[var(--color-primary)]">{node.meta}</p>}
     </button>
   );
 }
@@ -355,64 +372,22 @@ function NodeIcon({ kind, className = "h-5 w-5" }) {
   };
 
   if (kind === "Customer") {
-    return (
-      <svg {...common}>
-        <path d="M21 15a4 4 0 0 1-4 4H8l-5 3 1.5-4A7 7 0 1 1 21 15Z" />
-      </svg>
-    );
+    return <svg {...common}><path d="M21 15a4 4 0 0 1-4 4H8l-5 3 1.5-4A7 7 0 1 1 21 15Z" /></svg>;
   }
-
   if (kind === "Knowledge") {
-    return (
-      <svg {...common}>
-        <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5Z" />
-        <path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5Z" />
-      </svg>
-    );
+    return <svg {...common}><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5Z" /><path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5Z" /></svg>;
   }
-
   if (kind === "Qualification" || kind === "Continue") {
-    return (
-      <svg {...common}>
-        <path d="M8 6h13M8 12h13M8 18h13" />
-        <path d="m3 6 1 1 2-2M3 12l1 1 2-2M3 18l1 1 2-2" />
-      </svg>
-    );
+    return <svg {...common}><path d="M8 6h13M8 12h13M8 18h13" /><path d="m3 6 1 1 2-2M3 12l1 1 2-2M3 18l1 1 2-2" /></svg>;
   }
-
   if (kind === "Decision") {
-    return (
-      <svg {...common}>
-        <path d="M6 3v5a4 4 0 0 0 4 4h8" />
-        <path d="m15 9 3 3-3 3" />
-        <path d="M6 21v-5a4 4 0 0 1 4-4" />
-      </svg>
-    );
+    return <svg {...common}><path d="M6 3v5a4 4 0 0 0 4 4h8" /><path d="m15 9 3 3-3 3" /><path d="M6 21v-5a4 4 0 0 1 4-4" /></svg>;
   }
-
   if (kind === "Conversion") {
-    return (
-      <svg {...common}>
-        <circle cx="12" cy="12" r="8" />
-        <path d="m8.5 12 2.2 2.2 4.8-5" />
-      </svg>
-    );
+    return <svg {...common}><circle cx="12" cy="12" r="8" /><path d="m8.5 12 2.2 2.2 4.8-5" /></svg>;
   }
-
   if (kind === "Human") {
-    return (
-      <svg {...common}>
-        <circle cx="12" cy="8" r="4" />
-        <path d="M4.5 21a7.5 7.5 0 0 1 15 0" />
-      </svg>
-    );
+    return <svg {...common}><circle cx="12" cy="8" r="4" /><path d="M4.5 21a7.5 7.5 0 0 1 15 0" /></svg>;
   }
-
-  return (
-    <svg {...common}>
-      <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />
-      <circle cx="12" cy="12" r="4" />
-      <path d="m5.6 5.6 2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" />
-    </svg>
-  );
+  return <svg {...common}><path d="M12 3v3M12 18v3M3 12h3M18 12h3" /><circle cx="12" cy="12" r="4" /><path d="m5.6 5.6 2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" /></svg>;
 }
