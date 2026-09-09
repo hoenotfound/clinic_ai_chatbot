@@ -26,6 +26,14 @@ function text(value) {
   return String(value || "").trim();
 }
 
+function defaultStorage() {
+  try {
+    return globalThis.localStorage || null;
+  } catch {
+    return null;
+  }
+}
+
 function hasNamedEntries(items, key = "name") {
   return Array.isArray(items) && items.some((item) => text(item?.[key]));
 }
@@ -49,6 +57,12 @@ function industryLabel(config) {
     default:
       return "General Business";
   }
+}
+
+function locationLabel(config) {
+  if (config?.businessType === "aesthetic_clinic") return "Branches";
+  if (config?.businessType === "home_renovation") return "Service areas / locations";
+  return "Locations";
 }
 
 function locationsRequired(config) {
@@ -112,7 +126,7 @@ export function getClientSetupCompletion(config = {}) {
     },
     {
       id: "locations",
-      label: config?.businessType === "aesthetic_clinic" ? "Branches" : "Locations",
+      label: locationLabel(config),
       required: locationRequired,
       complete: locationMissing.length === 0,
       missing: locationMissing,
@@ -196,7 +210,7 @@ export function getClientSetupStorageKey(username, businessType) {
   return `da-chatbot:client-setup:v${CLIENT_SETUP_STORAGE_VERSION}:${safeUser}:${safeType}`;
 }
 
-export function readClientSetupProgress(username, businessType, storage = globalThis?.localStorage) {
+export function readClientSetupProgress(username, businessType, storage = defaultStorage()) {
   if (!storage) return null;
   try {
     const raw = storage.getItem(getClientSetupStorageKey(username, businessType));
@@ -209,20 +223,24 @@ export function readClientSetupProgress(username, businessType, storage = global
   }
 }
 
-export function writeClientSetupProgress(username, businessType, updates, storage = globalThis?.localStorage) {
+export function writeClientSetupProgress(username, businessType, updates, storage = defaultStorage()) {
   if (!storage) return null;
-  const current = readClientSetupProgress(username, businessType, storage) || {};
-  const next = {
-    version: CLIENT_SETUP_STORAGE_VERSION,
-    started: true,
-    dismissed: false,
-    completed: false,
-    ...current,
-    ...updates,
-    updatedAt: new Date().toISOString(),
-  };
-  storage.setItem(getClientSetupStorageKey(username, businessType), JSON.stringify(next));
-  return next;
+  try {
+    const current = readClientSetupProgress(username, businessType, storage) || {};
+    const next = {
+      version: CLIENT_SETUP_STORAGE_VERSION,
+      started: true,
+      dismissed: false,
+      completed: false,
+      ...current,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    storage.setItem(getClientSetupStorageKey(username, businessType), JSON.stringify(next));
+    return next;
+  } catch {
+    return null;
+  }
 }
 
 export function validClientSetupScreen(value) {
