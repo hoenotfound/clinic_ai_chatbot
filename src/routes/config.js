@@ -6,16 +6,11 @@ const usersRepo = require("../db/usersRepo");
 const leadDistributionRepo = require("../db/leadDistributionRepo");
 const followUpTranslationService = require("../services/followUpTranslationService");
 const telegramAlertService = require("../services/telegramAlertService");
+const { evaluateClientSetup } = require("../services/clientSetupService");
 const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
 
 const router = express.Router();
 
-// Staff promo-graphic uploads from Settings > Promotions — kept in memory
-// (never written to disk), then persisted to Postgres (see
-// db/promoImagesRepo.js) and served back out at a public URL WhatsApp's
-// Cloud API can fetch. Configured graphics are limited to WhatsApp's image
-// formats and size so an upload cannot save successfully and later fail only
-// when the automation tries to send it.
 const MAX_CONFIG_IMAGE_BYTES = 5 * 1024 * 1024;
 const CONFIG_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
 
@@ -30,10 +25,6 @@ const upload = multer({
   },
 });
 
-// Wraps upload.single("image") so Multer errors (file too large, wrong
-// mimetype) are turned into a JSON response instead of falling through to
-// Express's default HTML error handler — see the identical pattern (and
-// fuller explanation) in routes/conversations.js.
 function handleImageUpload(req, res, next) {
   upload.single("image")(req, res, (err) => {
     if (!err) return next();
@@ -44,11 +35,6 @@ function handleImageUpload(req, res, next) {
   });
 }
 
-// Shape checks for each top-level config key — deliberately loose (this
-// isn't a full schema validator), just enough to stop an obviously wrong
-// payload (wrong type, missing required sub-field) from reaching the AI's
-// system prompt builder and breaking every reply. See utils/systemPrompt.js
-// for how each of these is read back out.
 const VALIDATORS = {
   businessName: isNonEmptyString,
   businessDescription: isString,
@@ -68,6 +54,7 @@ const VALIDATORS = {
   branches: (v) =>
     Array.isArray(v) &&
     v.every((b) => isPlainObject(b) && isNonEmptyString(b.name) && isString(b.address) && isString(b.phone)),
+  serviceAreas: (v) => Array.isArray(v) && v.every(isNonEmptyString),
   promotions: (v) =>
     Array.isArray(v) &&
     v.every((p) => isPlainObject(p) && isNonEmptyString(p.name) && isString(p.imageUrl) && isString(p.caption)),
@@ -101,6 +88,13 @@ function isNonEmptyString(v) {
 }
 function isPlainObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function decorateConfig(config) {
+  return {
+    ...config,
+    clientSetup: evaluateClientSetup(config),
+  };
 }
 
 function isAutomatedFollowUpConfig(value) {
@@ -244,8 +238,6 @@ router.post("/automated-follow-up/translations", async (req, res) => {
   }
 });
 
-// Tools users can inspect the live eligible Sales pools without receiving
-// password hashes, permission overrides, inactive accounts, or admin accounts.
 router.get("/lead-distribution/status", async (req, res) => {
   try {
     const [accounts, unassigned] = await Promise.all([
@@ -320,25 +312,9 @@ async function saveUploadedImage(req, res) {
   }
 }
 
-// POST /api/config/promotions/image — staff uploads a promo graphic directly
-// (instead of pasting an already-hosted URL). Stored in Postgres and handed
-// back as a public URL pointing at GET /promo-images/:id (see server.js) —
-// the Settings page drops that URL straight into the promotion's imageUrl
-// field, no separate hosting step needed.
 router.post("/promotions/image", handleImageUpload, saveUploadedImage);
-
-// The follow-up tool uses the same durable image store as Promotions, but
-// gets its own route so the frontend API remains clear about what is being
-// configured. Orphan cleanup protects images referenced by either feature.
 router.post("/automated-follow-up/image", handleImageUpload, saveUploadedImage);
 
-// DELETE /api/config/promotions/image/:id — cleans up a promo image row
-// once it's no longer referenced by any promotion (staff replaced it with a
-// new upload, or hit "Remove"). See portal-frontend/src/pages/Settings.jsx
-// ImageFieldEditor, which calls this right after a successful replace and
-// right before clearing the field on remove. Best-effort from the client's
-// point of view — a failed delete here just leaves an orphaned row rather
-// than losing anything, so it's safe to fire without blocking the UI.
 router.delete("/promotions/image/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -354,21 +330,15 @@ router.delete("/promotions/image/:id", async (req, res) => {
   }
 });
 
-// GET /api/config — full clinic config, used to populate the Settings page.
 router.get("/", async (req, res) => {
   try {
-    res.json(configRepo.getConfig());
+    res.json(decorateConfig(configRepo.getConfig()));
   } catch (err) {
     console.error("Failed to load clinic config:", err);
     res.status(500).json({ error: "Something went wrong loading settings." });
   }
 });
 
-// PATCH /api/config — partial update. The Settings page saves one section
-// (tab) at a time, so the body is usually just one or two keys — anything
-// not included is left untouched. Takes effect immediately (see
-// db/configRepo.js) since the AI reads this same in-memory object fresh on
-// every message, no restart required.
 router.patch("/", async (req, res) => {
   try {
     const updates = req.body || {};
@@ -425,7 +395,7 @@ router.patch("/", async (req, res) => {
     }
 
     const updated = await configRepo.updateConfig(updates);
-    res.json(updated);
+    res.json(decorateConfig(updated));
   } catch (err) {
     const status = Number(err?.status) || 500;
     if (status >= 500) {
@@ -439,3 +409,4 @@ router.patch("/", async (req, res) => {
 });
 
 module.exports = router;
+module.exports.decorateConfig = decorateConfig;
