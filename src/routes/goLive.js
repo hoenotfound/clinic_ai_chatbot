@@ -1,10 +1,12 @@
 const express = require("express");
 const configRepo = require("../db/configRepo");
+const { createSetupStatusService } = require("../services/setupStatusService");
 const { evaluateClientSetup } = require("../services/clientSetupService");
 const { evaluateGoLiveGate } = require("../services/goLiveGateService");
 const setupStatusRoutes = require("./setupStatus");
 
 const router = express.Router();
+const setupStatus = createSetupStatusService({ ai: setupStatusRoutes.setupStatusAi });
 
 function requireAdministrator(req, res, next) {
   if (req.user?.role !== "admin") {
@@ -18,11 +20,6 @@ function requestBaseUrl(req) {
 }
 
 async function loadGoLiveGate({ runChecks = false, baseUrl } = {}) {
-  const setupStatus = setupStatusRoutes.setupStatus;
-  if (!setupStatus) {
-    throw new Error("Setup Status service is unavailable.");
-  }
-
   const rawOverview = runChecks
     ? await setupStatus.runAll({ requestBaseUrl: baseUrl })
     : await setupStatus.getOverview({ requestBaseUrl: baseUrl });
@@ -70,3 +67,4 @@ module.exports = router;
 module.exports.loadGoLiveGate = loadGoLiveGate;
 module.exports.requestBaseUrl = requestBaseUrl;
 module.exports.requireAdministrator = requireAdministrator;
+module.exports.setupStatus = setupStatus;
