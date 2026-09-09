@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { buildConversationFlow } from "../utils/conversationFlow";
@@ -21,6 +21,7 @@ export default function ConversationFlow() {
   const [loadError, setLoadError] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [selectedId, setSelectedId] = useState("customer-message");
+  const detailRef = useRef(null);
   const flow = useMemo(() => buildConversationFlow(config || {}), [config]);
   const ui = useMemo(() => getBusinessTerminology(config || {}), [config]);
   const selectedNode = flow.allNodes.find((node) => node.id === selectedId) || flow.mainNodes[0];
@@ -40,6 +41,15 @@ export default function ConversationFlow() {
       cancelled = true;
     };
   }, [reloadToken]);
+
+  function selectNode(id) {
+    setSelectedId(id);
+    if (typeof window !== "undefined" && window.matchMedia("(max-width: 1279px)").matches) {
+      window.requestAnimationFrame(() => {
+        detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }
 
   if (loadError && !config) {
     return (
@@ -126,7 +136,7 @@ export default function ConversationFlow() {
                       node={node}
                       step={index + 1}
                       selected={selectedNode.id === node.id}
-                      onSelect={() => setSelectedId(node.id)}
+                      onSelect={() => selectNode(node.id)}
                     />
                     {index < flow.mainNodes.length - 1 && <VerticalConnector />}
                   </div>
@@ -147,7 +157,7 @@ export default function ConversationFlow() {
                     key={node.id}
                     node={node}
                     selected={selectedNode.id === node.id}
-                    onSelect={() => setSelectedId(node.id)}
+                    onSelect={() => selectNode(node.id)}
                   />
                 ))}
               </div>
@@ -163,7 +173,7 @@ export default function ConversationFlow() {
             </div>
           </section>
 
-          <aside className="min-w-0 xl:sticky xl:top-6 xl:self-start">
+          <aside ref={detailRef} className="min-w-0 scroll-mt-4 xl:sticky xl:top-6 xl:self-start">
             <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm sm:p-6">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-primary-light)] text-[var(--color-primary)]">
