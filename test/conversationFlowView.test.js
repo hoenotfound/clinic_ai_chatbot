@@ -94,7 +94,11 @@ test("renovation flow uses short client-friendly stages and realistic examples",
   const handoff = flow.outcomes.find((node) => node.id === "human-handoff");
   assert.equal(handoff.branchLabel, "Needs staff");
   assert.equal(handoff.meta, "2 handoff triggers");
-  assert.ok(handoff.examples.some((example) => /staff directly/i.test(example.ai)));
+  assert.ok(
+    handoff.examples.some((example) =>
+      /(team member|staff).*(assist|help).*directly/i.test(example.ai)
+    )
+  );
 });
 
 test("clinic flow examples show branch and timing without making the flow rigid", async () => {
