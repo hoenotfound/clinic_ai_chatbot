@@ -101,8 +101,8 @@ export default function ConversationFlow() {
               A simple view of how your AI handles a typical enquiry, from the first message to a sales next step or human handoff.
             </p>
             <div className="flex shrink-0 flex-wrap gap-2">
-              <SetupPill>{flow.knowledgeSummary}</SetupPill>
-              <SetupPill>{flow.handoffCount} {flow.handoffCount === 1 ? "handoff trigger" : "handoff triggers"}</SetupPill>
+              <SetupPill label="Business knowledge">{flow.knowledgeSummary}</SetupPill>
+              <SetupPill label="Human handoff">{flow.handoffCount} {flow.handoffCount === 1 ? "trigger" : "triggers"}</SetupPill>
             </div>
           </div>
         </header>
@@ -226,10 +226,11 @@ export default function ConversationFlow() {
   );
 }
 
-function SetupPill({ children }) {
+function SetupPill({ label, children }) {
   return (
-    <span className="inline-flex min-h-8 items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-medium text-[var(--color-text-muted)] shadow-sm">
-      {children}
+    <span className="inline-flex min-h-8 items-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs text-[var(--color-text-muted)] shadow-sm">
+      <span className="font-semibold text-[var(--color-text)]">{label}:</span>
+      <span>{children}</span>
     </span>
   );
 }
