@@ -1,0 +1,80 @@
+name: PR108 Wire and Validate
+
+on:
+  push:
+    branches: [feature/unified-go-live-gate]
+
+permissions:
+  contents: write
+
+jobs:
+  wire-and-validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: clinic_ai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d clinic_ai_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/clinic_ai_test
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feature/unified-go-live-gate
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Wire Go Live backend route
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/server.js")
+          text = path.read_text()
+
+          import_old = 'const setupStatusRoutes = require("./routes/setupStatus");\n'
+          import_new = import_old + 'const goLiveRoutes = require("./routes/goLive");\n'
+          if import_new not in text:
+              if import_old not in text:
+                  raise SystemExit("setupStatusRoutes import anchor not found")
+              text = text.replace(import_old, import_new, 1)
+
+          mount_old = 'app.use("/api/setup-status", requireAuth, setupStatusRoutes);\n'
+          mount_new = mount_old + 'app.use("/api/go-live", requireAuth, goLiveRoutes);\n'
+          if mount_new not in text:
+              if mount_old not in text:
+                  raise SystemExit("setup-status route mount anchor not found")
+              text = text.replace(mount_old, mount_new, 1)
+
+          path.write_text(text)
+          PY
+      - run: npm ci
+      - run: npm test
+      - name: Portal install
+        working-directory: portal-frontend
+        run: npm ci
+      - name: Portal lint
+        working-directory: portal-frontend
+        run: npm run lint
+      - name: Portal build
+        working-directory: portal-frontend
+        run: npm run build
+      - name: Commit verified wiring and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/pr108-wire-and-validate.yml
+          git add src/server.js
+          git commit -m "Wire unified go-live gate"
+          git push origin HEAD:feature/unified-go-live-gate
