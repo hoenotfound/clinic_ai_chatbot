@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { api } from "./api";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { BusinessConfigProvider } from "./context/BusinessConfigContext";
 import Layout from "./components/Layout";
@@ -13,6 +15,11 @@ import ToolsRoute from "./pages/ToolsRoute";
 import Pipeline from "./pages/Pipeline";
 import Analytics from "./pages/Analytics";
 import SetupStatus from "./pages/SetupStatus";
+import ClientSetupWizard from "./pages/ClientSetupWizard";
+import {
+  readClientSetupProgress,
+  shouldAutoStartClientSetup,
+} from "./utils/clientSetupWizard";
 
 function homeForPermissions(permissions = {}, user = null) {
   if (permissions.view_all_leads || permissions.view_assigned_leads) return "/inbox";
@@ -50,8 +57,43 @@ function ProtectedRoute({ children, anyCapabilities = [], adminOnly = false }) {
 
 function DefaultRoute() {
   const { user, username, permissions, loading } = useAuth();
-  if (loading) return null;
+  const [setupTarget, setSetupTarget] = useState(null);
+  const [checkingSetup, setCheckingSetup] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (loading || !username || user?.role !== "admin") {
+      if (!loading) {
+        setSetupTarget(null);
+        setCheckingSetup(false);
+      }
+      return () => { cancelled = true; };
+    }
+
+    setCheckingSetup(true);
+    api.getConfig()
+      .then((config) => {
+        if (cancelled) return;
+        const progress = readClientSetupProgress(username, config.businessType);
+        setSetupTarget(
+          shouldAutoStartClientSetup(config, progress)
+            ? "/settings/client-setup"
+            : null
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setSetupTarget(null);
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingSetup(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [loading, username, user?.role]);
+
+  if (loading || checkingSetup) return null;
   if (!username) return <Navigate to="/login" replace />;
+  if (setupTarget) return <Navigate to={setupTarget} replace />;
   return <Navigate to={homeForPermissions(permissions, user)} replace />;
 }
 
@@ -95,6 +137,14 @@ export default function App() {
             <Route path="/tools" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><ToolsRoute /></ProtectedRoute>} />
             <Route path="/tools/lead-distribution" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><Navigate to="/tools?tool=lead-distribution" replace /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute anyCapabilities={["manage_settings"]}><Settings /></ProtectedRoute>} />
+            <Route
+              path="/settings/client-setup"
+              element={(
+                <ProtectedRoute adminOnly>
+                  <SettingsSectionLayout><ClientSetupWizard /></SettingsSectionLayout>
+                </ProtectedRoute>
+              )}
+            />
             <Route
               path="/settings/team"
               element={(
