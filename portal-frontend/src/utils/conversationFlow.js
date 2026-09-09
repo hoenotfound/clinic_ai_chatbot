@@ -60,38 +60,84 @@ function chat(customer, ai) {
   return { customer, ai };
 }
 
+function firstReply(introMessage, reply) {
+  return `${introMessage}\n\n${reply}`;
+}
+
 function exampleSet(businessType, context) {
   const { introMessage, conversionLabel, serviceName, locationName } = context;
 
   if (businessType === "home_renovation") {
     return {
       customerMessage: [
-        chat(`Hi, I'm interested in ${serviceName}.`, introMessage),
-        chat(`Can you help with a renovation project in ${locationName}?`, "Sure. What are you looking to renovate?"),
+        chat(
+          `Hi, I'm interested in ${serviceName} for my condo.`,
+          firstReply(introMessage, `Sure, I can help with ${serviceName}. Which area is the project in?`)
+        ),
+        chat(
+          `Hi, I'm comparing options for ${serviceName}.`,
+          firstReply(introMessage, "Of course. I can answer your questions first. What would you like to know?")
+        ),
       ],
       understandIntent: [
-        chat(`I want ${serviceName} for my condo.`, `Sure, I can help with ${serviceName}.`),
-        chat("I want to redo my kitchen before moving in.", "Sure. I can help gather a few useful project details for the team."),
+        chat(
+          `${locationName}. The kitchen is around 12ft.`,
+          `Got it. ${serviceName} in ${locationName}, around 12ft. Do you already have a photo or floor plan?`
+        ),
+        chat(
+          "I'm mainly comparing materials and price for now.",
+          "No problem. I'll focus on those questions first and won't rush you into the next step."
+        ),
       ],
       answer: [
-        chat("How much does it cost?", "The final quote depends on the project details. I can help collect the useful information first."),
-        chat("Do you cover my area?", "Sure. Which area is your project in? I can help check whether it's within our coverage."),
+        chat(
+          "Yes, I have a floor plan. Roughly how much would it cost?",
+          "The final quote depends on the layout, materials and measurements. If you send the floor plan, the team can assess the project more accurately."
+        ),
+        chat(
+          "Can you explain the material options first?",
+          "Sure. I can explain the configured options and help you compare them. If something is not in the business information, the team can confirm it."
+        ),
       ],
       qualify: [
-        chat(`I want ${serviceName}.`, "Sure. Do you have the approximate measurements or a photo of the space?"),
-        chat(`The project is in ${locationName}.`, "Got it. What are you looking to renovate there?"),
+        chat(
+          "I can send the floor plan now.",
+          "Perfect. Are you mainly looking for a quotation first, or would you prefer a site visit?"
+        ),
+        chat(
+          "I don't have measurements yet.",
+          "That's okay. We can keep discussing the options first. Measurements or photos can come later if they become useful."
+        ),
       ],
       decision: [
-        chat("I have the photos and project details ready.", `Great. I can guide this toward ${conversionLabel}.`),
-        chat("I'm still comparing options.", "No problem. I can keep helping with your questions first."),
+        chat(
+          "Quotation first please.",
+          `Sure. I have the useful project details so far and can move this toward ${conversionLabel}. The team will confirm the actual arrangement.`
+        ),
+        chat(
+          "I'm still comparing for now.",
+          "No problem. I'll keep helping with your questions without pushing you to proceed."
+        ),
       ],
       continue: [
-        chat("I don't know the measurements yet.", "That's okay. A clear photo or floor plan can still help the team understand the space."),
-        chat("Can I ask about materials first?", "Of course. I'll answer that first, then we can continue with any useful project details."),
+        chat(
+          "Can I ask about materials first?",
+          "Of course. I'll answer that first, then we can continue only if another detail is useful."
+        ),
+        chat(
+          "I don't have measurements yet.",
+          "That's okay. A photo or floor plan can still help later, but we can keep discussing your questions first."
+        ),
       ],
       conversion: [
-        chat("Yes, I'd like to proceed.", `Great. I'll guide this toward ${conversionLabel}, and the team will confirm the actual arrangement.`),
-        chat("I can send the photos now.", `Perfect. Send them over and the team can review the project for ${conversionLabel}.`),
+        chat(
+          "Yes, quotation first please.",
+          `Great. I'll guide this toward ${conversionLabel}, and the team will confirm the actual arrangement.`
+        ),
+        chat(
+          "I can send the floor plan now.",
+          `Perfect. Send it over and the team can review the project for ${conversionLabel}.`
+        ),
       ],
       handoff: [
         chat("Can I speak to your staff directly?", "Sure. I'll get a team member to assist you directly."),
@@ -103,32 +149,74 @@ function exampleSet(businessType, context) {
   if (businessType === "aesthetic_clinic") {
     return {
       customerMessage: [
-        chat(`Hi, I'm interested in ${serviceName}.`, introMessage),
-        chat("Can I know more about your treatments?", "Sure. What would you like help with?"),
+        chat(
+          `Hi, I'm interested in ${serviceName}.`,
+          firstReply(introMessage, `Sure. I can help with ${serviceName}. What would you like to know first?`)
+        ),
+        chat(
+          `Hi, I want to know more about ${serviceName}.`,
+          firstReply(introMessage, "Of course. What would you like to know?")
+        ),
       ],
       understandIntent: [
-        chat(`I'm interested in ${serviceName}.`, `Sure. I can help with information about ${serviceName} and the next step.`),
-        chat("I want something for facial lifting.", "Sure. What would you like to improve most?"),
+        chat(
+          "I'd like to know the price and maybe book a consultation.",
+          `Sure. I'll help with the treatment information first, then we can collect the details needed for ${conversionLabel}.`
+        ),
+        chat(
+          "I'm just comparing treatments for now.",
+          "No problem. I can answer your questions first without pushing you to book."
+        ),
       ],
       answer: [
-        chat("How much is it?", "Sure. I can share the treatment and pricing information we have, and the team can confirm anything that needs checking."),
-        chat("Is there a branch near me?", "Sure. Which area are you in? I can help narrow down the most convenient branch."),
+        chat(
+          "How much is it?",
+          "Sure. I can share the configured treatment and pricing information. If anything needs checking, the team will confirm it."
+        ),
+        chat(
+          "Can you explain how the treatment works?",
+          "Sure. I can explain the configured treatment information and answer what I can without guessing anything that needs staff confirmation."
+        ),
       ],
       qualify: [
-        chat("I'd like to book a consultation.", "Sure. Which branch is more convenient for you?"),
-        chat(`${locationName} please.`, "Great. What day or time works best for you?"),
+        chat(
+          `I'd like to proceed at ${locationName}.`,
+          "Great. What day or time works best for you?"
+        ),
+        chat(
+          "I'm not ready to choose a branch yet.",
+          "That's okay. We can keep discussing the treatment first and come back to booking details later."
+        ),
       ],
       decision: [
-        chat(`${locationName}, weekday afternoon.`, `Great. That's enough to move toward ${conversionLabel}.`),
-        chat("I'm just asking first.", "No problem. I'll keep answering your questions without pushing you to book."),
+        chat(
+          "Weekday afternoon works.",
+          `Great. I have ${locationName} and weekday afternoon. That's enough to move toward ${conversionLabel}; the team will confirm availability.`
+        ),
+        chat(
+          "I'm still thinking about it.",
+          "No problem. I'll keep answering your questions without pushing you to book."
+        ),
       ],
       continue: [
-        chat("Not sure which branch yet.", "No problem. I can keep helping with your treatment questions first."),
-        chat("Can you explain the treatment first?", "Of course. I'll answer that before asking for any booking details."),
+        chat(
+          "Can you explain the treatment first?",
+          "Of course. I'll answer that before asking for any booking details."
+        ),
+        chat(
+          "I'm not sure which branch yet.",
+          "No problem. I can keep helping with your treatment questions first."
+        ),
       ],
       conversion: [
-        chat(`${locationName}, weekday afternoon works.`, `Noted. The team will check availability and confirm the ${conversionLabel}.`),
-        chat("Yes, please arrange it.", `Sure. I'll collect the needed details and the team will confirm the ${conversionLabel}.`),
+        chat(
+          `${locationName}, weekday afternoon works.`,
+          `Noted. The team will check availability and confirm the ${conversionLabel}.`
+        ),
+        chat(
+          "Yes, please arrange it.",
+          `Sure. I'll collect the needed details and the team will confirm the ${conversionLabel}.`
+        ),
       ],
       handoff: [
         chat("I want to speak to a staff member.", "Sure. I'll get a team member to assist you directly."),
@@ -139,31 +227,64 @@ function exampleSet(businessType, context) {
 
   return {
     customerMessage: [
-      chat(`Hi, I'd like to know more about ${serviceName}.`, introMessage),
-      chat("Can you help me with your services?", "Sure. What would you like help with?"),
+      chat(
+        `Hi, I'd like to know more about ${serviceName}.`,
+        firstReply(introMessage, `Sure. I can help with ${serviceName}. What would you like to know first?`)
+      ),
+      chat(
+        `Hi, I'm comparing options for ${serviceName}.`,
+        firstReply(introMessage, "Of course. I can answer your questions first. What would you like to know?")
+      ),
     ],
     understandIntent: [
-      chat(`I'm interested in ${serviceName}.`, `Sure. I can help with ${serviceName} and the next step.`),
-      chat("I'm comparing a few options.", "No problem. I can answer your questions first."),
+      chat(
+        `I'm interested in ${serviceName} and may want to proceed soon.`,
+        `Sure. I'll answer your questions first, then collect only what is useful for ${conversionLabel}.`
+      ),
+      chat(
+        "I'm just comparing a few options for now.",
+        "No problem. I can help you compare them without pushing you to proceed."
+      ),
     ],
     answer: [
-      chat("How much does it cost?", "Sure. I can share the pricing information we have and let you know if the team needs to confirm anything."),
-      chat("How does it work?", "Sure. I can explain the service and help with any questions you have."),
+      chat(
+        "How much does it cost?",
+        "Sure. I can share the configured pricing information and let you know if the team needs to confirm anything."
+      ),
+      chat(
+        "How does it work?",
+        "Sure. I can explain the configured service information and answer what I can without guessing missing business details."
+      ),
     ],
     qualify: [
-      chat(`I'm interested in ${serviceName}.`, "Sure. May I know a little more about what you need?"),
-      chat("I want to proceed soon.", "Great. I'll ask for only the details the team needs for the next step."),
+      chat(
+        "That sounds suitable. What do you need from me?",
+        "Great. I'll ask for only the details the team needs for the next step."
+      ),
+      chat(
+        "I'm not ready to decide yet.",
+        "That's okay. We can keep discussing your questions and come back to the next step later."
+      ),
     ],
     decision: [
-      chat("Yes, I'd like to proceed.", `Great. I can guide this toward ${conversionLabel}.`),
-      chat("I'm still thinking about it.", "No problem. I can keep helping with your questions first."),
+      chat(
+        "Yes, I'd like to proceed.",
+        `Great. I have enough to guide this toward ${conversionLabel}, and the team will confirm the actual arrangement.`
+      ),
+      chat(
+        "I'm still thinking about it.",
+        "No problem. I can keep helping with your questions first."
+      ),
     ],
     continue: [
-      chat("I'm not sure yet.", "That's okay. What would you like to know before deciding?"),
       chat("Can I ask something else first?", "Of course. I'll answer that first."),
+      chat("I'm not sure yet.", "That's okay. What would you like to know before deciding?"),
     ],
     conversion: [
-      chat("Yes, let's proceed.", `Great. I'll guide this toward ${conversionLabel}, and the team will confirm the actual arrangement.`),
+      chat(
+        "Yes, let's proceed.",
+        `Great. I'll guide this toward ${conversionLabel}, and the team will confirm the actual arrangement.`
+      ),
       chat("What happens next?", `I'll collect what's needed for ${conversionLabel} and the team will confirm it.`),
     ],
     handoff: [
@@ -215,7 +336,7 @@ export function buildConversationFlow(config = {}) {
       title: "Customer asks",
       summary: `A new ${customerSingular} starts the conversation.`,
       examples: examples.customerMessage,
-      shortNote: "The configured intro message is used on the first reply.",
+      shortNote: "The configured intro message is added at the start of the first AI reply.",
       settingsTab: "general",
     },
     {
