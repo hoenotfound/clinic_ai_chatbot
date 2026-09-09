@@ -29,6 +29,8 @@ test("conversation flow is available from the portal for settings managers", () 
   assert.match(page, /Flexible, not scripted/);
   assert.match(page, /BranchRail/);
   assert.match(page, /AI does not force this order/);
+  assert.match(page, /matchMedia\("\(max-width: 1279px\)"\)/);
+  assert.match(page, /scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
   assert.match(page, /\/settings\?tab=aiBehavior/);
   assert.match(page, /\/settings\?tab=escalation/);
 });
