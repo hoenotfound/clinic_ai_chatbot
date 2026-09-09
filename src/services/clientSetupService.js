@@ -5,6 +5,7 @@ const PLACEHOLDER_BUSINESS_NAMES = new Set([
   "Your Renovation Business",
   "Your Business",
 ]);
+const SUPPORTED_PURCHASED_CHANNELS = new Set(["whatsapp", "facebook", "instagram"]);
 
 function text(value) {
   return String(value || "").trim();
@@ -68,6 +69,40 @@ function protectedGuardrails(config) {
   }
 }
 
+function purchasedChannelContract(env = process.env) {
+  const raw = text(env?.PURCHASED_CHANNELS);
+  if (!raw) {
+    return {
+      configured: false,
+      channels: [],
+      error: null,
+      source: null,
+    };
+  }
+
+  const channels = [];
+  for (const item of raw.split(",")) {
+    const channel = text(item).toLowerCase();
+    if (!channel) continue;
+    if (!SUPPORTED_PURCHASED_CHANNELS.has(channel)) {
+      return {
+        configured: true,
+        channels: [],
+        error: `Unsupported PURCHASED_CHANNELS value: ${channel}`,
+        source: "environment",
+      };
+    }
+    if (!channels.includes(channel)) channels.push(channel);
+  }
+
+  return {
+    configured: true,
+    channels,
+    error: null,
+    source: "environment",
+  };
+}
+
 function sectionState({ required, configured, missing }) {
   if (required) return missing.length === 0 ? "ready" : "needs_attention";
   return configured ? "configured" : "optional";
@@ -87,7 +122,7 @@ function buildSection({ id, label, required, configured, missing = [], note = ""
   };
 }
 
-function evaluateClientSetup(config = {}) {
+function evaluateClientSetup(config = {}, env = process.env) {
   const locationRequired = locationsRequired(config);
   const branchesConfigured = hasNamedEntries(config.branches);
   const serviceAreasConfigured = hasStringEntries(config.serviceAreas);
@@ -219,6 +254,7 @@ function evaluateClientSetup(config = {}) {
     requiredComplete: incompleteRequired.length === 0,
     incompleteRequired,
     protectedGuardrails: protectedGuardrails(config),
+    channelContract: purchasedChannelContract(env),
   };
 }
 
@@ -236,4 +272,5 @@ module.exports = {
   isFreshClientSetupCandidate,
   isPlaceholderBusinessName,
   protectedGuardrails,
+  purchasedChannelContract,
 };
