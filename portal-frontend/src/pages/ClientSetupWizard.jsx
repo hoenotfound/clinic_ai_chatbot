@@ -162,21 +162,13 @@ export default function ClientSetupWizard() {
 
   useEffect(() => {
     if (screen !== "goLive" || technicalAttempted) return;
-    let cancelled = false;
     setTechnicalAttempted(true);
     setTechnicalLoading(true);
     api.getSetupStatus()
-      .then((data) => {
-        if (!cancelled) setTechnical(data);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.message || "Couldn't load technical readiness.");
-      })
-      .finally(() => {
-        if (!cancelled) setTechnicalLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [screen, technicalAttempted]);
+      .then((data) => setTechnical(data))
+      .catch((err) => setError(err.message || "Couldn't load technical readiness."))
+      .finally(() => setTechnicalLoading(false));
+  }, [screen]);
 
   const completion = useMemo(() => getClientSetupCompletion(config || {}), [config]);
   const ui = getBusinessTerminology(config || {});
