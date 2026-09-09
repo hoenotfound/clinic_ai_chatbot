@@ -28,6 +28,7 @@ test("conversation flow uses one compact expandable journey without a separate d
   assert.match(page, /Select a step to see how it answers, qualifies and moves the conversation forward/);
   assert.match(page, /useState\("answer-from-knowledge"\)/);
   assert.match(page, /currentId === id \? null : id/);
+  assert.doesNotMatch(page, /setExampleIndex\(0\)/);
   assert.match(page, /AI replies & guides/);
   assert.match(page, /AI moves conversation forward/);
   assert.match(page, /AI decides next step/);
@@ -58,7 +59,7 @@ test("conversation flow uses one compact expandable journey without a separate d
   assert.doesNotMatch(page, /real chat example/i);
 });
 
-test("renovation flow uses short client-friendly stages and configuration-aware examples", async () => {
+test("renovation flow uses connected client-friendly journeys and configuration-aware examples", async () => {
   const { buildConversationFlow } = await loadFlowBuilder();
   const flow = buildConversationFlow({
     businessType: "home_renovation",
@@ -96,13 +97,34 @@ test("renovation flow uses short client-friendly stages and configuration-aware 
     flow.mainNodes.map((node) => node.title),
     ["Customer asks", "AI understands", "AI answers", "AI asks next", "Ready to proceed?"]
   );
+  assert.ok(flow.mainNodes.every((node) => node.examples.length === 2));
 
   const customerMessage = flow.mainNodes.find((node) => node.id === "customer-message");
-  assert.equal(customerMessage.examples[0].customer, "Hi, I'm interested in Kitchen cabinets.");
-  assert.equal(customerMessage.examples[0].ai, "Hi! Thanks for reaching out about your renovation 😊");
-  assert.ok(customerMessage.examples.some((example) => /Klang Valley/i.test(example.customer)));
-
+  const understand = flow.mainNodes.find((node) => node.id === "understand-intent");
+  const answer = flow.mainNodes.find((node) => node.id === "answer-from-knowledge");
   const qualification = flow.mainNodes.find((node) => node.id === "qualify-naturally");
+  const decision = flow.mainNodes.find((node) => node.id === "choose-next-path");
+
+  assert.equal(customerMessage.examples[0].customer, "Hi, I'm interested in Kitchen cabinets for my condo.");
+  assert.match(customerMessage.examples[0].ai, /^Hi! Thanks for reaching out about your renovation 😊/);
+  assert.match(customerMessage.examples[0].ai, /Which area is the project in/i);
+  assert.match(customerMessage.shortNote, /added at the start of the first AI reply/i);
+
+  assert.match(understand.examples[0].customer, /Klang Valley/i);
+  assert.match(understand.examples[0].ai, /Kitchen cabinets/i);
+  assert.match(understand.examples[0].ai, /Klang Valley/i);
+  assert.match(understand.examples[0].ai, /12ft/i);
+  assert.match(answer.examples[0].customer, /floor plan.*how much/i);
+  assert.match(answer.examples[0].ai, /layout, materials and measurements/i);
+  assert.match(qualification.examples[0].customer, /send the floor plan/i);
+  assert.match(qualification.examples[0].ai, /quotation.*site visit/i);
+  assert.match(decision.examples[0].customer, /Quotation first/i);
+  assert.match(decision.examples[0].ai, /site visit or quotation discussion/i);
+
+  assert.match(customerMessage.examples[1].customer, /comparing options/i);
+  assert.match(understand.examples[1].customer, /comparing materials and price/i);
+  assert.match(decision.examples[1].ai, /without pushing you to proceed/i);
+
   assert.ok(qualification.examples.length >= 2);
   assert.match(qualification.shortNote, /illustrative/i);
   assert.match(qualification.shortNote, /saved AI Behavior instructions/i);
@@ -130,7 +152,7 @@ test("renovation flow uses short client-friendly stages and configuration-aware 
   );
 });
 
-test("clinic flow uses configured branch examples without making the flow rigid", async () => {
+test("clinic flow uses a connected booking journey without making the flow rigid", async () => {
   const { buildConversationFlow } = await loadFlowBuilder();
   const flow = buildConversationFlow({
     businessType: "aesthetic_clinic",
@@ -153,13 +175,26 @@ test("clinic flow uses configured branch examples without making the flow rigid"
   assert.ok(flow.qualification.some((item) => item.label === "Preferred day / time"));
   assert.match(flow.flexibilityNote, /useful details needed to move forward/i);
 
+  const customerMessage = flow.mainNodes.find((node) => node.id === "customer-message");
+  const understand = flow.mainNodes.find((node) => node.id === "understand-intent");
   const answer = flow.mainNodes.find((node) => node.id === "answer-from-knowledge");
-  assert.ok(answer.examples.some((example) => /treatment and pricing information we have/i.test(example.ai)));
-
   const qualification = flow.mainNodes.find((node) => node.id === "qualify-naturally");
-  assert.ok(qualification.examples.some((example) => /Which branch/i.test(example.ai)));
-  assert.ok(qualification.examples.some((example) => /Mont Kiara/i.test(example.customer)));
-  assert.ok(qualification.examples.some((example) => /What day or time/i.test(example.ai)));
+  const decision = flow.mainNodes.find((node) => node.id === "choose-next-path");
+
+  assert.match(customerMessage.examples[0].ai, /^Hi! Thanks for messaging our clinic 😊/);
+  assert.match(customerMessage.examples[0].ai, /HIFU/i);
+  assert.match(understand.examples[0].customer, /price.*book a consultation/i);
+  assert.ok(answer.examples.some((example) => /configured treatment and pricing information/i.test(example.ai)));
+  assert.match(qualification.examples[0].customer, /Mont Kiara/i);
+  assert.match(qualification.examples[0].ai, /What day or time/i);
+  assert.match(decision.examples[0].customer, /Weekday afternoon/i);
+  assert.match(decision.examples[0].ai, /Mont Kiara/i);
+  assert.match(decision.examples[0].ai, /weekday afternoon/i);
+  assert.match(decision.examples[0].ai, /free consultation/i);
+
+  assert.match(customerMessage.examples[1].customer, /know more about HIFU/i);
+  assert.match(understand.examples[1].customer, /comparing treatments/i);
+  assert.match(decision.examples[1].ai, /without pushing you to book/i);
 
   const conversion = flow.outcomes.find((node) => node.id === "conversion-next-step");
   assert.equal(conversion.title, "Free consultation");
