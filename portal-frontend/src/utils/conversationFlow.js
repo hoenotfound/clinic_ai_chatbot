@@ -21,11 +21,11 @@ const QUALIFICATION_BY_INDUSTRY = {
 
 const FLEXIBILITY_NOTE_BY_INDUSTRY = {
   aesthetic_clinic:
-    "If a patient already gives the treatment, branch and timing details, the AI can skip those questions and move forward.",
+    "If a patient already gives the useful details needed to move forward, the AI can skip questions it no longer needs.",
   home_renovation:
-    "If a customer already gives the project, location and budget, the AI can skip those questions instead of asking again.",
+    "If a customer already gives useful project details, the AI can skip questions it no longer needs.",
   generic:
-    "If a customer already gives the details needed for the next step, the AI can skip those questions instead of asking again.",
+    "If a customer already gives the details needed for the next step, the AI can skip questions it no longer needs.",
 };
 
 function list(value) {
@@ -61,13 +61,13 @@ function chat(customer, ai) {
 }
 
 function exampleSet(businessType, context) {
-  const { introMessage, conversionLabel, serviceName } = context;
+  const { introMessage, conversionLabel, serviceName, locationName } = context;
 
   if (businessType === "home_renovation") {
     return {
       customerMessage: [
         chat(`Hi, I'm interested in ${serviceName}.`, introMessage),
-        chat("Can you help with a renovation project in Cheras?", "Sure. What are you looking to renovate?"),
+        chat(`Can you help with a renovation project in ${locationName}?`, "Sure. What are you looking to renovate?"),
       ],
       understandIntent: [
         chat(`I want ${serviceName} for my condo.`, `Sure, I can help with ${serviceName}.`),
@@ -79,10 +79,10 @@ function exampleSet(businessType, context) {
       ],
       qualify: [
         chat(`I want ${serviceName}.`, "Sure. Do you have the approximate measurements or a photo of the space?"),
-        chat("The project is in Cheras.", "Got it. What are you looking to renovate there?"),
+        chat(`The project is in ${locationName}.`, "Got it. What are you looking to renovate there?"),
       ],
       decision: [
-        chat("I have the photos and budget ready.", `Great. I can guide this toward ${conversionLabel}.`),
+        chat("I have the photos and project details ready.", `Great. I can guide this toward ${conversionLabel}.`),
         chat("I'm still comparing options.", "No problem. I can keep helping with your questions first."),
       ],
       continue: [
@@ -116,10 +116,10 @@ function exampleSet(businessType, context) {
       ],
       qualify: [
         chat("I'd like to book a consultation.", "Sure. Which branch is more convenient for you?"),
-        chat("PJ branch please.", "Great. What day or time works best for you?"),
+        chat(`${locationName} please.`, "Great. What day or time works best for you?"),
       ],
       decision: [
-        chat("PJ branch, Saturday afternoon.", `Great. That's enough to move toward ${conversionLabel}.`),
+        chat(`${locationName}, weekday afternoon.`, `Great. That's enough to move toward ${conversionLabel}.`),
         chat("I'm just asking first.", "No problem. I'll keep answering your questions without pushing you to book."),
       ],
       continue: [
@@ -127,7 +127,7 @@ function exampleSet(businessType, context) {
         chat("Can you explain the treatment first?", "Of course. I'll answer that before asking for any booking details."),
       ],
       conversion: [
-        chat("PJ, Saturday afternoon works.", `Noted. The team will check availability and confirm the ${conversionLabel}.`),
+        chat(`${locationName}, weekday afternoon works.`, `Noted. The team will check availability and confirm the ${conversionLabel}.`),
         chat("Yes, please arrange it.", `Sure. I'll collect the needed details and the team will confirm the ${conversionLabel}.`),
       ],
       handoff: [
@@ -184,6 +184,10 @@ export function buildConversationFlow(config = {}) {
   const services = list(config.services).filter((item) => compact(item?.name, ""));
   const faqs = list(config.faqs).filter((item) => compact(item?.q, "") && compact(item?.a, ""));
   const promotions = list(config.promotions).filter((item) => compact(item?.name, ""));
+  const branches = list(config.branches).filter((item) => compact(item?.name, ""));
+  const serviceAreas = list(config.serviceAreas)
+    .map((item) => compact(item, ""))
+    .filter(Boolean);
   const handoffTriggers = list(config.escalation?.outOfScopeTriggers)
     .map((item) => compact(item, ""))
     .filter(Boolean);
@@ -191,7 +195,12 @@ export function buildConversationFlow(config = {}) {
     services,
     businessType === "home_renovation" ? "a renovation project" : businessType === "aesthetic_clinic" ? "a treatment" : serviceSingular
   );
-  const examples = exampleSet(businessType, { introMessage, conversionLabel, serviceName });
+  const locationName = businessType === "aesthetic_clinic"
+    ? compact(branches[0]?.name, "the branch near me")
+    : businessType === "home_renovation"
+      ? compact(serviceAreas[0], "a nearby area")
+      : "my area";
+  const examples = exampleSet(businessType, { introMessage, conversionLabel, serviceName, locationName });
 
   const knowledgeSummary = [
     plural(services.length, serviceSingular, servicePlural),
@@ -234,7 +243,7 @@ export function buildConversationFlow(config = {}) {
       title: "AI asks next",
       summary: "Collects only the next useful detail when it helps the conversation move forward.",
       examples: examples.qualify,
-      shortNote: "The examples show typical industry qualification. Your current AI Behavior instructions remain authoritative.",
+      shortNote: "This example is illustrative. Your saved AI Behavior instructions decide which details to ask for and can add, remove or skip questions.",
       meta: `Typical areas: ${qualification.map((item) => item.label).join(" · ")}`,
       settingsTab: "aiBehavior",
     },
