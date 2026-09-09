@@ -25,7 +25,10 @@ test("conversation flow is available from the portal for settings managers", () 
   assert.match(sidebar, /icon: FlowIcon/);
   assert.match(page, /api\s*\.getConfig\(\)/);
   assert.match(page, /buildConversationFlow/);
-  assert.match(page, /Synced with current settings/);
+  assert.match(page, /Based on current settings/);
+  assert.doesNotMatch(page, /Synced with current settings/);
+  assert.match(page, /industry guide/);
+  assert.match(page, /How this stage is sourced/);
   assert.match(page, /Flexible, not scripted/);
   assert.match(page, /BranchRail/);
   assert.match(page, /AI does not force this order/);
@@ -35,7 +38,7 @@ test("conversation flow is available from the portal for settings managers", () 
   assert.match(page, /\/settings\?tab=escalation/);
 });
 
-test("renovation flow reflects the industry profile and current configured knowledge", async () => {
+test("renovation flow reflects configured knowledge while labelling qualification as industry guidance", async () => {
   const { buildConversationFlow } = await loadFlowBuilder();
   const flow = buildConversationFlow({
     businessType: "home_renovation",
@@ -51,6 +54,7 @@ test("renovation flow reflects the industry profile and current configured knowl
     ],
     faqs: [{ q: "Do you cover Cheras?", a: "Yes" }],
     promotions: [{ name: "September package" }],
+    closingPlaybook: "Do not ask for budget. Qualify only on scope and location.",
     conversion: {
       label: "site visit or quotation discussion",
       bookingReadyEnabled: false,
@@ -70,6 +74,12 @@ test("renovation flow reflects the industry profile and current configured knowl
   assert.match(flow.flexibilityNote, /project, location and budget/i);
   assert.ok(flow.qualification.some((item) => item.label === "Budget if useful"));
   assert.ok(flow.qualification.some((item) => item.label === "Photos / floor plan"));
+
+  const qualification = flow.mainNodes.find((node) => node.id === "qualify-naturally");
+  assert.equal(qualification.title, "Typical qualification areas");
+  assert.match(qualification.meta, /Typical industry guide/);
+  assert.match(qualification.sourceNote, /actual chatbot follows the current AI Behavior instructions/i);
+  assert.match(qualification.sourceNote, /add, remove or skip/i);
 
   const conversion = flow.outcomes.find((node) => node.id === "conversion-next-step");
   assert.equal(conversion.title, "Site visit / quotation discussion");
@@ -104,6 +114,9 @@ test("clinic flow explains booking-ready details without turning them into a rig
 
   const intent = flow.mainNodes.find((node) => node.id === "understand-intent");
   assert.ok(intent.details.some((detail) => /does not force/i.test(detail)));
+
+  const qualification = flow.mainNodes.find((node) => node.id === "qualify-naturally");
+  assert.match(qualification.sourceNote, /AI Behavior instructions/i);
 
   const conversion = flow.outcomes.find((node) => node.id === "conversion-next-step");
   assert.equal(conversion.title, "Free consultation");
