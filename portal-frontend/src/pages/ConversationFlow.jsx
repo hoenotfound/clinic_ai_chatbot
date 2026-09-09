@@ -20,8 +20,8 @@ function displayNodeTitle(node) {
   const titles = {
     "customer-message": "Customer asks",
     "understand-intent": "AI understands",
-    "answer-from-knowledge": "AI replies",
-    "qualify-naturally": "AI asks what's missing",
+    "answer-from-knowledge": "AI replies & guides",
+    "qualify-naturally": "AI moves conversation forward",
     "choose-next-path": "AI decides next step",
     "ask-next-question": "Keep chatting",
     "conversion-next-step": "Ready to proceed",
@@ -116,7 +116,7 @@ export default function ConversationFlow() {
           </div>
           <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">Conversation Flow</h1>
           <p className="mt-1.5 max-w-3xl text-[13px] leading-5 text-[var(--color-text-muted)] sm:mt-2 sm:text-sm sm:leading-6">
-            See how your AI handles a customer message, one step at a time.
+            See how your AI answers customers and guides interested leads toward the next step.
           </p>
           <p className="mt-1.5 text-[11px] font-medium leading-5 text-[var(--color-text-muted)] sm:mt-2 sm:text-xs">{knowledgeLine}</p>
         </header>
@@ -124,8 +124,8 @@ export default function ConversationFlow() {
         <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5 shadow-sm sm:rounded-3xl sm:p-4 lg:p-5">
           <div className="mb-3 flex items-start justify-between gap-3 sm:mb-4">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] sm:text-xs">Typical conversation</p>
-              <p className="mt-0.5 text-[11px] leading-4 text-[var(--color-text-muted)] sm:text-xs sm:leading-5">Select a step to preview an example.</p>
+              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] sm:text-xs">How the AI guides a lead forward</p>
+              <p className="mt-0.5 text-[11px] leading-4 text-[var(--color-text-muted)] sm:text-xs sm:leading-5">Select a step to see how it answers, qualifies and moves the conversation forward.</p>
             </div>
             <span className="hidden w-fit shrink-0 items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-[10px] font-semibold text-[var(--color-text-muted)] sm:inline-flex">
               <span aria-hidden="true">↻</span>
