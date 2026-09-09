@@ -57,43 +57,37 @@ function ProtectedRoute({ children, anyCapabilities = [], adminOnly = false }) {
 
 function DefaultRoute() {
   const { user, username, permissions, loading } = useAuth();
-  const [setupTarget, setSetupTarget] = useState(null);
-  const [checkingSetup, setCheckingSetup] = useState(false);
+  const adminDecisionKey = !loading && username && user?.role === "admin"
+    ? `${username}:admin`
+    : null;
+  const [setupDecision, setSetupDecision] = useState({ key: null, target: null });
 
   useEffect(() => {
     let cancelled = false;
-    if (loading || !username || user?.role !== "admin") {
-      if (!loading) {
-        setSetupTarget(null);
-        setCheckingSetup(false);
-      }
-      return () => { cancelled = true; };
-    }
+    if (!adminDecisionKey) return () => { cancelled = true; };
 
-    setCheckingSetup(true);
     api.getConfig()
       .then((config) => {
         if (cancelled) return;
         const progress = readClientSetupProgress(username, config.businessType);
-        setSetupTarget(
-          shouldAutoStartClientSetup(config, progress)
+        setSetupDecision({
+          key: adminDecisionKey,
+          target: shouldAutoStartClientSetup(config, progress)
             ? "/settings/client-setup"
-            : null
-        );
+            : null,
+        });
       })
       .catch(() => {
-        if (!cancelled) setSetupTarget(null);
-      })
-      .finally(() => {
-        if (!cancelled) setCheckingSetup(false);
+        if (!cancelled) setSetupDecision({ key: adminDecisionKey, target: null });
       });
 
     return () => { cancelled = true; };
-  }, [loading, username, user?.role]);
+  }, [adminDecisionKey, username]);
 
-  if (loading || checkingSetup) return null;
+  if (loading) return null;
   if (!username) return <Navigate to="/login" replace />;
-  if (setupTarget) return <Navigate to={setupTarget} replace />;
+  if (adminDecisionKey && setupDecision.key !== adminDecisionKey) return null;
+  if (setupDecision.target) return <Navigate to={setupDecision.target} replace />;
   return <Navigate to={homeForPermissions(permissions, user)} replace />;
 }
 
