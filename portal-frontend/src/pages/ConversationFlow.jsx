@@ -122,8 +122,8 @@ export default function ConversationFlow() {
             >
               <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Typical customer journey</p>
-                  <p className="mt-0.5 text-xs leading-5 text-[var(--color-text-muted)]">Choose a step to see a real chat example.</p>
+                  <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Example customer journey</p>
+                  <p className="mt-0.5 text-xs leading-5 text-[var(--color-text-muted)]">Choose a step to see an example chat.</p>
                 </div>
                 <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
                   <span aria-hidden="true">↻</span>
@@ -217,7 +217,6 @@ export default function ConversationFlow() {
                   <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{selectedNode.shortNote}</p>
                 </div>
               )}
-
               {selectedNode.settingsTab && (
                 <Link
                   to={settingsDestination(selectedNode.settingsTab)}
