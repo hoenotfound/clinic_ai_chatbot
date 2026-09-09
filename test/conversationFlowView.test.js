@@ -23,13 +23,13 @@ test("conversation flow uses one compact expandable journey without a separate d
   assert.match(app, /anyCapabilities=\{\["manage_settings"\]\}/);
   assert.match(sidebar, /to: "\/conversation-flow", label: "Conversation Flow"/);
   assert.match(page, /api\s*\.getConfig\(\)/);
-  assert.match(page, /See how your AI handles a customer message, one step at a time/);
-  assert.match(page, /Typical conversation/);
-  assert.match(page, /Select a step to preview an example/);
+  assert.match(page, /See how your AI answers customers and guides interested leads toward the next step/);
+  assert.match(page, /How the AI guides a lead forward/);
+  assert.match(page, /Select a step to see how it answers, qualifies and moves the conversation forward/);
   assert.match(page, /useState\("answer-from-knowledge"\)/);
   assert.match(page, /currentId === id \? null : id/);
-  assert.match(page, /AI replies/);
-  assert.match(page, /AI asks what's missing/);
+  assert.match(page, /AI replies & guides/);
+  assert.match(page, /AI moves conversation forward/);
   assert.match(page, /AI decides next step/);
   assert.match(page, /Keep chatting/);
   assert.match(page, /Ready to proceed/);
