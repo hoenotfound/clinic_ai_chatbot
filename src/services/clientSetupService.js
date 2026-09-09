@@ -142,9 +142,15 @@ function evaluateClientSetup(config = {}, env = process.env) {
   if (!text(config.aiAssistantName)) businessMissing.push("Enter an AI assistant name");
   if (!text(config.introMessage)) businessMissing.push("Enter an intro message");
 
-  const locationMissing = locationRequired && !branchesConfigured
-    ? ["Add at least one branch"]
-    : [];
+  const clinicBranches = Array.isArray(config.branches) ? config.branches : [];
+const clinicBranchMissingAddress = config?.businessType === "aesthetic_clinic"
+  && clinicBranches.some((branch) => text(branch?.name) && !text(branch?.address));
+const locationMissing = locationRequired
+  ? [
+      ...(!branchesConfigured ? ["Add at least one branch"] : []),
+      ...(clinicBranchMissingAddress ? ["Add an address for every clinic branch"] : []),
+    ]
+  : [];
 
   const operatingMissing = openingHoursConfigured(config)
     ? []

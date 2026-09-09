@@ -139,6 +139,15 @@ test("server-side setup evaluation is industry-aware and treats optional section
   assert.equal(clinicLocations.complete, false);
   assert.equal(clinicLocations.state, "needs_attention");
   assert.equal(clinicStatus.requiredComplete, false);
+
+  const clinicMissingAddress = configuredBusiness("aesthetic_clinic");
+  clinicMissingAddress.branches = [{ name: "KL", address: "", phone: "" }];
+  const missingAddressStatus = evaluateClientSetup(clinicMissingAddress);
+  const missingAddressLocations = missingAddressStatus.sections.find((section) => section.id === "locations");
+  assert.equal(missingAddressLocations.complete, false);
+  assert.equal(missingAddressLocations.state, "needs_attention");
+  assert.match(missingAddressLocations.missing.join(" "), /address/i);
+  assert.equal(missingAddressStatus.requiredComplete, false);
 });
 
 test("renovation service areas are separate from branches used for routing", () => {
@@ -280,6 +289,8 @@ test("wizard protects unsaved edits and reuses existing business-profile selecto
   assert.match(wizard, /api\.selectBusinessProfile\(profileChoice\)/);
   assert.match(wizard, /Confirm business profile/);
   assert.match(wizard, /businessDescription/);
+assert.match(wizard, /Confirm the business profile to unlock client-specific business fields/);
+assert.equal((wizard.match(/disabled=\{!locked\}/g) || []).length, 4);
 });
 
 test("wizard and Settings use separate service areas, stronger field validation, and promo upload", () => {

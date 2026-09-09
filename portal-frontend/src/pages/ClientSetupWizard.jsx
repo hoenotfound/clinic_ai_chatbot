@@ -710,10 +710,15 @@ function BusinessStep({ draft, config, setDraftValue, profileChoice, setProfileC
           </div>
         )}
       </div>
-      <Field label="Business name"><input className={INPUT_CLASS} value={draft.businessName || draft.clinicName || ""} onChange={(event) => setDraftValue("businessName", event.target.value)} /></Field>
-      <Field label="What does this business do?" hint="A short factual description used by the AI and lead scoring. Example: Custom kitchen cabinets, wardrobes and carpentry for residential homes around Klang Valley."><textarea rows={3} className={TEXTAREA_CLASS} value={draft.businessDescription || ""} onChange={(event) => setDraftValue("businessDescription", event.target.value)} /></Field>
-      <Field label="AI assistant name" hint="A friendly name for the assistant, not the business name."><input className={INPUT_CLASS} value={draft.aiAssistantName || ""} onChange={(event) => setDraftValue("aiAssistantName", event.target.value)} /></Field>
-      <Field label="First-message intro" hint="Used as the configured intro for a brand-new conversation."><textarea rows={3} className={TEXTAREA_CLASS} value={draft.introMessage || ""} onChange={(event) => setDraftValue("introMessage", event.target.value)} /></Field>
+      {!locked && (
+      <div className="mb-4 rounded-xl border border-[var(--color-accent)]/30 bg-[var(--color-accent-light)] px-3.5 py-3 text-xs leading-5 text-[var(--color-text-muted)]">
+        Confirm the business profile to unlock client-specific business fields. This prevents draft details from being replaced when the profile is applied.
+      </div>
+    )}
+    <Field label="Business name"><input className={INPUT_CLASS} disabled={!locked} value={draft.businessName || draft.clinicName || ""} onChange={(event) => setDraftValue("businessName", event.target.value)} /></Field>
+      <Field label="What does this business do?" hint="A short factual description used by the AI and lead scoring. Example: Custom kitchen cabinets, wardrobes and carpentry for residential homes around Klang Valley."><textarea rows={3} className={TEXTAREA_CLASS} disabled={!locked} value={draft.businessDescription || ""} onChange={(event) => setDraftValue("businessDescription", event.target.value)} /></Field>
+      <Field label="AI assistant name" hint="A friendly name for the assistant, not the business name."><input className={INPUT_CLASS} disabled={!locked} value={draft.aiAssistantName || ""} onChange={(event) => setDraftValue("aiAssistantName", event.target.value)} /></Field>
+      <Field label="First-message intro" hint="Used as the configured intro for a brand-new conversation."><textarea rows={3} className={TEXTAREA_CLASS} disabled={!locked} value={draft.introMessage || ""} onChange={(event) => setDraftValue("introMessage", event.target.value)} /></Field>
     </div>
   );
 }
