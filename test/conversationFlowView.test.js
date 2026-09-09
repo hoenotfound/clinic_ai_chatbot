@@ -13,7 +13,7 @@ async function loadFlowBuilder() {
   return import(pathToFileURL(file).href);
 }
 
-test("conversation flow keeps the client view simple and chat-first", () => {
+test("conversation flow uses one compact expandable journey without a separate detail panel", () => {
   const app = read("portal-frontend/src/App.jsx");
   const sidebar = read("portal-frontend/src/components/Sidebar.jsx");
   const page = read("portal-frontend/src/pages/ConversationFlow.jsx");
@@ -23,29 +23,39 @@ test("conversation flow keeps the client view simple and chat-first", () => {
   assert.match(app, /anyCapabilities=\{\["manage_settings"\]\}/);
   assert.match(sidebar, /to: "\/conversation-flow", label: "Conversation Flow"/);
   assert.match(page, /api\s*\.getConfig\(\)/);
-  assert.match(page, /See how your AI handles an enquiry/);
-  assert.match(page, /How your AI handles a chat/);
-  assert.match(page, /Choose a step to see an example/);
+  assert.match(page, /See how your AI handles a customer message, one step at a time/);
+  assert.match(page, /Typical conversation/);
+  assert.match(page, /Select a step to preview an example/);
   assert.match(page, /useState\("answer-from-knowledge"\)/);
+  assert.match(page, /currentId === id \? null : id/);
   assert.match(page, /AI replies/);
   assert.match(page, /AI asks what's missing/);
   assert.match(page, /AI decides next step/);
   assert.match(page, /Keep chatting/);
   assert.match(page, /Ready to proceed/);
   assert.match(page, /Human handoff/);
-  assert.match(page, /Example chat/);
-  assert.match(page, /Show another example/);
+  assert.match(page, /InlineDetail/);
+  assert.match(page, />Example</);
+  assert.match(page, /Another example/);
   assert.match(page, /ChatExample/);
   assert.match(page, /Customer/);
   assert.match(page, />AI</);
-  assert.match(page, /Why this happens/);
+  assert.match(page, /Why this step:/);
   assert.match(page, /Adapts to each conversation/);
   assert.match(page, /Examples illustrate typical behaviour/);
   assert.match(page, /Edit in \{settingsLabel/);
-  assert.doesNotMatch(page, /function SummaryPill/);
+  assert.match(page, /aria-expanded=\{selected\}/);
+  assert.match(page, /selected && \(/);
+  assert.match(page, /selectedIsOutcome && \(/);
+  assert.match(page, /md:hidden/);
+  assert.match(page, /hidden w-full max-w-2xl md:block/);
+  assert.match(page, /max-w-\[88%\]/);
+  assert.doesNotMatch(page, /<aside/);
+  assert.doesNotMatch(page, /detailRef/);
+  assert.doesNotMatch(page, /matchMedia/);
+  assert.doesNotMatch(page, /scrollIntoView/);
+  assert.doesNotMatch(page, /xl:grid-cols/);
   assert.doesNotMatch(page, /real chat example/i);
-  assert.match(page, /matchMedia\("\(max-width: 1279px\)"\)/);
-  assert.match(page, /scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
 });
 
 test("renovation flow uses short client-friendly stages and configuration-aware examples", async () => {
