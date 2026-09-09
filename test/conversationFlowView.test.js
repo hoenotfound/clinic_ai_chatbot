@@ -24,6 +24,9 @@ test("conversation flow presents a chat-first client view", () => {
   assert.match(sidebar, /to: "\/conversation-flow", label: "Conversation Flow"/);
   assert.match(page, /api\s*\.getConfig\(\)/);
   assert.match(page, /See how your AI replies to enquiries/);
+  assert.match(page, /Example customer journey/);
+  assert.match(page, /Choose a step to see an example chat/);
+  assert.doesNotMatch(page, /real chat example/i);
   assert.match(page, /Example chat/);
   assert.match(page, /Show another example/);
   assert.match(page, /ChatExample/);
@@ -38,7 +41,7 @@ test("conversation flow presents a chat-first client view", () => {
   assert.match(page, /\/settings\?tab=escalation/);
 });
 
-test("renovation flow uses short client-friendly stages and realistic examples", async () => {
+test("renovation flow uses short client-friendly stages and configuration-aware examples", async () => {
   const { buildConversationFlow } = await loadFlowBuilder();
   const flow = buildConversationFlow({
     businessType: "home_renovation",
@@ -52,7 +55,8 @@ test("renovation flow uses short client-friendly stages and realistic examples",
       { name: "Kitchen cabinets" },
       { name: "Wardrobes" },
     ],
-    faqs: [{ q: "Do you cover Cheras?", a: "Yes" }],
+    serviceAreas: ["Klang Valley"],
+    faqs: [{ q: "Do you cover Klang Valley?", a: "Yes" }],
     promotions: [{ name: "September package" }],
     closingPlaybook: "Do not ask for budget. Qualify only on scope and location.",
     conversion: {
@@ -79,12 +83,20 @@ test("renovation flow uses short client-friendly stages and realistic examples",
   const customerMessage = flow.mainNodes.find((node) => node.id === "customer-message");
   assert.equal(customerMessage.examples[0].customer, "Hi, I'm interested in Kitchen cabinets.");
   assert.equal(customerMessage.examples[0].ai, "Hi! Thanks for reaching out about your renovation 😊");
+  assert.ok(customerMessage.examples.some((example) => /Klang Valley/i.test(example.customer)));
 
   const qualification = flow.mainNodes.find((node) => node.id === "qualify-naturally");
   assert.ok(qualification.examples.length >= 2);
-  assert.match(qualification.shortNote, /typical industry qualification/i);
-  assert.match(qualification.shortNote, /AI Behavior instructions/i);
+  assert.match(qualification.shortNote, /illustrative/i);
+  assert.match(qualification.shortNote, /saved AI Behavior instructions/i);
+  assert.match(qualification.shortNote, /add, remove or skip questions/i);
   assert.ok(flow.qualification.some((item) => item.label === "Budget if useful"));
+  assert.match(flow.flexibilityNote, /useful project details/i);
+  assert.doesNotMatch(flow.flexibilityNote, /budget/i);
+
+  const renovationExamples = JSON.stringify(flow.allNodes.flatMap((node) => node.examples || []));
+  assert.match(renovationExamples, /Klang Valley/i);
+  assert.doesNotMatch(renovationExamples, /Cheras/i);
 
   const conversion = flow.outcomes.find((node) => node.id === "conversion-next-step");
   assert.equal(conversion.title, "Site visit / quotation discussion");
@@ -101,7 +113,7 @@ test("renovation flow uses short client-friendly stages and realistic examples",
   );
 });
 
-test("clinic flow examples show branch and timing without making the flow rigid", async () => {
+test("clinic flow uses configured branch examples without making the flow rigid", async () => {
   const { buildConversationFlow } = await loadFlowBuilder();
   const flow = buildConversationFlow({
     businessType: "aesthetic_clinic",
@@ -112,6 +124,7 @@ test("clinic flow examples show branch and timing without making the flow rigid"
       servicePlural: "treatments",
     },
     services: [{ name: "HIFU" }],
+    branches: [{ name: "Mont Kiara", address: "", phone: "" }],
     conversion: {
       label: "free consultation",
       bookingReadyEnabled: true,
@@ -121,16 +134,21 @@ test("clinic flow examples show branch and timing without making the flow rigid"
 
   assert.ok(flow.qualification.some((item) => item.label === "Preferred branch"));
   assert.ok(flow.qualification.some((item) => item.label === "Preferred day / time"));
-  assert.match(flow.flexibilityNote, /treatment, branch and timing details/i);
+  assert.match(flow.flexibilityNote, /useful details needed to move forward/i);
 
   const answer = flow.mainNodes.find((node) => node.id === "answer-from-knowledge");
   assert.ok(answer.examples.some((example) => /treatment and pricing information we have/i.test(example.ai)));
 
   const qualification = flow.mainNodes.find((node) => node.id === "qualify-naturally");
   assert.ok(qualification.examples.some((example) => /Which branch/i.test(example.ai)));
+  assert.ok(qualification.examples.some((example) => /Mont Kiara/i.test(example.customer)));
   assert.ok(qualification.examples.some((example) => /What day or time/i.test(example.ai)));
 
   const conversion = flow.outcomes.find((node) => node.id === "conversion-next-step");
   assert.equal(conversion.title, "Free consultation");
   assert.ok(conversion.examples.some((example) => /check availability/i.test(example.ai)));
+  assert.ok(conversion.examples.some((example) => /Mont Kiara/i.test(example.customer)));
+
+  const clinicExamples = JSON.stringify(flow.allNodes.flatMap((node) => node.examples || []));
+  assert.doesNotMatch(clinicExamples, /PJ branch|Saturday afternoon/i);
 });
