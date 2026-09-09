@@ -172,6 +172,8 @@ export const api = {
     const query = params.toString();
     return request(`/pipeline/analytics${query ? `?${query}` : ""}`);
   },
+  getGoLiveGate: () => request("/go-live"),
+  runGoLiveGate: () => request("/go-live/run", { method: "POST" }),
   getSetupStatus: () => request("/setup-status"),
   runSetupChecks: () => request("/setup-status/run", { method: "POST" }),
   selectBusinessProfile: (businessType) =>
