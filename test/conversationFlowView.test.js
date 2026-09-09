@@ -13,7 +13,7 @@ async function loadFlowBuilder() {
   return import(pathToFileURL(file).href);
 }
 
-test("conversation flow uses one expandable journey without a separate detail panel", () => {
+test("conversation flow uses one compact expandable journey without a separate detail panel", () => {
   const app = read("portal-frontend/src/App.jsx");
   const sidebar = read("portal-frontend/src/components/Sidebar.jsx");
   const page = read("portal-frontend/src/pages/ConversationFlow.jsx");
@@ -23,10 +23,11 @@ test("conversation flow uses one expandable journey without a separate detail pa
   assert.match(app, /anyCapabilities=\{\["manage_settings"\]\}/);
   assert.match(sidebar, /to: "\/conversation-flow", label: "Conversation Flow"/);
   assert.match(page, /api\s*\.getConfig\(\)/);
-  assert.match(page, /See how your AI handles an enquiry/);
-  assert.match(page, /How your AI handles a chat/);
-  assert.match(page, /Tap a step to see how it works/);
+  assert.match(page, /See how your AI handles a customer message, one step at a time/);
+  assert.match(page, /Typical conversation/);
+  assert.match(page, /Select a step to preview an example/);
   assert.match(page, /useState\("answer-from-knowledge"\)/);
+  assert.match(page, /currentId === id \? null : id/);
   assert.match(page, /AI replies/);
   assert.match(page, /AI asks what's missing/);
   assert.match(page, /AI decides next step/);
@@ -34,18 +35,21 @@ test("conversation flow uses one expandable journey without a separate detail pa
   assert.match(page, /Ready to proceed/);
   assert.match(page, /Human handoff/);
   assert.match(page, /InlineDetail/);
-  assert.match(page, /Example chat/);
-  assert.match(page, /Show another example/);
+  assert.match(page, />Example</);
+  assert.match(page, /Another example/);
   assert.match(page, /ChatExample/);
   assert.match(page, /Customer/);
   assert.match(page, />AI</);
-  assert.match(page, /Why: /);
+  assert.match(page, /Why this step:/);
   assert.match(page, /Adapts to each conversation/);
   assert.match(page, /Examples illustrate typical behaviour/);
   assert.match(page, /Edit in \{settingsLabel/);
   assert.match(page, /aria-expanded=\{selected\}/);
   assert.match(page, /selected && \(/);
   assert.match(page, /selectedIsOutcome && \(/);
+  assert.match(page, /md:hidden/);
+  assert.match(page, /hidden w-full max-w-2xl md:block/);
+  assert.match(page, /max-w-\[88%\]/);
   assert.doesNotMatch(page, /<aside/);
   assert.doesNotMatch(page, /detailRef/);
   assert.doesNotMatch(page, /matchMedia/);
