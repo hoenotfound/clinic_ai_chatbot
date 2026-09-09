@@ -120,7 +120,7 @@ test("clinic flow examples show branch and timing without making the flow rigid"
   assert.match(flow.flexibilityNote, /treatment, branch and timing details/i);
 
   const answer = flow.mainNodes.find((node) => node.id === "answer-from-knowledge");
-  assert.ok(answer.examples.some((example) => /configured treatment and pricing information/i.test(example.ai)));
+  assert.ok(answer.examples.some((example) => /treatment and pricing information we have/i.test(example.ai)));
 
   const qualification = flow.mainNodes.find((node) => node.id === "qualify-naturally");
   assert.ok(qualification.examples.some((example) => /Which branch/i.test(example.ai)));
