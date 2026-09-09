@@ -10,6 +10,9 @@ const {
 const {
   createSeedIndustrySetup,
 } = require("../src/config/industrySetup");
+const {
+  evaluateClientSetup,
+} = require("../src/services/clientSetupService");
 
 function read(relativePath) {
   return fs.readFileSync(path.join(__dirname, "..", relativePath), "utf8");
@@ -33,6 +36,9 @@ function configuredBusiness(businessType = "home_renovation") {
   return {
     businessType,
     businessName: businessType === "aesthetic_clinic" ? "Clinic ABC" : "Acme Cabinets",
+    businessDescription: businessType === "aesthetic_clinic"
+      ? "Aesthetic clinic serving patients in Kuala Lumpur"
+      : "Custom cabinetry and home renovation around Klang Valley",
     aiAssistantName: "Ava",
     introMessage: "Hi, how can I help?",
     industrySetup: {
@@ -40,9 +46,18 @@ function configuredBusiness(businessType = "home_renovation") {
       locked: true,
       source: "environment",
     },
-    branches: businessType === "aesthetic_clinic" ? [{ name: "KL" }] : [],
-    hours: { general: "Mon-Sat 10am-7pm" },
-    services: [{ name: businessType === "aesthetic_clinic" ? "Pico Laser" : "Kitchen Cabinets" }],
+    branches: businessType === "aesthetic_clinic"
+      ? [{ name: "KL", address: "Kuala Lumpur", phone: "" }]
+      : [],
+    serviceAreas: businessType === "home_renovation" ? ["Klang Valley"] : [],
+    hours: { general: "Mon-Sat 10am-7pm", closed: "" },
+    contact: { whatsapp: "", instagram: "", facebook: "", tiktok: "" },
+    services: [{
+      name: businessType === "aesthetic_clinic" ? "Pico Laser" : "Kitchen Cabinets",
+      description: "",
+      priceRange: "",
+      duration: "",
+    }],
     serviceAliases: [],
     faqs: [],
     promotions: [],
@@ -52,10 +67,15 @@ function configuredBusiness(businessType = "home_renovation") {
     sop: "Follow the configured business process.",
     escalation: {
       handoffMessage: "A team member will assist you.",
+      handoffNote: "",
       outOfScopeTriggers: ["Complaint"],
     },
     guardrails: ["Do not invent prices."],
   };
+}
+
+function withSetupStatus(config) {
+  return { ...config, clientSetup: evaluateClientSetup(config) };
 }
 
 test("fresh explicit industry provisioning is locked before client Settings are edited", () => {
@@ -81,6 +101,7 @@ test("fresh onboarding profiles keep customer-specific setup fields visibly inco
     assert.equal(profile.businessType, businessType);
     assert.equal(profile.businessName, placeholderName);
     assert.deepEqual(profile.branches, []);
+    assert.deepEqual(profile.serviceAreas, []);
     assert.deepEqual(profile.services, []);
     assert.deepEqual(profile.serviceAliases, []);
     assert.deepEqual(profile.faqs, []);
@@ -89,41 +110,110 @@ test("fresh onboarding profiles keep customer-specific setup fields visibly inco
   }
 });
 
-test("completion rules are industry-aware and based on real saved configuration", () => {
-  const { getClientSetupCompletion } = loadWizardHelper();
+test("server-side setup evaluation is industry-aware and treats optional sections honestly", () => {
   const renovation = configuredBusiness("home_renovation");
-  const renovationCompletion = getClientSetupCompletion(renovation);
-  const renovationLocations = renovationCompletion.sections.find((section) => section.id === "locations");
+  const renovationStatus = evaluateClientSetup(renovation);
+  const renovationLocations = renovationStatus.sections.find((section) => section.id === "locations");
+  const renovationFaqs = renovationStatus.sections.find((section) => section.id === "knowledge");
+  const renovationPromotions = renovationStatus.sections.find((section) => section.id === "promotions");
 
   assert.equal(renovationLocations.required, false);
-  assert.equal(renovationLocations.complete, true);
-  assert.match(renovationLocations.label, /Service areas/);
-  assert.equal(renovationCompletion.requiredComplete, true);
+  assert.equal(renovationLocations.configured, true);
+  assert.equal(renovationLocations.state, "configured");
+  assert.match(renovationLocations.label, /service areas/i);
+  assert.equal(renovationFaqs.required, false);
+  assert.equal(renovationFaqs.complete, false);
+  assert.equal(renovationFaqs.state, "optional");
+  assert.equal(renovationPromotions.complete, false);
+  assert.equal(renovationStatus.requiredComplete, true);
+  assert.equal(renovationStatus.requiredCompletedCount, renovationStatus.requiredTotal);
 
   const clinic = configuredBusiness("aesthetic_clinic");
   clinic.branches = [];
-  const clinicCompletion = getClientSetupCompletion(clinic);
-  const clinicLocations = clinicCompletion.sections.find((section) => section.id === "locations");
+  const clinicStatus = evaluateClientSetup(clinic);
+  const clinicLocations = clinicStatus.sections.find((section) => section.id === "locations");
   assert.equal(clinicLocations.required, true);
   assert.equal(clinicLocations.complete, false);
-  assert.equal(clinicCompletion.requiredComplete, false);
+  assert.equal(clinicLocations.state, "needs_attention");
+  assert.equal(clinicStatus.requiredComplete, false);
 });
 
-test("auto-start only targets fresh setup and respects continue-later dismissal", () => {
+test("renovation service areas are separate from branches used for routing", () => {
+  const renovation = configuredBusiness("home_renovation");
+  renovation.branches = [];
+  renovation.serviceAreas = ["Klang Valley", "PJ / Subang"];
+
+  const status = evaluateClientSetup(renovation);
+  const locations = status.sections.find((section) => section.id === "locations");
+  assert.equal(locations.configured, true);
+  assert.deepEqual(renovation.branches, []);
+
+  const configRepo = read("src/db/configRepo.js");
+  const configRoute = read("src/routes/config.js");
+  const leadDistribution = read("src/routes/config.js");
+  const systemPrompt = read("src/utils/systemPrompt.js");
+
+  assert.match(configRepo, /"serviceAreas"/);
+  assert.match(configRoute, /serviceAreas: \(v\) => Array\.isArray\(v\)/);
+  assert.match(leadDistribution, /const configuredBranches = \(config\.branches \|\| \[\]\)/);
+  assert.doesNotMatch(leadDistribution, /configuredBranches = \(config\.serviceAreas/);
+  assert.match(systemPrompt, /Project service areas \/ coverage/);
+});
+
+test("setup evaluation exposes protected industry guardrails", () => {
+  const renovation = configuredBusiness("home_renovation");
+  const status = evaluateClientSetup(renovation);
+  assert.ok(Array.isArray(status.protectedGuardrails));
+  assert.ok(status.protectedGuardrails.length > 0);
+  assert.ok(status.protectedGuardrails.some((rule) => /measurements|quotation|invent/i.test(rule)));
+});
+
+test("frontend completion consumes the authoritative server result", () => {
+  const { getClientSetupCompletion } = loadWizardHelper();
+  const configured = withSetupStatus(configuredBusiness("home_renovation"));
+  const completion = getClientSetupCompletion(configured);
+
+  assert.equal(completion.requiredComplete, true);
+  assert.equal(completion.requiredCompletedCount, completion.requiredTotal);
+  assert.equal(completion.sections.length, 8);
+
+  const missingServerStatus = getClientSetupCompletion(configuredBusiness("home_renovation"));
+  assert.equal(missingServerStatus.requiredComplete, false);
+  assert.deepEqual(Array.from(missingServerStatus.sections), []);
+});
+
+test("auto-start targets fresh locked and selectable deployments but not established clients", () => {
   const { shouldAutoStartClientSetup } = loadWizardHelper();
-  const fresh = configuredBusiness("home_renovation");
-  fresh.businessName = "Your Renovation Business";
-  fresh.hours.general = "Business hours not configured yet";
-  fresh.services = [];
 
-  assert.equal(shouldAutoStartClientSetup(fresh, null), true);
-  assert.equal(shouldAutoStartClientSetup(fresh, { started: true, dismissed: true }), false);
-  assert.equal(shouldAutoStartClientSetup(fresh, { started: true, completed: true }), false);
+  const freshLocked = configuredBusiness("home_renovation");
+  freshLocked.businessName = "Your Renovation Business";
+  freshLocked.hours.general = "Business hours not configured yet";
+  freshLocked.services = [];
+  const freshLockedDecorated = withSetupStatus(freshLocked);
 
-  const existing = configuredBusiness("home_renovation");
+  assert.equal(shouldAutoStartClientSetup(freshLockedDecorated, null), true);
+  assert.equal(shouldAutoStartClientSetup(freshLockedDecorated, { started: true, dismissed: true }), false);
+  assert.equal(shouldAutoStartClientSetup(freshLockedDecorated, { started: true, completed: true }), false);
+
+  const selectableProfile = {
+    ...freshLocked,
+    businessType: "aesthetic_clinic",
+    businessName: "Your Clinic",
+    industrySetup: {
+      selectable: true,
+      locked: false,
+      source: "default",
+    },
+  };
+  assert.equal(shouldAutoStartClientSetup(withSetupStatus(selectableProfile), null), true);
+
+  const existing = withSetupStatus(configuredBusiness("home_renovation"));
   assert.equal(shouldAutoStartClientSetup(existing, null), false);
 
-  const legacyPlaceholder = { ...fresh, industrySetup: { ...fresh.industrySetup, source: "legacy" } };
+  const legacyPlaceholder = withSetupStatus({
+    ...freshLocked,
+    industrySetup: { ...freshLocked.industrySetup, source: "legacy" },
+  });
   assert.equal(shouldAutoStartClientSetup(legacyPlaceholder, null), false);
 });
 
@@ -153,51 +243,74 @@ test("resume metadata survives normal storage and fails open when browser storag
   assert.equal(readClientSetupProgress("admin", "generic", blockedStorage), null);
 });
 
-test("client setup is admin-only and successful login passes through first-run routing", () => {
+test("client setup is admin-only, discoverable, and login passes through first-run routing", () => {
   const app = read("portal-frontend/src/App.jsx");
   const login = read("portal-frontend/src/pages/Login.jsx");
   const settingsLayout = read("portal-frontend/src/components/SettingsSectionLayout.jsx");
+  const settings = read("portal-frontend/src/pages/Settings.jsx");
 
   assert.match(app, /path="\/settings\/client-setup"/);
   assert.match(app, /<ProtectedRoute adminOnly>/);
   assert.match(app, /shouldAutoStartClientSetup/);
   assert.match(app, /setupDecision\.key !== adminDecisionKey/);
-  assert.match(app, /readClientSetupProgress/);
   assert.match(login, /<Navigate to="\/" replace \/>/);
   assert.match(settingsLayout, /Client Setup/);
-  assert.match(settingsLayout, /\/settings\/client-setup/);
-  assert.match(settingsLayout, /user\?\.role === "admin"/);
+  assert.match(settings, /label: "Client Setup", to: "\/settings\/client-setup"/);
 });
 
-test("wizard reuses live Settings config and existing Setup Status without customer messaging", () => {
+test("wizard protects unsaved edits and reuses existing business-profile selector", () => {
   const wizard = read("portal-frontend/src/pages/ClientSetupWizard.jsx");
-  const helper = read("portal-frontend/src/utils/clientSetupWizard.js");
 
-  assert.match(wizard, /api\.getConfig\(\)/);
-  assert.match(wizard, /api\.updateConfig\(payload\)/);
+  assert.match(wizard, /hasUnsavedChanges\(screen, draft, config\)/);
+  assert.match(wizard, /window\.confirm\("You have unsaved changes/);
+  assert.match(wizard, /setDraft\(cloneConfig\(config\)\)/);
+  assert.match(wizard, /api\.selectBusinessProfile\(profileChoice\)/);
+  assert.match(wizard, /Confirm business profile/);
+  assert.match(wizard, /businessDescription/);
+});
+
+test("wizard and Settings use separate service areas, stronger field validation, and promo upload", () => {
+  const wizard = read("portal-frontend/src/pages/ClientSetupWizard.jsx");
+  const settings = read("portal-frontend/src/pages/Settings.jsx");
+
+  for (const source of [wizard, settings]) {
+    assert.match(source, /serviceAreas/);
+    assert.match(source, /Every FAQ needs both a question and an answer/);
+    assert.match(source, /must map to a service/);
+    assert.match(source, /cannot be before its start date/);
+    assert.match(source, /api\.uploadPromoImage\(file\)/);
+  }
+  assert.match(wizard, /type=\{field\.type \|\| "text"\}/);
+  assert.match(settings, /type=\{f\.type \|\| "text"\}/);
+});
+
+test("wizard separates normal health from strict live messaging proof and never messages customers", () => {
+  const wizard = read("portal-frontend/src/pages/ClientSetupWizard.jsx");
+
+  assert.match(wizard, /Live messaging proof/);
+  assert.match(wizard, /roundTripCorrelated/);
+  assert.match(wizard, /lastVerifiedAutomatedReplyAt/);
+  assert.match(wizard, /purchased messaging channels/);
+  assert.match(wizard, /does not send a test message to a real customer/);
   assert.match(wizard, /api\.getSetupStatus\(\)/);
   assert.match(wizard, /api\.runSetupChecks\(\)/);
-  assert.match(wizard, /Saved changes appear in Settings immediately/);
-  assert.match(wizard, /measurements, budget, timeline/);
   assert.doesNotMatch(wizard, /api\.(?:sendMessage|sendImage|sendVoice|takeOver|returnToAi)\(/);
-
-  assert.match(helper, /getClientSetupCompletion/);
-  assert.match(helper, /requiredComplete/);
-  assert.match(helper, /localStorage/);
-  assert.match(helper, /dismissed/);
-  assert.match(helper, /completed/);
-  assert.match(helper, /required: false/);
-  assert.doesNotMatch(helper, /fetch\(|\/api\/|api\./);
 });
 
-test("wizard completion is derived from saved configuration rather than click-through state", () => {
+test("AI behaviour is progressive-disclosure and built-in guardrails are protected", () => {
   const wizard = read("portal-frontend/src/pages/ClientSetupWizard.jsx");
-  const helper = read("portal-frontend/src/utils/clientSetupWizard.js");
+  const settings = read("portal-frontend/src/pages/Settings.jsx");
 
-  assert.match(wizard, /getClientSetupCompletion\(config \|\| \{\}\)/);
-  assert.match(wizard, /setConfig\(updated\)/);
-  assert.match(helper, /sections\.filter\(\(section\) => section\.complete\)/);
-  assert.match(helper, /sections\.filter\(\(section\) => section\.required && !section\.complete\)/);
-  assert.match(helper, /isPlaceholderBusinessName/);
-  assert.match(helper, /not configured yet/i);
+  assert.match(wizard, /Advanced AI instructions/);
+  assert.match(wizard, /Built-in safety rules/);
+  assert.match(settings, /Built-in industry safety rules/);
+  assert.match(settings, /config\.clientSetup\?\.protectedGuardrails/);
+});
+
+test("config API decorates reads and writes with server-derived setup status", () => {
+  const configRoute = read("src/routes/config.js");
+  assert.match(configRoute, /evaluateClientSetup/);
+  assert.match(configRoute, /clientSetup: evaluateClientSetup\(config\)/);
+  assert.match(configRoute, /res\.json\(decorateConfig\(configRepo\.getConfig\(\)\)\)/);
+  assert.match(configRoute, /res\.json\(decorateConfig\(updated\)\)/);
 });
