@@ -207,7 +207,7 @@ export default function ClientSetupWizard() {
         setConfig(loaded);
         setDraft(cloneConfig(loaded));
         setProfileChoice(loaded.businessType || "aesthetic_clinic");
-        setProtectedGuardrails(cleanStrings(loaded.guardrails));
+        setProtectedGuardrails(cleanStrings(loaded.clientSetup?.protectedGuardrails || []));
         setScreen(progress?.started && !progress?.completed ? resumeAt : "welcome");
         writeClientSetupProgress(username, loaded.businessType, {
           started: true,
@@ -295,7 +295,7 @@ export default function ClientSetupWizard() {
       setConfig(loaded);
       setDraft(cloneConfig(loaded));
       setProfileChoice(loaded.businessType);
-      setProtectedGuardrails(cleanStrings(loaded.guardrails));
+      setProtectedGuardrails(cleanStrings(loaded.clientSetup?.protectedGuardrails || []));
       writeClientSetupProgress(username, loaded.businessType, {
         started: true,
         dismissed: false,
