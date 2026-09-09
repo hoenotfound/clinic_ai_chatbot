@@ -16,6 +16,7 @@ import Pipeline from "./pages/Pipeline";
 import Analytics from "./pages/Analytics";
 import ConversationFlow from "./pages/ConversationFlow";
 import SetupStatus from "./pages/SetupStatus";
+import GoLive from "./pages/GoLive";
 import ClientSetupWizard from "./pages/ClientSetupWizard";
 import {
   readClientSetupProgress,
@@ -148,6 +149,14 @@ export default function App() {
               element={(
                 <ProtectedRoute anyCapabilities={["manage_users"]}>
                   <SettingsSectionLayout><TeamAccess /></SettingsSectionLayout>
+                </ProtectedRoute>
+              )}
+            />
+            <Route
+              path="/settings/go-live"
+              element={(
+                <ProtectedRoute adminOnly>
+                  <SettingsSectionLayout><GoLive /></SettingsSectionLayout>
                 </ProtectedRoute>
               )}
             />
