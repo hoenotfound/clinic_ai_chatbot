@@ -92,13 +92,13 @@ export default function ConversationFlow() {
             </span>
             <span className="inline-flex min-h-7 items-center gap-1.5 rounded-full bg-[var(--color-primary-light)] px-2.5 text-[11px] font-semibold text-[var(--color-primary)]">
               <span aria-hidden="true">●</span>
-              Synced with current settings
+              Based on current settings
             </span>
           </div>
           <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">Conversation Flow</h1>
           <div className="mt-2 flex flex-col gap-2.5 lg:flex-row lg:items-end lg:justify-between">
             <p className="max-w-3xl text-sm leading-6 text-[var(--color-text-muted)]">
-              A simple view of how your AI handles a typical enquiry, from the first message to a sales next step or human handoff.
+              A simple view of how your AI handles a typical enquiry. Current knowledge, conversion and handoff settings are shown directly, while qualification areas are an industry guide.
             </p>
             <div className="flex shrink-0 flex-wrap gap-2">
               <SetupPill label="Business knowledge">{flow.knowledgeSummary}</SetupPill>
@@ -120,7 +120,7 @@ export default function ConversationFlow() {
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Typical AI journey</p>
                   <p className="mt-0.5 text-xs leading-5 text-[var(--color-text-muted)]">
-                    Click any stage to see the rules and information behind it.
+                    Click any stage to see what comes from current settings and what is typical industry guidance.
                   </p>
                 </div>
                 <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
@@ -163,7 +163,7 @@ export default function ConversationFlow() {
               </div>
 
               <div className="mt-3 flex flex-col gap-2 border-t border-[var(--color-border)] pt-3 text-[11px] leading-5 text-[var(--color-text-muted)] sm:flex-row sm:items-center sm:justify-between">
-                <span>Generated from the current business configuration.</span>
+                <span>Built from current business configuration plus clearly labelled industry guidance.</span>
                 <div className="flex flex-wrap gap-x-4 gap-y-1">
                   <Link to="/settings?tab=services" className="font-semibold text-[var(--color-primary)] hover:underline">{ui.servicesLabel}</Link>
                   <Link to="/settings?tab=aiBehavior" className="font-semibold text-[var(--color-primary)] hover:underline">AI behaviour</Link>
@@ -190,6 +190,13 @@ export default function ConversationFlow() {
               {selectedNode.meta && (
                 <div className="mt-4 rounded-xl bg-[var(--color-bg)] px-3.5 py-3 text-xs font-semibold text-[var(--color-text-muted)]">
                   {selectedNode.meta}
+                </div>
+              )}
+
+              {selectedNode.sourceNote && (
+                <div className="mt-3 rounded-xl border border-[var(--color-accent)]/35 bg-[var(--color-accent-light)] px-3.5 py-3 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  <p className="font-bold text-[var(--color-text)]">How this stage is sourced</p>
+                  <p className="mt-1">{selectedNode.sourceNote}</p>
                 </div>
               )}
 
