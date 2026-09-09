@@ -14,6 +14,7 @@ import TeamAccess from "./pages/TeamAccess";
 import ToolsRoute from "./pages/ToolsRoute";
 import Pipeline from "./pages/Pipeline";
 import Analytics from "./pages/Analytics";
+import ConversationFlow from "./pages/ConversationFlow";
 import SetupStatus from "./pages/SetupStatus";
 import ClientSetupWizard from "./pages/ClientSetupWizard";
 import {
@@ -132,6 +133,7 @@ export default function App() {
             <Route path="/analytics" element={<ProtectedRoute anyCapabilities={["view_analytics"]}><Analytics /></ProtectedRoute>} />
             <Route path="/tools" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><ToolsRoute /></ProtectedRoute>} />
             <Route path="/tools/lead-distribution" element={<ProtectedRoute anyCapabilities={["manage_tools"]}><Navigate to="/tools?tool=lead-distribution" replace /></ProtectedRoute>} />
+            <Route path="/conversation-flow" element={<ProtectedRoute anyCapabilities={["manage_settings"]}><ConversationFlow /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute anyCapabilities={["manage_settings"]}><Settings /></ProtectedRoute>} />
             <Route
               path="/settings/client-setup"
