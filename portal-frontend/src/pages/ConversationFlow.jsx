@@ -38,10 +38,10 @@ export default function ConversationFlow() {
   const [exampleIndex, setExampleIndex] = useState(0);
   const flow = useMemo(() => buildConversationFlow(config || {}), [config]);
   const ui = useMemo(() => getBusinessTerminology(config || {}), [config]);
-  const selectedNode = flow.allNodes.find((node) => node.id === selectedId) || flow.mainNodes[0];
-  const examples = selectedNode.examples || [];
+  const selectedNode = flow.allNodes.find((node) => node.id === selectedId) || null;
+  const examples = selectedNode?.examples || [];
   const selectedExample = examples.length > 0 ? examples[exampleIndex % examples.length] : null;
-  const selectedIsOutcome = flow.outcomes.some((node) => node.id === selectedNode.id);
+  const selectedIsOutcome = selectedNode ? flow.outcomes.some((node) => node.id === selectedNode.id) : false;
   const knowledgeLine = [
     `${flow.knowledgeCounts.services} ${flow.knowledgeCounts.services === 1 ? ui.serviceSingular : ui.servicePlural}`,
     `${flow.knowledgeCounts.faqs} ${flow.knowledgeCounts.faqs === 1 ? "FAQ" : "FAQs"}`,
@@ -66,7 +66,7 @@ export default function ConversationFlow() {
   }, [reloadToken]);
 
   function selectNode(id) {
-    setSelectedId(id);
+    setSelectedId((currentId) => (currentId === id ? null : id));
     setExampleIndex(0);
   }
 
@@ -103,7 +103,7 @@ export default function ConversationFlow() {
 
   return (
     <main className="h-full overflow-y-auto bg-[var(--color-bg)]">
-      <div className="mx-auto w-full max-w-[1080px] px-3.5 py-5 sm:px-5 sm:py-6 lg:px-8 lg:py-7">
+      <div className="mx-auto w-full max-w-[980px] px-3.5 py-5 sm:px-5 sm:py-6 lg:px-8 lg:py-7">
         <header className="mb-5">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <span className="inline-flex min-h-7 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-[11px] font-semibold text-[var(--color-text-muted)]">
@@ -116,7 +116,7 @@ export default function ConversationFlow() {
           </div>
           <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">Conversation Flow</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--color-text-muted)]">
-            See how your AI handles an enquiry from first message to next step.
+            See how your AI handles a customer message, one step at a time.
           </p>
           <p className="mt-2 text-xs font-medium text-[var(--color-text-muted)]">{knowledgeLine}</p>
         </header>
@@ -124,8 +124,8 @@ export default function ConversationFlow() {
         <section className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-sm sm:p-4 lg:p-5">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">How your AI handles a chat</p>
-              <p className="mt-0.5 text-xs leading-5 text-[var(--color-text-muted)]">Tap a step to see how it works.</p>
+              <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Typical conversation</p>
+              <p className="mt-0.5 text-xs leading-5 text-[var(--color-text-muted)]">Select a step to preview an example.</p>
             </div>
             <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
               <span aria-hidden="true">↻</span>
@@ -135,7 +135,7 @@ export default function ConversationFlow() {
 
           <div className="mx-auto w-full max-w-2xl">
             {flow.mainNodes.map((node, index) => {
-              const selected = selectedNode.id === node.id;
+              const selected = selectedNode?.id === node.id;
               return (
                 <div key={node.id}>
                   <FlowNode
@@ -168,18 +168,34 @@ export default function ConversationFlow() {
           <BranchRail />
 
           <div className="grid gap-3 md:grid-cols-3">
-            {flow.outcomes.map((node) => (
-              <OutcomeNode
-                key={node.id}
-                node={node}
-                selected={selectedNode.id === node.id}
-                onSelect={() => selectNode(node.id)}
-              />
-            ))}
+            {flow.outcomes.map((node) => {
+              const selected = selectedNode?.id === node.id;
+              return (
+                <div key={node.id}>
+                  <OutcomeNode
+                    node={node}
+                    selected={selected}
+                    onSelect={() => selectNode(node.id)}
+                  />
+                  {selected && (
+                    <div className="mt-2 md:hidden">
+                      <InlineDetail
+                        node={node}
+                        example={selectedExample}
+                        examples={examples}
+                        onNextExample={() => setExampleIndex((value) => (value + 1) % examples.length)}
+                        ui={ui}
+                        standalone
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {selectedIsOutcome && (
-            <div className="mx-auto mt-3 w-full max-w-2xl">
+            <div className="mx-auto mt-3 hidden w-full max-w-2xl md:block">
               <InlineDetail
                 node={selectedNode}
                 example={selectedExample}
@@ -206,14 +222,14 @@ function InlineDetail({ node, example, examples, onNextExample, ui, standalone =
       className={`${standalone ? "rounded-2xl border" : "-mt-px rounded-b-2xl border border-t-0"} border-[var(--color-primary)]/35 bg-[var(--color-bg)] px-4 pb-4 pt-3 sm:px-5`}
     >
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Example chat</p>
+        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Example</p>
         {examples.length > 1 && (
           <button
             type="button"
             onClick={onNextExample}
             className="text-[11px] font-semibold text-[var(--color-primary)] hover:underline"
           >
-            Show another example
+            Another example
           </button>
         )}
       </div>
@@ -226,20 +242,24 @@ function InlineDetail({ node, example, examples, onNextExample, ui, standalone =
         )}
       </div>
 
-      {node.shortNote && (
-        <p className="mt-3 text-xs leading-5 text-[var(--color-text-muted)]">
-          <span className="font-semibold text-[var(--color-text)]">Why: </span>
-          {node.shortNote}
-        </p>
-      )}
+      {(node.shortNote || node.settingsTab) && (
+        <div className="mt-3 flex flex-col gap-2 border-t border-[var(--color-border)] pt-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          {node.shortNote ? (
+            <p className="max-w-xl text-xs leading-5 text-[var(--color-text-muted)]">
+              <span className="font-semibold text-[var(--color-text)]">Why this step: </span>
+              {node.shortNote}
+            </p>
+          ) : <span />}
 
-      {node.settingsTab && (
-        <Link
-          to={settingsDestination(node.settingsTab)}
-          className="mt-3 inline-flex text-xs font-semibold text-[var(--color-primary)] hover:underline"
-        >
-          Edit in {settingsLabel(node.settingsTab, ui)} →
-        </Link>
+          {node.settingsTab && (
+            <Link
+              to={settingsDestination(node.settingsTab)}
+              className="shrink-0 text-xs font-semibold text-[var(--color-primary)] hover:underline"
+            >
+              Edit in {settingsLabel(node.settingsTab, ui)} →
+            </Link>
+          )}
+        </div>
       )}
     </div>
   );
@@ -250,13 +270,13 @@ function ChatExample({ example }) {
     <div className="space-y-3">
       <div>
         <p className="mb-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Customer</p>
-        <div className="mr-8 rounded-2xl rounded-tl-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 text-xs leading-5 text-[var(--color-text)]">
+        <div className="w-fit max-w-[88%] break-words rounded-2xl rounded-tl-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 text-[13px] leading-5 text-[var(--color-text)]">
           {example.customer}
         </div>
       </div>
       <div className="flex flex-col items-end">
         <p className="mb-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-primary)]">AI</p>
-        <div className="ml-8 rounded-2xl rounded-tr-md bg-[var(--color-primary-light)] px-3.5 py-2.5 text-xs leading-5 text-[var(--color-text)]">
+        <div className="w-fit max-w-[88%] break-words rounded-2xl rounded-tr-md bg-[var(--color-primary-light)] px-3.5 py-2.5 text-[13px] leading-5 text-[var(--color-text)]">
           {example.ai}
         </div>
       </div>
@@ -273,20 +293,21 @@ function FlowNode({ node, step, selected, onSelect }) {
       aria-pressed={selected}
       aria-expanded={selected}
       aria-label={`Step ${step}: ${title}`}
-      className={`group flex min-h-[54px] w-full items-center gap-3 border px-3 py-2 text-left transition-all sm:px-3.5 ${
+      className={`group flex min-h-[50px] w-full items-center gap-3 border px-3 py-2 text-left transition-all sm:px-3.5 ${
         selected
           ? "rounded-t-2xl border-[var(--color-primary)] bg-[var(--color-primary-light)]"
-          : "rounded-2xl border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-primary)]/40"
+          : "rounded-2xl border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-primary)]/40 hover:bg-[var(--color-surface)]"
       }`}
     >
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-surface)] text-[var(--color-primary)]">
-        <NodeIcon kind={node.kind} className="h-[18px] w-[18px]" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[var(--color-primary)]">Step {step}</p>
-        <h3 className="mt-0.5 text-sm font-bold leading-5">{title}</h3>
-      </div>
-      <span className="text-sm text-[var(--color-text-muted)]" aria-hidden="true">{selected ? "⌄" : "›"}</span>
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+        selected
+          ? "bg-[var(--color-primary)] text-white"
+          : "border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-primary)]"
+      }`}>
+        {step}
+      </span>
+      <h3 className="min-w-0 flex-1 text-sm font-bold leading-5">{title}</h3>
+      <span className="text-sm text-[var(--color-text-muted)]" aria-hidden="true">{selected ? "⌃" : "›"}</span>
     </button>
   );
 }
@@ -342,17 +363,17 @@ function OutcomeNode({ node, selected, onSelect }) {
       aria-pressed={selected}
       aria-expanded={selected}
       aria-label={title}
-      className={`flex min-h-16 items-center gap-2.5 rounded-2xl border p-3 text-left transition-all ${
+      className={`flex min-h-[60px] w-full items-center gap-2.5 rounded-2xl border p-3 text-left transition-all ${
         selected
           ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]"
-          : `${styles.card} bg-[var(--color-bg)] hover:border-[var(--color-primary)]/40`
+          : `${styles.card} bg-[var(--color-bg)] hover:border-[var(--color-primary)]/40 hover:bg-[var(--color-surface)]`
       }`}
     >
       <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${styles.icon}`}>
         <NodeIcon kind={node.kind} className="h-4 w-4" />
       </div>
       <h3 className="min-w-0 flex-1 text-sm font-bold leading-5">{title}</h3>
-      <span className="text-sm text-[var(--color-text-muted)]" aria-hidden="true">{selected ? "⌄" : "›"}</span>
+      <span className="text-sm text-[var(--color-text-muted)]" aria-hidden="true">{selected ? "⌃" : "›"}</span>
     </button>
   );
 }
