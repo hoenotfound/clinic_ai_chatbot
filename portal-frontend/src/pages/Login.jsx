@@ -20,7 +20,7 @@ export default function Login() {
     }
   }, []);
 
-  if (username) return <Navigate to="/inbox" replace />;
+  if (username) return <Navigate to="/" replace />;
 
   async function handleSubmit(e) {
     e.preventDefault();
