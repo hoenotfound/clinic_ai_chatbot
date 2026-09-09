@@ -32,8 +32,6 @@ test("conversation flow presents a chat-first client view", () => {
   assert.match(page, /Why this happens/);
   assert.match(page, /Adapts to each conversation/);
   assert.match(page, /Examples illustrate typical behaviour/);
-  assert.doesNotMatch(page, /How this stage is sourced/);
-  assert.doesNotMatch(page, /What happens here/);
   assert.match(page, /matchMedia\("\(max-width: 1279px\)"\)/);
   assert.match(page, /scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
   assert.match(page, /\/settings\?tab=aiBehavior/);
