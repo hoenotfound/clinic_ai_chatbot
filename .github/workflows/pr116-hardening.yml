@@ -1,0 +1,66 @@
+name: PR116 Hardening
+
+on:
+  push:
+    branches:
+      - feature/unified-go-live-gate
+    paths:
+      - .github/workflows/pr116-hardening.yml
+
+permissions:
+  contents: write
+
+jobs:
+  harden-and-validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: chatbot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/chatbot_test
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feature/unified-go-live-gate
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Apply hardening patch
+        run: python3 scripts/pr116Hardening.py
+      - name: Backend install
+        run: npm ci
+      - name: Backend tests
+        run: npm test
+      - name: Portal install
+        working-directory: portal-frontend
+        run: npm ci
+      - name: Portal lint
+        working-directory: portal-frontend
+        run: npm run lint
+      - name: Portal build
+        working-directory: portal-frontend
+        run: npm run build
+      - name: Commit verified hardening and remove temporary files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm scripts/pr116Hardening.py .github/workflows/pr116-hardening.yml
+          git add -A
+          git diff --cached --check
+          git commit -m "Harden unified go-live gate"
+          git push origin HEAD:feature/unified-go-live-gate
