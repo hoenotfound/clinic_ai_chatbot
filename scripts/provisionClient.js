@@ -323,6 +323,7 @@ function printHuman(result) {
     console.log(`Health check:   ${plan.render.healthCheckPath}`);
     console.log(`Runtime keys:   ${plan.render.runtimeEnvKeys.length ? plan.render.runtimeEnvKeys.join(", ") : "none"}`);
     console.log(`Profile env:    ${plan.profileContract.envKey}=${plan.profileContract.value}`);
+    console.log(`Channel env:    ${plan.channelContract.envKey}=${plan.channelContract.value}`);
     console.log("\nRun the same command with --execute only after reviewing this plan.");
     return;
   }
@@ -339,6 +340,7 @@ function printHuman(result) {
   }
   if (result.render.deployedCommitSha) console.log(`Commit:         ${result.render.deployedCommitSha}`);
   console.log(`Profile lock:   ${result.profileContract.envKey}=${result.profileContract.value}`);
+  console.log(`Channel contract: ${result.channelContract.envKey}=${result.channelContract.value}`);
   if (result.runtimeFinalization?.adminPasswordRemoved) {
     console.log("Bootstrap secret: ADMIN_PASSWORD removed from Render after verified admin login");
   }
@@ -393,6 +395,7 @@ async function main() {
   const input = {
     clientSlug: args.clientSlug,
     industry: args.industry,
+    requiredChannels: args.channels,
     runtimeEnv,
     renderPlan: args.renderPlan,
     renderRegion: args.renderRegion,
