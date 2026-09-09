@@ -155,6 +155,12 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
     `No ${terms.locationPlural} configured. Do not invent a location.`
   );
 
+  const serviceAreasList = listOrNone(
+    config.serviceAreas,
+    (area) => `- ${area}`,
+    "No project service areas configured. Do not claim an area is covered unless staff confirms it."
+  );
+
   const handoffTriggers = listOrNone(
     config.escalation?.outOfScopeTriggers,
     (trigger) => `- ${trigger}`,
@@ -164,6 +170,9 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
   const contact = config.contact || {};
   const hours = config.hours || {};
   const introMessage = String(config.introMessage || "").trim();
+  const serviceAreasSection = config.businessType === "home_renovation"
+    ? `- Project service areas / coverage:\n${serviceAreasList}\n`
+    : "";
 
   return `You are ${config.aiAssistantName}, the chat assistant for ${context.businessName}. Business profile: ${context.businessDescription}. You are currently replying on ${channelLabel(channel)}.
 
@@ -183,7 +192,7 @@ BUSINESS INFO:
 - Business type: ${config.businessType || "generic"}
 - ${terms.locationPlural}:
 ${locationsList}
-- Hours: ${hours.general || "Not configured"}${hours.closed ? `. ${hours.closed}.` : ""}
+${serviceAreasSection}- Hours: ${hours.general || "Not configured"}${hours.closed ? `. ${hours.closed}.` : ""}
 - Main WhatsApp: ${contact.whatsapp || "Not configured"}
 - Instagram: ${contact.instagram || "Not configured"}
 ${contact.facebook ? `- Facebook: ${contact.facebook}\n` : ""}${contact.tiktok ? `- TikTok: ${contact.tiktok}\n` : ""}
