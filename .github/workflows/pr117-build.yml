@@ -1,0 +1,113 @@
+name: PR117 Build
+
+on:
+  push:
+    branches:
+      - feature/multi-client-ops-registry
+    paths:
+      - .github/workflows/pr117-build.yml
+
+permissions:
+  contents: write
+
+jobs:
+  wire-and-validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: chatbot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/chatbot_test
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feature/multi-client-ops-registry
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Wire client endpoint and provisioning identity
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              p.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              "src/server.js",
+              'const goLiveRoutes = require("./routes/goLive");\n',
+              'const goLiveRoutes = require("./routes/goLive");\nconst opsReadinessRoutes = require("./routes/opsReadiness");\n'
+          )
+          replace_once(
+              "src/server.js",
+              '// ── Management portal API ──\napp.use("/api/auth", authRoutes);',
+              '// ── Read-only machine endpoint for the separate Ops Registry. ──\n// This intentionally bypasses portal sessions and has its own bearer-token guard.\napp.use("/api/ops/readiness", opsReadinessRoutes);\n\n// ── Management portal API ──\napp.use("/api/auth", authRoutes);'
+          )
+
+          replace_once(
+              "src/provisioning/clientProvisioner.js",
+              'const RESERVED_RUNTIME_ENV_KEYS = new Set([\n  "DATABASE_URL",',
+              'const RESERVED_RUNTIME_ENV_KEYS = new Set([\n  "CLIENT_SLUG",\n  "DATABASE_URL",'
+          )
+          replace_once(
+              "src/provisioning/clientProvisioner.js",
+              '  return [\n    { key: "INITIAL_BUSINESS_TYPE", value: plan.industry },',
+              '  return [\n    { key: "CLIENT_SLUG", value: plan.clientSlug },\n    { key: "INITIAL_BUSINESS_TYPE", value: plan.industry },'
+          )
+
+          replace_once(
+              "test/clientProvisioner.test.js",
+              '  for (const key of [\n    "INITIAL_BUSINESS_TYPE",',
+              '  for (const key of [\n    "CLIENT_SLUG",\n    "INITIAL_BUSINESS_TYPE",'
+          )
+          replace_once(
+              "test/clientProvisioner.test.js",
+              '  assert.deepEqual(envVars.slice(0, 4), [\n    { key: "INITIAL_BUSINESS_TYPE", value: "aesthetic_clinic" },\n    { key: "PURCHASED_CHANNELS", value: "" },\n    { key: "DATABASE_URL", value: "postgresql://pooled" },\n    { key: "SESSION_SECRET", generateValue: true },\n  ]);\n  assert.deepEqual(envVars[4], { key: "AI_PROVIDER", value: "gemini" });',
+              '  assert.deepEqual(envVars.slice(0, 5), [\n    { key: "CLIENT_SLUG", value: "client-one" },\n    { key: "INITIAL_BUSINESS_TYPE", value: "aesthetic_clinic" },\n    { key: "PURCHASED_CHANNELS", value: "" },\n    { key: "DATABASE_URL", value: "postgresql://pooled" },\n    { key: "SESSION_SECRET", generateValue: true },\n  ]);\n  assert.deepEqual(envVars[5], { key: "AI_PROVIDER", value: "gemini" });'
+          )
+          replace_once(
+              "test/clientProvisioner.test.js",
+              '  assert.deepEqual(byKey.get("INITIAL_BUSINESS_TYPE"), {\n    key: "INITIAL_BUSINESS_TYPE",\n    value: "home_renovation",\n  });',
+              '  assert.deepEqual(byKey.get("CLIENT_SLUG"), { key: "CLIENT_SLUG", value: "reno-alpha" });\n  assert.deepEqual(byKey.get("INITIAL_BUSINESS_TYPE"), {\n    key: "INITIAL_BUSINESS_TYPE",\n    value: "home_renovation",\n  });'
+          )
+          PY
+      - name: Backend install
+        run: npm ci
+      - name: Backend tests
+        run: npm test
+      - name: Portal install
+        working-directory: portal-frontend
+        run: npm ci
+      - name: Portal lint
+        working-directory: portal-frontend
+        run: npm run lint
+      - name: Portal build
+        working-directory: portal-frontend
+        run: npm run build
+      - name: Commit verified PR117 wiring and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/workflows/pr117-build.yml
+          git add -A
+          git diff --cached --check
+          git commit -m "Wire multi-client ops registry"
+          git push origin HEAD:feature/multi-client-ops-registry
