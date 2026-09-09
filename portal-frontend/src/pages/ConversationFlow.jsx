@@ -67,7 +67,6 @@ export default function ConversationFlow() {
 
   function selectNode(id) {
     setSelectedId((currentId) => (currentId === id ? null : id));
-    setExampleIndex(0);
   }
 
   if (loadError && !config) {
