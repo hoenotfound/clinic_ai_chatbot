@@ -64,6 +64,9 @@ const FLEXIBILITY_NOTE_BY_INDUSTRY = {
     "If a customer already provides the details needed for the next step, the AI can skip those questions instead of asking again.",
 };
 
+const QUALIFICATION_SOURCE_NOTE =
+  "These are typical qualification areas for this industry. Your actual chatbot follows the current AI Behavior instructions, which are authoritative and may add, remove or skip these questions.";
+
 function list(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -148,10 +151,11 @@ export function buildConversationFlow(config = {}) {
     {
       id: "qualify-naturally",
       kind: "Qualification",
-      title: "Qualify naturally",
-      summary: `Only missing details are collected when they help move the ${customerSingular} forward.`,
+      title: "Typical qualification areas",
+      summary: `Common ${businessType === "home_renovation" ? "project " : ""}details for this industry are shown as a guide. The actual AI follows your current AI Behavior instructions and only asks what is useful.`,
       details: qualification.map((item) => `${item.label}: ${item.detail}`),
-      meta: `${qualification.length} possible ${businessType === "home_renovation" ? "project " : ""}details`,
+      meta: `Typical industry guide · ${qualification.length} ${businessType === "home_renovation" ? "project " : ""}areas`,
+      sourceNote: QUALIFICATION_SOURCE_NOTE,
       settingsTab: "aiBehavior",
     },
     {
@@ -229,6 +233,7 @@ export function buildConversationFlow(config = {}) {
     },
     handoffCount: handoffTriggers.length,
     flexibilityNote: FLEXIBILITY_NOTE_BY_INDUSTRY[businessType] || FLEXIBILITY_NOTE_BY_INDUSTRY.generic,
+    qualificationSourceNote: QUALIFICATION_SOURCE_NOTE,
     mainNodes,
     outcomes,
     allNodes: [...mainNodes, ...outcomes],
