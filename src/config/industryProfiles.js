@@ -115,8 +115,6 @@ function buildGenericProfile() {
   return {
     businessType: "generic",
     businessName: "Your Business",
-    // Temporary compatibility alias. Older modules still read clinicName while
-    // the codebase is migrated gradually to industry-neutral naming.
     clinicName: "Your Business",
     businessDescription: "a customer-facing business in Malaysia",
     terminology: {
@@ -137,6 +135,7 @@ function buildGenericProfile() {
     },
     aiAssistantName: "Alex",
     branches: [],
+    serviceAreas: [],
     hours: {
       general: "Business hours not configured yet",
       closed: "",
@@ -184,10 +183,6 @@ function buildHomeRenovationProfile() {
     },
     conversion: {
       label: "site visit or quotation discussion",
-      // The current booking_ready backend assumes a configured clinic branch
-      // plus an appointment preference. Renovation leads often need a customer
-      // property address instead, so keep that executable outcome off until the
-      // outcome schema is generalized in a later migration.
       bookingReadyEnabled: false,
       guidanceTitle: "SITE VISIT / QUOTATION NEXT STEP",
       staffConfirmationText: "the team will review the project details and confirm the next step",
@@ -240,6 +235,7 @@ function buildAestheticClinicProfile() {
     businessType: "aesthetic_clinic",
     businessName: legacy.clinicName,
     businessDescription: "an aesthetics clinic in Malaysia",
+    serviceAreas: [],
     terminology: {
       customerSingular: "patient",
       customerPlural: "patients",
@@ -318,9 +314,6 @@ function inferStoredBusinessType(storedConfig = {}, env = process.env) {
     return normalized;
   }
 
-  // Every database created before industry profiles existed was clinic-first.
-  // Preserve that behavior instead of silently reclassifying an existing
-  // production instance because a new deployment happens to set another env.
   if (storedConfig.clinicName) return "aesthetic_clinic";
   return getRequestedInitialBusinessType(env);
 }
@@ -337,10 +330,10 @@ function hydrateBusinessConfig(storedConfig = {}, env = process.env) {
     ...storedConfig,
     businessType,
     businessName,
-    // businessName is the canonical neutral field. Keep the historical alias
-    // synchronized during hydration so old modules can never observe a stale
-    // clinicName after neutral onboarding/settings updates.
     clinicName: businessName,
+    serviceAreas: Array.isArray(storedConfig.serviceAreas)
+      ? storedConfig.serviceAreas
+      : base.serviceAreas,
     terminology: {
       ...base.terminology,
       ...(storedConfig.terminology || {}),
