@@ -195,7 +195,10 @@ function webhookResult(definition, stored, checkedAt) {
       ? "A valid signed webhook has been received."
       : "Configured. Waiting for the first valid signed webhook from Meta.",
     checkedAt,
-    { lastWebhookAt }
+    {
+      lastWebhookAt,
+      reason: lastWebhookAt ? null : "live_evidence_pending",
+    }
   );
 }
 
@@ -232,7 +235,10 @@ function mergeOverview(
           ? "Messaging confirmed by a received customer message."
           : "Configured. Send and receive a test message to confirm messaging.",
         saved?.last_checked_at || null,
-        { lastActivityAt }
+        {
+          lastActivityAt,
+          reason: lastActivityAt ? null : "live_evidence_pending",
+        }
       );
     }
     if (!item && !definition.isConfigured) {

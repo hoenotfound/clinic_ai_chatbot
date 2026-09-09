@@ -367,3 +367,19 @@ test("rejected admin login fails safely without echoing the password", async () 
     }
   );
 });
+
+
+test("readiness preserves structured Setup Status reason codes", () => {
+  const data = overview();
+  data.checks = data.checks.map((item) =>
+    item.key === "whatsapp_webhook"
+      ? { ...item, status: "warning", configured: true, reason: "live_evidence_pending" }
+      : item
+  );
+  const report = evaluateReadiness(data, {
+    expectedIndustry: "home_renovation",
+    requiredChannels: ["whatsapp"],
+  });
+  const webhook = report.channelChecks.find((item) => item.key === "whatsapp_webhook");
+  assert.equal(webhook.reason, "live_evidence_pending");
+});

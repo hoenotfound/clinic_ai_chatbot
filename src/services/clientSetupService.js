@@ -143,14 +143,14 @@ function evaluateClientSetup(config = {}, env = process.env) {
   if (!text(config.introMessage)) businessMissing.push("Enter an intro message");
 
   const clinicBranches = Array.isArray(config.branches) ? config.branches : [];
-const clinicBranchMissingAddress = config?.businessType === "aesthetic_clinic"
-  && clinicBranches.some((branch) => text(branch?.name) && !text(branch?.address));
-const locationMissing = locationRequired
-  ? [
-      ...(!branchesConfigured ? ["Add at least one branch"] : []),
-      ...(clinicBranchMissingAddress ? ["Add an address for every clinic branch"] : []),
-    ]
-  : [];
+  const clinicBranchMissingAddress = config?.businessType === "aesthetic_clinic"
+    && clinicBranches.some((branch) => text(branch?.name) && !text(branch?.address));
+  const locationMissing = locationRequired
+    ? [
+        ...(!branchesConfigured ? ["Add at least one branch"] : []),
+        ...(clinicBranchMissingAddress ? ["Add an address for every clinic branch"] : []),
+      ]
+    : [];
 
   const operatingMissing = openingHoursConfigured(config)
     ? []

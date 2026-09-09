@@ -58,6 +58,7 @@ const configRoutes = require("./routes/config");
 const contactsRoutes = require("./routes/contacts");
 const pipelineRoutes = require("./routes/pipeline");
 const setupStatusRoutes = require("./routes/setupStatus");
+const goLiveRoutes = require("./routes/goLive");
 const { bootstrapAdminUser } = require("./db/bootstrapAdmin");
 const configRepo = require("./db/configRepo");
 const { pruneOrphanedPromoImages } = configRepo;
@@ -874,6 +875,7 @@ app.use("/api/config", requireAuth, configRoutes);
 app.use("/api/contacts", requireAuth, contactsRoutes);
 app.use("/api/pipeline", requireAuth, pipelineRoutes);
 app.use("/api/setup-status", requireAuth, setupStatusRoutes);
+app.use("/api/go-live", requireAuth, goLiveRoutes);
 
 // ── Serve the built portal frontend in production ──
 const portalBuildPath = path.join(__dirname, "../portal-frontend/dist");

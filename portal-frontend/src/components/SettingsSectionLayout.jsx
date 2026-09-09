@@ -34,8 +34,17 @@ export default function SettingsSectionLayout({ children }) {
   const navigate = useNavigate();
   const isTeam = location.pathname === "/settings/team";
   const isClientSetup = location.pathname === "/settings/client-setup";
+  const isGoLive = location.pathname === "/settings/go-live";
   const isSetup = location.pathname === "/settings/setup";
-  const mobileValue = isTeam ? "team" : isClientSetup ? "clientSetup" : isSetup ? "setup" : "general";
+  const mobileValue = isTeam
+    ? "team"
+    : isClientSetup
+      ? "clientSetup"
+      : isGoLive
+        ? "goLive"
+        : isSetup
+          ? "setup"
+          : "general";
 
   const teamItem = permissions.manage_users
     ? { id: "team", to: "/settings/team", label: "Team & Access" }
@@ -43,10 +52,13 @@ export default function SettingsSectionLayout({ children }) {
   const clientSetupItem = user?.role === "admin"
     ? { id: "clientSetup", to: "/settings/client-setup", label: "Client Setup" }
     : null;
+  const goLiveItem = user?.role === "admin"
+    ? { id: "goLive", to: "/settings/go-live", label: "Go Live" }
+    : null;
   const setupItem = user?.role === "admin"
     ? { id: "setup", to: "/settings/setup", label: "Setup Status" }
     : null;
-  const destinationItems = [teamItem, clientSetupItem, setupItem].filter(Boolean);
+  const destinationItems = [teamItem, clientSetupItem, goLiveItem, setupItem].filter(Boolean);
 
   function handleMobileChange(value) {
     const configItem = configItems.find((item) => item.id === value);
@@ -92,13 +104,14 @@ export default function SettingsSectionLayout({ children }) {
             </div>
           )}
 
-          {(clientSetupItem || setupItem) && (
+          {(clientSetupItem || goLiveItem || setupItem) && (
             <div className={`${permissions.manage_settings || teamItem ? "mt-3 border-t border-[var(--color-border)] pt-3" : ""}`}>
               <p className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
                 System
               </p>
               <div className="space-y-1">
                 {clientSetupItem && <SettingsNavLink item={clientSetupItem} />}
+                {goLiveItem && <SettingsNavLink item={goLiveItem} />}
                 {setupItem && <SettingsNavLink item={setupItem} />}
               </div>
             </div>
@@ -122,6 +135,7 @@ export default function SettingsSectionLayout({ children }) {
               ))}
               {teamItem && <option value={teamItem.id}>{teamItem.label}</option>}
               {clientSetupItem && <option value={clientSetupItem.id}>{clientSetupItem.label}</option>}
+              {goLiveItem && <option value={goLiveItem.id}>{goLiveItem.label}</option>}
               {setupItem && <option value={setupItem.id}>{setupItem.label}</option>}
             </select>
           </label>
