@@ -28,13 +28,31 @@ function capitalize(value) {
   return text ? `${text[0].toUpperCase()}${text.slice(1)}` : text;
 }
 
+function cleanStrings(items) {
+  return (items || []).map((item) => String(item || "").trim()).filter(Boolean);
+}
+
+function isValidWhatsapp(value) {
+  const input = String(value || "").trim();
+  if (!input) return true;
+  if (/^https?:\/\/(?:api\.)?whatsapp\.com\//i.test(input)) return true;
+  if (/^https?:\/\/wa\.me\/\d{8,15}(?:\?.*)?$/i.test(input)) return true;
+  const compact = input.replace(/[\s()\-]/g, "");
+  return /^\+?\d{8,15}$/.test(compact);
+}
+
+function isIsoDate(value) {
+  if (!value) return true;
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+}
+
 export default function Settings() {
   const { user, permissions } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get("tab");
   const initialTab = TAB_IDS.includes(requestedTab) ? requestedTab : "general";
-  const [config, setConfig] = useState(null); // null = loading
+  const [config, setConfig] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [activeTab, setActiveTab] = useState(initialTab);
@@ -43,10 +61,13 @@ export default function Settings() {
   const teamItem = permissions.manage_users
     ? { id: "team", label: "Team & Access", to: "/settings/team" }
     : null;
+  const clientSetupItem = user?.role === "admin"
+    ? { id: "client-setup", label: "Client Setup", to: "/settings/client-setup" }
+    : null;
   const setupItem = user?.role === "admin"
     ? { id: "setup", label: "Setup Status", to: "/settings/setup" }
     : null;
-  const destinationItems = [teamItem, setupItem].filter(Boolean);
+  const destinationItems = [teamItem, clientSetupItem, setupItem].filter(Boolean);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,9 +91,6 @@ export default function Settings() {
     setActiveTab((current) => (current === nextTab ? current : nextTab));
   }, [searchParams]);
 
-  // Called by a tab after it successfully saves — updates the shared config
-  // so every other tab reflects the latest server state the next time it's
-  // opened, not just the one that just saved.
   function handleSaved(updatedConfig) {
     setConfig(updatedConfig);
     showToast("Settings saved.", "info");
@@ -134,6 +152,7 @@ export default function Settings() {
 
   const ui = getBusinessTerminology(config);
   const tabs = getSettingsTabs(config);
+  const systemItems = [clientSetupItem, setupItem].filter(Boolean);
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--color-bg)] md:flex-row">
@@ -178,18 +197,21 @@ export default function Settings() {
             </div>
           )}
 
-          {setupItem && (
+          {systemItems.length > 0 && (
             <div className="mt-3 border-t border-[var(--color-border)] pt-3">
               <p className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
                 System
               </p>
-              <button
-                type="button"
-                onClick={() => navigate(setupItem.to)}
-                className="min-h-10 w-full rounded-xl px-3 text-left text-sm font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
-              >
-                {setupItem.label}
-              </button>
+              {systemItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => navigate(item.to)}
+                  className="min-h-10 w-full rounded-xl px-3 text-left text-sm font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
           )}
         </nav>
@@ -214,9 +236,9 @@ export default function Settings() {
                   <option value={teamItem.id}>{teamItem.label}</option>
                 </optgroup>
               )}
-              {setupItem && (
+              {systemItems.length > 0 && (
                 <optgroup label="System">
-                  <option value={setupItem.id}>{setupItem.label}</option>
+                  {systemItems.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
                 </optgroup>
               )}
             </select>
@@ -244,8 +266,6 @@ export default function Settings() {
     </div>
   );
 }
-
-// ── Shared bits ──
 
 function SectionHeading({ title, description }) {
   return (
@@ -280,11 +300,6 @@ function SaveButton({ saving, onClick, label = "Save changes" }) {
   );
 }
 
-// Generic editor for an array of objects sharing the same fields (locations,
-// services, FAQs, promotions, service aliases). Each field is a single-line
-// `input`, a `textarea`, or an `image` uploader — see the `fields` prop
-// shape used by each tab below. `onError` is only needed if any field is
-// type "image" (surfaces upload failures as a toast).
 function RepeatableListEditor({ items, fields, onChange, emptyItem, addLabel, onError }) {
   function updateItem(idx, key, value) {
     const next = items.slice();
@@ -332,8 +347,18 @@ function RepeatableListEditor({ items, fields, onChange, emptyItem, addLabel, on
                     placeholder={f.placeholder}
                     onChange={(e) => updateItem(idx, f.key, e.target.value)}
                   />
+                ) : f.type === "select" ? (
+                  <select
+                    className={inputClass}
+                    value={item[f.key] ?? ""}
+                    onChange={(e) => updateItem(idx, f.key, e.target.value)}
+                  >
+                    <option value="">{f.placeholder || "Choose an option"}</option>
+                    {(f.options || []).map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
                 ) : (
                   <input
+                    type={f.type || "text"}
                     className={inputClass}
                     value={item[f.key] ?? ""}
                     placeholder={f.placeholder}
@@ -359,19 +384,13 @@ function RepeatableListEditor({ items, fields, onChange, emptyItem, addLabel, on
 const MAX_PROMO_IMAGE_BYTES = 5 * 1024 * 1024;
 const PROMO_IMAGE_TYPES = new Set(["image/jpeg", "image/png"]);
 
-// Upload-a-file control for the promotion image field — staff pick a photo
-// straight from their computer instead of needing to host it somewhere and
-// paste a URL. Uploads immediately on selection (separate from the tab's
-// Save button) and writes the resulting hosted URL into the field; the raw
-// URL is still shown/editable underneath as a fallback for pasting an
-// already-hosted link.
 function ImageFieldEditor({ value, onChange, onError }) {
   const fileInputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
 
   async function handleFilePicked(e) {
     const file = e.target.files?.[0];
-    e.target.value = ""; // allow picking the same file again later
+    e.target.value = "";
     if (!file) return;
     if (!PROMO_IMAGE_TYPES.has(file.type)) {
       onError("Please choose a JPG or PNG image.");
@@ -432,7 +451,6 @@ function ImageFieldEditor({ value, onChange, onError }) {
   );
 }
 
-// Generic editor for an array of plain strings (guardrails, handoff triggers).
 function StringListEditor({ items, onChange, addLabel, placeholder }) {
   function updateItem(idx, value) {
     const next = items.slice();
@@ -478,12 +496,11 @@ function StringListEditor({ items, onChange, addLabel, placeholder }) {
   );
 }
 
-// ── Tabs ──
-
 function GeneralTab({ config, onSaved, onError }) {
   const ui = getBusinessTerminology(config);
   const [form, setForm] = useState({
     clinicName: config.clinicName,
+    businessDescription: config.businessDescription || "",
     aiAssistantName: config.aiAssistantName,
     introMessage: config.introMessage,
     tone: config.tone,
@@ -491,8 +508,8 @@ function GeneralTab({ config, onSaved, onError }) {
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
-    if (!form.clinicName.trim() || !form.aiAssistantName.trim() || !form.introMessage.trim()) {
-      onError(`${ui.businessNameLabel}, assistant name, and intro message can't be empty.`);
+    if (!form.clinicName.trim() || !form.businessDescription.trim() || !form.aiAssistantName.trim() || !form.introMessage.trim()) {
+      onError(`${ui.businessNameLabel}, business description, assistant name, and intro message can't be empty.`);
       return;
     }
     setSaving(true);
@@ -510,13 +527,21 @@ function GeneralTab({ config, onSaved, onError }) {
     <div>
       <SectionHeading
         title="General"
-        description={`Basic identity the AI uses to introduce itself and talk about the ${ui.businessNoun}.`}
+        description={`Basic identity and context the AI uses to talk about the ${ui.businessNoun}.`}
       />
       <Field label={ui.businessNameLabel}>
         <input
           className={inputClass}
           value={form.clinicName}
           onChange={(e) => setForm({ ...form, clinicName: e.target.value })}
+        />
+      </Field>
+      <Field label="Business description" hint="A short factual description of what the business does and serves.">
+        <textarea
+          rows={3}
+          className={textareaClass}
+          value={form.businessDescription}
+          onChange={(e) => setForm({ ...form, businessDescription: e.target.value })}
         />
       </Field>
       <Field label="AI assistant name" hint="Gives the bot a friendly identity instead of just “AI”.">
@@ -559,12 +584,15 @@ const BRANCH_FIELDS = [
 
 function BranchesTab({ config, onSaved, onError }) {
   const ui = getBusinessTerminology(config);
+  const renovation = config.businessType === "home_renovation";
+  const clinic = config.businessType === "aesthetic_clinic";
   const [items, setItems] = useState(() => (config.branches || []).map((b) => ({ ...b, whatsapp: b.whatsapp || "" })));
+  const [serviceAreas, setServiceAreas] = useState(() => [...(config.serviceAreas || [])]);
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
     const cleaned = items
-      .filter((b) => b.name.trim() || b.address.trim() || b.phone.trim())
+      .filter((b) => b.name.trim() || b.address.trim() || b.phone.trim() || b.whatsapp.trim())
       .map((b) => ({
         name: b.name.trim(),
         address: b.address.trim(),
@@ -575,10 +603,19 @@ function BranchesTab({ config, onSaved, onError }) {
       onError(`Every ${ui.locationSingular} needs a name.`);
       return;
     }
+    if (clinic && cleaned.some((b) => !b.address)) {
+      onError("Every clinic branch needs an address.");
+      return;
+    }
+    const cleanedAreas = cleanStrings(serviceAreas);
     setSaving(true);
     try {
-      const updated = await api.updateConfig({ branches: cleaned });
+      const updated = await api.updateConfig({
+        branches: cleaned,
+        ...(renovation ? { serviceAreas: cleanedAreas } : {}),
+      });
       setItems(cleaned.map((b) => ({ ...b, whatsapp: b.whatsapp || "" })));
+      if (renovation) setServiceAreas(cleanedAreas);
       onSaved(updated);
     } catch (err) {
       onError(err.message || `Couldn't save ${ui.locationPlural}.`);
@@ -590,9 +627,12 @@ function BranchesTab({ config, onSaved, onError }) {
   return (
     <div>
       <SectionHeading
-        title={ui.locationsLabel}
-        description={`Business locations the AI can share when a ${ui.customerSingular} asks where to go or which location to choose.`}
+        title={renovation ? "Locations & Service Areas" : ui.locationsLabel}
+        description={renovation
+          ? "Actual showrooms/branches stay separate from project service coverage, so Pipeline and staff assignment only use real business locations."
+          : `Business locations the AI can share when a ${ui.customerSingular} asks where to go or which location to choose.`}
       />
+      {renovation && <h3 className="mb-3 text-sm font-bold">Actual showrooms / branches</h3>}
       <RepeatableListEditor
         items={items}
         fields={BRANCH_FIELDS}
@@ -600,6 +640,18 @@ function BranchesTab({ config, onSaved, onError }) {
         emptyItem={{ name: "", address: "", phone: "", whatsapp: "" }}
         addLabel={`Add ${ui.locationSingular}`}
       />
+      {renovation && (
+        <div className="mt-7 border-t border-[var(--color-border)] pt-6">
+          <h3 className="text-sm font-bold">Project service areas</h3>
+          <p className="mb-3 mt-1 text-xs leading-5 text-[var(--color-text-muted)]">Areas where the business normally accepts renovation projects. These never become team/Pipeline branches.</p>
+          <StringListEditor
+            items={serviceAreas}
+            onChange={setServiceAreas}
+            addLabel="Add service area"
+            placeholder="e.g. Klang Valley, PJ / Subang"
+          />
+        </div>
+      )}
       <div className="mt-4">
         <SaveButton saving={saving} onClick={handleSave} />
       </div>
@@ -626,6 +678,10 @@ function HoursContactTab({ config, onSaved, onError }) {
       onError("Opening hours can't be empty.");
       return;
     }
+    if (!isValidWhatsapp(form.contact.whatsapp)) {
+      onError("Enter a valid WhatsApp number or WhatsApp link.");
+      return;
+    }
     setSaving(true);
     try {
       const updated = await api.updateConfig(form);
@@ -646,16 +702,16 @@ function HoursContactTab({ config, onSaved, onError }) {
       <Field label="Closed days / note">
         <input className={inputClass} value={form.hours.closed} onChange={(e) => setHours("closed", e.target.value)} />
       </Field>
-      <Field label="Main WhatsApp number">
+      <Field label="Main WhatsApp number" hint="Phone number or wa.me / WhatsApp link.">
         <input className={inputClass} value={form.contact.whatsapp} onChange={(e) => setContact("whatsapp", e.target.value)} />
       </Field>
-      <Field label="Instagram">
+      <Field label="Instagram" hint="Username or profile URL.">
         <input className={inputClass} value={form.contact.instagram} onChange={(e) => setContact("instagram", e.target.value)} />
       </Field>
-      <Field label="Facebook">
+      <Field label="Facebook" hint="Page name or URL.">
         <input className={inputClass} value={form.contact.facebook} onChange={(e) => setContact("facebook", e.target.value)} />
       </Field>
-      <Field label="TikTok">
+      <Field label="TikTok" hint="Username or profile URL.">
         <input className={inputClass} value={form.contact.tiktok} onChange={(e) => setContact("tiktok", e.target.value)} />
       </Field>
       <SaveButton saving={saving} onClick={handleSave} />
@@ -669,14 +725,14 @@ function ServicesTab({ config, onSaved, onError }) {
     { key: "name", label: `${capitalize(ui.serviceSingular)} name` },
     { key: "description", label: "Description", type: "textarea", rows: 3 },
     { key: "priceRange", label: "Price" },
-    { key: "duration", label: "Duration" },
+    { key: "duration", label: config.businessType === "home_renovation" ? "Typical timeline / note" : "Duration" },
   ];
   const [items, setItems] = useState(() => config.services || []);
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
     const cleaned = items
-      .filter((s) => s.name.trim() || s.description.trim())
+      .filter((s) => s.name.trim() || s.description.trim() || s.priceRange.trim() || s.duration.trim())
       .map((s) => ({
         name: s.name.trim(),
         description: s.description.trim(),
@@ -719,12 +775,12 @@ function ServicesTab({ config, onSaved, onError }) {
   );
 }
 
-const ALIAS_FIELDS = [
-  { key: "alias", label: "What customers type", placeholder: "e.g. common shorthand or nickname" },
-  { key: "officialService", label: "Maps to service", placeholder: "e.g. configured service name" },
-];
-
 function AliasesTab({ config, onSaved, onError }) {
+  const serviceNames = (config.services || []).map((service) => service.name).filter(Boolean);
+  const aliasFields = [
+    { key: "alias", label: "What customers type", placeholder: "e.g. common shorthand or nickname" },
+    { key: "officialService", label: "Maps to service", type: "select", options: serviceNames, placeholder: "Choose a configured service" },
+  ];
   const [items, setItems] = useState(() => config.serviceAliases || []);
   const [saving, setSaving] = useState(false);
 
@@ -732,8 +788,13 @@ function AliasesTab({ config, onSaved, onError }) {
     const cleaned = items
       .filter((a) => a.alias.trim() || a.officialService.trim())
       .map((a) => ({ alias: a.alias.trim(), officialService: a.officialService.trim() }));
-    if (cleaned.some((a) => !a.alias)) {
-      onError("Every entry needs the term customers actually type.");
+    if (cleaned.some((a) => !a.alias || !a.officialService)) {
+      onError("Every service term needs both the customer wording and the service it maps to.");
+      return;
+    }
+    const canonical = new Set(serviceNames.map((name) => name.toLowerCase()));
+    if (cleaned.some((a) => !canonical.has(a.officialService.toLowerCase()))) {
+      onError("Every service term must map to a service currently configured.");
       return;
     }
     setSaving(true);
@@ -752,11 +813,12 @@ function AliasesTab({ config, onSaved, onError }) {
     <div>
       <SectionHeading
         title="Service Terms"
-        description="Casual terms customers actually type, mapped to the official service name — so the AI doesn't hand off just because the wording doesn't match exactly."
+        description="Casual terms customers type, mapped to an actual configured service."
       />
+      {serviceNames.length === 0 && <p className="mb-4 rounded-xl bg-[var(--color-accent-light)] p-3 text-xs">Add at least one service before creating customer terms.</p>}
       <RepeatableListEditor
         items={items}
-        fields={ALIAS_FIELDS}
+        fields={aliasFields}
         onChange={setItems}
         emptyItem={{ alias: "", officialService: "" }}
         addLabel="Add term"
@@ -781,8 +843,8 @@ function FaqsTab({ config, onSaved, onError }) {
     const cleaned = items
       .filter((f) => f.q.trim() || f.a.trim())
       .map((f) => ({ q: f.q.trim(), a: f.a.trim() }));
-    if (cleaned.some((f) => !f.q)) {
-      onError("Every FAQ needs a question.");
+    if (cleaned.some((f) => !f.q || !f.a)) {
+      onError("Every FAQ needs both a question and an answer.");
       return;
     }
     setSaving(true);
@@ -818,8 +880,8 @@ const PROMOTION_FIELDS = [
   { key: "name", label: "Promo name" },
   { key: "imageUrl", label: "Promo image", type: "image" },
   { key: "caption", label: "Caption", type: "textarea", rows: 2 },
-  { key: "validFrom", label: "Valid from (YYYY-MM-DD, optional)", placeholder: "Always on if blank" },
-  { key: "validUntil", label: "Valid until (YYYY-MM-DD, optional)", placeholder: "No end date if blank" },
+  { key: "validFrom", label: "Valid from (optional)", type: "date" },
+  { key: "validUntil", label: "Valid until (optional)", type: "date" },
 ];
 
 function PromotionsTab({ config, onSaved, onError }) {
@@ -830,7 +892,7 @@ function PromotionsTab({ config, onSaved, onError }) {
 
   async function handleSave() {
     const cleaned = items
-      .filter((p) => p.name.trim() || p.imageUrl.trim())
+      .filter((p) => p.name.trim() || p.imageUrl.trim() || p.caption.trim() || p.validFrom || p.validUntil)
       .map((p) => ({
         name: p.name.trim(),
         imageUrl: p.imageUrl.trim(),
@@ -841,6 +903,16 @@ function PromotionsTab({ config, onSaved, onError }) {
     if (cleaned.some((p) => !p.name)) {
       onError("Every promotion needs a name.");
       return;
+    }
+    for (const promotion of cleaned) {
+      if (!isIsoDate(promotion.validFrom) || !isIsoDate(promotion.validUntil)) {
+        onError("Promotion dates must be valid dates.");
+        return;
+      }
+      if (promotion.validFrom && promotion.validUntil && promotion.validUntil < promotion.validFrom) {
+        onError(`The end date for ${promotion.name} cannot be before its start date.`);
+        return;
+      }
     }
     setSaving(true);
     try {
@@ -933,9 +1005,12 @@ function AiBehaviorTab({ config, onSaved, onError }) {
 
 function EscalationTab({ config, onSaved, onError }) {
   const ui = getBusinessTerminology(config);
+  const protectedGuardrails = cleanStrings(config.clientSetup?.protectedGuardrails || []);
+  const protectedSet = new Set(protectedGuardrails);
+  const initialCustom = (config.guardrails || []).filter((rule) => !protectedSet.has(rule));
   const [form, setForm] = useState({
     escalation: { ...config.escalation, outOfScopeTriggers: [...(config.escalation.outOfScopeTriggers || [])] },
-    guardrails: [...(config.guardrails || [])],
+    customGuardrails: initialCustom,
   });
   const [saving, setSaving] = useState(false);
 
@@ -944,21 +1019,30 @@ function EscalationTab({ config, onSaved, onError }) {
   }
 
   async function handleSave() {
-    const cleanedTriggers = form.escalation.outOfScopeTriggers.map((t) => t.trim()).filter(Boolean);
-    const cleanedGuardrails = form.guardrails.map((g) => g.trim()).filter(Boolean);
+    const cleanedTriggers = cleanStrings(form.escalation.outOfScopeTriggers);
+    const cleanedCustom = cleanStrings(form.customGuardrails);
     if (!form.escalation.handoffMessage.trim()) {
       onError("The handoff message can't be empty.");
+      return;
+    }
+    if (cleanedTriggers.length === 0) {
+      onError("Keep at least one handoff trigger.");
+      return;
+    }
+    const guardrails = [...new Set([...protectedGuardrails, ...cleanedCustom])];
+    if (guardrails.length === 0) {
+      onError("Keep at least one AI guardrail.");
       return;
     }
     setSaving(true);
     try {
       const updated = await api.updateConfig({
         escalation: { ...form.escalation, outOfScopeTriggers: cleanedTriggers },
-        guardrails: cleanedGuardrails,
+        guardrails,
       });
       setForm({
         escalation: { ...form.escalation, outOfScopeTriggers: cleanedTriggers },
-        guardrails: cleanedGuardrails,
+        customGuardrails: cleanedCustom,
       });
       onSaved(updated);
     } catch (err) {
@@ -972,7 +1056,7 @@ function EscalationTab({ config, onSaved, onError }) {
     <div>
       <SectionHeading
         title="Handoff & Rules"
-        description="When the AI should stop and bring in a human, and hard boundaries it must never cross."
+        description="When the AI should stop and bring in a human, plus industry safety rules and any extra client-specific boundaries."
       />
       <Field label={`Hand off to a human when the ${ui.customerSingular} asks about...`}>
         <StringListEditor
@@ -997,12 +1081,21 @@ function EscalationTab({ config, onSaved, onError }) {
           onChange={(e) => setEscalation("handoffNote", e.target.value)}
         />
       </Field>
-      <Field label="Guardrails — things the AI must never do">
+      {protectedGuardrails.length > 0 && (
+        <div className="mb-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+          <p className="text-sm font-bold">Built-in industry safety rules</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">These come from the selected industry profile and cannot be removed here.</p>
+          <ul className="mt-3 space-y-2 text-xs leading-5 text-[var(--color-text-muted)]">
+            {protectedGuardrails.map((rule) => <li key={rule}>🔒 {rule}</li>)}
+          </ul>
+        </div>
+      )}
+      <Field label="Additional client-specific guardrails" hint="Optional rules added on top of the built-in industry safeguards.">
         <StringListEditor
-          items={form.guardrails}
-          onChange={(v) => setForm((prev) => ({ ...prev, guardrails: v }))}
-          addLabel="Add guardrail"
-          placeholder="e.g. Never quote a price that isn't listed above"
+          items={form.customGuardrails}
+          onChange={(v) => setForm((prev) => ({ ...prev, customGuardrails: v }))}
+          addLabel="Add client rule"
+          placeholder="e.g. Never quote delivery outside West Malaysia"
         />
       </Field>
       <SaveButton saving={saving} onClick={handleSave} />
