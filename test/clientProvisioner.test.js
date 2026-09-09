@@ -126,6 +126,7 @@ test("runtime env cannot override app or control-plane provisioning values", () 
   for (const key of [
     "INITIAL_BUSINESS_TYPE",
     "BUSINESS_TYPE",
+    "PURCHASED_CHANNELS",
     "DATABASE_URL",
     "SESSION_SECRET",
     "PORT",
@@ -348,9 +349,11 @@ test("renderEnvVars keeps provisioner-owned values ahead of custom runtime env",
     runtimeEnv: { AI_PROVIDER: "gemini" },
   }, {});
   const envVars = renderEnvVars(plan, "postgresql://pooled");
-  assert.deepEqual(envVars.slice(0, 3), [
+  assert.deepEqual(envVars.slice(0, 4), [
     { key: "INITIAL_BUSINESS_TYPE", value: "aesthetic_clinic" },
+    { key: "PURCHASED_CHANNELS", value: "" },
     { key: "DATABASE_URL", value: "postgresql://pooled" },
     { key: "SESSION_SECRET", generateValue: true },
   ]);
+  assert.deepEqual(envVars[4], { key: "AI_PROVIDER", value: "gemini" });
 });
