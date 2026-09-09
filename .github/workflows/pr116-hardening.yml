@@ -39,7 +39,9 @@ jobs:
         with:
           node-version: 22
       - name: Apply hardening patch
-        run: python3 scripts/pr116Hardening.py
+        run: |
+          sed -i 's/fullyReadyOverview()/overview()/g' scripts/pr116Hardening.py
+          python3 scripts/pr116Hardening.py
       - name: Backend install
         run: npm ci
       - name: Backend tests
