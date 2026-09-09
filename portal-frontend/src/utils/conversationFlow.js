@@ -71,11 +71,11 @@ function exampleSet(businessType, context) {
       ],
       understandIntent: [
         chat(`I want ${serviceName} for my condo.`, `Sure, I can help with ${serviceName}.`),
-        chat("I want to redo my kitchen before moving in.", "Sure. I can help gather the useful project details for the team."),
+        chat("I want to redo my kitchen before moving in.", "Sure. I can help gather a few useful project details for the team."),
       ],
       answer: [
         chat("How much does it cost?", "The final quote depends on the project details. I can help collect the useful information first."),
-        chat("Do you cover my area?", "I can check that based on the configured service area and your project location."),
+        chat("Do you cover my area?", "Sure. Which area is your project in? I can help check whether it's within our coverage."),
       ],
       qualify: [
         chat(`I want ${serviceName}.`, "Sure. Do you have the approximate measurements or a photo of the space?"),
@@ -108,11 +108,11 @@ function exampleSet(businessType, context) {
       ],
       understandIntent: [
         chat(`I'm interested in ${serviceName}.`, `Sure. I can help with information about ${serviceName} and the next step.`),
-        chat("I want something for facial lifting.", "Sure. I can help narrow down what may be relevant before the team advises further."),
+        chat("I want something for facial lifting.", "Sure. What would you like to improve most?"),
       ],
       answer: [
-        chat("How much is it?", "I'll use the configured treatment and pricing information, and I won't make up a price that isn't listed."),
-        chat("Is there a branch near me?", "I can help based on the clinic branches currently configured."),
+        chat("How much is it?", "Sure. I can share the treatment and pricing information we have, and the team can confirm anything that needs checking."),
+        chat("Is there a branch near me?", "Sure. Which area are you in? I can help narrow down the most convenient branch."),
       ],
       qualify: [
         chat("I'd like to book a consultation.", "Sure. Which branch is more convenient for you?"),
@@ -147,12 +147,12 @@ function exampleSet(businessType, context) {
       chat("I'm comparing a few options.", "No problem. I can answer your questions first."),
     ],
     answer: [
-      chat("How much does it cost?", "I'll use the configured business information and won't invent a price that isn't listed."),
-      chat("How does it work?", "I'll answer using the information currently configured for the business."),
+      chat("How much does it cost?", "Sure. I can share the pricing information we have and let you know if the team needs to confirm anything."),
+      chat("How does it work?", "Sure. I can explain the service and help with any questions you have."),
     ],
     qualify: [
       chat(`I'm interested in ${serviceName}.`, "Sure. May I know a little more about what you need?"),
-      chat("I want to proceed soon.", "Great. I'll collect only the details the team needs for the next step."),
+      chat("I want to proceed soon.", "Great. I'll ask for only the details the team needs for the next step."),
     ],
     decision: [
       chat("Yes, I'd like to proceed.", `Great. I can guide this toward ${conversionLabel}.`),
