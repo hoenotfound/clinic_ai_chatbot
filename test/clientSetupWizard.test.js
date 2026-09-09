@@ -8,6 +8,9 @@ const {
   getOnboardingIndustryProfile,
 } = require("../src/config/onboardingIndustryProfiles");
 const {
+  getIndustryProfile,
+} = require("../src/config/industryProfiles");
+const {
   createSeedIndustrySetup,
 } = require("../src/config/industrySetup");
 const {
@@ -160,12 +163,22 @@ test("renovation service areas are separate from branches used for routing", () 
   assert.match(systemPrompt, /Project service areas \/ coverage/);
 });
 
-test("setup evaluation exposes protected industry guardrails", () => {
+test("setup evaluation protects only profile guardrails already active for the client", () => {
   const renovation = configuredBusiness("home_renovation");
+  const profile = getIndustryProfile("home_renovation");
+  const activeBuiltIn = profile.guardrails[0];
+  const inactiveBuiltIn = profile.guardrails[1];
+  const customRule = "Only serve projects inside Klang Valley.";
+  renovation.guardrails = [activeBuiltIn, customRule];
+
   const status = evaluateClientSetup(renovation);
-  assert.ok(Array.isArray(status.protectedGuardrails));
-  assert.ok(status.protectedGuardrails.length > 0);
-  assert.ok(status.protectedGuardrails.some((rule) => /measurements|quotation|invent/i.test(rule)));
+  assert.deepEqual(status.protectedGuardrails, [activeBuiltIn]);
+  assert.equal(status.protectedGuardrails.includes(customRule), false);
+  assert.equal(status.protectedGuardrails.includes(inactiveBuiltIn), false);
+
+  const fresh = configuredBusiness("home_renovation");
+  fresh.guardrails = [...profile.guardrails];
+  assert.deepEqual(evaluateClientSetup(fresh).protectedGuardrails, profile.guardrails);
 });
 
 test("frontend completion consumes the authoritative server result", () => {
@@ -290,7 +303,7 @@ test("wizard separates normal health from strict live messaging proof and never 
   assert.match(wizard, /Live messaging proof/);
   assert.match(wizard, /roundTripCorrelated/);
   assert.match(wizard, /lastVerifiedAutomatedReplyAt/);
-  assert.match(wizard, /purchased messaging channels/);
+  assert.match(wizard, /messaging channels were purchased/);
   assert.match(wizard, /does not send a test message to a real customer/);
   assert.match(wizard, /api\.getSetupStatus\(\)/);
   assert.match(wizard, /api\.runSetupChecks\(\)/);
@@ -305,6 +318,12 @@ test("AI behaviour is progressive-disclosure and built-in guardrails are protect
   assert.match(wizard, /Built-in safety rules/);
   assert.match(settings, /Built-in industry safety rules/);
   assert.match(settings, /config\.clientSetup\?\.protectedGuardrails/);
+
+  const protectedSourceMatches = wizard.match(
+    /setProtectedGuardrails\(cleanStrings\(loaded\.clientSetup\?\.protectedGuardrails \|\| \[\]\)\)/g,
+  ) || [];
+  assert.equal(protectedSourceMatches.length, 2);
+  assert.doesNotMatch(wizard, /setProtectedGuardrails\(cleanStrings\(loaded\.guardrails\)\)/);
 });
 
 test("config API decorates reads and writes with server-derived setup status", () => {
