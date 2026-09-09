@@ -1,12 +1,11 @@
 const express = require("express");
 const configRepo = require("../db/configRepo");
-const { createSetupStatusService } = require("../services/setupStatusService");
 const { evaluateClientSetup } = require("../services/clientSetupService");
 const { evaluateGoLiveGate } = require("../services/goLiveGateService");
-const setupStatusRoutes = require("./setupStatus");
-
-const router = express.Router();
-const setupStatus = createSetupStatusService({ ai: setupStatusRoutes.setupStatusAi });
+const {
+  decorateOverview,
+  setupStatus,
+} = require("../services/setupStatusOverviewService");
 
 function requireAdministrator(req, res, next) {
   if (req.user?.role !== "admin") {
@@ -23,7 +22,7 @@ async function loadGoLiveGate({ runChecks = false, baseUrl } = {}) {
   const rawOverview = runChecks
     ? await setupStatus.runAll({ requestBaseUrl: baseUrl })
     : await setupStatus.getOverview({ requestBaseUrl: baseUrl });
-  const setupOverview = await setupStatusRoutes.decorateOverview(rawOverview);
+  const setupOverview = await decorateOverview(rawOverview);
   const config = configRepo.getConfig();
   const clientSetup = evaluateClientSetup(config);
 
@@ -34,36 +33,44 @@ async function loadGoLiveGate({ runChecks = false, baseUrl } = {}) {
   });
 }
 
-router.use(requireAdministrator);
+function createGoLiveRouter({ loadGate = loadGoLiveGate } = {}) {
+  const router = express.Router();
+  router.use(requireAdministrator);
 
-router.get("/", async (req, res) => {
-  try {
-    return res.json(await loadGoLiveGate({ baseUrl: requestBaseUrl(req) }));
-  } catch (err) {
-    console.error("Failed to load go-live readiness:", err);
-    return res.status(500).json({
-      error: "Something went wrong loading go-live readiness.",
-      code: "GO_LIVE_GATE_LOAD_FAILED",
-    });
-  }
-});
+  router.get("/", async (req, res) => {
+    try {
+      return res.json(await loadGate({ baseUrl: requestBaseUrl(req), runChecks: false }));
+    } catch (err) {
+      console.error("Failed to load go-live readiness:", err);
+      return res.status(500).json({
+        error: "Something went wrong loading go-live readiness.",
+        code: "GO_LIVE_GATE_LOAD_FAILED",
+      });
+    }
+  });
 
-router.post("/run", async (req, res) => {
-  try {
-    return res.json(await loadGoLiveGate({
-      runChecks: true,
-      baseUrl: requestBaseUrl(req),
-    }));
-  } catch (err) {
-    console.error("Failed to run go-live readiness checks:", err);
-    return res.status(500).json({
-      error: "Something went wrong running go-live readiness checks.",
-      code: "GO_LIVE_GATE_RUN_FAILED",
-    });
-  }
-});
+  router.post("/run", async (req, res) => {
+    try {
+      return res.json(await loadGate({
+        runChecks: true,
+        baseUrl: requestBaseUrl(req),
+      }));
+    } catch (err) {
+      console.error("Failed to run go-live readiness checks:", err);
+      return res.status(500).json({
+        error: "Something went wrong running go-live readiness checks.",
+        code: "GO_LIVE_GATE_RUN_FAILED",
+      });
+    }
+  });
+
+  return router;
+}
+
+const router = createGoLiveRouter();
 
 module.exports = router;
+module.exports.createGoLiveRouter = createGoLiveRouter;
 module.exports.loadGoLiveGate = loadGoLiveGate;
 module.exports.requestBaseUrl = requestBaseUrl;
 module.exports.requireAdministrator = requireAdministrator;

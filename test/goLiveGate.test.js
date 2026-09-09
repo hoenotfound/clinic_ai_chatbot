@@ -36,6 +36,7 @@ function healthyMessaging(channel) {
     evidence: "Real customer messaging activity has been observed.",
     lastInboundAt: "2026-09-09T10:00:00.000Z",
     lastSuccessfulOutboundAt: "2026-09-09T10:00:04.000Z",
+    lastVerifiedRoundTripInboundAt: "2026-09-09T10:00:00.000Z",
     lastVerifiedAutomatedReplyAt: "2026-09-09T10:00:03.000Z",
     lastReadinessDeliveryFailureAt: null,
     recentDeliveryFailures: 0,
@@ -190,6 +191,7 @@ test("configured purchased channel awaiting its first real conversation is needs
           ...item,
           configured: true,
           status: "warning",
+          reason: "live_evidence_pending",
           summary: "Configured. Waiting for the first valid signed webhook from Meta.",
         }
       : item
@@ -200,6 +202,7 @@ test("configured purchased channel awaiting its first real conversation is needs
           ...item,
           status: "healthy",
           lastInboundAt: null,
+          lastVerifiedRoundTripInboundAt: null,
           lastVerifiedAutomatedReplyAt: null,
           lastReadinessDeliveryFailureAt: null,
         }
@@ -216,23 +219,28 @@ test("configured purchased channel awaiting its first real conversation is needs
   assert.equal(gate.channels[0].inboundVerified, false);
 });
 
-test("latest inbound without a newer verified AI reply is needs_testing", () => {
+test("newer customer inbound does not erase an already verified round trip", () => {
   const overview = setupOverview();
   overview.systemHealth.messaging = overview.systemHealth.messaging.map((item) =>
     item.channel === "whatsapp"
       ? {
           ...item,
+          // This can be a later human-takeover conversation. Historical proof
+          // remains valid while current runtime health stays healthy.
           lastInboundAt: "2026-09-09T10:05:00.000Z",
-          lastVerifiedAutomatedReplyAt: "2026-09-09T10:04:59.000Z",
+          lastVerifiedRoundTripInboundAt: "2026-09-09T10:00:00.000Z",
+          lastVerifiedAutomatedReplyAt: "2026-09-09T10:00:03.000Z",
         }
       : item
   );
 
   const gate = evaluate({ overview });
 
-  assert.equal(gate.status, "needs_testing");
-  assert.equal(gate.testingRequired.some((item) => item.key === "whatsapp_round_trip_outbound"), true);
-  assert.equal(gate.channels[0].aiReplyVerified, false);
+  assert.equal(gate.status, "ready");
+  assert.equal(gate.testingRequired.some((item) => item.key === "whatsapp_round_trip_outbound"), false);
+  assert.equal(gate.channels[0].aiReplyVerified, true);
+  assert.equal(gate.channels[0].latestCustomerInboundAt, "2026-09-09T10:05:00.000Z");
+  assert.equal(gate.channels[0].lastVerifiedRoundTripInboundAt, "2026-09-09T10:00:00.000Z");
 });
 
 test("a newer failed normal-AI delivery is blocked rather than needs_testing", () => {
@@ -304,4 +312,116 @@ test("degraded but usable AI yields ready_with_warnings", () => {
   assert.equal(gate.status, "ready_with_warnings");
   assert.equal(gate.ready, true);
   assert.equal(gate.warnings.some((item) => item.key === "system_health_ai"), true);
+});
+
+
+test("gate exposes a stable machine-readable v1 contract", () => {
+  const gate = evaluate();
+  assert.equal(gate.schemaVersion, 1);
+  assert.deepEqual(gate.decision, { status: "ready", handoverAllowed: true });
+  assert.equal(gate.profileAlignment.ready, true);
+});
+
+test("structured testing issues do not depend on human-readable summary text", () => {
+  const overview = setupOverview();
+  overview.checks = overview.checks.map((item) =>
+    item.key === "whatsapp_webhook"
+      ? {
+          ...item,
+          configured: true,
+          status: "warning",
+          reason: "live_evidence_pending",
+          summary: "Copy can change without changing behavior.",
+        }
+      : item
+  );
+  overview.systemHealth.messaging = overview.systemHealth.messaging.map((item) =>
+    item.channel === "whatsapp"
+      ? {
+          ...item,
+          lastVerifiedRoundTripInboundAt: null,
+          lastVerifiedAutomatedReplyAt: null,
+        }
+      : item
+  );
+
+  const gate = evaluate({ overview });
+  const issue = gate.testingRequired.find((item) => item.key === "whatsapp_webhook");
+  assert.equal(gate.status, "needs_testing");
+  assert.equal(issue.category, "live_test");
+  assert.equal(issue.channel, "whatsapp");
+  assert.equal(issue.severity, "action_required");
+  assert.match(issue.action, /genuine customer/i);
+});
+
+test("whatsapp and instagram both must pass when both were purchased", () => {
+  const overview = setupOverview();
+  overview.checks = overview.checks.map((item) => {
+    if (item.key === "instagram" || item.key === "meta_webhook") {
+      return { ...item, configured: true, status: "ready", summary: `${item.key} is ready` };
+    }
+    return item;
+  });
+  overview.systemHealth.messaging = overview.systemHealth.messaging.map((item) =>
+    item.channel === "instagram" ? healthyMessaging("instagram") : item
+  );
+
+  const gate = evaluate({ completion: clientSetup(["whatsapp", "instagram"]), overview });
+  assert.equal(gate.status, "ready");
+  assert.equal(gate.channels.length, 2);
+  assert.equal(gate.channels.every((item) => item.ready), true);
+});
+
+test("one purchased channel can be ready while another still needs live testing", () => {
+  const overview = setupOverview();
+  overview.checks = overview.checks.map((item) => {
+    if (item.key === "instagram") {
+      return { ...item, configured: true, status: "warning", reason: "live_evidence_pending", summary: "Awaiting proof." };
+    }
+    if (item.key === "meta_webhook") {
+      return { ...item, configured: true, status: "warning", reason: "live_evidence_pending", summary: "Awaiting proof." };
+    }
+    return item;
+  });
+  overview.systemHealth.messaging = overview.systemHealth.messaging.map((item) =>
+    item.channel === "instagram"
+      ? {
+          ...healthyMessaging("instagram"),
+          lastInboundAt: null,
+          lastVerifiedRoundTripInboundAt: null,
+          lastVerifiedAutomatedReplyAt: null,
+        }
+      : item
+  );
+
+  const gate = evaluate({ completion: clientSetup(["whatsapp", "instagram"]), overview });
+  const whatsapp = gate.channels.find((item) => item.channel === "whatsapp");
+  const instagram = gate.channels.find((item) => item.channel === "instagram");
+  assert.equal(gate.status, "needs_testing");
+  assert.equal(whatsapp.ready, true);
+  assert.equal(instagram.ready, false);
+  assert.equal(instagram.testingRequired.length > 0, true);
+});
+
+test("shared Meta webhook hard failure blocks both purchased social channels without duplicate global issues", () => {
+  const overview = setupOverview();
+  overview.checks = overview.checks.map((item) => {
+    if (["facebook", "instagram"].includes(item.key)) {
+      return { ...item, configured: true, status: "ready", summary: `${item.key} is ready` };
+    }
+    if (item.key === "meta_webhook") {
+      return { ...item, configured: true, status: "error", summary: "Meta webhook secret check failed." };
+    }
+    return item;
+  });
+  overview.systemHealth.messaging = overview.systemHealth.messaging.map((item) =>
+    ["facebook", "instagram"].includes(item.channel) ? healthyMessaging(item.channel) : item
+  );
+
+  const gate = evaluate({ completion: clientSetup(["facebook", "instagram"]), overview });
+  assert.equal(gate.status, "blocked");
+  assert.equal(gate.blockers.filter((item) => item.key === "meta_webhook").length, 1);
+  assert.deepEqual(gate.blockers.find((item) => item.key === "meta_webhook").channels.sort(), ["facebook", "instagram"]);
+  assert.equal(gate.channels.find((item) => item.channel === "facebook").ready, false);
+  assert.equal(gate.channels.find((item) => item.channel === "instagram").ready, false);
 });

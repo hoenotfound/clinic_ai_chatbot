@@ -30,6 +30,9 @@ test("messaging health keeps operational recovery separate from exact AI readine
               last_inbound_contact_id: 11,
               last_inbound_message_id: 101,
               last_inbound_at: "2026-09-08T10:00:00.000Z",
+              last_verified_round_trip_contact_id: 11,
+              last_verified_round_trip_inbound_message_id: 101,
+              last_verified_round_trip_inbound_at: "2026-09-08T10:00:00.000Z",
               last_verified_ai_reply_at: "2026-09-08T10:00:02.000Z",
               last_ai_reply_failure_at: null,
             },
@@ -38,6 +41,9 @@ test("messaging health keeps operational recovery separate from exact AI readine
               last_inbound_contact_id: 22,
               last_inbound_message_id: 202,
               last_inbound_at: "2026-09-08T10:00:04.000Z",
+              last_verified_round_trip_contact_id: null,
+              last_verified_round_trip_inbound_message_id: null,
+              last_verified_round_trip_inbound_at: null,
               last_verified_ai_reply_at: null,
               last_ai_reply_failure_at: "2026-09-08T10:00:06.000Z",
             },
@@ -46,6 +52,9 @@ test("messaging health keeps operational recovery separate from exact AI readine
               last_inbound_contact_id: 33,
               last_inbound_message_id: 303,
               last_inbound_at: "2026-09-08T10:00:04.000Z",
+              last_verified_round_trip_contact_id: 33,
+              last_verified_round_trip_inbound_message_id: 303,
+              last_verified_round_trip_inbound_at: "2026-09-08T10:00:04.000Z",
               last_verified_ai_reply_at: "2026-09-08T10:00:07.000Z",
               last_ai_reply_failure_at: null,
             },
@@ -87,6 +96,7 @@ test("messaging health keeps operational recovery separate from exact AI readine
   const facebook = metrics.find((item) => item.channel === "facebook");
 
   assert.equal(whatsapp.lastSuccessfulOutboundAt.toISOString(), "2026-09-08T10:00:03.000Z");
+  assert.equal(whatsapp.lastVerifiedRoundTripInboundAt, "2026-09-08T10:00:00.000Z");
   assert.equal(whatsapp.lastVerifiedAutomatedReplyAt, "2026-09-08T10:00:02.000Z");
   assert.equal(whatsapp.roundTripCorrelated, true);
 
@@ -106,8 +116,10 @@ test("messaging health keeps operational recovery separate from exact AI readine
   const readinessSql = seenSql.find((sql) => sql.includes("outbound_message_evidence"));
   assert.ok(readinessSql);
   assert.match(readinessSql, /e\.message_id = reply\.id/);
-  assert.match(readinessSql, /e\.contact_id = li\.contact_id/);
-  assert.match(readinessSql, /e\.channel = li\.channel/);
+  assert.match(readinessSql, /reply\.contact_id = e\.contact_id/);
+  assert.match(readinessSql, /c\.channel = e\.channel/);
+  assert.match(readinessSql, /inbound_message\.created_at < reply\.created_at/);
+  assert.match(readinessSql, /ROW_NUMBER\(\) OVER/);
   assert.match(readinessSql, /e\.origin = 'ai_reply'/);
   assert.match(readinessSql, /e\.accepted = true/);
 });

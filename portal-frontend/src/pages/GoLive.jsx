@@ -75,7 +75,7 @@ function SummaryCard({ label, value, detail }) {
   );
 }
 
-function IssueList({ title, items, tone = "warning" }) {
+function IssueList({ title, items, tone = "warning", onNavigate }) {
   if (!items?.length) return null;
   const danger = tone === "danger";
   return (
@@ -84,7 +84,13 @@ function IssueList({ title, items, tone = "warning" }) {
       <div className="mt-3 space-y-2">
         {items.map((item, index) => (
           <div key={`${item.key || "issue"}-${index}`} className="rounded-xl bg-white px-3.5 py-3 text-xs leading-5 shadow-sm">
-            {item.summary || "Readiness item needs review."}
+            <p>{item.summary || "Readiness item needs review."}</p>
+            {item.action && <p className="mt-1.5 font-medium text-[var(--color-text)]">Next: {item.action}</p>}
+            {item.remediationRoute && onNavigate && (
+              <button type="button" onClick={() => onNavigate(item.remediationRoute)} className="mt-2 h-8 rounded-lg border border-[var(--color-border)] px-2.5 text-[11px] font-semibold">
+                Open {item.category === "business_setup" ? "Client Setup" : "Setup Status"}
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -108,9 +114,19 @@ function ChannelCard({ channel }) {
       <div className="mt-4 grid gap-2">
         <Signal ok={channel.configured} label="Configuration" detail={channel.configured ? "Required channel credentials and runtime are present." : "Required channel configuration is incomplete."} />
         <Signal ok={channel.setupReady} label="Connection checks" detail={channel.setupReady ? "Required Setup Status checks are ready." : "Connection or webhook confirmation still needs attention."} />
-        <Signal ok={channel.inboundVerified} label="Real customer inbound" detail={channel.lastInboundAt ? `Observed ${formatTime(channel.lastInboundAt)}` : "No real inbound message has been verified yet."} />
-        <Signal ok={channel.aiReplyVerified} label="Verified AI reply" detail={channel.lastVerifiedAutomatedReplyAt ? `Provider accepted ${formatTime(channel.lastVerifiedAutomatedReplyAt)}` : "No provider-accepted normal AI reply to the latest inbound has been verified yet."} />
+        <Signal ok={channel.inboundVerified} label="Verified customer inbound" detail={channel.lastVerifiedRoundTripInboundAt ? `Round-trip proof started ${formatTime(channel.lastVerifiedRoundTripInboundAt)}` : "No successful real-customer round trip has been verified yet."} />
+        <Signal ok={channel.aiReplyVerified} label="Verified AI reply" detail={channel.lastVerifiedAutomatedReplyAt ? `Provider accepted ${formatTime(channel.lastVerifiedAutomatedReplyAt)}` : "No provider-accepted normal AI reply has completed a verified round trip yet."} />
       </div>
+      {!channel.blockers?.length && channel.testingRequired?.length > 0 && (
+        <div className="mt-3 rounded-xl bg-[var(--color-accent-light)]/45 px-3.5 py-3 text-[11px] leading-5">
+          <p className="font-bold">How to complete the live test</p>
+          <ol className="mt-1 list-decimal space-y-0.5 pl-4 text-[var(--color-text-muted)]">
+            <li>Send a genuine customer message on {channel.label}.</li>
+            <li>Allow the normal AI reply path to respond successfully.</li>
+            <li>Return here and run go-live checks again.</li>
+          </ol>
+        </div>
+      )}
     </article>
   );
 }
@@ -244,6 +260,13 @@ export default function GoLive() {
                 {data.businessSetup?.ready ? "Complete" : "Incomplete"}
               </span>
             </div>
+            <div className="mt-4">
+              <Signal
+                ok={data.profileAlignment?.ready}
+                label="Business profile alignment"
+                detail={data.profileAlignment?.summary || "Business-profile alignment has not been verified yet."}
+              />
+            </div>
             {incompleteBusinessItems.length > 0 ? (
               <div className="mt-4 space-y-2">
                 {incompleteBusinessItems.map((item) => (
@@ -300,9 +323,9 @@ export default function GoLive() {
             <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">Fix blockers first. Live-testing items require a genuine customer-side test conversation, not a synthetic send from this dashboard.</p>
           </div>
           <div className="grid gap-3 lg:grid-cols-2">
-            <IssueList title="Blocking issues" items={data.blockers} tone="danger" />
-            <IssueList title="Live testing required" items={data.testingRequired} />
-            <IssueList title="Warnings to review" items={data.warnings} />
+            <IssueList title="Blocking issues" items={data.blockers} tone="danger" onNavigate={navigate} />
+            <IssueList title="Live testing required" items={data.testingRequired} onNavigate={navigate} />
+            <IssueList title="Warnings to review" items={data.warnings} onNavigate={navigate} />
             {!data.blockers?.length && !data.testingRequired?.length && !data.warnings?.length && (
               <div className="rounded-2xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/50 p-4 text-sm leading-6 text-[var(--color-primary)]">
                 Nothing remains. This client has passed the unified go-live gate.

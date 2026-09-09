@@ -141,9 +141,9 @@ async function getMessagingMetrics({ hours = 24 } = {}, queryable = pool) {
       [safeHours]
     ),
     // Readiness evidence is intentionally separate from ordinary channel
-    // health. It must belong to the latest inbound contact and to an explicitly
-    // tagged normal AI reply; staff, scheduled, follow-up and system-fallback
-    // sends cannot satisfy this query.
+    // health. Keep the latest customer inbound for current diagnostics, but also
+    // preserve the latest successful exact AI round trip as durable go-live proof.
+    // A later human-takeover conversation must not erase an already-proven channel.
     queryable.query(
       `WITH latest_inbound AS (
          SELECT DISTINCT ON (c.channel)
@@ -156,15 +156,12 @@ async function getMessagingMetrics({ hours = 24 } = {}, queryable = pool) {
          WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
            AND m.role = 'user'
          ORDER BY c.channel, m.created_at DESC, m.id DESC
-       ), readiness_evidence AS (
+       ), latest_inbound_evidence AS (
          SELECT
            li.channel,
            li.contact_id,
            li.inbound_message_id,
            li.last_inbound_at,
-           MAX(e.accepted_at) FILTER (
-             WHERE e.origin = 'ai_reply' AND e.accepted = true
-           ) AS last_verified_ai_reply_at,
            MAX(e.attempted_at) FILTER (
              WHERE e.origin = 'ai_reply' AND e.accepted = false
            ) AS last_ai_reply_failure_at
@@ -178,16 +175,60 @@ async function getMessagingMetrics({ hours = 24 } = {}, queryable = pool) {
           AND e.contact_id = li.contact_id
           AND e.channel = li.channel
          GROUP BY li.channel, li.contact_id, li.inbound_message_id, li.last_inbound_at
+       ), verified_round_trips AS (
+         SELECT
+           c.channel,
+           reply.contact_id,
+           inbound.id AS inbound_message_id,
+           inbound.created_at AS inbound_at,
+           e.accepted_at AS verified_reply_at,
+           ROW_NUMBER() OVER (
+             PARTITION BY c.channel
+             ORDER BY e.accepted_at DESC, reply.id DESC
+           ) AS channel_rank
+         FROM outbound_message_evidence e
+         JOIN messages reply
+           ON reply.id = e.message_id
+          AND reply.contact_id = e.contact_id
+          AND reply.role = 'assistant'
+         JOIN contacts c
+           ON c.id = e.contact_id
+          AND c.channel = e.channel
+         JOIN LATERAL (
+           SELECT inbound_message.id, inbound_message.created_at
+           FROM messages inbound_message
+           WHERE inbound_message.contact_id = reply.contact_id
+             AND inbound_message.role = 'user'
+             AND inbound_message.created_at < reply.created_at
+           ORDER BY inbound_message.created_at DESC, inbound_message.id DESC
+           LIMIT 1
+         ) inbound ON true
+         WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
+           AND e.origin = 'ai_reply'
+           AND e.accepted = true
+       ), latest_verified_round_trip AS (
+         SELECT
+           channel,
+           contact_id,
+           inbound_message_id,
+           inbound_at,
+           verified_reply_at
+         FROM verified_round_trips
+         WHERE channel_rank = 1
        )
        SELECT
          channels.channel,
-         re.contact_id AS last_inbound_contact_id,
-         re.inbound_message_id AS last_inbound_message_id,
-         re.last_inbound_at,
-         re.last_verified_ai_reply_at,
-         re.last_ai_reply_failure_at
+         lie.contact_id AS last_inbound_contact_id,
+         lie.inbound_message_id AS last_inbound_message_id,
+         lie.last_inbound_at,
+         vrt.contact_id AS last_verified_round_trip_contact_id,
+         vrt.inbound_message_id AS last_verified_round_trip_inbound_message_id,
+         vrt.inbound_at AS last_verified_round_trip_inbound_at,
+         vrt.verified_reply_at AS last_verified_ai_reply_at,
+         lie.last_ai_reply_failure_at
        FROM (VALUES ('whatsapp'), ('instagram'), ('facebook')) AS channels(channel)
-       LEFT JOIN readiness_evidence re ON re.channel = channels.channel
+       LEFT JOIN latest_inbound_evidence lie ON lie.channel = channels.channel
+       LEFT JOIN latest_verified_round_trip vrt ON vrt.channel = channels.channel
        ORDER BY channels.channel`
     ),
     messagingRuntimeHealthRepo.listRuntimeHealth(queryable),
@@ -224,10 +265,17 @@ async function getMessagingMetrics({ hours = 24 } = {}, queryable = pool) {
       lastInboundMessageId: readiness.last_inbound_message_id == null
         ? null
         : Number(readiness.last_inbound_message_id),
+      lastVerifiedRoundTripContactId: readiness.last_verified_round_trip_contact_id == null
+        ? null
+        : Number(readiness.last_verified_round_trip_contact_id),
+      lastVerifiedRoundTripInboundMessageId: readiness.last_verified_round_trip_inbound_message_id == null
+        ? null
+        : Number(readiness.last_verified_round_trip_inbound_message_id),
+      lastVerifiedRoundTripInboundAt: readiness.last_verified_round_trip_inbound_at || null,
       lastVerifiedAutomatedReplyAt: readiness.last_verified_ai_reply_at || null,
       lastReadinessDeliveryFailureAt: readiness.last_ai_reply_failure_at || null,
       roundTripCorrelated: Boolean(
-        readiness.last_inbound_at && readiness.last_verified_ai_reply_at
+        readiness.last_verified_round_trip_inbound_at && readiness.last_verified_ai_reply_at
       ),
     };
   });

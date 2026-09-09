@@ -323,6 +323,7 @@ function readinessItem(check, { required = true } = {}) {
     required,
     configured: check?.configured === true,
     status: check?.status || "missing",
+    reason: check?.reason || null,
     summary: check?.summary || "Check result was not returned.",
     checkedAt: check?.checkedAt || null,
     lastSuccessAt: check?.lastSuccessAt || null,

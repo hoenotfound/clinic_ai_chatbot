@@ -7,13 +7,12 @@ const {
   purchasedChannelContract,
 } = require("./clientSetupService");
 
+const GO_LIVE_SCHEMA_VERSION = 1;
 const CHANNEL_LABELS = Object.freeze({
   whatsapp: "WhatsApp",
   facebook: "Facebook Messenger",
   instagram: "Instagram",
 });
-
-const PASSIVE_CHANNEL_WARNING = /waiting for (?:the )?first valid signed webhook|send and receive a test message|waiting for real messaging activity|customer message|live messaging activity/i;
 
 function timestampMs(value) {
   if (!value) return null;
@@ -25,7 +24,8 @@ function uniqueIssues(items = []) {
   const seen = new Set();
   return items.filter((item) => {
     if (!item) return false;
-    const key = `${item.key || "unknown"}|${item.status || "unknown"}|${item.summary || ""}`;
+    const channels = Array.isArray(item.channels) ? item.channels.join(",") : "";
+    const key = `${item.key || "unknown"}|${item.status || "unknown"}|${channels}|${item.summary || ""}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -40,25 +40,66 @@ function channelCheck(readiness, key) {
   return (readiness?.channelChecks || []).find((item) => item.key === key) || null;
 }
 
-function isTestingBlocker(item, readiness) {
-  if (!item?.key) return false;
-  if (/_round_trip_(?:inbound|outbound)$/.test(item.key)) {
-    return ["missing", "stale", "warning"].includes(item.status);
-  }
+function runtimeForChannel(readiness, channel) {
+  return (readiness?.operationalHealth?.messaging || [])
+    .find((item) => item.channel === channel) || null;
+}
 
-  const check = channelCheck(readiness, item.key);
-  return Boolean(
-    check
-    && check.configured === true
-    && check.status === "warning"
-    && PASSIVE_CHANNEL_WARNING.test(check.summary || item.summary || "")
-  );
+function channelsForIssue(item, requiredChannels = []) {
+  if (Array.isArray(item?.channels) && item.channels.length) {
+    return item.channels.filter((channel) => requiredChannels.includes(channel));
+  }
+  if (!item?.key) return [];
+  return requiredChannels.filter((channel) => (
+    item.key.startsWith(`${channel}_`)
+    || (CHANNEL_CHECK_KEYS[channel] || []).includes(item.key)
+  ));
 }
 
 function blockerBelongsToChannel(item, channel) {
-  if (!item?.key || !channel) return false;
-  if (item.key.startsWith(`${channel}_`)) return true;
+  if (!item || !channel) return false;
+  if (Array.isArray(item.channels) && item.channels.length) return item.channels.includes(channel);
+  if (item.key?.startsWith(`${channel}_`)) return true;
   return (CHANNEL_CHECK_KEYS[channel] || []).includes(item.key);
+}
+
+function hasStableRoundTrip(runtime) {
+  const inboundMs = timestampMs(runtime?.lastVerifiedRoundTripInboundAt);
+  const replyMs = timestampMs(runtime?.lastVerifiedAutomatedReplyAt);
+  const failureMs = timestampMs(runtime?.lastReadinessDeliveryFailureAt);
+  return Boolean(
+    inboundMs
+    && replyMs
+    && replyMs >= inboundMs
+    && (!failureMs || failureMs <= replyMs)
+  );
+}
+
+function classifyReadinessBlocker(item, readiness, requiredChannels) {
+  if (!item?.key) return { kind: "hard", channels: [] };
+  const channels = channelsForIssue(item, requiredChannels);
+  const stableChannels = channels.filter((channel) => hasStableRoundTrip(runtimeForChannel(readiness, channel)));
+  const unverifiedChannels = channels.filter((channel) => !stableChannels.includes(channel));
+
+  if (/_round_trip_(?:inbound|outbound)$/.test(item.key)) {
+    if (channels.length && unverifiedChannels.length === 0) return { kind: "ignore", channels };
+    if (["missing", "stale", "warning"].includes(item.status)) {
+      return { kind: "testing", channels: unverifiedChannels.length ? unverifiedChannels : channels };
+    }
+  }
+
+  const check = channelCheck(readiness, item.key);
+  if (
+    check
+    && check.configured === true
+    && check.status === "warning"
+    && check.reason === "live_evidence_pending"
+  ) {
+    if (channels.length && unverifiedChannels.length === 0) return { kind: "ignore", channels };
+    return { kind: "testing", channels: unverifiedChannels.length ? unverifiedChannels : channels };
+  }
+
+  return { kind: "hard", channels };
 }
 
 function buildBusinessSetup(clientSetup) {
@@ -80,31 +121,73 @@ function buildBusinessSetup(clientSetup) {
   };
 }
 
+function issueCategory(item, kind, channels) {
+  if (item.key === "business_setup") return "business_setup";
+  if (item.key === "business_profile") return "business_profile";
+  if (item.key === "purchased_channels") return "provisioning";
+  if (kind === "testing" || /_round_trip_(?:inbound|outbound)$/.test(item.key || "")) return "live_test";
+  if (channels.length) return "channel_setup";
+  return "system";
+}
+
+function issueAction(category, channels) {
+  const labels = channels.map(channelLabel).join(" and ");
+  switch (category) {
+    case "business_setup":
+      return "Complete the required Client Setup sections, save them, then run go-live checks again.";
+    case "business_profile":
+      return "Review the business-profile alignment details and correct the mismatched industry configuration.";
+    case "provisioning":
+      return "Set the server-owned PURCHASED_CHANNELS contract for this client, then redeploy or restart as required.";
+    case "live_test":
+      return `From a genuine customer account, message ${labels || "the purchased channel"}, allow the normal AI reply path to respond, then run go-live checks again.`;
+    case "channel_setup":
+      return `Review ${labels || "the channel"} credentials, webhook configuration and connection checks in Setup Status.`;
+    default:
+      return "Review the affected system check in Setup Status, fix the underlying issue, then run go-live checks again.";
+  }
+}
+
+function remediationRoute(category) {
+  if (category === "business_setup") return "/settings/client-setup";
+  if (["business_profile", "channel_setup", "system"].includes(category)) return "/settings/setup";
+  return null;
+}
+
+function decorateIssue(item, kind, requiredChannels) {
+  const channels = channelsForIssue(item, requiredChannels);
+  const category = issueCategory(item, kind, channels);
+  return {
+    ...item,
+    category,
+    severity: kind === "blocker" ? "error" : kind === "testing" ? "action_required" : "warning",
+    channel: channels.length === 1 ? channels[0] : null,
+    channels,
+    action: issueAction(category, channels),
+    remediationRoute: remediationRoute(category),
+  };
+}
+
 function buildChannelSummary(channel, readiness, hardBlockers, testingRequired) {
   const checks = (CHANNEL_CHECK_KEYS[channel] || [])
     .map((key) => channelCheck(readiness, key))
     .filter(Boolean);
-  const runtime = (readiness?.operationalHealth?.messaging || [])
-    .find((item) => item.channel === channel) || null;
+  const runtime = runtimeForChannel(readiness, channel);
 
-  const inboundAt = runtime?.lastInboundAt || null;
+  const latestInboundAt = runtime?.lastInboundAt || null;
+  const verifiedInboundAt = runtime?.lastVerifiedRoundTripInboundAt || null;
   const replyAt = runtime?.lastVerifiedAutomatedReplyAt || null;
   const failureAt = runtime?.lastReadinessDeliveryFailureAt || null;
-  const inboundMs = timestampMs(inboundAt);
-  const replyMs = timestampMs(replyAt);
-  const failureMs = timestampMs(failureAt);
-  const inboundVerified = Boolean(inboundMs);
-  const aiReplyVerified = Boolean(
-    inboundMs
-    && replyMs
-    && replyMs >= inboundMs
-    && (!failureMs || failureMs <= replyMs)
-  );
+  const inboundVerified = Boolean(timestampMs(verifiedInboundAt));
+  const aiReplyVerified = hasStableRoundTrip(runtime);
   const configured = checks.length > 0
     && checks.every((item) => item.configured === true)
     && runtime?.configured === true;
   const setupReady = checks.length > 0
-    && checks.every((item) => item.configured === true && item.status === "ready");
+    && checks.every((item) => (
+      item.configured === true
+      && (item.status === "ready" || (item.status === "warning" && item.reason === "live_evidence_pending" && aiReplyVerified))
+    ));
   const runtimeReady = runtime?.status === "healthy";
   const channelHardBlockers = hardBlockers.filter((item) => blockerBelongsToChannel(item, channel));
   const channelTesting = testingRequired.filter((item) => blockerBelongsToChannel(item, channel));
@@ -119,7 +202,13 @@ function buildChannelSummary(channel, readiness, hardBlockers, testingRequired) 
     inboundVerified,
     aiReplyVerified,
     ready: channelHardBlockers.length === 0 && channelTesting.length === 0,
-    lastInboundAt: inboundAt,
+    verificationState: channelHardBlockers.length
+      ? "blocked"
+      : channelTesting.length
+        ? "needs_testing"
+        : "ready",
+    latestCustomerInboundAt: latestInboundAt,
+    lastVerifiedRoundTripInboundAt: verifiedInboundAt,
     lastVerifiedAutomatedReplyAt: replyAt,
     lastReadinessDeliveryFailureAt: failureAt,
     checks,
@@ -167,6 +256,7 @@ function evaluateGoLiveGate({
   const completion = clientSetup || evaluateClientSetup(config, env);
   const businessSetup = buildBusinessSetup(completion);
   const contract = completion?.channelContract || purchasedChannelContract(env);
+  const requiredChannels = Array.isArray(contract?.channels) ? contract.channels : [];
   const hardBlockers = [];
   const testingRequired = [];
   const warnings = [];
@@ -188,11 +278,16 @@ function evaluateGoLiveGate({
     try {
       readiness = evaluateReadiness(setupOverview, {
         expectedIndustry: config?.businessType,
-        requiredChannels: contract.channels,
+        requiredChannels,
       });
       for (const item of readiness.blocking || []) {
-        if (isTestingBlocker(item, readiness)) testingRequired.push(item);
-        else hardBlockers.push(item);
+        const classification = classifyReadinessBlocker(item, readiness, requiredChannels);
+        if (classification.kind === "ignore") continue;
+        const classified = classification.channels.length
+          ? { ...item, channels: classification.channels }
+          : item;
+        if (classification.kind === "testing") testingRequired.push(classified);
+        else hardBlockers.push(classified);
       }
       warnings.push(...(readiness.warnings || []));
     } catch (err) {
@@ -204,12 +299,15 @@ function evaluateGoLiveGate({
     }
   }
 
-  const blockers = uniqueIssues(hardBlockers);
-  const testing = uniqueIssues(testingRequired);
-  const gateWarnings = uniqueIssues(warnings);
+  const blockerItems = uniqueIssues(hardBlockers)
+    .map((item) => decorateIssue(item, "blocker", requiredChannels));
+  const testingItems = uniqueIssues(testingRequired)
+    .map((item) => decorateIssue(item, "testing", requiredChannels));
+  const warningItems = uniqueIssues(warnings)
+    .map((item) => decorateIssue(item, "warning", requiredChannels));
   const channels = !contractBlocker && readiness
-    ? contract.channels.map((channel) => buildChannelSummary(channel, readiness, blockers, testing))
-    : (Array.isArray(contract?.channels) ? contract.channels : []).map((channel) => ({
+    ? requiredChannels.map((channel) => buildChannelSummary(channel, readiness, blockerItems, testingItems))
+    : requiredChannels.map((channel) => ({
         channel,
         label: channelLabel(channel),
         purchased: true,
@@ -219,7 +317,9 @@ function evaluateGoLiveGate({
         inboundVerified: false,
         aiReplyVerified: false,
         ready: false,
-        lastInboundAt: null,
+        verificationState: "blocked",
+        latestCustomerInboundAt: null,
+        lastVerifiedRoundTripInboundAt: null,
         lastVerifiedAutomatedReplyAt: null,
         lastReadinessDeliveryFailureAt: null,
         checks: [],
@@ -227,36 +327,45 @@ function evaluateGoLiveGate({
         testingRequired: [],
       }));
 
-  const channelKeys = new Set(
-    Object.values(CHANNEL_CHECK_KEYS).flat()
-  );
-  const requiredChannels = Array.isArray(contract?.channels) ? contract.channels : [];
+  const channelKeys = new Set(Object.values(CHANNEL_CHECK_KEYS).flat());
   const systemBlockers = readiness
-    ? blockers.filter((item) => {
-        if (item.key === "business_profile" || item.key === "business_setup" || item.key === "purchased_channels") return false;
+    ? blockerItems.filter((item) => {
+        if (["business_profile", "business_setup", "purchased_channels"].includes(item.key)) return false;
         if (channelKeys.has(item.key)) return false;
         return !requiredChannels.some((channel) => item.key?.startsWith(`${channel}_`));
       })
-    : blockers.filter((item) => !["business_setup", "purchased_channels"].includes(item.key));
+    : blockerItems.filter((item) => !["business_setup", "purchased_channels"].includes(item.key));
 
-  const status = blockers.length > 0
+  const status = blockerItems.length > 0
     ? "blocked"
-    : testing.length > 0
+    : testingItems.length > 0
       ? "needs_testing"
-      : gateWarnings.length > 0
+      : warningItems.length > 0
         ? "ready_with_warnings"
         : "ready";
   const ready = ["ready", "ready_with_warnings"].includes(status);
+  const profileReady = readiness?.businessProfile?.status === "ready";
 
   return {
+    schemaVersion: GO_LIVE_SCHEMA_VERSION,
     status,
     ready,
+    decision: {
+      status,
+      handoverAllowed: ready,
+    },
     checkedAt: setupOverview?.checkedAt || new Date().toISOString(),
     lastTechnicalRunAt: setupOverview?.lastRunAt || null,
     businessType: config?.businessType || null,
     businessName: config?.businessName || config?.clinicName || null,
     businessSetup,
     businessProfile: readiness?.businessProfile || setupOverview?.businessProfile || null,
+    profileAlignment: {
+      ready: profileReady,
+      expectedIndustry: readiness?.businessProfile?.expectedIndustry || config?.businessType || null,
+      actualIndustry: readiness?.businessProfile?.actualIndustry || setupOverview?.businessProfile?.businessType || null,
+      summary: readiness?.businessProfile?.summary || "Business-profile alignment has not been verified yet.",
+    },
     channelContract: {
       configured: contract?.configured === true,
       channels: requiredChannels,
@@ -271,13 +380,13 @@ function evaluateGoLiveGate({
       blockers: systemBlockers,
     },
     channels,
-    blockers,
-    testingRequired: testing,
-    warnings: gateWarnings,
+    blockers: blockerItems,
+    testingRequired: testingItems,
+    warnings: warningItems,
     summary: {
-      blockers: blockers.length,
-      testingRequired: testing.length,
-      warnings: gateWarnings.length,
+      blockers: blockerItems.length,
+      testingRequired: testingItems.length,
+      warnings: warningItems.length,
       purchasedChannels: requiredChannels.length,
       channelsReady: channels.filter((item) => item.ready).length,
     },
@@ -286,10 +395,12 @@ function evaluateGoLiveGate({
 
 module.exports = {
   CHANNEL_LABELS,
-  PASSIVE_CHANNEL_WARNING,
+  GO_LIVE_SCHEMA_VERSION,
   blockerBelongsToChannel,
   buildChannelSummary,
+  channelsForIssue,
+  classifyReadinessBlocker,
   evaluateGoLiveGate,
-  isTestingBlocker,
+  hasStableRoundTrip,
   uniqueIssues,
 };

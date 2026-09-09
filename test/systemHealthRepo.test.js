@@ -64,6 +64,9 @@ test("messaging metrics preserve existing operational recovery while exposing ex
               last_inbound_contact_id: 10,
               last_inbound_message_id: 100,
               last_inbound_at: new Date("2026-09-05T00:00:00Z"),
+              last_verified_round_trip_contact_id: 10,
+              last_verified_round_trip_inbound_message_id: 100,
+              last_verified_round_trip_inbound_at: new Date("2026-09-05T00:00:00Z"),
               last_verified_ai_reply_at: new Date("2026-09-05T00:00:05Z"),
               last_ai_reply_failure_at: null,
             },
@@ -72,6 +75,9 @@ test("messaging metrics preserve existing operational recovery while exposing ex
               last_inbound_contact_id: 20,
               last_inbound_message_id: 200,
               last_inbound_at: new Date("2026-09-05T00:02:00Z"),
+              last_verified_round_trip_contact_id: null,
+              last_verified_round_trip_inbound_message_id: null,
+              last_verified_round_trip_inbound_at: null,
               last_verified_ai_reply_at: null,
               last_ai_reply_failure_at: null,
             },
@@ -80,6 +86,9 @@ test("messaging metrics preserve existing operational recovery while exposing ex
               last_inbound_contact_id: null,
               last_inbound_message_id: null,
               last_inbound_at: null,
+              last_verified_round_trip_contact_id: null,
+              last_verified_round_trip_inbound_message_id: null,
+              last_verified_round_trip_inbound_at: null,
               last_verified_ai_reply_at: null,
               last_ai_reply_failure_at: null,
             },
@@ -122,6 +131,7 @@ test("messaging metrics preserve existing operational recovery while exposing ex
 
   const whatsapp = metrics.find((item) => item.channel === "whatsapp");
   assert.equal(whatsapp.lastSuccessfulOutboundAt.toISOString(), "2026-09-05T00:00:05.000Z");
+  assert.equal(whatsapp.lastVerifiedRoundTripInboundAt.toISOString(), "2026-09-05T00:00:00.000Z");
   assert.equal(whatsapp.lastVerifiedAutomatedReplyAt.toISOString(), "2026-09-05T00:00:05.000Z");
   assert.equal(whatsapp.roundTripCorrelated, true);
 
