@@ -87,7 +87,9 @@ function DefaultRoute() {
   if (loading) return null;
   if (!username) return <Navigate to="/login" replace />;
   if (adminDecisionKey && setupDecision.key !== adminDecisionKey) return null;
-  if (setupDecision.target) return <Navigate to={setupDecision.target} replace />;
+  if (adminDecisionKey && setupDecision.key === adminDecisionKey && setupDecision.target) {
+    return <Navigate to={setupDecision.target} replace />;
+  }
   return <Navigate to={homeForPermissions(permissions, user)} replace />;
 }
 
