@@ -6,6 +6,9 @@ const path = require("path");
 
 const {
   acquireProvisioningLock,
+  parseArgs,
+  readinessFailureReport,
+  requireReadinessAdminCredentials,
   safeErrorOutput,
   writeProvisioningReceipt,
 } = require("../scripts/provisionClient");
@@ -45,12 +48,33 @@ test("stale local provisioning lock is recovered when its process is no longer r
   assert.equal(fs.existsSync(path.join(stateDir, "da-chatbot-acme.lock")), false);
 });
 
-test("successful provisioning receipt is secret-free and contains recovery identifiers", (t) => {
+test("provision CLI accepts an explicit required-channel contract", () => {
+  const args = parseArgs([
+    "--client", "acme",
+    "--industry", "home_renovation",
+    "--channels", "whatsapp,instagram",
+  ]);
+  assert.equal(args.channels, "whatsapp,instagram");
+});
+
+test("execution readiness requires the bootstrap admin credentials that are copied to the client", () => {
+  assert.deepEqual(
+    requireReadinessAdminCredentials({ ADMIN_USERNAME: "admin", ADMIN_PASSWORD: "secret-pass" }),
+    { username: "admin", password: "secret-pass" }
+  );
+  assert.throws(
+    () => requireReadinessAdminCredentials({ ADMIN_USERNAME: "admin" }),
+    (err) => err.code === "READINESS_ADMIN_CREDENTIALS_REQUIRED"
+  );
+});
+
+test("successful provisioning receipt is secret-free and stores finalization/readiness identifiers", (t) => {
   const baseDir = tempDir(t);
   const result = {
     mode: "executed",
     clientSlug: "acme",
     industry: "home_renovation",
+    requiredChannels: ["whatsapp", "instagram"],
     neon: {
       projectId: "neon-123",
       projectName: "da-chatbot-acme",
@@ -62,16 +86,32 @@ test("successful provisioning receipt is secret-free and contains recovery ident
       url: "https://da-chatbot-acme.onrender.com",
       deployId: "dep-123",
       deployStatus: "live",
+      deployedCommitSha: "abc123",
       region: "singapore",
       plan: "starter",
       repo: "https://github.com/hoenotfound/clinic_ai_chatbot",
       branch: "main",
       healthCheckPath: "/",
     },
+    runtimeFinalization: {
+      publicBaseUrlConfigured: true,
+      adminPasswordRemoved: true,
+      deployId: "dep-final",
+      deployStatus: "live",
+      deployedCommitSha: "abc123",
+    },
     profileContract: {
       envKey: "INITIAL_BUSINESS_TYPE",
       value: "home_renovation",
       lockedOnFirstStartup: true,
+    },
+    readiness: {
+      status: "needs_attention",
+      ready: false,
+      verificationCompleted: true,
+      checkedAt: "2026-09-08T12:01:00.000Z",
+      requiredChannels: ["whatsapp", "instagram"],
+      blocking: [{ key: "instagram", status: "warning", summary: "Send a test message." }],
     },
   };
 
@@ -81,12 +121,30 @@ test("successful provisioning receipt is secret-free and contains recovery ident
   });
   const saved = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
 
+  assert.equal(saved.version, 3);
   assert.equal(saved.completedAt, "2026-09-08T12:00:00.000Z");
+  assert.equal(saved.lastVerifiedAt, "2026-09-08T12:01:00.000Z");
   assert.equal(saved.render.serviceId, "srv-123");
-  assert.equal(saved.render.deployStatus, "live");
+  assert.equal(saved.render.deployedCommitSha, "abc123");
+  assert.equal(saved.runtimeFinalization.adminPasswordRemoved, true);
+  assert.equal(saved.runtimeFinalization.deployId, "dep-final");
   assert.equal(saved.neon.projectId, "neon-123");
+  assert.deepEqual(saved.requiredChannels, ["whatsapp", "instagram"]);
+  assert.equal(saved.readiness.status, "needs_attention");
   assert.equal(JSON.stringify(saved).includes("DATABASE_URL"), false);
   assert.equal(JSON.stringify(saved).includes("API_KEY"), false);
+  assert.equal(JSON.stringify(saved).includes("ADMIN_PASSWORD"), false);
+});
+
+test("readiness transport/auth failure is classified separately from verified needs-attention", () => {
+  const report = readinessFailureReport(
+    Object.assign(new Error("Administrator login failed"), { code: "READINESS_LOGIN_REJECTED" }),
+    { industry: "home_renovation", channels: ["whatsapp"] }
+  );
+  assert.equal(report.status, "verification_failed");
+  assert.equal(report.ready, false);
+  assert.equal(report.verificationCompleted, false);
+  assert.equal(report.blocking[0].key, "READINESS_LOGIN_REJECTED");
 });
 
 test("CLI error output redacts runtime and control-plane secrets defensively", () => {

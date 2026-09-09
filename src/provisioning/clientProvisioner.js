@@ -43,6 +43,7 @@ const RESERVED_RUNTIME_ENV_KEYS = new Set([
   "SESSION_SECRET",
   "INITIAL_BUSINESS_TYPE",
   "BUSINESS_TYPE",
+  "PUBLIC_BASE_URL",
   "PORT",
 ]);
 
@@ -470,6 +471,8 @@ async function provisionClient(input = {}, {
     neon: {
       projectId: neon.projectId,
       projectName: plan.neon.projectName,
+      databaseName: neon.databaseName,
+      roleName: neon.roleName,
       region: plan.neon.region,
     },
     render: {
@@ -515,4 +518,5 @@ module.exports = {
   requireExecutionConfig,
   requireIndustry,
   requireRenderRegion,
+  resourceName,
 };

@@ -42,46 +42,99 @@ test("inbound health metrics combine durable message and Meta-resolution queues"
   assert.equal(metrics.oldestOpenAt.toISOString(), "2026-09-05T00:01:00.000Z");
 });
 
-test("messaging metrics preserve quiet channels and include accepted social outbound activity", async () => {
+test("messaging metrics preserve existing operational recovery while exposing exact AI readiness evidence", async () => {
   const queryable = {
     async query(sql, params = []) {
-      if (/FROM contacts c/.test(sql)) {
-        assert.match(sql, /delivery_status = 'failed'/);
-        assert.match(sql, /MAX\(m\.created_at\).*m\.role = 'user'/s);
-        assert.deepEqual(params, [24]);
+      if (/FROM messaging_runtime_health/.test(sql)) {
+        assert.deepEqual(params, []);
         return {
-          rows: [{
+          rows: [
+            { channel: "instagram", last_outbound_accepted_at: new Date("2026-09-05T00:03:00Z") },
+          ],
+        };
+      }
+      if (/outbound_message_evidence/.test(sql)) {
+        assert.match(sql, /e\.message_id = reply\.id/);
+        assert.match(sql, /e\.origin = 'ai_reply'/);
+        assert.deepEqual(params, []);
+        return {
+          rows: [
+            {
+              channel: "whatsapp",
+              last_inbound_contact_id: 10,
+              last_inbound_message_id: 100,
+              last_inbound_at: new Date("2026-09-05T00:00:00Z"),
+              last_verified_ai_reply_at: new Date("2026-09-05T00:00:05Z"),
+              last_ai_reply_failure_at: null,
+            },
+            {
+              channel: "instagram",
+              last_inbound_contact_id: 20,
+              last_inbound_message_id: 200,
+              last_inbound_at: new Date("2026-09-05T00:02:00Z"),
+              last_verified_ai_reply_at: null,
+              last_ai_reply_failure_at: null,
+            },
+            {
+              channel: "facebook",
+              last_inbound_contact_id: null,
+              last_inbound_message_id: null,
+              last_inbound_at: null,
+              last_verified_ai_reply_at: null,
+              last_ai_reply_failure_at: null,
+            },
+          ],
+        };
+      }
+
+      assert.match(sql, /MAX\(m\.created_at\).*m\.whatsapp_message_id IS NOT NULL/s);
+      assert.deepEqual(params, [24]);
+      return {
+        rows: [
+          {
             channel: "whatsapp",
             last_inbound_at: new Date("2026-09-05T00:00:00Z"),
             last_successful_outbound_at: new Date("2026-09-05T00:00:05Z"),
             recent_delivery_failures: 0,
             last_delivery_failure_at: null,
-          }],
-        };
-      }
-      if (/FROM messaging_runtime_health/.test(sql)) {
-        assert.deepEqual(params, []);
-        return {
-          rows: [{
+          },
+          {
             channel: "instagram",
-            last_outbound_accepted_at: new Date("2026-09-05T00:03:00Z"),
-          }],
-        };
-      }
-      throw new Error(`Unexpected query: ${sql}`);
+            last_inbound_at: new Date("2026-09-05T00:02:00Z"),
+            last_successful_outbound_at: null,
+            recent_delivery_failures: 0,
+            last_delivery_failure_at: null,
+          },
+          {
+            channel: "facebook",
+            last_inbound_at: null,
+            last_successful_outbound_at: null,
+            recent_delivery_failures: 0,
+            last_delivery_failure_at: null,
+          },
+        ],
+      };
     },
   };
 
   const metrics = await getMessagingMetrics({ hours: 24 }, queryable);
   assert.equal(metrics.length, 3);
-  assert.equal(metrics[0].channel, "whatsapp");
-  assert.equal(metrics[0].recentDeliveryFailures, 0);
-  assert.equal(metrics[1].channel, "instagram");
-  assert.equal(metrics[1].lastInboundAt, null);
-  assert.equal(
-    metrics[1].lastSuccessfulOutboundAt.toISOString(),
-    "2026-09-05T00:03:00.000Z"
-  );
-  assert.equal(metrics[2].channel, "facebook");
-  assert.equal(metrics[2].lastSuccessfulOutboundAt, null);
+
+  const whatsapp = metrics.find((item) => item.channel === "whatsapp");
+  assert.equal(whatsapp.lastSuccessfulOutboundAt.toISOString(), "2026-09-05T00:00:05.000Z");
+  assert.equal(whatsapp.lastVerifiedAutomatedReplyAt.toISOString(), "2026-09-05T00:00:05.000Z");
+  assert.equal(whatsapp.roundTripCorrelated, true);
+
+  const instagram = metrics.find((item) => item.channel === "instagram");
+  // Social channel-wide provider acceptance remains useful for ordinary Setup
+  // Status recovery, but cannot satisfy strict post-provision readiness.
+  assert.equal(instagram.lastSuccessfulOutboundAt.toISOString(), "2026-09-05T00:03:00.000Z");
+  assert.equal(instagram.lastVerifiedAutomatedReplyAt, null);
+  assert.equal(instagram.roundTripCorrelated, false);
+
+  const facebook = metrics.find((item) => item.channel === "facebook");
+  assert.equal(facebook.lastInboundAt, null);
+  assert.equal(facebook.lastSuccessfulOutboundAt, null);
+  assert.equal(facebook.lastVerifiedAutomatedReplyAt, null);
+  assert.equal(facebook.roundTripCorrelated, false);
 });
