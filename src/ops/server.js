@@ -7,6 +7,7 @@ const { createClientRegistryRepo } = require("./clientRegistryRepo");
 const { createClientPoller } = require("./clientPoller");
 const { createFleetService } = require("./fleetService");
 const { createRequireOpsAdmin } = require("./requireOpsAdmin");
+const { createRequireOpsAction } = require("./requireOpsAction");
 const { clientDetailHtml, dashboardHtml } = require("./dashboard");
 const { assertOpsRegistryMode } = require("./mode");
 
@@ -20,17 +21,52 @@ function pollIntervalMs(env = process.env) {
   return Math.max(MIN_POLL_INTERVAL_MS, Math.floor(parsed));
 }
 
+function createSingleFlight(task) {
+  if (typeof task !== "function") throw new TypeError("Single-flight task must be a function.");
+  let inFlight = null;
+
+  function run() {
+    if (inFlight) return inFlight;
+    inFlight = Promise.resolve()
+      .then(task)
+      .finally(() => {
+        inFlight = null;
+      });
+    return inFlight;
+  }
+
+  run.inFlight = () => inFlight;
+  return run;
+}
+
 function createOpsRegistryApp({
   fleetService,
   authenticate,
+  authorizeAction = createRequireOpsAction(),
   healthCheck = async () => true,
+  refreshAll = null,
 } = {}) {
   if (!fleetService) throw new Error("fleetService is required.");
   if (typeof authenticate !== "function") throw new Error("Ops Registry admin authentication is required.");
+  if (typeof authorizeAction !== "function") throw new Error("Ops Registry action authorization is required.");
+
+  const runFleetRefresh = typeof refreshAll === "function"
+    ? refreshAll
+    : () => fleetService.refreshAll();
 
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "32kb" }));
+  app.use((_req, res, next) => {
+    res.set("X-Content-Type-Options", "nosniff");
+    res.set("X-Frame-Options", "DENY");
+    res.set("Referrer-Policy", "no-referrer");
+    res.set(
+      "Content-Security-Policy",
+      "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'",
+    );
+    next();
+  });
 
   app.get("/healthz", async (_req, res) => {
     try {
@@ -71,7 +107,7 @@ function createOpsRegistryApp({
     }
   });
 
-  app.post("/api/clients/:clientSlug/refresh", async (req, res) => {
+  app.post("/api/clients/:clientSlug/refresh", authorizeAction, async (req, res) => {
     try {
       return res.json(await fleetService.refreshClient(req.params.clientSlug));
     } catch (err) {
@@ -83,9 +119,9 @@ function createOpsRegistryApp({
     }
   });
 
-  app.post("/api/refresh-all", async (_req, res) => {
+  app.post("/api/refresh-all", authorizeAction, async (_req, res) => {
     try {
-      return res.json(await fleetService.refreshAll());
+      return res.json(await runFleetRefresh());
     } catch (err) {
       console.error("Failed to refresh Ops Registry fleet:", err);
       return res.status(500).json({ error: "Could not refresh fleet readiness." });
@@ -93,6 +129,13 @@ function createOpsRegistryApp({
   });
 
   return app;
+}
+
+async function closeServer(server) {
+  if (!server?.listening) return;
+  await new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
 }
 
 async function start(env = process.env) {
@@ -103,23 +146,71 @@ async function start(env = process.env) {
   const poller = createClientPoller({ env });
   const fleetService = createFleetService({ repo, poller, env });
   const authenticate = createRequireOpsAdmin({ env });
+  const refreshAll = createSingleFlight(() => fleetService.refreshAll());
 
   const app = createOpsRegistryApp({
     fleetService,
     authenticate,
     healthCheck: () => pool.query("SELECT 1"),
+    refreshAll,
   });
 
   const port = Number(env.PORT || env.OPS_PORT || DEFAULT_PORT);
-  app.listen(port, () => {
+  const server = app.listen(port, () => {
     console.log(`DA Ops Registry listening on port ${port}`);
   });
 
-  const refresh = () => fleetService.refreshAll().catch((err) => {
+  const backgroundRefresh = () => refreshAll().catch((err) => {
     console.error("Ops Registry background refresh failed:", err);
   });
-  refresh();
-  setInterval(refresh, pollIntervalMs(env));
+  backgroundRefresh();
+  const refreshTimer = setInterval(backgroundRefresh, pollIntervalMs(env));
+  refreshTimer.unref?.();
+
+  let shutdownPromise = null;
+  const onSignal = (signal) => {
+    shutdown(signal).catch((err) => {
+      console.error("Ops Registry shutdown failed:", err);
+      process.exitCode = 1;
+    });
+  };
+
+  async function shutdown(signal = "shutdown") {
+    if (shutdownPromise) return shutdownPromise;
+    shutdownPromise = (async () => {
+      console.log(`DA Ops Registry received ${signal}; shutting down.`);
+      clearInterval(refreshTimer);
+      process.removeListener("SIGTERM", sigtermHandler);
+      process.removeListener("SIGINT", sigintHandler);
+      await closeServer(server);
+      const activeRefresh = refreshAll.inFlight();
+      if (activeRefresh) {
+        try {
+          await activeRefresh;
+        } catch (_) {
+          // The refresh path already records/logs client failures. Shutdown
+          // should still continue and release the database pool.
+        }
+      }
+      await pool.end();
+    })();
+    return shutdownPromise;
+  }
+
+  const sigtermHandler = () => onSignal("SIGTERM");
+  const sigintHandler = () => onSignal("SIGINT");
+  process.once("SIGTERM", sigtermHandler);
+  process.once("SIGINT", sigintHandler);
+
+  return {
+    app,
+    fleetService,
+    pool,
+    refreshAll,
+    refreshTimer,
+    server,
+    shutdown,
+  };
 }
 
 if (require.main === module) {
@@ -132,7 +223,9 @@ if (require.main === module) {
 module.exports = {
   DEFAULT_POLL_INTERVAL_MS,
   MIN_POLL_INTERVAL_MS,
+  closeServer,
   createOpsRegistryApp,
+  createSingleFlight,
   pollIntervalMs,
   start,
 };
