@@ -2,9 +2,14 @@ services:
   - type: web
     name: da-chatbot-ops-registry
     runtime: node
+    region: singapore
+    numInstances: 1
     buildCommand: npm ci
+    preDeployCommand: npm run ops-registry:migrate
     startCommand: npm run ops-registry:start
     healthCheckPath: /healthz
+    maxShutdownDelaySeconds: 120
+    autoDeployTrigger: checksPass
     envVars:
       - key: OPS_REGISTRY_MODE
         value: "true"
