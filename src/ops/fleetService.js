@@ -54,13 +54,14 @@ function presentClient(client, {
   const status = fleetStatus(client, { now, offlineAfterMs });
   const currentCommit = String(env.RENDER_GIT_COMMIT || env.OPS_REGISTRY_COMMIT || "").trim() || null;
   const snapshot = client.lastSnapshot || null;
+  const readiness = snapshot?.readiness || null;
   const knownReadinessStatus = lastKnownReadinessStatus(client);
   return {
     clientSlug: client.clientSlug,
     displayName: client.displayName,
     baseUrl: client.baseUrl,
     industry: snapshot?.client?.businessType || client.industry || null,
-    purchasedChannels: snapshot?.readiness?.channelContract?.channels
+    purchasedChannels: readiness?.channelContract?.channels
       || client.purchasedChannels
       || [],
     status,
@@ -71,11 +72,11 @@ function presentClient(client, {
     lastSuccessAt: client.lastSuccessAt,
     lastError: client.lastError,
     lastHttpStatus: client.lastHttpStatus,
-    readiness: snapshot?.readiness || null,
-    channels: Array.isArray(snapshot?.channels) ? snapshot.channels : [],
-    blockers: Array.isArray(snapshot?.blockers) ? snapshot.blockers : [],
-    testing: Array.isArray(snapshot?.testing) ? snapshot.testing : [],
-    warnings: Array.isArray(snapshot?.warnings) ? snapshot.warnings : [],
+    readiness,
+    channels: Array.isArray(readiness?.channels) ? readiness.channels : [],
+    blockers: Array.isArray(readiness?.blockers) ? readiness.blockers : [],
+    testing: Array.isArray(readiness?.testingRequired) ? readiness.testingRequired : [],
+    warnings: Array.isArray(readiness?.warnings) ? readiness.warnings : [],
     deployment: {
       ...deploymentState(client, currentCommit),
       registryCommit: currentCommit,
