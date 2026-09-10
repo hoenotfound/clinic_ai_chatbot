@@ -340,7 +340,8 @@ test("AI behaviour is progressive-disclosure and built-in guardrails are protect
 test("config API decorates reads and writes with server-derived setup status", () => {
   const configRoute = read("src/routes/config.js");
   assert.match(configRoute, /evaluateClientSetup/);
-  assert.match(configRoute, /clientSetup: evaluateClientSetup\(config\)/);
+  assert.match(configRoute, /industrySetup:\s*normalizeIndustrySetup\(config\?\.industrySetup\)/);
+  assert.match(configRoute, /clientSetup: evaluateClientSetup\(normalizedConfig\)/);
   assert.match(configRoute, /res\.json\(decorateConfig\(configRepo\.getConfig\(\)\)\)/);
   assert.match(configRoute, /res\.json\(decorateConfig\(updated\)\)/);
 });
