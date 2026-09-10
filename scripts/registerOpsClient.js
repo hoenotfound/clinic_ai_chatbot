@@ -139,10 +139,15 @@ async function main() {
     await runOpsMigrations(pool);
     const repo = createClientRegistryRepo(pool);
     const saved = await registerRecord(repo, record, { upsert: args.upsert });
-    console.log(`${args.upsert ? "Registered/updated" : "Registered"} ${saved.displayName} (${saved.clientSlug})`);
+    console.log(`\n✓ ${args.upsert ? "Registered/updated" : "Registered"} ${saved.displayName} (${saved.clientSlug})`);
     console.log(`Base URL: ${saved.baseUrl}`);
-    console.log(`Token env: ${saved.tokenEnvKey}`);
-    console.log("No token value was written to the registry database.");
+    console.log(`Registry token env: ${saved.tokenEnvKey}`);
+    console.log("No token value was written to the registry database.\n");
+    console.log("Next steps:");
+    console.log(`1. Set OPS_READINESS_TOKEN on the ${saved.clientSlug} client deployment.`);
+    console.log(`2. Set ${saved.tokenEnvKey} on the central Ops Registry to the same secret value.`);
+    console.log("3. Restart/redeploy the services only if your hosting platform requires it for new environment values.");
+    console.log("4. Run: npm run ops-registry:verify -- --probe-clients");
   } finally {
     await pool.end();
   }
