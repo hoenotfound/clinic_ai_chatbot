@@ -105,6 +105,13 @@ async function registerRecord(repo, record, { upsert = false } = {}) {
     return await repo.insertClient(record);
   } catch (error) {
     if (error?.code === "23505") {
+      if (error?.constraint === "idx_ops_clients_token_env_key_unique") {
+        const duplicateTokenKey = new Error(
+          `Token environment key '${record.tokenEnvKey}' is already assigned to another client. Use a unique per-client token environment key.`,
+        );
+        duplicateTokenKey.code = "OPS_TOKEN_ENV_ALREADY_EXISTS";
+        throw duplicateTokenKey;
+      }
       const duplicate = new Error(
         `Client slug '${record.clientSlug}' is already registered. Re-run with --upsert to update it intentionally.`,
       );
@@ -145,7 +152,7 @@ async function main() {
     console.log("No token value was written to the registry database.\n");
     console.log("Next steps:");
     console.log(`1. Set OPS_READINESS_TOKEN on the ${saved.clientSlug} client deployment.`);
-    console.log(`2. Set ${saved.tokenEnvKey} on the central Ops Registry to the same secret value.`);
+    console.log(`2. Set ${saved.tokenEnvKey} on the central Ops Registry to the same unique secret value.`);
     console.log("3. Restart/redeploy the services only if your hosting platform requires it for new environment values.");
     console.log("4. Run: npm run ops-registry:verify -- --probe-clients");
   } finally {
