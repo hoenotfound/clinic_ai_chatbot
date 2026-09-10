@@ -78,7 +78,7 @@ async function load() {
   ].map(([label,count,cls]) => '<div class="card"><span class="label">'+label+'</span><b class="'+cls+'">'+count+'</b></div>').join("");
   const rows = data.clients || [];
   if (!rows.length) {
-    document.getElementById("table").innerHTML = '<div class="empty"><h2>No client deployments registered</h2><p>Provisioning can enroll new clients automatically. New clients start in Setup so background monitoring does not keep staging services awake.</p><code>npm run provision-client -- --ops-enrollment required --execute ...</code><p class="muted">Move a client to Live only after its hosting is production-ready.</p></div>';
+    document.getElementById("table").innerHTML = '<div class="empty"><h2>No client deployments registered</h2><p>Provisioning can enroll new clients automatically. New clients start in Setup so background monitoring does not keep staging services awake.</p><code>npm run provision-client -- --ops-enrollment required --execute ...</code><p class="muted">Move a client to Live only after its hosting is production-ready. Run npm run ops-registry:verify before relying on this dashboard in production.</p></div>';
     return;
   }
   document.getElementById("table").innerHTML = '<table><thead><tr><th>Client</th><th>Lifecycle</th><th>Industry</th><th>Channels</th><th>Status</th><th>Last contact</th><th>Version</th><th>Issue</th></tr></thead><tbody>'+
