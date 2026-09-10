@@ -41,8 +41,10 @@ function normalizeRemoteSnapshot(payload, expectedSlug = null) {
     throw new Error("Client returned an invalid readiness status.");
   }
   const remoteSlug = payload?.client?.slug || null;
-  if (expectedSlug && remoteSlug && remoteSlug !== expectedSlug) {
-    throw new Error(`Client identity mismatch: expected ${expectedSlug}, received ${remoteSlug}.`);
+  if (expectedSlug && remoteSlug !== expectedSlug) {
+    throw new Error(
+      `Client identity mismatch: expected ${expectedSlug}, received ${remoteSlug || "missing client slug"}.`,
+    );
   }
 
   return {
@@ -84,11 +86,16 @@ function createClientPoller({
 } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("Client poller requires fetch().");
 
-  async function pollClient(client) {
+  async function pollClient(client, { signal = null } = {}) {
     const baseUrl = normalizedBaseUrl(client.baseUrl);
     const token = tokenFromEnv(client, env);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const abortFromParent = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) controller.abort();
+      else signal.addEventListener("abort", abortFromParent, { once: true });
+    }
     try {
       const response = await fetchImpl(`${baseUrl}/api/ops/readiness`, {
         method: "GET",
@@ -117,13 +124,18 @@ function createClientPoller({
       };
     } catch (err) {
       if (err?.name === "AbortError") {
-        throw Object.assign(new Error(`Client readiness request timed out after ${timeoutMs}ms.`), {
-          code: "OPS_POLL_TIMEOUT",
-        });
+        const parentAborted = signal?.aborted === true;
+        throw Object.assign(
+          new Error(parentAborted
+            ? "Client readiness request was cancelled."
+            : `Client readiness request timed out after ${timeoutMs}ms.`),
+          { code: parentAborted ? "OPS_POLL_CANCELLED" : "OPS_POLL_TIMEOUT" },
+        );
       }
       throw err;
     } finally {
       clearTimeout(timeout);
+      signal?.removeEventListener?.("abort", abortFromParent);
     }
   }
 
