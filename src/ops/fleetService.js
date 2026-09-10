@@ -1,4 +1,10 @@
 const OFFLINE_AFTER_MS = 15 * 60 * 1000;
+const READINESS_STATUSES = new Set([
+  "ready",
+  "ready_with_warnings",
+  "needs_testing",
+  "blocked",
+]);
 
 function timestampMs(value) {
   if (!value) return null;
@@ -17,13 +23,27 @@ function deploymentState(client, currentCommit) {
   };
 }
 
+function latestPollFailed(client) {
+  if (!client?.lastError) return false;
+  const pollMs = timestampMs(client.lastPollAt);
+  const successMs = timestampMs(client.lastSuccessAt);
+  if (!pollMs) return true;
+  return !successMs || pollMs >= successMs;
+}
+
+function lastKnownReadinessStatus(client) {
+  const status = client?.lastStatus || client?.lastSnapshot?.readiness?.status || null;
+  return READINESS_STATUSES.has(status) ? status : null;
+}
+
 function fleetStatus(client, {
   now = new Date(),
   offlineAfterMs = OFFLINE_AFTER_MS,
 } = {}) {
+  if (latestPollFailed(client)) return "offline";
   const successMs = timestampMs(client.lastSuccessAt);
   if (!successMs || now.getTime() - successMs > offlineAfterMs) return "offline";
-  return client.lastStatus || client?.lastSnapshot?.readiness?.status || "offline";
+  return lastKnownReadinessStatus(client) || "offline";
 }
 
 function presentClient(client, {
@@ -34,6 +54,7 @@ function presentClient(client, {
   const status = fleetStatus(client, { now, offlineAfterMs });
   const currentCommit = String(env.RENDER_GIT_COMMIT || env.OPS_REGISTRY_COMMIT || "").trim() || null;
   const snapshot = client.lastSnapshot || null;
+  const knownReadinessStatus = lastKnownReadinessStatus(client);
   return {
     clientSlug: client.clientSlug,
     displayName: client.displayName,
@@ -44,14 +65,22 @@ function presentClient(client, {
       || [],
     status,
     online: status !== "offline",
+    lastKnownReadinessStatus: knownReadinessStatus,
+    lastPollAttemptAt: client.lastPollAt,
     lastPollAt: client.lastPollAt,
     lastSuccessAt: client.lastSuccessAt,
     lastError: client.lastError,
     lastHttpStatus: client.lastHttpStatus,
     readiness: snapshot?.readiness || null,
+    channels: Array.isArray(snapshot?.channels) ? snapshot.channels : [],
+    blockers: Array.isArray(snapshot?.blockers) ? snapshot.blockers : [],
+    testing: Array.isArray(snapshot?.testing) ? snapshot.testing : [],
+    warnings: Array.isArray(snapshot?.warnings) ? snapshot.warnings : [],
     deployment: {
       ...deploymentState(client, currentCommit),
       registryCommit: currentCommit,
+      startedAt: snapshot?.deployment?.startedAt || null,
+      appVersion: snapshot?.deployment?.appVersion || null,
     },
     render: client.render,
     neon: client.neon,
@@ -82,10 +111,16 @@ function createFleetService({
   now = () => new Date(),
   offlineAfterMs = OFFLINE_AFTER_MS,
 } = {}) {
+  function present(client) {
+    return client ? presentClient(client, { env, now: now(), offlineAfterMs }) : null;
+  }
+
+  async function getClient(clientSlug) {
+    return present(await repo.getClient(clientSlug));
+  }
+
   async function listFleet() {
-    const clients = (await repo.listClients()).map((client) =>
-      presentClient(client, { env, now: now(), offlineAfterMs })
-    );
+    const clients = (await repo.listClients()).map(present);
     return {
       schemaVersion: 1,
       generatedAt: now().toISOString(),
@@ -117,8 +152,7 @@ function createFleetService({
         polledAt,
       });
     }
-    const updated = await repo.getClient(clientSlug);
-    return presentClient(updated, { env, now: now(), offlineAfterMs });
+    return getClient(clientSlug);
   }
 
   async function refreshAll() {
@@ -146,6 +180,7 @@ function createFleetService({
   }
 
   return {
+    getClient,
     listFleet,
     refreshAll,
     refreshClient,
@@ -158,6 +193,8 @@ module.exports = {
   deploymentState,
   fleetStatus,
   fleetSummary,
+  lastKnownReadinessStatus,
+  latestPollFailed,
   presentClient,
   timestampMs,
 };
