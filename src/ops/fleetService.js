@@ -2,6 +2,11 @@ const {
   DEFAULT_OFFLINE_AFTER_MS,
   offlineAfterMs: configuredOfflineAfterMs,
 } = require("./runtimeConfig");
+const {
+  LEGACY_CLIENT_LIFECYCLE,
+  lifecyclePolicy,
+  normalizeClientLifecycle,
+} = require("./clientLifecycle");
 
 const READINESS_STATUSES = new Set([
   "ready",
@@ -14,6 +19,12 @@ function timestampMs(value) {
   if (!value) return null;
   const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function clientLifecycleStatus(client) {
+  return normalizeClientLifecycle(client?.lifecycleStatus, {
+    fallback: LEGACY_CLIENT_LIFECYCLE,
+  });
 }
 
 function deploymentState(client, currentCommit) {
@@ -45,9 +56,17 @@ function fleetStatus(client, {
   offlineAfterMs = DEFAULT_OFFLINE_AFTER_MS,
 } = {}) {
   if (latestPollFailed(client)) return "offline";
+  const lifecycle = clientLifecycleStatus(client);
+  const knownStatus = lastKnownReadinessStatus(client);
+
+  // Setup/trial/paused deployments can intentionally sleep for long periods.
+  // Preserve their last verified readiness rather than calling an intentionally
+  // unpolled Free/staging service offline solely because its snapshot is old.
+  if (lifecycle !== "live") return knownStatus || "offline";
+
   const successMs = timestampMs(client.lastSuccessAt);
   if (!successMs || now.getTime() - successMs > offlineAfterMs) return "offline";
-  return lastKnownReadinessStatus(client) || "offline";
+  return knownStatus || "offline";
 }
 
 function presentClient(client, {
@@ -55,6 +74,9 @@ function presentClient(client, {
   now = new Date(),
   offlineAfterMs = DEFAULT_OFFLINE_AFTER_MS,
 } = {}) {
+  const lifecycle = lifecyclePolicy(client?.lifecycleStatus, {
+    fallback: LEGACY_CLIENT_LIFECYCLE,
+  });
   const status = fleetStatus(client, { now, offlineAfterMs });
   const currentCommit = String(env.RENDER_GIT_COMMIT || env.OPS_REGISTRY_COMMIT || "").trim() || null;
   const snapshot = client.lastSnapshot || null;
@@ -68,6 +90,9 @@ function presentClient(client, {
     purchasedChannels: readiness?.channelContract?.channels
       || client.purchasedChannels
       || [],
+    lifecycleStatus: lifecycle.status,
+    backgroundPollingEnabled: lifecycle.backgroundPollingEnabled,
+    manualRefreshAllowed: lifecycle.manualRefreshAllowed,
     status,
     online: status !== "offline",
     lastKnownReadinessStatus: knownReadinessStatus,
@@ -151,6 +176,17 @@ function createFleetService({
         throw err;
       }
 
+      const policy = lifecyclePolicy(client.lifecycleStatus, {
+        fallback: LEGACY_CLIENT_LIFECYCLE,
+      });
+      if (!policy.manualRefreshAllowed) {
+        const err = new Error(
+          `Client ${clientSlug} is paused. Change its lifecycle before refreshing readiness.`,
+        );
+        err.code = "OPS_CLIENT_PAUSED";
+        throw err;
+      }
+
       const polledAt = now();
       try {
         const result = await poller.pollClient(client, { signal });
@@ -178,7 +214,10 @@ function createFleetService({
   }
 
   async function refreshAll({ signal = null } = {}) {
-    const clients = await repo.listClients();
+    const allClients = await repo.listClients();
+    const clients = allClients.filter((client) => lifecyclePolicy(client.lifecycleStatus, {
+      fallback: LEGACY_CLIENT_LIFECYCLE,
+    }).backgroundPollingEnabled);
     const results = new Array(clients.length);
     const concurrency = Math.max(1, Math.min(4, clients.length || 1));
     let cursor = 0;
@@ -200,8 +239,24 @@ function createFleetService({
       refreshedAt: now().toISOString(),
       summary: fleetSummary(completed),
       clients: completed,
+      refreshedCount: completed.length,
+      skippedCount: allClients.length - clients.length,
       cancelled: signal?.aborted === true,
     };
+  }
+
+  async function setClientLifecycle(clientSlug, lifecycleStatus) {
+    const normalized = normalizeClientLifecycle(lifecycleStatus);
+    if (typeof repo.updateLifecycle !== "function") {
+      throw new Error("Ops Registry repository does not support lifecycle updates.");
+    }
+    const updated = await repo.updateLifecycle(clientSlug, normalized);
+    if (!updated) {
+      const err = new Error(`Unknown client: ${clientSlug}`);
+      err.code = "OPS_CLIENT_NOT_FOUND";
+      throw err;
+    }
+    return present(updated);
   }
 
   return {
@@ -209,6 +264,7 @@ function createFleetService({
     listFleet,
     refreshAll,
     refreshClient,
+    setClientLifecycle,
     activeClientRefreshCount: () => refreshes.size,
   };
 }
@@ -216,6 +272,7 @@ function createFleetService({
 module.exports = {
   OFFLINE_AFTER_MS: DEFAULT_OFFLINE_AFTER_MS,
   READINESS_STATUSES,
+  clientLifecycleStatus,
   createFleetService,
   deploymentState,
   fleetStatus,

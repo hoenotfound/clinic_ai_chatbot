@@ -128,12 +128,33 @@ function createOpsRegistryApp({
     }
   });
 
+  app.post("/api/clients/:clientSlug/lifecycle", authorizeAction, async (req, res) => {
+    try {
+      return res.json(await fleetService.setClientLifecycle(
+        req.params.clientSlug,
+        req.body?.lifecycleStatus,
+      ));
+    } catch (err) {
+      if (err?.code === "OPS_CLIENT_NOT_FOUND") {
+        return res.status(404).json({ error: err.message });
+      }
+      if (err?.code === "OPS_CLIENT_LIFECYCLE_INVALID") {
+        return res.status(400).json({ error: err.message });
+      }
+      console.error("Failed to update Ops Registry client lifecycle:", err);
+      return res.status(500).json({ error: "Could not update client lifecycle." });
+    }
+  });
+
   app.post("/api/clients/:clientSlug/refresh", authorizeAction, async (req, res) => {
     try {
       return res.json(await fleetService.refreshClient(req.params.clientSlug));
     } catch (err) {
       if (err?.code === "OPS_CLIENT_NOT_FOUND") {
         return res.status(404).json({ error: err.message });
+      }
+      if (err?.code === "OPS_CLIENT_PAUSED") {
+        return res.status(409).json({ error: err.message });
       }
       console.error("Failed to refresh Ops Registry client:", err);
       return res.status(500).json({ error: "Could not refresh client readiness." });

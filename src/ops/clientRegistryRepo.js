@@ -1,3 +1,9 @@
+const {
+  DEFAULT_NEW_CLIENT_LIFECYCLE,
+  LEGACY_CLIENT_LIFECYCLE,
+  normalizeClientLifecycle,
+} = require("./clientLifecycle");
+
 function rowToClient(row = {}) {
   return {
     clientSlug: row.client_slug,
@@ -5,6 +11,9 @@ function rowToClient(row = {}) {
     baseUrl: row.base_url,
     industry: row.industry || null,
     purchasedChannels: Array.isArray(row.purchased_channels) ? row.purchased_channels : [],
+    lifecycleStatus: normalizeClientLifecycle(row.lifecycle_status, {
+      fallback: LEGACY_CLIENT_LIFECYCLE,
+    }),
     tokenEnvKey: row.token_env_key,
     render: {
       serviceId: row.render_service_id || null,
@@ -27,6 +36,11 @@ function rowToClient(row = {}) {
   };
 }
 
+function optionalLifecycleValue(client) {
+  if (client?.lifecycleStatus == null || String(client.lifecycleStatus).trim() === "") return null;
+  return normalizeClientLifecycle(client.lifecycleStatus);
+}
+
 function clientValues(client) {
   return [
     client.clientSlug,
@@ -40,6 +54,7 @@ function clientValues(client) {
     client.neon?.projectId || null,
     client.neon?.projectName || null,
     client.provisionedCommitSha || null,
+    optionalLifecycleValue(client),
   ];
 }
 
@@ -55,6 +70,7 @@ const INSERT_COLUMNS = `
   neon_project_id,
   neon_project_name,
   provisioned_commit_sha,
+  lifecycle_status,
   updated_at
 `;
 
@@ -81,7 +97,7 @@ function createClientRegistryRepo(queryable) {
   async function insertClient(client) {
     const result = await queryable.query(
       `INSERT INTO ops_clients (${INSERT_COLUMNS})
-       VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,NOW())
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,COALESCE($12::text,'${DEFAULT_NEW_CLIENT_LIFECYCLE}'),NOW())
        RETURNING *`,
       clientValues(client),
     );
@@ -91,7 +107,7 @@ function createClientRegistryRepo(queryable) {
   async function upsertClient(client) {
     const result = await queryable.query(
       `INSERT INTO ops_clients (${INSERT_COLUMNS})
-       VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,NOW())
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,COALESCE($12::text,'${DEFAULT_NEW_CLIENT_LIFECYCLE}'),NOW())
        ON CONFLICT (client_slug) DO UPDATE SET
          display_name = EXCLUDED.display_name,
          base_url = EXCLUDED.base_url,
@@ -103,11 +119,25 @@ function createClientRegistryRepo(queryable) {
          neon_project_id = EXCLUDED.neon_project_id,
          neon_project_name = EXCLUDED.neon_project_name,
          provisioned_commit_sha = EXCLUDED.provisioned_commit_sha,
+         lifecycle_status = COALESCE($12::text, ops_clients.lifecycle_status),
          updated_at = NOW()
        RETURNING *`,
       clientValues(client),
     );
     return rowToClient(result.rows[0]);
+  }
+
+  async function updateLifecycle(clientSlug, lifecycleStatus) {
+    const normalized = normalizeClientLifecycle(lifecycleStatus);
+    const result = await queryable.query(
+      `UPDATE ops_clients
+       SET lifecycle_status = $2,
+           updated_at = NOW()
+       WHERE client_slug = $1
+       RETURNING *`,
+      [clientSlug, normalized],
+    );
+    return result.rows[0] ? rowToClient(result.rows[0]) : null;
   }
 
   async function recordPollSuccess(clientSlug, {
@@ -165,6 +195,7 @@ function createClientRegistryRepo(queryable) {
     listClients,
     recordPollFailure,
     recordPollSuccess,
+    updateLifecycle,
     upsertClient,
   };
 }

@@ -20,6 +20,7 @@ test("client detail page safely embeds an untrusted route slug", () => {
 });
 
 async function withServer(callback, authEnv = {}) {
+  let lifecycleStatus = "setup";
   const fleetService = {
     listFleet: async () => ({ schemaVersion: 1, summary: { total: 1 }, clients: [{ clientSlug: "acme" }] }),
     getClient: async (slug) => slug === "acme"
@@ -27,12 +28,34 @@ async function withServer(callback, authEnv = {}) {
           clientSlug: "acme",
           displayName: "Acme",
           status: "ready",
+          lifecycleStatus,
+          backgroundPollingEnabled: lifecycleStatus === "live",
+          manualRefreshAllowed: lifecycleStatus !== "paused",
           tokenConfigured: true,
           readiness: { status: "ready" },
         }
       : null,
     refreshAll: async () => ({ schemaVersion: 1, clients: [] }),
     refreshClient: async () => ({ clientSlug: "acme" }),
+    setClientLifecycle: async (slug, value) => {
+      if (slug !== "acme") {
+        const error = new Error(`Unknown client: ${slug}`);
+        error.code = "OPS_CLIENT_NOT_FOUND";
+        throw error;
+      }
+      if (!["setup", "trial", "live", "paused"].includes(value)) {
+        const error = new Error("Unsupported client lifecycle.");
+        error.code = "OPS_CLIENT_LIFECYCLE_INVALID";
+        throw error;
+      }
+      lifecycleStatus = value;
+      return {
+        clientSlug: slug,
+        lifecycleStatus,
+        backgroundPollingEnabled: lifecycleStatus === "live",
+        manualRefreshAllowed: lifecycleStatus !== "paused",
+      };
+    },
   };
   const app = createOpsRegistryApp({
     fleetService,
@@ -61,6 +84,7 @@ test("registry health is public but fleet and detail data require operations adm
     assert.equal((await fetch(`${baseUrl}/api/clients`)).status, 401);
     assert.equal((await fetch(`${baseUrl}/api/clients/acme`)).status, 401);
     assert.equal((await fetch(`${baseUrl}/api/refresh-all`, { method: "POST" })).status, 401);
+    assert.equal((await fetch(`${baseUrl}/api/clients/acme/lifecycle`, { method: "POST" })).status, 401);
 
     const authorization = `Basic ${Buffer.from("ops:long-enough-password").toString("base64")}`;
     const response = await fetch(`${baseUrl}/api/clients`, {
@@ -86,7 +110,7 @@ test("registry health is public but fleet and detail data require operations adm
   });
 });
 
-test("authenticated refresh actions require the explicit Ops action header", async () => {
+test("authenticated refresh and lifecycle actions require the explicit Ops action header", async () => {
   await withServer(async (baseUrl) => {
     const authorization = `Basic ${Buffer.from("ops:long-enough-password").toString("base64")}`;
 
@@ -95,6 +119,13 @@ test("authenticated refresh actions require the explicit Ops action header", asy
       headers: { authorization },
     });
     assert.equal(missingHeader.status, 403);
+
+    const lifecycleMissingHeader = await fetch(`${baseUrl}/api/clients/acme/lifecycle`, {
+      method: "POST",
+      headers: { authorization, "content-type": "application/json" },
+      body: JSON.stringify({ lifecycleStatus: "trial" }),
+    });
+    assert.equal(lifecycleMissingHeader.status, 403);
 
     const crossSite = await fetch(`${baseUrl}/api/refresh-all`, {
       method: "POST",
@@ -114,6 +145,34 @@ test("authenticated refresh actions require the explicit Ops action header", asy
       },
     });
     assert.equal(allowed.status, 200);
+
+    const lifecycleAllowed = await fetch(`${baseUrl}/api/clients/acme/lifecycle`, {
+      method: "POST",
+      headers: {
+        authorization,
+        "x-ops-action": "1",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ lifecycleStatus: "trial" }),
+    });
+    assert.equal(lifecycleAllowed.status, 200);
+    assert.equal((await lifecycleAllowed.json()).lifecycleStatus, "trial");
+  });
+});
+
+test("invalid lifecycle updates fail with 400", async () => {
+  await withServer(async (baseUrl) => {
+    const authorization = `Basic ${Buffer.from("ops:long-enough-password").toString("base64")}`;
+    const response = await fetch(`${baseUrl}/api/clients/acme/lifecycle`, {
+      method: "POST",
+      headers: {
+        authorization,
+        "x-ops-action": "1",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ lifecycleStatus: "production" }),
+    });
+    assert.equal(response.status, 400);
   });
 });
 
