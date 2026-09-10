@@ -19,7 +19,12 @@ function createGoLiveRouter({ loadGate = loadGoLiveGate } = {}) {
 
   router.get("/", async (req, res) => {
     try {
-      return res.json(await loadGate({ baseUrl: requestBaseUrl(req), runChecks: false }));
+      const setupOverview = await setupStatus.getOverview();
+      return res.json(await loadGate({
+        baseUrl: requestBaseUrl(req),
+        runChecks: false,
+        setupOverview,
+      }));
     } catch (err) {
       console.error("Failed to load go-live readiness:", err);
       return res.status(500).json({
@@ -31,9 +36,11 @@ function createGoLiveRouter({ loadGate = loadGoLiveGate } = {}) {
 
   router.post("/run", async (req, res) => {
     try {
+      const setupOverview = await setupStatus.getOverview();
       return res.json(await loadGate({
         runChecks: true,
         baseUrl: requestBaseUrl(req),
+        setupOverview,
       }));
     } catch (err) {
       console.error("Failed to run go-live readiness checks:", err);
