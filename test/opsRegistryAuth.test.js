@@ -19,7 +19,7 @@ test("client detail page safely embeds an untrusted route slug", () => {
   assert.match(html, /const clientSlug = "\\u003c\/script\\u003e/);
 });
 
-async function withServer(callback) {
+async function withServer(callback, authEnv = {}) {
   const fleetService = {
     listFleet: async () => ({ schemaVersion: 1, summary: { total: 1 }, clients: [{ clientSlug: "acme" }] }),
     getClient: async (slug) => slug === "acme"
@@ -40,6 +40,7 @@ async function withServer(callback) {
       env: {
         OPS_REGISTRY_ADMIN_USERNAME: "ops",
         OPS_REGISTRY_ADMIN_PASSWORD: "long-enough-password",
+        ...authEnv,
       },
     }),
     healthCheck: async () => true,
@@ -67,6 +68,8 @@ test("registry health is public but fleet and detail data require operations adm
     });
     assert.equal(response.status, 200);
     assert.equal((await response.json()).schemaVersion, 1);
+    assert.equal(response.headers.get("x-frame-options"), "DENY");
+    assert.match(response.headers.get("content-security-policy") || "", /frame-ancestors 'none'/);
 
     const detail = await fetch(`${baseUrl}/api/clients/acme`, { headers: { authorization } });
     assert.equal(detail.status, 200);
@@ -75,6 +78,58 @@ test("registry health is public but fleet and detail data require operations adm
     assert.equal(Object.hasOwn(body, "token"), false);
     assert.equal(Object.hasOwn(body, "tokenEnvKey"), false);
     assert.equal(Object.hasOwn(body, "databaseUrl"), false);
+  });
+});
+
+test("authenticated refresh actions require the explicit Ops action header", async () => {
+  await withServer(async (baseUrl) => {
+    const authorization = `Basic ${Buffer.from("ops:long-enough-password").toString("base64")}`;
+
+    const missingHeader = await fetch(`${baseUrl}/api/refresh-all`, {
+      method: "POST",
+      headers: { authorization },
+    });
+    assert.equal(missingHeader.status, 403);
+
+    const crossSite = await fetch(`${baseUrl}/api/refresh-all`, {
+      method: "POST",
+      headers: {
+        authorization,
+        "x-ops-action": "1",
+        "sec-fetch-site": "cross-site",
+      },
+    });
+    assert.equal(crossSite.status, 403);
+
+    const allowed = await fetch(`${baseUrl}/api/refresh-all`, {
+      method: "POST",
+      headers: {
+        authorization,
+        "x-ops-action": "1",
+      },
+    });
+    assert.equal(allowed.status, 200);
+  });
+});
+
+test("repeated failed Ops admin authentication is throttled", async () => {
+  await withServer(async (baseUrl) => {
+    const badAuthorization = `Basic ${Buffer.from("ops:wrong-password").toString("base64")}`;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const response = await fetch(`${baseUrl}/api/clients`, {
+        headers: { authorization: badAuthorization },
+      });
+      assert.equal(response.status, 401);
+    }
+
+    const blocked = await fetch(`${baseUrl}/api/clients`, {
+      headers: { authorization: badAuthorization },
+    });
+    assert.equal(blocked.status, 429);
+    assert.ok(Number(blocked.headers.get("retry-after")) >= 1);
+  }, {
+    OPS_AUTH_MAX_FAILURES: "3",
+    OPS_AUTH_WINDOW_MS: "10000",
   });
 });
 
