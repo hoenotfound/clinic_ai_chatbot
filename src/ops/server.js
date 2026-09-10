@@ -1,12 +1,14 @@
 require("dotenv").config();
 
 const express = require("express");
-const { createOpsPool, ensureOpsSchema } = require("./db");
+const { createOpsPool } = require("./db");
+const { runOpsMigrations } = require("./migrationRunner");
 const { createClientRegistryRepo } = require("./clientRegistryRepo");
 const { createClientPoller } = require("./clientPoller");
 const { createFleetService } = require("./fleetService");
 const { createRequireOpsAdmin } = require("./requireOpsAdmin");
-const { dashboardHtml } = require("./dashboard");
+const { clientDetailHtml, dashboardHtml } = require("./dashboard");
+const { assertOpsRegistryMode } = require("./mode");
 
 const DEFAULT_PORT = 10001;
 const DEFAULT_POLL_INTERVAL_MS = 5 * 60 * 1000;
@@ -23,6 +25,9 @@ function createOpsRegistryApp({
   authenticate,
   healthCheck = async () => true,
 } = {}) {
+  if (!fleetService) throw new Error("fleetService is required.");
+  if (typeof authenticate !== "function") throw new Error("Ops Registry admin authentication is required.");
+
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "32kb" }));
@@ -42,12 +47,27 @@ function createOpsRegistryApp({
     res.type("html").send(dashboardHtml());
   });
 
+  app.get("/clients/:clientSlug", (req, res) => {
+    res.type("html").send(clientDetailHtml(req.params.clientSlug));
+  });
+
   app.get("/api/clients", async (_req, res) => {
     try {
       return res.json(await fleetService.listFleet());
     } catch (err) {
       console.error("Failed to list Ops Registry clients:", err);
       return res.status(500).json({ error: "Could not load client registry." });
+    }
+  });
+
+  app.get("/api/clients/:clientSlug", async (req, res) => {
+    try {
+      const client = await fleetService.getClient(req.params.clientSlug);
+      if (!client) return res.status(404).json({ error: "Client not found." });
+      return res.json(client);
+    } catch (err) {
+      console.error("Failed to load Ops Registry client:", err);
+      return res.status(500).json({ error: "Could not load client." });
     }
   });
 
@@ -75,13 +95,14 @@ function createOpsRegistryApp({
   return app;
 }
 
-async function start() {
-  const pool = createOpsPool(process.env);
-  await ensureOpsSchema(pool);
+async function start(env = process.env) {
+  assertOpsRegistryMode(env);
+  const pool = createOpsPool(env);
+  await runOpsMigrations(pool);
   const repo = createClientRegistryRepo(pool);
-  const poller = createClientPoller({ env: process.env });
-  const fleetService = createFleetService({ repo, poller, env: process.env });
-  const authenticate = createRequireOpsAdmin({ env: process.env });
+  const poller = createClientPoller({ env });
+  const fleetService = createFleetService({ repo, poller, env });
+  const authenticate = createRequireOpsAdmin({ env });
 
   const app = createOpsRegistryApp({
     fleetService,
@@ -89,7 +110,7 @@ async function start() {
     healthCheck: () => pool.query("SELECT 1"),
   });
 
-  const port = Number(process.env.PORT || process.env.OPS_PORT || DEFAULT_PORT);
+  const port = Number(env.PORT || env.OPS_PORT || DEFAULT_PORT);
   app.listen(port, () => {
     console.log(`DA Ops Registry listening on port ${port}`);
   });
@@ -98,7 +119,7 @@ async function start() {
     console.error("Ops Registry background refresh failed:", err);
   });
   refresh();
-  setInterval(refresh, pollIntervalMs(process.env));
+  setInterval(refresh, pollIntervalMs(env));
 }
 
 if (require.main === module) {
