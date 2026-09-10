@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: da-chatbot-ops-registry
+    runtime: node
+    region: singapore
+    numInstances: 1
+    buildCommand: npm ci
+    preDeployCommand: npm run ops-registry:migrate
+    startCommand: npm run ops-registry:start
+    healthCheckPath: /healthz
+    maxShutdownDelaySeconds: 120
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: OPS_REGISTRY_MODE
+        value: "true"
+      - key: OPS_DATABASE_URL
+        sync: false
+      - key: OPS_REGISTRY_ADMIN_USERNAME
+        sync: false
+      - key: OPS_REGISTRY_ADMIN_PASSWORD
+        sync: false
+      - key: OPS_POLL_INTERVAL_MS
+        value: "300000"
+      - key: OPS_DATABASE_SSL_REJECT_UNAUTHORIZED
+        value: "true"
+      - key: OPS_AUTH_TRUST_PROXY
+        value: "true"
