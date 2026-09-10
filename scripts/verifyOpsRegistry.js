@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 require("dotenv").config();
 
+const crypto = require("crypto");
 const { createOpsPool, buildOpsPoolConfig } = require("../src/ops/db");
 const { createClientRegistryRepo } = require("../src/ops/clientRegistryRepo");
 const { createClientPoller } = require("../src/ops/clientPoller");
 const { listMigrationFiles } = require("../src/ops/migrationRunner");
 const { assertOpsRegistryMode } = require("../src/ops/mode");
 const { createRequireOpsAdmin } = require("../src/ops/requireOpsAdmin");
+const { redactSensitiveText } = require("../src/provisioning/providerClients");
 
 function parseArgs(argv = []) {
   const args = { probeClients: false };
@@ -33,6 +35,22 @@ Options:
 `;
 }
 
+function sensitiveValues(env = process.env, clients = []) {
+  const values = [
+    env.OPS_DATABASE_URL,
+    env.OPS_REGISTRY_ADMIN_PASSWORD,
+    ...Object.entries(env)
+      .filter(([key]) => /^OPS_CLIENT_TOKEN_/i.test(key))
+      .map(([, value]) => value),
+    ...clients.map((client) => env[client?.tokenEnvKey]),
+  ];
+  return Array.from(new Set(values.filter(Boolean).map(String)));
+}
+
+function redactOpsText(value, env = process.env, clients = []) {
+  return redactSensitiveText(value, sensitiveValues(env, clients));
+}
+
 function validateConfiguration(env = process.env) {
   const checks = [];
 
@@ -40,21 +58,21 @@ function validateConfiguration(env = process.env) {
     assertOpsRegistryMode(env);
     checks.push({ ok: true, label: "OPS_REGISTRY_MODE=true" });
   } catch (error) {
-    checks.push({ ok: false, label: error.message });
+    checks.push({ ok: false, label: redactOpsText(error.message, env) });
   }
 
   try {
     buildOpsPoolConfig(env);
     checks.push({ ok: true, label: "OPS_DATABASE_URL configured" });
   } catch (error) {
-    checks.push({ ok: false, label: error.message });
+    checks.push({ ok: false, label: redactOpsText(error.message, env) });
   }
 
   try {
     createRequireOpsAdmin({ env });
     checks.push({ ok: true, label: "Ops admin credentials configured" });
   } catch (error) {
-    checks.push({ ok: false, label: error.message });
+    checks.push({ ok: false, label: redactOpsText(error.message, env) });
   }
 
   return checks;
@@ -91,17 +109,60 @@ async function inspectMigrationState(pool) {
       };
 }
 
+function tokenFingerprint(token) {
+  return crypto.createHash("sha256").update(String(token)).digest("hex");
+}
+
 function inspectClientTokens(clients, env = process.env) {
-  return clients.map((client) => {
-    const token = String(env[client.tokenEnvKey] || "").trim();
-    return {
-      clientSlug: client.clientSlug,
-      ok: token.length >= 32,
-      label: token.length >= 32
-        ? `${client.clientSlug}: readiness token configured`
-        : `${client.clientSlug}: ${client.tokenEnvKey} missing or shorter than 32 characters`,
-    };
-  });
+  const checks = [];
+  const seenKeys = new Map();
+  const seenFingerprints = new Map();
+
+  for (const client of clients) {
+    const slug = client.clientSlug;
+    const tokenEnvKey = String(client.tokenEnvKey || "").trim();
+    const token = String(env[tokenEnvKey] || "").trim();
+
+    const previousKeyOwner = seenKeys.get(tokenEnvKey);
+    if (previousKeyOwner) {
+      checks.push({
+        clientSlug: slug,
+        ok: false,
+        label: `${slug}: token environment key ${tokenEnvKey} is also assigned to ${previousKeyOwner}`,
+      });
+    } else {
+      seenKeys.set(tokenEnvKey, slug);
+    }
+
+    if (token.length < 32) {
+      checks.push({
+        clientSlug: slug,
+        ok: false,
+        label: `${slug}: ${tokenEnvKey} missing or shorter than 32 characters`,
+      });
+      continue;
+    }
+
+    const fingerprint = tokenFingerprint(token);
+    const previousTokenOwner = seenFingerprints.get(fingerprint);
+    if (previousTokenOwner) {
+      checks.push({
+        clientSlug: slug,
+        ok: false,
+        label: `${slug}: readiness credential duplicates ${previousTokenOwner}; every client must use a unique token`,
+      });
+      continue;
+    }
+
+    seenFingerprints.set(fingerprint, slug);
+    checks.push({
+      clientSlug: slug,
+      ok: true,
+      label: `${slug}: unique readiness token configured`,
+    });
+  }
+
+  return checks;
 }
 
 async function probeClients(clients, env = process.env, { poller = createClientPoller({ env }) } = {}) {
@@ -118,7 +179,7 @@ async function probeClients(clients, env = process.env, { poller = createClientP
       results.push({
         clientSlug: client.clientSlug,
         ok: false,
-        label: `${client.clientSlug}: ${error.message}`,
+        label: `${client.clientSlug}: ${redactOpsText(error.message, env, clients)}`,
       });
     }
   }
@@ -136,7 +197,7 @@ async function main({ argv = process.argv.slice(2), env = process.env } = {}) {
   try {
     args = parseArgs(argv);
   } catch (error) {
-    console.error(error.message);
+    console.error(redactOpsText(error.message, env));
     console.error(usage());
     return 2;
   }
@@ -152,12 +213,16 @@ async function main({ argv = process.argv.slice(2), env = process.env } = {}) {
   if (configChecks.some((check) => !check.ok)) return 1;
 
   const pool = createOpsPool(env);
+  let clients = [];
   try {
     try {
       await pool.query("SELECT 1");
       printChecks([{ ok: true, label: "PostgreSQL connection successful" }]);
     } catch (error) {
-      printChecks([{ ok: false, label: `PostgreSQL connection failed: ${error.message}` }]);
+      printChecks([{
+        ok: false,
+        label: `PostgreSQL connection failed: ${redactOpsText(error.message, env)}`,
+      }]);
       return 1;
     }
 
@@ -169,7 +234,7 @@ async function main({ argv = process.argv.slice(2), env = process.env } = {}) {
     }
 
     const repo = createClientRegistryRepo(pool);
-    const clients = await repo.listClients();
+    clients = await repo.listClients();
     console.log(`\nRegistered clients: ${clients.length}`);
 
     const tokenChecks = inspectClientTokens(clients, env);
@@ -196,7 +261,7 @@ if (require.main === module) {
       process.exitCode = code;
     })
     .catch((error) => {
-      console.error(`Ops Registry preflight failed: ${error.message || error}`);
+      console.error(`Ops Registry preflight failed: ${redactOpsText(error.message || error, process.env)}`);
       process.exitCode = 1;
     });
 }
@@ -207,6 +272,9 @@ module.exports = {
   main,
   parseArgs,
   probeClients,
+  redactOpsText,
+  sensitiveValues,
+  tokenFingerprint,
   usage,
   validateConfiguration,
 };
