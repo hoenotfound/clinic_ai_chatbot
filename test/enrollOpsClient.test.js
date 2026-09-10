@@ -7,8 +7,10 @@ const path = require("path");
 const {
   parseArgs,
   provisioningResultFromReceipt,
+  recoveryLockName,
   writeEnrollmentToReceipt,
 } = require("../scripts/enrollOpsClient");
+const { acquireProvisioningLock } = require("../scripts/provisionClient");
 
 function fixture() {
   return {
@@ -35,6 +37,12 @@ function fixture() {
   };
 }
 
+function tempDir(t) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ops-enroll-lock-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  return directory;
+}
+
 test("Ops enrollment recovery CLI accepts only receipt/json controls", () => {
   assert.deepEqual(parseArgs(["--receipt", ".provisioning/acme.json", "--json"]), {
     json: true,
@@ -50,6 +58,20 @@ test("receipt converts to the minimum safe provisioning result needed for re-enr
   assert.equal(result.render.url, "https://client.example");
   assert.deepEqual(result.requiredChannels, ["whatsapp", "instagram"]);
   assert.equal(Object.hasOwn(result, "runtimeEnv"), false);
+});
+
+test("recovery uses the same per-client resource lock as normal provisioning", (t) => {
+  const receipt = fixture();
+  const name = recoveryLockName(receipt);
+  assert.equal(name, "da-chatbot-acme-clinic");
+
+  const baseDir = tempDir(t);
+  const first = acquireProvisioningLock(name, { baseDir });
+  t.after(() => first.release());
+  assert.throws(
+    () => acquireProvisioningLock(recoveryLockName(receipt), { baseDir }),
+    (err) => err.code === "PROVISIONING_LOCKED"
+  );
 });
 
 test("recovery updates only secret-free enrollment state atomically", (t) => {
