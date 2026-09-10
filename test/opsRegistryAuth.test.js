@@ -6,10 +6,17 @@ const {
   parseBasicAuth,
 } = require("../src/ops/requireOpsAdmin");
 const { createOpsRegistryApp } = require("../src/ops/server");
+const { clientDetailHtml } = require("../src/ops/dashboard");
 
 test("basic auth parser preserves colons in the password", () => {
   const header = `Basic ${Buffer.from("admin:pass:word").toString("base64")}`;
   assert.deepEqual(parseBasicAuth(header), { username: "admin", password: "pass:word" });
+});
+
+test("client detail page safely embeds an untrusted route slug", () => {
+  const html = clientDetailHtml('</script><script>alert("xss")</script>');
+  assert.equal(html.includes('</script><script>alert("xss")</script>'), false);
+  assert.match(html, /const clientSlug = "\\u003c\/script\\u003e/);
 });
 
 async function withServer(callback) {

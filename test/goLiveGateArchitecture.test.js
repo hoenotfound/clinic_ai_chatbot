@@ -20,13 +20,15 @@ test("go-live API is authenticated and administrator-only", () => {
 
 test("go-live gate reuses Setup Status and never introduces a customer send path", () => {
   const route = source("src/routes/goLive.js");
+  const loader = source("src/services/goLiveGateLoaderService.js");
   const page = source("portal-frontend/src/pages/GoLive.jsx");
 
-  assert.match(route, /setupStatus\.getOverview/);
-  assert.match(route, /setupStatus\.runAll/);
-  assert.match(route, /setupStatusOverviewService/);
+  assert.match(route, /goLiveGateLoaderService/);
+  assert.match(loader, /setupStatus\.getOverview/);
+  assert.match(loader, /setupStatus\.runAll/);
+  assert.match(loader, /setupStatusOverviewService/);
   assert.doesNotMatch(route, /require\("\.\/setupStatus"\)/);
-  assert.doesNotMatch(route, /send(?:Text|Message|Image|Voice)|channelMessaging|whatsappService|metaMessagingService/);
+  assert.doesNotMatch(`${route}\n${loader}`, /send(?:Text|Message|Image|Voice)|channelMessaging|whatsappService|metaMessagingService/);
   assert.match(page, /never sends a synthetic customer message/i);
 });
 

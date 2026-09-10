@@ -1,6 +1,5 @@
 const express = require("express");
 const { loadGoLiveGate } = require("../services/goLiveGateLoaderService");
-const { setupStatus } = require("../services/setupStatusOverviewService");
 
 function requireAdministrator(req, res, next) {
   if (req.user?.role !== "admin") {
@@ -19,11 +18,9 @@ function createGoLiveRouter({ loadGate = loadGoLiveGate } = {}) {
 
   router.get("/", async (req, res) => {
     try {
-      const setupOverview = await setupStatus.getOverview();
       return res.json(await loadGate({
         baseUrl: requestBaseUrl(req),
         runChecks: false,
-        setupOverview,
       }));
     } catch (err) {
       console.error("Failed to load go-live readiness:", err);
@@ -36,11 +33,9 @@ function createGoLiveRouter({ loadGate = loadGoLiveGate } = {}) {
 
   router.post("/run", async (req, res) => {
     try {
-      const setupOverview = await setupStatus.getOverview();
       return res.json(await loadGate({
         runChecks: true,
         baseUrl: requestBaseUrl(req),
-        setupOverview,
       }));
     } catch (err) {
       console.error("Failed to run go-live readiness checks:", err);
@@ -61,4 +56,3 @@ module.exports.createGoLiveRouter = createGoLiveRouter;
 module.exports.loadGoLiveGate = loadGoLiveGate;
 module.exports.requestBaseUrl = requestBaseUrl;
 module.exports.requireAdministrator = requireAdministrator;
-module.exports.setupStatus = setupStatus;

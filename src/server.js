@@ -59,6 +59,7 @@ const contactsRoutes = require("./routes/contacts");
 const pipelineRoutes = require("./routes/pipeline");
 const setupStatusRoutes = require("./routes/setupStatus");
 const goLiveRoutes = require("./routes/goLive");
+const opsReadinessRoutes = require("./routes/opsReadiness");
 const { bootstrapAdminUser } = require("./db/bootstrapAdmin");
 const configRepo = require("./db/configRepo");
 const { pruneOrphanedPromoImages } = configRepo;
@@ -867,6 +868,10 @@ app.get("/promo-images/:id", async (req, res) => {
     res.status(500).send("Something went wrong.");
   }
 });
+
+// ── Read-only machine endpoint for the separate Ops Registry. ──
+// This intentionally bypasses portal sessions and has its own bearer-token guard.
+app.use("/api/ops/readiness", opsReadinessRoutes);
 
 // ── Management portal API ──
 app.use("/api/auth", authRoutes);

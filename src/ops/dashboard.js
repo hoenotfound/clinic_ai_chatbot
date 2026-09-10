@@ -7,6 +7,15 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function inlineScriptJson(value) {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
 const sharedStyles = `
   :root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f6f7fb}
   *{box-sizing:border-box}body{margin:0}.shell{max-width:1180px;margin:0 auto;padding:32px 20px 56px}
@@ -94,7 +103,7 @@ setInterval(() => load().catch(()=>{}), 30000);
 }
 
 function clientDetailHtml(clientSlug) {
-  const safeSlug = JSON.stringify(String(clientSlug || ""));
+  const safeSlug = inlineScriptJson(String(clientSlug || ""));
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -150,4 +159,5 @@ module.exports = {
   clientDetailHtml,
   dashboardHtml,
   escapeHtml,
+  inlineScriptJson,
 };

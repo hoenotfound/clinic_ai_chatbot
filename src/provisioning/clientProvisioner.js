@@ -50,6 +50,8 @@ const RENDER_PLANS = Object.freeze([
 ]);
 
 const RESERVED_RUNTIME_ENV_KEYS = new Set([
+  "CLIENT_SLUG",
+  "OPS_READINESS_TOKEN",
   "DATABASE_URL",
   "SESSION_SECRET",
   "INITIAL_BUSINESS_TYPE",
@@ -267,6 +269,7 @@ function publicPlan(plan) {
 function renderEnvVars(plan, databaseUrl) {
   const custom = Object.entries(plan.runtimeEnv).map(([key, value]) => ({ key, value }));
   return [
+    { key: "CLIENT_SLUG", value: plan.clientSlug },
     { key: "INITIAL_BUSINESS_TYPE", value: plan.industry },
     { key: "PURCHASED_CHANNELS", value: plan.requiredChannels.join(",") },
     { key: "DATABASE_URL", value: databaseUrl },
