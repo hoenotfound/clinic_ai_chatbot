@@ -1,4 +1,5 @@
 const { loadGoLiveGate } = require("./goLiveGateLoaderService");
+const { version: appVersion } = require("../../package.json");
 
 const ALLOWED_STATUSES = new Set([
   "ready",
@@ -6,6 +7,8 @@ const ALLOWED_STATUSES = new Set([
   "needs_testing",
   "blocked",
 ]);
+
+const PROCESS_STARTED_AT = new Date(Date.now() - process.uptime() * 1000).toISOString();
 
 function deploymentCommit(env = process.env) {
   return String(
@@ -31,21 +34,26 @@ function sanitizeIssues(items = []) {
 }
 
 function sanitizeChannels(channels = []) {
-  return (Array.isArray(channels) ? channels : []).map((item) => ({
-    channel: item?.channel || null,
-    label: item?.label || item?.channel || null,
-    purchased: item?.purchased === true,
-    configured: item?.configured === true,
-    runtimeReady: item?.runtimeReady === true,
-    inboundVerified: item?.inboundVerified === true,
-    aiReplyVerified: item?.aiReplyVerified === true,
-    ready: item?.ready === true,
-    verificationState: item?.verificationState || "unknown",
-    latestCustomerInboundAt: item?.latestCustomerInboundAt || null,
-    lastVerifiedRoundTripInboundAt: item?.lastVerifiedRoundTripInboundAt || null,
-    lastVerifiedAutomatedReplyAt: item?.lastVerifiedAutomatedReplyAt || null,
-    lastReadinessDeliveryFailureAt: item?.lastReadinessDeliveryFailureAt || null,
-  }));
+  return (Array.isArray(channels) ? channels : [])
+    .filter((item) => item?.purchased === true)
+    .map((item) => ({
+      channel: item?.channel || null,
+      label: item?.label || item?.channel || null,
+      purchased: true,
+      configured: item?.configured === true,
+      runtimeReady: item?.runtimeReady === true,
+      inboundVerified: item?.inboundVerified === true,
+      aiReplyVerified: item?.aiReplyVerified === true,
+      ready: item?.ready === true,
+      verificationState: item?.verificationState || "unknown",
+      latestCustomerInboundAt: item?.latestCustomerInboundAt || null,
+      lastVerifiedRoundTripAt: item?.lastVerifiedRoundTripInboundAt
+        || item?.lastVerifiedAutomatedReplyAt
+        || null,
+      lastVerifiedRoundTripInboundAt: item?.lastVerifiedRoundTripInboundAt || null,
+      lastVerifiedAutomatedReplyAt: item?.lastVerifiedAutomatedReplyAt || null,
+      lastReadinessDeliveryFailureAt: item?.lastReadinessDeliveryFailureAt || null,
+    }));
 }
 
 function sanitizeGateForOps(gate, env = process.env) {
@@ -60,6 +68,8 @@ function sanitizeGateForOps(gate, env = process.env) {
     },
     deployment: {
       commitSha: deploymentCommit(env),
+      startedAt: PROCESS_STARTED_AT,
+      appVersion,
     },
     readiness: {
       status,
@@ -118,6 +128,7 @@ async function loadOpsReadiness({
 
 module.exports = {
   ALLOWED_STATUSES,
+  PROCESS_STARTED_AT,
   deploymentCommit,
   loadOpsReadiness,
   sanitizeGateForOps,
