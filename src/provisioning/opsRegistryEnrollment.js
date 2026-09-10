@@ -42,12 +42,11 @@ class OpsRegistryEnrollmentError extends Error {
 }
 
 function normalizeOpsEnrollmentMode(value, env = process.env) {
-  const mode = String(
-    value || env.PROVISIONING_OPS_ENROLLMENT_MODE || DEFAULT_OPS_ENROLLMENT_MODE
-  ).trim().toLowerCase();
+  const configured = value || env.PROVISIONING_OPS_ENROLLMENT_MODE || DEFAULT_OPS_ENROLLMENT_MODE;
+  const mode = String(configured).trim().toLowerCase();
   if (!OPS_ENROLLMENT_MODES.includes(mode)) {
     throw new OpsRegistryEnrollmentError(
-      `Unsupported Ops Registry enrollment mode "${value}". Use: ${OPS_ENROLLMENT_MODES.join(", ")}.`,
+      `Unsupported Ops Registry enrollment mode "${configured}". Use: ${OPS_ENROLLMENT_MODES.join(", ")}.`,
       {
         code: "OPS_ENROLLMENT_MODE_UNSUPPORTED",
         stage: "validation",
@@ -110,10 +109,9 @@ function requireOpsEnrollmentConfig({
   const plan = buildOpsEnrollmentPlan({ clientSlug, mode, env });
   if (plan.mode === "off") return plan;
 
-  // Auto mode remains backwards compatible when no Ops control-plane values
-  // are present. A partially configured control plane is different: failing
-  // before Neon/Render creation is safer than silently creating an untracked
-  // production client.
+  // Auto remains backwards compatible when neither control-plane value exists.
+  // A partial configuration fails closed so production cannot silently create
+  // a client that the operator intended to track.
   const shouldRequireCompleteConfig = plan.mode === "required"
     || (plan.mode === "auto" && plan.missing.length < REQUIRED_CONTROL_ENV_KEYS.length);
   if (shouldRequireCompleteConfig && plan.missing.length) {
@@ -129,8 +127,8 @@ function requireOpsEnrollmentConfig({
 
   if (plan.enabled) {
     try {
-      // Validate the dedicated Ops DB connection string before any customer
-      // cloud resource is created. This function does not open a connection.
+      // Syntax/config validation only. Connectivity is checked again during
+      // the actual registry write, where errors remain recoverable.
       buildOpsPoolConfig(env);
     } catch (err) {
       throw new OpsRegistryEnrollmentError(
@@ -184,8 +182,8 @@ function opsEnrollmentFailureState(error, fallbackState = null) {
 
 function generateOpsReadinessToken(randomBytes = crypto.randomBytes) {
   const token = randomBytes(32).toString("base64url");
-  if (token.length < 32) {
-    throw new OpsRegistryEnrollmentError("Generated Ops readiness token did not meet the minimum entropy length.", {
+  if (token.length < 32 || !/^[A-Za-z0-9_-]+$/.test(token)) {
+    throw new OpsRegistryEnrollmentError("Generated Ops readiness token did not meet the required format.", {
       code: "OPS_ENROLLMENT_TOKEN_GENERATION_FAILED",
       stage: "token_generation",
       retrySafe: true,
@@ -194,10 +192,36 @@ function generateOpsReadinessToken(randomBytes = crypto.randomBytes) {
   return token;
 }
 
+function normalizeProvisionedBaseUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    throw new OpsRegistryEnrollmentError(
+      "Provisioning result is missing the Render URL required for Ops Registry enrollment.",
+      {
+        code: "OPS_ENROLLMENT_RESULT_INCOMPLETE",
+        stage: "validation",
+        retrySafe: true,
+      }
+    );
+  }
+  try {
+    return normalizedBaseUrl(raw);
+  } catch (err) {
+    throw new OpsRegistryEnrollmentError(
+      `Provisioning result has an invalid Render URL: ${err.message}`,
+      {
+        code: "OPS_ENROLLMENT_CLIENT_URL_INVALID",
+        stage: "validation",
+        retrySafe: true,
+        cause: err,
+      }
+    );
+  }
+}
+
 function registryRecordFromProvisionedResult(result, tokenEnvKey, snapshot = null) {
   const clientSlug = String(result?.clientSlug || "").trim();
   const serviceId = String(result?.render?.serviceId || "").trim();
-  const baseUrl = normalizedBaseUrl(result?.render?.url);
   if (!clientSlug || !serviceId) {
     throw new OpsRegistryEnrollmentError(
       "Provisioning result is missing the client slug or Render service ID required for Ops Registry enrollment.",
@@ -208,10 +232,12 @@ function registryRecordFromProvisionedResult(result, tokenEnvKey, snapshot = nul
       }
     );
   }
+  const baseUrl = normalizeProvisionedBaseUrl(result?.render?.url);
+  const displayName = String(snapshot?.client?.businessName || "").trim() || clientSlug;
 
   return {
     clientSlug,
-    displayName: String(snapshot?.client?.businessName || clientSlug).trim(),
+    displayName,
     baseUrl,
     industry: result?.industry || null,
     purchasedChannels: Array.isArray(result?.requiredChannels)
@@ -315,10 +341,9 @@ function wrapEnrollmentError(error, {
 }
 
 function preparedResult(state, token, record) {
-  const prepared = { state: { ...state }, record: { ...record } };
-  // The token must stay usable for the in-process deployment/verification
-  // steps, but must never appear in JSON output, receipts, logs or accidental
-  // object spreads.
+  const prepared = { state: { ...state }, record: { ...(record || {}) } };
+  // Keep the token usable only inside this process while preventing accidental
+  // JSON serialization, object spreads, receipts, and normal log output.
   Object.defineProperty(prepared, "token", {
     value: token,
     enumerable: false,
@@ -326,6 +351,22 @@ function preparedResult(state, token, record) {
     writable: false,
   });
   return prepared;
+}
+
+function assertDistinctEnrollmentServices(result, plan, state) {
+  if (!plan?.enabled) return;
+  const clientServiceId = String(result?.render?.serviceId || "").trim();
+  if (clientServiceId && clientServiceId === plan.registryServiceId) {
+    throw new OpsRegistryEnrollmentError(
+      "Client and Ops Registry Render service IDs must be different. Refusing to write enrollment secrets to the same service.",
+      {
+        code: "OPS_ENROLLMENT_SERVICE_ID_COLLISION",
+        stage: "validation",
+        publicState: state,
+        retrySafe: true,
+      }
+    );
+  }
 }
 
 async function prepareOpsRegistryEnrollment({
@@ -341,14 +382,16 @@ async function prepareOpsRegistryEnrollment({
     env,
   });
   const state = publicStateFromPlan(plan);
+  if (!plan.enabled) return preparedResult(state, null, null);
+
+  assertDistinctEnrollmentServices(result, plan, state);
   const record = registryRecordFromProvisionedResult(result, plan.tokenEnvKey);
-  if (!plan.enabled) return preparedResult(state, null, record);
 
   let token;
   try {
     token = String(tokenFactory() || "").trim();
-    if (token.length < 32) {
-      throw new Error("token is shorter than 32 characters");
+    if (token.length < 32 || !/^[A-Za-z0-9_-]+$/.test(token)) {
+      throw new Error("token is shorter than 32 characters or is not URL-safe");
     }
   } catch (err) {
     throw wrapEnrollmentError(err, {
@@ -418,6 +461,25 @@ function markPreparedClientDeployment(prepared, {
   return prepared;
 }
 
+function recordQueuedDeployment(state, role, queued) {
+  const deployId = queued?.id || null;
+  const deployStatus = String(queued?.status || "queued").trim().toLowerCase() || "queued";
+  if (role === "client") {
+    state.clientDeployId = deployId;
+    state.clientDeployStatus = deployStatus;
+  } else {
+    state.registryDeployId = deployId;
+    state.registryDeployStatus = deployStatus;
+  }
+}
+
+function recordFailedDeploymentStatus(state, role, error) {
+  const resourceStatus = String(error?.resourceStatus || "").trim().toLowerCase();
+  if (!resourceStatus) return;
+  if (role === "client") state.clientDeployStatus = resourceStatus;
+  else state.registryDeployStatus = resourceStatus;
+}
+
 async function deployServiceForEnrollment({
   prepared,
   serviceId,
@@ -445,18 +507,21 @@ async function deployServiceForEnrollment({
   const state = { ...prepared.state };
   try {
     const queued = await renderApi.triggerDeploy(serviceId);
+    // Persist the accepted deploy immediately. If the subsequent wait times out
+    // or reports a terminal failure, the receipt still has the exact deployment
+    // identifier an operator needs to inspect.
+    recordQueuedDeployment(state, role, queued);
+    prepared.state = { ...state };
+
     const live = await renderClient.waitForDeploy(serviceId, queued.id);
     const status = String(live?.status || "live").toLowerCase();
-    if (role === "client") {
-      state.clientDeployId = queued.id;
-      state.clientDeployStatus = status;
-    } else {
-      state.registryDeployId = queued.id;
-      state.registryDeployStatus = status;
-    }
-    prepared.state = state;
+    if (role === "client") state.clientDeployStatus = status;
+    else state.registryDeployStatus = status;
+    prepared.state = { ...state };
     return prepared;
   } catch (err) {
+    recordFailedDeploymentStatus(state, role, err);
+    prepared.state = { ...state };
     throw wrapEnrollmentError(err, {
       code: role === "client"
         ? "OPS_ENROLLMENT_CLIENT_DEPLOY_FAILED"
@@ -492,12 +557,80 @@ async function withOpsRepo(env, {
   createRepo = createClientRegistryRepo,
 } = {}, task) {
   const pool = createPool(env);
+  let connection = pool;
+  let release = () => {};
+  let transactionStarted = false;
   try {
     await migrate(pool);
-    const repo = createRepo(pool);
-    return await task(repo);
+    if (typeof pool.connect === "function") {
+      connection = await pool.connect();
+      release = typeof connection.release === "function"
+        ? () => connection.release()
+        : () => {};
+    }
+
+    // Keep the registry metadata upsert and its first successful snapshot atomic
+    // when a real PostgreSQL queryable is available. Lightweight unit-test
+    // doubles without query() still use the same task path.
+    if (typeof connection?.query === "function") {
+      await connection.query("BEGIN");
+      transactionStarted = true;
+    }
+
+    try {
+      const repo = createRepo(connection);
+      const result = await task(repo);
+      if (transactionStarted) {
+        await connection.query("COMMIT");
+        transactionStarted = false;
+      }
+      return result;
+    } catch (err) {
+      if (transactionStarted) {
+        try {
+          await connection.query("ROLLBACK");
+        } catch (_) {
+          // Preserve the original registry mutation failure.
+        }
+        transactionStarted = false;
+      }
+      throw err;
+    }
   } finally {
+    release();
     await pool.end?.();
+  }
+}
+
+function normalizedChannelContract(value) {
+  if (!Array.isArray(value)) return null;
+  return [...new Set(
+    value
+      .map((item) => String(item || "").trim().toLowerCase())
+      .filter(Boolean)
+  )].sort();
+}
+
+function assertRemoteProvisioningContract(snapshot, result) {
+  const remoteIndustry = snapshot?.client?.businessType || null;
+  if (result?.industry && remoteIndustry !== result.industry) {
+    throw new Error(
+      `Client profile mismatch: expected ${result.industry}, received ${remoteIndustry || "missing business type"}.`
+    );
+  }
+
+  const expectedChannels = normalizedChannelContract(result?.requiredChannels || []) || [];
+  const remoteChannels = normalizedChannelContract(snapshot?.readiness?.channelContract?.channels);
+  if (expectedChannels.length && (
+    !remoteChannels
+    || expectedChannels.length !== remoteChannels.length
+    || expectedChannels.some((channel, index) => channel !== remoteChannels[index])
+  )) {
+    throw new Error(
+      `Client purchased-channel contract mismatch: expected ${expectedChannels.join(", ")}, received ${
+        remoteChannels ? remoteChannels.join(", ") : "missing channel contract"
+      }.`
+    );
   }
 }
 
@@ -549,12 +682,7 @@ async function verifyAndRegisterPreparedEnrollment({
     const localTokenEnv = { [state.tokenEnvKey]: prepared.token };
     const poller = createClientPoller({ fetchImpl, env: localTokenEnv });
     pollResult = await poller.pollClient(prepared.record);
-    const remoteIndustry = pollResult.snapshot?.client?.businessType || null;
-    if (result?.industry && remoteIndustry && remoteIndustry !== result.industry) {
-      throw new Error(
-        `Client profile mismatch: expected ${result.industry}, received ${remoteIndustry}.`
-      );
-    }
+    assertRemoteProvisioningContract(pollResult.snapshot, result);
     state.endpointVerified = true;
   } catch (err) {
     throw wrapEnrollmentError(err, {
@@ -577,13 +705,13 @@ async function verifyAndRegisterPreparedEnrollment({
   try {
     await withOpsRepo(env, { createPool, migrate, createRepo }, async (repo) => {
       await repo.upsertClient(record);
-      state.registryRecordUpserted = true;
       await repo.recordPollSuccess(record.clientSlug, {
         httpStatus: pollResult.httpStatus,
         snapshot,
         polledAt,
       });
     });
+    state.registryRecordUpserted = true;
   } catch (err) {
     throw wrapEnrollmentError(err, {
       code: "OPS_ENROLLMENT_REGISTRY_UPSERT_FAILED",
@@ -612,6 +740,8 @@ module.exports = {
   DEFAULT_OPS_ENROLLMENT_MODE,
   OPS_ENROLLMENT_MODES,
   OpsRegistryEnrollmentError,
+  assertDistinctEnrollmentServices,
+  assertRemoteProvisioningContract,
   buildOpsEnrollmentPlan,
   createRenderOpsEnrollmentApi,
   defaultTokenEnvKey,
