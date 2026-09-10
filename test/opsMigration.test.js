@@ -15,15 +15,20 @@ test("Ops Registry migrations use their own namespace instead of client migratio
   assert.deepEqual(listMigrationFiles(opsDir), [
     "001_ops_clients.sql",
     "002_unique_token_env_key.sql",
+    "003_ops_client_lifecycle.sql",
   ]);
   assert.equal(fs.readdirSync(clientDir).some((name) => /ops_clients/i.test(name)), false);
 
   const initialSql = fs.readFileSync(path.join(opsDir, "001_ops_clients.sql"), "utf8");
   const uniquenessSql = fs.readFileSync(path.join(opsDir, "002_unique_token_env_key.sql"), "utf8");
+  const lifecycleSql = fs.readFileSync(path.join(opsDir, "003_ops_client_lifecycle.sql"), "utf8");
   assert.match(initialSql, /CREATE TABLE IF NOT EXISTS ops_clients/i);
   assert.match(uniquenessSql, /CREATE UNIQUE INDEX IF NOT EXISTS idx_ops_clients_token_env_key_unique/i);
+  assert.match(lifecycleSql, /SET lifecycle_status = 'live'/i);
+  assert.match(lifecycleSql, /SET DEFAULT 'setup'/i);
+  assert.match(lifecycleSql, /CHECK \(lifecycle_status IN \('setup', 'trial', 'live', 'paused'\)\)/i);
   assert.doesNotMatch(
-    `${initialSql}\n${uniquenessSql}`,
+    `${initialSql}\n${uniquenessSql}\n${lifecycleSql}`,
     /DROP\s+TABLE|TRUNCATE|customer|message_content|access_token|api_key|database_url|admin_password/i,
   );
 });

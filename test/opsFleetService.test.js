@@ -15,6 +15,7 @@ function client(overrides = {}) {
     baseUrl: "https://acme.example.com",
     industry: "home_renovation",
     purchasedChannels: ["whatsapp"],
+    lifecycleStatus: "live",
     tokenEnvKey: "OPS_CLIENT_TOKEN_ACME",
     render: { serviceId: "srv-1", serviceName: "acme" },
     neon: { projectId: "neon-1", projectName: "acme" },
@@ -57,6 +58,26 @@ test("fleet presentation reports version drift without GitHub access", () => {
   assert.equal(presented.deployment.appVersion, "0.1.0");
   assert.equal(presented.channels[0].channel, "whatsapp");
   assert.equal(presented.tokenConfigured, true);
+  assert.equal(presented.lifecycleStatus, "live");
+  assert.equal(presented.backgroundPollingEnabled, true);
+  assert.equal(presented.manualRefreshAllowed, true);
+});
+
+test("setup/trial clients keep their last known readiness while intentionally not background-polled", () => {
+  for (const lifecycleStatus of ["setup", "trial", "paused"]) {
+    const presented = presentClient(client({
+      lifecycleStatus,
+      lastPollAt: "2026-09-01T12:00:00.000Z",
+      lastSuccessAt: "2026-09-01T12:00:00.000Z",
+      lastStatus: "needs_testing",
+      lastSnapshot: { schemaVersion: 1, readiness: { status: "needs_testing" } },
+    }), {
+      now: new Date("2026-09-10T12:00:00.000Z"),
+      offlineAfterMs: 15 * 60 * 1000,
+    });
+    assert.equal(presented.status, "needs_testing");
+    assert.equal(presented.backgroundPollingEnabled, false);
+  }
 });
 
 test("refresh failure marks current connectivity offline but keeps last successful readiness", async () => {
@@ -198,6 +219,117 @@ test("cancelled background poll does not record a client failure", async () => {
   const refreshed = await fleet.refreshClient("acme");
   assert.equal(failureWrites, 0);
   assert.equal(refreshed.status, "ready");
+});
+
+test("refreshAll polls only live clients and leaves setup/trial/paused deployments asleep", async () => {
+  const now = "2026-09-10T12:00:00.000Z";
+  const clients = [
+    client({ clientSlug: "setup", lifecycleStatus: "setup", lastSuccessAt: now, lastStatus: "needs_testing" }),
+    client({ clientSlug: "trial", lifecycleStatus: "trial", lastSuccessAt: now, lastStatus: "needs_testing" }),
+    client({ clientSlug: "live", lifecycleStatus: "live", lastSuccessAt: now, lastStatus: "ready" }),
+    client({ clientSlug: "paused", lifecycleStatus: "paused", lastSuccessAt: now, lastStatus: "ready" }),
+  ];
+  const bySlug = new Map(clients.map((item) => [item.clientSlug, item]));
+  const polled = [];
+  const repo = {
+    listClients: async () => clients,
+    getClient: async (slug) => bySlug.get(slug),
+    recordPollFailure: async () => {},
+    recordPollSuccess: async (slug, values) => {
+      const current = bySlug.get(slug);
+      Object.assign(current, {
+        lastPollAt: values.polledAt,
+        lastSuccessAt: values.polledAt,
+        lastStatus: values.snapshot.readiness.status,
+        lastSnapshot: values.snapshot,
+        lastError: null,
+      });
+    },
+  };
+  const fleet = createFleetService({
+    repo,
+    poller: {
+      pollClient: async (item) => {
+        polled.push(item.clientSlug);
+        return { httpStatus: 200, snapshot: { schemaVersion: 1, readiness: { status: "ready" } } };
+      },
+    },
+    now: () => new Date(now),
+  });
+
+  const result = await fleet.refreshAll();
+  assert.deepEqual(polled, ["live"]);
+  assert.equal(result.refreshedCount, 1);
+  assert.equal(result.skippedCount, 3);
+});
+
+test("setup and trial clients allow manual refresh while paused clients fail closed", async () => {
+  for (const lifecycleStatus of ["setup", "trial"]) {
+    let state = client({ lifecycleStatus });
+    let polls = 0;
+    const repo = {
+      listClients: async () => [state],
+      getClient: async () => state,
+      recordPollFailure: async () => {},
+      recordPollSuccess: async (_slug, values) => {
+        state = {
+          ...state,
+          lastPollAt: values.polledAt,
+          lastSuccessAt: values.polledAt,
+          lastStatus: "ready",
+          lastSnapshot: values.snapshot,
+        };
+      },
+    };
+    const fleet = createFleetService({
+      repo,
+      poller: {
+        pollClient: async () => {
+          polls += 1;
+          return { httpStatus: 200, snapshot: { schemaVersion: 1, readiness: { status: "ready" } } };
+        },
+      },
+    });
+    await fleet.refreshClient("acme");
+    assert.equal(polls, 1);
+  }
+
+  const paused = client({ lifecycleStatus: "paused" });
+  const fleet = createFleetService({
+    repo: {
+      listClients: async () => [paused],
+      getClient: async () => paused,
+      recordPollFailure: async () => {},
+      recordPollSuccess: async () => {},
+    },
+    poller: { pollClient: async () => { throw new Error("should not poll"); } },
+  });
+  await assert.rejects(
+    fleet.refreshClient("acme"),
+    (error) => error?.code === "OPS_CLIENT_PAUSED",
+  );
+});
+
+test("lifecycle updates are persisted through the repository and returned in presentation", async () => {
+  let state = client({ lifecycleStatus: "setup" });
+  const repo = {
+    listClients: async () => [state],
+    getClient: async () => state,
+    updateLifecycle: async (_slug, lifecycleStatus) => {
+      state = { ...state, lifecycleStatus };
+      return state;
+    },
+  };
+  const fleet = createFleetService({ repo, poller: {} });
+  const updated = await fleet.setClientLifecycle("acme", "trial");
+  assert.equal(updated.lifecycleStatus, "trial");
+  assert.equal(updated.backgroundPollingEnabled, false);
+  assert.equal(updated.manualRefreshAllowed, true);
+
+  await assert.rejects(
+    fleet.setClientLifecycle("acme", "production"),
+    (error) => error?.code === "OPS_CLIENT_LIFECYCLE_INVALID",
+  );
 });
 
 test("refreshAll isolates a failed client and returns all five summary states", async () => {
