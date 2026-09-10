@@ -54,19 +54,22 @@ function redactOpsText(value, env = process.env, clients = []) {
 
 function validateFleetTargetConfiguration(env = process.env) {
   const configured = String(env.OPS_FLEET_TARGET_COMMIT || "").trim();
-  if (!configured) return null;
+  const registryEvidence = String(env.RENDER_GIT_COMMIT || env.OPS_REGISTRY_COMMIT || "").trim();
+  if (!configured && !registryEvidence) return null;
 
   const target = resolveFleetTarget(env);
   if (target.validity !== TARGET_VALIDITY.VALID) {
     return {
       ok: false,
-      label: target.error || "OPS_FLEET_TARGET_COMMIT is invalid.",
+      label: target.error || "Fleet target commit evidence is invalid.",
     };
   }
 
   return {
     ok: true,
-    label: "Pinned fleet target is a valid full Git commit SHA",
+    label: target.source === "configured"
+      ? "Pinned fleet target is a valid full Git commit SHA"
+      : "Registry deployment commit is a valid full Git commit SHA",
   };
 }
 
