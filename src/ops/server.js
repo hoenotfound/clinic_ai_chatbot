@@ -1,5 +1,6 @@
 require("dotenv").config();
 
+const crypto = require("crypto");
 const express = require("express");
 const { createOpsPool } = require("./db");
 const { runOpsMigrations } = require("./migrationRunner");
@@ -10,15 +11,28 @@ const { createRequireOpsAdmin } = require("./requireOpsAdmin");
 const { createRequireOpsAction } = require("./requireOpsAction");
 const { clientDetailHtml, dashboardHtml } = require("./dashboard");
 const { assertOpsRegistryMode } = require("./mode");
+const {
+  DEFAULT_POLL_INTERVAL_MS,
+  MIN_POLL_INTERVAL_MS,
+  pollIntervalMs,
+} = require("./runtimeConfig");
 
 const DEFAULT_PORT = 10001;
-const DEFAULT_POLL_INTERVAL_MS = 5 * 60 * 1000;
-const MIN_POLL_INTERVAL_MS = 60 * 1000;
+const DEFAULT_SHUTDOWN_GRACE_MS = 100 * 1000;
+const MAX_SHUTDOWN_GRACE_MS = 110 * 1000;
 
-function pollIntervalMs(env = process.env) {
-  const parsed = Number(env.OPS_POLL_INTERVAL_MS);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_POLL_INTERVAL_MS;
-  return Math.max(MIN_POLL_INTERVAL_MS, Math.floor(parsed));
+function boundedPositiveInteger(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
+function shutdownGraceMs(env = process.env) {
+  return boundedPositiveInteger(
+    env.OPS_SHUTDOWN_GRACE_MS,
+    DEFAULT_SHUTDOWN_GRACE_MS,
+    { min: 5000, max: MAX_SHUTDOWN_GRACE_MS },
+  );
 }
 
 function createSingleFlight(task) {
@@ -37,6 +51,10 @@ function createSingleFlight(task) {
 
   run.inFlight = () => inFlight;
   return run;
+}
+
+function securityNonce() {
+  return crypto.randomBytes(16).toString("base64");
 }
 
 function createOpsRegistryApp({
@@ -58,12 +76,15 @@ function createOpsRegistryApp({
   app.disable("x-powered-by");
   app.use(express.json({ limit: "32kb" }));
   app.use((_req, res, next) => {
+    const nonce = securityNonce();
+    res.locals.cspNonce = nonce;
     res.set("X-Content-Type-Options", "nosniff");
     res.set("X-Frame-Options", "DENY");
     res.set("Referrer-Policy", "no-referrer");
+    res.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     res.set(
       "Content-Security-Policy",
-      "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'",
+      `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; connect-src 'self'`,
     );
     next();
   });
@@ -80,11 +101,11 @@ function createOpsRegistryApp({
   app.use(authenticate);
 
   app.get("/", (_req, res) => {
-    res.type("html").send(dashboardHtml());
+    res.type("html").send(dashboardHtml(res.locals.cspNonce));
   });
 
   app.get("/clients/:clientSlug", (req, res) => {
-    res.type("html").send(clientDetailHtml(req.params.clientSlug));
+    res.type("html").send(clientDetailHtml(req.params.clientSlug, res.locals.cspNonce));
   });
 
   app.get("/api/clients", async (_req, res) => {
@@ -138,6 +159,22 @@ async function closeServer(server) {
   });
 }
 
+async function settleWithin(promise, timeoutMs) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([
+      Promise.resolve(promise).then(() => true, () => true),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function start(env = process.env) {
   assertOpsRegistryMode(env);
   const pool = createOpsPool(env);
@@ -146,7 +183,10 @@ async function start(env = process.env) {
   const poller = createClientPoller({ env });
   const fleetService = createFleetService({ repo, poller, env });
   const authenticate = createRequireOpsAdmin({ env });
-  const refreshAll = createSingleFlight(() => fleetService.refreshAll());
+  const refreshAbortController = new AbortController();
+  const refreshAll = createSingleFlight(() => fleetService.refreshAll({
+    signal: refreshAbortController.signal,
+  }));
 
   const app = createOpsRegistryApp({
     fleetService,
@@ -182,16 +222,20 @@ async function start(env = process.env) {
       clearInterval(refreshTimer);
       process.removeListener("SIGTERM", sigtermHandler);
       process.removeListener("SIGINT", sigintHandler);
-      await closeServer(server);
+      refreshAbortController.abort();
+      server.closeIdleConnections?.();
+
       const activeRefresh = refreshAll.inFlight();
-      if (activeRefresh) {
-        try {
-          await activeRefresh;
-        } catch (_) {
-          // The refresh path already records/logs client failures. Shutdown
-          // should still continue and release the database pool.
-        }
+      const gracefulWork = Promise.allSettled([
+        closeServer(server),
+        activeRefresh || Promise.resolve(),
+      ]);
+      const graceful = await settleWithin(gracefulWork, shutdownGraceMs(env));
+      if (!graceful) {
+        console.error("Ops Registry graceful shutdown deadline reached; closing remaining HTTP connections.");
+        server.closeAllConnections?.();
       }
+
       await pool.end();
     })();
     return shutdownPromise;
@@ -206,6 +250,7 @@ async function start(env = process.env) {
     app,
     fleetService,
     pool,
+    refreshAbortController,
     refreshAll,
     refreshTimer,
     server,
@@ -222,10 +267,16 @@ if (require.main === module) {
 
 module.exports = {
   DEFAULT_POLL_INTERVAL_MS,
+  DEFAULT_SHUTDOWN_GRACE_MS,
+  MAX_SHUTDOWN_GRACE_MS,
   MIN_POLL_INTERVAL_MS,
+  boundedPositiveInteger,
   closeServer,
   createOpsRegistryApp,
   createSingleFlight,
   pollIntervalMs,
+  securityNonce,
+  settleWithin,
+  shutdownGraceMs,
   start,
 };
