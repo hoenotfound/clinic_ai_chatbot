@@ -2,6 +2,7 @@ const crypto = require("crypto");
 
 const DEFAULT_AUTH_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_AUTH_MAX_FAILURES = 20;
+const DEFAULT_AUTH_MAX_TRACKED_ADDRESSES = 1000;
 
 function digest(value) {
   return crypto.createHash("sha256").update(String(value || "")).digest();
@@ -62,30 +63,49 @@ function createRequireOpsAdmin({ env = process.env, now = () => Date.now() } = {
     DEFAULT_AUTH_MAX_FAILURES,
     { min: 3, max: 100 },
   );
+  const maxTrackedAddresses = boundedPositiveInteger(
+    env.OPS_AUTH_MAX_TRACKED_ADDRESSES,
+    DEFAULT_AUTH_MAX_TRACKED_ADDRESSES,
+    { min: 100, max: 10_000 },
+  );
   const trustProxy = String(env.OPS_AUTH_TRUST_PROXY || "").trim().toLowerCase() === "true";
   const failures = new Map();
 
-  function failureKey(req, username) {
-    return `${requestAddress(req, trustProxy)}:${String(username || "unknown").slice(0, 128)}`;
+  function pruneExpired(currentTime) {
+    for (const [key, entry] of failures) {
+      if (entry.resetAt <= currentTime) failures.delete(key);
+    }
   }
 
-  function currentEntry(key) {
+  function ensureCapacity(key) {
+    if (failures.has(key)) return;
+    while (failures.size >= maxTrackedAddresses) {
+      const oldestKey = failures.keys().next().value;
+      if (oldestKey == null) break;
+      failures.delete(oldestKey);
+    }
+  }
+
+  function currentEntry(key, currentTime) {
     const current = failures.get(key);
     if (!current) return null;
-    if (current.resetAt <= now()) {
+    if (current.resetAt <= currentTime) {
       failures.delete(key);
       return null;
     }
     return current;
   }
 
-  return function requireOpsAdmin(req, res, next) {
+  function requireOpsAdmin(req, res, next) {
+    const currentTime = now();
+    pruneExpired(currentTime);
+
     const credentials = parseBasicAuth(req.get("authorization"));
-    const key = failureKey(req, credentials?.username);
-    const entry = currentEntry(key);
+    const key = requestAddress(req, trustProxy);
+    const entry = currentEntry(key, currentTime);
 
     if (entry && entry.count >= maxFailures) {
-      const retryAfterSeconds = Math.max(1, Math.ceil((entry.resetAt - now()) / 1000));
+      const retryAfterSeconds = Math.max(1, Math.ceil((entry.resetAt - currentTime) / 1000));
       res.set("Retry-After", String(retryAfterSeconds));
       res.set("Cache-Control", "no-store");
       return res.status(429).send("Too many authentication attempts.");
@@ -96,7 +116,8 @@ function createRequireOpsAdmin({ env = process.env, now = () => Date.now() } = {
       || !safeEqual(credentials.username, expectedUsername)
       || !safeEqual(credentials.password, expectedPassword)
     ) {
-      const nextEntry = entry || { count: 0, resetAt: now() + windowMs };
+      ensureCapacity(key);
+      const nextEntry = entry || { count: 0, resetAt: currentTime + windowMs };
       nextEntry.count += 1;
       failures.set(key, nextEntry);
       res.set("WWW-Authenticate", 'Basic realm="DA Ops Registry"');
@@ -107,11 +128,16 @@ function createRequireOpsAdmin({ env = process.env, now = () => Date.now() } = {
     failures.delete(key);
     res.set("Cache-Control", "no-store");
     return next();
-  };
+  }
+
+  requireOpsAdmin.trackedAddressCount = () => failures.size;
+  requireOpsAdmin.pruneExpired = () => pruneExpired(now());
+  return requireOpsAdmin;
 }
 
 module.exports = {
   DEFAULT_AUTH_MAX_FAILURES,
+  DEFAULT_AUTH_MAX_TRACKED_ADDRESSES,
   DEFAULT_AUTH_WINDOW_MS,
   boundedPositiveInteger,
   createRequireOpsAdmin,
