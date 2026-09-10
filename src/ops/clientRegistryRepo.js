@@ -126,6 +126,7 @@ function createClientRegistryRepo(queryable) {
            last_error = NULL,
            updated_at = NOW()
        WHERE client_slug = $1
+         AND (last_poll_at IS NULL OR last_poll_at <= $2)
        RETURNING *`,
       [
         clientSlug,
@@ -151,6 +152,7 @@ function createClientRegistryRepo(queryable) {
            last_error = $4,
            updated_at = NOW()
        WHERE client_slug = $1
+         AND (last_poll_at IS NULL OR last_poll_at <= $2)
        RETURNING *`,
       [clientSlug, polledAt, httpStatus, String(error || "Polling failed").slice(0, 1000)],
     );
