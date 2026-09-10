@@ -11,6 +11,10 @@
     "diagnose:gemini": "node scripts/diagnoseGeminiKeys.js",
     "provision-client": "node scripts/provisionClient.js",
     "verify-client": "node scripts/verifyClientReadiness.js",
+    "ops-registry:start": "node src/ops/server.js",
+    "ops-registry:migrate": "node src/ops/migrate.js",
+    "ops:register-client": "node scripts/registerOpsClient.js",
+    "ops:generate-token": "node scripts/generateOpsReadinessToken.js",
     "test": "node --test"
   },
   "dependencies": {

@@ -1,11 +1,5 @@
 const express = require("express");
-const configRepo = require("../db/configRepo");
-const { evaluateClientSetup } = require("../services/clientSetupService");
-const { evaluateGoLiveGate } = require("../services/goLiveGateService");
-const {
-  decorateOverview,
-  setupStatus,
-} = require("../services/setupStatusOverviewService");
+const { loadGoLiveGate } = require("../services/goLiveGateLoaderService");
 
 function requireAdministrator(req, res, next) {
   if (req.user?.role !== "admin") {
@@ -18,28 +12,16 @@ function requestBaseUrl(req) {
   return `${req.protocol}://${req.get("host")}`;
 }
 
-async function loadGoLiveGate({ runChecks = false, baseUrl } = {}) {
-  const rawOverview = runChecks
-    ? await setupStatus.runAll({ requestBaseUrl: baseUrl })
-    : await setupStatus.getOverview({ requestBaseUrl: baseUrl });
-  const setupOverview = await decorateOverview(rawOverview);
-  const config = configRepo.getConfig();
-  const clientSetup = evaluateClientSetup(config);
-
-  return evaluateGoLiveGate({
-    config,
-    clientSetup,
-    setupOverview,
-  });
-}
-
 function createGoLiveRouter({ loadGate = loadGoLiveGate } = {}) {
   const router = express.Router();
   router.use(requireAdministrator);
 
   router.get("/", async (req, res) => {
     try {
-      return res.json(await loadGate({ baseUrl: requestBaseUrl(req), runChecks: false }));
+      return res.json(await loadGate({
+        baseUrl: requestBaseUrl(req),
+        runChecks: false,
+      }));
     } catch (err) {
       console.error("Failed to load go-live readiness:", err);
       return res.status(500).json({
@@ -74,4 +56,3 @@ module.exports.createGoLiveRouter = createGoLiveRouter;
 module.exports.loadGoLiveGate = loadGoLiveGate;
 module.exports.requestBaseUrl = requestBaseUrl;
 module.exports.requireAdministrator = requireAdministrator;
-module.exports.setupStatus = setupStatus;
