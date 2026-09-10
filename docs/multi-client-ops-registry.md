@@ -10,22 +10,16 @@ Each customer keeps its existing isolated runtime:
 - one client Neon database
 - customer conversations and contacts remain only in that client database
 
-The Ops Registry uses a separate `OPS_DATABASE_URL`. Its database stores only operational metadata and the latest sanitized readiness snapshot. It does **not** store customer conversations, contacts, phone numbers, Meta/Gemini/Claude credentials, client `DATABASE_URL` values, client administrator passwords, or session secrets.
+The Ops Registry uses a separate `OPS_DATABASE_URL`. Its database stores only operational metadata and the latest sanitized readiness snapshot. It does **not** store customer conversations, contacts, phone numbers, Meta/Gemini/Claude credentials, client `DATABASE_URL` values, client administrator passwords, session secrets, or Ops token values.
 
 Normal client deployments keep using `npm start`. The control-plane process uses `npm run ops-registry:start` and refuses to start unless `OPS_REGISTRY_MODE=true` is set. This prevents an ordinary client deployment from accidentally becoming the fleet dashboard.
 
 ## Client readiness endpoint
 
-Set a unique, high-entropy value on each client:
+Each client uses a unique, high-entropy value in:
 
 ```text
 OPS_READINESS_TOKEN=<at least 32 characters>
-```
-
-Generate one with:
-
-```bash
-npm run ops:generate-token
 ```
 
 When the token is absent, `/api/ops/readiness` behaves as unavailable (`404`). Existing clients therefore keep operating normally without Ops Registry configuration. When configured, the endpoint accepts only:
@@ -40,7 +34,7 @@ Only purchased channels are returned in channel readiness. Facebook and Instagra
 
 ## Registry service environment
 
-Required:
+Required on the registry deployment:
 
 ```text
 OPS_REGISTRY_MODE=true
@@ -56,17 +50,111 @@ OPS_POLL_INTERVAL_MS=300000
 OPS_PORT=10001
 ```
 
-For every registered client, configure the registry service with the environment variable named by that client's `token_env_key`. Example:
+For every registered client, the registry service receives an environment variable named from the stable client slug. Example:
 
 ```text
 OPS_CLIENT_TOKEN_BELECO_CLINIC=<same value as Beleco's OPS_READINESS_TOKEN>
 ```
 
-The registry database stores only `OPS_CLIENT_TOKEN_BELECO_CLINIC`, not its value.
+The registry database stores only the environment-variable name `OPS_CLIENT_TOKEN_BELECO_CLINIC`, never its secret value.
 
-PR #117 deliberately does not auto-generate the client token during provisioning. Render can generate a secret for one service, but the same secret must also reach the separate registry deployment. Until there is a secure secret handoff between those deployments, automatic generation would either make pairing impossible or tempt secret leakage into the provisioning receipt. The v1 flow therefore generates the token explicitly and configures the two secret environments out of band. The receipt remains secret-free.
+## Automated enrollment during provisioning
 
-Provisioning does set `CLIENT_SLUG` for new clients so the machine endpoint can report a stable deployment identity. Existing deployments without it remain compatible; identity is nullable and the chatbot itself does not depend on the registry.
+New client provisioning can securely pair the client and registry without copying the token through a receipt or terminal output.
+
+Operator shell configuration:
+
+```text
+PROVISIONING_OPS_ENROLLMENT_MODE=required
+PROVISIONING_OPS_REGISTRY_RENDER_SERVICE_ID=<central registry Render service ID>
+OPS_DATABASE_URL=<dedicated registry postgres>
+```
+
+The existing provisioning Render API key is used to write both secret environment variables directly through Render's control plane. The configured registry Render service ID must be different from the newly created client service ID; enrollment fails closed before writing either secret if the IDs collide.
+
+With the full Ops control plane configured, the normal command:
+
+```bash
+npm run provision-client -- \
+  --client acme-clinic \
+  --industry aesthetic_clinic \
+  --channels whatsapp,facebook,instagram \
+  --runtime-env-file ./acme.client-runtime.env \
+  --render-plan starter \
+  --execute
+```
+
+performs the enrollment flow automatically:
+
+1. generate a fresh 32-byte random token in memory;
+2. write it to the client as `OPS_READINESS_TOKEN`;
+3. write the same value to the central registry as `OPS_CLIENT_TOKEN_<SLUG>`;
+4. let the existing client runtime-finalization deploy apply the client token;
+5. deploy the central registry so it loads the matching token;
+6. call the client's `/api/ops/readiness` endpoint with the in-memory token and require the exact expected client slug;
+7. require the exact expected business profile and purchased-channel contract before registry mutation;
+8. atomically upsert the secret-free registry metadata and seed its first successful readiness snapshot;
+9. store only safe enrollment/recovery state in the local provisioning receipt.
+
+The token is deliberately non-enumerable in the in-process prepared enrollment object and is never added to command JSON output, the provisioning receipt, the Ops database row, GitHub, or application logs.
+
+Enrollment modes:
+
+- `auto` (default): automatically enroll when both `PROVISIONING_OPS_REGISTRY_RENDER_SERVICE_ID` and `OPS_DATABASE_URL` are configured. With neither value configured, keep the historical standalone provisioning behavior. A partial configuration fails before creating Neon or Render resources.
+- `required`: require complete Ops control-plane configuration before any client cloud resource is created. This is recommended for production operators so an untracked client cannot be created accidentally.
+- `off`: explicitly skip Ops enrollment.
+
+The mode can be selected with `--ops-enrollment auto|required|off` or `PROVISIONING_OPS_ENROLLMENT_MODE`.
+
+## Recovery and token rotation
+
+If enrollment is interrupted after the client infrastructure exists, do not paste or recover the old token. Re-run enrollment from the secret-free v3 receipt:
+
+```bash
+npm run ops:enroll-client -- \
+  --receipt .provisioning/acme-clinic.json
+```
+
+The recovery command deliberately generates a **new** token, updates both Render services, redeploys the client and registry, verifies the exact client identity/profile/channel contract, and upserts the same client row. Re-running it is therefore a safe token rotation and registry reconciliation operation rather than a duplicate-client creation path.
+
+Recovery uses the same per-client local provisioning lock as the original provisioning command, so two processes on the same operator machine cannot rotate the same client's token concurrently. The lock is machine-local; do not run provisioning or enrollment recovery for the same client concurrently from separate operator machines.
+
+If Render accepts a deployment request but the later deployment wait fails or times out, the receipt preserves the accepted deployment ID and latest known status so the operator can inspect the exact deployment before retrying.
+
+The receipt stores only safe recovery state such as:
+
+- token environment-variable name
+- client/registry deployment IDs and statuses
+- whether each secret environment was configured
+- whether the readiness endpoint identity was verified
+- whether the registry row was upserted
+- verified readiness status and commit SHA
+- failure code/stage when enrollment was incomplete
+
+It never stores the token value.
+
+## Manual registration compatibility
+
+The older registration command remains available for existing/legacy deployments and deliberate manual operations:
+
+```bash
+OPS_REGISTRY_MODE=true OPS_DATABASE_URL=... npm run ops:register-client -- \
+  --receipt .provisioning/beleco-clinic.json \
+  --name "Beleco Clinic"
+```
+
+The command imports:
+
+- stable client slug
+- business industry
+- purchased channels
+- Render URL/service ID
+- Neon project ID
+- provisioned commit SHA
+
+A duplicate client slug is rejected by default. To intentionally replace the registered deployment metadata for an existing slug, add `--upsert`.
+
+For manual pairing, `npm run ops:generate-token` still generates a suitable secret. Configure that value out of band on both services. Automated provisioning and recovery do not call this command because they keep the generated value in memory and send it directly through the Render API.
 
 ## Registry schema and migrations
 
@@ -85,27 +173,6 @@ OPS_REGISTRY_MODE=true OPS_DATABASE_URL=... npm run ops-registry:migrate
 ```
 
 The registry service also runs the same idempotent migration runner at startup.
-
-## Registering a provisioned client
-
-Provisioning receipts remain secret-free. Register a new client with:
-
-```bash
-OPS_REGISTRY_MODE=true OPS_DATABASE_URL=... npm run ops:register-client -- \
-  --receipt .provisioning/beleco-clinic.json \
-  --name "Beleco Clinic"
-```
-
-The command imports:
-
-- stable client slug
-- business industry
-- purchased channels
-- Render URL/service ID
-- Neon project ID
-- provisioned commit SHA
-
-A duplicate client slug is rejected by default. To intentionally replace the registered deployment metadata for an existing slug, add `--upsert`.
 
 ## Running the registry
 
@@ -144,7 +211,7 @@ This keeps two different facts visible at the same time. For example, a client c
 
 Render exposes `RENDER_GIT_COMMIT` to running services. The client readiness endpoint includes that commit SHA, plus safe app version/start metadata, and the registry compares the deployed SHA with its own deployed commit when available.
 
-Version state is intentionally conservative in v1:
+Version state is intentionally conservative:
 
 - `current` - exact SHA match
 - `different` - exact SHA differs

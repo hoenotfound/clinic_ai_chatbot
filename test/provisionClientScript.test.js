@@ -5,6 +5,7 @@ const os = require("os");
 const path = require("path");
 
 const {
+  OPS_ENROLLMENT_FAILED_EXIT_CODE,
   acquireProvisioningLock,
   parseArgs,
   readinessFailureReport,
@@ -48,13 +49,16 @@ test("stale local provisioning lock is recovered when its process is no longer r
   assert.equal(fs.existsSync(path.join(stateDir, "da-chatbot-acme.lock")), false);
 });
 
-test("provision CLI accepts an explicit required-channel contract", () => {
+test("provision CLI accepts explicit channel and Ops enrollment contracts", () => {
   const args = parseArgs([
     "--client", "acme",
     "--industry", "home_renovation",
     "--channels", "whatsapp,instagram",
+    "--ops-enrollment", "required",
   ]);
   assert.equal(args.channels, "whatsapp,instagram");
+  assert.equal(args.opsEnrollment, "required");
+  assert.equal(OPS_ENROLLMENT_FAILED_EXIT_CODE, 5);
 });
 
 test("execution readiness requires the bootstrap admin credentials that are copied to the client", () => {
@@ -68,7 +72,7 @@ test("execution readiness requires the bootstrap admin credentials that are copi
   );
 });
 
-test("successful provisioning receipt is secret-free and stores finalization/readiness identifiers", (t) => {
+test("successful provisioning receipt is secret-free and stores finalization, Ops enrollment, and readiness identifiers", (t) => {
   const baseDir = tempDir(t);
   const result = {
     mode: "executed",
@@ -100,6 +104,27 @@ test("successful provisioning receipt is secret-free and stores finalization/rea
       deployStatus: "live",
       deployedCommitSha: "abc123",
     },
+    opsEnrollment: {
+      mode: "required",
+      enabled: true,
+      status: "verified",
+      tokenEnvKey: "OPS_CLIENT_TOKEN_ACME",
+      registryServiceId: "srv-registry",
+      clientTokenConfigured: true,
+      registryTokenConfigured: true,
+      clientDeployId: "dep-final",
+      clientDeployStatus: "live",
+      registryDeployId: "dep-registry",
+      registryDeployStatus: "live",
+      endpointVerified: true,
+      registryRecordUpserted: true,
+      verified: true,
+      verifiedAt: "2026-09-08T12:00:30.000Z",
+      readinessStatus: "needs_testing",
+      remoteCommitSha: "abc123",
+      failureCode: null,
+      failureStage: null,
+    },
     profileContract: {
       envKey: "INITIAL_BUSINESS_TYPE",
       value: "home_renovation",
@@ -130,6 +155,9 @@ test("successful provisioning receipt is secret-free and stores finalization/rea
   assert.equal(saved.runtimeFinalization.deployId, "dep-final");
   assert.equal(saved.neon.projectId, "neon-123");
   assert.deepEqual(saved.requiredChannels, ["whatsapp", "instagram"]);
+  assert.equal(saved.opsEnrollment.status, "verified");
+  assert.equal(saved.opsEnrollment.tokenEnvKey, "OPS_CLIENT_TOKEN_ACME");
+  assert.equal(Object.hasOwn(saved.opsEnrollment, "token"), false);
   assert.equal(saved.readiness.status, "needs_attention");
   assert.equal(JSON.stringify(saved).includes("DATABASE_URL"), false);
   assert.equal(JSON.stringify(saved).includes("API_KEY"), false);

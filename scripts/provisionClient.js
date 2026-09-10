@@ -28,15 +28,27 @@ const {
   extractRenderCommitSha,
   finalizeRenderRuntime,
 } = require("../src/provisioning/renderFinalizer");
+const {
+  OpsRegistryEnrollmentError,
+  buildOpsEnrollmentPlan,
+  deployPreparedRegistryToken,
+  markPreparedClientDeployment,
+  opsEnrollmentFailureState,
+  prepareOpsRegistryEnrollment,
+  publicStateFromPlan,
+  requireOpsEnrollmentConfig,
+  verifyAndRegisterPreparedEnrollment,
+} = require("../src/provisioning/opsRegistryEnrollment");
 
 const PROVISIONING_STATE_DIR = ".provisioning";
 const READINESS_NEEDS_ATTENTION_EXIT_CODE = 3;
 const READINESS_VERIFICATION_FAILED_EXIT_CODE = 4;
+const OPS_ENROLLMENT_FAILED_EXIT_CODE = 5;
 
 function usage() {
   return `
-Provision one client Render service + Neon database and verify that the new
-chatbot is ready for its purchased messaging channels.
+Provision one client Render service + Neon database, automatically enroll it in
+the central Ops Registry when configured, and verify the purchased channels.
 
 Usage:
   npm run provision-client -- --client <slug> --industry <profile> --channels <csv> [options]
@@ -53,10 +65,15 @@ Safe by default:
 
 Options:
   --execute                   Create Neon + Render, wait for first deploy,
-                              finalize the runtime, then verify production health
+                              finalize the runtime, enroll Ops when enabled,
+                              then verify production health
   --runtime-env-file <path>   dotenv file containing client runtime variables.
                               Execution preflights admin, AI, R2 and purchased
                               channel credentials before any cloud creation.
+  --ops-enrollment <mode>     auto | required | off. Default: auto, or
+                              PROVISIONING_OPS_ENROLLMENT_MODE when set.
+                              auto enrolls when the full Ops control plane is
+                              configured; required fails preflight if it is not.
   --render-plan <plan>        Render instance plan. Required for --execute
                               unless PROVISIONING_RENDER_PLAN is set.
   --render-region <region>    Default: singapore
@@ -79,20 +96,40 @@ Runtime finalization:
   to the actual Render URL, removes ADMIN_PASSWORD from Render, deploys those
   changes, and verifies the finalized deployment.
 
+Automated Ops enrollment:
+  When enabled, provisioning generates a fresh high-entropy readiness token,
+  writes it directly to the client Render service as OPS_READINESS_TOKEN and to
+  the central registry Render service as OPS_CLIENT_TOKEN_<CLIENT_SLUG>, deploys
+  the registry, proves the exact client identity through /api/ops/readiness, and
+  upserts the secret-free registry record. The token value is never printed,
+  written to the receipt, committed, or stored in the Ops database.
+
+  Required Ops control-plane shell values:
+    PROVISIONING_OPS_REGISTRY_RENDER_SERVICE_ID
+    OPS_DATABASE_URL
+
+  For production operators, PROVISIONING_OPS_ENROLLMENT_MODE=required is
+  recommended so an untracked client cannot be created accidentally.
+
 Exit codes:
   0  Provisioned and READY / READY WITH WARNINGS (or dry-run plan)
   2  Provisioning/input failure before a usable deployment exists
   3  Infrastructure is live and verification completed, but NEEDS ATTENTION
   4  Infrastructure is live, but readiness verification could not complete
+  5  Client provisioning completed, but enabled Ops Registry enrollment did not
+     reach verified state. Repair with npm run ops:enroll-client -- --receipt ...
 
 Control-plane credentials are read only from the shell environment:
   PROVISIONING_RENDER_API_KEY
   PROVISIONING_RENDER_OWNER_ID
   PROVISIONING_NEON_API_KEY
   PROVISIONING_NEON_ORG_ID     optional for an organization-scoped Neon key
+  PROVISIONING_OPS_REGISTRY_RENDER_SERVICE_ID
+  OPS_DATABASE_URL             dedicated central Ops Registry database
 
-Do not put Render/Neon control-plane API keys in --runtime-env-file. They are
-used by this local command and are never copied into the client.
+Do not put Render/Neon control-plane API keys, OPS_DATABASE_URL, or Ops token
+values in --runtime-env-file. They are used by this local command and are never
+copied into ordinary client configuration or provisioning receipts.
 `;
 }
 
@@ -103,6 +140,7 @@ function parseArgs(argv) {
     ["--industry", "industry"],
     ["--channels", "channels"],
     ["--runtime-env-file", "runtimeEnvFile"],
+    ["--ops-enrollment", "opsEnrollment"],
     ["--render-plan", "renderPlan"],
     ["--render-region", "renderRegion"],
     ["--neon-region", "neonRegion"],
@@ -244,6 +282,9 @@ function buildProvisioningReceipt(result, now = new Date()) {
     runtimeFinalization: result.runtimeFinalization
       ? { ...result.runtimeFinalization }
       : null,
+    opsEnrollment: result.opsEnrollment
+      ? JSON.parse(JSON.stringify(result.opsEnrollment))
+      : null,
     readiness: result.readiness ? JSON.parse(JSON.stringify(result.readiness)) : null,
   };
 }
@@ -309,6 +350,23 @@ function printReadiness(readiness) {
   }
 }
 
+function printOpsEnrollment(state) {
+  if (!state) return;
+  console.log("\nOps Registry enrollment");
+  if (!state.enabled) {
+    console.log(`Status:         SKIPPED (${state.mode})`);
+    console.log(`Token env:      ${state.tokenEnvKey}`);
+    return;
+  }
+  console.log(`Status:         ${state.verified ? "VERIFIED" : String(state.status || "pending").toUpperCase()}`);
+  console.log(`Token env:      ${state.tokenEnvKey}`);
+  console.log(`Client deploy:  ${state.clientDeployId || "n/a"} (${state.clientDeployStatus || "n/a"})`);
+  console.log(`Registry deploy:${state.registryDeployId ? ` ${state.registryDeployId}` : " n/a"} (${state.registryDeployStatus || "n/a"})`);
+  console.log(`Endpoint proof: ${state.endpointVerified ? "verified" : "not verified"}`);
+  console.log(`Registry row:   ${state.registryRecordUpserted ? "upserted" : "not upserted"}`);
+  if (state.failureCode) console.log(`Failure:        ${state.failureCode}${state.failureStage ? ` (${state.failureStage})` : ""}`);
+}
+
 function printHuman(result) {
   if (result.mode === "plan") {
     const plan = result.plan;
@@ -324,6 +382,15 @@ function printHuman(result) {
     console.log(`Runtime keys:   ${plan.render.runtimeEnvKeys.length ? plan.render.runtimeEnvKeys.join(", ") : "none"}`);
     console.log(`Profile env:    ${plan.profileContract.envKey}=${plan.profileContract.value}`);
     console.log(`Channel env:    ${plan.channelContract.envKey}=${plan.channelContract.value}`);
+    if (plan.opsEnrollment) {
+      const ops = plan.opsEnrollment;
+      const opsLabel = ops.enabled
+        ? "will enroll"
+        : (ops.mode === "auto" && !ops.configured ? "not configured; will skip" : "disabled");
+      console.log(`Ops enrollment: ${ops.mode} (${opsLabel})`);
+      console.log(`Ops token env:  ${ops.tokenEnvKey}`);
+      if (ops.missing?.length) console.log(`Ops missing:    ${ops.missing.join(", ")}`);
+    }
     console.log("\nRun the same command with --execute only after reviewing this plan.");
     return;
   }
@@ -344,6 +411,7 @@ function printHuman(result) {
   if (result.runtimeFinalization?.adminPasswordRemoved) {
     console.log("Bootstrap secret: ADMIN_PASSWORD removed from Render after verified admin login");
   }
+  printOpsEnrollment(result.opsEnrollment);
   printReadiness(result.readiness);
   if (result.receiptPath) console.log(`\nReceipt:        ${result.receiptPath}`);
   if (result.receiptWarning) console.log(`Receipt warning: ${result.receiptWarning}`);
@@ -407,6 +475,7 @@ async function main() {
   const sensitiveValues = [
     process.env.PROVISIONING_RENDER_API_KEY,
     process.env.PROVISIONING_NEON_API_KEY,
+    process.env.OPS_DATABASE_URL,
     ...Object.values(runtimeEnv || {}),
   ].filter(Boolean);
 
@@ -414,6 +483,17 @@ async function main() {
   try {
     const channels = normalizeRequiredChannels(args.channels);
     const plan = buildProvisioningPlan(input, process.env);
+    const opsPlan = args.execute
+      ? requireOpsEnrollmentConfig({
+          clientSlug: plan.clientSlug,
+          mode: args.opsEnrollment,
+          env: process.env,
+        })
+      : buildOpsEnrollmentPlan({
+          clientSlug: plan.clientSlug,
+          mode: args.opsEnrollment,
+          env: process.env,
+        });
 
     let result;
     if (!args.execute) {
@@ -422,6 +502,7 @@ async function main() {
         plan: {
           ...publicPlan(plan),
           readiness: { requiredChannels: channels },
+          opsEnrollment: opsPlan,
         },
       };
     } else {
@@ -455,12 +536,28 @@ async function main() {
 
       let readiness;
       let runtimeFinalization = null;
+      let opsEnrollment = publicStateFromPlan(opsPlan);
+      let preparedOps = null;
       try {
         await verifyAdminLogin({
           baseUrl: result.render.url,
           username: admin.username,
           password: admin.password,
         });
+
+        if (opsPlan.enabled) {
+          try {
+            preparedOps = await prepareOpsRegistryEnrollment({
+              result,
+              mode: opsPlan.mode,
+              env: process.env,
+              renderClient,
+            });
+            opsEnrollment = { ...preparedOps.state };
+          } catch (err) {
+            opsEnrollment = opsEnrollmentFailureState(err, opsEnrollment);
+          }
+        }
 
         const finalized = await finalizeRenderRuntime({
           apiKey: process.env.PROVISIONING_RENDER_API_KEY,
@@ -471,6 +568,28 @@ async function main() {
         runtimeFinalization = { ...finalized, completed: true, failureCode: null };
         if (runtimeFinalization.deployedCommitSha) {
           result.render.deployedCommitSha = runtimeFinalization.deployedCommitSha;
+        }
+
+        if (preparedOps) {
+          markPreparedClientDeployment(preparedOps, {
+            deployId: runtimeFinalization.deployId,
+            deployStatus: runtimeFinalization.deployStatus,
+          });
+          try {
+            await deployPreparedRegistryToken({
+              prepared: preparedOps,
+              result,
+              env: process.env,
+              renderClient,
+            });
+            opsEnrollment = await verifyAndRegisterPreparedEnrollment({
+              prepared: preparedOps,
+              result,
+              env: process.env,
+            });
+          } catch (err) {
+            opsEnrollment = opsEnrollmentFailureState(err, preparedOps.state);
+          }
         }
 
         readiness = await verifyClientReadiness({
@@ -491,7 +610,7 @@ async function main() {
         readiness = readinessFailureReport(err, { industry: result.industry, channels });
       }
 
-      result = { ...result, runtimeFinalization, readiness };
+      result = { ...result, runtimeFinalization, opsEnrollment, readiness };
 
       try {
         const receipt = writeProvisioningReceipt(result);
@@ -507,6 +626,8 @@ async function main() {
     if (result.mode === "executed") {
       if (result.readiness?.status === "verification_failed") {
         process.exitCode = READINESS_VERIFICATION_FAILED_EXIT_CODE;
+      } else if (result.opsEnrollment?.enabled && result.opsEnrollment?.verified !== true) {
+        process.exitCode = OPS_ENROLLMENT_FAILED_EXIT_CODE;
       } else if (result.readiness?.ready !== true) {
         process.exitCode = READINESS_NEEDS_ATTENTION_EXIT_CODE;
       }
@@ -520,7 +641,11 @@ async function main() {
         console.error(`Preserved resources: ${JSON.stringify(output.partialResources)}`);
       }
     }
-    process.exitCode = err instanceof ClientProvisioningError || err instanceof ClientReadinessError ? 2 : 1;
+    process.exitCode = err instanceof ClientProvisioningError
+      || err instanceof ClientReadinessError
+      || err instanceof OpsRegistryEnrollmentError
+      ? 2
+      : 1;
   } finally {
     if (lock) {
       try {
@@ -535,6 +660,7 @@ async function main() {
 if (require.main === module) main();
 
 module.exports = {
+  OPS_ENROLLMENT_FAILED_EXIT_CODE,
   PROVISIONING_STATE_DIR,
   READINESS_NEEDS_ATTENTION_EXIT_CODE,
   READINESS_VERIFICATION_FAILED_EXIT_CODE,

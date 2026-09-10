@@ -16,6 +16,7 @@
     "ops-registry:verify": "node scripts/verifyOpsRegistry.js",
     "ops-registry:smoke": "node scripts/smokeOpsRegistry.js",
     "ops:register-client": "node scripts/registerOpsClient.js",
+    "ops:enroll-client": "node scripts/enrollOpsClient.js",
     "ops:generate-token": "node scripts/generateOpsReadinessToken.js",
     "test": "node --test"
   },
