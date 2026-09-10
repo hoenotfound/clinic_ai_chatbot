@@ -14,7 +14,16 @@ test("basic auth parser preserves colons in the password", () => {
 
 async function withServer(callback) {
   const fleetService = {
-    listFleet: async () => ({ schemaVersion: 1, summary: { total: 0 }, clients: [] }),
+    listFleet: async () => ({ schemaVersion: 1, summary: { total: 1 }, clients: [{ clientSlug: "acme" }] }),
+    getClient: async (slug) => slug === "acme"
+      ? {
+          clientSlug: "acme",
+          displayName: "Acme",
+          status: "ready",
+          tokenConfigured: true,
+          readiness: { status: "ready" },
+        }
+      : null,
     refreshAll: async () => ({ schemaVersion: 1, clients: [] }),
     refreshClient: async () => ({ clientSlug: "acme" }),
   };
@@ -38,10 +47,12 @@ async function withServer(callback) {
   }
 }
 
-test("registry health is public but fleet data requires operations admin auth", async () => {
+test("registry health is public but fleet and detail data require operations admin auth", async () => {
   await withServer(async (baseUrl) => {
     assert.equal((await fetch(`${baseUrl}/healthz`)).status, 200);
     assert.equal((await fetch(`${baseUrl}/api/clients`)).status, 401);
+    assert.equal((await fetch(`${baseUrl}/api/clients/acme`)).status, 401);
+    assert.equal((await fetch(`${baseUrl}/api/refresh-all`, { method: "POST" })).status, 401);
 
     const authorization = `Basic ${Buffer.from("ops:long-enough-password").toString("base64")}`;
     const response = await fetch(`${baseUrl}/api/clients`, {
@@ -49,5 +60,21 @@ test("registry health is public but fleet data requires operations admin auth", 
     });
     assert.equal(response.status, 200);
     assert.equal((await response.json()).schemaVersion, 1);
+
+    const detail = await fetch(`${baseUrl}/api/clients/acme`, { headers: { authorization } });
+    assert.equal(detail.status, 200);
+    const body = await detail.json();
+    assert.equal(body.clientSlug, "acme");
+    assert.equal(Object.hasOwn(body, "token"), false);
+    assert.equal(Object.hasOwn(body, "tokenEnvKey"), false);
+    assert.equal(Object.hasOwn(body, "databaseUrl"), false);
+  });
+});
+
+test("unknown protected client detail returns 404", async () => {
+  await withServer(async (baseUrl) => {
+    const authorization = `Basic ${Buffer.from("ops:long-enough-password").toString("base64")}`;
+    const response = await fetch(`${baseUrl}/api/clients/missing`, { headers: { authorization } });
+    assert.equal(response.status, 404);
   });
 });
