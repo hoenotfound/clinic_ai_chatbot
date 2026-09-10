@@ -65,7 +65,7 @@ jobs:
           replace_once(
               "src/provisioning/clientProvisioner.js",
               'const RESERVED_RUNTIME_ENV_KEYS = new Set([\n  "DATABASE_URL",',
-              'const RESERVED_RUNTIME_ENV_KEYS = new Set([\n  "CLIENT_SLUG",\n  "DATABASE_URL",'
+              'const RESERVED_RUNTIME_ENV_KEYS = new Set([\n  "CLIENT_SLUG",\n  "OPS_READINESS_TOKEN",\n  "DATABASE_URL",'
           )
           replace_once(
               "src/provisioning/clientProvisioner.js",
@@ -76,7 +76,7 @@ jobs:
           replace_once(
               "test/clientProvisioner.test.js",
               '  for (const key of [\n    "INITIAL_BUSINESS_TYPE",',
-              '  for (const key of [\n    "CLIENT_SLUG",\n    "INITIAL_BUSINESS_TYPE",'
+              '  for (const key of [\n    "CLIENT_SLUG",\n    "OPS_READINESS_TOKEN",\n    "INITIAL_BUSINESS_TYPE",'
           )
           replace_once(
               "test/clientProvisioner.test.js",
@@ -89,6 +89,9 @@ jobs:
               '  assert.deepEqual(byKey.get("CLIENT_SLUG"), { key: "CLIENT_SLUG", value: "reno-alpha" });\n  assert.deepEqual(byKey.get("INITIAL_BUSINESS_TYPE"), {\n    key: "INITIAL_BUSINESS_TYPE",\n    value: "home_renovation",\n  });'
           )
           PY
+      - name: Remove temporary PR117 scaffolding before validation
+        run: |
+          git rm -f --ignore-unmatch scripts/buildPr117.py src/services/goLiveSnapshotService.js src/services/opsTokenService.js
       - name: Backend install
         run: npm ci
       - name: Backend tests
@@ -102,12 +105,12 @@ jobs:
       - name: Portal build
         working-directory: portal-frontend
         run: npm run build
-      - name: Commit verified PR117 wiring and remove temporary build files
+      - name: Commit verified PR117 wiring and remove temporary workflow
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f .github/workflows/pr117-build.yml scripts/buildPr117.py src/services/goLiveSnapshotService.js src/services/opsTokenService.js
+          git rm -f .github/workflows/pr117-build.yml
           git add -A
           git diff --cached --check
-          git commit -m "Wire multi-client ops registry"
+          git commit -m "Finish multi-client ops registry"
           git push origin HEAD:feature/multi-client-ops-registry
