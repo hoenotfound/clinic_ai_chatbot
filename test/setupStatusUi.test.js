@@ -70,7 +70,7 @@ test("setup schema is included in startup migrations and stores no credentials",
   const runner = read("src/db/migrationRunner.js");
   const schema = read("src/db/setupStatusSchema.sql");
 
-  assert.match(db, /runMigrations\(pool\)/);
+  assert.match(db, /runMigrations\(pool(?:\s*,|\s*\))/);
   assert.match(runner, /name: "setup_status"/);
   assert.match(runner, /file: "setupStatusSchema\.sql"/);
   assert.match(schema, /last_success_at/);
