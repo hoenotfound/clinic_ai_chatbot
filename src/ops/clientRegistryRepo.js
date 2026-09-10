@@ -27,6 +27,37 @@ function rowToClient(row = {}) {
   };
 }
 
+function clientValues(client) {
+  return [
+    client.clientSlug,
+    client.displayName,
+    client.baseUrl,
+    client.industry || null,
+    JSON.stringify(client.purchasedChannels || []),
+    client.tokenEnvKey,
+    client.render?.serviceId || null,
+    client.render?.serviceName || null,
+    client.neon?.projectId || null,
+    client.neon?.projectName || null,
+    client.provisionedCommitSha || null,
+  ];
+}
+
+const INSERT_COLUMNS = `
+  client_slug,
+  display_name,
+  base_url,
+  industry,
+  purchased_channels,
+  token_env_key,
+  render_service_id,
+  render_service_name,
+  neon_project_id,
+  neon_project_name,
+  provisioned_commit_sha,
+  updated_at
+`;
+
 function createClientRegistryRepo(queryable) {
   if (!queryable?.query) throw new Error("Ops Registry repository requires a Postgres queryable.");
 
@@ -42,27 +73,25 @@ function createClientRegistryRepo(queryable) {
   async function getClient(clientSlug) {
     const result = await queryable.query(
       `SELECT * FROM ops_clients WHERE client_slug = $1`,
-      [clientSlug]
+      [clientSlug],
     );
     return result.rows[0] ? rowToClient(result.rows[0]) : null;
   }
 
+  async function insertClient(client) {
+    const result = await queryable.query(
+      `INSERT INTO ops_clients (${INSERT_COLUMNS})
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,NOW())
+       RETURNING *`,
+      clientValues(client),
+    );
+    return rowToClient(result.rows[0]);
+  }
+
   async function upsertClient(client) {
     const result = await queryable.query(
-      `INSERT INTO ops_clients (
-         client_slug,
-         display_name,
-         base_url,
-         industry,
-         purchased_channels,
-         token_env_key,
-         render_service_id,
-         render_service_name,
-         neon_project_id,
-         neon_project_name,
-         provisioned_commit_sha,
-         updated_at
-       ) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,NOW())
+      `INSERT INTO ops_clients (${INSERT_COLUMNS})
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,NOW())
        ON CONFLICT (client_slug) DO UPDATE SET
          display_name = EXCLUDED.display_name,
          base_url = EXCLUDED.base_url,
@@ -76,19 +105,7 @@ function createClientRegistryRepo(queryable) {
          provisioned_commit_sha = EXCLUDED.provisioned_commit_sha,
          updated_at = NOW()
        RETURNING *`,
-      [
-        client.clientSlug,
-        client.displayName,
-        client.baseUrl,
-        client.industry || null,
-        JSON.stringify(client.purchasedChannels || []),
-        client.tokenEnvKey,
-        client.render?.serviceId || null,
-        client.render?.serviceName || null,
-        client.neon?.projectId || null,
-        client.neon?.projectName || null,
-        client.provisionedCommitSha || null,
-      ]
+      clientValues(client),
     );
     return rowToClient(result.rows[0]);
   }
@@ -117,7 +134,7 @@ function createClientRegistryRepo(queryable) {
         snapshot?.readiness?.status || "unknown",
         Number(snapshot?.schemaVersion) || null,
         JSON.stringify(snapshot),
-      ]
+      ],
     );
     return result.rows[0] ? rowToClient(result.rows[0]) : null;
   }
@@ -135,13 +152,14 @@ function createClientRegistryRepo(queryable) {
            updated_at = NOW()
        WHERE client_slug = $1
        RETURNING *`,
-      [clientSlug, polledAt, httpStatus, String(error || "Polling failed").slice(0, 1000)]
+      [clientSlug, polledAt, httpStatus, String(error || "Polling failed").slice(0, 1000)],
     );
     return result.rows[0] ? rowToClient(result.rows[0]) : null;
   }
 
   return {
     getClient,
+    insertClient,
     listClients,
     recordPollFailure,
     recordPollSuccess,
