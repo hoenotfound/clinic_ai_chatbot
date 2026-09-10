@@ -152,7 +152,7 @@ test("production migrations load ownership, routing, and social follow-up safegu
   const safetySchema = read("src/db/leadDistributionSafetySchema.sql");
   const followUpSchema = read("src/db/followUpMultiChannelSchema.sql");
 
-  assert.match(db, /runMigrations\(pool\)/);
+  assert.match(db, /runMigrations\(pool(?:\s*,|\s*\))/);
   assert.match(runner, /name: "follow_up_multi_channel"/);
   assert.match(runner, /file: "followUpMultiChannelSchema\.sql"/);
   assert.match(followUpSchema, /normalize_social_automated_follow_up_retry_status/);

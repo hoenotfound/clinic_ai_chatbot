@@ -892,26 +892,38 @@ app.get(/^(?!\/(webhook|meta-webhook|api)).*/, (req, res) => {
 });
 
 async function start() {
+  console.log("[Startup] Initializing database schema and migrations...");
   // Create tables if they don't exist yet — safe to run every startup.
   await initSchema();
+  console.log("[Startup] Database schema and migrations ready.");
 
+  console.log("[Startup] Loading client configuration...");
   // Loads the clinic config (branches, services, AI tone/playbook/SOP, etc.)
   // from Postgres into the shared, in-memory clinicConfig object.
   await configRepo.loadConfig();
+  console.log("[Startup] Client configuration loaded.");
 
+  console.log("[Startup] Backfilling existing conversations into the lead pipeline...");
   // Bring existing conversations into the first pipeline stage on the
   // initial deployment.
   const backfilledLeadCount = await pipelineRepo.backfillLeadsForExistingContacts();
+  console.log(
+    `[Startup] Lead pipeline backfill complete (${backfilledLeadCount} conversation(s) added).`
+  );
   if (backfilledLeadCount > 0) {
     console.log(`Added ${backfilledLeadCount} existing conversation(s) to the lead pipeline.`);
   }
 
+  console.log("[Startup] Bootstrapping admin user...");
   await bootstrapAdminUser();
+  console.log("[Startup] Admin user bootstrap complete.");
 
+  console.log(`[Startup] Opening HTTP server on port ${PORT}...`);
   app.listen(PORT, () => {
-    console.log(`Server listening on port ${PORT}`);
+    console.log(`[Startup] Server listening on port ${PORT}`);
   });
 
+  console.log("[Startup] Starting maintenance and recovery workers...");
   pruneOrphanedPromoImages();
   setInterval(pruneOrphanedPromoImages, PROMO_IMAGE_PRUNE_INTERVAL_MS);
 
@@ -920,6 +932,7 @@ async function start() {
   startAutomatedFollowUps();
   startStaffWaitingAlerts();
   startLeadScoring();
+  console.log("[Startup] Maintenance and recovery workers started.");
 }
 
 start().catch((err) => {

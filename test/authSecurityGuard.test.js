@@ -30,7 +30,7 @@ test("startup migrations include persistent login throttling table", () => {
   const runner = source("src/db/migrationRunner.js");
   const schema = source("src/db/loginRateLimitSchema.sql");
 
-  assert.match(db, /runMigrations\(pool\)/);
+  assert.match(db, /runMigrations\(pool\s*(?:,|\))/);
   assert.match(runner, /name: "login_rate_limits"/);
   assert.match(runner, /file: "loginRateLimitSchema\.sql"/);
   assert.match(schema, /CREATE TABLE IF NOT EXISTS login_rate_limits/);

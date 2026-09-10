@@ -5,7 +5,7 @@
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node -r ./src/services/scheduledMessageBootstrap.js -r ./src/services/metaAdsEnrichmentBootstrap.js src/server.js",
+    "start": "node -r ./src/services/startupWatchdogBootstrap.js -r ./src/services/scheduledMessageBootstrap.js -r ./src/services/metaAdsEnrichmentBootstrap.js src/server.js",
     "dev": "node --watch -r ./src/services/scheduledMessageBootstrap.js -r ./src/services/metaAdsEnrichmentBootstrap.js src/server.js",
     "create-user": "node scripts/createUser.js",
     "diagnose:gemini": "node scripts/diagnoseGeminiKeys.js",

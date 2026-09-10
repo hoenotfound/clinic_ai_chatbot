@@ -7,7 +7,7 @@ const dbSource = fs.readFileSync(path.join(__dirname, "../src/db/db.js"), "utf8"
 const serverSource = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
 
 test("database bootstrap uses the versioned runner instead of replaying schema files directly", () => {
-  assert.match(dbSource, /runMigrations\(pool\)/);
+  assert.match(dbSource, /runMigrations\(pool(?:\s*,|\s*\))/);
   assert.doesNotMatch(dbSource, /readFileSync/);
   assert.doesNotMatch(dbSource, /schema\.sql/);
   assert.doesNotMatch(dbSource, /loginRateLimitSchema\.sql/);

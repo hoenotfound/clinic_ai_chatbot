@@ -30,6 +30,55 @@ const BASELINE_MIGRATIONS = Object.freeze([
 // released automatically if the process/connection dies midway through a
 // deploy, so a replacement Render instance can safely continue.
 const MIGRATION_LOCK_KEYS = Object.freeze([441121, 20260904]);
+const DEFAULT_MIGRATION_LOCK_TIMEOUT_MS = 30_000;
+const DEFAULT_MIGRATION_LOCK_RETRY_MS = 250;
+
+function positiveInt(value, fallback) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function acquireMigrationLock(
+  client,
+  {
+    lockKeys = MIGRATION_LOCK_KEYS,
+    timeoutMs = DEFAULT_MIGRATION_LOCK_TIMEOUT_MS,
+    retryMs = DEFAULT_MIGRATION_LOCK_RETRY_MS,
+    now = Date.now,
+    sleepFn = sleep,
+  } = {}
+) {
+  const safeTimeoutMs = positiveInt(timeoutMs, DEFAULT_MIGRATION_LOCK_TIMEOUT_MS);
+  const safeRetryMs = Math.min(
+    safeTimeoutMs,
+    positiveInt(retryMs, DEFAULT_MIGRATION_LOCK_RETRY_MS)
+  );
+  const startedAt = now();
+
+  while (true) {
+    const result = await client.query(
+      "SELECT pg_try_advisory_lock($1, $2) AS acquired",
+      lockKeys
+    );
+    if (result.rows?.[0]?.acquired === true) return true;
+
+    const elapsedMs = Math.max(0, now() - startedAt);
+    if (elapsedMs >= safeTimeoutMs) {
+      const err = new Error(
+        `Timed out after ${safeTimeoutMs}ms waiting for the database migration lock. ` +
+          "Another app instance or migration may still be using it."
+      );
+      err.code = "MIGRATION_LOCK_TIMEOUT";
+      throw err;
+    }
+
+    await sleepFn(Math.min(safeRetryMs, Math.max(1, safeTimeoutMs - elapsedMs)));
+  }
+}
 
 function sha256(buffer) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
@@ -185,13 +234,32 @@ async function runMigrations(poolLike, options = {}) {
   }
 
   const migrations = validateMigrationPlan(options.migrations || loadMigrations());
+  const lockTimeoutMs = positiveInt(
+    options.lockTimeoutMs,
+    DEFAULT_MIGRATION_LOCK_TIMEOUT_MS
+  );
+  const lockRetryMs = positiveInt(
+    options.lockRetryMs,
+    DEFAULT_MIGRATION_LOCK_RETRY_MS
+  );
   const client = await poolLike.connect();
   let lockHeld = false;
   let appliedCount = 0;
 
   try {
-    await client.query("SELECT pg_advisory_lock($1, $2)", MIGRATION_LOCK_KEYS);
+    if (!options.quiet) {
+      console.log(
+        `[Startup] Waiting for database migration lock (max ${lockTimeoutMs}ms)...`
+      );
+    }
+    await acquireMigrationLock(client, {
+      timeoutMs: lockTimeoutMs,
+      retryMs: lockRetryMs,
+    });
     lockHeld = true;
+    if (!options.quiet) {
+      console.log("[Startup] Database migration lock acquired.");
+    }
 
     await ensureMigrationTable(client);
     let appliedResult = await client.query(
@@ -236,12 +304,19 @@ async function runMigrations(poolLike, options = {}) {
     );
     validateAppliedMigrations(appliedResult.rows, migrations);
 
-    return {
+    const result = {
       appliedCount,
       skippedCount: migrations.length - appliedCount,
       currentVersion: migrations.length ? migrations[migrations.length - 1].version : 0,
       migrations: appliedResult.rows,
     };
+    if (!options.quiet) {
+      console.log(
+        `[Startup] Database migrations ready at version ${result.currentVersion} ` +
+          `(${result.appliedCount} applied, ${result.skippedCount} already current).`
+      );
+    }
+    return result;
   } finally {
     if (lockHeld) {
       await client
@@ -254,7 +329,11 @@ async function runMigrations(poolLike, options = {}) {
 
 module.exports = {
   BASELINE_MIGRATIONS,
+  DEFAULT_MIGRATION_LOCK_RETRY_MS,
+  DEFAULT_MIGRATION_LOCK_TIMEOUT_MS,
   MIGRATION_FILE_PATTERN,
+  MIGRATION_LOCK_KEYS,
+  acquireMigrationLock,
   gitBlobSha1,
   loadMigrations,
   runMigrations,
