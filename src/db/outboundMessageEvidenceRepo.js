@@ -49,7 +49,17 @@ async function recordOutcome({
        accepted_at,
        updated_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $5 THEN $7 ELSE NULL END, NOW())
+     VALUES (
+       $1,
+       $2,
+       $3,
+       $4,
+       $5,
+       $6,
+       $7::timestamptz,
+       CASE WHEN $5 THEN $7::timestamptz ELSE NULL::timestamptz END,
+       NOW()
+     )
      ON CONFLICT (message_id) DO UPDATE SET
        contact_id = EXCLUDED.contact_id,
        channel = EXCLUDED.channel,
