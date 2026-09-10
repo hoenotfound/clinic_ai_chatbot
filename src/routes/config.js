@@ -6,6 +6,7 @@ const usersRepo = require("../db/usersRepo");
 const leadDistributionRepo = require("../db/leadDistributionRepo");
 const followUpTranslationService = require("../services/followUpTranslationService");
 const telegramAlertService = require("../services/telegramAlertService");
+const { normalizeIndustrySetup } = require("../config/industrySetup");
 const { evaluateClientSetup } = require("../services/clientSetupService");
 const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
 
@@ -91,9 +92,13 @@ function isPlainObject(v) {
 }
 
 function decorateConfig(config) {
-  return {
+  const normalizedConfig = {
     ...config,
-    clientSetup: evaluateClientSetup(config),
+    industrySetup: normalizeIndustrySetup(config?.industrySetup),
+  };
+  return {
+    ...normalizedConfig,
+    clientSetup: evaluateClientSetup(normalizedConfig),
   };
 }
 
