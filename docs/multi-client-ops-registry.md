@@ -70,7 +70,7 @@ PROVISIONING_OPS_REGISTRY_RENDER_SERVICE_ID=<central registry Render service ID>
 OPS_DATABASE_URL=<dedicated registry postgres>
 ```
 
-The existing provisioning Render API key is used to write both secret environment variables directly through Render's control plane.
+The existing provisioning Render API key is used to write both secret environment variables directly through Render's control plane. The configured registry Render service ID must be different from the newly created client service ID; enrollment fails closed before writing either secret if the IDs collide.
 
 With the full Ops control plane configured, the normal command:
 
@@ -92,9 +92,9 @@ performs the enrollment flow automatically:
 4. let the existing client runtime-finalization deploy apply the client token;
 5. deploy the central registry so it loads the matching token;
 6. call the client's `/api/ops/readiness` endpoint with the in-memory token and require the exact expected client slug;
-7. verify the reported business profile when available;
-8. upsert the secret-free registry metadata only after endpoint identity verification succeeds;
-9. seed the first successful registry snapshot so the dashboard can show the client immediately.
+7. require the exact expected business profile and purchased-channel contract before registry mutation;
+8. atomically upsert the secret-free registry metadata and seed its first successful readiness snapshot;
+9. store only safe enrollment/recovery state in the local provisioning receipt.
 
 The token is deliberately non-enumerable in the in-process prepared enrollment object and is never added to command JSON output, the provisioning receipt, the Ops database row, GitHub, or application logs.
 
@@ -115,7 +115,11 @@ npm run ops:enroll-client -- \
   --receipt .provisioning/acme-clinic.json
 ```
 
-The recovery command deliberately generates a **new** token, updates both Render services, redeploys the client and registry, verifies the exact client identity, and upserts the same client row. Re-running it is therefore a safe token rotation and registry reconciliation operation rather than a duplicate-client creation path.
+The recovery command deliberately generates a **new** token, updates both Render services, redeploys the client and registry, verifies the exact client identity/profile/channel contract, and upserts the same client row. Re-running it is therefore a safe token rotation and registry reconciliation operation rather than a duplicate-client creation path.
+
+Recovery uses the same per-client local provisioning lock as the original provisioning command, so two processes on the same operator machine cannot rotate the same client's token concurrently. The lock is machine-local; do not run provisioning or enrollment recovery for the same client concurrently from separate operator machines.
+
+If Render accepts a deployment request but the later deployment wait fails or times out, the receipt preserves the accepted deployment ID and latest known status so the operator can inspect the exact deployment before retrying.
 
 The receipt stores only safe recovery state such as:
 
