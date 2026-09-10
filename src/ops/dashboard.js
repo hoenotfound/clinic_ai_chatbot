@@ -19,7 +19,7 @@ function inlineScriptJson(value) {
 const sharedStyles = `
   :root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f6f7fb}
   *{box-sizing:border-box}body{margin:0}.shell{max-width:1180px;margin:0 auto;padding:32px 20px 56px}
-  h1{margin:0;font-size:28px}h2{font-size:17px;margin:0 0 14px}.sub{color:#667085;margin:7px 0 24px}.toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+  h1{margin:0;font-size:28px}h2{font-size:17px;margin:0 0 14px}.sub{color:#667085;margin:7px 0 24px}.toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}.spaced-toolbar{margin-top:18px}
   button,.button{border:0;border-radius:10px;background:#5b5bd6;color:white;padding:10px 14px;font-weight:650;cursor:pointer;text-decoration:none;display:inline-block}
   button:disabled{opacity:.55;cursor:wait}.cards{display:grid;grid-template-columns:repeat(6,minmax(115px,1fr));gap:12px;margin:20px 0}
   .card,.panel{background:white;border:1px solid #e4e7ec;border-radius:14px;box-shadow:0 1px 2px rgba(16,24,40,.03)}
@@ -35,14 +35,15 @@ const sharedStyles = `
   @media(max-width:900px){.cards{grid-template-columns:repeat(3,1fr)}}@media(max-width:760px){.cards{grid-template-columns:repeat(2,1fr)}.detail-grid{grid-template-columns:1fr}.shell{padding:22px 14px}.kv{grid-template-columns:120px 1fr}}
 `;
 
-function dashboardHtml() {
+function dashboardHtml(nonce = "") {
+  const safeNonce = escapeHtml(nonce);
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>DA Chatbot Operations</title>
-  <style>${sharedStyles}</style>
+  <style nonce="${safeNonce}">${sharedStyles}</style>
 </head>
 <body>
   <main class="shell">
@@ -53,7 +54,7 @@ function dashboardHtml() {
     <section class="cards" id="summary"></section>
     <section class="panel"><div id="table" class="empty">Loading clients…</div></section>
   </main>
-<script>
+<script nonce="${safeNonce}">
 const escapeHtml = ${escapeHtml.toString()};
 const statusLabel = {ready:"Ready",ready_with_warnings:"Ready with warnings",needs_testing:"Testing required",blocked:"Blocked",offline:"Offline"};
 const fmt = value => value ? new Date(value).toLocaleString() : "—";
@@ -108,26 +109,27 @@ setInterval(() => load().catch(()=>{}), 30000);
 </body></html>`;
 }
 
-function clientDetailHtml(clientSlug) {
+function clientDetailHtml(clientSlug, nonce = "") {
   const safeSlug = inlineScriptJson(String(clientSlug || ""));
+  const safeNonce = escapeHtml(nonce);
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Client Operations Detail</title>
-  <style>${sharedStyles}</style>
+  <style nonce="${safeNonce}">${sharedStyles}</style>
 </head>
 <body>
   <main class="shell">
     <a class="back" href="/">← All clients</a>
-    <div class="toolbar" style="margin-top:18px">
+    <div class="toolbar spaced-toolbar">
       <div><h1 id="title">Client operations</h1><p class="sub" id="subtitle">Loading…</p></div>
       <button id="refresh">Refresh client</button>
     </div>
     <div id="content" class="empty panel">Loading client…</div>
   </main>
-<script>
+<script nonce="${safeNonce}">
 const escapeHtml = ${escapeHtml.toString()};
 const clientSlug = ${safeSlug};
 const statusLabel = {ready:"Ready",ready_with_warnings:"Ready with warnings",needs_testing:"Testing required",blocked:"Blocked",offline:"Offline"};
