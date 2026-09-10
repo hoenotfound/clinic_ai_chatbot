@@ -29,7 +29,7 @@ const sharedStyles = `
   .badge{display:inline-flex;align-items:center;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:700;background:#eef2f6}
   .ready{background:#e8f7ee;color:#157347}.ready_with_warnings{background:#fff5d6;color:#8a6200}.needs_testing{background:#fff0dc;color:#9a4c00}.blocked{background:#feecec;color:#b42318}.offline{background:#eef2f6;color:#475467}
   .channels{display:flex;gap:5px;flex-wrap:wrap}.channel{background:#f2f4f7;border-radius:7px;padding:4px 7px;font-size:11px;font-weight:650}
-  .error{color:#b42318;max-width:260px}.empty{text-align:center;padding:40px;color:#667085}.back{color:#5b5bd6;text-decoration:none;font-weight:650;font-size:14px}
+  .error{color:#b42318;max-width:260px}.empty{text-align:center;padding:40px;color:#667085}.empty h2{color:#172033;margin-bottom:8px}.empty p{margin:8px auto;max-width:650px;line-height:1.5}.empty code{display:inline-block;margin-top:10px;padding:9px 11px;border-radius:8px;background:#f2f4f7;color:#344054;font-size:12px}.back{color:#5b5bd6;text-decoration:none;font-weight:650;font-size:14px}
   .detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:20px 0}.detail-panel{padding:18px}.kv{display:grid;grid-template-columns:160px 1fr;gap:9px 16px;font-size:14px}.kv dt{color:#667085}.kv dd{margin:0;overflow-wrap:anywhere}
   .section-list{display:grid;gap:9px}.issue-row,.channel-row{border:1px solid #eef0f3;border-radius:10px;padding:12px}.issue-row b,.channel-row b{display:block;margin-bottom:4px}.actions{display:flex;gap:10px;flex-wrap:wrap}
   @media(max-width:900px){.cards{grid-template-columns:repeat(3,1fr)}}@media(max-width:760px){.cards{grid-template-columns:repeat(2,1fr)}.detail-grid{grid-template-columns:1fr}.shell{padding:22px 14px}.kv{grid-template-columns:120px 1fr}}
@@ -58,6 +58,7 @@ const escapeHtml = ${escapeHtml.toString()};
 const statusLabel = {ready:"Ready",ready_with_warnings:"Ready with warnings",needs_testing:"Testing required",blocked:"Blocked",offline:"Offline"};
 const fmt = value => value ? new Date(value).toLocaleString() : "—";
 const channelName = value => typeof value === "string" ? value : (value?.channel || value?.name || "unknown");
+const actionHeaders = {"x-ops-action":"1"};
 async function load() {
   const response = await fetch("/api/clients", {headers:{accept:"application/json"}});
   if (!response.ok) throw new Error("Could not load registry");
@@ -73,7 +74,7 @@ async function load() {
   ].map(([label,count,cls]) => '<div class="card"><span class="label">'+label+'</span><b class="'+cls+'">'+count+'</b></div>').join("");
   const rows = data.clients || [];
   if (!rows.length) {
-    document.getElementById("table").innerHTML = '<div class="empty">No clients registered yet.</div>';
+    document.getElementById("table").innerHTML = '<div class="empty"><h2>No client deployments registered</h2><p>Generate a readiness token, configure the matching secret on the client and this registry, then register the client provisioning receipt.</p><code>npm run ops:register-client -- --receipt .provisioning/client.json</code><p class="muted">Run npm run ops-registry:verify before relying on this dashboard in production.</p></div>';
     return;
   }
   document.getElementById("table").innerHTML = '<table><thead><tr><th>Client</th><th>Industry</th><th>Channels</th><th>Status</th><th>Last contact</th><th>Version</th><th>Issue</th></tr></thead><tbody>'+
@@ -93,8 +94,13 @@ async function load() {
 }
 document.getElementById("refresh").addEventListener("click", async () => {
   const button=document.getElementById("refresh"); button.disabled=true; button.textContent="Refreshing…";
-  try { await fetch("/api/refresh-all",{method:"POST"}); await load(); }
-  finally { button.disabled=false; button.textContent="Refresh all"; }
+  try {
+    const response=await fetch("/api/refresh-all",{method:"POST",headers:actionHeaders});
+    if(!response.ok) throw new Error("Could not refresh fleet");
+    await load();
+  } catch (err) {
+    document.getElementById("table").innerHTML='<div class="empty error">'+escapeHtml(err.message)+'</div>';
+  } finally { button.disabled=false; button.textContent="Refresh all"; }
 });
 load().catch(err => document.getElementById("table").textContent=err.message);
 setInterval(() => load().catch(()=>{}), 30000);
@@ -126,6 +132,7 @@ const escapeHtml = ${escapeHtml.toString()};
 const clientSlug = ${safeSlug};
 const statusLabel = {ready:"Ready",ready_with_warnings:"Ready with warnings",needs_testing:"Testing required",blocked:"Blocked",offline:"Offline"};
 const fmt = value => value ? new Date(value).toLocaleString() : "—";
+const actionHeaders = {"x-ops-action":"1"};
 const issueRows = items => (items||[]).map(item => '<div class="issue-row"><b>'+escapeHtml(item.summary||item.category||"Issue")+'</b><div>'+escapeHtml(item.action||item.remediationRoute||"")+'</div></div>').join("") || '<div class="muted">None</div>';
 async function load() {
   const response=await fetch('/api/clients/'+encodeURIComponent(clientSlug),{headers:{accept:'application/json'}});
@@ -149,7 +156,7 @@ async function load() {
     '<section class="panel detail-panel"><h2>Warnings</h2><div class="section-list">'+issueRows(c.warnings)+'</div></section>'+
   '</div>';
 }
-document.getElementById('refresh').addEventListener('click',async()=>{const b=document.getElementById('refresh');b.disabled=true;b.textContent='Refreshing…';try{await fetch('/api/clients/'+encodeURIComponent(clientSlug)+'/refresh',{method:'POST'});await load();}finally{b.disabled=false;b.textContent='Refresh client';}});
+document.getElementById('refresh').addEventListener('click',async()=>{const b=document.getElementById('refresh');b.disabled=true;b.textContent='Refreshing…';try{const response=await fetch('/api/clients/'+encodeURIComponent(clientSlug)+'/refresh',{method:'POST',headers:actionHeaders});if(!response.ok)throw new Error('Could not refresh client');await load();}catch(err){document.getElementById('content').innerHTML='<div class="empty error">'+escapeHtml(err.message)+'</div>';}finally{b.disabled=false;b.textContent='Refresh client';}});
 load().catch(err=>document.getElementById('content').textContent=err.message);
 </script>
 </body></html>`;
