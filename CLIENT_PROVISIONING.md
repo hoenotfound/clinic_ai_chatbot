@@ -8,6 +8,7 @@ one client
   -> one Neon project/database
   -> one explicit chatbot industry profile
   -> one explicit purchased-channel contract
+  -> optional/required automated Ops Registry enrollment
   -> production readiness verification
 ```
 
@@ -19,19 +20,21 @@ For a new client, `provision-client`:
 
 1. requires an explicit business industry;
 2. requires the messaging channels the client actually bought;
-3. validates Render/Neon options and required client runtime credentials before cloud creation;
+3. validates Render/Neon options, required client runtime credentials, and enabled Ops control-plane configuration before cloud creation;
 4. checks Render and Neon for exact resource-name collisions;
 5. creates Neon in the selected region and waits for create operations;
 6. retrieves the pooled PostgreSQL connection URI;
-7. creates the Render Node web service with `DATABASE_URL`, a generated `SESSION_SECRET`, and canonical `INITIAL_BUSINESS_TYPE`;
+7. creates the Render Node web service with `CLIENT_SLUG`, `DATABASE_URL`, a generated `SESSION_SECRET`, canonical `INITIAL_BUSINESS_TYPE`, and `PURCHASED_CHANNELS`;
 8. waits for the initial Render deployment to become `live`;
 9. records the deployed Git commit when available;
 10. proves the bootstrap administrator can log in;
-11. sets provisioner-owned `PUBLIC_BASE_URL` to the actual Render URL;
-12. removes `ADMIN_PASSWORD` from Render after bootstrap succeeds;
-13. deploys the finalized runtime and waits for it to become `live`;
-14. runs authenticated readiness verification;
-15. writes a secret-free v3 provisioning/readiness receipt.
+11. when Ops enrollment is enabled, generates a fresh in-memory token and writes matching secret environment values directly to the client and central registry through Render;
+12. sets provisioner-owned `PUBLIC_BASE_URL` to the actual Render URL;
+13. removes `ADMIN_PASSWORD` from Render after bootstrap succeeds;
+14. deploys the finalized client runtime, which also applies the client Ops token, and waits for it to become `live`;
+15. when Ops enrollment is enabled, deploys the central registry, proves the exact client identity through `/api/ops/readiness`, and upserts the secret-free fleet record and first successful snapshot;
+16. runs authenticated client readiness verification;
+17. writes a secret-free v3 provisioning/readiness receipt.
 
 The final verification reuses protected Setup Status and `systemHealth`. It adds a stricter go-live proof without changing the ordinary Setup Status meaning of “last successful outbound.”
 
@@ -132,7 +135,62 @@ export PROVISIONING_RENDER_BRANCH="main"
 export PROVISIONING_RESOURCE_PREFIX="da-chatbot"
 ```
 
-Provider/CLI errors redact runtime secrets, control-plane tokens, bearer credentials, and PostgreSQL URLs.
+### Ops Registry enrollment control plane
+
+For automatic fleet enrollment, the local operator shell also needs:
+
+```bash
+export PROVISIONING_OPS_REGISTRY_RENDER_SERVICE_ID="srv-..."
+export OPS_DATABASE_URL="postgresql://...dedicated-ops-db..."
+```
+
+Enrollment mode is selected with either:
+
+```text
+--ops-enrollment auto|required|off
+```
+
+or:
+
+```bash
+export PROVISIONING_OPS_ENROLLMENT_MODE="required"
+```
+
+Modes:
+
+- `auto` is the default. If both Ops control-plane values are present, enrollment runs automatically. If neither is present, provisioning keeps the historical standalone behavior. A partial Ops configuration fails preflight before Neon or Render is created.
+- `required` requires complete Ops control-plane configuration before cloud creation and treats incomplete enrollment as a distinct provisioning failure. This is recommended for production operators.
+- `off` explicitly skips fleet enrollment.
+
+Provider/CLI errors redact runtime secrets, control-plane tokens, bearer credentials, Ops database credentials, and PostgreSQL URLs.
+
+## Ops token and receipt safety
+
+When enrollment is enabled, the provisioner creates a fresh 32-byte random token in memory. It is sent directly through Render's authenticated API to:
+
+```text
+client Render:   OPS_READINESS_TOKEN
+registry Render: OPS_CLIENT_TOKEN_<NORMALIZED_CLIENT_SLUG>
+```
+
+The token is deliberately held as a non-enumerable in-process property while deployment and endpoint verification are running. It is never printed and is never written to:
+
+- `.provisioning/<client>.json`;
+- the Ops Registry PostgreSQL row;
+- GitHub source, issues, or PRs;
+- normal command JSON output;
+- application logs.
+
+The Ops database stores only the deterministic token environment-variable **name**. Exact client identity is verified before the registry row is upserted.
+
+If enrollment fails after infrastructure is live, the receipt stores only the safe partial state and failure code/stage. Repair it with:
+
+```bash
+npm run ops:enroll-client -- \
+  --receipt .provisioning/acme-cabinets.json
+```
+
+The recovery command does not need the old token. It generates a fresh token, updates both services, redeploys them, verifies the client, and upserts the same registry row. Re-running it therefore acts as safe token rotation/reconciliation rather than creating duplicate client infrastructure.
 
 ## Client runtime configuration
 
@@ -162,7 +220,8 @@ For `--execute`, provisioning fails **before creating Neon or Render** when requ
 - `ADMIN_USERNAME` and `ADMIN_PASSWORD`;
 - at least one AI credential path (Gemini or Claude);
 - required R2 credentials;
-- credentials for every purchased channel.
+- credentials for every purchased channel;
+- complete Ops control-plane configuration when Ops enrollment is `required`, or when `auto` is partially configured.
 
 `ADMIN_PASSWORD` exists in Render only for bootstrap. After the first successful administrator login, it is removed and the finalized runtime is deployed. Keep the local runtime file secure because `verify-client` still needs the administrator password; the user account itself is persisted in PostgreSQL.
 
@@ -170,10 +229,13 @@ Passwords are not accepted as CLI flags.
 
 Provisioning owns and rejects these client-input keys:
 
+- `CLIENT_SLUG`
+- `OPS_READINESS_TOKEN`
 - `DATABASE_URL`
 - `SESSION_SECRET`
 - `INITIAL_BUSINESS_TYPE`
 - `BUSINESS_TYPE`
+- `PURCHASED_CHANNELS`
 - `PUBLIC_BASE_URL`
 - `PORT`
 
@@ -192,7 +254,7 @@ npm run provision-client -- \
   --runtime-env-file ./acme.client-runtime.env
 ```
 
-No Render, Neon, or client-portal request is made in dry-run mode. Output contains runtime key names only, never secret values.
+No Render, Neon, client-portal, or Ops Registry mutation is made in dry-run mode. Output contains runtime key names and safe Ops enrollment metadata only, never secret values.
 
 ## 2. Execute provisioning
 
@@ -208,6 +270,19 @@ npm run provision-client -- \
 
 Add `--json` for automation.
 
+For a production operator that must never create an untracked deployment:
+
+```bash
+npm run provision-client -- \
+  --client acme-cabinets \
+  --industry home_renovation \
+  --channels whatsapp,instagram \
+  --render-plan starter \
+  --runtime-env-file ./acme.client-runtime.env \
+  --ops-enrollment required \
+  --execute
+```
+
 ### Exit codes
 
 ```text
@@ -215,9 +290,12 @@ Add `--json` for automation.
 2 = validation/provisioning failure before a usable deployment exists
 3 = infrastructure live; verification completed; NEEDS ATTENTION
 4 = infrastructure live; readiness verification could not complete
+5 = infrastructure live; enabled Ops Registry enrollment is incomplete
 ```
 
-Do not delete/recreate infrastructure merely because readiness returns 3 or 4.
+A readiness verification failure (4) takes precedence because it means trustworthy client health could not be established. Otherwise an enabled but unverified Ops enrollment returns 5 before a normal NEEDS ATTENTION result.
+
+Do not delete/recreate infrastructure merely because readiness returns 3, 4, or Ops enrollment returns 5.
 
 ## Readiness states
 
@@ -371,10 +449,11 @@ Receipt v3 contains only recovery/readiness metadata, including:
 - Render service/deploy metadata;
 - deployed commit SHA when available;
 - runtime-finalization state;
+- secret-free Ops enrollment/recovery state;
 - profile contract;
 - latest readiness report.
 
-It never contains `DATABASE_URL`, API keys, access tokens, administrator passwords, or copied runtime-env values.
+It never contains `DATABASE_URL`, API keys, access tokens, Ops token values, administrator passwords, or copied runtime-env values.
 
 Runtime finalization records:
 
@@ -391,6 +470,8 @@ failureCode: RENDER_RUNTIME_FINALIZATION_FAILED
 
 and keeps the existing infrastructure for deliberate recovery.
 
+Ops enrollment similarly records safe booleans, deploy IDs/statuses, token environment-variable name, verified status, and failure code/stage. It never records the generated token.
+
 Receipt-write failure after infrastructure is live is a warning, not a false cloud-provisioning failure.
 
 ## Partial failures
@@ -400,10 +481,11 @@ Cloud create requests are non-idempotent and are never blindly retried. There is
 - Neon created / Render fails: Neon is preserved with recovery identifiers.
 - Render created / deploy fails: known Render + Neon identifiers are preserved.
 - Runtime finalization partially fails: the exact known finalization state is preserved in the result/receipt.
+- Ops enrollment partially fails: finish normal client finalization/readiness when possible, preserve safe enrollment state, then run `npm run ops:enroll-client -- --receipt ...` to rotate/reconcile the pairing.
 - NEEDS ATTENTION: fix the reported condition and rerun `verify-client`.
 - VERIFICATION FAILED: fix access/login/transport/Setup Status and rerun `verify-client`.
 
-See `PROVISIONING_RECOVERY.md` for detailed recovery steps.
+See `PROVISIONING_RECOVERY.md` for detailed infrastructure recovery steps and `docs/multi-client-ops-registry.md` for fleet enrollment details.
 
 ## Render build/start/health contract
 
@@ -413,4 +495,4 @@ Start: npm start
 Health check: /
 ```
 
-Render `live` proves only that the web process serves. Client handover requires READY or READY WITH WARNINGS, with any warning explicitly accepted by the operator.
+Render `live` proves only that the web process serves. Client handover requires READY or READY WITH WARNINGS, with any warning explicitly accepted by the operator. When Ops enrollment is enabled, the fleet pairing must also reach `verified` before the provisioning command reports complete success.
