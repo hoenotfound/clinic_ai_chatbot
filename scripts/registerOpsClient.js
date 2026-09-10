@@ -3,13 +3,15 @@ require("dotenv").config();
 
 const fs = require("fs");
 const path = require("path");
-const { createOpsPool, ensureOpsSchema } = require("../src/ops/db");
+const { createOpsPool } = require("../src/ops/db");
+const { runOpsMigrations } = require("../src/ops/migrationRunner");
 const { createClientRegistryRepo } = require("../src/ops/clientRegistryRepo");
 const { normalizedBaseUrl } = require("../src/ops/clientPoller");
+const { assertOpsRegistryMode } = require("../src/ops/mode");
 
 function usage() {
   return `
-Register or update one client in the DA Multi-Client Ops Registry.
+Register one client in the DA Multi-Client Ops Registry.
 
 Usage:
   npm run ops:register-client -- --receipt <path> [options]
@@ -23,6 +25,7 @@ Options:
   --token-env <ENV_KEY>     Central registry env var containing this client's
                             OPS_READINESS_TOKEN. Defaults to a deterministic
                             OPS_CLIENT_TOKEN_<SLUG> name.
+  --upsert                  Explicitly update an existing client with this slug.
   --help
 
 Secrets:
@@ -39,6 +42,10 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === "--help" || arg === "-h") {
       args.help = true;
+      continue;
+    }
+    if (arg === "--upsert") {
+      args.upsert = true;
       continue;
     }
     const next = argv[index + 1];
@@ -92,6 +99,22 @@ function registryRecordFromReceipt(receipt, args = {}) {
   };
 }
 
+async function registerRecord(repo, record, { upsert = false } = {}) {
+  if (upsert) return repo.upsertClient(record);
+  try {
+    return await repo.insertClient(record);
+  } catch (error) {
+    if (error?.code === "23505") {
+      const duplicate = new Error(
+        `Client slug '${record.clientSlug}' is already registered. Re-run with --upsert to update it intentionally.`,
+      );
+      duplicate.code = "OPS_CLIENT_ALREADY_EXISTS";
+      throw duplicate;
+    }
+    throw error;
+  }
+}
+
 async function main() {
   let args;
   try {
@@ -101,6 +124,7 @@ async function main() {
       return;
     }
     if (!args.receiptPath) throw new Error("--receipt is required.");
+    assertOpsRegistryMode(process.env);
   } catch (err) {
     console.error(err.message);
     console.error(usage());
@@ -112,10 +136,10 @@ async function main() {
   const record = registryRecordFromReceipt(receipt, args);
   const pool = createOpsPool(process.env);
   try {
-    await ensureOpsSchema(pool);
+    await runOpsMigrations(pool);
     const repo = createClientRegistryRepo(pool);
-    const saved = await repo.upsertClient(record);
-    console.log(`Registered ${saved.displayName} (${saved.clientSlug})`);
+    const saved = await registerRecord(repo, record, { upsert: args.upsert });
+    console.log(`${args.upsert ? "Registered/updated" : "Registered"} ${saved.displayName} (${saved.clientSlug})`);
     console.log(`Base URL: ${saved.baseUrl}`);
     console.log(`Token env: ${saved.tokenEnvKey}`);
     console.log("No token value was written to the registry database.");
@@ -134,6 +158,7 @@ if (require.main === module) {
 module.exports = {
   defaultTokenEnvKey,
   parseArgs,
+  registerRecord,
   registryRecordFromReceipt,
   validateTokenEnvKey,
 };
