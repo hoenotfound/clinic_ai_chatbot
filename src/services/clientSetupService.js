@@ -1,4 +1,5 @@
 const { getIndustryProfile } = require("../config/industryProfiles");
+const { normalizeIndustrySetup } = require("../config/industrySetup");
 
 const PLACEHOLDER_BUSINESS_NAMES = new Set([
   "Your Clinic",
@@ -25,8 +26,8 @@ function openingHoursConfigured(config) {
 }
 
 function profileConfirmed(config) {
-  const setup = config?.industrySetup;
-  return setup?.locked === true && setup?.selectable !== true;
+  const setup = normalizeIndustrySetup(config?.industrySetup);
+  return setup.locked === true && setup.selectable !== true;
 }
 
 function industryLabel(config) {
