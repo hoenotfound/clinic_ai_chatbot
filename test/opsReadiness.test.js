@@ -43,6 +43,13 @@ function gate() {
       lastVerifiedAutomatedReplyAt: "2026-09-09T11:50:03.000Z",
       lastReadinessDeliveryFailureAt: null,
       checks: [{ secret: "must not leak" }],
+    }, {
+      channel: "facebook",
+      label: "Facebook",
+      purchased: false,
+      configured: true,
+      ready: true,
+      checks: [{ secret: "must not leak" }],
     }],
     blockers: [],
     testingRequired: [],
@@ -54,11 +61,18 @@ function gate() {
       purchasedChannels: 1,
       channelsReady: 1,
     },
+    customer: { phone: "+60123456789", message: "private lead message" },
+    credentials: {
+      databaseUrl: "postgresql://secret",
+      metaAccessToken: "meta-secret",
+      geminiApiKey: "gemini-secret",
+      adminPassword: "admin-secret",
+    },
     system: { health: { internal: "must not leak" } },
   };
 }
 
-test("ops readiness snapshot is sanitized and contains no internal check payloads", () => {
+test("ops readiness snapshot is sanitized and contains purchased operational data only", () => {
   const snapshot = sanitizeGateForOps(gate(), {
     CLIENT_SLUG: "acme",
     RENDER_GIT_COMMIT: "abcdef123456",
@@ -68,10 +82,15 @@ test("ops readiness snapshot is sanitized and contains no internal check payload
   assert.equal(snapshot.client.slug, "acme");
   assert.equal(snapshot.deployment.commitSha, "abcdef123456");
   assert.equal(snapshot.readiness.status, "ready");
+  assert.deepEqual(snapshot.readiness.channels.map((item) => item.channel), ["whatsapp"]);
   assert.equal(snapshot.readiness.channels[0].ready, true);
+  assert.equal(snapshot.readiness.channels[0].lastVerifiedRoundTripAt, "2026-09-09T11:50:00.000Z");
   assert.equal(Object.hasOwn(snapshot.readiness.channels[0], "checks"), false);
   assert.equal(Object.hasOwn(snapshot, "system"), false);
-  assert.doesNotMatch(JSON.stringify(snapshot), /must not leak/);
+  assert.doesNotMatch(
+    JSON.stringify(snapshot),
+    /must not leak|private lead message|\+60123456789|postgresql:\/\/secret|meta-secret|gemini-secret|admin-secret/,
+  );
 });
 
 test("ops readiness token middleware is disabled by default", () => {
@@ -85,6 +104,19 @@ test("ops readiness token middleware is disabled by default", () => {
   };
   middleware(req, response, () => assert.fail("must not call next"));
   assert.equal(response.statusCode, 404);
+});
+
+test("ops readiness token rejects an invalid bearer token", () => {
+  const middleware = createRequireOpsReadinessToken({ env: { OPS_READINESS_TOKEN: "x".repeat(32) } });
+  const req = { get: () => `Bearer ${"y".repeat(32)}` };
+  const response = {
+    statusCode: null,
+    status(code) { this.statusCode = code; return this; },
+    set() {},
+    json() { return this; },
+  };
+  middleware(req, response, () => assert.fail("must not call next"));
+  assert.equal(response.statusCode, 401);
 });
 
 test("ops readiness token accepts only the configured bearer token", () => {
@@ -117,10 +149,11 @@ async function withServer(callback) {
   }
 }
 
-test("ops readiness route returns the sanitized machine snapshot", async () => {
+test("ops readiness route is GET-only and returns the machine snapshot", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/ops/readiness`);
     assert.equal(response.status, 200);
     assert.equal((await response.json()).schemaVersion, 1);
+    assert.equal((await fetch(`${baseUrl}/api/ops/readiness`, { method: "POST" })).status, 404);
   });
 });
