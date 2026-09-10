@@ -16,6 +16,7 @@ const {
   requireOpsEnrollmentConfig,
   verifyAndRegisterPreparedEnrollment,
 } = require("../src/provisioning/opsRegistryEnrollment");
+const { acquireProvisioningLock } = require("./provisionClient");
 
 function usage() {
   return `
@@ -30,10 +31,12 @@ Required shell configuration:
   PROVISIONING_OPS_REGISTRY_RENDER_SERVICE_ID
   OPS_DATABASE_URL
 
-This command is intentionally idempotent at the registry-record level. Every
+This command is safely repeatable at the registry-record level. Every completed
 run generates a fresh high-entropy token, configures both Render services,
-redeploys them, verifies the exact client identity, and upserts the registry
-record. The token value is never written to the receipt or printed.
+redeploys them, verifies the exact client identity/profile/channel contract, and
+upserts the registry record. A same-machine provisioning lock prevents two local
+operators from rotating the same client's token concurrently. The token value is
+never written to the receipt or printed.
 `;
 }
 
@@ -86,6 +89,12 @@ function provisioningResultFromReceipt(receipt) {
     render: { ...(receipt.render || {}) },
     profileContract: { ...(receipt.profileContract || {}) },
   };
+}
+
+function recoveryLockName(receipt) {
+  const value = String(receipt?.render?.serviceName || receipt?.clientSlug || "").trim();
+  if (!value) throw new Error("Receipt is missing a stable client name for the provisioning lock.");
+  return value;
 }
 
 function writeEnrollmentToReceipt(absolutePath, receipt, opsEnrollment, {
@@ -209,6 +218,19 @@ async function main() {
     return;
   }
 
+  // Use the same service/resource name as normal provisioning so recovery and
+  // first-time provisioning cannot mutate the same client concurrently on one
+  // operator machine. Do not touch the receipt when lock acquisition fails,
+  // because another active process may be about to write a newer state.
+  let lock;
+  try {
+    lock = acquireProvisioningLock(recoveryLockName(loaded.receipt));
+  } catch (err) {
+    console.error(`Ops Registry enrollment stopped: ${err.message}`);
+    process.exitCode = 2;
+    return;
+  }
+
   const sensitiveValues = [
     process.env.PROVISIONING_RENDER_API_KEY,
     process.env.OPS_DATABASE_URL,
@@ -257,6 +279,12 @@ async function main() {
     }
     process.exitCode = 2;
     return null;
+  } finally {
+    try {
+      lock.release();
+    } catch (err) {
+      console.error(`Warning: could not release local provisioning lock: ${err.message}`);
+    }
   }
 }
 
@@ -271,6 +299,7 @@ module.exports = {
   loadReceipt,
   parseArgs,
   provisioningResultFromReceipt,
+  recoveryLockName,
   runEnrollmentFromReceipt,
   usage,
   writeEnrollmentToReceipt,
