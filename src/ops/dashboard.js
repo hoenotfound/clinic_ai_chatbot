@@ -62,12 +62,15 @@ function dashboardHtml(nonce = "") {
 const escapeHtml = ${escapeHtml.toString()};
 const statusLabel = {ready:"Ready",ready_with_warnings:"Ready with warnings",needs_testing:"Testing required",blocked:"Blocked",offline:"Offline"};
 const lifecycleLabel = {setup:"Setup",trial:"Trial",live:"Live",paused:"Paused"};
-const driftLabel = {current:"Current",drifted:"Drifted",unknown:"Unknown"};
+const driftLabel = {current:"Observed current",drifted:"Observed drifted",unknown:"Unknown"};
 const targetSourceLabel = {configured:"Pinned target",registry_deployment:"Registry deployment",unavailable:"Unavailable"};
+const driftReasonLabel = {matches_target:"Observed commit matches target",differs_from_target:"Observed commit differs from target",target_unavailable:"Fleet target unavailable",target_invalid:"Fleet target invalid",observation_unavailable:"Running commit not observed yet",observation_invalid:"Client returned an invalid commit value"};
 const fmt = value => value ? new Date(value).toLocaleString() : "—";
 const shortCommit = value => value ? String(value).slice(0,8) : "—";
 const channelName = value => typeof value === "string" ? value : (value?.channel || value?.name || "unknown");
 const actionHeaders = {"x-ops-action":"1"};
+function targetCardValue(d){if(d.targetValidity==='invalid')return 'Invalid';if(d.targetCommit)return shortCommit(d.targetCommit);return 'Unavailable';}
+function targetCardHelp(d){if(d.targetValidity==='invalid')return d.targetError||'The configured fleet target is not a valid full Git commit SHA.';return 'Exact full-SHA comparison only. Read-only visibility.';}
 async function load() {
   const response = await fetch("/api/clients", {headers:{accept:"application/json"}});
   if (!response.ok) throw new Error("Could not load registry");
@@ -83,9 +86,9 @@ async function load() {
     ["Offline",s.offline||0,"offline"]
   ].map(([label,count,cls]) => '<div class="card"><span class="label">'+label+'</span><b class="'+cls+'">'+count+'</b></div>').join("");
   document.getElementById("deployment-summary").innerHTML = [
-    '<div class="card"><span class="label">Fleet target · '+escapeHtml(targetSourceLabel[d.targetSource]||d.targetSource||"Unavailable")+'</span><b class="commit-value">'+escapeHtml(shortCommit(d.targetCommit))+'</b><div class="muted">Exact commit comparison only. Read-only visibility.</div></div>',
-    '<div class="card"><span class="label">Version current</span><b class="version-current">'+escapeHtml(d.current||0)+'</b></div>',
-    '<div class="card"><span class="label">Drifted</span><b class="version-drifted">'+escapeHtml(d.drifted||0)+'</b></div>',
+    '<div class="card"><span class="label">Fleet target · '+escapeHtml(targetSourceLabel[d.targetSource]||d.targetSource||"Unavailable")+'</span><b class="commit-value">'+escapeHtml(targetCardValue(d))+'</b><div class="muted">'+escapeHtml(targetCardHelp(d))+'</div></div>',
+    '<div class="card"><span class="label">Observed current</span><b class="version-current">'+escapeHtml(d.current||0)+'</b></div>',
+    '<div class="card"><span class="label">Observed drifted</span><b class="version-drifted">'+escapeHtml(d.drifted||0)+'</b></div>',
     '<div class="card"><span class="label">Version unknown</span><b class="version-unknown">'+escapeHtml(d.unknown||0)+'</b></div>'
   ].join("");
   const rows = data.clients || [];
@@ -102,14 +105,16 @@ async function load() {
       const lifecycle=c.lifecycleStatus||'live';
       const monitoring=c.backgroundPollingEnabled?'Automatic monitoring':'No background polling';
       const drift=deployment.driftStatus||'unknown';
+      const reason=driftReasonLabel[deployment.driftReason]||deployment.driftReason||'Version evidence unavailable';
       const versionPair='Observed '+shortCommit(deployment.observedCommit)+' · Target '+shortCommit(deployment.targetCommit);
+      const versionNote=drift==='unknown'?versionPair+' · '+reason:versionPair;
       return '<tr><td><div class="client"><a href="'+detailHref+'">'+escapeHtml(c.displayName)+'</a></div><div class="muted">'+escapeHtml(c.clientSlug)+'</div></td>'+
         '<td><span class="badge lifecycle-'+escapeHtml(lifecycle)+'">'+escapeHtml(lifecycleLabel[lifecycle]||lifecycle)+'</span><div class="muted">'+escapeHtml(monitoring)+'</div></td>'+
         '<td>'+escapeHtml(c.industry||"—")+'</td>'+
         '<td><div class="channels">'+channels+'</div></td>'+
         '<td><span class="badge '+escapeHtml(c.status)+'">'+escapeHtml(statusLabel[c.status]||c.status)+'</span></td>'+
         '<td>'+escapeHtml(fmt(c.lastSuccessAt))+'</td>'+
-        '<td><span class="badge version-'+escapeHtml(drift)+'">'+escapeHtml(driftLabel[drift]||drift)+'</span><div class="muted">'+escapeHtml(versionPair)+'</div></td>'+
+        '<td><span class="badge version-'+escapeHtml(drift)+'">'+escapeHtml(driftLabel[drift]||drift)+'</span><div class="muted">'+escapeHtml(versionNote)+'</div></td>'+
         '<td class="'+(issue?"error":"")+'">'+escapeHtml(issue||"—")+'</td></tr>';
     }).join("")+'</tbody></table>';
 }
@@ -165,8 +170,10 @@ const escapeHtml = ${escapeHtml.toString()};
 const clientSlug = ${safeSlug};
 const statusLabel = {ready:"Ready",ready_with_warnings:"Ready with warnings",needs_testing:"Testing required",blocked:"Blocked",offline:"Offline"};
 const lifecycleLabel = {setup:"Setup",trial:"Trial",live:"Live",paused:"Paused"};
-const driftLabel = {current:"Current",drifted:"Drifted",unknown:"Unknown"};
+const driftLabel = {current:"Observed current",drifted:"Observed drifted",unknown:"Unknown"};
 const targetSourceLabel = {configured:"Pinned target",registry_deployment:"Registry deployment",unavailable:"Unavailable"};
+const targetValidityLabel = {valid:"Valid",invalid:"Invalid",unavailable:"Unavailable"};
+const driftReasonLabel = {matches_target:"Observed commit matches target",differs_from_target:"Observed commit differs from target",target_unavailable:"Fleet target unavailable",target_invalid:"Fleet target invalid",observation_unavailable:"Running commit not observed yet",observation_invalid:"Client returned an invalid commit value"};
 const fmt = value => value ? new Date(value).toLocaleString() : "—";
 const actionHeaders = {"x-ops-action":"1"};
 const actionJsonHeaders = {"x-ops-action":"1","content-type":"application/json"};
@@ -177,6 +184,14 @@ function lifecycleHelp(status){
   return 'Background polling is off. Use Refresh client only when you want to wake and test this setup/trial deployment.';
 }
 function changedSinceProvisioning(value){return value===true?'Yes':value===false?'No':'Unknown';}
+function versionObservationHelp(c,d,lifecycle){
+  if(d.targetValidity==='invalid') return d.targetError||'The configured fleet target is invalid. Fix it before interpreting drift.';
+  if(d.driftReason==='observation_invalid') return 'The client returned a commit value that is not a full hexadecimal Git SHA, so drift is not inferred from it.';
+  if(lifecycle==='paused') return 'This is the last successful version observation. Paused clients are not polled until reactivated.';
+  if(lifecycle==='setup'||lifecycle==='trial') return 'This is the last successful version observation. Setup/Trial clients are not background-polled; use Refresh client before relying on the version state.';
+  if(c.status==='offline') return 'This version came from the last successful poll. The client is currently offline, so the running version cannot be re-confirmed right now.';
+  return 'Version evidence comes from the running client during its latest successful readiness poll.';
+}
 async function load() {
   const response=await fetch('/api/clients/'+encodeURIComponent(clientSlug),{headers:{accept:'application/json'}});
   if(response.status===404) throw new Error('Client not found');
@@ -191,10 +206,12 @@ async function load() {
   refreshButton.title=c.manualRefreshAllowed===false?'Paused clients cannot be refreshed until reactivated.':'';
   const d=c.deployment||{};
   const drift=d.driftStatus||'unknown';
+  const reason=driftReasonLabel[d.driftReason]||d.driftReason||'Version evidence unavailable';
+  const targetValidation=d.targetError||targetValidityLabel[d.targetValidity]||d.targetValidity||'Unavailable';
   const channels=(c.channels||[]).map(ch => '<div class="channel-row"><b>'+escapeHtml(ch.channel||'Channel')+' · '+escapeHtml(ch.status||'unknown')+'</b><div>Last verified round trip: '+escapeHtml(fmt(ch.lastVerifiedRoundTripAt))+'</div></div>').join('') || '<div class="muted">No purchased-channel readiness has been recorded yet.</div>';
   document.getElementById('content').outerHTML='<div id="content">'+
     '<div class="detail-grid">'+
-      '<section class="panel detail-panel"><h2>Deployment & version drift</h2><dl class="kv"><dt>Render</dt><dd>'+escapeHtml(c.render?.serviceName||c.baseUrl||'—')+'</dd><dt>Version state</dt><dd><span class="badge version-'+escapeHtml(drift)+'">'+escapeHtml(driftLabel[drift]||drift)+'</span></dd><dt>Observed commit</dt><dd>'+escapeHtml(d.observedCommit||'Unknown')+'</dd><dt>Fleet target</dt><dd>'+escapeHtml(d.targetCommit||'Unknown')+'</dd><dt>Target source</dt><dd>'+escapeHtml(targetSourceLabel[d.targetSource]||d.targetSource||'Unavailable')+'</dd><dt>Provisioned commit</dt><dd>'+escapeHtml(d.provisionedCommit||'Unknown')+'</dd><dt>Changed since provisioning</dt><dd>'+escapeHtml(changedSinceProvisioning(d.changedSinceProvisioning))+'</dd><dt>Registry commit</dt><dd>'+escapeHtml(d.registryCommit||'Unknown')+'</dd><dt>App version</dt><dd>'+escapeHtml(d.appVersion||'—')+'</dd><dt>Process started</dt><dd>'+escapeHtml(fmt(d.startedAt))+'</dd><dt>Version observed</dt><dd>'+escapeHtml(fmt(d.lastObservedAt))+'</dd></dl><p class="muted">Deployment drift is read-only. The Registry does not redeploy, upgrade, or change client configuration.</p></section>'+
+      '<section class="panel detail-panel"><h2>Deployment & version drift</h2><dl class="kv"><dt>Render</dt><dd>'+escapeHtml(c.render?.serviceName||c.baseUrl||'—')+'</dd><dt>Version state</dt><dd><span class="badge version-'+escapeHtml(drift)+'">'+escapeHtml(driftLabel[drift]||drift)+'</span></dd><dt>Reason</dt><dd>'+escapeHtml(reason)+'</dd><dt>Observed commit</dt><dd>'+escapeHtml(d.observedCommit||'Unknown')+'</dd><dt>Fleet target</dt><dd>'+escapeHtml(d.targetCommit||'Unknown')+'</dd><dt>Target source</dt><dd>'+escapeHtml(targetSourceLabel[d.targetSource]||d.targetSource||'Unavailable')+'</dd><dt>Target validation</dt><dd class="'+(d.targetValidity==='invalid'?'error':'')+'">'+escapeHtml(targetValidation)+'</dd><dt>Provisioned commit</dt><dd>'+escapeHtml(d.provisionedCommit||'Unknown')+'</dd><dt>Changed since provisioning</dt><dd>'+escapeHtml(changedSinceProvisioning(d.changedSinceProvisioning))+'</dd><dt>Registry commit</dt><dd>'+escapeHtml(d.registryCommit||'Unknown')+'</dd><dt>App version</dt><dd>'+escapeHtml(d.appVersion||'—')+'</dd><dt>Process started</dt><dd>'+escapeHtml(fmt(d.startedAt))+'</dd><dt>Version observed</dt><dd>'+escapeHtml(fmt(d.lastObservedAt))+'</dd></dl><p class="muted">'+escapeHtml(versionObservationHelp(c,d,lifecycle))+' Deployment drift is read-only; the Registry does not redeploy, upgrade, or change client configuration.</p></section>'+
       '<section class="panel detail-panel"><h2>Lifecycle & monitoring</h2><dl class="kv"><dt>Lifecycle</dt><dd>'+escapeHtml(lifecycleLabel[lifecycle]||lifecycle)+'</dd><dt>Background polling</dt><dd>'+escapeHtml(c.backgroundPollingEnabled?'Enabled':'Disabled')+'</dd><dt>Manual refresh</dt><dd>'+escapeHtml(c.manualRefreshAllowed===false?'Disabled':'Available')+'</dd><dt>Policy</dt><dd>'+escapeHtml(lifecycleHelp(lifecycle))+'</dd></dl><p class="muted">Lifecycle controls Registry polling only. It does not change the Render or Neon billing plan.</p></section>'+
       '<section class="panel detail-panel"><h2>Contact</h2><dl class="kv"><dt>Last attempt</dt><dd>'+escapeHtml(fmt(c.lastPollAttemptAt))+'</dd><dt>Last success</dt><dd>'+escapeHtml(fmt(c.lastSuccessAt))+'</dd><dt>Last known readiness</dt><dd>'+escapeHtml(statusLabel[c.lastKnownReadinessStatus]||c.lastKnownReadinessStatus||'Unknown')+'</dd><dt>HTTP status</dt><dd>'+escapeHtml(c.lastHttpStatus??'—')+'</dd><dt>Current error</dt><dd class="'+(c.lastError?'error':'')+'">'+escapeHtml(c.lastError||'None')+'</dd></dl></section>'+
     '</div>'+
