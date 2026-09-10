@@ -55,6 +55,8 @@ function normalizeRemoteSnapshot(payload, expectedSlug = null) {
     },
     deployment: {
       commitSha: payload?.deployment?.commitSha || null,
+      startedAt: payload?.deployment?.startedAt || null,
+      appVersion: payload?.deployment?.appVersion || null,
     },
     readiness: {
       status: payload.readiness.status,
@@ -100,7 +102,7 @@ function createClientPoller({
       if (!response.ok) {
         throw Object.assign(
           new Error(`Client readiness endpoint returned HTTP ${response.status}.`),
-          { httpStatus: response.status }
+          { httpStatus: response.status },
         );
       }
       let payload;
