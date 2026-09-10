@@ -130,6 +130,76 @@ test("successful refresh updates last success and clears the current connectivit
   assert.equal(refreshed.lastError, null);
 });
 
+test("concurrent refreshes for the same client share one poll", async () => {
+  let calls = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let state = client();
+  const snapshot = { schemaVersion: 1, readiness: { status: "ready" } };
+  const repo = {
+    listClients: async () => [state],
+    getClient: async () => state,
+    recordPollFailure: async () => {},
+    recordPollSuccess: async (_slug, values) => {
+      state = {
+        ...state,
+        lastPollAt: values.polledAt,
+        lastSuccessAt: values.polledAt,
+        lastStatus: "ready",
+        lastSnapshot: snapshot,
+        lastError: null,
+      };
+    },
+  };
+  const fleet = createFleetService({
+    repo,
+    poller: {
+      pollClient: async () => {
+        calls += 1;
+        await gate;
+        return { httpStatus: 200, snapshot };
+      },
+    },
+    now: () => new Date("2026-09-09T12:06:00.000Z"),
+  });
+
+  const first = fleet.refreshClient("acme");
+  const second = fleet.refreshClient("acme");
+  assert.equal(first, second);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, 1);
+  assert.equal(fleet.activeClientRefreshCount(), 1);
+  release();
+  await first;
+  assert.equal(fleet.activeClientRefreshCount(), 0);
+});
+
+test("cancelled background poll does not record a client failure", async () => {
+  let failureWrites = 0;
+  const state = client({
+    lastPollAt: "2026-09-09T12:00:00.000Z",
+    lastSuccessAt: "2026-09-09T12:00:00.000Z",
+    lastStatus: "ready",
+    lastSnapshot: { schemaVersion: 1, readiness: { status: "ready" } },
+  });
+  const repo = {
+    listClients: async () => [state],
+    getClient: async () => state,
+    recordPollSuccess: async () => {},
+    recordPollFailure: async () => { failureWrites += 1; },
+  };
+  const cancelled = Object.assign(new Error("cancelled"), { code: "OPS_POLL_CANCELLED" });
+  const fleet = createFleetService({
+    repo,
+    poller: { pollClient: async () => { throw cancelled; } },
+    now: () => new Date("2026-09-09T12:06:00.000Z"),
+  });
+
+  const refreshed = await fleet.refreshClient("acme");
+  assert.equal(failureWrites, 0);
+  assert.equal(refreshed.status, "ready");
+});
+
 test("refreshAll isolates a failed client and returns all five summary states", async () => {
   const now = "2026-09-09T12:06:00.000Z";
   const clients = [

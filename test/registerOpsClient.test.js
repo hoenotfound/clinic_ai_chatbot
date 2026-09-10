@@ -60,6 +60,44 @@ test("new registration uses insert and does not silently overwrite duplicate slu
   assert.equal(upsertCalled, false);
 });
 
+test("duplicate token environment key gets a specific registration error", async () => {
+  const duplicate = Object.assign(new Error("duplicate token env"), {
+    code: "23505",
+    constraint: "idx_ops_clients_token_env_key_unique",
+  });
+  const repo = {
+    insertClient: async () => { throw duplicate; },
+    upsertClient: async () => assert.fail("upsert should not be called"),
+  };
+
+  await assert.rejects(
+    registerRecord(repo, {
+      clientSlug: "beta",
+      tokenEnvKey: "OPS_CLIENT_TOKEN_SHARED",
+    }),
+    (error) => error.code === "OPS_TOKEN_ENV_ALREADY_EXISTS" && /unique per-client/i.test(error.message),
+  );
+});
+
+test("upsert also normalizes a duplicate token environment key conflict", async () => {
+  const duplicate = Object.assign(new Error("duplicate token env"), {
+    code: "23505",
+    constraint: "idx_ops_clients_token_env_key_unique",
+  });
+  const repo = {
+    insertClient: async () => assert.fail("insert should not be called"),
+    upsertClient: async () => { throw duplicate; },
+  };
+
+  await assert.rejects(
+    registerRecord(repo, {
+      clientSlug: "beta",
+      tokenEnvKey: "OPS_CLIENT_TOKEN_SHARED",
+    }, { upsert: true }),
+    (error) => error.code === "OPS_TOKEN_ENV_ALREADY_EXISTS" && /unique per-client/i.test(error.message),
+  );
+});
+
 test("explicit upsert uses the update path", async () => {
   const repo = {
     insertClient: async () => assert.fail("insert should not be called"),

@@ -1,4 +1,8 @@
-const OFFLINE_AFTER_MS = 15 * 60 * 1000;
+const {
+  DEFAULT_OFFLINE_AFTER_MS,
+  offlineAfterMs: configuredOfflineAfterMs,
+} = require("./runtimeConfig");
+
 const READINESS_STATUSES = new Set([
   "ready",
   "ready_with_warnings",
@@ -38,7 +42,7 @@ function lastKnownReadinessStatus(client) {
 
 function fleetStatus(client, {
   now = new Date(),
-  offlineAfterMs = OFFLINE_AFTER_MS,
+  offlineAfterMs = DEFAULT_OFFLINE_AFTER_MS,
 } = {}) {
   if (latestPollFailed(client)) return "offline";
   const successMs = timestampMs(client.lastSuccessAt);
@@ -49,7 +53,7 @@ function fleetStatus(client, {
 function presentClient(client, {
   env = process.env,
   now = new Date(),
-  offlineAfterMs = OFFLINE_AFTER_MS,
+  offlineAfterMs = DEFAULT_OFFLINE_AFTER_MS,
 } = {}) {
   const status = fleetStatus(client, { now, offlineAfterMs });
   const currentCommit = String(env.RENDER_GIT_COMMIT || env.OPS_REGISTRY_COMMIT || "").trim() || null;
@@ -110,10 +114,15 @@ function createFleetService({
   poller,
   env = process.env,
   now = () => new Date(),
-  offlineAfterMs = OFFLINE_AFTER_MS,
+  offlineAfterMs = null,
 } = {}) {
+  const staleAfterMs = offlineAfterMs == null
+    ? configuredOfflineAfterMs(env)
+    : offlineAfterMs;
+  const refreshes = new Map();
+
   function present(client) {
-    return client ? presentClient(client, { env, now: now(), offlineAfterMs }) : null;
+    return client ? presentClient(client, { env, now: now(), offlineAfterMs: staleAfterMs }) : null;
   }
 
   async function getClient(clientSlug) {
@@ -130,33 +139,45 @@ function createFleetService({
     };
   }
 
-  async function refreshClient(clientSlug) {
-    const client = await repo.getClient(clientSlug);
-    if (!client) {
-      const err = new Error(`Unknown client: ${clientSlug}`);
-      err.code = "OPS_CLIENT_NOT_FOUND";
-      throw err;
-    }
+  function refreshClient(clientSlug, { signal = null } = {}) {
+    const existing = refreshes.get(clientSlug);
+    if (existing) return existing;
 
-    const polledAt = now();
-    try {
-      const result = await poller.pollClient(client);
-      await repo.recordPollSuccess(clientSlug, {
-        httpStatus: result.httpStatus,
-        snapshot: result.snapshot,
-        polledAt,
-      });
-    } catch (err) {
-      await repo.recordPollFailure(clientSlug, {
-        httpStatus: err?.httpStatus || null,
-        error: err?.message || err,
-        polledAt,
-      });
-    }
-    return getClient(clientSlug);
+    const refreshPromise = (async () => {
+      const client = await repo.getClient(clientSlug);
+      if (!client) {
+        const err = new Error(`Unknown client: ${clientSlug}`);
+        err.code = "OPS_CLIENT_NOT_FOUND";
+        throw err;
+      }
+
+      const polledAt = now();
+      try {
+        const result = await poller.pollClient(client, { signal });
+        await repo.recordPollSuccess(clientSlug, {
+          httpStatus: result.httpStatus,
+          snapshot: result.snapshot,
+          polledAt,
+        });
+      } catch (err) {
+        if (err?.code !== "OPS_POLL_CANCELLED") {
+          await repo.recordPollFailure(clientSlug, {
+            httpStatus: err?.httpStatus || null,
+            error: err?.message || err,
+            polledAt,
+          });
+        }
+      }
+      return getClient(clientSlug);
+    })().finally(() => {
+      if (refreshes.get(clientSlug) === refreshPromise) refreshes.delete(clientSlug);
+    });
+
+    refreshes.set(clientSlug, refreshPromise);
+    return refreshPromise;
   }
 
-  async function refreshAll() {
+  async function refreshAll({ signal = null } = {}) {
     const clients = await repo.listClients();
     const results = new Array(clients.length);
     const concurrency = Math.max(1, Math.min(4, clients.length || 1));
@@ -164,19 +185,22 @@ function createFleetService({
 
     async function worker() {
       while (true) {
+        if (signal?.aborted) return;
         const index = cursor;
         cursor += 1;
         if (index >= clients.length) return;
-        results[index] = await refreshClient(clients[index].clientSlug);
+        results[index] = await refreshClient(clients[index].clientSlug, { signal });
       }
     }
 
     await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    const completed = results.filter(Boolean);
     return {
       schemaVersion: 1,
       refreshedAt: now().toISOString(),
-      summary: fleetSummary(results),
-      clients: results,
+      summary: fleetSummary(completed),
+      clients: completed,
+      cancelled: signal?.aborted === true,
     };
   }
 
@@ -185,11 +209,13 @@ function createFleetService({
     listFleet,
     refreshAll,
     refreshClient,
+    activeClientRefreshCount: () => refreshes.size,
   };
 }
 
 module.exports = {
-  OFFLINE_AFTER_MS,
+  OFFLINE_AFTER_MS: DEFAULT_OFFLINE_AFTER_MS,
+  READINESS_STATUSES,
   createFleetService,
   deploymentState,
   fleetStatus,
