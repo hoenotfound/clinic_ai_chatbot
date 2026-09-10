@@ -119,7 +119,7 @@ function presentClient(client, {
     testing: Array.isArray(readiness?.testingRequired) ? readiness.testingRequired : [],
     warnings: Array.isArray(readiness?.warnings) ? readiness.warnings : [],
     deployment: {
-      ...deploymentState(client, target.commitSha),
+      ...deploymentState(client, registryCommit),
       ...drift,
       registryCommit,
       startedAt: snapshot?.deployment?.startedAt || null,
