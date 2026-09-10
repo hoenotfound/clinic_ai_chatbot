@@ -99,26 +99,35 @@ function registryRecordFromReceipt(receipt, args = {}) {
   };
 }
 
+function normalizeRegistrationConflict(error, record, { upsert = false } = {}) {
+  if (error?.code !== "23505") return error;
+
+  if (error?.constraint === "idx_ops_clients_token_env_key_unique") {
+    const duplicateTokenKey = new Error(
+      `Token environment key '${record.tokenEnvKey}' is already assigned to another client. Use a unique per-client token environment key.`,
+    );
+    duplicateTokenKey.code = "OPS_TOKEN_ENV_ALREADY_EXISTS";
+    return duplicateTokenKey;
+  }
+
+  if (!upsert) {
+    const duplicate = new Error(
+      `Client slug '${record.clientSlug}' is already registered. Re-run with --upsert to update it intentionally.`,
+    );
+    duplicate.code = "OPS_CLIENT_ALREADY_EXISTS";
+    return duplicate;
+  }
+
+  return error;
+}
+
 async function registerRecord(repo, record, { upsert = false } = {}) {
-  if (upsert) return repo.upsertClient(record);
   try {
-    return await repo.insertClient(record);
+    return upsert
+      ? await repo.upsertClient(record)
+      : await repo.insertClient(record);
   } catch (error) {
-    if (error?.code === "23505") {
-      if (error?.constraint === "idx_ops_clients_token_env_key_unique") {
-        const duplicateTokenKey = new Error(
-          `Token environment key '${record.tokenEnvKey}' is already assigned to another client. Use a unique per-client token environment key.`,
-        );
-        duplicateTokenKey.code = "OPS_TOKEN_ENV_ALREADY_EXISTS";
-        throw duplicateTokenKey;
-      }
-      const duplicate = new Error(
-        `Client slug '${record.clientSlug}' is already registered. Re-run with --upsert to update it intentionally.`,
-      );
-      duplicate.code = "OPS_CLIENT_ALREADY_EXISTS";
-      throw duplicate;
-    }
-    throw error;
+    throw normalizeRegistrationConflict(error, record, { upsert });
   }
 }
 
@@ -169,6 +178,7 @@ if (require.main === module) {
 
 module.exports = {
   defaultTokenEnvKey,
+  normalizeRegistrationConflict,
   parseArgs,
   registerRecord,
   registryRecordFromReceipt,
