@@ -33,7 +33,8 @@ test("formats human intervention and delivery failure alerts", () => {
   assert.match(human, /🚨 Human Intervention Required/);
   assert.match(human, /AI handed off this conversation/);
   assert.match(human, /🔥 Hot/);
-  assert.match(human, /Latest Customer Message:/);
+  assert.match(human, /Latest Patient Message:/);
+  assert.doesNotMatch(human, /Latest Customer Message:/);
   assert.match(human, /inbox\?contact=12/);
 
   const delivery = buildImmediateAlertMessage({
@@ -44,6 +45,7 @@ test("formats human intervention and delivery failure alerts", () => {
   });
   assert.match(delivery, /⚠️ WhatsApp Delivery Failed/);
   assert.match(delivery, /Check the failed message in Inbox/);
+  assert.match(delivery, /contact the patient manually\./);
 });
 
 test("missing lead temperature is not mislabeled as warm", () => {
