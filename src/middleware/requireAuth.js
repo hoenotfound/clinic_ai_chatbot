@@ -269,7 +269,7 @@ function enforceConfigPolicy(req, res, user) {
     return true;
   }
 
-  return canSettings ? true : forbidden(res, "Clinic settings are disabled for this account.");
+  return canSettings ? true : forbidden(res, "Business settings are disabled for this account.");
 }
 
 async function enforceRoutePolicy(req, res, user) {
