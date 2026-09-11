@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { branding } from "../config/branding";
+import { useClientBranding } from "../hooks/useClientBranding";
 
 const REMEMBER_KEY = "portal.rememberedUsername";
 
 export default function Login() {
   const { username, login, error } = useAuth();
+  const branding = useClientBranding();
   const [form, setForm] = useState({ username: "", password: "" });
   const [remember, setRemember] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -52,11 +53,20 @@ export default function Login() {
         <div className="w-full max-w-sm">
           {/* Client identity */}
           <div className="mb-8 flex flex-col items-center text-center">
-            <img
-              src={branding.clientLogo}
-              alt={`${branding.clientName} logo`}
-              className="mb-4 h-20 w-20 rounded-2xl object-contain shadow-lg ring-1 ring-white/10"
-            />
+            {branding.clientLogoUrl ? (
+              <img
+                src={branding.clientLogoUrl}
+                alt={`${branding.clientName} logo`}
+                className="mb-4 h-20 w-20 rounded-2xl object-contain shadow-lg ring-1 ring-white/10"
+              />
+            ) : (
+              <div
+                aria-label={`${branding.clientName} logo`}
+                className="mb-4 flex h-20 w-20 items-center justify-center rounded-2xl bg-white/10 font-display text-2xl font-bold text-white shadow-lg ring-1 ring-white/10"
+              >
+                {branding.initials}
+              </div>
+            )}
             <h1 className="font-display text-2xl font-bold text-white">
               {branding.clientName}
             </h1>
