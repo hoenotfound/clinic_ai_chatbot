@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const { pool } = require("../db/db");
 const clinicConfig = require("../config/clinicConfig");
 const { getConversionProfile } = require("../config/conversionProfiles");
+const { getOperationalLabels } = require("../utils/businessTerminology");
 const {
   channelLabel,
   formatContactIdentifier,
@@ -140,10 +141,18 @@ function nextStepLabel(value) {
   return clean(value);
 }
 
-function buildImmediateAlertMessage({ type, context, reason, details = {}, env = process.env }) {
+function buildImmediateAlertMessage({
+  type,
+  context,
+  reason,
+  details = {},
+  env = process.env,
+  config = clinicConfig,
+}) {
   const isDelivery = type === "delivery_failure";
   const isBookingReady = type === "booking_ready";
-  const conversion = getConversionProfile(clinicConfig);
+  const conversion = getConversionProfile(config);
+  const labels = getOperationalLabels(config);
   const platform = channelLabel(context.channel || "whatsapp");
   const title = isDelivery
     ? `⚠️ ${platform} Delivery Failed`
@@ -176,8 +185,8 @@ function buildImmediateAlertMessage({ type, context, reason, details = {}, env =
     }
   } else {
     lines.push(
-      `Treatment: ${clean(context.treatment_interest)}`,
-      `Branch: ${clean(context.branch_name)}`
+      `${labels.serviceInterestLabel}: ${clean(context.treatment_interest)}`,
+      `${labels.locationLabel}: ${clean(context.branch_name)}`
     );
   }
 
@@ -211,6 +220,7 @@ function createTelegramImmediateAlertService({
   claimAlert = claimImmediateAlert,
   releaseAlert = releaseImmediateAlert,
   sendMessage = postTelegramMessage,
+  config = clinicConfig,
 } = {}) {
   async function send(type, { contactId, reason, messageId = null, details = {} }) {
     if (!isTelegramEnabled(env)) return { status: "disabled" };
@@ -244,7 +254,7 @@ function createTelegramImmediateAlertService({
     }
 
     try {
-      const text = buildImmediateAlertMessage({ type, context, reason, details, env });
+      const text = buildImmediateAlertMessage({ type, context, reason, details, env, config });
       const result = await sendMessage({
         token: env.TELEGRAM_BOT_TOKEN,
         chatId: env.TELEGRAM_CHAT_ID,
