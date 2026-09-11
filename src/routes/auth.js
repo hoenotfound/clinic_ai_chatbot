@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 const usersRepo = require("../db/usersRepo");
 const clinicConfig = require("../config/clinicConfig");
 const realtimeEvents = require("../utils/realtimeEvents");
+const { buildClientBranding } = require("../services/clientBrandingService");
 const { loginRateLimit, recordFailedAttempt, clearAttempts } = require("../middleware/loginRateLimit");
 const { verifyLoginCredentials } = require("../services/authCredentialService");
 const { requireAuth, requireCapability } = require("../middleware/requireAuth");
@@ -30,6 +31,14 @@ router.use((req, res, next) => {
     req.sessionOptions.secure = true;
   }
   next();
+});
+
+// The login screen needs the client identity before a staff session exists.
+// Expose only the small, sanitized branding surface that is already intended
+// to be public on that page. No operational configuration or credentials leave
+// the server through this endpoint.
+router.get("/branding", (req, res) => {
+  res.json(buildClientBranding(clinicConfig, process.env));
 });
 
 function validateDisplayName(value) {
