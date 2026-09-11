@@ -10,6 +10,7 @@ import LeadAssignmentBadge, {
   buildLeadAssignmentFilterOptions,
   matchesLeadAssignment,
 } from "../components/LeadAssignmentBadge";
+import { getBusinessTerminology } from "../utils/businessTerminology";
 import {
   messagingPolicyStatus,
   policyFailureExplanation,
@@ -121,7 +122,8 @@ function formatPolicyDate(value) {
 }
 
 export default function Inbox() {
-  const { username, permissions } = useAuth();
+  const { user, username, permissions } = useAuth();
+  const ui = getBusinessTerminology(user?.businessProfile || {});
   const canViewAllLeads = permissions.view_all_leads === true;
   const { toasts, showToast, dismissToast } = useToasts();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -619,7 +621,7 @@ export default function Inbox() {
       }
       await refreshConversations();
       if (result?.delivered === false) {
-        showToast("Message saved but WhatsApp delivery failed — the patient may not have received it. Please try resending.", "warning");
+        showToast(`Message saved but WhatsApp delivery failed — the ${ui.customerSingular} may not have received it. Please try resending.`, "warning");
       }
     } catch (err) {
       console.error("Failed to send message:", err);
@@ -664,7 +666,7 @@ export default function Inbox() {
       }
       await refreshConversations();
       if (result?.delivered === false) {
-        showToast("Image saved but WhatsApp delivery failed — the patient may not have received it. Please try resending.", "warning");
+        showToast(`Image saved but WhatsApp delivery failed — the ${ui.customerSingular} may not have received it. Please try resending.`, "warning");
       }
     } catch (err) {
       console.error("Failed to send image:", err);
@@ -691,7 +693,7 @@ export default function Inbox() {
       }
       await refreshConversations();
       if (result?.delivered === false) {
-        showToast("Voice message saved but WhatsApp delivery failed — the patient may not have received it. Please try recording again.", "warning");
+        showToast(`Voice message saved but WhatsApp delivery failed — the ${ui.customerSingular} may not have received it. Please try recording again.`, "warning");
       } else if (result?.transcribed === false) {
         showToast("Voice message sent. Its transcript couldn't be generated, but the recording was saved.", "info");
       }
@@ -715,6 +717,7 @@ export default function Inbox() {
         mobileThreadOpen={mobileThreadOpen}
         currentUsername={username}
         canViewAllLeads={canViewAllLeads}
+        customerPlural={ui.customerPlural}
       />
       <ThreadView
         key={selectedId ?? "no-conversation"}
@@ -740,6 +743,7 @@ export default function Inbox() {
         onToast={showToast}
         mobileThreadOpen={mobileThreadOpen}
         onBack={() => setMobileThreadOpen(false)}
+        customerSingular={ui.customerSingular}
       />
       <ContactDetailsDrawer
         open={contactDetailsOpen}
@@ -758,6 +762,7 @@ function ConversationList({
   mobileThreadOpen,
   currentUsername,
   canViewAllLeads,
+  customerPlural,
 }) {
   const [filters, setFilters] = useState({
     status: "all",
@@ -1037,7 +1042,7 @@ function ConversationList({
             title={canViewAllLeads ? "No conversations yet" : "No assigned conversations"}
             description={
               canViewAllLeads
-                ? "New patient messages will appear here automatically."
+                ? `New ${customerPlural} messages will appear here automatically.`
                 : "Leads assigned to you will appear here automatically."
             }
           />
@@ -1241,6 +1246,7 @@ function ThreadView({
   onToast,
   mobileThreadOpen,
   onBack,
+  customerSingular,
 }) {
   const bottomRef = useRef(null);
   const threadScrollRef = useRef(null);
@@ -1582,7 +1588,7 @@ function ThreadView({
           </div>
           <h2 className="mt-4 font-display text-base font-bold">Choose a conversation</h2>
           <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">
-            Select a patient to view messages and reply.
+            Select a {customerSingular} to view messages and reply.
           </p>
         </div>
       </div>
@@ -1884,7 +1890,7 @@ function ThreadView({
                   handleSubmit(e);
                 }
               }}
-              placeholder={policyBlocksComposer ? `${messagingPolicy.channelLabel} reply unavailable` : imageFile ? "Add a caption…" : contact.mode === "human" ? "Message this patient…" : "Message to take over from AI…"}
+              placeholder={policyBlocksComposer ? `${messagingPolicy.channelLabel} reply unavailable` : imageFile ? "Add a caption…" : contact.mode === "human" ? `Message this ${customerSingular}…` : "Message to take over from AI…"}
               rows={1}
               className="max-h-32 min-h-10 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2.5 text-sm leading-relaxed outline-none disabled:opacity-50 sm:px-2.5"
             />
