@@ -193,13 +193,13 @@ function buildImmediateAlertMessage({
   if (context.latest_customer_message) {
     lines.push(
       "",
-      "Latest Customer Message:",
+      `Latest ${labels.customerLabel} Message:`,
       clean(context.latest_customer_message).slice(0, LATEST_MESSAGE_LIMIT)
     );
   }
 
   const action = isDelivery
-    ? "Action: Check the failed message in Inbox and retry or contact the customer manually."
+    ? `Action: Check the failed message in Inbox and retry or contact the ${labels.customerSingular} manually.`
     : isBookingReady
       ? `Action: ${conversion.alertAction}`
       : "Action: Open the conversation and review/respond as soon as possible.";
