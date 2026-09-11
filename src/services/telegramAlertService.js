@@ -122,7 +122,7 @@ function buildConversationSummaryMessage({
       "AI Summary: Unavailable",
       "",
       "Recommended Action:",
-      "Open the Inbox, review the conversation manually, and follow up with the customer.",
+      `Open the Inbox, review the conversation manually, and follow up with the ${labels.customerSingular}.`,
     ];
 
     if (inboxUrl) {
