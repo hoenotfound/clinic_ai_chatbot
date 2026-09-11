@@ -79,11 +79,23 @@ function getOnboardingIndustryProfile(type) {
   return getIndustryProfile(normalized || type);
 }
 
+function applyProvisionedIdentity(profile, env = process.env) {
+  const displayName = String(env.CLIENT_DISPLAY_NAME || "").trim().slice(0, 100);
+  if (!displayName) return profile;
+  return {
+    ...profile,
+    businessName: displayName,
+    clinicName: displayName,
+  };
+}
+
 function getInitialOnboardingConfig(env = process.env) {
-  return getOnboardingIndustryProfile(getRequestedInitialBusinessType(env));
+  const profile = getOnboardingIndustryProfile(getRequestedInitialBusinessType(env));
+  return applyProvisionedIdentity(profile, env);
 }
 
 module.exports = {
+  applyProvisionedIdentity,
   buildFreshAestheticClinicProfile,
   getInitialOnboardingConfig,
   getOnboardingIndustryProfile,

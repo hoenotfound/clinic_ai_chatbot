@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { branding } from "../config/branding";
+import { useClientBranding } from "../hooks/useClientBranding";
 
 const LEAD_VIEW = ["view_assigned_leads", "view_all_leads"];
 const NAV_ITEMS = [
@@ -21,6 +21,7 @@ const NAV_ITEMS = [
 
 export default function Sidebar() {
   const { user, username, permissions, logout } = useAuth();
+  const branding = useClientBranding();
   const navigate = useNavigate();
   const visibleItems = NAV_ITEMS.filter((item) => {
     if (item.adminAlso && user?.role === "admin") return true;
@@ -35,11 +36,20 @@ export default function Sidebar() {
   return (
     <aside className="flex h-screen w-[4.25rem] shrink-0 flex-col bg-[var(--color-sidebar)] text-[var(--color-sidebar-text)] transition-[width] lg:w-60">
       <div className="flex items-center justify-center gap-2.5 px-3 py-5 lg:justify-start lg:px-5">
-        <img
-          src={branding.clientLogo}
-          alt={`${branding.clientName} logo`}
-          className="h-8 w-8 shrink-0 rounded-lg object-contain"
-        />
+        {branding.clientLogoUrl ? (
+          <img
+            src={branding.clientLogoUrl}
+            alt={`${branding.clientName} logo`}
+            className="h-8 w-8 shrink-0 rounded-lg object-contain"
+          />
+        ) : (
+          <div
+            aria-label={`${branding.clientName} logo`}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 text-xs font-bold text-white"
+          >
+            {branding.initials}
+          </div>
+        )}
         <span className="hidden truncate font-display text-[15px] font-bold text-white lg:inline">
           {branding.clientName}
         </span>
