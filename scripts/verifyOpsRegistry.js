@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const { createOpsPool, buildOpsPoolConfig } = require("../src/ops/db");
 const { createClientRegistryRepo } = require("../src/ops/clientRegistryRepo");
 const { createClientPoller } = require("../src/ops/clientPoller");
+const { resolveFleetTarget, TARGET_VALIDITY } = require("../src/ops/deploymentDrift");
 const { listMigrationFiles } = require("../src/ops/migrationRunner");
 const { assertOpsRegistryMode } = require("../src/ops/mode");
 const { createRequireOpsAdmin } = require("../src/ops/requireOpsAdmin");
@@ -51,6 +52,27 @@ function redactOpsText(value, env = process.env, clients = []) {
   return redactSensitiveText(value, sensitiveValues(env, clients));
 }
 
+function validateFleetTargetConfiguration(env = process.env) {
+  const configured = String(env.OPS_FLEET_TARGET_COMMIT || "").trim();
+  const registryEvidence = String(env.RENDER_GIT_COMMIT || env.OPS_REGISTRY_COMMIT || "").trim();
+  if (!configured && !registryEvidence) return null;
+
+  const target = resolveFleetTarget(env);
+  if (target.validity !== TARGET_VALIDITY.VALID) {
+    return {
+      ok: false,
+      label: target.error || "Fleet target commit evidence is invalid.",
+    };
+  }
+
+  return {
+    ok: true,
+    label: target.source === "configured"
+      ? "Pinned fleet target is a valid full Git commit SHA"
+      : "Registry deployment commit is a valid full Git commit SHA",
+  };
+}
+
 function validateConfiguration(env = process.env) {
   const checks = [];
 
@@ -74,6 +96,9 @@ function validateConfiguration(env = process.env) {
   } catch (error) {
     checks.push({ ok: false, label: redactOpsText(error.message, env) });
   }
+
+  const targetCheck = validateFleetTargetConfiguration(env);
+  if (targetCheck) checks.push(targetCheck);
 
   return checks;
 }
@@ -277,4 +302,5 @@ module.exports = {
   tokenFingerprint,
   usage,
   validateConfiguration,
+  validateFleetTargetConfiguration,
 };

@@ -7,6 +7,12 @@ const {
   lifecyclePolicy,
   normalizeClientLifecycle,
 } = require("./clientLifecycle");
+const {
+  deploymentDriftSummary,
+  driftForClient,
+  resolveFleetTarget,
+  sameCommit,
+} = require("./deploymentDrift");
 
 const READINESS_STATUSES = new Set([
   "ready",
@@ -27,13 +33,17 @@ function clientLifecycleStatus(client) {
   });
 }
 
+// Kept for API compatibility with the original version visibility fields.
+// New drift UI/API consumers should prefer deployment.driftStatus and
+// deployment.observedCommit because provisionedCommitSha is not proof of what
+// the running process is currently serving.
 function deploymentState(client, currentCommit) {
   const deployed = client?.lastSnapshot?.deployment?.commitSha
     || client?.provisionedCommitSha
     || null;
   if (!deployed || !currentCommit) return { state: "unknown", deployedCommit: deployed };
   return {
-    state: deployed === currentCommit ? "current" : "different",
+    state: sameCommit(deployed, currentCommit) ? "current" : "different",
     deployedCommit: deployed,
   };
 }
@@ -78,7 +88,9 @@ function presentClient(client, {
     fallback: LEGACY_CLIENT_LIFECYCLE,
   });
   const status = fleetStatus(client, { now, offlineAfterMs });
-  const currentCommit = String(env.RENDER_GIT_COMMIT || env.OPS_REGISTRY_COMMIT || "").trim() || null;
+  const registryCommit = String(env.RENDER_GIT_COMMIT || env.OPS_REGISTRY_COMMIT || "").trim() || null;
+  const target = resolveFleetTarget(env);
+  const drift = driftForClient(client, target);
   const snapshot = client.lastSnapshot || null;
   const readiness = snapshot?.readiness || null;
   const knownReadinessStatus = lastKnownReadinessStatus(client);
@@ -107,10 +119,12 @@ function presentClient(client, {
     testing: Array.isArray(readiness?.testingRequired) ? readiness.testingRequired : [],
     warnings: Array.isArray(readiness?.warnings) ? readiness.warnings : [],
     deployment: {
-      ...deploymentState(client, currentCommit),
-      registryCommit: currentCommit,
+      ...deploymentState(client, registryCommit),
+      ...drift,
+      registryCommit,
       startedAt: snapshot?.deployment?.startedAt || null,
       appVersion: snapshot?.deployment?.appVersion || null,
+      lastObservedAt: drift.observedCommit ? client.lastSuccessAt || null : null,
     },
     render: client.render,
     neon: client.neon,
@@ -156,10 +170,12 @@ function createFleetService({
 
   async function listFleet() {
     const clients = (await repo.listClients()).map(present);
+    const target = resolveFleetTarget(env);
     return {
       schemaVersion: 1,
       generatedAt: now().toISOString(),
       summary: fleetSummary(clients),
+      deploymentSummary: deploymentDriftSummary(clients, target),
       clients,
     };
   }
@@ -234,11 +250,10 @@ function createFleetService({
 
     await Promise.all(Array.from({ length: concurrency }, () => worker()));
     const completed = results.filter(Boolean);
+    const fleet = await listFleet();
     return {
-      schemaVersion: 1,
+      ...fleet,
       refreshedAt: now().toISOString(),
-      summary: fleetSummary(completed),
-      clients: completed,
       refreshedCount: completed.length,
       skippedCount: allClients.length - clients.length,
       cancelled: signal?.aborted === true,

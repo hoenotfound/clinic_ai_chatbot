@@ -21,20 +21,21 @@ const sharedStyles = `
   *{box-sizing:border-box}body{margin:0}.shell{max-width:1180px;margin:0 auto;padding:32px 20px 56px}
   h1{margin:0;font-size:28px}h2{font-size:17px;margin:0 0 14px}.sub{color:#667085;margin:7px 0 24px}.toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}.spaced-toolbar{margin-top:18px}
   button,.button{border:0;border-radius:10px;background:#5b5bd6;color:white;padding:10px 14px;font-weight:650;cursor:pointer;text-decoration:none;display:inline-block}
-  button:disabled{opacity:.55;cursor:not-allowed}.cards{display:grid;grid-template-columns:repeat(6,minmax(115px,1fr));gap:12px;margin:20px 0}
+  button:disabled{opacity:.55;cursor:not-allowed}.cards{display:grid;grid-template-columns:repeat(6,minmax(115px,1fr));gap:12px;margin:20px 0}.version-cards{grid-template-columns:2fr repeat(3,minmax(115px,1fr));margin-top:0}
   select{border:1px solid #d0d5dd;border-radius:10px;background:white;color:#172033;padding:9px 34px 9px 10px;font-weight:650}.lifecycle-control{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.lifecycle-control .label{text-transform:none;letter-spacing:0;font-size:13px}
   .card,.panel{background:white;border:1px solid #e4e7ec;border-radius:14px;box-shadow:0 1px 2px rgba(16,24,40,.03)}
-  .card{padding:16px}.card b{display:block;font-size:24px;margin-top:6px}.label{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#667085}
-  .panel{overflow:auto}table{width:100%;border-collapse:collapse;min-width:980px}th,td{padding:14px 16px;text-align:left;border-bottom:1px solid #eef0f3;font-size:14px}
+  .card{padding:16px}.card b{display:block;font-size:24px;margin-top:6px}.card .commit-value{font-size:17px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}.label{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#667085}
+  .panel{overflow:auto}table{width:100%;border-collapse:collapse;min-width:1040px}th,td{padding:14px 16px;text-align:left;border-bottom:1px solid #eef0f3;font-size:14px}
   th{font-size:12px;text-transform:uppercase;color:#667085;background:#fafbfc}.client{font-weight:700}.client a{color:#172033;text-decoration:none}.client a:hover{text-decoration:underline}.muted{color:#667085;font-size:12px;margin-top:3px}
   .badge{display:inline-flex;align-items:center;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:700;background:#eef2f6}
   .ready{background:#e8f7ee;color:#157347}.ready_with_warnings{background:#fff5d6;color:#8a6200}.needs_testing{background:#fff0dc;color:#9a4c00}.blocked{background:#feecec;color:#b42318}.offline{background:#eef2f6;color:#475467}
   .lifecycle-setup{background:#eef4ff;color:#3538cd}.lifecycle-trial{background:#f4ebff;color:#6941c6}.lifecycle-live{background:#e8f7ee;color:#157347}.lifecycle-paused{background:#eef2f6;color:#475467}
+  .version-current{background:#e8f7ee;color:#157347}.version-drifted{background:#fff0dc;color:#9a4c00}.version-unknown{background:#eef2f6;color:#475467}
   .channels{display:flex;gap:5px;flex-wrap:wrap}.channel{background:#f2f4f7;border-radius:7px;padding:4px 7px;font-size:11px;font-weight:650}
   .error{color:#b42318;max-width:260px}.empty{text-align:center;padding:40px;color:#667085}.empty h2{color:#172033;margin-bottom:8px}.empty p{margin:8px auto;max-width:650px;line-height:1.5}.empty code{display:inline-block;margin-top:10px;padding:9px 11px;border-radius:8px;background:#f2f4f7;color:#344054;font-size:12px}.back{color:#5b5bd6;text-decoration:none;font-weight:650;font-size:14px}
   .detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:20px 0}.detail-panel{padding:18px}.kv{display:grid;grid-template-columns:160px 1fr;gap:9px 16px;font-size:14px}.kv dt{color:#667085}.kv dd{margin:0;overflow-wrap:anywhere}
   .section-list{display:grid;gap:9px}.issue-row,.channel-row{border:1px solid #eef0f3;border-radius:10px;padding:12px}.issue-row b,.channel-row b{display:block;margin-bottom:4px}.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  @media(max-width:900px){.cards{grid-template-columns:repeat(3,1fr)}}@media(max-width:760px){.cards{grid-template-columns:repeat(2,1fr)}.detail-grid{grid-template-columns:1fr}.shell{padding:22px 14px}.kv{grid-template-columns:120px 1fr}}
+  @media(max-width:900px){.cards,.version-cards{grid-template-columns:repeat(2,1fr)}}@media(max-width:760px){.cards,.version-cards{grid-template-columns:1fr}.detail-grid{grid-template-columns:1fr}.shell{padding:22px 14px}.kv{grid-template-columns:120px 1fr}}
 `;
 
 function dashboardHtml(nonce = "") {
@@ -50,24 +51,32 @@ function dashboardHtml(nonce = "") {
 <body>
   <main class="shell">
     <div class="toolbar">
-      <div><h1>DA Chatbot Operations</h1><p class="sub">Fleet readiness across isolated client deployments. Only Live clients are background monitored.</p></div>
+      <div><h1>DA Chatbot Operations</h1><p class="sub">Fleet readiness and deployment drift across isolated client deployments. Only Live clients are background monitored.</p></div>
       <button id="refresh">Refresh live clients</button>
     </div>
     <section class="cards" id="summary"></section>
+    <section class="cards version-cards" id="deployment-summary"></section>
     <section class="panel"><div id="table" class="empty">Loading clients…</div></section>
   </main>
 <script nonce="${safeNonce}">
 const escapeHtml = ${escapeHtml.toString()};
 const statusLabel = {ready:"Ready",ready_with_warnings:"Ready with warnings",needs_testing:"Testing required",blocked:"Blocked",offline:"Offline"};
 const lifecycleLabel = {setup:"Setup",trial:"Trial",live:"Live",paused:"Paused"};
+const driftLabel = {current:"Observed current",drifted:"Observed drifted",unknown:"Unknown"};
+const targetSourceLabel = {configured:"Pinned target",registry_deployment:"Registry deployment",unavailable:"Unavailable"};
+const driftReasonLabel = {matches_target:"Observed commit matches target",differs_from_target:"Observed commit differs from target",target_unavailable:"Fleet target unavailable",target_invalid:"Fleet target invalid",observation_unavailable:"Running commit not observed yet",observation_invalid:"Client returned an invalid commit value"};
 const fmt = value => value ? new Date(value).toLocaleString() : "—";
+const shortCommit = value => value ? String(value).slice(0,8) : "—";
 const channelName = value => typeof value === "string" ? value : (value?.channel || value?.name || "unknown");
 const actionHeaders = {"x-ops-action":"1"};
+function targetCardValue(d){if(d.targetValidity==='invalid')return 'Invalid';if(d.targetCommit)return shortCommit(d.targetCommit);return 'Unavailable';}
+function targetCardHelp(d){if(d.targetValidity==='invalid')return d.targetError||'The configured fleet target is not a valid full Git commit SHA.';return 'Exact full-SHA comparison only. Read-only visibility.';}
 async function load() {
   const response = await fetch("/api/clients", {headers:{accept:"application/json"}});
   if (!response.ok) throw new Error("Could not load registry");
   const data = await response.json();
   const s = data.summary || {};
+  const d = data.deploymentSummary || {};
   document.getElementById("summary").innerHTML = [
     ["Clients",s.total||0,""],
     ["Ready",s.ready||0,"ready"],
@@ -76,6 +85,12 @@ async function load() {
     ["Blocked",s.blocked||0,"blocked"],
     ["Offline",s.offline||0,"offline"]
   ].map(([label,count,cls]) => '<div class="card"><span class="label">'+label+'</span><b class="'+cls+'">'+count+'</b></div>').join("");
+  document.getElementById("deployment-summary").innerHTML = [
+    '<div class="card"><span class="label">Fleet target · '+escapeHtml(targetSourceLabel[d.targetSource]||d.targetSource||"Unavailable")+'</span><b class="commit-value">'+escapeHtml(targetCardValue(d))+'</b><div class="muted">'+escapeHtml(targetCardHelp(d))+'</div></div>',
+    '<div class="card"><span class="label">Observed current</span><b class="version-current">'+escapeHtml(d.current||0)+'</b></div>',
+    '<div class="card"><span class="label">Observed drifted</span><b class="version-drifted">'+escapeHtml(d.drifted||0)+'</b></div>',
+    '<div class="card"><span class="label">Version unknown</span><b class="version-unknown">'+escapeHtml(d.unknown||0)+'</b></div>'
+  ].join("");
   const rows = data.clients || [];
   if (!rows.length) {
     document.getElementById("table").innerHTML = '<div class="empty"><h2>No client deployments registered</h2><p>Provisioning can enroll new clients automatically. New clients start in Setup so background monitoring does not keep staging services awake.</p><code>npm run provision-client -- --ops-enrollment required --execute ...</code><p class="muted">Move a client to Live only after its hosting is production-ready. Run npm run ops-registry:verify before relying on this dashboard in production.</p></div>';
@@ -89,13 +104,17 @@ async function load() {
       const detailHref='/clients/'+encodeURIComponent(c.clientSlug);
       const lifecycle=c.lifecycleStatus||'live';
       const monitoring=c.backgroundPollingEnabled?'Automatic monitoring':'No background polling';
+      const drift=deployment.driftStatus||'unknown';
+      const reason=driftReasonLabel[deployment.driftReason]||deployment.driftReason||'Version evidence unavailable';
+      const versionPair='Observed '+shortCommit(deployment.observedCommit)+' · Target '+shortCommit(deployment.targetCommit);
+      const versionNote=drift==='unknown'?versionPair+' · '+reason:versionPair;
       return '<tr><td><div class="client"><a href="'+detailHref+'">'+escapeHtml(c.displayName)+'</a></div><div class="muted">'+escapeHtml(c.clientSlug)+'</div></td>'+
         '<td><span class="badge lifecycle-'+escapeHtml(lifecycle)+'">'+escapeHtml(lifecycleLabel[lifecycle]||lifecycle)+'</span><div class="muted">'+escapeHtml(monitoring)+'</div></td>'+
         '<td>'+escapeHtml(c.industry||"—")+'</td>'+
         '<td><div class="channels">'+channels+'</div></td>'+
         '<td><span class="badge '+escapeHtml(c.status)+'">'+escapeHtml(statusLabel[c.status]||c.status)+'</span></td>'+
         '<td>'+escapeHtml(fmt(c.lastSuccessAt))+'</td>'+
-        '<td>'+escapeHtml(deployment.state==="current"?"Current":deployment.state==="different"?"Different":"Unknown")+'<div class="muted">'+escapeHtml((deployment.deployedCommit||"").slice(0,8))+'</div></td>'+
+        '<td><span class="badge version-'+escapeHtml(drift)+'">'+escapeHtml(driftLabel[drift]||drift)+'</span><div class="muted">'+escapeHtml(versionNote)+'</div></td>'+
         '<td class="'+(issue?"error":"")+'">'+escapeHtml(issue||"—")+'</td></tr>';
     }).join("")+'</tbody></table>';
 }
@@ -151,6 +170,10 @@ const escapeHtml = ${escapeHtml.toString()};
 const clientSlug = ${safeSlug};
 const statusLabel = {ready:"Ready",ready_with_warnings:"Ready with warnings",needs_testing:"Testing required",blocked:"Blocked",offline:"Offline"};
 const lifecycleLabel = {setup:"Setup",trial:"Trial",live:"Live",paused:"Paused"};
+const driftLabel = {current:"Observed current",drifted:"Observed drifted",unknown:"Unknown"};
+const targetSourceLabel = {configured:"Pinned target",registry_deployment:"Registry deployment",unavailable:"Unavailable"};
+const targetValidityLabel = {valid:"Valid",invalid:"Invalid",unavailable:"Unavailable"};
+const driftReasonLabel = {matches_target:"Observed commit matches target",differs_from_target:"Observed commit differs from target",target_unavailable:"Fleet target unavailable",target_invalid:"Fleet target invalid",observation_unavailable:"Running commit not observed yet",observation_invalid:"Client returned an invalid commit value"};
 const fmt = value => value ? new Date(value).toLocaleString() : "—";
 const actionHeaders = {"x-ops-action":"1"};
 const actionJsonHeaders = {"x-ops-action":"1","content-type":"application/json"};
@@ -159,6 +182,15 @@ function lifecycleHelp(status){
   if(status==='live') return 'Background monitoring is enabled on the normal fleet interval.';
   if(status==='paused') return 'All Registry polling is paused until the lifecycle is changed.';
   return 'Background polling is off. Use Refresh client only when you want to wake and test this setup/trial deployment.';
+}
+function changedSinceProvisioning(value){return value===true?'Yes':value===false?'No':'Unknown';}
+function versionObservationHelp(c,d,lifecycle){
+  if(d.targetValidity==='invalid') return d.targetError||'The configured fleet target is invalid. Fix it before interpreting drift.';
+  if(d.driftReason==='observation_invalid') return 'The client returned a commit value that is not a full hexadecimal Git SHA, so drift is not inferred from it.';
+  if(lifecycle==='paused') return 'This is the last successful version observation. Paused clients are not polled until reactivated.';
+  if(lifecycle==='setup'||lifecycle==='trial') return 'This is the last successful version observation. Setup/Trial clients are not background-polled; use Refresh client before relying on the version state.';
+  if(c.status==='offline') return 'This version came from the last successful poll. The client is currently offline, so the running version cannot be re-confirmed right now.';
+  return 'Version evidence comes from the running client during its latest successful readiness poll.';
 }
 async function load() {
   const response=await fetch('/api/clients/'+encodeURIComponent(clientSlug),{headers:{accept:'application/json'}});
@@ -173,10 +205,13 @@ async function load() {
   refreshButton.disabled=c.manualRefreshAllowed===false;
   refreshButton.title=c.manualRefreshAllowed===false?'Paused clients cannot be refreshed until reactivated.':'';
   const d=c.deployment||{};
+  const drift=d.driftStatus||'unknown';
+  const reason=driftReasonLabel[d.driftReason]||d.driftReason||'Version evidence unavailable';
+  const targetValidation=d.targetError||targetValidityLabel[d.targetValidity]||d.targetValidity||'Unavailable';
   const channels=(c.channels||[]).map(ch => '<div class="channel-row"><b>'+escapeHtml(ch.channel||'Channel')+' · '+escapeHtml(ch.status||'unknown')+'</b><div>Last verified round trip: '+escapeHtml(fmt(ch.lastVerifiedRoundTripAt))+'</div></div>').join('') || '<div class="muted">No purchased-channel readiness has been recorded yet.</div>';
   document.getElementById('content').outerHTML='<div id="content">'+
     '<div class="detail-grid">'+
-      '<section class="panel detail-panel"><h2>Deployment</h2><dl class="kv"><dt>Render</dt><dd>'+escapeHtml(c.render?.serviceName||c.baseUrl||'—')+'</dd><dt>Database</dt><dd>'+escapeHtml(c.neon?.projectName||'Configured separately')+'</dd><dt>Commit</dt><dd>'+escapeHtml(d.deployedCommit||'Unknown')+'</dd><dt>Version</dt><dd>'+escapeHtml(d.state==='current'?'Current':d.state==='different'?'Different from registry deployment':'Unknown')+'</dd><dt>App version</dt><dd>'+escapeHtml(d.appVersion||'—')+'</dd></dl></section>'+
+      '<section class="panel detail-panel"><h2>Deployment & version drift</h2><dl class="kv"><dt>Render</dt><dd>'+escapeHtml(c.render?.serviceName||c.baseUrl||'—')+'</dd><dt>Version state</dt><dd><span class="badge version-'+escapeHtml(drift)+'">'+escapeHtml(driftLabel[drift]||drift)+'</span></dd><dt>Reason</dt><dd>'+escapeHtml(reason)+'</dd><dt>Observed commit</dt><dd>'+escapeHtml(d.observedCommit||'Unknown')+'</dd><dt>Fleet target</dt><dd>'+escapeHtml(d.targetCommit||'Unknown')+'</dd><dt>Target source</dt><dd>'+escapeHtml(targetSourceLabel[d.targetSource]||d.targetSource||'Unavailable')+'</dd><dt>Target validation</dt><dd class="'+(d.targetValidity==='invalid'?'error':'')+'">'+escapeHtml(targetValidation)+'</dd><dt>Provisioned commit</dt><dd>'+escapeHtml(d.provisionedCommit||'Unknown')+'</dd><dt>Changed since provisioning</dt><dd>'+escapeHtml(changedSinceProvisioning(d.changedSinceProvisioning))+'</dd><dt>Registry commit</dt><dd>'+escapeHtml(d.registryCommit||'Unknown')+'</dd><dt>App version</dt><dd>'+escapeHtml(d.appVersion||'—')+'</dd><dt>Process started</dt><dd>'+escapeHtml(fmt(d.startedAt))+'</dd><dt>Version observed</dt><dd>'+escapeHtml(fmt(d.lastObservedAt))+'</dd></dl><p class="muted">'+escapeHtml(versionObservationHelp(c,d,lifecycle))+' Deployment drift is read-only; the Registry does not redeploy, upgrade, or change client configuration.</p></section>'+
       '<section class="panel detail-panel"><h2>Lifecycle & monitoring</h2><dl class="kv"><dt>Lifecycle</dt><dd>'+escapeHtml(lifecycleLabel[lifecycle]||lifecycle)+'</dd><dt>Background polling</dt><dd>'+escapeHtml(c.backgroundPollingEnabled?'Enabled':'Disabled')+'</dd><dt>Manual refresh</dt><dd>'+escapeHtml(c.manualRefreshAllowed===false?'Disabled':'Available')+'</dd><dt>Policy</dt><dd>'+escapeHtml(lifecycleHelp(lifecycle))+'</dd></dl><p class="muted">Lifecycle controls Registry polling only. It does not change the Render or Neon billing plan.</p></section>'+
       '<section class="panel detail-panel"><h2>Contact</h2><dl class="kv"><dt>Last attempt</dt><dd>'+escapeHtml(fmt(c.lastPollAttemptAt))+'</dd><dt>Last success</dt><dd>'+escapeHtml(fmt(c.lastSuccessAt))+'</dd><dt>Last known readiness</dt><dd>'+escapeHtml(statusLabel[c.lastKnownReadinessStatus]||c.lastKnownReadinessStatus||'Unknown')+'</dd><dt>HTTP status</dt><dd>'+escapeHtml(c.lastHttpStatus??'—')+'</dd><dt>Current error</dt><dd class="'+(c.lastError?'error':'')+'">'+escapeHtml(c.lastError||'None')+'</dd></dl></section>'+
     '</div>'+
