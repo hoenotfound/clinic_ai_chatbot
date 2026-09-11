@@ -114,6 +114,20 @@ test("clinic Telegram conversation summaries preserve the existing labels", () =
   assert.match(text, /Appointment: Saturday afternoon/);
 });
 
+test("clinic Telegram manual-review summaries use patient wording", () => {
+  const text = buildConversationSummaryMessage({
+    lead: lead({ treatment_interest: "HIFU", branch_name: "Puchong" }),
+    score: {
+      summaryUnavailable: true,
+      alertType: "ai_scoring_failed",
+    },
+    config: clinic,
+  });
+
+  assert.match(text, /follow up with the patient\./);
+  assert.doesNotMatch(text, /follow up with the customer\./);
+});
+
 test("renovation human and delivery alerts use neutral service/location labels", () => {
   for (const type of ["human_intervention", "delivery_failure"]) {
     const text = buildImmediateAlertMessage({
@@ -131,6 +145,23 @@ test("renovation human and delivery alerts use neutral service/location labels",
     assert.match(text, /Business location: Cheras Showroom/);
     assert.doesNotMatch(text, /Treatment:|Branch:/);
   }
+});
+
+test("clinic immediate alerts use patient wording", () => {
+  const text = buildImmediateAlertMessage({
+    type: "delivery_failure",
+    context: {
+      ...lead({ treatment_interest: "HIFU", branch_name: "Puchong" }),
+      temperature: "warm",
+      latest_customer_message: "Is HIFU suitable for me?",
+    },
+    reason: "Delivery failed.",
+    config: clinic,
+  });
+
+  assert.match(text, /Latest Patient Message:/);
+  assert.match(text, /contact the patient manually\./);
+  assert.doesNotMatch(text, /Latest Customer Message:|contact the customer manually\./);
 });
 
 test("live portal and permission sources do not keep the known clinic-only copy leaks", () => {
