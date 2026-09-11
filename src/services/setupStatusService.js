@@ -80,6 +80,7 @@ function definitions(env = process.env) {
     : "gemini";
   const facebookConfigured = configured(env.FACEBOOK_PAGE_ID, env.FACEBOOK_PAGE_ACCESS_TOKEN);
   const instagramConfigured = configured(env.INSTAGRAM_PAGE_ID, env.INSTAGRAM_PAGE_ACCESS_TOKEN);
+  const mediaIsolation = mediaStorage.getMediaIsolationStatus(env);
 
   return [
     { key: "database", group: "Core system", label: "Database", optional: false, isConfigured: true },
@@ -102,7 +103,18 @@ function definitions(env = process.env) {
     { key: "facebook", group: "Messaging channels", label: "Facebook Messenger", optional: true, isConfigured: facebookConfigured },
     { key: "instagram", group: "Messaging channels", label: "Instagram", optional: true, isConfigured: instagramConfigured },
     { key: "meta_webhook", group: "Messaging channels", label: "Facebook & Instagram webhook", optional: true, isConfigured: (facebookConfigured || instagramConfigured) && configured(env.META_APP_SECRET, env.META_VERIFY_TOKEN) },
-    { key: "r2", group: "Supporting services", label: "Media storage", optional: false, isConfigured: configured(env.R2_ACCOUNT_ID, env.R2_ACCESS_KEY_ID, env.R2_SECRET_ACCESS_KEY, env.R2_BUCKET_NAME) },
+    {
+      key: "r2",
+      group: "Supporting services",
+      label: "Media storage",
+      optional: false,
+      isConfigured: configured(env.R2_ACCOUNT_ID, env.R2_ACCESS_KEY_ID, env.R2_SECRET_ACCESS_KEY, env.R2_BUCKET_NAME),
+      meta: {
+        isolationMode: mediaIsolation.mode,
+        mediaNamespace: mediaIsolation.prefix,
+        isolationReason: mediaIsolation.reason,
+      },
+    },
     { key: "telegram", group: "Supporting services", label: "Telegram alerts", optional: true, isConfigured: text(env.TELEGRAM_ALERTS_ENABLED).toLowerCase() === "true" && configured(env.TELEGRAM_BOT_TOKEN, env.TELEGRAM_CHAT_ID) },
     { key: "meta_marketing", group: "Supporting services", label: "Meta Ads enrichment", optional: true, isConfigured: Boolean(text(env.META_MARKETING_ACCESS_TOKEN)) },
   ];
@@ -260,6 +272,22 @@ function mergeOverview(
       );
     }
     item ||= result(definition.key, "warning", "Configured, but not checked yet.", null);
+
+    if (
+      definition.key === "r2" &&
+      definition.meta?.isolationMode !== "isolated" &&
+      item.status === "ready"
+    ) {
+      item = result(
+        "r2",
+        "warning",
+        definition.meta?.isolationReason === "invalid_client_slug"
+          ? "R2 is connected, but CLIENT_SLUG does not produce a safe client media namespace."
+          : "R2 is connected, but CLIENT_SLUG is missing, so new media would use the legacy shared namespace.",
+        item.checkedAt,
+        { reason: definition.meta?.isolationReason || "client_slug_missing" }
+      );
+    }
 
     const merged = {
       ...definition.meta,
@@ -494,19 +522,66 @@ function createSetupStatusService({
     if (!definition.isConfigured) {
       return result("r2", "error", "R2 media storage configuration is incomplete.", checkedAt);
     }
+    const isolation = mediaStorage.getMediaIsolationStatus(env);
     let key = null;
     try {
       key = await storage.uploadMedia(
         Buffer.from("clinic-ai-setup-check", "utf8"),
         "text/plain",
-        { contactId: "setup-check" }
+        { contactId: "setup-check", env }
       );
       await storage.deleteMedia(key);
+      const uploadedKey = key;
       key = null;
-      return result("r2", "ready", "A private test object was uploaded and deleted successfully.", checkedAt);
+
+      if (!isolation.prefix) {
+        return result(
+          "r2",
+          "warning",
+          isolation.reason === "invalid_client_slug"
+            ? "R2 works, but CLIENT_SLUG does not produce a safe client media namespace."
+            : "R2 works, but CLIENT_SLUG is missing, so new media uses the legacy shared namespace.",
+          checkedAt,
+          {
+            isolationMode: isolation.mode,
+            mediaNamespace: null,
+            reason: isolation.reason,
+          }
+        );
+      }
+
+      if (!String(uploadedKey).startsWith(`${isolation.prefix}/`)) {
+        return result(
+          "r2",
+          "warning",
+          `R2 works, but the test object was not written under the expected ${isolation.prefix}/ namespace.`,
+          checkedAt,
+          {
+            isolationMode: "mismatch",
+            mediaNamespace: isolation.prefix,
+            reason: "client_namespace_mismatch",
+          }
+        );
+      }
+
+      return result(
+        "r2",
+        "ready",
+        `A private test object was uploaded and deleted successfully under ${isolation.prefix}/.`,
+        checkedAt,
+        {
+          isolationMode: isolation.mode,
+          mediaNamespace: isolation.prefix,
+          reason: null,
+        }
+      );
     } catch (err) {
       if (key) await storage.deleteMedia(key).catch(() => {});
-      return result("r2", "error", privateError(err, "R2 media storage check failed."), checkedAt);
+      return result("r2", "error", privateError(err, "R2 media storage check failed."), checkedAt, {
+        isolationMode: isolation.mode,
+        mediaNamespace: isolation.prefix,
+        reason: isolation.reason,
+      });
     }
   }
 
