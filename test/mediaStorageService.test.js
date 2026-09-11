@@ -3,6 +3,93 @@ const assert = require("node:assert/strict");
 
 const mediaStorage = require("../src/services/mediaStorageService");
 
+test("new permanent media keys are isolated by client slug", () => {
+  const common = {
+    kind: "messages",
+    contactId: 42,
+    mimeType: "image/jpeg",
+    now: 1789143000000,
+    id: "fixed-id",
+  };
+
+  const clientA = mediaStorage.buildMediaObjectKey({
+    ...common,
+    env: { CLIENT_SLUG: "acme-renovation" },
+  });
+  const clientB = mediaStorage.buildMediaObjectKey({
+    ...common,
+    env: { CLIENT_SLUG: "beleco-clinic" },
+  });
+
+  assert.equal(
+    clientA,
+    "clients/acme-renovation/messages/42/1789143000000-fixed-id.jpg"
+  );
+  assert.equal(
+    clientB,
+    "clients/beleco-clinic/messages/42/1789143000000-fixed-id.jpg"
+  );
+  assert.notEqual(clientA, clientB);
+});
+
+test("temporary Meta media uses the same client namespace", () => {
+  const key = mediaStorage.buildMediaObjectKey({
+    kind: "meta-outbound",
+    contactId: 42,
+    mimeType: "audio/ogg",
+    now: 1789143000000,
+    id: "fixed-id",
+    env: { CLIENT_SLUG: "acme-renovation" },
+  });
+
+  assert.equal(
+    key,
+    "clients/acme-renovation/meta-outbound/42/1789143000000-fixed-id.ogg"
+  );
+});
+
+test("client and contact path components cannot escape the media namespace", () => {
+  const key = mediaStorage.buildMediaObjectKey({
+    kind: "messages",
+    contactId: "../../other/client",
+    mimeType: "image/png",
+    now: 1,
+    id: "../unsafe-id",
+    env: { CLIENT_SLUG: "../ACME / West\\.." },
+  });
+
+  assert.equal(mediaStorage.sanitizeClientSlug("../ACME / West\\.."), "acme-west");
+  assert.equal(
+    key,
+    "clients/acme-west/messages/..-..-other-client/1-..-unsafe-id.png"
+  );
+  assert.equal(key.includes("/../"), false);
+});
+
+test("missing client slug keeps the historical unprefixed key shape", () => {
+  const isolation = mediaStorage.getMediaIsolationStatus({});
+  const key = mediaStorage.buildMediaObjectKey({
+    kind: "messages",
+    contactId: "setup-check",
+    mimeType: "application/octet-stream",
+    now: 123,
+    id: "legacy",
+    env: {},
+  });
+
+  assert.deepEqual(isolation, {
+    mode: "legacy",
+    clientSlug: null,
+    prefix: null,
+    reason: "client_slug_missing",
+  });
+  assert.equal(key, "messages/setup-check/123-legacy.bin");
+  assert.equal(
+    mediaStorage.applyClientNamespace("messages/12/existing.jpg", {}),
+    "messages/12/existing.jpg"
+  );
+});
+
 test("R2 presigned GET URL matches AWS SigV4 for a fixed request", (t) => {
   const original = {
     accountId: process.env.R2_ACCOUNT_ID,
