@@ -273,22 +273,6 @@ function mergeOverview(
     }
     item ||= result(definition.key, "warning", "Configured, but not checked yet.", null);
 
-    if (
-      definition.key === "r2" &&
-      definition.meta?.isolationMode !== "isolated" &&
-      item.status === "ready"
-    ) {
-      item = result(
-        "r2",
-        "warning",
-        definition.meta?.isolationReason === "invalid_client_slug"
-          ? "R2 is connected, but CLIENT_SLUG does not produce a safe client media namespace."
-          : "R2 is connected, but CLIENT_SLUG is missing, so new media would use the legacy shared namespace.",
-        item.checkedAt,
-        { reason: definition.meta?.isolationReason || "client_slug_missing" }
-      );
-    }
-
     const merged = {
       ...definition.meta,
       key: definition.key,
@@ -537,10 +521,10 @@ function createSetupStatusService({
       if (!isolation.prefix) {
         return result(
           "r2",
-          "warning",
+          "ready",
           isolation.reason === "invalid_client_slug"
-            ? "R2 works, but CLIENT_SLUG does not produce a safe client media namespace."
-            : "R2 works, but CLIENT_SLUG is missing, so new media uses the legacy shared namespace.",
+            ? "A private R2 test object was uploaded and deleted successfully, but CLIENT_SLUG does not produce a client media namespace."
+            : "A private R2 test object was uploaded and deleted successfully. CLIENT_SLUG is missing, so new media uses the legacy unprefixed namespace.",
           checkedAt,
           {
             isolationMode: isolation.mode,
