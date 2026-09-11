@@ -1,5 +1,7 @@
 const https = require("https");
 const telegramAlertRepo = require("../db/telegramAlertRepo");
+const clinicConfig = require("../config/clinicConfig");
+const { getOperationalLabels } = require("../utils/businessTerminology");
 
 const TELEGRAM_MESSAGE_LIMIT = 4000;
 const TELEGRAM_TIMEOUT_MS = 8000;
@@ -91,7 +93,13 @@ function limitTelegramMessage(lines) {
     : `${message.slice(0, TELEGRAM_MESSAGE_LIMIT - 3)}...`;
 }
 
-function buildConversationSummaryMessage({ lead, score, env = process.env }) {
+function buildConversationSummaryMessage({
+  lead,
+  score,
+  env = process.env,
+  config = clinicConfig,
+}) {
+  const labels = getOperationalLabels(config);
   const name = clean(lead.name || lead.whatsapp_profile_name, "Unknown contact");
   const inboxUrl = buildInboxUrl(lead.contact_id, env);
   const currentTemperature = temperatureLabel(lead.current_temperature);
@@ -106,15 +114,15 @@ function buildConversationSummaryMessage({ lead, score, env = process.env }) {
       "",
       `Stage: ${clean(lead.stage_name)}`,
       `Current Temperature: ${currentTemperature}`,
-      `Treatment: ${clean(lead.treatment_interest)}`,
-      `Branch: ${clean(lead.branch_name)}`,
+      `${labels.serviceInterestLabel}: ${clean(lead.treatment_interest)}`,
+      `${labels.locationLabel}: ${clean(lead.branch_name)}`,
       `Assigned to: ${assignedOwner}`,
-      `Appointment: ${formatAppointmentForLead(lead)}`,
+      `${labels.nextStepTimingLabel}: ${formatAppointmentForLead(lead)}`,
       "",
       "AI Summary: Unavailable",
       "",
       "Recommended Action:",
-      "Open the Inbox, review the conversation manually, and follow up with the customer.",
+      `Open the Inbox, review the conversation manually, and follow up with the ${labels.customerSingular}.`,
     ];
 
     if (inboxUrl) {
@@ -137,10 +145,10 @@ function buildConversationSummaryMessage({ lead, score, env = process.env }) {
     `Stage: ${clean(lead.stage_name)}`,
     `Current Temperature: ${currentTemperature}`,
     `AI Review: ${aiTemperature} (${clean(score?.confidence, "unknown")} confidence)`,
-    `Treatment: ${treatment}`,
-    `Branch: ${branch}`,
+    `${labels.serviceInterestLabel}: ${treatment}`,
+    `${labels.locationLabel}: ${branch}`,
     `Assigned to: ${assignedOwner}`,
-    `Appointment: ${appointment}`,
+    `${labels.nextStepTimingLabel}: ${appointment}`,
     `Main concern: ${clean(summary.mainConcern)}`,
     "",
     "Chat Summary:",
@@ -216,6 +224,7 @@ function createTelegramAlertService({
   env = process.env,
   repository = telegramAlertRepo,
   sendMessage = postTelegramMessage,
+  config = clinicConfig,
 } = {}) {
   return {
     async queueConversationSummary({ leadId, throughMessageId, score }) {
@@ -258,6 +267,7 @@ function createTelegramAlertService({
             lead: claim,
             score: claim.score_data,
             env,
+            config,
           });
           await sendMessage({
             token: env.TELEGRAM_BOT_TOKEN,

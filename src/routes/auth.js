@@ -217,7 +217,7 @@ router.post("/users", requireAuth, requireCapability("manage_users"), async (req
     return res.status(400).json({ error: "Role must be admin or sales." });
   }
   if (requestedBranch === false) {
-    return res.status(400).json({ error: "Choose a branch that exists in clinic settings." });
+    return res.status(400).json({ error: "Choose a configured business location." });
   }
 
   try {
@@ -272,7 +272,7 @@ router.patch("/users/:userId", requireAuth, requireCapability("manage_users"), a
   if (Object.prototype.hasOwnProperty.call(req.body || {}, "branchName")) {
     const branchName = validateBranchName(req.body.branchName);
     if (branchName === false) {
-      return res.status(400).json({ error: "Choose a branch that exists in clinic settings." });
+      return res.status(400).json({ error: "Choose a configured business location." });
     }
     updates.branchName = branchName;
   }

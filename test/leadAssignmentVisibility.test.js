@@ -121,7 +121,7 @@ test("Inbox thread header stays compact while keeping owner and channel context"
   assert.match(inbox, /if \(channel === "instagram"\) return "Instagram"/);
   assert.match(inbox, /ownerUsername=\{contact\.lead_owner_username\}/);
   assert.match(inbox, /ownerDisplayName=\{contact\.lead_owner_display_name\}/);
-  assert.match(inbox, /Message this patient…/);
+  assert.match(inbox, /`Message this \$\{customerSingular\}…`/);
   assert.match(inbox, /Message to take over from AI…/);
   assert.doesNotMatch(inbox, /Type a WhatsApp message to this patient/);
 });
@@ -129,7 +129,7 @@ test("Inbox thread header stays compact while keeping owner and channel context"
 test("restricted Inbox scope hides irrelevant assignment choices and explains the visible workload", () => {
   const inbox = source("portal-frontend/src/pages/Inbox.jsx");
 
-  assert.match(inbox, /const \{ username, permissions \} = useAuth\(\)/);
+  assert.match(inbox, /const \{ user, username, permissions \} = useAuth\(\)/);
   assert.match(inbox, /const canViewAllLeads = permissions\.view_all_leads === true/);
   assert.match(inbox, /canViewAllLeads \? \(/);
   assert.match(inbox, /My assigned leads/);

@@ -38,6 +38,7 @@ const {
   isUrgentSafetyMessage,
 } = require("./utils/handoffReply");
 const clinicConfig = require("./config/clinicConfig");
+const { getOperationalLabels } = require("./utils/businessTerminology");
 const messagesRepo = require("./db/messagesRepo");
 const outboundMessageEvidenceRepo = require("./db/outboundMessageEvidenceRepo");
 const contactsRepo = require("./db/contactsRepo");
@@ -279,6 +280,7 @@ async function processIncomingMessage(
     unsupportedType,
   } = incoming;
   const channel = incoming.channel || "whatsapp";
+  const { customerLabel, customerSingular } = getOperationalLabels(clinicConfig);
   let contact = preclaimed?.contact || null;
   let savedInbound = preclaimed?.savedInbound || null;
   let responseAttempted = false;
@@ -357,7 +359,7 @@ async function processIncomingMessage(
         await contactsRepo.setAttention(
           contact.id,
           true,
-          "A patient voice message could not be transcribed."
+          `A ${customerSingular} voice message could not be transcribed.`
         );
 
         if (!suppressAutoReply) {
@@ -394,7 +396,7 @@ async function processIncomingMessage(
         await contactsRepo.setAttention(
           contact.id,
           true,
-          "A patient photo could not be downloaded."
+          `A ${customerSingular} photo could not be downloaded.`
         );
 
         if (!suppressAutoReply) {
@@ -420,7 +422,7 @@ async function processIncomingMessage(
         mimeType: media.mimeType,
         buffer: media.buffer,
       };
-      text = incoming.text ? `📷 ${incoming.text}` : "📷 [Patient sent a photo]";
+      text = incoming.text ? `📷 ${incoming.text}` : `📷 [${customerLabel} sent a photo]`;
       await conversationStore.updateInboundMessage(
         contact.id,
         savedInbound.id,
@@ -727,7 +729,7 @@ app.use(
 
 // ── Health check ──
 app.get("/", (req, res) => {
-  res.send("Clinic AI messaging bot is running.");
+  res.send("AI messaging bot is running.");
 });
 
 // ── WhatsApp webhook verification (unchanged callback) ──
