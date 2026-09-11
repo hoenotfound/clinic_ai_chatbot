@@ -1,9 +1,9 @@
 /**
- * Stores patient media bytes (photos, voice notes) in Cloudflare R2 instead
+ * Stores customer media bytes (photos, voice notes) in Cloudflare R2 instead
  * of Postgres. R2 is S3-compatible, so this uses the standard AWS SDK S3
  * client pointed at R2's endpoint — no Cloudflare-specific SDK needed.
  *
- * The bucket is kept PRIVATE. Patient photos/recordings are sensitive, so
+ * The bucket is kept PRIVATE. Customer photos/recordings are sensitive, so
  * bytes are only ever fetched server-side by authenticated routes. For the
  * rare case where Meta must fetch an outbound Instagram attachment by URL,
  * a duplicate temporary object is exposed only through a short-lived SigV4
@@ -20,6 +20,8 @@ const {
 
 const DEFAULT_META_SHARE_SECONDS = 10 * 60;
 const DEFAULT_TEMP_DELETE_DELAY_MS = 12 * 60 * 1000;
+const CLIENT_MEDIA_ROOT = "clients";
+const MAX_CLIENT_SLUG_LENGTH = 80;
 let cachedClient = null;
 
 function getStorageConfig() {
@@ -65,6 +67,76 @@ function extensionForMimeType(mimeType) {
   if (type === "audio/aac") return "aac";
   if (type === "audio/amr") return "amr";
   return "bin";
+}
+
+function sanitizeClientSlug(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, MAX_CLIENT_SLUG_LENGTH)
+    .replace(/-+$/g, "");
+}
+
+function safeObjectSegment(value, fallback = "misc") {
+  const segment = String(value == null ? "" : value)
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 100)
+    .replace(/-+$/g, "");
+  return segment || fallback;
+}
+
+/**
+ * Returns the client namespace used for new media objects. Existing deployments
+ * without CLIENT_SLUG deliberately stay in legacy mode so an environment
+ * upgrade cannot suddenly make media uploads fail. Setup Status surfaces that
+ * fallback so production clients can be brought onto the isolated namespace.
+ */
+function getMediaIsolationStatus(env = process.env) {
+  const configuredSlug = String(env?.CLIENT_SLUG || "").trim();
+  const clientSlug = sanitizeClientSlug(configuredSlug);
+  if (!clientSlug) {
+    return {
+      mode: "legacy",
+      clientSlug: null,
+      prefix: null,
+      reason: configuredSlug ? "invalid_client_slug" : "client_slug_missing",
+    };
+  }
+  return {
+    mode: "isolated",
+    clientSlug,
+    prefix: `${CLIENT_MEDIA_ROOT}/${clientSlug}`,
+    reason: null,
+  };
+}
+
+function applyClientNamespace(relativeKey, env = process.env) {
+  const isolation = getMediaIsolationStatus(env);
+  return isolation.prefix ? `${isolation.prefix}/${relativeKey}` : relativeKey;
+}
+
+/**
+ * Pure key builder used by both permanent and temporary media writes. `now`
+ * and `id` are injectable for deterministic tests only.
+ */
+function buildMediaObjectKey({
+  kind = "messages",
+  contactId = "misc",
+  mimeType,
+  now = Date.now(),
+  id = crypto.randomUUID(),
+  env = process.env,
+} = {}) {
+  const safeKind = kind === "meta-outbound" ? "meta-outbound" : "messages";
+  const safeContactId = safeObjectSegment(contactId);
+  const safeTimestamp = Number.isFinite(Number(now)) ? Math.max(0, Math.floor(Number(now))) : Date.now();
+  const safeId = safeObjectSegment(id, crypto.randomUUID());
+  const relativeKey = `${safeKind}/${safeContactId}/${safeTimestamp}-${safeId}.${extensionForMimeType(mimeType)}`;
+  return applyClientNamespace(relativeKey, env);
 }
 
 function encodeAwsComponent(value) {
@@ -155,27 +227,45 @@ async function putObject(key, buffer, mimeType) {
 
 /**
  * Uploads a media buffer to R2 and returns the object key to persist in
- * Postgres. Keys are namespaced by contact so a bucket listing stays
- * organized and a contact's media can be found/deleted together later.
+ * Postgres. New keys are namespaced by CLIENT_SLUG and then by contact. Legacy
+ * deployments without CLIENT_SLUG continue writing the historical key shape.
  */
-async function uploadMedia(buffer, mimeType, { contactId = "misc" } = {}) {
-  const key = `messages/${contactId}/${Date.now()}-${crypto.randomUUID()}.${extensionForMimeType(mimeType)}`;
+async function uploadMedia(
+  buffer,
+  mimeType,
+  { contactId = "misc", env = process.env } = {}
+) {
+  const key = buildMediaObjectKey({
+    kind: "messages",
+    contactId,
+    mimeType,
+    env,
+  });
   await putObject(key, buffer, mimeType);
   return key;
 }
 
 /**
  * Creates a second, disposable copy for Meta to fetch. We intentionally do
- * not make the permanent patient-media object public or expose its key. The
+ * not make the permanent customer-media object public or expose its key. The
  * temporary URL expires after a few minutes and the object is removed shortly
  * afterwards. Failed retries simply create a fresh short-lived copy.
  */
 async function uploadTemporaryMedia(
   buffer,
   mimeType,
-  { contactId = "misc", expiresSeconds = DEFAULT_META_SHARE_SECONDS } = {}
+  {
+    contactId = "misc",
+    expiresSeconds = DEFAULT_META_SHARE_SECONDS,
+    env = process.env,
+  } = {}
 ) {
-  const key = `meta-outbound/${contactId}/${Date.now()}-${crypto.randomUUID()}.${extensionForMimeType(mimeType)}`;
+  const key = buildMediaObjectKey({
+    kind: "meta-outbound",
+    contactId,
+    mimeType,
+    env,
+  });
   await putObject(key, buffer, mimeType);
   return {
     key,
@@ -200,6 +290,9 @@ function scheduleTemporaryMediaDelete(key, delayMs = DEFAULT_TEMP_DELETE_DELAY_M
  * is supplied, that range is forwarded directly to R2 so voice playback and
  * seeking transfer only the requested bytes instead of downloading the whole
  * recording into application memory.
+ *
+ * The supplied key is used exactly as stored. This is what keeps pre-#128
+ * unprefixed database keys fully backward-compatible.
  */
 async function openMediaStream(key, { range = null } = {}) {
   const input = {
@@ -246,12 +339,17 @@ function isRangeNotSatisfiableError(err) {
   );
 }
 
-/** Deletes a media object from R2. */
+/** Deletes a media object from R2. Stored legacy keys are accepted unchanged. */
 async function deleteMedia(key) {
   await getClient().send(new DeleteObjectCommand({ Bucket: getBucketName(), Key: key }));
 }
 
 module.exports = {
+  CLIENT_MEDIA_ROOT,
+  applyClientNamespace,
+  buildMediaObjectKey,
+  sanitizeClientSlug,
+  getMediaIsolationStatus,
   uploadMedia,
   uploadTemporaryMedia,
   createPresignedGetUrl,
