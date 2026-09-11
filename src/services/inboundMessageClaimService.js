@@ -5,16 +5,19 @@ const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const leadAttributionService = require("./leadAttributionService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsappPolicy = require("./whatsappPolicyService");
+const clinicConfig = require("../config/clinicConfig");
+const { getOperationalLabels } = require("../utils/businessTerminology");
 
-function initialInboundText(incoming) {
+function initialInboundText(incoming, config = clinicConfig) {
+  const { customerLabel } = getOperationalLabels(config);
   if (incoming.unsupportedType) {
-    return `📎 [Patient sent an unsupported ${incoming.unsupportedType} message]`;
+    return `📎 [${customerLabel} sent an unsupported ${incoming.unsupportedType} message]`;
   }
-  if (incoming.mediaType === "audio") return "🎤 [Patient sent a voice message]";
+  if (incoming.mediaType === "audio") return `🎤 [${customerLabel} sent a voice message]`;
   if (incoming.mediaType === "image") {
-    return incoming.text ? `📷 ${incoming.text}` : "📷 [Patient sent a photo]";
+    return incoming.text ? `📷 ${incoming.text}` : `📷 [${customerLabel} sent a photo]`;
   }
-  return incoming.text || "[Patient sent an empty message]";
+  return incoming.text || `[${customerLabel} sent an empty message]`;
 }
 
 function publishInboundMessage(events, savedInbound) {
@@ -34,6 +37,7 @@ function createInboundMessageClaimService({
   processing = inboundProcessingRepo,
   events = realtimeEvents,
   policy = whatsappPolicy,
+  config = clinicConfig,
 } = {}) {
   function isWhatsappOptOut(incoming) {
     return Boolean(
@@ -127,7 +131,7 @@ function createInboundMessageClaimService({
           firstMessageId: savedInbound.id,
         });
       } catch (err) {
-        // Attribution must never block the patient conversation. The raw
+        // Attribution must never block the customer conversation. The raw
         // message and processing job are already durable.
         console.error(`Failed to capture lead attribution for lead ${lead.id}:`, err);
       }
@@ -227,7 +231,7 @@ function createInboundMessageClaimService({
 
     const durableClaim = await processing.storeInboundClaim({
       contactId: contact.id,
-      content: initialInboundText(incoming),
+      content: initialInboundText(incoming, config),
       storedMessageId: storedInboundId,
       channel,
       incoming,
