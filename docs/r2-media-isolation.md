@@ -22,7 +22,7 @@ Temporary objects that Meta must fetch use:
 clients/acme-renovation/meta-outbound/<contact-id>/<timestamp>-<uuid>.<ext>
 ```
 
-The client slug and contact path segment are sanitized before they are used in an object key.
+The client slug and contact path segment are sanitized before they are used in an object key. Exact `.` and `..` object-path segments are rejected and replaced with safe fallback segments.
 
 ## Backward compatibility
 
@@ -72,7 +72,7 @@ The Media storage check still performs a private upload/delete test. It now also
 clients/acme-renovation
 ```
 
-For a correctly isolated deployment, the test object itself must be written under that prefix. If R2 works but the generated key does not match the expected prefix, Setup Status reports a warning.
+For a correctly isolated deployment, the test object itself must be written under that prefix. If R2 works but the generated key does not match the expected prefix, Setup Status returns an **error** so production readiness fails closed instead of allowing a namespace-isolation problem through as a warning.
 
 A legacy deployment without `CLIENT_SLUG` remains operational and the R2 connection check can still be ready, but its metadata/summary shows `legacy` isolation mode rather than pretending client namespacing is enabled.
 
