@@ -537,7 +537,7 @@ function createSetupStatusService({
       if (!String(uploadedKey).startsWith(`${isolation.prefix}/`)) {
         return result(
           "r2",
-          "warning",
+          "error",
           `R2 works, but the test object was not written under the expected ${isolation.prefix}/ namespace.`,
           checkedAt,
           {
