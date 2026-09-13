@@ -86,7 +86,8 @@ function safeObjectSegment(value, fallback = "misc") {
     .replace(/^-+|-+$/g, "")
     .slice(0, 100)
     .replace(/-+$/g, "");
-  return segment || fallback;
+  if (!segment || segment === "." || segment === "..") return fallback;
+  return segment;
 }
 
 /**
