@@ -66,6 +66,35 @@ test("client and contact path components cannot escape the media namespace", () 
   assert.equal(key.includes("/../"), false);
 });
 
+test("exact dot path segments fall back to safe object segments", () => {
+  for (const dangerous of [".", ".."]) {
+    const contactKey = mediaStorage.buildMediaObjectKey({
+      kind: "messages",
+      contactId: dangerous,
+      mimeType: "image/png",
+      now: 1,
+      id: "fixed-id",
+      env: { CLIENT_SLUG: "acme" },
+    });
+    assert.equal(
+      contactKey,
+      "clients/acme/messages/misc/1-fixed-id.png"
+    );
+
+    const idKey = mediaStorage.buildMediaObjectKey({
+      kind: "messages",
+      contactId: "contact",
+      mimeType: "image/png",
+      now: 1,
+      id: dangerous,
+      env: { CLIENT_SLUG: "acme" },
+    });
+    assert.equal(idKey.includes("/./"), false);
+    assert.equal(idKey.includes("/../"), false);
+    assert.match(idKey, /^clients\/acme\/messages\/contact\/1-[A-Za-z0-9-]+\.png$/);
+  }
+});
+
 test("missing client slug keeps the historical unprefixed key shape", () => {
   const isolation = mediaStorage.getMediaIsolationStatus({});
   const key = mediaStorage.buildMediaObjectKey({
