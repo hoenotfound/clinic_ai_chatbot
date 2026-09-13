@@ -67,19 +67,8 @@ function repository() {
   };
 }
 
-test("Setup Status exposes the active client media namespace", () => {
-  const r2 = definitions(env()).find((item) => item.key === "r2");
-
-  assert.equal(r2.isConfigured, true);
-  assert.equal(r2.meta.isolationMode, "isolated");
-  assert.equal(r2.meta.mediaNamespace, "clients/acme-renovation");
-  assert.equal(r2.meta.isolationReason, null);
-});
-
-test("Setup Status verifies its R2 test object is written under the client namespace", async () => {
-  const runtimeEnv = env();
-  const deleted = [];
-  const service = createSetupStatusService({
+function setupService(runtimeEnv, storage) {
+  return createSetupStatusService({
     env: runtimeEnv,
     repository: repository(),
     now: () => new Date("2026-09-12T02:00:00.000Z"),
@@ -95,21 +84,36 @@ test("Setup Status verifies its R2 test object is written under the client names
         return "ok";
       },
     },
-    storage: {
-      async uploadMedia(buffer, mimeType, options) {
-        assert.equal(buffer.toString(), "clinic-ai-setup-check");
-        assert.equal(mimeType, "text/plain");
-        assert.equal(options.contactId, "setup-check");
-        assert.equal(options.env, runtimeEnv);
-        return "clients/acme-renovation/messages/setup-check/object.bin";
-      },
-      async deleteMedia(key) {
-        deleted.push(key);
-      },
-    },
+    storage,
     fetchImpl: async (url) => {
       assert.match(String(url), /\/10001\?/);
       return response({ id: "10001", verified_name: "Acme WhatsApp" });
+    },
+  });
+}
+
+test("Setup Status exposes the active client media namespace", () => {
+  const r2 = definitions(env()).find((item) => item.key === "r2");
+
+  assert.equal(r2.isConfigured, true);
+  assert.equal(r2.meta.isolationMode, "isolated");
+  assert.equal(r2.meta.mediaNamespace, "clients/acme-renovation");
+  assert.equal(r2.meta.isolationReason, null);
+});
+
+test("Setup Status verifies its R2 test object is written under the client namespace", async () => {
+  const runtimeEnv = env();
+  const deleted = [];
+  const service = setupService(runtimeEnv, {
+    async uploadMedia(buffer, mimeType, options) {
+      assert.equal(buffer.toString(), "clinic-ai-setup-check");
+      assert.equal(mimeType, "text/plain");
+      assert.equal(options.contactId, "setup-check");
+      assert.equal(options.env, runtimeEnv);
+      return "clients/acme-renovation/messages/setup-check/object.bin";
+    },
+    async deleteMedia(key) {
+      deleted.push(key);
     },
   });
 
@@ -121,6 +125,29 @@ test("Setup Status verifies its R2 test object is written under the client names
   assert.equal(r2.mediaNamespace, "clients/acme-renovation");
   assert.match(r2.summary, /clients\/acme-renovation\//);
   assert.deepEqual(deleted, ["clients/acme-renovation/messages/setup-check/object.bin"]);
+});
+
+test("Setup Status fails closed when an isolated R2 test object misses its namespace", async () => {
+  const runtimeEnv = env();
+  const deleted = [];
+  const service = setupService(runtimeEnv, {
+    async uploadMedia() {
+      return "messages/setup-check/object.bin";
+    },
+    async deleteMedia(key) {
+      deleted.push(key);
+    },
+  });
+
+  const status = await service.runAll();
+  const r2 = status.checks.find((item) => item.key === "r2");
+
+  assert.equal(r2.status, "error");
+  assert.equal(r2.isolationMode, "mismatch");
+  assert.equal(r2.mediaNamespace, "clients/acme-renovation");
+  assert.equal(r2.reason, "client_namespace_mismatch");
+  assert.match(r2.summary, /not written under the expected clients\/acme-renovation\//);
+  assert.deepEqual(deleted, ["messages/setup-check/object.bin"]);
 });
 
 test("legacy deployments remain usable but expose legacy namespace mode", () => {
