@@ -30,20 +30,95 @@ The runtime isolation preload is retained as defense in depth:
 
 `INSTAGRAM_PAGE_ID` remains the linked Facebook Page ID used by the existing outbound Instagram Messenger API path. `INSTAGRAM_ACCOUNT_ID` is the Instagram Professional Account ID used as the webhook routing identity.
 
-## Central Meta router deployment
+## Recommended bootstrap deployment: embed the router in one paid client Render
 
-Run the router as a separate Render web service from this repository:
+For the first few customers, the central Meta router can run inside one existing always-on paid client Render instead of paying for another Render service.
+
+```text
+                         ONE META APP
+                              |
+             +----------------+----------------+
+             |                                 |
+         WhatsApp                       Messenger + IG
+             |                                 |
+      per-WABA direct                          v
+        callbacks                    Anchor paid client Render
+             |                        +-----------------------+
+             |                        | normal chatbot        |
+             |                        | /webhook              |
+             |                        | /meta-webhook         |
+             |                        |                       |
+             |                        | embedded Meta router  |
+             |                        | /meta-router/...      |
+             |                        +-----------+-----------+
+             |                                    |
+       +-----+-----+                         +----+----+
+       v     v     v                         v    v    v
+     Client A/B/C Render                  Client A/B/C Render
+```
+
+Only the chosen anchor deployment sets:
+
+```text
+META_ROUTER_ENABLED=true
+META_ROUTER_DATABASE_URL=<router DB credential>
+META_APP_SECRET=<shared production Meta app secret>
+META_VERIFY_TOKEN=<shared callback verification token>
+```
+
+Optional:
+
+```text
+META_ROUTER_MOUNT_PATH=/meta-router
+META_ROUTER_FORWARD_TIMEOUT_MS=8000
+META_ROUTER_DATABASE_SSL_REJECT_UNAUTHORIZED=true
+META_ROUTER_DATABASE_CONNECTION_TIMEOUT_MS=5000
+META_ROUTER_DATABASE_QUERY_TIMEOUT_MS=10000
+META_ROUTER_DATABASE_POOL_MAX=3
+```
+
+The default embedded endpoints are:
+
+```text
+Callback verification + webhook:
+https://<anchor-client-host>/meta-router/meta-webhook
+
+Router health:
+https://<anchor-client-host>/meta-router/healthz
+```
+
+Configure the shared Meta App's Messenger and Instagram callback URL once to the embedded callback above. Do not point WhatsApp at this route.
+
+### Least-privilege database credential
+
+Embedded mode deliberately refuses to fall back to `OPS_DATABASE_URL`. Do **not** put the full Ops Registry database credential on a customer deployment.
+
+`META_ROUTER_DATABASE_URL` should ideally use a PostgreSQL role with only the access required by the live router:
+
+```text
+CONNECT to the routing database
+USAGE on the schema containing meta_webhook_routes
+SELECT on meta_webhook_routes
+```
+
+The live router does not run Ops migrations and does not register/update routes. Migration `004_meta_webhook_routes.sql` and route-registration writes remain control-plane operations run through the Ops Registry/operator tooling.
+
+This is important when the Ops Registry itself is hosted on a free/sleeping service: Messenger/Instagram delivery does not call the Ops Registry HTTP service. The embedded router reads the routing table directly from PostgreSQL, so the Ops Registry web service may be asleep without interrupting messages.
+
+## Long-term deployment: extract the router to its own service
+
+The embedded mode is intentionally portable. When client volume justifies dedicated infrastructure, deploy the same router as its own Render service:
 
 ```bash
 npm run meta-router:start
 ```
 
-Required router environment:
+Use:
 
 ```text
+META_ROUTER_DATABASE_URL=<router DB credential>
 META_APP_SECRET=<shared Meta Developer App secret>
 META_VERIFY_TOKEN=<verify token configured in the Meta dashboard>
-OPS_DATABASE_URL=<central Ops Registry PostgreSQL database>
 ```
 
 Optional:
@@ -52,21 +127,32 @@ Optional:
 META_ROUTER_FORWARD_TIMEOUT_MS=8000
 ```
 
-Use `/healthz` as the router health check. Because Messenger and Instagram for every client depend on this service, deploy it as an always-available production service rather than a service that intentionally sleeps between requests.
-
-Migration `004_meta_webhook_routes.sql` stores only route metadata: client slug, channel, Meta asset ID, target base URL, and enabled state. It does not store Page access tokens or the Meta app secret. A given `(channel, asset_id)` can belong to only one client route, and each client deployment can register at most one Facebook Page and one Instagram account. That matches the chatbot runtime, which currently has one sender ID/access-token configuration per channel.
-
-Configure the app-level callbacks once:
+The standalone service exposes:
 
 ```text
-Messenger callback:
-https://<meta-router-host>/meta-webhook
-
-Instagram callback:
-https://<meta-router-host>/meta-webhook
+/meta-webhook
+/healthz
 ```
 
-Use the same `META_VERIFY_TOKEN` configured on the router. The router implements the GET verification challenge for these app-level callbacks.
+At migration time, change the Meta App callback from:
+
+```text
+https://<anchor-client-host>/meta-router/meta-webhook
+```
+
+to:
+
+```text
+https://<dedicated-meta-router-host>/meta-webhook
+```
+
+No client Render/Neon architecture or route records need to change.
+
+For a dedicated production router, keep it always available. Messenger and Instagram for every client depend on it. The router is deliberately read-only; ensure Ops migration `004_meta_webhook_routes.sql` has already been applied before starting it.
+
+## Route registry
+
+Migration `004_meta_webhook_routes.sql` stores only route metadata: client slug, channel, Meta asset ID, target base URL, and enabled state. It does not store Page access tokens or the Meta app secret. A given `(channel, asset_id)` can belong to only one client route, and each client deployment can register at most one Facebook Page and one Instagram account. That matches the chatbot runtime, which currently has one sender ID/access-token configuration per channel.
 
 ## Register Messenger / Instagram client routes
 
@@ -100,9 +186,9 @@ A client that bought only one channel only needs that channel's route. Re-runnin
 
 Route registration controls only where an incoming webhook is delivered. It does **not** grant Meta permissions or subscribe the client's Page/account to webhook fields. During manual onboarding you must still complete the normal Meta asset authorization/subscription steps for that client. In particular, Messenger needs the client Page subscribed to the shared app and the required webhook fields such as `messages`; Instagram must likewise be connected/subscribed according to the Messenger-from-Meta Instagram setup used by this project.
 
-## WhatsApp per-client callback
+## WhatsApp remains direct per client
 
-WhatsApp stays direct from Meta to each client's existing `/webhook`; it does not pass through the Messenger/Instagram router. Meta officially supports a WABA-specific callback override on `/{WABA_ID}/subscribed_apps`.
+WhatsApp does not pass through the Messenger/Instagram router. Each WABA stays direct from Meta to its own client's existing `/webhook` using the WABA-specific callback override on `/{WABA_ID}/subscribed_apps`.
 
 For manual onboarding run:
 
@@ -142,7 +228,7 @@ The command performs three checks/actions in order:
    -> confirm the callback override, and the app ID when supplied
 ```
 
-This makes the manual WABA step safe to repeat for many clients.
+This makes the manual WABA step safe to repeat for many clients and keeps WhatsApp independent of the central FB/IG router.
 
 ## Client runtime values
 
@@ -167,6 +253,8 @@ META_VERIFY_TOKEN=...
 
 The central router verifies Meta's original signature. It then signs each isolated client payload using the same app secret, so the existing client `verifyMetaWebhookSignature` middleware remains valid. `X-DA-Meta-Router: 1` is added for diagnostics.
 
+Only the temporary anchor client additionally needs `META_ROUTER_ENABLED=true` and the router database credential. Other clients do not.
+
 ## Failure behavior
 
 The router waits until every affected client has durably accepted the routed webhook. If a route is missing, disabled, times out, or a client returns a non-2xx response, the router returns HTTP 503 to Meta instead of acknowledging undelivered work.
@@ -175,17 +263,22 @@ Meta can retry the original event. Existing provider-message-ID deduplication an
 
 Unknown assets intentionally fail closed with 503. If an old Page/account is removed from service, unsubscribe that asset from the Meta app or remove/disable its delivery configuration instead of leaving a permanent unknown webhook source that Meta will keep retrying.
 
-## Manual onboarding sequence
+## Bootstrap manual onboarding sequence
 
 ```text
 1. Provision client Render + Neon + optional R2 using the existing PR129 flow
 2. Give the client deployment its channel-specific tokens/IDs
 3. Manually authorize/attach the client's Meta assets to the shared Meta app
-4. Ensure the client's Messenger/Instagram assets are subscribed to the required webhook fields
-5. Messenger/Instagram: register Page / Instagram account IDs in the central router
-6. WhatsApp: configure and read-back the WABA callback override to that client's /webhook
-7. Point the app-level Messenger + Instagram callbacks to the central router once (not once per client)
-8. Run Setup Status plus real inbound and outbound go-live tests for every purchased channel
+4. Ensure the client's Messenger/Instagram assets are subscribed to required webhook fields
+5. Messenger/Instagram: register Page / Instagram account IDs in the route registry
+6. WhatsApp: configure and read back the WABA callback override to that client's /webhook
+7. On the chosen paid anchor Render only:
+   META_ROUTER_ENABLED=true
+   META_ROUTER_DATABASE_URL=<read-only routing credential>
+8. Point the app-level Messenger + Instagram callback once to:
+   https://<anchor-host>/meta-router/meta-webhook
+9. Verify /meta-router/healthz
+10. Run Setup Status plus real inbound and outbound go-live tests for every purchased channel
 ```
 
 This flow deliberately does not require Embedded Signup. Embedded Signup can be added later to automate authorization while keeping the same runtime routing architecture.
