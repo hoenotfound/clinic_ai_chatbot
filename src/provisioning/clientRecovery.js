@@ -149,6 +149,8 @@ function validateExistingRenderService(service, plan) {
   }
   const actualRepo = service.repo || service.repository || service.serviceDetails?.repo || null;
   const actualBranch = service.branch || service.serviceDetails?.branch || null;
+  const actualType = service.type || service.serviceDetails?.type || null;
+  const actualRegion = service.region || service.serviceDetails?.region || null;
   if (actualRepo && actualRepo !== plan.render.repo) {
     throw new ClientRecoveryError(
       `Existing Render service repository does not match the recovery plan. Expected ${plan.render.repo}, found ${actualRepo}.`,
@@ -159,6 +161,18 @@ function validateExistingRenderService(service, plan) {
     throw new ClientRecoveryError(
       `Existing Render service branch does not match the recovery plan. Expected ${plan.render.branch}, found ${actualBranch}.`,
       { code: "RECOVERY_RENDER_BRANCH_MISMATCH", stage: "recovery_preflight", retrySafe: false }
+    );
+  }
+  if (actualType && actualType !== "web_service") {
+    throw new ClientRecoveryError(
+      `Existing Render resource is type ${actualType}, not the expected web_service.`,
+      { code: "RECOVERY_RENDER_TYPE_MISMATCH", stage: "recovery_preflight", retrySafe: false }
+    );
+  }
+  if (actualRegion && plan.render.region && actualRegion !== plan.render.region) {
+    throw new ClientRecoveryError(
+      `Existing Render service region does not match the recovery plan. Expected ${plan.render.region}, found ${actualRegion}.`,
+      { code: "RECOVERY_RENDER_REGION_MISMATCH", stage: "recovery_preflight", retrySafe: false }
     );
   }
   return service;
@@ -288,10 +302,10 @@ async function recoverInterruptedProvisioning(input = {}, {
       );
     }
   }
-  if (bucket.location && bucket.location !== plan.r2.locationHint) {
+  if (bucket.jurisdiction && bucket.jurisdiction !== plan.r2.jurisdiction) {
     throw new ClientRecoveryError(
-      `Existing R2 bucket location ${bucket.location} does not match the recovery plan ${plan.r2.locationHint}.`,
-      { code: "RECOVERY_R2_LOCATION_MISMATCH", stage: "recovery_preflight", retrySafe: false }
+      `Existing R2 bucket jurisdiction ${bucket.jurisdiction} does not match the recovery plan ${plan.r2.jurisdiction}.`,
+      { code: "RECOVERY_R2_JURISDICTION_MISMATCH", stage: "recovery_preflight", retrySafe: false }
     );
   }
 
