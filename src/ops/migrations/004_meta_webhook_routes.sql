@@ -6,8 +6,8 @@ CREATE TABLE IF NOT EXISTS meta_webhook_routes (
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (client_slug, channel, asset_id),
-  UNIQUE (channel, asset_id)
+  PRIMARY KEY (channel, asset_id),
+  UNIQUE (client_slug, channel)
 );
 
 CREATE INDEX IF NOT EXISTS idx_meta_webhook_routes_lookup
