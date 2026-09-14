@@ -30,8 +30,10 @@ test("Ops Registry migrations use their own namespace instead of client migratio
   assert.match(lifecycleSql, /SET DEFAULT 'setup'/i);
   assert.match(lifecycleSql, /CHECK \(lifecycle_status IN \('setup', 'trial', 'live', 'paused'\)\)/i);
   assert.match(metaWebhookRoutesSql, /CREATE TABLE IF NOT EXISTS meta_webhook_routes/i);
+  assert.match(metaWebhookRoutesSql, /PRIMARY KEY \(client_slug, channel, asset_id\)/i);
   assert.match(metaWebhookRoutesSql, /UNIQUE \(channel, asset_id\)/i);
   assert.match(metaWebhookRoutesSql, /CREATE INDEX IF NOT EXISTS idx_meta_webhook_routes_lookup/i);
+  assert.match(metaWebhookRoutesSql, /CREATE INDEX IF NOT EXISTS idx_meta_webhook_routes_client/i);
   assert.doesNotMatch(
     `${initialSql}\n${uniquenessSql}\n${lifecycleSql}\n${metaWebhookRoutesSql}`,
     /DROP\s+TABLE|TRUNCATE|customer|message_content|access_token|api_key|database_url|admin_password/i,
