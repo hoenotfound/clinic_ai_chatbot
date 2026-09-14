@@ -8,9 +8,9 @@ const {
   registryRecordFromReceipt,
 } = require("../scripts/registerOpsClient");
 
-test("provisioning receipt becomes a secret-free registry record", () => {
-  const record = registryRecordFromReceipt({
-    version: 3,
+function receipt(version = 3) {
+  return {
+    version,
     clientSlug: "beleco-clinic",
     industry: "aesthetic_clinic",
     requiredChannels: ["whatsapp", "instagram"],
@@ -25,13 +25,37 @@ test("provisioning receipt becomes a secret-free registry record", () => {
       projectName: "da-chatbot-beleco",
     },
     secrets: { OPS_READINESS_TOKEN: "must-not-leak" },
-  });
+  };
+}
+
+test("provisioning v3 receipt becomes a secret-free registry record", () => {
+  const record = registryRecordFromReceipt(receipt(3));
 
   assert.equal(record.clientSlug, "beleco-clinic");
   assert.equal(record.tokenEnvKey, "OPS_CLIENT_TOKEN_BELECO_CLINIC");
   assert.equal(Object.hasOwn(record, "token"), false);
   assert.doesNotMatch(JSON.stringify(record), /must-not-leak/);
   assert.deepEqual(record.purchasedChannels, ["whatsapp", "instagram"]);
+});
+
+test("provisioning v4 receipt remains compatible with Ops registration", () => {
+  const input = receipt(4);
+  input.r2 = {
+    enabled: true,
+    bucketName: "da-chatbot-beleco-media",
+    tokenId: "token-id",
+  };
+  const record = registryRecordFromReceipt(input);
+  assert.equal(record.clientSlug, "beleco-clinic");
+  assert.equal(record.render.serviceId, "srv-123");
+  assert.equal(Object.hasOwn(record, "r2"), false);
+});
+
+test("unsupported provisioning receipt versions fail closed", () => {
+  assert.throws(
+    () => registryRecordFromReceipt(receipt(5)),
+    /Unsupported provisioning receipt version 5/
+  );
 });
 
 test("token env names are deterministic and contain no client secret", () => {
