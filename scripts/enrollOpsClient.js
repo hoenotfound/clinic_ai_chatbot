@@ -16,6 +16,9 @@ const {
   requireOpsEnrollmentConfig,
   verifyAndRegisterPreparedEnrollment,
 } = require("../src/provisioning/opsRegistryEnrollment");
+const {
+  requireSupportedProvisioningReceipt,
+} = require("../src/provisioning/provisioningReceipt");
 const { acquireProvisioningLock } = require("./provisionClient");
 
 function usage() {
@@ -24,6 +27,9 @@ Resume or repair Ops Registry enrollment for an already provisioned client.
 
 Usage:
   npm run ops:enroll-client -- --receipt <path> [--json]
+
+Supported receipts:
+  Provisioning receipt version 3 or 4.
 
 Required shell configuration:
   PROVISIONING_RENDER_API_KEY
@@ -68,9 +74,7 @@ function loadReceipt(receiptPath) {
   if (!receiptPath) throw new Error("--receipt is required.");
   const absolute = path.resolve(process.cwd(), receiptPath);
   const receipt = JSON.parse(fs.readFileSync(absolute, "utf8"));
-  if (Number(receipt?.version) !== 3) {
-    throw new Error("Only provisioning receipt version 3 is supported.");
-  }
+  requireSupportedProvisioningReceipt(receipt);
   if (!receipt?.clientSlug || !receipt?.render?.serviceId || !receipt?.render?.url) {
     throw new Error("Receipt is missing the client slug, Render service ID, or Render URL.");
   }
@@ -86,6 +90,7 @@ function provisioningResultFromReceipt(receipt) {
       ? [...receipt.requiredChannels]
       : [],
     neon: { ...(receipt.neon || {}) },
+    r2: receipt.r2 ? { ...receipt.r2 } : null,
     render: { ...(receipt.render || {}) },
     profileContract: { ...(receipt.profileContract || {}) },
   };
@@ -131,6 +136,7 @@ async function runEnrollmentFromReceipt({
   fetchImpl = global.fetch,
   createRenderClientImpl = createRenderClient,
 } = {}) {
+  requireSupportedProvisioningReceipt(receipt);
   const result = provisioningResultFromReceipt(receipt);
   requireOpsEnrollmentConfig({
     clientSlug: result.clientSlug,
@@ -218,10 +224,6 @@ async function main() {
     return;
   }
 
-  // Use the same service/resource name as normal provisioning so recovery and
-  // first-time provisioning cannot mutate the same client concurrently on one
-  // operator machine. Do not touch the receipt when lock acquisition fails,
-  // because another active process may be about to write a newer state.
   let lock;
   try {
     lock = acquireProvisioningLock(recoveryLockName(loaded.receipt));
