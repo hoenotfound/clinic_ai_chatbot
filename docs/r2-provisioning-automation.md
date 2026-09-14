@@ -32,7 +32,7 @@ PROVISIONING_CLOUDFLARE_R2_LOCATION_HINT=apac
 The control token needs the Cloudflare permissions required to:
 
 - create/list R2 buckets (`Workers R2 Storage Write`)
-- create/roll account-owned API tokens (`Account API Tokens Write`)
+- create/list/read/roll account-owned API tokens (`Account API Tokens Write`)
 
 It is a provisioning credential. It must never be copied into a client Render service.
 
@@ -41,7 +41,7 @@ It is a provisioning credential. It must never be copied into a client Render se
 The R2 provisioning module supports the same gradual-rollout idea as Ops enrollment:
 
 - `auto` (default): automate R2 when both Cloudflare control values are present. If neither is configured, preserve the current manual-R2 path. Partial configuration fails closed.
-- `required`: require complete Cloudflare control configuration. This is the intended production mode once the integration is complete.
+- `required`: require complete Cloudflare control configuration. This is the intended production mode once automated R2 is adopted.
 - `off`: deliberately skip Cloudflare R2 provisioning and preserve manual R2 runtime credentials.
 
 ## Resource naming
@@ -60,11 +60,13 @@ da-chatbot-acme-renovation-media
 
 Bucket names are normalized and capped at Cloudflare's 63-character limit.
 
-The generated account-owned token uses a safe operator-facing name such as:
+The generated account-owned token uses a deterministic operator-facing name such as:
 
 ```text
 da-chatbot-acme-renovation-r2
 ```
+
+The deterministic names are also the recovery identity. Recovery never adopts a differently named bucket or token.
 
 ## Client credential scope
 
@@ -104,18 +106,59 @@ R2_SECRET_ACCESS_KEY=...
 R2_BUCKET_NAME=...
 ```
 
-## Recovery
+## Receipts
 
-Cloudflare supports rolling an account-owned token value while preserving its policy. The module exposes that primitive so a later recovery command can regenerate the one-time value and derive a new R2 secret without widening the token's bucket scope.
+New provisioning writes receipt version 4. Receipt v4 adds only secret-free R2 recovery metadata:
 
-The production integration should keep the existing no-destructive-auto-rollback policy. If Neon/R2/Render creation stops partway through, preserve safe resource identifiers for inspection and recovery rather than deleting resources automatically.
+- R2 mode/enabled/provisioned state
+- bucket name
+- token ID and deterministic token name
+- location hint and jurisdiction
+
+The receipt builder uses an explicit R2 allowlist. Even if a future in-memory result accidentally contains `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, or a raw token value, those fields are not serialized into the receipt.
+
+Existing Ops tools accept both receipt v3 and v4 so older clients remain repairable while new R2-enabled clients can use the same Ops enrollment/re-registration workflows.
+
+## Interrupted provisioning recovery
+
+Provisioning remains deliberately non-destructive. A failure after Neon/R2/Render creation does not delete provider resources automatically.
+
+Use the dedicated recovery command for an interrupted automated-R2 run:
+
+```bash
+npm run recover-client -- \
+  --client acme-renovation \
+  --industry home_renovation \
+  --channels whatsapp,instagram \
+  --runtime-env-file ./acme.client-runtime.env
+```
+
+Review the dry-run first, then add `--execute`.
+
+Recovery uses the same deterministic resource names as the original provisioning run and follows these rules:
+
+1. Exactly one matching Neon project must exist. Recovery discovers its active main branch, database and owner role, then requests a fresh pooled connection URI.
+2. If the exact R2 bucket exists, it is reused. If the exact bucket is confirmed absent, recovery may create that exact bucket. It never adopts a differently named bucket.
+3. If a same-name Cloudflare token exists, recovery validates that it is active and has exactly one allow policy, exactly one resource equal to the expected bucket, and exactly the expected bucket-item permission before rolling its value.
+4. Multiple same-name active tokens, unexpected token scope, inactive tokens, mismatched bucket location, or ambiguous provider resources fail closed. Recovery does not widen permissions or silently choose one.
+5. If no same-name token exists, recovery creates the deterministic bucket-scoped token and derives new S3 credentials in memory.
+6. If the exact Render service already exists, its repository/branch are checked when the provider returns them. Recovery updates only the managed R2 environment values and redeploys the existing service. It does not restore the bootstrap admin password or replace unrelated runtime variables.
+7. If the Render service does not exist, recovery creates it with the recovered Neon database and R2 credentials, then continues normal login/finalization/readiness checks.
+
+After recovery writes the normal secret-free v4 receipt, Ops enrollment can be repaired with:
+
+```bash
+npm run ops:enroll-client -- --receipt .provisioning/acme-renovation.json
+```
+
+The recovery command never prints or writes the database URL, generated R2 secret, raw Cloudflare token value, or client runtime secrets.
 
 ## PR #129 implementation stages
 
-1. Cloudflare R2 provisioning client, plan/mode validation, token derivation and tests.
-2. Integrate R2 planning into `provision-client` dry-run and deterministic preflight.
-3. Add Render environment injection and collision-safe R2 creation to the main provisioning transaction.
-4. Add secret-free receipt/recovery metadata and an R2 repair/rotation command.
-5. Add end-to-end mocked provisioning tests plus production rollout guidance.
+1. Cloudflare R2 provisioning client, plan/mode validation, token derivation and tests. Completed.
+2. Integrate R2 planning into `provision-client` dry-run and deterministic preflight. Completed.
+3. Add Render environment injection and collision-safe R2 creation to the main provisioning transaction. Completed.
+4. Add secret-free v4 receipt metadata, v3/v4 Ops compatibility, and safe interrupted-run recovery/rotation. Completed.
+5. Complete final regression review, CI, and production rollout validation before merging.
 
-Do not merge the feature until the full integration is complete and CI is green.
+Do not merge the feature until final review and CI are green.
