@@ -17,6 +17,7 @@ Usage:
 
 Options:
   --waba-id <id>              Override WHATSAPP_WABA_ID from the runtime env file
+  --app-id <id>               Confirm the returned subscription belongs to this Meta app
   --client-url <url>          Client Render/public base URL
   --runtime-env-file <path>   dotenv containing WHATSAPP_TOKEN, WHATSAPP_VERIFY_TOKEN,
                               and normally WHATSAPP_WABA_ID
@@ -24,6 +25,8 @@ Options:
   --json                      Print machine-readable output
   --help                      Show this help
 
+The command first performs the same verification-token handshake against the
+client /webhook endpoint, then updates the WABA subscription and reads it back.
 Access tokens and verify tokens are intentionally read from the runtime env file,
 not accepted as command-line flags, so they do not need to be placed in shell
 history.
@@ -34,6 +37,7 @@ function parseArgs(argv) {
   const result = { json: false };
   const valueFlags = new Map([
     ["--waba-id", "wabaId"],
+    ["--app-id", "appId"],
     ["--client-url", "clientBaseUrl"],
     ["--runtime-env-file", "runtimeEnvFile"],
     ["--graph-version", "graphVersion"],
@@ -84,6 +88,7 @@ async function main() {
     const runtimeEnv = loadRuntimeEnv(args.runtimeEnvFile);
     const result = await configureWhatsAppWebhook({
       wabaId: args.wabaId || runtimeEnv.WHATSAPP_WABA_ID,
+      appId: args.appId || runtimeEnv.META_APP_ID || runtimeEnv.WHATSAPP_APP_ID || process.env.META_APP_ID,
       accessToken: runtimeEnv.WHATSAPP_TOKEN,
       verifyToken: runtimeEnv.WHATSAPP_VERIFY_TOKEN,
       clientBaseUrl: args.clientBaseUrl,
@@ -94,6 +99,7 @@ async function main() {
     else {
       console.log("WhatsApp WABA webhook configured and confirmed.");
       console.log(`WABA:     ${result.wabaId}`);
+      if (result.appId) console.log(`Meta app: ${result.appId}`);
       console.log(`Callback: ${result.callbackUrl}`);
     }
   } catch (err) {
