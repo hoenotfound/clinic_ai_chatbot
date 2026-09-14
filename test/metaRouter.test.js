@@ -26,7 +26,7 @@ test("collects unique business asset ids from one Meta webhook", () => {
   );
 });
 
-test("routes one signed batch to each affected client without rewriting the body", async () => {
+test("routes a batched Meta webhook as isolated, newly signed client payloads", async () => {
   const body = {
     object: "page",
     entry: [
@@ -34,8 +34,7 @@ test("routes one signed batch to each affected client without rewriting the body
       { id: "page-b", messaging: [{ message: { mid: "b" } }] },
     ],
   };
-  const rawBody = Buffer.from(JSON.stringify(body));
-  const signature = expectedMetaSignature("meta-secret", rawBody);
+  const appSecret = "meta-secret";
   const routes = new Map([
     ["page-a", {
       clientSlug: "client-a",
@@ -66,8 +65,7 @@ test("routes one signed batch to each affected client without rewriting the body
 
   const result = await routeRawWebhook({
     body,
-    rawBody,
-    signature,
+    appSecret,
     repo,
     fetchImpl,
   });
@@ -82,16 +80,25 @@ test("routes one signed batch to each affected client without rewriting the body
       "https://client-b.example.test/meta-webhook",
     ],
   );
+
+  const byUrl = new Map(requests.map((request) => [request.url, request]));
+  const clientA = byUrl.get("https://client-a.example.test/meta-webhook");
+  const clientB = byUrl.get("https://client-b.example.test/meta-webhook");
+  assert.deepEqual(JSON.parse(Buffer.from(clientA.options.body).toString("utf8")).entry, [body.entry[0]]);
+  assert.deepEqual(JSON.parse(Buffer.from(clientB.options.body).toString("utf8")).entry, [body.entry[1]]);
+
   for (const request of requests) {
-    assert.equal(request.options.headers["X-Hub-Signature-256"], signature);
+    const raw = Buffer.from(request.options.body);
+    assert.equal(
+      request.options.headers["X-Hub-Signature-256"],
+      expectedMetaSignature(appSecret, raw),
+    );
     assert.equal(request.options.headers["X-DA-Meta-Router"], "1");
-    assert.deepEqual(Buffer.from(request.options.body), rawBody);
   }
 });
 
-test("forwards only once when several assets resolve to the same client target", async () => {
+test("forwards once with all matching entries when several assets resolve to the same client target", async () => {
   const body = { object: "page", entry: [{ id: "page-a" }, { id: "page-a-2" }] };
-  const rawBody = Buffer.from(JSON.stringify(body));
   const requests = [];
   const repo = {
     async getRoutes() {
@@ -116,8 +123,7 @@ test("forwards only once when several assets resolve to the same client target",
 
   await routeRawWebhook({
     body,
-    rawBody,
-    signature: "sha256=test",
+    appSecret: "meta-secret",
     repo,
     fetchImpl: async (url, options) => {
       requests.push({ url, options });
@@ -126,6 +132,8 @@ test("forwards only once when several assets resolve to the same client target",
   });
 
   assert.equal(requests.length, 1);
+  const forwardedBody = JSON.parse(Buffer.from(requests[0].options.body).toString("utf8"));
+  assert.deepEqual(forwardedBody.entry.map((entry) => entry.id), ["page-a", "page-a-2"]);
 });
 
 test("fails closed when any asset in the webhook has no registered route", async () => {
@@ -133,8 +141,7 @@ test("fails closed when any asset in the webhook has no registered route", async
   await assert.rejects(
     routeRawWebhook({
       body,
-      rawBody: Buffer.from(JSON.stringify(body)),
-      signature: "sha256=test",
+      appSecret: "meta-secret",
       repo: {
         async getRoutes() {
           return [{
@@ -159,8 +166,7 @@ test("fails closed when a registered route is disabled", async () => {
   await assert.rejects(
     routeRawWebhook({
       body,
-      rawBody: Buffer.from(JSON.stringify(body)),
-      signature: "sha256=test",
+      appSecret: "meta-secret",
       repo: {
         async getRoutes() {
           return [{
@@ -175,5 +181,17 @@ test("fails closed when a registered route is disabled", async () => {
       fetchImpl: async () => ({ ok: true, status: 200 }),
     }),
     (err) => err.code === "META_ROUTE_DISABLED",
+  );
+});
+
+test("refuses to route isolated payloads without the shared Meta app secret", async () => {
+  const body = { object: "page", entry: [{ id: "page-a" }] };
+  await assert.rejects(
+    routeRawWebhook({
+      body,
+      repo: { getRoutes: async () => [] },
+      fetchImpl: async () => ({ ok: true, status: 200 }),
+    }),
+    (err) => err.code === "META_ROUTE_SECRET_MISSING",
   );
 });
