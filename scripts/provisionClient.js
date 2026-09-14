@@ -20,6 +20,10 @@ const {
   R2ProvisioningError,
 } = require("../src/provisioning/r2Provisioning");
 const {
+  CURRENT_PROVISIONING_RECEIPT_VERSION,
+  secretFreeR2ReceiptState,
+} = require("../src/provisioning/provisioningReceipt");
+const {
   ClientReadinessError,
   normalizeRequiredChannels,
   validateRuntimeReadinessContract,
@@ -296,7 +300,7 @@ function acquireProvisioningLock(resourceName, {
 
 function buildProvisioningReceipt(result, now = new Date()) {
   return {
-    version: 4,
+    version: CURRENT_PROVISIONING_RECEIPT_VERSION,
     completedAt: now.toISOString(),
     lastVerifiedAt: result.readiness?.checkedAt || null,
     clientSlug: result.clientSlug,
@@ -304,7 +308,7 @@ function buildProvisioningReceipt(result, now = new Date()) {
     requiredChannels: [...(result.requiredChannels || [])],
     profileContract: { ...result.profileContract },
     neon: { ...result.neon },
-    r2: result.r2 ? JSON.parse(JSON.stringify(result.r2)) : null,
+    r2: secretFreeR2ReceiptState(result.r2),
     render: { ...result.render },
     runtimeFinalization: result.runtimeFinalization
       ? { ...result.runtimeFinalization }
