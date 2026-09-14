@@ -113,13 +113,26 @@ function createMetaWebhookRouteRepo(queryable) {
          client_slug, channel, asset_id, target_base_url, enabled, updated_at
        ) VALUES ($1,$2,$3,$4,$5,NOW())
        ON CONFLICT (channel, asset_id) DO UPDATE SET
-         client_slug = EXCLUDED.client_slug,
          target_base_url = EXCLUDED.target_base_url,
          enabled = EXCLUDED.enabled,
          updated_at = NOW()
+       WHERE meta_webhook_routes.client_slug = EXCLUDED.client_slug
        RETURNING *`,
       [slug, normalizedChannel, normalizedAssetId, target, enabled === true],
     );
+
+    if (!result.rows[0]) {
+      const existing = await getRoute(normalizedChannel, normalizedAssetId);
+      const error = new Error(
+        existing
+          ? `Meta asset ${normalizedChannel}:${normalizedAssetId} is already registered to client ${existing.clientSlug}. Delete that route explicitly before assigning it to another client.`
+          : `Meta asset ${normalizedChannel}:${normalizedAssetId} could not be registered because its route changed concurrently.`,
+      );
+      error.code = "META_ROUTE_ASSET_CONFLICT";
+      error.existingClientSlug = existing?.clientSlug || null;
+      throw error;
+    }
+
     return rowToRoute(result.rows[0]);
   }
 
