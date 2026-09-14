@@ -55,6 +55,18 @@ function rowToRoute(row = {}) {
   };
 }
 
+function clientChannelConflict(existing, channel, assetId) {
+  const error = new Error(
+    `Client ${existing.clientSlug} already has ${channel} asset ${existing.assetId}. ` +
+      `This chatbot deployment supports one ${channel} business asset per channel; ` +
+      `delete the existing route explicitly before assigning ${assetId}.`,
+  );
+  error.code = "META_ROUTE_CLIENT_CHANNEL_CONFLICT";
+  error.existingAssetId = existing.assetId;
+  error.clientSlug = existing.clientSlug;
+  return error;
+}
+
 function createMetaWebhookRouteRepo(queryable) {
   if (!queryable?.query) throw new Error("Meta webhook route repository requires a Postgres queryable.");
 
@@ -84,6 +96,19 @@ function createMetaWebhookRouteRepo(queryable) {
     return result.rows.map(rowToRoute);
   }
 
+  async function getClientChannelRoute(clientSlug, channel) {
+    const slug = normalizeClientSlug(clientSlug);
+    const normalizedChannel = normalizeChannel(channel);
+    const result = await queryable.query(
+      `SELECT *
+       FROM meta_webhook_routes
+       WHERE client_slug = $1 AND channel = $2
+       LIMIT 1`,
+      [slug, normalizedChannel],
+    );
+    return result.rows[0] ? rowToRoute(result.rows[0]) : null;
+  }
+
   async function listClientRoutes(clientSlug) {
     const slug = normalizeClientSlug(clientSlug);
     const result = await queryable.query(
@@ -108,18 +133,37 @@ function createMetaWebhookRouteRepo(queryable) {
     const normalizedAssetId = normalizeAssetId(assetId);
     const target = normalizeTargetBaseUrl(targetBaseUrl);
 
-    const result = await queryable.query(
-      `INSERT INTO meta_webhook_routes (
-         client_slug, channel, asset_id, target_base_url, enabled, updated_at
-       ) VALUES ($1,$2,$3,$4,$5,NOW())
-       ON CONFLICT (channel, asset_id) DO UPDATE SET
-         target_base_url = EXCLUDED.target_base_url,
-         enabled = EXCLUDED.enabled,
-         updated_at = NOW()
-       WHERE meta_webhook_routes.client_slug = EXCLUDED.client_slug
-       RETURNING *`,
-      [slug, normalizedChannel, normalizedAssetId, target, enabled === true],
-    );
+    const existingForClient = await getClientChannelRoute(slug, normalizedChannel);
+    if (existingForClient && existingForClient.assetId !== normalizedAssetId) {
+      throw clientChannelConflict(existingForClient, normalizedChannel, normalizedAssetId);
+    }
+
+    let result;
+    try {
+      result = await queryable.query(
+        `INSERT INTO meta_webhook_routes (
+           client_slug, channel, asset_id, target_base_url, enabled, updated_at
+         ) VALUES ($1,$2,$3,$4,$5,NOW())
+         ON CONFLICT (channel, asset_id) DO UPDATE SET
+           target_base_url = EXCLUDED.target_base_url,
+           enabled = EXCLUDED.enabled,
+           updated_at = NOW()
+         WHERE meta_webhook_routes.client_slug = EXCLUDED.client_slug
+         RETURNING *`,
+        [slug, normalizedChannel, normalizedAssetId, target, enabled === true],
+      );
+    } catch (err) {
+      // The database constraint is the final guard against two concurrent
+      // registrations assigning two assets from the same channel to one
+      // single-asset client runtime.
+      if (err?.code === "23505") {
+        const concurrent = await getClientChannelRoute(slug, normalizedChannel);
+        if (concurrent && concurrent.assetId !== normalizedAssetId) {
+          throw clientChannelConflict(concurrent, normalizedChannel, normalizedAssetId);
+        }
+      }
+      throw err;
+    }
 
     if (!result.rows[0]) {
       const existing = await getRoute(normalizedChannel, normalizedAssetId);
@@ -170,6 +214,7 @@ function createMetaWebhookRouteRepo(queryable) {
 
   return {
     deleteClientRoute,
+    getClientChannelRoute,
     getRoute,
     getRoutes,
     listClientRoutes,
@@ -179,6 +224,7 @@ function createMetaWebhookRouteRepo(queryable) {
 }
 
 module.exports = {
+  clientChannelConflict,
   createMetaWebhookRouteRepo,
   normalizeAssetId,
   normalizeChannel,
