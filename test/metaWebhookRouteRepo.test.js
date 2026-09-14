@@ -98,5 +98,42 @@ test("upserts by channel and asset so one client can own several Pages", async (
 
   assert.equal(queries.length, 2);
   assert.match(queries[0].sql, /ON CONFLICT \(channel, asset_id\)/i);
+  assert.match(queries[0].sql, /WHERE meta_webhook_routes\.client_slug = EXCLUDED\.client_slug/i);
+  assert.doesNotMatch(queries[0].sql, /client_slug\s*=\s*EXCLUDED\.client_slug/i);
   assert.deepEqual(queries.map(({ params }) => params[2]), ["page-a", "page-b"]);
+});
+
+test("refuses to silently move an existing Meta asset to another client", async () => {
+  let call = 0;
+  const queryable = {
+    async query(sql) {
+      call += 1;
+      if (call === 1) {
+        assert.match(sql, /ON CONFLICT \(channel, asset_id\)/i);
+        return { rows: [] };
+      }
+      assert.match(sql, /WHERE channel = \$1 AND asset_id = \$2/i);
+      return {
+        rows: [{
+          client_slug: "client-a",
+          channel: "facebook",
+          asset_id: "page-a",
+          target_base_url: "https://client-a.example.test",
+          enabled: true,
+        }],
+      };
+    },
+  };
+  const repo = createMetaWebhookRouteRepo(queryable);
+
+  await assert.rejects(
+    repo.upsertRoute({
+      clientSlug: "client-b",
+      channel: "facebook",
+      assetId: "page-a",
+      targetBaseUrl: "https://client-b.example.test",
+    }),
+    (err) => err.code === "META_ROUTE_ASSET_CONFLICT"
+      && err.existingClientSlug === "client-a",
+  );
 });
