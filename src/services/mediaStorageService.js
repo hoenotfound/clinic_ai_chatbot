@@ -117,6 +117,13 @@ function getMediaIsolationStatus(env = process.env) {
 
 function applyClientNamespace(relativeKey, env = process.env) {
   const isolation = getMediaIsolationStatus(env);
+  if (isolation.reason === "invalid_client_slug") {
+    const error = new Error(
+      "CLIENT_SLUG is configured but does not produce a valid client media namespace."
+    );
+    error.code = "INVALID_CLIENT_MEDIA_SLUG";
+    throw error;
+  }
   return isolation.prefix ? `${isolation.prefix}/${relativeKey}` : relativeKey;
 }
 
