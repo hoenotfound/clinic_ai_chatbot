@@ -1,5 +1,4 @@
 const {
-  ClientProvisioningError,
   buildProvisioningPlan,
   requireExecutionConfig,
 } = require("./clientProvisioner");
@@ -41,22 +40,29 @@ function exactlyOne(items, label, code) {
   return list[0];
 }
 
-function selectNeonDefaults({ branches, databases, roles } = {}) {
-  const branchList = Array.isArray(branches) ? branches : [];
-  const activeMain = branchList.filter((branch) => branch?.name === "main" && !branch?.deleted_at);
+function selectNeonBranch(branches = []) {
+  const list = Array.isArray(branches) ? branches : [];
+  const active = list.filter((branch) => !branch?.deleted_at);
+  const activeMain = active.filter((branch) => branch?.name === "main");
   const branch = activeMain.length === 1
     ? activeMain[0]
-    : (branchList.length === 1 ? branchList[0] : null);
+    : (active.length === 1 ? active[0] : null);
   if (!branch?.id) {
     throw new ClientRecoveryError(
       "Recovery could not determine a unique Neon branch for the interrupted project.",
       { code: "RECOVERY_NEON_BRANCH_AMBIGUOUS", stage: "neon_recovery", retrySafe: true }
     );
   }
+  return branch;
+}
 
+function selectNeonDefaults({ branches, databases, roles } = {}) {
+  const branch = selectNeonBranch(branches);
   const databaseList = Array.isArray(databases) ? databases : [];
-  const database = databaseList.find((item) => item?.name === "neondb")
-    || (databaseList.length === 1 ? databaseList[0] : null);
+  const matchingDatabases = databaseList.filter((item) => item?.name === "neondb");
+  const database = matchingDatabases.length === 1
+    ? matchingDatabases[0]
+    : (databaseList.length === 1 ? databaseList[0] : null);
   if (!database?.name) {
     throw new ClientRecoveryError(
       "Recovery could not determine a unique Neon database for the interrupted project.",
@@ -66,8 +72,10 @@ function selectNeonDefaults({ branches, databases, roles } = {}) {
 
   const roleList = Array.isArray(roles) ? roles : [];
   const ownerName = database.owner_name || database.ownerName || null;
-  const role = (ownerName ? roleList.find((item) => item?.name === ownerName) : null)
-    || (roleList.length === 1 ? roleList[0] : null);
+  const matchingRoles = ownerName ? roleList.filter((item) => item?.name === ownerName) : [];
+  const role = matchingRoles.length === 1
+    ? matchingRoles[0]
+    : (roleList.length === 1 ? roleList[0] : null);
   if (!role?.name) {
     throw new ClientRecoveryError(
       "Recovery could not determine the Neon database owner role for the interrupted project.",
@@ -106,8 +114,8 @@ async function discoverNeonDefaults({
     query: { search: "main", limit: 100 },
   });
   const branches = Array.isArray(branchPayload?.branches) ? branchPayload.branches : [];
-  const provisional = selectNeonDefaults({ branches, databases: [{ name: "placeholder" }], roles: [{ name: "placeholder" }] });
-  const encodedBranch = encodeURIComponent(provisional.branchId);
+  const branch = selectNeonBranch(branches);
+  const encodedBranch = encodeURIComponent(branch.id);
   const [databasePayload, rolePayload] = await Promise.all([
     request(`projects/${encodedProject}/branches/${encodedBranch}/databases`),
     request(`projects/${encodedProject}/branches/${encodedBranch}/roles`),
@@ -129,6 +137,31 @@ function fullRenderEnvVars(plan, databaseUrl, managedRuntimeEnv) {
     ...Object.entries(managedRuntimeEnv).map(([key, value]) => ({ key, value })),
     ...Object.entries(plan.runtimeEnv).map(([key, value]) => ({ key, value })),
   ];
+}
+
+function validateExistingRenderService(service, plan) {
+  if (!service?.id) {
+    throw new ClientRecoveryError("Existing Render service is missing its service ID.", {
+      code: "RECOVERY_RENDER_SERVICE_ID_MISSING",
+      stage: "render_recovery",
+      retrySafe: false,
+    });
+  }
+  const actualRepo = service.repo || service.repository || service.serviceDetails?.repo || null;
+  const actualBranch = service.branch || service.serviceDetails?.branch || null;
+  if (actualRepo && actualRepo !== plan.render.repo) {
+    throw new ClientRecoveryError(
+      `Existing Render service repository does not match the recovery plan. Expected ${plan.render.repo}, found ${actualRepo}.`,
+      { code: "RECOVERY_RENDER_REPO_MISMATCH", stage: "recovery_preflight", retrySafe: false }
+    );
+  }
+  if (actualBranch && actualBranch !== plan.render.branch) {
+    throw new ClientRecoveryError(
+      `Existing Render service branch does not match the recovery plan. Expected ${plan.render.branch}, found ${actualBranch}.`,
+      { code: "RECOVERY_RENDER_BRANCH_MISMATCH", stage: "recovery_preflight", retrySafe: false }
+    );
+  }
+  return service;
 }
 
 async function redeployExistingRenderWithR2({
@@ -219,13 +252,41 @@ async function recoverInterruptedProvisioning(input = {}, {
     activeR2Client.findBucketsByExactName(plan.r2.bucketName),
   ]);
   const neonProject = exactlyOne(neonMatches, "Neon project", "RECOVERY_NEON_PROJECT_NOT_UNIQUE");
-  const bucket = exactlyOne(bucketMatches, "R2 bucket", "RECOVERY_R2_BUCKET_NOT_UNIQUE");
   if (Array.isArray(renderMatches) && renderMatches.length > 1) {
     throw new ClientRecoveryError("Recovery found multiple Render services with the expected name. Resolve the ambiguity first.", {
       code: "RECOVERY_RENDER_SERVICE_AMBIGUOUS",
       stage: "recovery_preflight",
       retrySafe: true,
     });
+  }
+  if (Array.isArray(bucketMatches) && bucketMatches.length > 1) {
+    throw new ClientRecoveryError("Recovery found multiple R2 buckets with the expected name. Resolve the ambiguity first.", {
+      code: "RECOVERY_R2_BUCKET_AMBIGUOUS",
+      stage: "recovery_preflight",
+      retrySafe: true,
+    });
+  }
+  if (renderMatches.length === 1) validateExistingRenderService(renderMatches[0], plan);
+
+  let bucket = bucketMatches[0] || null;
+  let createdR2Bucket = false;
+  if (!bucket) {
+    try {
+      bucket = await activeR2Client.createBucket({
+        name: plan.r2.bucketName,
+        locationHint: plan.r2.locationHint,
+      });
+      createdR2Bucket = true;
+    } catch (err) {
+      throw new ClientRecoveryError(
+        `Recovery confirmed the expected R2 bucket was absent but could not create it: ${err?.message || "R2 bucket creation failed"}.`,
+        {
+          code: "RECOVERY_R2_BUCKET_CREATE_FAILED",
+          stage: "r2_recovery",
+          retrySafe: err?.ambiguous === true ? false : null,
+        }
+      );
+    }
   }
   if (bucket.location && bucket.location !== plan.r2.locationHint) {
     throw new ClientRecoveryError(
@@ -262,13 +323,6 @@ async function recoverInterruptedProvisioning(input = {}, {
   let reusedRender = false;
   if (renderMatches.length === 1) {
     service = renderMatches[0];
-    if (!service?.id) {
-      throw new ClientRecoveryError("Existing Render service is missing its service ID.", {
-        code: "RECOVERY_RENDER_SERVICE_ID_MISSING",
-        stage: "render_recovery",
-        retrySafe: false,
-      });
-    }
     const redeployed = await redeployExistingRenderImpl({
       serviceId: service.id,
       managedRuntimeEnv,
@@ -309,7 +363,8 @@ async function recoverInterruptedProvisioning(input = {}, {
     recovered: true,
     recovery: {
       reusedNeon: true,
-      reusedR2Bucket: true,
+      reusedR2Bucket: !createdR2Bucket,
+      createdR2Bucket,
       recoveredR2Token: credentials.recovered === true,
       createdR2Token: credentials.created === true,
       reusedRender,
@@ -365,5 +420,7 @@ module.exports = {
   fullRenderEnvVars,
   recoverInterruptedProvisioning,
   redeployExistingRenderWithR2,
+  selectNeonBranch,
   selectNeonDefaults,
+  validateExistingRenderService,
 };
