@@ -146,7 +146,7 @@ test("successful provisioning receipt is secret-free and stores finalization, Op
   });
   const saved = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
 
-  assert.equal(saved.version, 3);
+  assert.equal(saved.version, 4);
   assert.equal(saved.completedAt, "2026-09-08T12:00:00.000Z");
   assert.equal(saved.lastVerifiedAt, "2026-09-08T12:01:00.000Z");
   assert.equal(saved.render.serviceId, "srv-123");
