@@ -65,11 +65,83 @@ test("maps database rows without exposing unrelated data", () => {
   );
 });
 
-test("upserts by channel and asset so one client can own several Pages", async () => {
+test("upserts the same channel asset without allowing client ownership to change", async () => {
   const queries = [];
   const queryable = {
     async query(sql, params) {
       queries.push({ sql, params });
+      if (/WHERE client_slug = \$1 AND channel = \$2/i.test(sql)) {
+        return { rows: [] };
+      }
+      return {
+        rows: [{
+          client_slug: params[0],
+          channel: params[1],
+          asset_id: params[2],
+          target_base_url: params[3],
+          enabled: params[4],
+        }],
+      };
+    },
+  };
+  const repo = createMetaWebhookRouteRepo(queryable);
+
+  await repo.upsertRoute({
+    clientSlug: "client-a",
+    channel: "facebook",
+    assetId: "page-a",
+    targetBaseUrl: "https://client-a.example.test",
+  });
+
+  assert.equal(queries.length, 2);
+  const insertSql = queries[1].sql;
+  assert.match(insertSql, /ON CONFLICT \(channel, asset_id\)/i);
+  assert.match(insertSql, /WHERE meta_webhook_routes\.client_slug = EXCLUDED\.client_slug/i);
+  const updateSetMatch = insertSql.match(
+    /DO UPDATE SET([\s\S]*?)WHERE meta_webhook_routes\.client_slug = EXCLUDED\.client_slug/i,
+  );
+  assert.ok(updateSetMatch, "expected guarded DO UPDATE SET clause");
+  assert.doesNotMatch(updateSetMatch[1], /\bclient_slug\s*=/i);
+});
+
+test("refuses a second Facebook Page on a single client deployment", async () => {
+  const queries = [];
+  const queryable = {
+    async query(sql) {
+      queries.push(sql);
+      assert.match(sql, /WHERE client_slug = \$1 AND channel = \$2/i);
+      return {
+        rows: [{
+          client_slug: "client-a",
+          channel: "facebook",
+          asset_id: "page-a",
+          target_base_url: "https://client-a.example.test",
+          enabled: true,
+        }],
+      };
+    },
+  };
+  const repo = createMetaWebhookRouteRepo(queryable);
+
+  await assert.rejects(
+    repo.upsertRoute({
+      clientSlug: "client-a",
+      channel: "facebook",
+      assetId: "page-b",
+      targetBaseUrl: "https://client-a.example.test",
+    }),
+    (err) => err.code === "META_ROUTE_CLIENT_CHANNEL_CONFLICT"
+      && err.existingAssetId === "page-a",
+  );
+  assert.equal(queries.length, 1, "conflict should fail before an INSERT is attempted");
+});
+
+test("allows one Facebook route and one Instagram route for the same client", async () => {
+  const insertedChannels = [];
+  const queryable = {
+    async query(sql, params) {
+      if (/WHERE client_slug = \$1 AND channel = \$2/i.test(sql)) return { rows: [] };
+      insertedChannels.push(params[1]);
       return {
         rows: [{
           client_slug: params[0],
@@ -91,20 +163,12 @@ test("upserts by channel and asset so one client can own several Pages", async (
   });
   await repo.upsertRoute({
     clientSlug: "client-a",
-    channel: "facebook",
-    assetId: "page-b",
+    channel: "instagram",
+    assetId: "ig-a",
     targetBaseUrl: "https://client-a.example.test",
   });
 
-  assert.equal(queries.length, 2);
-  assert.match(queries[0].sql, /ON CONFLICT \(channel, asset_id\)/i);
-  assert.match(queries[0].sql, /WHERE meta_webhook_routes\.client_slug = EXCLUDED\.client_slug/i);
-  const updateSetMatch = queries[0].sql.match(
-    /DO UPDATE SET([\s\S]*?)WHERE meta_webhook_routes\.client_slug = EXCLUDED\.client_slug/i,
-  );
-  assert.ok(updateSetMatch, "expected guarded DO UPDATE SET clause");
-  assert.doesNotMatch(updateSetMatch[1], /\bclient_slug\s*=/i);
-  assert.deepEqual(queries.map(({ params }) => params[2]), ["page-a", "page-b"]);
+  assert.deepEqual(insertedChannels, ["facebook", "instagram"]);
 });
 
 test("refuses to silently move an existing Meta asset to another client", async () => {
@@ -113,6 +177,10 @@ test("refuses to silently move an existing Meta asset to another client", async 
     async query(sql) {
       call += 1;
       if (call === 1) {
+        assert.match(sql, /WHERE client_slug = \$1 AND channel = \$2/i);
+        return { rows: [] };
+      }
+      if (call === 2) {
         assert.match(sql, /ON CONFLICT \(channel, asset_id\)/i);
         return { rows: [] };
       }
