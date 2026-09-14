@@ -5,6 +5,7 @@ const os = require("os");
 const path = require("path");
 
 const {
+  loadReceipt,
   parseArgs,
   provisioningResultFromReceipt,
   recoveryLockName,
@@ -12,9 +13,9 @@ const {
 } = require("../scripts/enrollOpsClient");
 const { acquireProvisioningLock } = require("../scripts/provisionClient");
 
-function fixture() {
+function fixture(version = 3) {
   return {
-    version: 3,
+    version,
     completedAt: "2026-09-10T12:00:00.000Z",
     clientSlug: "acme-clinic",
     industry: "aesthetic_clinic",
@@ -51,12 +52,32 @@ test("Ops enrollment recovery CLI accepts only receipt/json controls", () => {
   assert.throws(() => parseArgs(["--token", "secret"]), /Unknown argument/);
 });
 
+test("receipt loader accepts both v3 and v4 receipts and rejects future versions", (t) => {
+  const directory = tempDir(t);
+  for (const version of [3, 4]) {
+    const receiptPath = path.join(directory, `v${version}.json`);
+    fs.writeFileSync(receiptPath, `${JSON.stringify(fixture(version))}\n`);
+    assert.equal(loadReceipt(receiptPath).receipt.version, version);
+  }
+  const futurePath = path.join(directory, "v5.json");
+  fs.writeFileSync(futurePath, `${JSON.stringify(fixture(5))}\n`);
+  assert.throws(() => loadReceipt(futurePath), /Unsupported provisioning receipt version 5/);
+});
+
 test("receipt converts to the minimum safe provisioning result needed for re-enrollment", () => {
-  const result = provisioningResultFromReceipt(fixture());
+  const v4 = fixture(4);
+  v4.r2 = {
+    enabled: true,
+    provisioned: true,
+    bucketName: "da-chatbot-acme-clinic-media",
+    tokenId: "token-1",
+  };
+  const result = provisioningResultFromReceipt(v4);
   assert.equal(result.clientSlug, "acme-clinic");
   assert.equal(result.render.serviceId, "srv-client");
   assert.equal(result.render.url, "https://client.example");
   assert.deepEqual(result.requiredChannels, ["whatsapp", "instagram"]);
+  assert.equal(result.r2.bucketName, "da-chatbot-acme-clinic-media");
   assert.equal(Object.hasOwn(result, "runtimeEnv"), false);
 });
 
@@ -78,7 +99,7 @@ test("recovery updates only secret-free enrollment state atomically", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ops-enroll-receipt-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const receiptPath = path.join(directory, "acme.json");
-  fs.writeFileSync(receiptPath, `${JSON.stringify(fixture(), null, 2)}\n`, { mode: 0o600 });
+  fs.writeFileSync(receiptPath, `${JSON.stringify(fixture(4), null, 2)}\n`, { mode: 0o600 });
 
   const secret = "this-token-must-never-be-written";
   const enrollment = {
@@ -101,11 +122,12 @@ test("recovery updates only secret-free enrollment state atomically", (t) => {
     remoteCommitSha: "new-sha",
   };
 
-  writeEnrollmentToReceipt(receiptPath, fixture(), enrollment, {
+  writeEnrollmentToReceipt(receiptPath, fixture(4), enrollment, {
     deployedCommitSha: "new-sha",
   });
   const saved = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
 
+  assert.equal(saved.version, 4);
   assert.equal(saved.opsEnrollment.status, "verified");
   assert.equal(saved.opsEnrollment.tokenEnvKey, "OPS_CLIENT_TOKEN_ACME_CLINIC");
   assert.equal(saved.render.deployedCommitSha, "new-sha");
