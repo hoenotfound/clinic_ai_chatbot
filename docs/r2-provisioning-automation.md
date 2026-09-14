@@ -68,6 +68,12 @@ da-chatbot-acme-renovation-r2
 
 The deterministic names are also the recovery identity. Recovery never adopts a differently named bucket or token.
 
+## Location hint versus jurisdiction
+
+`PROVISIONING_CLOUDFLARE_R2_LOCATION_HINT` is passed to Cloudflare when the bucket is created, but it is a best-effort placement hint rather than an ownership or recovery invariant. Recovery therefore does **not** reject an existing deterministic bucket merely because Cloudflare reports an actual location different from the requested hint.
+
+Recovery does validate the bucket jurisdiction when Cloudflare returns one. The default provisioning model expects the `default` jurisdiction. Account + deterministic bucket name + jurisdiction + exact token scope form the durable recovery identity.
+
 ## Client credential scope
 
 The generated client token is restricted to the exact bucket resource:
@@ -139,11 +145,12 @@ Recovery uses the same deterministic resource names as the original provisioning
 
 1. Exactly one matching Neon project must exist. Recovery discovers its active main branch, database and owner role, then requests a fresh pooled connection URI.
 2. If the exact R2 bucket exists, it is reused. If the exact bucket is confirmed absent, recovery may create that exact bucket. It never adopts a differently named bucket.
-3. If a same-name Cloudflare token exists, recovery validates that it is active and has exactly one allow policy, exactly one resource equal to the expected bucket, and exactly the expected bucket-item permission before rolling its value.
-4. Multiple same-name active tokens, unexpected token scope, inactive tokens, mismatched bucket location, or ambiguous provider resources fail closed. Recovery does not widen permissions or silently choose one.
-5. If no same-name token exists, recovery creates the deterministic bucket-scoped token and derives new S3 credentials in memory.
-6. If the exact Render service already exists, its repository/branch are checked when the provider returns them. Recovery updates only the managed R2 environment values and redeploys the existing service. It does not restore the bootstrap admin password or replace unrelated runtime variables.
-7. If the Render service does not exist, recovery creates it with the recovered Neon database and R2 credentials, then continues normal login/finalization/readiness checks.
+3. A different provider-reported R2 location is allowed because the original location hint is best effort; an explicit bucket-jurisdiction mismatch fails closed.
+4. If a same-name Cloudflare token exists, recovery validates that it is active and has exactly one allow policy, exactly one resource equal to the expected bucket, and exactly the expected bucket-item permission before rolling its value.
+5. Multiple same-name active tokens, unexpected token scope, inactive tokens, jurisdiction mismatch, or ambiguous provider resources fail closed. Recovery does not widen permissions or silently choose one.
+6. If no same-name token exists, recovery creates the deterministic bucket-scoped token and derives new S3 credentials in memory.
+7. If the exact Render service already exists, its repository, branch, type and region are checked when the provider returns them. Recovery updates only the managed R2 environment values and redeploys the existing service. It does not restore the bootstrap admin password or replace unrelated runtime variables.
+8. If the Render service does not exist, recovery creates it with the recovered Neon database and R2 credentials, then continues normal login/finalization/readiness checks.
 
 After recovery writes the normal secret-free v4 receipt, Ops enrollment can be repaired with:
 
