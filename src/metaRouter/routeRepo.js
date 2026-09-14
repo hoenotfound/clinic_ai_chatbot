@@ -1,7 +1,7 @@
 function normalizeChannel(value) {
   const channel = String(value || "").trim().toLowerCase();
-  if (!['facebook', 'instagram'].includes(channel)) {
-    throw new Error(`Unsupported Meta webhook route channel: ${value || 'missing'}`);
+  if (!["facebook", "instagram"].includes(channel)) {
+    throw new Error(`Unsupported Meta webhook route channel: ${value || "missing"}`);
   }
   return channel;
 }
@@ -28,8 +28,11 @@ function normalizeTargetBaseUrl(value) {
   } catch (_) {
     throw new Error("Meta webhook route target URL is invalid.");
   }
+  if (parsed.username || parsed.password) {
+    throw new Error("Meta webhook route target URL must not contain credentials.");
+  }
+  const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
   if (parsed.protocol !== "https:") {
-    const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
     if (!(local && parsed.protocol === "http:")) {
       throw new Error("Meta webhook route target URL must use HTTPS.");
     }
@@ -109,8 +112,8 @@ function createMetaWebhookRouteRepo(queryable) {
       `INSERT INTO meta_webhook_routes (
          client_slug, channel, asset_id, target_base_url, enabled, updated_at
        ) VALUES ($1,$2,$3,$4,$5,NOW())
-       ON CONFLICT (client_slug, channel) DO UPDATE SET
-         asset_id = EXCLUDED.asset_id,
+       ON CONFLICT (channel, asset_id) DO UPDATE SET
+         client_slug = EXCLUDED.client_slug,
          target_base_url = EXCLUDED.target_base_url,
          enabled = EXCLUDED.enabled,
          updated_at = NOW()
@@ -132,16 +135,24 @@ function createMetaWebhookRouteRepo(queryable) {
     return result.rows.map(rowToRoute);
   }
 
-  async function deleteClientRoute(clientSlug, channel) {
+  async function deleteClientRoute(clientSlug, channel, assetId = null) {
     const slug = normalizeClientSlug(clientSlug);
     const normalizedChannel = normalizeChannel(channel);
-    const result = await queryable.query(
-      `DELETE FROM meta_webhook_routes
-       WHERE client_slug = $1 AND channel = $2
-       RETURNING *`,
-      [slug, normalizedChannel],
-    );
-    return result.rows[0] ? rowToRoute(result.rows[0]) : null;
+    const normalizedAssetId = assetId == null ? null : normalizeAssetId(assetId);
+    const result = normalizedAssetId
+      ? await queryable.query(
+          `DELETE FROM meta_webhook_routes
+           WHERE client_slug = $1 AND channel = $2 AND asset_id = $3
+           RETURNING *`,
+          [slug, normalizedChannel, normalizedAssetId],
+        )
+      : await queryable.query(
+          `DELETE FROM meta_webhook_routes
+           WHERE client_slug = $1 AND channel = $2
+           RETURNING *`,
+          [slug, normalizedChannel],
+        );
+    return result.rows.map(rowToRoute);
   }
 
   return {
