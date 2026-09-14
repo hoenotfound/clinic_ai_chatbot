@@ -178,6 +178,55 @@ function secretAccessKeyFromTokenValue(tokenValue) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+function assertBucketTokenScope(token, {
+  accountId,
+  bucketName,
+  tokenName,
+  permissionId,
+  jurisdiction = R2_JURISDICTION,
+} = {}) {
+  const expectedResource = bucketResourceId(accountId, bucketName, jurisdiction);
+  if (!token?.id || token.name !== tokenName) {
+    throw new R2ProvisioningError(
+      `R2 recovery found a Cloudflare token that does not match the expected token name "${tokenName}".`,
+      { code: "R2_RECOVERY_TOKEN_MISMATCH", stage: "token_recovery" }
+    );
+  }
+  if (token.status && token.status !== "active") {
+    throw new R2ProvisioningError(
+      `R2 recovery token "${tokenName}" is ${token.status}, not active.`,
+      { code: "R2_RECOVERY_TOKEN_INACTIVE", stage: "token_recovery" }
+    );
+  }
+
+  const policies = Array.isArray(token.policies) ? token.policies : [];
+  if (policies.length !== 1) {
+    throw new R2ProvisioningError(
+      `R2 recovery token "${tokenName}" does not have exactly one bucket policy. Refusing to roll a token with unexpected scope.`,
+      { code: "R2_RECOVERY_TOKEN_SCOPE_MISMATCH", stage: "token_recovery" }
+    );
+  }
+  const policy = policies[0] || {};
+  const resources = policy.resources && typeof policy.resources === "object" ? policy.resources : {};
+  const resourceKeys = Object.keys(resources);
+  const permissionGroups = Array.isArray(policy.permission_groups) ? policy.permission_groups : [];
+  const permissionMatches = permissionGroups.length === 1
+    && permissionGroups[0]?.id === permissionId;
+  if (
+    policy.effect !== "allow"
+    || resourceKeys.length !== 1
+    || resourceKeys[0] !== expectedResource
+    || resources[expectedResource] !== "*"
+    || !permissionMatches
+  ) {
+    throw new R2ProvisioningError(
+      `R2 recovery token "${tokenName}" is not restricted to the expected bucket. Refusing to rotate or reuse it.`,
+      { code: "R2_RECOVERY_TOKEN_SCOPE_MISMATCH", stage: "token_recovery" }
+    );
+  }
+  return token;
+}
+
 function createCloudflareR2Client({
   apiToken,
   accountId,
@@ -248,6 +297,40 @@ function createCloudflareR2Client({
     return bucket;
   }
 
+  async function getToken(tokenId) {
+    try {
+      const payload = await request(`${accountPath}/tokens/${encodeURIComponent(tokenId)}`);
+      return cloudflareResult(payload, "token_lookup") || null;
+    } catch (err) {
+      if (err instanceof ProviderApiError && err.status === 404) return null;
+      throw err;
+    }
+  }
+
+  async function findTokensByExactName(name) {
+    const matches = [];
+    const perPage = 50;
+    let page = 1;
+    while (true) {
+      const payload = await request(`${accountPath}/tokens`, {
+        query: { page, per_page: perPage, include_expired: true },
+      });
+      const result = cloudflareResult(payload, "token_list");
+      const list = Array.isArray(result) ? result : [];
+      matches.push(...list.filter((token) => token?.name === name));
+      const total = Number(payload?.result_info?.total_count || 0);
+      if (list.length < perPage || (total > 0 && page * perPage >= total)) break;
+      page += 1;
+      if (page > 200) {
+        throw new R2ProvisioningError("Cloudflare token lookup exceeded the safe pagination limit.", {
+          code: "R2_TOKEN_LOOKUP_PAGINATION_LIMIT",
+          stage: "token_recovery",
+        });
+      }
+    }
+    return matches;
+  }
+
   async function createBucketCredentials({
     bucketName,
     tokenName,
@@ -300,12 +383,75 @@ function createCloudflareR2Client({
     };
   }
 
+  async function recoverBucketCredentials({
+    bucketName,
+    tokenName,
+    tokenId = null,
+    jurisdiction = R2_JURISDICTION,
+  } = {}) {
+    const permission = await findPermissionGroup(
+      R2_BUCKET_ITEM_WRITE_PERMISSION,
+      R2_BUCKET_RESOURCE_SCOPE
+    );
+    let token = null;
+    if (tokenId) {
+      token = await getToken(tokenId);
+      if (!token) {
+        throw new R2ProvisioningError(
+          `R2 recovery token ID "${tokenId}" no longer exists. Refusing to create a second token automatically.`,
+          { code: "R2_RECOVERY_TOKEN_NOT_FOUND", stage: "token_recovery" }
+        );
+      }
+    } else {
+      const exact = await findTokensByExactName(tokenName);
+      const active = exact.filter((item) => !item?.status || item.status === "active");
+      if (active.length > 1) {
+        throw new R2ProvisioningError(
+          `Multiple active Cloudflare tokens are named "${tokenName}". Resolve the duplicates before recovery.`,
+          { code: "R2_RECOVERY_TOKEN_AMBIGUOUS", stage: "token_recovery" }
+        );
+      }
+      if (active.length === 1) {
+        token = active[0];
+      } else if (exact.length) {
+        throw new R2ProvisioningError(
+          `Cloudflare token "${tokenName}" exists but is not active. Resolve it before recovery.`,
+          { code: "R2_RECOVERY_TOKEN_INACTIVE", stage: "token_recovery" }
+        );
+      }
+    }
+
+    if (!token) {
+      const created = await createBucketCredentials({ bucketName, tokenName, jurisdiction });
+      return { ...created, recovered: false, created: true };
+    }
+
+    assertBucketTokenScope(token, {
+      accountId: normalizedAccountId,
+      bucketName,
+      tokenName,
+      permissionId: permission.id,
+      jurisdiction,
+    });
+    const rolled = await rollBucketCredentials(token.id);
+    return {
+      ...rolled,
+      tokenName,
+      resource: bucketResourceId(normalizedAccountId, bucketName, jurisdiction),
+      recovered: true,
+      created: false,
+    };
+  }
+
   return {
     accountId: normalizedAccountId,
     createBucket,
     createBucketCredentials,
     findBucketsByExactName,
     findPermissionGroup,
+    findTokensByExactName,
+    getToken,
+    recoverBucketCredentials,
     rollBucketCredentials,
   };
 }
@@ -336,6 +482,7 @@ module.exports = {
   R2_LOCATION_HINTS,
   R2_PROVISIONING_MODES,
   R2ProvisioningError,
+  assertBucketTokenScope,
   bucketResourceId,
   buildR2BucketName,
   buildR2ProvisioningPlan,
