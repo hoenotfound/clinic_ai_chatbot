@@ -54,7 +54,7 @@ META_ROUTER_FORWARD_TIMEOUT_MS=8000
 
 Use `/healthz` as the router health check. Because Messenger and Instagram for every client depend on this service, deploy it as an always-available production service rather than a service that intentionally sleeps between requests.
 
-Migration `004_meta_webhook_routes.sql` stores only route metadata: client slug, channel, Meta asset ID, target base URL, and enabled state. It does not store Page access tokens or the Meta app secret. One client can have multiple Facebook Pages and/or Instagram accounts. A given `(channel, asset_id)` can belong to only one client route.
+Migration `004_meta_webhook_routes.sql` stores only route metadata: client slug, channel, Meta asset ID, target base URL, and enabled state. It does not store Page access tokens or the Meta app secret. A given `(channel, asset_id)` can belong to only one client route, and each client deployment can register at most one Facebook Page and one Instagram account. That matches the chatbot runtime, which currently has one sender ID/access-token configuration per channel.
 
 Configure the app-level callbacks once:
 
@@ -96,7 +96,7 @@ FACEBOOK_PAGE_ID=123456789
 INSTAGRAM_ACCOUNT_ID=17841400000000000
 ```
 
-A client that bought only one channel only needs that channel's route. If a client owns several Pages or Instagram accounts, run the registration command again for each additional asset; registration is keyed by channel + asset ID and does not replace another asset belonging to the same client.
+A client that bought only one channel only needs that channel's route. Re-running registration for the same client and the same asset is safe and can update the target URL/enabled state. Assigning a different Page or Instagram account to the same client/channel is rejected until the previous route is explicitly removed; this prevents inbound traffic for one asset from being answered with another asset's configured sender/token. If a business later needs multiple Pages or multiple Instagram accounts in one deployment, the outbound credential model must be expanded first rather than only adding router entries.
 
 Route registration controls only where an incoming webhook is delivered. It does **not** grant Meta permissions or subscribe the client's Page/account to webhook fields. During manual onboarding you must still complete the normal Meta asset authorization/subscription steps for that client. In particular, Messenger needs the client Page subscribed to the shared app and the required webhook fields such as `messages`; Instagram must likewise be connected/subscribed according to the Messenger-from-Meta Instagram setup used by this project.
 
