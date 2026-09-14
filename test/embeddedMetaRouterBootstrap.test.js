@@ -2,6 +2,11 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const express = require("express");
+const {
+  createMetaRouterApp,
+  expectedMetaSignature,
+} = require("../src/metaRouter/server");
 
 const previousEnabled = process.env.META_ROUTER_ENABLED;
 delete process.env.META_ROUTER_ENABLED;
@@ -14,6 +19,20 @@ const {
 } = require("../src/services/embeddedMetaRouterBootstrap");
 if (previousEnabled === undefined) delete process.env.META_ROUTER_ENABLED;
 else process.env.META_ROUTER_ENABLED = previousEnabled;
+
+async function withServer(app, callback) {
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((resolve, reject) => {
+    server.once("listening", resolve);
+    server.once("error", reject);
+  });
+  const address = server.address();
+  try {
+    await callback(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
 
 test("embedded Meta router is disabled by default and validates enable flags", () => {
   assert.equal(parseEnabled(undefined), false);
@@ -118,6 +137,71 @@ test("Express wrapper mounts the router exactly once and preserves Express stati
   assert.equal(wrapped.Router, originalExpress.Router);
   assert.equal(wrapped.json, originalExpress.json);
   assert.equal(createdApps.length, 2);
+});
+
+test("real embedded mount verifies Meta raw signatures and leaves normal chatbot routes reachable", async () => {
+  const appSecret = "shared-meta-secret";
+  const forwarded = [];
+  const routerApp = createMetaRouterApp({
+    env: {
+      META_APP_SECRET: appSecret,
+      META_VERIFY_TOKEN: "verify-token",
+    },
+    repo: {
+      async getRoutes(channel, assetIds) {
+        assert.equal(channel, "facebook");
+        assert.deepEqual(assetIds, ["page-a"]);
+        return [{
+          clientSlug: "client-a",
+          channel: "facebook",
+          assetId: "page-a",
+          targetBaseUrl: "https://client-a.example.test",
+          enabled: true,
+        }];
+      },
+    },
+    fetchImpl: async (url, options) => {
+      forwarded.push({ url, options });
+      return { ok: true, status: 200 };
+    },
+    healthCheck: async () => true,
+  });
+
+  const wrappedExpress = wrapExpressFactory(express, {
+    mountPath: "/meta-router",
+    callbackPath: "/meta-router/meta-webhook",
+    routerApp,
+  });
+  const app = wrappedExpress();
+  app.get("/normal-chatbot-route", (_req, res) => res.status(200).send("chatbot-ok"));
+
+  await withServer(app, async (baseUrl) => {
+    const verifyResponse = await fetch(
+      `${baseUrl}/meta-router/meta-webhook?hub.mode=subscribe&hub.verify_token=verify-token&hub.challenge=challenge-123`,
+    );
+    assert.equal(verifyResponse.status, 200);
+    assert.equal(await verifyResponse.text(), "challenge-123");
+
+    const rawBody = Buffer.from(JSON.stringify({
+      object: "page",
+      entry: [{ id: "page-a", messaging: [{ message: { mid: "m-1", text: "hello" } }] }],
+    }));
+    const webhookResponse = await fetch(`${baseUrl}/meta-router/meta-webhook`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": expectedMetaSignature(appSecret, rawBody),
+      },
+      body: rawBody,
+    });
+    assert.equal(webhookResponse.status, 200);
+    assert.equal(forwarded.length, 1);
+    assert.equal(forwarded[0].url, "https://client-a.example.test/meta-webhook");
+
+    const normalResponse = await fetch(`${baseUrl}/normal-chatbot-route`);
+    assert.equal(normalResponse.status, 200);
+    assert.equal(await normalResponse.text(), "chatbot-ok");
+  });
 });
 
 test("normal npm start preloads the optional embedded router bootstrap", () => {
