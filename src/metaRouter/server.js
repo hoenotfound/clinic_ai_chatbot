@@ -72,6 +72,31 @@ function targetWebhookUrl(baseUrl) {
   return `${String(baseUrl || "").replace(/\/+$/, "")}/meta-webhook`;
 }
 
+function buildIsolatedTargetPayloads(body, routesByAsset) {
+  const groups = new Map();
+  const entries = Array.isArray(body?.entry) ? body.entry : [];
+
+  for (const entry of entries) {
+    const assetId = text(entry?.id);
+    const route = routesByAsset.get(assetId);
+    if (!route) continue;
+    const key = `${route.clientSlug}\n${route.targetBaseUrl}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { route, entries: [], assetIds: new Set() };
+      groups.set(key, group);
+    }
+    group.entries.push(entry);
+    group.assetIds.add(assetId);
+  }
+
+  return [...groups.values()].map((group) => ({
+    route: group.route,
+    body: { ...body, entry: group.entries },
+    assetIds: [...group.assetIds],
+  }));
+}
+
 async function forwardRawWebhook({
   route,
   rawBody,
@@ -121,8 +146,7 @@ async function forwardRawWebhook({
 
 async function routeRawWebhook({
   body,
-  rawBody,
-  signature,
+  appSecret,
   repo,
   fetchImpl = global.fetch,
   timeoutMs = DEFAULT_FORWARD_TIMEOUT_MS,
@@ -132,6 +156,13 @@ async function routeRawWebhook({
 
   const assetIds = collectAssetIds(body);
   if (!assetIds.length) return { ignored: true, channel, forwarded: [] };
+  if (!text(appSecret)) {
+    throw routeFailure(
+      "META_APP_SECRET is required to sign isolated client webhook payloads.",
+      "META_ROUTE_SECRET_MISSING",
+      { channel },
+    );
+  }
 
   const routes = await repo.getRoutes(channel, assetIds);
   const routesByAsset = new Map(routes.map((route) => [route.assetId, route]));
@@ -153,21 +184,26 @@ async function routeRawWebhook({
     );
   }
 
-  // Forward the exact original bytes, not a parsed/re-serialized payload. The
-  // client deployment can therefore verify Meta's original X-Hub-Signature-256.
-  // If Meta ever batches several businesses in one POST, each affected client
-  // receives the original batch and its parser filters entries to its own asset.
-  const distinctTargets = new Map();
-  for (const assetId of assetIds) {
-    const route = routesByAsset.get(assetId);
-    const key = `${route.clientSlug}\n${route.targetBaseUrl}`;
-    if (!distinctTargets.has(key)) distinctTargets.set(key, route);
-  }
-
+  // Meta can batch entries for several business assets into one signed POST.
+  // Never forward that whole batch to every tenant. The router has already
+  // verified Meta's original signature, so create one payload per client,
+  // containing only that client's entries, then HMAC-sign the exact bytes we
+  // forward. Existing client /meta-webhook verification therefore stays intact
+  // without exposing another client's raw message data to the deployment.
+  const targetPayloads = buildIsolatedTargetPayloads(body, routesByAsset);
   const forwarded = await Promise.all(
-    [...distinctTargets.values()].map((route) =>
-      forwardRawWebhook({ route, rawBody, signature, fetchImpl, timeoutMs })
-    ),
+    targetPayloads.map(async ({ route, body: isolatedBody, assetIds: routedAssetIds }) => {
+      const isolatedRawBody = Buffer.from(JSON.stringify(isolatedBody));
+      const isolatedSignature = expectedMetaSignature(appSecret, isolatedRawBody);
+      const result = await forwardRawWebhook({
+        route,
+        rawBody: isolatedRawBody,
+        signature: isolatedSignature,
+        fetchImpl,
+        timeoutMs,
+      });
+      return { ...result, assetIds: routedAssetIds };
+    }),
   );
 
   return { ignored: false, channel, forwarded };
@@ -236,8 +272,7 @@ function createMetaRouterApp({
       try {
         const routed = await routeRawWebhook({
           body,
-          rawBody,
-          signature,
+          appSecret,
           repo,
           fetchImpl,
           timeoutMs,
@@ -300,6 +335,7 @@ module.exports = {
   DEFAULT_PORT,
   MAX_FORWARD_TIMEOUT_MS,
   boundedPositiveInteger,
+  buildIsolatedTargetPayloads,
   channelForObject,
   collectAssetIds,
   createMetaRouterApp,
