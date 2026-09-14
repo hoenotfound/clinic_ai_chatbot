@@ -3,7 +3,8 @@
 This integration keeps the existing WhatsApp webhook and WhatsApp transport separate.
 
 - WhatsApp callback: `/webhook`
-- Facebook Messenger and Instagram callback: `/meta-webhook`
+- Per-client Facebook Messenger and Instagram processing endpoint: `/meta-webhook`
+- Shared multi-client Meta callback: central router (embedded or standalone; see below)
 - All three channels share the existing AI reply, lead scoring, human takeover, attention flags, conversation history, and Telegram alert logic.
 - Automated follow-up scheduling remains WhatsApp-only for now.
 - Staff text replies work for WhatsApp, Facebook, and Instagram.
@@ -29,16 +30,41 @@ When **one approved Meta Developer App is shared by several client businesses**,
 
 ```text
 Meta app-level Messenger + Instagram callback
-  -> central Meta router /meta-webhook
+  -> central Meta router
   -> identify Page / Instagram Professional Account
   -> isolate entries for one client
   -> sign isolated payload
   -> that client's /meta-webhook
 ```
 
-Do not change the app-level Messenger/Instagram callback for every new client. Configure it once to the central router and register each client's asset IDs in the routing registry.
+For the cost-saving bootstrap architecture, the router can be embedded in one existing always-on paid client Render:
 
-WhatsApp is different: each client's WABA can use its own `override_callback_uri` and continue going directly to that client's `/webhook`.
+```text
+https://ANCHOR-CLIENT-DOMAIN/meta-router/meta-webhook
+```
+
+Only that anchor deployment sets:
+
+```text
+META_ROUTER_ENABLED=true
+META_ROUTER_DATABASE_URL=<read-only routing DB credential>
+```
+
+The embedded router health endpoint is:
+
+```text
+https://ANCHOR-CLIENT-DOMAIN/meta-router/healthz
+```
+
+Later, the exact same router can be extracted to a dedicated service using `npm run meta-router:start`, where the callback is:
+
+```text
+https://YOUR-META-ROUTER/meta-webhook
+```
+
+Do not change the app-level Messenger/Instagram callback for every new client. Configure it once to the current central router and register each client's asset IDs in the routing registry.
+
+WhatsApp is different: each client's WABA can use its own `override_callback_uri` and continue going directly to that client's `/webhook`. WhatsApp never needs to pass through the central Messenger/Instagram router.
 
 ## Environment variables
 
@@ -64,6 +90,21 @@ A separate `INSTAGRAM_APP_SECRET` is not required by this integration.
 
 You can enable only Facebook or only Instagram. The unused channel variables may stay empty.
 
+### Extra values for the temporary anchor/router deployment
+
+Only the paid client Render chosen to host the bootstrap router needs:
+
+```text
+META_ROUTER_ENABLED=true
+META_ROUTER_DATABASE_URL=<router-only PostgreSQL credential>
+# Optional; defaults to /meta-router
+META_ROUTER_MOUNT_PATH=/meta-router
+```
+
+`META_ROUTER_DATABASE_URL` should ideally be a PostgreSQL role with `SELECT` access to `meta_webhook_routes` only. Embedded mode intentionally refuses to use `OPS_DATABASE_URL`, so the customer deployment does not need the full Ops Registry database credential.
+
+The live router does not run Ops Registry migrations or perform route-registration writes. The Ops Registry/operator tooling owns those control-plane operations.
+
 ## Facebook Messenger
 
 1. Add/configure **Messenger from Meta** for the Facebook Page.
@@ -71,7 +112,8 @@ You can enable only Facebook or only Instagram. The unused channel variables may
 3. Make sure the app has the permissions/tasks Meta requires for Messenger, including permission to message as the Page.
 4. Configure the webhook callback:
    - single-client app: `https://YOUR-CLIENT-DOMAIN/meta-webhook`
-   - shared multi-client app: `https://YOUR-META-ROUTER/meta-webhook`
+   - shared app, embedded router: `https://ANCHOR-CLIENT-DOMAIN/meta-router/meta-webhook`
+   - shared app, standalone router: `https://YOUR-META-ROUTER/meta-webhook`
 5. Use the corresponding `META_VERIFY_TOKEN` for the webhook verify token.
 6. Subscribe the Page to the `messages` webhook field and make sure the shared app is installed/subscribed on that Page. App-level callback configuration alone is not enough for a new Page.
 7. Put the Page ID and Page access token into `FACEBOOK_PAGE_ID` and `FACEBOOK_PAGE_ACCESS_TOKEN`.
@@ -88,7 +130,8 @@ Messenger replies are customer-initiated. The customer must have messaged the Pa
 5. Make sure the app/Page has the Instagram messaging permissions and tasks shown by Meta for this use case (including permission to manage/access Instagram messages).
 6. Configure the webhook callback:
    - single-client app: `https://YOUR-CLIENT-DOMAIN/meta-webhook`
-   - shared multi-client app: `https://YOUR-META-ROUTER/meta-webhook`
+   - shared app, embedded router: `https://ANCHOR-CLIENT-DOMAIN/meta-router/meta-webhook`
+   - shared app, standalone router: `https://YOUR-META-ROUTER/meta-webhook`
 7. Use the corresponding `META_VERIFY_TOKEN` value as the webhook verify token.
 8. Subscribe the Instagram messaging webhook fields required by your app, including `messages`, and ensure that this client's account/Page is actually connected to the shared app.
 9. Put the **Facebook Page ID shown in Instagram settings** into `INSTAGRAM_PAGE_ID`.
@@ -115,7 +158,7 @@ Instagram replies are customer-initiated. The customer must first message the Pr
 
 ## Security
 
-Set `META_APP_SECRET` in production. The `/meta-webhook` POST route verifies `X-Hub-Signature-256` separately from the existing WhatsApp webhook verification.
+Set `META_APP_SECRET` in production. The per-client `/meta-webhook` POST route verifies `X-Hub-Signature-256` separately from the existing WhatsApp webhook verification.
 
 For multi-client routing, the central router never forwards another client's `entry[]` data to a client deployment. It verifies Meta's original request, splits the payload by registered asset ID, and only forwards the matching entries. The client-side asset filter remains as an additional guard.
 
@@ -157,8 +200,8 @@ For staff takeover, plain text replies are supported on all three channels. New 
 
 After adding the environment variables and webhook subscriptions:
 
-1. deploy the client and, for multi-client mode, the central Meta router;
-2. confirm the router `/healthz` is healthy;
+1. deploy each client and enable the central Meta router in either embedded or standalone mode;
+2. confirm the relevant router health endpoint is healthy;
 3. confirm Messenger and Instagram app-level callbacks verify against the router;
 4. confirm each client's Page/Instagram account is subscribed to the required webhook fields and registered in the routing table;
 5. message the Facebook Page from a normal Facebook account and confirm the message appears only in the intended client's Inbox with the Facebook badge;
