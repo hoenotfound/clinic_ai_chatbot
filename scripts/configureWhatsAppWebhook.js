@@ -27,9 +27,12 @@ Options:
 
 The command first performs the same verification-token handshake against the
 client /webhook endpoint, then updates the WABA subscription and reads it back.
-Access tokens and verify tokens are intentionally read from the runtime env file,
-not accepted as command-line flags, so they do not need to be placed in shell
-history.
+For the Meta management calls it prefers WHATSAPP_MANAGEMENT_TOKEN from the
+operator shell. Keep that management token out of the client Render/runtime env.
+If it is not supplied, the client's WHATSAPP_TOKEN is used as a backwards-
+compatible fallback and must itself have whatsapp_business_management access.
+Tokens are intentionally not accepted as command-line flags so they do not need
+to be placed in shell history.
 `;
 }
 
@@ -68,6 +71,12 @@ function loadRuntimeEnv(filePath) {
   return dotenv.parse(fs.readFileSync(absolute));
 }
 
+function selectManagementAccessToken({ operatorEnv = process.env, runtimeEnv = {} } = {}) {
+  const managementToken = String(operatorEnv.WHATSAPP_MANAGEMENT_TOKEN || "").trim();
+  if (managementToken) return managementToken;
+  return String(runtimeEnv.WHATSAPP_TOKEN || "").trim();
+}
+
 async function main() {
   let args;
   try {
@@ -89,7 +98,7 @@ async function main() {
     const result = await configureWhatsAppWebhook({
       wabaId: args.wabaId || runtimeEnv.WHATSAPP_WABA_ID,
       appId: args.appId || runtimeEnv.META_APP_ID || runtimeEnv.WHATSAPP_APP_ID || process.env.META_APP_ID,
-      accessToken: runtimeEnv.WHATSAPP_TOKEN,
+      accessToken: selectManagementAccessToken({ runtimeEnv }),
       verifyToken: runtimeEnv.WHATSAPP_VERIFY_TOKEN,
       clientBaseUrl: args.clientBaseUrl,
       graphVersion: args.graphVersion || process.env.META_GRAPH_API_VERSION,
@@ -113,5 +122,6 @@ if (require.main === module) main();
 module.exports = {
   loadRuntimeEnv,
   parseArgs,
+  selectManagementAccessToken,
   usage,
 };
