@@ -99,7 +99,11 @@ test("upserts by channel and asset so one client can own several Pages", async (
   assert.equal(queries.length, 2);
   assert.match(queries[0].sql, /ON CONFLICT \(channel, asset_id\)/i);
   assert.match(queries[0].sql, /WHERE meta_webhook_routes\.client_slug = EXCLUDED\.client_slug/i);
-  assert.doesNotMatch(queries[0].sql, /client_slug\s*=\s*EXCLUDED\.client_slug/i);
+  const updateSetMatch = queries[0].sql.match(
+    /DO UPDATE SET([\s\S]*?)WHERE meta_webhook_routes\.client_slug = EXCLUDED\.client_slug/i,
+  );
+  assert.ok(updateSetMatch, "expected guarded DO UPDATE SET clause");
+  assert.doesNotMatch(updateSetMatch[1], /\bclient_slug\s*=/i);
   assert.deepEqual(queries.map(({ params }) => params[2]), ["page-a", "page-b"]);
 });
 
