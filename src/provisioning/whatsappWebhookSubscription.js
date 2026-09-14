@@ -1,3 +1,5 @@
+const crypto = require("crypto");
+
 const DEFAULT_GRAPH_API_VERSION = "v26.0";
 const DEFAULT_TIMEOUT_MS = 10000;
 
@@ -42,6 +44,11 @@ function normalizedHttpsBaseUrl(value) {
       code: "WHATSAPP_WEBHOOK_CLIENT_URL_INVALID",
     });
   }
+  if (parsed.username || parsed.password) {
+    throw new WhatsAppWebhookSubscriptionError("The client public URL must not contain credentials.", {
+      code: "WHATSAPP_WEBHOOK_CLIENT_URL_INVALID",
+    });
+  }
   const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
   if (parsed.protocol !== "https:" && !(local && parsed.protocol === "http:")) {
     throw new WhatsAppWebhookSubscriptionError("The client public URL must use HTTPS.", {
@@ -77,6 +84,75 @@ function requireCredentials({ wabaId, accessToken, verifyToken }) {
   return values;
 }
 
+async function fetchWithTimeout(url, options, {
+  fetchImpl = global.fetch,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  timeoutMessage = "Request timed out.",
+  timeoutCode = "WHATSAPP_WEBHOOK_REQUEST_TIMEOUT",
+} = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchImpl(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      throw new WhatsAppWebhookSubscriptionError(timeoutMessage, {
+        code: timeoutCode,
+        retrySafe: true,
+      });
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function verifyClientWebhookEndpoint({
+  callbackUrl,
+  verifyToken,
+  fetchImpl = global.fetch,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+}) {
+  const url = new URL(callbackUrl);
+  const challenge = `da-${crypto.randomBytes(12).toString("hex")}`;
+  url.searchParams.set("hub.mode", "subscribe");
+  url.searchParams.set("hub.verify_token", text(verifyToken));
+  url.searchParams.set("hub.challenge", challenge);
+
+  let response;
+  try {
+    response = await fetchWithTimeout(url.toString(), { method: "GET" }, {
+      fetchImpl,
+      timeoutMs,
+      timeoutMessage: "The client WhatsApp webhook verification endpoint timed out.",
+      timeoutCode: "WHATSAPP_WEBHOOK_ENDPOINT_TIMEOUT",
+    });
+  } catch (err) {
+    if (err instanceof WhatsAppWebhookSubscriptionError) throw err;
+    throw new WhatsAppWebhookSubscriptionError(
+      `Could not reach the client WhatsApp webhook verification endpoint: ${err?.message || String(err)}`,
+      {
+        code: "WHATSAPP_WEBHOOK_ENDPOINT_UNREACHABLE",
+        retrySafe: true,
+        cause: err,
+      },
+    );
+  }
+
+  const responseText = await response.text().catch(() => "");
+  if (!response.ok || responseText !== challenge) {
+    throw new WhatsAppWebhookSubscriptionError(
+      `Client WhatsApp webhook verification failed before Meta configuration (HTTP ${response.status}).`,
+      {
+        code: "WHATSAPP_WEBHOOK_ENDPOINT_VERIFY_FAILED",
+        status: response.status,
+        retrySafe: true,
+      },
+    );
+  }
+  return true;
+}
+
 async function graphRequest({
   path,
   method = "GET",
@@ -86,11 +162,9 @@ async function graphRequest({
   fetchImpl = global.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 }) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const url = `https://graph.facebook.com/${normalizedGraphVersion(graphVersion)}/${path.replace(/^\/+/, "")}`;
   try {
-    const response = await fetchImpl(url, {
+    const response = await fetchWithTimeout(url, {
       method,
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -98,7 +172,11 @@ async function graphRequest({
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
-      signal: controller.signal,
+    }, {
+      fetchImpl,
+      timeoutMs,
+      timeoutMessage: "Meta Graph API request timed out.",
+      timeoutCode: "WHATSAPP_WEBHOOK_GRAPH_TIMEOUT",
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || payload?.error) {
@@ -117,12 +195,6 @@ async function graphRequest({
     return payload;
   } catch (err) {
     if (err instanceof WhatsAppWebhookSubscriptionError) throw err;
-    if (err?.name === "AbortError") {
-      throw new WhatsAppWebhookSubscriptionError("Meta Graph API request timed out.", {
-        code: "WHATSAPP_WEBHOOK_GRAPH_TIMEOUT",
-        retrySafe: true,
-      });
-    }
     throw new WhatsAppWebhookSubscriptionError(
       `Meta Graph API request failed: ${err?.message || String(err)}`,
       {
@@ -131,8 +203,6 @@ async function graphRequest({
         cause: err,
       },
     );
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -148,7 +218,7 @@ async function getWabaSubscriptions({
     verifyToken: "not-needed-for-read",
   });
   const payload = await graphRequest({
-    path: `${encodeURIComponent(credentials.wabaId)}/subscribed_apps`,
+    path: `${encodeURIComponent(credentials.wabaId)}/subscribed_apps?limit=100`,
     accessToken: credentials.accessToken,
     graphVersion,
     fetchImpl,
@@ -156,13 +226,22 @@ async function getWabaSubscriptions({
   return Array.isArray(payload?.data) ? payload.data : [];
 }
 
-function subscriptionMatchesCallback(subscription, callbackUrl) {
+function subscriptionAppId(subscription) {
+  return text(
+    subscription?.whatsapp_business_api_data?.id
+      || subscription?.id,
+  ) || null;
+}
+
+function subscriptionMatchesCallback(subscription, callbackUrl, appId = null) {
   const actual = text(
     subscription?.override_callback_uri
       || subscription?.overrideCallbackUri
       || subscription?.override_callback_url,
   );
   if (!actual) return false;
+  const expectedAppId = text(appId);
+  if (expectedAppId && subscriptionAppId(subscription) !== expectedAppId) return false;
   try {
     return normalizedHttpsBaseUrl(actual) === normalizedHttpsBaseUrl(callbackUrl);
   } catch (_) {
@@ -175,11 +254,20 @@ async function configureWhatsAppWebhook({
   accessToken,
   verifyToken,
   clientBaseUrl,
+  appId = null,
   graphVersion = DEFAULT_GRAPH_API_VERSION,
   fetchImpl = global.fetch,
 }) {
   const credentials = requireCredentials({ wabaId, accessToken, verifyToken });
   const callbackUrl = whatsappCallbackUrl(clientBaseUrl);
+
+  // Catch a wrong Render URL or mismatched verify token before mutating the
+  // WABA subscription. This mirrors Meta's own verification handshake.
+  await verifyClientWebhookEndpoint({
+    callbackUrl,
+    verifyToken: credentials.verifyToken,
+    fetchImpl,
+  });
 
   await graphRequest({
     path: `${encodeURIComponent(credentials.wabaId)}/subscribed_apps`,
@@ -200,12 +288,13 @@ async function configureWhatsAppWebhook({
     fetchImpl,
   });
   const matched = subscriptions.find((subscription) =>
-    subscriptionMatchesCallback(subscription, callbackUrl),
+    subscriptionMatchesCallback(subscription, callbackUrl, appId),
   );
 
   if (!matched) {
+    const appHint = text(appId) ? ` for Meta app ${text(appId)}` : "";
     throw new WhatsAppWebhookSubscriptionError(
-      "Meta accepted the WABA subscription request, but the expected callback override was not confirmed by the follow-up check.",
+      `Meta accepted the WABA subscription request, but the expected callback override${appHint} was not confirmed by the follow-up check.`,
       {
         code: "WHATSAPP_WEBHOOK_OVERRIDE_NOT_CONFIRMED",
         retrySafe: true,
@@ -215,6 +304,7 @@ async function configureWhatsAppWebhook({
 
   return {
     wabaId: credentials.wabaId,
+    appId: subscriptionAppId(matched),
     callbackUrl,
     confirmed: true,
   };
@@ -225,11 +315,14 @@ module.exports = {
   DEFAULT_TIMEOUT_MS,
   WhatsAppWebhookSubscriptionError,
   configureWhatsAppWebhook,
+  fetchWithTimeout,
   getWabaSubscriptions,
   graphRequest,
   normalizedGraphVersion,
   normalizedHttpsBaseUrl,
   requireCredentials,
+  subscriptionAppId,
   subscriptionMatchesCallback,
+  verifyClientWebhookEndpoint,
   whatsappCallbackUrl,
 };
