@@ -2,8 +2,7 @@ require("dotenv").config();
 
 const crypto = require("crypto");
 const express = require("express");
-const { createOpsPool } = require("../ops/db");
-const { runOpsMigrations } = require("../ops/migrationRunner");
+const { createMetaRouterPool } = require("./db");
 const { createMetaWebhookRouteRepo } = require("./routeRepo");
 
 const DEFAULT_PORT = 10002;
@@ -292,8 +291,11 @@ function createMetaRouterApp({
 }
 
 async function start(env = process.env) {
-  const pool = createOpsPool(env);
-  await runOpsMigrations(pool);
+  // The router is deliberately read-only. Ops Registry owns migration 004 and
+  // route-registration writes; the live router only needs SELECT privileges on
+  // meta_webhook_routes. META_ROUTER_DATABASE_URL is preferred. OPS_DATABASE_URL
+  // remains a backwards-compatible fallback for a standalone deployment.
+  const pool = createMetaRouterPool(env, { allowOpsFallback: true });
   const repo = createMetaWebhookRouteRepo(pool);
   const app = createMetaRouterApp({
     repo,
