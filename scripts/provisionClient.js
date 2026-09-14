@@ -17,6 +17,13 @@ const {
   redactSensitiveText,
 } = require("../src/provisioning/providerClients");
 const {
+  R2ProvisioningError,
+} = require("../src/provisioning/r2Provisioning");
+const {
+  CURRENT_PROVISIONING_RECEIPT_VERSION,
+  secretFreeR2ReceiptState,
+} = require("../src/provisioning/provisioningReceipt");
+const {
   ClientReadinessError,
   normalizeRequiredChannels,
   validateRuntimeReadinessContract,
@@ -47,8 +54,9 @@ const OPS_ENROLLMENT_FAILED_EXIT_CODE = 5;
 
 function usage() {
   return `
-Provision one client Render service + Neon database, automatically enroll it in
-the central Ops Registry when configured, and verify the purchased channels.
+Provision one client Render service + Neon database, optionally provision a
+private per-client Cloudflare R2 bucket, automatically enroll it in the central
+Ops Registry when configured, and verify the purchased channels.
 
 Usage:
   npm run provision-client -- --client <slug> --industry <profile> --channels <csv> [options]
@@ -64,12 +72,17 @@ Safe by default:
   and performs no network calls or cloud mutations.
 
 Options:
-  --execute                   Create Neon + Render, wait for first deploy,
+  --execute                   Create infrastructure, wait for first deploy,
                               finalize the runtime, enroll Ops when enabled,
                               then verify production health
   --runtime-env-file <path>   dotenv file containing client runtime variables.
-                              Execution preflights admin, AI, R2 and purchased
-                              channel credentials before any cloud creation.
+                              With automated R2 enabled, do not include R2_*;
+                              those values are generated and injected directly.
+  --r2-provisioning <mode>    auto | required | off. Default: auto, or
+                              PROVISIONING_R2_MODE when set. auto provisions R2
+                              when both Cloudflare control values are configured.
+  --r2-location <hint>        apac | eeur | enam | weur | wnam | oc.
+                              Default: apac.
   --ops-enrollment <mode>     auto | required | off. Default: auto, or
                               PROVISIONING_OPS_ENROLLMENT_MODE when set.
                               auto enrolls when the full Ops control plane is
@@ -83,6 +96,19 @@ Options:
   --branch <name>             Render Git branch, default: main
   --json                      Machine-readable output
   --help                      Show this help
+
+Automated R2 provisioning:
+  When enabled, provisioning creates a private Standard R2 bucket and an
+  account-owned API token scoped only to that bucket. The derived S3 credentials
+  are passed directly into the new Render service. The one-time token value and
+  derived R2 secret are never printed or written to the provisioning receipt.
+
+  Required Cloudflare control-plane shell values:
+    PROVISIONING_CLOUDFLARE_ACCOUNT_ID
+    PROVISIONING_CLOUDFLARE_API_TOKEN
+
+  The control token must be able to manage R2 buckets and account-owned API
+  tokens. Keep it only in the operator shell/control plane, never client config.
 
 Go-live rules:
   Required Setup Status checks must be configured and ready. Database migrations
@@ -124,12 +150,14 @@ Control-plane credentials are read only from the shell environment:
   PROVISIONING_RENDER_OWNER_ID
   PROVISIONING_NEON_API_KEY
   PROVISIONING_NEON_ORG_ID     optional for an organization-scoped Neon key
+  PROVISIONING_CLOUDFLARE_ACCOUNT_ID
+  PROVISIONING_CLOUDFLARE_API_TOKEN
   PROVISIONING_OPS_REGISTRY_RENDER_SERVICE_ID
   OPS_DATABASE_URL             dedicated central Ops Registry database
 
-Do not put Render/Neon control-plane API keys, OPS_DATABASE_URL, or Ops token
-values in --runtime-env-file. They are used by this local command and are never
-copied into ordinary client configuration or provisioning receipts.
+Do not put control-plane API keys, OPS_DATABASE_URL, or generated secret values
+in --runtime-env-file. They are used by this local command and are never copied
+into ordinary client configuration or provisioning receipts.
 `;
 }
 
@@ -140,6 +168,8 @@ function parseArgs(argv) {
     ["--industry", "industry"],
     ["--channels", "channels"],
     ["--runtime-env-file", "runtimeEnvFile"],
+    ["--r2-provisioning", "r2Provisioning"],
+    ["--r2-location", "r2Location"],
     ["--ops-enrollment", "opsEnrollment"],
     ["--render-plan", "renderPlan"],
     ["--render-region", "renderRegion"],
@@ -270,7 +300,7 @@ function acquireProvisioningLock(resourceName, {
 
 function buildProvisioningReceipt(result, now = new Date()) {
   return {
-    version: 3,
+    version: CURRENT_PROVISIONING_RECEIPT_VERSION,
     completedAt: now.toISOString(),
     lastVerifiedAt: result.readiness?.checkedAt || null,
     clientSlug: result.clientSlug,
@@ -278,6 +308,7 @@ function buildProvisioningReceipt(result, now = new Date()) {
     requiredChannels: [...(result.requiredChannels || [])],
     profileContract: { ...result.profileContract },
     neon: { ...result.neon },
+    r2: secretFreeR2ReceiptState(result.r2),
     render: { ...result.render },
     runtimeFinalization: result.runtimeFinalization
       ? { ...result.runtimeFinalization }
@@ -312,6 +343,17 @@ function requireReadinessAdminCredentials(runtimeEnv) {
     );
   }
   return { username, password };
+}
+
+function runtimeEnvForReadinessPreflight(runtimeEnv, plan) {
+  if (!plan?.r2?.enabled) return runtimeEnv;
+  return {
+    ...runtimeEnv,
+    R2_ACCOUNT_ID: "managed-by-provisioner",
+    R2_ACCESS_KEY_ID: "managed-by-provisioner",
+    R2_SECRET_ACCESS_KEY: "managed-by-provisioner",
+    R2_BUCKET_NAME: plan.r2.bucketName,
+  };
 }
 
 function readinessFailureReport(err, { industry, channels } = {}) {
@@ -375,6 +417,16 @@ function printHuman(result) {
     console.log(`Industry:       ${plan.industry}`);
     console.log(`Channels:       ${(plan.readiness?.requiredChannels || []).join(", ")}`);
     console.log(`Neon project:   ${plan.neon.projectName} (${plan.neon.region})`);
+    if (plan.r2) {
+      const r2Label = plan.r2.enabled
+        ? "will provision"
+        : (plan.r2.mode === "auto" && !plan.r2.configured ? "not configured; manual runtime R2 expected" : "disabled");
+      console.log(`R2 provisioning:${plan.r2.mode} (${r2Label})`);
+      console.log(`R2 bucket:      ${plan.r2.bucketName} (${plan.r2.locationHint})`);
+      if (plan.r2.missing?.length && plan.r2.mode === "required") {
+        console.log(`R2 missing:     ${plan.r2.missing.join(", ")}`);
+      }
+    }
     console.log(`Render service: ${plan.render.serviceName} (${plan.render.region})`);
     console.log(`Render plan:    ${plan.render.plan || "<required before --execute>"}`);
     console.log(`Repo:           ${plan.render.repo}#${plan.render.branch}`);
@@ -399,6 +451,12 @@ function printHuman(result) {
   console.log(`Client:         ${result.clientSlug}`);
   console.log(`Industry:       ${result.industry}`);
   console.log(`Neon project:   ${result.neon.projectName} (${result.neon.projectId})`);
+  if (result.r2?.enabled) {
+    console.log(`R2 bucket:      ${result.r2.bucketName}`);
+    console.log(`R2 token:       ${result.r2.tokenName} (${result.r2.tokenId || "unknown"})`);
+  } else if (result.r2) {
+    console.log(`R2 provisioning:${result.r2.mode} (manual/disabled)`);
+  }
   console.log(`Render service: ${result.render.serviceName} (${result.render.serviceId})`);
   if (result.render.url) console.log(`Render URL:     ${result.render.url}`);
   console.log(`Initial deploy: ${result.render.deployId} (${result.render.deployStatus})`);
@@ -465,6 +523,8 @@ async function main() {
     industry: args.industry,
     requiredChannels: args.channels,
     runtimeEnv,
+    r2ProvisioningMode: args.r2Provisioning,
+    r2LocationHint: args.r2Location,
     renderPlan: args.renderPlan,
     renderRegion: args.renderRegion,
     neonRegion: args.neonRegion,
@@ -475,6 +535,7 @@ async function main() {
   const sensitiveValues = [
     process.env.PROVISIONING_RENDER_API_KEY,
     process.env.PROVISIONING_NEON_API_KEY,
+    process.env.PROVISIONING_CLOUDFLARE_API_TOKEN,
     process.env.OPS_DATABASE_URL,
     ...Object.values(runtimeEnv || {}),
   ].filter(Boolean);
@@ -507,7 +568,7 @@ async function main() {
       };
     } else {
       requireExecutionConfig(plan, process.env);
-      validateRuntimeReadinessContract(runtimeEnv, channels);
+      validateRuntimeReadinessContract(runtimeEnvForReadinessPreflight(runtimeEnv, plan), channels);
       const admin = requireReadinessAdminCredentials(runtimeEnv);
       lock = acquireProvisioningLock(plan.resourceName);
 
@@ -644,6 +705,7 @@ async function main() {
     process.exitCode = err instanceof ClientProvisioningError
       || err instanceof ClientReadinessError
       || err instanceof OpsRegistryEnrollmentError
+      || err instanceof R2ProvisioningError
       ? 2
       : 1;
   } finally {
@@ -673,6 +735,7 @@ module.exports = {
   parseArgs,
   readinessFailureReport,
   requireReadinessAdminCredentials,
+  runtimeEnvForReadinessPreflight,
   safeErrorOutput,
   usage,
   writeProvisioningReceipt,

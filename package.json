@@ -10,6 +10,7 @@
     "create-user": "node scripts/createUser.js",
     "diagnose:gemini": "node scripts/diagnoseGeminiKeys.js",
     "provision-client": "node scripts/provisionClient.js",
+    "recover-client": "node scripts/recoverClientProvisioning.js",
     "verify-client": "node scripts/verifyClientReadiness.js",
     "ops-registry:start": "node src/ops/server.js",
     "ops-registry:migrate": "node src/ops/migrate.js",

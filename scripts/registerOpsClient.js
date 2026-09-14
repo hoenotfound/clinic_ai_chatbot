@@ -8,6 +8,9 @@ const { runOpsMigrations } = require("../src/ops/migrationRunner");
 const { createClientRegistryRepo } = require("../src/ops/clientRegistryRepo");
 const { normalizedBaseUrl } = require("../src/ops/clientPoller");
 const { assertOpsRegistryMode } = require("../src/ops/mode");
+const {
+  requireSupportedProvisioningReceipt,
+} = require("../src/provisioning/provisioningReceipt");
 
 function usage() {
   return `
@@ -17,7 +20,7 @@ Usage:
   npm run ops:register-client -- --receipt <path> [options]
 
 Required:
-  --receipt <path>          Provisioning v3 receipt for the client.
+  --receipt <path>          Provisioning v3 or v4 receipt for the client.
 
 Options:
   --name <display name>     Defaults to the receipt client slug.
@@ -74,7 +77,7 @@ function validateTokenEnvKey(value) {
 }
 
 function registryRecordFromReceipt(receipt, args = {}) {
-  if (Number(receipt?.version) !== 3) throw new Error("Only provisioning receipt version 3 is supported.");
+  requireSupportedProvisioningReceipt(receipt);
   const clientSlug = String(receipt?.clientSlug || "").trim();
   if (!clientSlug) throw new Error("Receipt is missing clientSlug.");
   const baseUrl = normalizedBaseUrl(args.baseUrl || receipt?.render?.url);

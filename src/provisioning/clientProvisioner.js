@@ -2,6 +2,13 @@ const {
   SUPPORTED_BUSINESS_TYPES,
   normalizeBusinessType,
 } = require("../config/industryProfiles");
+const {
+  buildR2ProvisioningPlan,
+  createCloudflareR2Client,
+  publicR2ProvisioningPlan,
+  r2RuntimeEnv,
+  requireR2ProvisioningConfig,
+} = require("./r2Provisioning");
 
 const DEFAULT_RENDER_REPO = "https://github.com/hoenotfound/clinic_ai_chatbot";
 const DEFAULT_RENDER_BRANCH = "main";
@@ -22,6 +29,12 @@ const PURCHASED_CHANNEL_ALIASES = Object.freeze({
   ig: "instagram",
   instagram: "instagram",
 });
+const R2_RUNTIME_ENV_KEYS = Object.freeze([
+  "R2_ACCOUNT_ID",
+  "R2_ACCESS_KEY_ID",
+  "R2_SECRET_ACCESS_KEY",
+  "R2_BUCKET_NAME",
+]);
 
 const RENDER_REGIONS = Object.freeze([
   "frankfurt",
@@ -215,6 +228,27 @@ function buildProvisioningPlan(input = {}, env = process.env) {
   const renderRegion = requireRenderRegion(
     input.renderRegion || env.PROVISIONING_RENDER_REGION || DEFAULT_RENDER_REGION
   );
+  const r2 = buildR2ProvisioningPlan({
+    resourceName: name,
+    mode: input.r2ProvisioningMode,
+    locationHint: input.r2LocationHint,
+    env,
+  });
+
+  if (r2.enabled) {
+    const conflicts = R2_RUNTIME_ENV_KEYS.filter((key) => Object.prototype.hasOwnProperty.call(runtimeEnv, key));
+    if (conflicts.length) {
+      throw new ClientProvisioningError(
+        `Automated R2 provisioning owns ${conflicts.join(", ")}. Remove them from the runtime env input or disable automated R2 provisioning.`,
+        { code: "R2_RUNTIME_ENV_RESERVED", stage: "validation" }
+      );
+    }
+  }
+
+  const runtimeEnvKeys = new Set(Object.keys(runtimeEnv));
+  if (r2.enabled) {
+    for (const key of R2_RUNTIME_ENV_KEYS) runtimeEnvKeys.add(key);
+  }
 
   return {
     clientSlug,
@@ -226,6 +260,7 @@ function buildProvisioningPlan(input = {}, env = process.env) {
       region: String(input.neonRegion || env.PROVISIONING_NEON_REGION || DEFAULT_NEON_REGION).trim(),
       orgId: String(input.neonOrgId || env.PROVISIONING_NEON_ORG_ID || "").trim() || null,
     },
+    r2,
     render: {
       serviceName: name,
       ownerId: String(input.renderOwnerId || env.PROVISIONING_RENDER_OWNER_ID || "").trim() || null,
@@ -240,7 +275,7 @@ function buildProvisioningPlan(input = {}, env = process.env) {
         input.startCommand || env.PROVISIONING_RENDER_START_COMMAND || DEFAULT_START_COMMAND
       ).trim(),
       healthCheckPath: DEFAULT_HEALTH_CHECK_PATH,
-      runtimeEnvKeys: Object.keys(runtimeEnv).sort(),
+      runtimeEnvKeys: Array.from(runtimeEnvKeys).sort(),
     },
     runtimeEnv,
   };
@@ -253,6 +288,7 @@ function publicPlan(plan) {
     requiredChannels: [...plan.requiredChannels],
     resourceName: plan.resourceName,
     neon: { ...plan.neon },
+    r2: publicR2ProvisioningPlan(plan.r2),
     render: { ...plan.render },
     profileContract: {
       envKey: "INITIAL_BUSINESS_TYPE",
@@ -266,7 +302,8 @@ function publicPlan(plan) {
   };
 }
 
-function renderEnvVars(plan, databaseUrl) {
+function renderEnvVars(plan, databaseUrl, managedRuntimeEnv = {}) {
+  const managed = Object.entries(managedRuntimeEnv).map(([key, value]) => ({ key, value }));
   const custom = Object.entries(plan.runtimeEnv).map(([key, value]) => ({ key, value }));
   return [
     { key: "CLIENT_SLUG", value: plan.clientSlug },
@@ -274,6 +311,7 @@ function renderEnvVars(plan, databaseUrl) {
     { key: "PURCHASED_CHANNELS", value: plan.requiredChannels.join(",") },
     { key: "DATABASE_URL", value: databaseUrl },
     { key: "SESSION_SECRET", generateValue: true },
+    ...managed,
     ...custom,
   ];
 }
@@ -294,12 +332,23 @@ function requireExecutionConfig(plan, env = process.env) {
       { code: "PROVISIONING_CONFIG_MISSING", stage: "validation" }
     );
   }
+
+  try {
+    requireR2ProvisioningConfig(plan.r2);
+  } catch (err) {
+    throw new ClientProvisioningError(err.message, {
+      code: err.code || "R2_PROVISIONING_CONFIG_MISSING",
+      stage: err.stage || "validation",
+      retrySafe: true,
+    });
+  }
 }
 
-function exactCollisionMessage(plan, renderMatches, neonMatches) {
+function exactCollisionMessage(plan, renderMatches, neonMatches, r2Matches = []) {
   const collisions = [];
   if (renderMatches.length) collisions.push(`Render service "${plan.render.serviceName}"`);
   if (neonMatches.length) collisions.push(`Neon project "${plan.neon.projectName}"`);
+  if (r2Matches.length) collisions.push(`R2 bucket "${plan.r2.bucketName}"`);
   return collisions.length
     ? `${collisions.join(" and ")} already exists. Provisioning stopped before creating anything.`
     : null;
@@ -328,6 +377,7 @@ async function provisionClient(input = {}, {
   env = process.env,
   renderClient = null,
   neonClient = null,
+  r2Client = null,
 } = {}) {
   const plan = buildProvisioningPlan(input, env);
   if (!execute) {
@@ -342,12 +392,32 @@ async function provisionClient(input = {}, {
     });
   }
 
+  let activeR2Client = r2Client;
+  if (plan.r2.enabled && !activeR2Client) {
+    try {
+      activeR2Client = createCloudflareR2Client({
+        apiToken: env.PROVISIONING_CLOUDFLARE_API_TOKEN,
+        accountId: plan.r2.accountId,
+      });
+    } catch (err) {
+      throw new ClientProvisioningError(`Could not initialize Cloudflare R2 provisioning: ${err.message}`, {
+        code: "R2_PROVIDER_CLIENT_REQUIRED",
+        stage: "validation",
+        retrySafe: true,
+      });
+    }
+  }
+
   let renderMatches;
   let neonMatches;
+  let r2Matches = [];
   try {
-    [renderMatches, neonMatches] = await Promise.all([
+    [renderMatches, neonMatches, r2Matches] = await Promise.all([
       renderClient.findServicesByExactName(plan.render.serviceName),
       neonClient.findProjectsByExactName(plan.neon.projectName),
+      plan.r2.enabled
+        ? activeR2Client.findBucketsByExactName(plan.r2.bucketName)
+        : Promise.resolve([]),
     ]);
   } catch (err) {
     throw new ClientProvisioningError(
@@ -360,7 +430,7 @@ async function provisionClient(input = {}, {
     );
   }
 
-  const collision = exactCollisionMessage(plan, renderMatches, neonMatches);
+  const collision = exactCollisionMessage(plan, renderMatches, neonMatches, r2Matches);
   if (collision) {
     throw new ClientProvisioningError(collision, {
       code: "RESOURCE_NAME_COLLISION",
@@ -435,6 +505,89 @@ async function provisionClient(input = {}, {
     );
   }
 
+  let managedRuntimeEnv = {};
+  let r2Result = {
+    mode: plan.r2.mode,
+    enabled: plan.r2.enabled,
+    provisioned: false,
+    bucketName: plan.r2.enabled ? plan.r2.bucketName : null,
+    tokenId: null,
+    tokenName: plan.r2.enabled ? plan.r2.tokenName : null,
+    locationHint: plan.r2.locationHint,
+    jurisdiction: plan.r2.jurisdiction,
+  };
+
+  if (plan.r2.enabled) {
+    let bucket;
+    try {
+      bucket = await activeR2Client.createBucket({
+        name: plan.r2.bucketName,
+        locationHint: plan.r2.locationHint,
+      });
+    } catch (err) {
+      if (err?.status === 409) {
+        throw new ClientProvisioningError(
+          `Cloudflare reported an R2 bucket conflict for "${plan.r2.bucketName}" after Neon was created. Neon was left intact for inspection.`,
+          {
+            code: "R2_RESOURCE_COLLISION",
+            stage: "r2_bucket_create",
+            partialResources,
+            retrySafe: false,
+          }
+        );
+      }
+      throw new ClientProvisioningError(
+        `R2 bucket creation failed after Neon project ${neon.projectId} was created: ${err.message}. Neon was not deleted automatically.`,
+        {
+          code: "R2_BUCKET_CREATE_FAILED",
+          stage: "r2_bucket_create",
+          partialResources,
+          retrySafe: err?.ambiguous === true ? false : null,
+        }
+      );
+    }
+
+    partialResources.r2BucketName = bucket.name || plan.r2.bucketName;
+    partialResources.r2LocationHint = bucket.location || plan.r2.locationHint;
+
+    let credentials;
+    try {
+      credentials = await activeR2Client.createBucketCredentials({
+        bucketName: plan.r2.bucketName,
+        tokenName: plan.r2.tokenName,
+        jurisdiction: plan.r2.jurisdiction,
+      });
+    } catch (err) {
+      throw new ClientProvisioningError(
+        `R2 bucket "${plan.r2.bucketName}" was created but its client-scoped credentials could not be created: ${err.message}. Existing resources were preserved for recovery.`,
+        {
+          code: "R2_CREDENTIAL_CREATE_FAILED",
+          stage: "r2_credentials_create",
+          partialResources: {
+            ...partialResources,
+            ...(err?.partialResources || {}),
+          },
+          retrySafe: err?.ambiguous === true ? false : null,
+        }
+      );
+    }
+
+    partialResources.r2TokenId = credentials.tokenId;
+    partialResources.r2TokenName = credentials.tokenName || plan.r2.tokenName;
+    managedRuntimeEnv = r2RuntimeEnv({
+      accountId: plan.r2.accountId,
+      bucketName: plan.r2.bucketName,
+      credentials,
+    });
+    r2Result = {
+      ...r2Result,
+      provisioned: true,
+      bucketName: plan.r2.bucketName,
+      tokenId: credentials.tokenId,
+      tokenName: credentials.tokenName || plan.r2.tokenName,
+    };
+  }
+
   let renderResponse;
   try {
     renderResponse = await renderClient.createWebService({
@@ -446,12 +599,12 @@ async function provisionClient(input = {}, {
       buildCommand: plan.render.buildCommand,
       startCommand: plan.render.startCommand,
       healthCheckPath: plan.render.healthCheckPath,
-      envVars: renderEnvVars(plan, databaseUrl),
+      envVars: renderEnvVars(plan, databaseUrl, managedRuntimeEnv),
     });
   } catch (err) {
     if (err?.status === 409) {
       throw new ClientProvisioningError(
-        `Render reported a resource conflict for "${plan.render.serviceName}" after Neon was created. Another provisioning attempt may have won the race. Neon was left intact for recovery.`,
+        `Render reported a resource conflict for "${plan.render.serviceName}" after infrastructure was created. Existing resources were left intact for recovery.`,
         {
           code: "RENDER_RESOURCE_COLLISION",
           stage: "render_create",
@@ -461,7 +614,7 @@ async function provisionClient(input = {}, {
       );
     }
     throw new ClientProvisioningError(
-      `Render service creation failed after Neon project ${neon.projectId} was created: ${err.message}. Neon was not deleted automatically. Resolve the Render issue, then either complete provisioning deliberately or remove the unused Neon project manually.`,
+      `Render service creation failed after infrastructure was created: ${err.message}. Existing resources were not deleted automatically. Resolve the Render issue, then complete provisioning deliberately rather than creating duplicates.`,
       {
         code: "RENDER_CREATE_FAILED",
         stage: "render_create",
@@ -498,7 +651,7 @@ async function provisionClient(input = {}, {
     deploy = await renderClient.waitForDeploy(serviceId, deployId);
   } catch (err) {
     throw new ClientProvisioningError(
-      `Render service was created but its initial deploy did not become live: ${err.message}. The Render service and Neon project were left intact for inspection/recovery.`,
+      `Render service was created but its initial deploy did not become live: ${err.message}. The Render service and previously-created infrastructure were left intact for inspection/recovery.`,
       {
         code: "RENDER_DEPLOY_FAILED",
         stage: "render_deploy",
@@ -520,6 +673,7 @@ async function provisionClient(input = {}, {
       roleName: neon.roleName,
       region: plan.neon.region,
     },
+    r2: r2Result,
     render: {
       serviceId,
       serviceName: service.name || plan.render.serviceName,
@@ -555,11 +709,13 @@ module.exports = {
   DEFAULT_RESOURCE_PREFIX,
   DEFAULT_START_COMMAND,
   PURCHASED_CHANNEL_ALIASES,
+  R2_RUNTIME_ENV_KEYS,
   RENDER_PLANS,
   RENDER_REGIONS,
   RESERVED_RUNTIME_ENV_KEYS,
   SUPPORTED_PURCHASED_CHANNELS,
   buildProvisioningPlan,
+  exactCollisionMessage,
   normalizeClientSlug,
   normalizePurchasedChannels,
   normalizeRenderPlan,
