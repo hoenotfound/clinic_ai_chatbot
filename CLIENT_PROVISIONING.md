@@ -19,7 +19,7 @@ Provisioning is dry-run by default and mutates providers only when `--execute` i
 
 `provision-client` validates the client/profile/channel contract, checks deterministic Render/Neon/R2 names for collisions, creates Neon, optionally creates a dedicated R2 bucket and bucket-scoped client access, injects the generated R2 runtime values into Render, deploys the client, finalizes its runtime, performs Ops enrollment when enabled, verifies readiness, and writes a secret-free receipt v4.
 
-Supported canonical industries are `aesthetic_clinic`, `home_renovation`, and `generic`. Supported purchased channels are `whatsapp`, `facebook`, and `instagram`. Only purchased channels block go-live.
+Supported canonical industries are `aesthetic_clinic`, `tcm_clinic`, `home_renovation`, and `generic`. Supported purchased channels are `whatsapp`, `facebook`, and `instagram`. Only purchased channels block go-live.
 
 ## Automated R2 modes
 
