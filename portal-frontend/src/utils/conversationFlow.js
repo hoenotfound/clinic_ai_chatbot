@@ -74,7 +74,7 @@ function firstReply(introMessage, reply) {
 
 function exampleSet(businessType, context) {
   const { introMessage, conversionLabel, serviceName, locationName, locationCount } = context;
-  const singleClinicLocation = locationCount === 1;
+  const singleClinicLocation = businessType === "tcm_clinic" && locationCount === 1;
 
   if (businessType === "home_renovation") {
     return {
