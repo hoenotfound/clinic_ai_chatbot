@@ -99,7 +99,12 @@ test("fresh TCM profile is clinic-shaped but does not inherit aesthetic client f
   assert.match(profile.sop, /never diagnose/i);
   assert.match(profile.sop, /prescribe herbal/i);
   assert.match(profile.sop, /prescribed medication/i);
+  assert.match(profile.sop, /diastasis recti/i);
+  assert.match(profile.sop, /testimonials/i);
+  assert.match(profile.sop, /dampness, cold, qi, meridians/i);
   assert.ok(profile.guardrails.some((rule) => /guarantee/i.test(rule)));
+  assert.ok(profile.guardrails.some((rule) => /postpartum or post-c-section/i.test(rule)));
+  assert.ok(profile.guardrails.some((rule) => /centimetres lost|weight loss|body reshaping/i.test(rule)));
   assert.ok(profile.guardrails.some((rule) => /urgent medical attention/i.test(rule)));
 });
 
@@ -111,7 +116,14 @@ test("TCM reuses appointment conversion, clinic pipeline and booking-intent rule
 
   assert.equal(conversion.enabled, true);
   assert.equal(conversion.mode, "appointment");
-  assert.match(conversion.label, /consultation|treatment appointment/i);
+  assert.equal(conversion.label, "assessment or treatment appointment");
+
+  const customized = getIndustryProfile("tcm_clinic");
+  customized.conversion = {
+    ...customized.conversion,
+    label: "initial wellness assessment",
+  };
+  assert.equal(getConversionProfile(customized).label, "initial wellness assessment");
   assert.deepEqual(
     pipeline.defaultStages.map(({ name, systemKey }) => [name, systemKey]),
     CLINIC_DEFAULT_STAGES.map(({ name, systemKey }) => [name, systemKey])
@@ -129,12 +141,12 @@ test("TCM reuses appointment conversion, clinic pipeline and booking-intent rule
   assert.equal(hot?.matchedRule, "booking_intent");
 });
 
-test("TCM booking-ready output requires a configured clinic branch and timing", () => {
+test("single-location TCM booking-ready automatically resolves the only configured branch", () => {
   withProfile(configuredTcmProfile(), () => {
     const valid = parseAiReplyResult(JSON.stringify({
       reply: "Noted. The clinic team will check the slot and confirm with you.",
       outcome: "booking_ready",
-      branch: "Kajang",
+      branch: null,
       treatment: "Acupuncture",
       appointmentPreference: "Saturday afternoon",
     }));
@@ -147,7 +159,33 @@ test("TCM booking-ready output requires a configured clinic branch and timing", 
 
     assert.throws(
       () => parseAiReplyResult(JSON.stringify({
-        reply: "The team will confirm with you.",
+        reply: "The clinic team will check the slot.",
+        outcome: "booking_ready",
+        branch: "Imaginary Branch",
+        treatment: "Acupuncture",
+        appointmentPreference: "Saturday afternoon",
+      })),
+      (err) => err.code === "INVALID_AI_RESPONSE" && /branch and appointment preference/i.test(err.message)
+    );
+  });
+});
+
+test("multi-location TCM booking-ready still requires a real configured branch", () => {
+  const profile = configuredTcmProfile();
+  profile.branches = [
+    ...profile.branches,
+    {
+      name: "Petaling Jaya",
+      address: "Petaling Jaya, Selangor",
+      phone: "",
+      whatsapp: null,
+    },
+  ];
+
+  withProfile(profile, () => {
+    assert.throws(
+      () => parseAiReplyResult(JSON.stringify({
+        reply: "The clinic team will check the slot.",
         outcome: "booking_ready",
         branch: null,
         treatment: "Acupuncture",
@@ -168,7 +206,12 @@ test("TCM system prompt carries TCM safety rules without aesthetic defaults", ()
     assert.match(prompt, /do not diagnose/i);
     assert.match(prompt, /herbal formula/i);
     assert.match(prompt, /prescribed medication/i);
-    assert.match(prompt, /consultation or treatment appointment/i);
+    assert.match(prompt, /assessment or treatment appointment/i);
+    assert.match(prompt, /exactly one configured clinic branch/i);
+    assert.match(prompt, /do not ask the patient to choose a branch\/location solely to become booking-ready/i);
+    assert.match(prompt, /diastasis recti/i);
+    assert.match(prompt, /testimonials/i);
+    assert.match(prompt, /centimetres lost|weight loss|body reshaping/i);
     assert.doesNotMatch(prompt, /Beleco Clinic/);
     assert.doesNotMatch(prompt, /HIFU/);
   });
@@ -205,7 +248,7 @@ test("TCM portal uses clinic labels and clinic conversation flow", async () => {
 
   const flow = flowModule.buildConversationFlow(configuredTcmProfile());
   assert.equal(flow.businessType, "tcm_clinic");
-  assert.match(flow.conversionLabel, /consultation|treatment appointment/i);
+  assert.equal(flow.conversionLabel, "assessment or treatment appointment");
   assert.equal(flow.qualification[0].label, "Treatment or concern");
   assert.equal(
     flow.outcomes.find((node) => node.id === "conversion-next-step")?.branchLabel,
