@@ -7,6 +7,10 @@ const BUSINESS_TYPE_ALIASES = {
   aesthetic: "aesthetic_clinic",
   clinic: "aesthetic_clinic",
   medical_aesthetic: "aesthetic_clinic",
+  tcm_clinic: "tcm_clinic",
+  tcm: "tcm_clinic",
+  traditional_chinese_medicine: "tcm_clinic",
+  chinese_medicine: "tcm_clinic",
   home_renovation: "home_renovation",
   renovation: "home_renovation",
   carpentry: "home_renovation",
@@ -17,6 +21,7 @@ const BUSINESS_TYPE_ALIASES = {
 
 const SUPPORTED_BUSINESS_TYPES = Object.freeze([
   "aesthetic_clinic",
+  "tcm_clinic",
   "home_renovation",
   "generic",
 ]);
@@ -228,6 +233,102 @@ NEXT STEP:
   };
 }
 
+
+function buildTcmClinicProfile() {
+  const profile = buildGenericProfile();
+  const escalation = genericEscalation();
+
+  return {
+    ...profile,
+    businessType: "tcm_clinic",
+    businessName: "Your TCM Clinic",
+    clinicName: "Your TCM Clinic",
+    businessDescription: "a Traditional Chinese Medicine (TCM) clinic in Malaysia",
+    terminology: {
+      customerSingular: "patient",
+      customerPlural: "patients",
+      locationSingular: "clinic branch",
+      locationPlural: "clinic branches",
+      serviceSingular: "treatment",
+      servicePlural: "treatments",
+    },
+    conversion: {
+      label: "consultation or treatment appointment",
+      bookingReadyEnabled: true,
+      guidanceTitle: "BOOKING A TCM CONSULTATION OR TREATMENT APPOINTMENT",
+      staffConfirmationText: "the clinic team will check availability and follow up shortly",
+      readyExamples: [
+        "Patient wants acupuncture, chooses a configured branch, and says Saturday afternoon works.",
+        "Patient asks to book a TCM consultation, then provides a configured branch plus tomorrow around 3pm.",
+        "Patient confirms the clinic branch and a usable day/time after you asked for booking details.",
+      ],
+      notReadyExamples: [
+        "Can acupuncture help with my back pain?",
+        "How much is a consultation?",
+        "Can I book?",
+        "Any slots this weekend?",
+        "A branch name when you still do not have a day/time preference.",
+        "Maybe next week or another hesitant/tentative answer.",
+      ],
+    },
+    hours: {
+      general: "Clinic hours not configured yet",
+      closed: "",
+    },
+    introMessage: "Hi! Thanks for messaging our TCM clinic 😊",
+    closingPlaybook: `
+GENERAL APPROACH:
+- Treat genuine treatment, pricing, suitability and appointment questions as patient enquiries, not just FAQs.
+- Answer the patient's actual question first, using only configured clinic information, then guide them toward a practitioner consultation or treatment appointment when appropriate.
+- Keep the tone helpful and non-pressuring. Never manufacture urgency, discounts, availability, medical claims or guaranteed results.
+
+HEALTH QUESTIONS:
+- You may explain configured TCM services in general terms, but do not diagnose a condition, identify the cause of symptoms, prescribe herbs or formulas, recommend doses, or promise that a treatment will cure or prevent a disease.
+- If suitability depends on symptoms, medical history, medicines, pregnancy, age, or practitioner assessment, explain that a qualified practitioner needs to assess the patient.
+- Do not tell a patient to stop, start, replace, or change prescribed medicines or medical treatment.
+
+QUALIFICATION:
+- Collect only details that help the clinic continue the enquiry safely, such as the patient's main concern, the configured treatment they are asking about, preferred branch, and practical timing when they are ready to proceed.
+- Ask one useful question at a time. Do not turn the chat into a medical questionnaire.
+- If the patient describes urgent or severe symptoms, prioritize appropriate urgent medical care and human review rather than continuing the sales flow.
+
+NEXT STEP:
+- When the patient clearly wants to proceed, gather a configured clinic branch and usable day/time preference.
+- Do not claim an appointment is confirmed. The clinic team must verify availability and confirm the actual booking.
+`,
+    tone: "Warm, professional, reassuring, concise, and natural for patient chat.",
+    sop: `
+- Use only configured clinic facts when stating treatments, prices, promotions, branches, hours, policies or availability.
+- Keep health information general and informational. Never diagnose, prescribe herbal medicines or formulas, recommend a dosage, or guarantee treatment outcomes.
+- Never advise a patient to stop, start, replace, or change prescribed medication or medical care.
+- Questions about pregnancy, children, significant medical conditions, medication interactions, treatment contraindications, or whether a treatment is medically suitable require practitioner judgment.
+- For severe or urgent symptoms, advise the patient to seek appropriate urgent medical care and trigger human handoff instead of continuing routine sales qualification.
+- Move genuinely interested patients toward the clinic's configured consultation or appointment process without pressuring them.
+`,
+    escalation: {
+      ...escalation,
+      outOfScopeTriggers: [
+        ...escalation.outOfScopeTriggers,
+        "The patient asks the AI to diagnose a disease, identify the cause of symptoms, or make a clinical assessment that requires a qualified practitioner.",
+        "The patient asks for a herbal prescription, formula selection, dosage, medication change, interaction assessment, or advice to stop or replace prescribed treatment.",
+        "The patient describes severe, rapidly worsening, or potentially urgent symptoms that require medical assessment rather than routine sales chat.",
+        "Suitability depends on pregnancy, a child or elderly patient, a significant medical condition, prescribed medicines, or another factor that requires practitioner judgment.",
+      ],
+      handoffMessage: "I'll get the clinic team to help you with this directly.",
+      handoffNote: "A clinic team member or qualified practitioner should review the patient's latest question and continue the conversation.",
+    },
+    guardrails: [
+      ...genericGuardrails(),
+      "Do not diagnose a disease, identify the cause of symptoms, or present a TCM pattern diagnosis as established fact.",
+      "Do not prescribe or recommend a specific herbal formula, medicine, supplement, dose, frequency, or medication change.",
+      "Do not tell a patient to stop, delay, replace, or avoid prescribed medical treatment in favor of TCM care.",
+      "Do not guarantee that acupuncture, cupping, tuina, herbs, or another treatment will cure, prevent, or definitely improve a condition.",
+      "Do not state that a treatment is medically suitable when the answer depends on practitioner assessment, medical history, pregnancy, medicines, age, or contraindications.",
+      "If symptoms may require urgent medical attention, prioritize urgent care guidance and human escalation over sales or booking prompts.",
+    ],
+  };
+}
+
 function buildAestheticClinicProfile() {
   const legacy = deepClone(legacyClinicDefaults);
   return {
@@ -267,6 +368,7 @@ function buildAestheticClinicProfile() {
 
 const PROFILE_BUILDERS = {
   aesthetic_clinic: buildAestheticClinicProfile,
+  tcm_clinic: buildTcmClinicProfile,
   home_renovation: buildHomeRenovationProfile,
   generic: buildGenericProfile,
 };
