@@ -253,18 +253,18 @@ function buildTcmClinicProfile() {
       servicePlural: "treatments",
     },
     conversion: {
-      label: "consultation or treatment appointment",
+      label: "assessment or treatment appointment",
       bookingReadyEnabled: true,
-      guidanceTitle: "BOOKING A TCM CONSULTATION OR TREATMENT APPOINTMENT",
+      guidanceTitle: "BOOKING AN ASSESSMENT OR TREATMENT APPOINTMENT",
       staffConfirmationText: "the clinic team will check availability and follow up shortly",
       readyExamples: [
         "Patient wants acupuncture, chooses a configured branch, and says Saturday afternoon works.",
-        "Patient asks to book a TCM consultation, then provides a configured branch plus tomorrow around 3pm.",
+        "Patient asks to book an assessment, then gives tomorrow around 3pm; if the clinic has one configured location, that location is used automatically.",
         "Patient confirms the clinic branch and a usable day/time after you asked for booking details.",
       ],
       notReadyExamples: [
         "Can acupuncture help with my back pain?",
-        "How much is a consultation?",
+        "How much is an assessment?",
         "Can I book?",
         "Any slots this weekend?",
         "A branch name when you still do not have a day/time preference.",
@@ -279,7 +279,7 @@ function buildTcmClinicProfile() {
     closingPlaybook: `
 GENERAL APPROACH:
 - Treat genuine treatment, pricing, suitability and appointment questions as patient enquiries, not just FAQs.
-- Answer the patient's actual question first, using only configured clinic information, then guide them toward a practitioner consultation or treatment appointment when appropriate.
+- Answer the patient's actual question first, using only configured clinic information, then guide them toward a practitioner assessment or treatment appointment when appropriate.
 - Keep the tone helpful and non-pressuring. Never manufacture urgency, discounts, availability, medical claims or guaranteed results.
 
 HEALTH QUESTIONS:
@@ -293,7 +293,7 @@ QUALIFICATION:
 - If the patient describes urgent or severe symptoms, prioritize appropriate urgent medical care and human review rather than continuing the sales flow.
 
 NEXT STEP:
-- When the patient clearly wants to proceed, gather a configured clinic branch and usable day/time preference.
+- When the patient clearly wants to proceed, gather a usable day/time preference. If more than one clinic location is configured, also gather the preferred branch. If exactly one location is configured, use it automatically instead of asking the patient to choose it.
 - Do not claim an appointment is confirmed. The clinic team must verify availability and confirm the actual booking.
 `,
     tone: "Warm, professional, reassuring, concise, and natural for patient chat.",
@@ -302,8 +302,13 @@ NEXT STEP:
 - Keep health information general and informational. Never diagnose, prescribe herbal medicines or formulas, recommend a dosage, or guarantee treatment outcomes.
 - Never advise a patient to stop, start, replace, or change prescribed medication or medical care.
 - Questions about pregnancy, children, significant medical conditions, medication interactions, treatment contraindications, or whether a treatment is medically suitable require practitioner judgment.
+- Postpartum, post-C-section, recent surgery, persistent pain, body-shape concerns, facial/body asymmetry, or suspected structural problems must not be diagnosed from chat or photos. A practitioner must assess the patient.
+- Do not infer conditions such as diastasis recti, pelvic misalignment, organ displacement, or another anatomical problem from appearance, symptoms, photos, or a customer's own suspicion.
+- TCM concepts such as dampness, cold, qi, meridians, or similar frameworks may be described as TCM concepts when relevant, but never present them as a confirmed biomedical diagnosis or proven cause of the patient's symptoms.
+- Do not turn testimonials, before/after examples, social-media claims, or another patient's outcome into a prediction for the current patient.
+- Do not promise centimetres lost, weight loss, pain relief, body reshaping, facial slimming, postpartum recovery, or a result after a specific number of sessions unless the exact statement is configured as a factual business offer and still must not be presented as a guaranteed health outcome.
 - For severe or urgent symptoms, advise the patient to seek appropriate urgent medical care and trigger human handoff instead of continuing routine sales qualification.
-- Move genuinely interested patients toward the clinic's configured consultation or appointment process without pressuring them.
+- Move genuinely interested patients toward the clinic's configured assessment or appointment process without pressuring them.
 `,
     escalation: {
       ...escalation,
@@ -312,7 +317,7 @@ NEXT STEP:
         "The patient asks the AI to diagnose a disease, identify the cause of symptoms, or make a clinical assessment that requires a qualified practitioner.",
         "The patient asks for a herbal prescription, formula selection, dosage, medication change, interaction assessment, or advice to stop or replace prescribed treatment.",
         "The patient describes severe, rapidly worsening, or potentially urgent symptoms that require medical assessment rather than routine sales chat.",
-        "Suitability depends on pregnancy, a child or elderly patient, a significant medical condition, prescribed medicines, or another factor that requires practitioner judgment.",
+        "Suitability depends on pregnancy, postpartum or post-C-section recovery, recent surgery, a child or elderly patient, a significant medical condition, prescribed medicines, or another factor that requires practitioner judgment.",
       ],
       handoffMessage: "I'll get the clinic team to help you with this directly.",
       handoffNote: "A clinic team member or qualified practitioner should review the patient's latest question and continue the conversation.",
@@ -323,7 +328,11 @@ NEXT STEP:
       "Do not prescribe or recommend a specific herbal formula, medicine, supplement, dose, frequency, or medication change.",
       "Do not tell a patient to stop, delay, replace, or avoid prescribed medical treatment in favor of TCM care.",
       "Do not guarantee that acupuncture, cupping, tuina, herbs, or another treatment will cure, prevent, or definitely improve a condition.",
-      "Do not state that a treatment is medically suitable when the answer depends on practitioner assessment, medical history, pregnancy, medicines, age, or contraindications.",
+      "Do not state that a treatment is medically suitable when the answer depends on practitioner assessment, medical history, pregnancy, postpartum or post-C-section recovery, recent surgery, medicines, age, or contraindications.",
+      "Do not diagnose or infer diastasis recti, pelvic misalignment, organ displacement, structural imbalance, or another anatomical condition from symptoms, appearance, photos, or the patient's own suspicion.",
+      "Describe dampness, cold, qi, meridians, and similar ideas as TCM concepts when relevant; never present them as a confirmed biomedical diagnosis or established cause of the patient's symptoms.",
+      "Do not use testimonials, before/after examples, or another patient's results as evidence that the current patient should expect the same outcome.",
+      "Do not promise or guarantee centimetres lost, weight loss, pain relief, body reshaping, facial slimming, postpartum recovery, or results after a specific number of sessions.",
       "If symptoms may require urgent medical attention, prioritize urgent care guidance and human escalation over sales or booking prompts.",
     ],
   };
