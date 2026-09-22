@@ -327,7 +327,7 @@ NEXT STEP:
       "Do not diagnose a disease, identify the cause of symptoms, or present a TCM pattern diagnosis as established fact.",
       "Do not prescribe or recommend a specific herbal formula, medicine, supplement, dose, frequency, or medication change.",
       "Do not tell a patient to stop, delay, replace, or avoid prescribed medical treatment in favor of TCM care.",
-      "Do not guarantee that acupuncture, cupping, tuina, herbs, or another treatment will cure, prevent, or definitely improve a condition.",
+      "Do not guarantee that any treatment, service, herb, or other TCM intervention will cure, prevent, or definitely improve a condition.",
       "Do not state that a treatment is medically suitable when the answer depends on practitioner assessment, medical history, pregnancy, postpartum or post-C-section recovery, recent surgery, medicines, age, or contraindications.",
       "Do not diagnose or infer diastasis recti, pelvic misalignment, organ displacement, structural imbalance, or another anatomical condition from symptoms, appearance, photos, or the patient's own suspicion.",
       "Describe dampness, cold, qi, meridians, and similar ideas as TCM concepts when relevant; never present them as a confirmed biomedical diagnosis or established cause of the patient's symptoms.",
