@@ -96,6 +96,9 @@ test("fresh TCM profile is clinic-shaped but does not inherit aesthetic client f
   assert.doesNotMatch(serialized, /beleco/);
   assert.doesNotMatch(serialized, /hifu/);
   assert.doesNotMatch(serialized, /sculptra/);
+  assert.doesNotMatch(serialized, /acupuncture/);
+  assert.doesNotMatch(serialized, /cupping/);
+  assert.doesNotMatch(serialized, /tuina/);
   assert.match(profile.sop, /never diagnose/i);
   assert.match(profile.sop, /prescribe herbal/i);
   assert.match(profile.sop, /prescribed medication/i);
@@ -139,6 +142,47 @@ test("TCM reuses appointment conversion, clinic pipeline and booking-intent rule
   });
   assert.equal(hot?.temperature, "hot");
   assert.equal(hot?.matchedRule, "booking_intent");
+});
+
+test("TCM assessment intent becomes Hot in English, BM and Chinese without promoting hesitant intent", () => {
+  const directExamples = [
+    "I want an assessment.",
+    "Saya nak buat assessment.",
+    "我想做评估。",
+  ];
+
+  for (const messageText of directExamples) {
+    const result = classifyTemperatureMessage({
+      messageText,
+      businessType: "tcm_clinic",
+    });
+    assert.equal(result?.temperature, "hot", messageText);
+    assert.equal(result?.matchedRule, "booking_intent", messageText);
+  }
+
+  assert.equal(
+    classifyTemperatureMessage({
+      messageText: "I don't want an assessment yet.",
+      businessType: "tcm_clinic",
+    }),
+    null
+  );
+
+  const contextResult = classifyTemperatureMessage({
+    messageText: "Yes please",
+    previousBusinessMessage: "Would you like me to arrange an assessment?",
+    businessType: "tcm_clinic",
+  });
+  assert.equal(contextResult?.temperature, "hot");
+  assert.equal(contextResult?.matchedRule, "scheduling_confirmation");
+
+  const chineseContext = classifyTemperatureMessage({
+    messageText: "可以",
+    previousBusinessMessage: "要不要帮你安排评估？",
+    businessType: "tcm_clinic",
+  });
+  assert.equal(chineseContext?.temperature, "hot");
+  assert.equal(chineseContext?.matchedRule, "scheduling_confirmation");
 });
 
 test("single-location TCM booking-ready automatically resolves the only configured branch", () => {
