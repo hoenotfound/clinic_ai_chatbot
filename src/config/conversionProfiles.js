@@ -41,17 +41,17 @@ const CONVERSION_PROFILES = Object.freeze({
   tcm_clinic: Object.freeze({
     enabled: true,
     mode: "appointment",
-    label: "consultation or treatment appointment",
-    guidanceTitle: "BOOKING A TCM CONSULTATION OR TREATMENT APPOINTMENT",
+    label: "assessment or treatment appointment",
+    guidanceTitle: "BOOKING AN ASSESSMENT OR TREATMENT APPOINTMENT",
     staffConfirmationText: "the clinic team will check availability and follow up shortly",
     readyExamples: [
       "Patient wants acupuncture, chooses a configured branch, and says Saturday afternoon works.",
-      "Patient asks to book a TCM consultation, then provides a configured branch plus tomorrow around 3pm.",
+      "Patient asks to book an assessment, then gives tomorrow around 3pm; if the clinic has one configured location, that location is used automatically.",
       "Patient confirms the clinic branch and a usable day/time after you asked for booking details.",
     ],
     notReadyExamples: [
       "Can acupuncture help with my back pain?",
-      "How much is a consultation?",
+      "How much is an assessment?",
       "Can I book?",
       "Any slots this weekend?",
       "A branch name when you still do not have a day/time preference.",
