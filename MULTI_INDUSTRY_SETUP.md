@@ -7,12 +7,13 @@ The production chatbot remains one shared codebase. Each client can still have i
 The shared repo currently includes:
 
 - `aesthetic_clinic`
+- `tcm_clinic`
 - `home_renovation`
 - `generic`
 
 **Aesthetic Clinic is the default profile.** A fresh deployment with no industry environment variable starts as `aesthetic_clinic` for backward compatibility.
 
-The aesthetic-clinic profile preserves the historical clinic behavior and defaults. Renovation and generic profiles start with empty services, locations, FAQs and promotions so a fresh non-clinic client cannot inherit clinic facts.
+The aesthetic-clinic profile preserves the historical clinic behavior and defaults. The TCM profile reuses the clinic appointment workflow but starts with empty services, locations, FAQs and promotions plus TCM-specific health guardrails, so it never inherits aesthetic client facts. Renovation and generic profiles also start without clinic client facts.
 
 ## Choosing the industry for a fresh deployment
 
@@ -29,6 +30,7 @@ businessType=aesthetic_clinic
 The untouched default seed is temporarily selectable from **Setup Status > Business profile** by an administrator. Available choices are:
 
 - Aesthetic Clinic — default
+- TCM Clinic
 - Home Renovation
 - General Business
 
@@ -132,6 +134,10 @@ Clinic behavior stays compatible with the existing production flow:
 - staff is alerted to verify the requested branch/time and confirm availability.
 
 The existing `branch_name`, `treatment_interest`, `appointmentPreference`, `booking_ready` activity metadata, Inbox attention behavior and Hot-lead side effect remain in place.
+
+### TCM clinic
+
+TCM uses the same appointment-ready mechanics as the clinic flow: the patient must be ready to proceed, select a configured clinic branch, and provide a usable day/time preference before staff is alerted to confirm availability. The profile starts without aesthetic services, promotions or FAQs and adds safeguards against diagnosis, herbal prescribing, medication changes, unsupported medical suitability claims and guaranteed treatment outcomes.
 
 ### Home renovation
 
@@ -247,8 +253,9 @@ The generic profile does not inherit clinic booking vocabulary or renovation quo
 One GitHub production repo
         |
         +-- Client A Render -> Neon A -> aesthetic_clinic
-        +-- Client B Render -> Neon B -> home_renovation
-        +-- Client C Render -> Neon C -> generic / future profile
+        +-- Client B Render -> Neon B -> tcm_clinic
+        +-- Client C Render -> Neon C -> home_renovation
+        +-- Client D Render -> Neon D -> generic / future profile
 ```
 
 Bug fixes and core features stay in one codebase. Industry behavior and client facts stay in profile/config data rather than separate repositories.
