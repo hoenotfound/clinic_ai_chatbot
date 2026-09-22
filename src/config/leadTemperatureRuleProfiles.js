@@ -134,6 +134,13 @@ const TCM_HOT_INTENT_PATTERNS = frozenPatterns([
   /(?:我|我们|我們)(?:想|要)(?:预约|預約|安排|做)?(?:评估|評估|assessment)/,
 ]);
 
+const TCM_UNCLEAR_HOT_PATTERNS = frozenPatterns([
+  ...CLINIC_UNCLEAR_HOT_PATTERNS,
+  /\b(?:do|would)\s+i\s+need\s+(?:an?\s+)?assessment\b/,
+  /\b(?:perlu|kena)\s+(?:saya|kami)\s+(?:buat\s+)?(?:assessment|penilaian)\s*(?:ke|kah)?\b/,
+  /(?:我|我们|我們)?(?:需要|要)(?:做)?(?:评估|評估)吗/,
+]);
+
 const TCM_NEGATED_HOT_PATTERNS = frozenPatterns([
   ...CLINIC_NEGATED_HOT_PATTERNS,
   /\b(?:don't|do not|won't|will not|not ready to)\s+(?:book|schedule|arrange|have|get|do|want)?\s*(?:an?\s+)?assessment\b/,
@@ -147,6 +154,12 @@ const TCM_CONTEXT_PROMPT_PATTERNS = frozenPatterns([
   /\b(?:shall|can)\s+i\s+(?:book|schedule|arrange)?\s*(?:an?\s+)?assessment\b/,
   /\b(?:nak|mahu)\s+(?:saya|kami)?\s*(?:buat|arrange|book)?\s*(?:assessment|penilaian)\b/,
   /(?:要不要|需要我|可以帮你|可以幫你).{0,12}(?:预约|預約|安排|做)?(?:评估|評估)/,
+]);
+
+const TCM_CONTEXT_CHOICE_PATTERNS = frozenPatterns([
+  /^(?:an?\s+)?assessment(?:\s+(?:please|pls))?[.! ]*$/,
+  /^(?:assessment|penilaian)(?:\s+(?:boleh|ya|please))?[.! ]*$/,
+  /^(?:评估|評估)(?:可以|吧|就好)?[。.!！ ]*$/,
 ]);
 
 const RENOVATION_ABSOLUTE_REJECTION_PATTERNS = frozenPatterns([
@@ -273,7 +286,7 @@ const LEAD_TEMPERATURE_RULE_PROFILES = Object.freeze({
     id: "tcm_clinic",
     mode: "appointment",
     hotIntentPatterns: TCM_HOT_INTENT_PATTERNS,
-    unclearHotPatterns: CLINIC_UNCLEAR_HOT_PATTERNS,
+    unclearHotPatterns: TCM_UNCLEAR_HOT_PATTERNS,
     negatedHotPatterns: TCM_NEGATED_HOT_PATTERNS,
     absoluteRejectionPatterns: UNIVERSAL_ABSOLUTE_REJECTION_PATTERNS,
     declinePatterns: CLINIC_DECLINE_PATTERNS,
@@ -282,14 +295,14 @@ const LEAD_TEMPERATURE_RULE_PROFILES = Object.freeze({
     contextPromptPatterns: TCM_CONTEXT_PROMPT_PATTERNS,
     contextConfirmPatterns: CONFIRMATION_PATTERNS,
     contextDetailPatterns: DATE_OR_TIME_PATTERNS,
-    contextChoicePatterns: frozenPatterns([]),
+    contextChoicePatterns: TCM_CONTEXT_CHOICE_PATTERNS,
     nonConfirmingContextPatterns: CLINIC_NON_CONFIRMING_CONTEXT_PATTERNS,
     allowConfiguredLocationAnswers: true,
     alternativeOverridesNonConfirming: false,
     hotMatchedRule: "booking_intent",
-    hotReason: "The patient showed clear booking or appointment intent.",
+    hotReason: "The patient showed clear assessment, booking, or appointment intent.",
     contextMatchedRule: "scheduling_confirmation",
-    contextReason: "The patient confirmed scheduling details after a booking question.",
+    contextReason: "The patient confirmed an assessment or appointment next step after the clinic prompted them.",
   }),
   home_renovation: Object.freeze({
     id: "home_renovation",
