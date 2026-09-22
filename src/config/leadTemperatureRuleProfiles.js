@@ -136,7 +136,8 @@ const TCM_HOT_INTENT_PATTERNS = frozenPatterns([
 
 const TCM_UNCLEAR_HOT_PATTERNS = frozenPatterns([
   ...CLINIC_UNCLEAR_HOT_PATTERNS,
-  /\b(?:do|would)\s+i\s+need\s+(?:an?\s+)?assessment\b/,
+  /\b(?:do|would)\s+(?:i|we)\s+need\s+(?:an?\s+)?assessment\b/,
+  /\b(?:i|we)\s+need\s+(?:an?\s+)?assessment\s*\?/,
   /\b(?:perlu|kena)\s+(?:saya|kami)\s+(?:buat\s+)?(?:assessment|penilaian)\s*(?:ke|kah)?\b/,
   /(?:我|我们|我們)?(?:需要|要)(?:做)?(?:评估|評估)吗/,
 ]);
