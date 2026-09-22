@@ -137,7 +137,7 @@ The existing `branch_name`, `treatment_interest`, `appointmentPreference`, `book
 
 ### TCM clinic
 
-TCM uses the same appointment-ready mechanics as the clinic flow: the patient must be ready to proceed, select a configured clinic branch, and provide a usable day/time preference before staff is alerted to confirm availability. The profile starts without aesthetic services, promotions or FAQs and adds safeguards against diagnosis, herbal prescribing, medication changes, unsupported medical suitability claims and guaranteed treatment outcomes.
+TCM uses the same appointment-ready mechanics as the clinic flow: the patient must be ready to proceed and provide a usable day/time preference before staff is alerted to confirm availability. If exactly one clinic location is configured, that location is selected automatically instead of asking the patient to choose it; multi-location clinics still require a real configured branch choice. The default conversion wording is "assessment or treatment appointment" and remains overridable in the stored conversion config for a specific client. The profile starts without aesthetic services, promotions or FAQs and adds safeguards against diagnosis, herbal prescribing, medication changes, unsupported medical suitability claims, testimonial/result extrapolation, body/postpartum diagnosis and guaranteed treatment outcomes.
 
 ### Home renovation
 
