@@ -45,12 +45,12 @@ const CONVERSION_PROFILES = Object.freeze({
     guidanceTitle: "BOOKING AN ASSESSMENT OR TREATMENT APPOINTMENT",
     staffConfirmationText: "the clinic team will check availability and follow up shortly",
     readyExamples: [
-      "Patient wants acupuncture, chooses a configured branch, and says Saturday afternoon works.",
+      "Patient wants a configured treatment, has the required clinic location context, and says Saturday afternoon works.",
       "Patient asks to book an assessment, then gives tomorrow around 3pm; if the clinic has one configured location, that location is used automatically.",
       "Patient confirms the clinic branch and a usable day/time after you asked for booking details.",
     ],
     notReadyExamples: [
-      "Can acupuncture help with my back pain?",
+      "Can this treatment help with my concern?",
       "How much is an assessment?",
       "Can I book?",
       "Any slots this weekend?",
