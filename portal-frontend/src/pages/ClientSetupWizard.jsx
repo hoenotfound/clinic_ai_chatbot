@@ -31,6 +31,7 @@ const FLOW = [
 ];
 const PROFILE_OPTIONS = [
   { value: "aesthetic_clinic", label: "Aesthetic Clinic" },
+  { value: "tcm_clinic", label: "TCM Clinic" },
   { value: "home_renovation", label: "Home Renovation" },
   { value: "generic", label: "General Business" },
 ];
@@ -47,6 +48,7 @@ function cloneConfig(config) {
 
 function industryName(type) {
   if (type === "aesthetic_clinic") return "Aesthetic Clinic";
+  if (type === "tcm_clinic") return "TCM Clinic";
   if (type === "home_renovation") return "Home Renovation";
   return "General Business";
 }
@@ -326,7 +328,7 @@ export default function ClientSetupWizard() {
   function validateLocations() {
     const branches = cleanBranches(draft.branches);
     if (branches.some((item) => !item.name)) return `Every ${ui.locationSingular} needs a name.`;
-    if (config.businessType === "aesthetic_clinic") {
+    if (["aesthetic_clinic", "tcm_clinic"].includes(config.businessType)) {
       if (branches.length === 0) return "Add at least one clinic branch before completing setup.";
       if (branches.some((item) => !item.address)) return "Every clinic branch needs an address.";
     }
