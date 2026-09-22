@@ -180,13 +180,20 @@ test("TCM assessment intent becomes Hot in English, BM and Chinese without promo
     }),
     null
   );
-  assert.equal(
-    classifyTemperatureMessage({
-      messageText: "Do I need an assessment?",
-      businessType: "tcm_clinic",
-    }),
-    null
-  );
+  for (const messageText of [
+    "Do I need an assessment?",
+    "Do we need an assessment?",
+    "I need an assessment?",
+  ]) {
+    assert.equal(
+      classifyTemperatureMessage({
+        messageText,
+        businessType: "tcm_clinic",
+      }),
+      null,
+      messageText
+    );
+  }
 
   const contextResult = classifyTemperatureMessage({
     messageText: "Yes please",
