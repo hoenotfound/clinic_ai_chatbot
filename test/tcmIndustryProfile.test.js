@@ -24,6 +24,7 @@ const {
 } = require("../src/services/leadTemperatureAutomation");
 const { parseAiReplyResult } = require("../src/utils/aiReplyResult");
 const { buildSystemPrompt } = require("../src/utils/systemPrompt");
+const { buildProvisioningPlan } = require("../src/provisioning/clientProvisioner");
 
 function withProfile(profile, callback) {
   const previous = JSON.parse(JSON.stringify(liveConfig));
@@ -76,6 +77,18 @@ test("TCM is a first-class supported industry with practical aliases", () => {
   );
   assert.equal(option?.label, "TCM Clinic");
   assert.equal(option?.default, false);
+});
+
+test("TCM provisioning aliases resolve to the canonical deployment contract", () => {
+  const plan = buildProvisioningPlan({
+    clientSlug: "Neutro Sense TCM",
+    industry: "tcm",
+  }, {});
+
+  assert.equal(plan.clientSlug, "neutro-sense-tcm");
+  assert.equal(plan.industry, "tcm_clinic");
+  assert.equal(plan.resourceName, "da-chatbot-neutro-sense-tcm");
+  assert.equal(plan.render.healthCheckPath, "/");
 });
 
 test("fresh TCM profile is clinic-shaped but does not inherit aesthetic client facts", () => {
