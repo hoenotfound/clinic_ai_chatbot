@@ -190,7 +190,7 @@ function parseStructuredReply(raw) {
   const providedBranch = cleanOptionalText(parsed.branch);
   const branch = providedBranch
     ? canonicalConfiguredBranch(providedBranch)
-    : !isProjectMode
+    : !isProjectMode && clinicConfig.businessType === "tcm_clinic"
       ? soleConfiguredBranch()
       : null;
   const treatment = parsed.treatment == null
