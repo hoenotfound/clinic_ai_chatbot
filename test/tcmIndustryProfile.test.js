@@ -180,6 +180,13 @@ test("TCM assessment intent becomes Hot in English, BM and Chinese without promo
     }),
     null
   );
+  assert.equal(
+    classifyTemperatureMessage({
+      messageText: "Do I need an assessment?",
+      businessType: "tcm_clinic",
+    }),
+    null
+  );
 
   const contextResult = classifyTemperatureMessage({
     messageText: "Yes please",
@@ -188,6 +195,14 @@ test("TCM assessment intent becomes Hot in English, BM and Chinese without promo
   });
   assert.equal(contextResult?.temperature, "hot");
   assert.equal(contextResult?.matchedRule, "scheduling_confirmation");
+
+  const choiceContext = classifyTemperatureMessage({
+    messageText: "Assessment please",
+    previousBusinessMessage: "Would you like me to arrange an assessment?",
+    businessType: "tcm_clinic",
+  });
+  assert.equal(choiceContext?.temperature, "hot");
+  assert.equal(choiceContext?.matchedRule, "scheduling_confirmation");
 
   const chineseContext = classifyTemperatureMessage({
     messageText: "可以",
