@@ -108,7 +108,8 @@ Do not repeat booking_ready on a later "ok", "thanks", or similar acknowledgemen
   }
 
   const locationNames = configuredLocationNames();
-  const appointmentLocationRule = locationNames.length === 1
+  const appointmentLocationRule =
+    config.businessType === "tcm_clinic" && locationNames.length === 1
     ? `- This business has exactly one configured ${terms.locationSingular}: "${locationNames[0]}". Treat that location as selected automatically for booking readiness. Do not ask the ${terms.customerSingular} to choose a branch/location solely to become booking-ready.`
     : `- A specific configured ${terms.locationSingular} has been chosen or clearly accepted, and it maps unambiguously to one of the configured ${terms.locationPlural} above.`;
 
@@ -186,7 +187,9 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
     : "";
   const locationNames = configuredLocationNames();
   const appointmentLocationOutputRule =
-    conversion.mode === "appointment" && locationNames.length === 1
+    conversion.mode === "appointment" &&
+    config.businessType === "tcm_clinic" &&
+    locationNames.length === 1
       ? `- For appointment-mode booking_ready, this business has exactly one configured ${terms.locationSingular} ("${locationNames[0]}"). Use that canonical location automatically even if the ${terms.customerSingular} did not name it, and do not ask them to choose a location solely for booking readiness.`
       : `- For appointment-mode booking_ready, "branch" and "appointmentPreference" MUST be non-null and reflect the current attempt. Use the canonical configured location name rather than an abbreviation.`;
 
