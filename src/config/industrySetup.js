@@ -10,6 +10,11 @@ const BUSINESS_PROFILE_OPTIONS = Object.freeze([
     description: "Clinic consultation, appointment and treatment workflow.",
   }),
   Object.freeze({
+    value: "tcm_clinic",
+    label: "TCM Clinic",
+    description: "Traditional Chinese Medicine consultation, treatment and appointment workflow.",
+  }),
+  Object.freeze({
     value: "home_renovation",
     label: "Home Renovation",
     description: "Renovation, cabinetry, carpentry, quotation and site-visit workflow.",
