@@ -127,6 +127,28 @@ const CLINIC_NON_CONFIRMING_CONTEXT_PATTERNS = frozenPatterns([
   /(?:不行|不可以|不能|没空|沒空|没有空|沒有空|不方便|改天|改期|取消)/,
 ]);
 
+const TCM_HOT_INTENT_PATTERNS = frozenPatterns([
+  ...CLINIC_HOT_INTENT_PATTERNS,
+  /\b(?:i|we)\s+(?:want|would like|need)\s+(?:to\s+)?(?:book|schedule|arrange|have|get|do)?\s*(?:an?\s+)?assessment\b/,
+  /\b(?:saya|kami)\s+(?:nak|mahu|hendak)\s+(?:buat|book|booking|arrange)?\s*(?:assessment|penilaian)\b/,
+  /(?:我|我们|我們)(?:想|要)(?:预约|預約|安排|做)?(?:评估|評估|assessment)/,
+]);
+
+const TCM_NEGATED_HOT_PATTERNS = frozenPatterns([
+  ...CLINIC_NEGATED_HOT_PATTERNS,
+  /\b(?:don't|do not|won't|will not|not ready to)\s+(?:book|schedule|arrange|have|get|do|want)?\s*(?:an?\s+)?assessment\b/,
+  /\b(?:tak nak|tidak mahu|tak mahu|tidak nak)\s+(?:buat|book|booking|arrange)?\s*(?:assessment|penilaian)\b/,
+  /(?:不想|不要|不打算)(?:预约|預約|安排|做)?(?:评估|評估|assessment)/,
+]);
+
+const TCM_CONTEXT_PROMPT_PATTERNS = frozenPatterns([
+  ...CLINIC_CONTEXT_PROMPT_PATTERNS,
+  /\b(?:would|do)\s+you\s+like\s+(?:me\s+)?to\s+(?:book|schedule|arrange)?\s*(?:an?\s+)?assessment\b/,
+  /\b(?:shall|can)\s+i\s+(?:book|schedule|arrange)?\s*(?:an?\s+)?assessment\b/,
+  /\b(?:nak|mahu)\s+(?:saya|kami)?\s*(?:buat|arrange|book)?\s*(?:assessment|penilaian)\b/,
+  /(?:要不要|需要我|可以帮你|可以幫你).{0,12}(?:预约|預約|安排|做)?(?:评估|評估)/,
+]);
+
 const RENOVATION_ABSOLUTE_REJECTION_PATTERNS = frozenPatterns([
   ...UNIVERSAL_ABSOLUTE_REJECTION_PATTERNS,
   /\b(?:the\s+)?(?:renovation|project|renovation project)\s+(?:is\s+|was\s+)?(?:cancelled|canceled|called off)\b/,
@@ -250,14 +272,14 @@ const LEAD_TEMPERATURE_RULE_PROFILES = Object.freeze({
   tcm_clinic: Object.freeze({
     id: "tcm_clinic",
     mode: "appointment",
-    hotIntentPatterns: CLINIC_HOT_INTENT_PATTERNS,
+    hotIntentPatterns: TCM_HOT_INTENT_PATTERNS,
     unclearHotPatterns: CLINIC_UNCLEAR_HOT_PATTERNS,
-    negatedHotPatterns: CLINIC_NEGATED_HOT_PATTERNS,
+    negatedHotPatterns: TCM_NEGATED_HOT_PATTERNS,
     absoluteRejectionPatterns: UNIVERSAL_ABSOLUTE_REJECTION_PATTERNS,
     declinePatterns: CLINIC_DECLINE_PATTERNS,
     positiveContrastPatterns: CLINIC_POSITIVE_CONTRAST_PATTERNS,
     alternativeContextPatterns: ALTERNATIVE_SCHEDULING_PATTERNS,
-    contextPromptPatterns: CLINIC_CONTEXT_PROMPT_PATTERNS,
+    contextPromptPatterns: TCM_CONTEXT_PROMPT_PATTERNS,
     contextConfirmPatterns: CONFIRMATION_PATTERNS,
     contextDetailPatterns: DATE_OR_TIME_PATTERNS,
     contextChoicePatterns: frozenPatterns([]),
