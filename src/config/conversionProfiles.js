@@ -60,8 +60,8 @@ const CONVERSION_PROFILES = Object.freeze({
     requirements: Object.freeze({}),
     alertTitle: "🔥 Booking Ready",
     attentionReason: "Booking ready: patient provided scheduling preferences; clinic staff should confirm availability.",
-    activityDescription: "AI marked this TCM enquiry Booking Ready. Staff should verify the requested branch/time and confirm availability before setting the appointment.",
-    alertAction: "Open the conversation, verify the requested branch/time, and confirm the appointment availability with the patient.",
+    activityDescription: "AI marked this TCM enquiry Booking Ready. Staff should verify the clinic location/time and confirm availability before setting the appointment.",
+    alertAction: "Open the conversation, verify the clinic location/time, and confirm the appointment availability with the patient.",
   }),
   home_renovation: Object.freeze({
     enabled: true,
