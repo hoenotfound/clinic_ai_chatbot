@@ -102,6 +102,13 @@ function canonicalConfiguredBranch(value, branches = clinicConfig.branches) {
   return matches.length === 1 ? String(matches[0].name).trim() : null;
 }
 
+function soleConfiguredBranch(branches = clinicConfig.branches) {
+  const named = (branches || [])
+    .map((branch) => String(branch?.name || "").trim())
+    .filter(Boolean);
+  return named.length === 1 ? named[0] : null;
+}
+
 function invalidResponse(message) {
   const err = new Error(message);
   err.code = "INVALID_AI_RESPONSE";
@@ -180,7 +187,12 @@ function parseStructuredReply(raw) {
   }
 
   const isProjectMode = conversion.mode === "project";
-  const branch = canonicalConfiguredBranch(parsed.branch);
+  const providedBranch = cleanOptionalText(parsed.branch);
+  const branch = providedBranch
+    ? canonicalConfiguredBranch(providedBranch)
+    : !isProjectMode
+      ? soleConfiguredBranch()
+      : null;
   const treatment = parsed.treatment == null
     ? null
     : isProjectMode
@@ -297,6 +309,7 @@ module.exports = {
   canonicalConfiguredName,
   canonicalConfiguredService,
   configuredBranchAliases,
+  soleConfiguredBranch,
   parseAiReplyResult,
   parseStructuredReply,
 };
