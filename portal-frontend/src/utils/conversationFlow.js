@@ -28,6 +28,10 @@ const FLEXIBILITY_NOTE_BY_INDUSTRY = {
     "If a customer already gives the details needed for the next step, the AI can skip questions it no longer needs.",
 };
 
+QUALIFICATION_BY_INDUSTRY.tcm_clinic = QUALIFICATION_BY_INDUSTRY.aesthetic_clinic.map((item) => ({ ...item }));
+FLEXIBILITY_NOTE_BY_INDUSTRY.tcm_clinic =
+  "If a patient already gives the useful details needed to move forward, the AI can skip questions it no longer needs.";
+
 function list(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -146,7 +150,7 @@ function exampleSet(businessType, context) {
     };
   }
 
-  if (businessType === "aesthetic_clinic") {
+  if (businessType === "aesthetic_clinic" || businessType === "tcm_clinic") {
     return {
       customerMessage: [
         chat(
@@ -314,9 +318,9 @@ export function buildConversationFlow(config = {}) {
     .filter(Boolean);
   const serviceName = firstServiceName(
     services,
-    businessType === "home_renovation" ? "a renovation project" : businessType === "aesthetic_clinic" ? "a treatment" : serviceSingular
+    businessType === "home_renovation" ? "a renovation project" : ["aesthetic_clinic", "tcm_clinic"].includes(businessType) ? "a treatment" : serviceSingular
   );
-  const locationName = businessType === "aesthetic_clinic"
+  const locationName = ["aesthetic_clinic", "tcm_clinic"].includes(businessType)
     ? compact(branches[0]?.name, "the branch near me")
     : businessType === "home_renovation"
       ? compact(serviceAreas[0], "a nearby area")
