@@ -585,7 +585,7 @@ const BRANCH_FIELDS = [
 function BranchesTab({ config, onSaved, onError }) {
   const ui = getBusinessTerminology(config);
   const renovation = config.businessType === "home_renovation";
-  const clinic = config.businessType === "aesthetic_clinic";
+  const clinic = ["aesthetic_clinic", "tcm_clinic"].includes(config.businessType);
   const [items, setItems] = useState(() => (config.branches || []).map((b) => ({ ...b, whatsapp: b.whatsapp || "" })));
   const [serviceAreas, setServiceAreas] = useState(() => [...(config.serviceAreas || [])]);
   const [saving, setSaving] = useState(false);
