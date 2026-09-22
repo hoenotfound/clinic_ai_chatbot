@@ -79,6 +79,10 @@ const PIPELINE_PROFILES = Object.freeze({
     defaultStages: CLINIC_DEFAULT_STAGES,
     analytics: CLINIC_ANALYTICS,
   }),
+  tcm_clinic: Object.freeze({
+    defaultStages: CLINIC_DEFAULT_STAGES,
+    analytics: CLINIC_ANALYTICS,
+  }),
   home_renovation: Object.freeze({
     defaultStages: RENOVATION_DEFAULT_STAGES,
     analytics: RENOVATION_ANALYTICS,
