@@ -3,6 +3,7 @@ const { normalizeIndustrySetup } = require("../config/industrySetup");
 
 const PLACEHOLDER_BUSINESS_NAMES = new Set([
   "Your Clinic",
+  "Your TCM Clinic",
   "Your Renovation Business",
   "Your Business",
 ]);
@@ -34,6 +35,8 @@ function industryLabel(config) {
   switch (config?.businessType) {
     case "aesthetic_clinic":
       return "Aesthetic Clinic";
+    case "tcm_clinic":
+      return "TCM Clinic";
     case "home_renovation":
       return "Home Renovation";
     default:
@@ -42,13 +45,13 @@ function industryLabel(config) {
 }
 
 function locationLabel(config) {
-  if (config?.businessType === "aesthetic_clinic") return "Branches";
+  if (["aesthetic_clinic", "tcm_clinic"].includes(config?.businessType)) return "Branches";
   if (config?.businessType === "home_renovation") return "Locations & service areas";
   return "Locations";
 }
 
 function locationsRequired(config) {
-  return config?.businessType === "aesthetic_clinic";
+  return ["aesthetic_clinic", "tcm_clinic"].includes(config?.businessType);
 }
 
 function contactConfigured(config) {
