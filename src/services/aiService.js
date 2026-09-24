@@ -404,7 +404,7 @@ async function runGeminiReply(
         }),
         {
           env,
-          healthScope: `reply:${model}`,
+          healthScope: `model:${model}`,
           retryCount: policy.retryCount,
           globalBudgetMs: modelBudgetMs,
           preferredTimeoutMs: policy.preferredTimeoutMs,
