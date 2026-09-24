@@ -4,6 +4,7 @@ const { Client } = require("pg");
 
 const {
   BASELINE_MIGRATIONS,
+  LEGACY_MIGRATION_LOCK_KEYS,
   loadMigrations,
   runMigrations,
 } = require("../src/db/migrationRunner");
@@ -47,16 +48,17 @@ test(
       const migrations = loadMigrations();
 
       // Simulate two Render instances starting against the same fresh client
-      // database. The advisory lock must serialize them so only one applies
-      // each migration and the other sees the completed history.
+      // database. Each migration transaction is serialized and re-checks
+      // history under the lock, so the two instances may share the work but no
+      // migration can be applied twice.
       const results = await Promise.all([
         runMigrations(pool, { quiet: true }),
         runMigrations(pool, { quiet: true }),
       ]);
 
-      assert.deepEqual(
-        results.map((result) => result.appliedCount).sort((a, b) => a - b),
-        [0, migrations.length]
+      assert.equal(
+        results.reduce((sum, result) => sum + result.appliedCount, 0),
+        migrations.length
       );
       assert.ok(results.every((result) => result.currentVersion === migrations.length));
 
@@ -86,6 +88,44 @@ test(
       const restarted = await runMigrations(pool, { quiet: true });
       assert.equal(restarted.appliedCount, 0);
       assert.equal(restarted.skippedCount, migrations.length);
+    });
+  }
+);
+
+test(
+  "a stale legacy session advisory lock does not block the pooler-safe runner",
+  { skip: !connectionString },
+  async () => {
+    await withIsolatedSchema("migrations_legacy_lock", async ({ admin, pool }) => {
+      await admin.query(
+        "SELECT pg_advisory_lock($1, $2)",
+        LEGACY_MIGRATION_LOCK_KEYS
+      );
+
+      try {
+        const result = await runMigrations(pool, {
+          quiet: true,
+          migrations: [
+            {
+              version: 1,
+              name: "pooler_safe_probe",
+              sql: "CREATE TABLE pooler_safe_probe (id INTEGER PRIMARY KEY);",
+            },
+          ],
+          lockTimeoutMs: 500,
+          lockRetryMs: 20,
+        });
+
+        assert.equal(result.appliedCount, 1);
+        const probe = await admin.query(
+          "SELECT to_regclass('pooler_safe_probe') AS table_name"
+        );
+        assert.ok(probe.rows[0].table_name);
+      } finally {
+        await admin
+          .query("SELECT pg_advisory_unlock($1, $2)", LEGACY_MIGRATION_LOCK_KEYS)
+          .catch(() => {});
+      }
     });
   }
 );
