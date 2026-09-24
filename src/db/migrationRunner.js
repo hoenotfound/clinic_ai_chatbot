@@ -26,10 +26,18 @@ const BASELINE_MIGRATIONS = Object.freeze([
   { version: 11, name: "login_rate_limits", file: "loginRateLimitSchema.sql", expectedGitBlobSha: "0d19d885f25864935a53b5728a1b38e349daa974" },
 ]);
 
-// Two signed 32-bit keys for a session-level advisory lock. A session lock is
-// released automatically if the process/connection dies midway through a
-// deploy, so a replacement Render instance can safely continue.
-const MIGRATION_LOCK_KEYS = Object.freeze([441121, 20260904]);
+// Two signed 32-bit keys for a transaction-scoped advisory lock.
+//
+// Render client databases use Neon pooled connections (PgBouncer transaction
+// pooling). Session-level advisory locks are unsafe there because the lock and
+// unlock statements can run on different PostgreSQL backends. Keep migration
+// coordination inside the same explicit transaction as each migration instead.
+//
+// The second key is an intentional lock epoch bump from the legacy
+// session-level lock. That prevents a stale legacy lock left behind on a pooled
+// backend from blocking deployments after this fix.
+const LEGACY_MIGRATION_LOCK_KEYS = Object.freeze([441121, 20260904]);
+const MIGRATION_LOCK_KEYS = Object.freeze([441121, 20260924]);
 const DEFAULT_MIGRATION_LOCK_TIMEOUT_MS = 30_000;
 const DEFAULT_MIGRATION_LOCK_RETRY_MS = 250;
 
@@ -42,6 +50,14 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Acquire the migration mutex inside an already-open PostgreSQL transaction.
+ *
+ * IMPORTANT: callers must issue BEGIN before calling this function and must
+ * COMMIT or ROLLBACK afterward. pg_advisory_xact_lock is released
+ * automatically at transaction end, which makes it safe with PgBouncer
+ * transaction pooling.
+ */
 async function acquireMigrationLock(
   client,
   {
@@ -61,7 +77,7 @@ async function acquireMigrationLock(
 
   while (true) {
     const result = await client.query(
-      "SELECT pg_try_advisory_lock($1, $2) AS acquired",
+      "SELECT pg_try_advisory_xact_lock($1, $2) AS acquired",
       lockKeys
     );
     if (result.rows?.[0]?.acquired === true) return true;
@@ -243,8 +259,9 @@ async function runMigrations(poolLike, options = {}) {
     DEFAULT_MIGRATION_LOCK_RETRY_MS
   );
   const client = await poolLike.connect();
-  let lockHeld = false;
   let appliedCount = 0;
+  let loggedLockAcquired = false;
+  let finalAppliedRows = [];
 
   try {
     if (!options.quiet) {
@@ -252,63 +269,77 @@ async function runMigrations(poolLike, options = {}) {
         `[Startup] Waiting for database migration lock (max ${lockTimeoutMs}ms)...`
       );
     }
-    await acquireMigrationLock(client, {
-      timeoutMs: lockTimeoutMs,
-      retryMs: lockRetryMs,
-    });
-    lockHeld = true;
-    if (!options.quiet) {
-      console.log("[Startup] Database migration lock acquired.");
-    }
 
-    await ensureMigrationTable(client);
-    let appliedResult = await client.query(
-      "SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version ASC"
-    );
-    validateAppliedMigrations(appliedResult.rows, migrations);
-
-    const appliedVersions = new Set(appliedResult.rows.map((row) => Number(row.version)));
-
-    for (const migration of migrations) {
-      if (appliedVersions.has(migration.version)) continue;
-
+    while (true) {
       await client.query("BEGIN");
+      let activeMigration = null;
+
       try {
-        await client.query(migration.sql);
+        // The transaction-scoped advisory lock pins this transaction's
+        // migration work to one PostgreSQL backend even when DATABASE_URL
+        // points at a PgBouncer transaction pool.
+        await acquireMigrationLock(client, {
+          timeoutMs: lockTimeoutMs,
+          retryMs: lockRetryMs,
+        });
+
+        if (!loggedLockAcquired && !options.quiet) {
+          console.log("[Startup] Database migration lock acquired.");
+          loggedLockAcquired = true;
+        }
+
+        await ensureMigrationTable(client);
+        const appliedResult = await client.query(
+          "SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version ASC"
+        );
+        validateAppliedMigrations(appliedResult.rows, migrations);
+
+        const appliedVersions = new Set(
+          appliedResult.rows.map((row) => Number(row.version))
+        );
+        activeMigration = migrations.find(
+          (migration) => !appliedVersions.has(migration.version)
+        );
+
+        if (!activeMigration) {
+          finalAppliedRows = appliedResult.rows;
+          await client.query("COMMIT");
+          break;
+        }
+
+        await client.query(activeMigration.sql);
         await client.query(
           `INSERT INTO schema_migrations (version, name, checksum)
            VALUES ($1, $2, $3)`,
-          [migration.version, migration.name, migration.checksum]
+          [activeMigration.version, activeMigration.name, activeMigration.checksum]
         );
         await client.query("COMMIT");
         appliedCount += 1;
-        appliedVersions.add(migration.version);
+
         if (!options.quiet) {
           console.log(
-            `Applied database migration ${String(migration.version).padStart(3, "0")}_${migration.name}`
+            `Applied database migration ${String(activeMigration.version).padStart(3, "0")}_${activeMigration.name}`
           );
         }
       } catch (err) {
         await client.query("ROLLBACK").catch(() => {});
-        const wrapped = new Error(
-          `Database migration ${String(migration.version).padStart(3, "0")}_${migration.name} failed: ${err.message}`
-        );
-        wrapped.cause = err;
-        throw wrapped;
+
+        if (activeMigration && err?.code !== "MIGRATION_LOCK_TIMEOUT") {
+          const wrapped = new Error(
+            `Database migration ${String(activeMigration.version).padStart(3, "0")}_${activeMigration.name} failed: ${err.message}`
+          );
+          wrapped.cause = err;
+          throw wrapped;
+        }
+        throw err;
       }
     }
-
-    // Re-read after applying so the result is useful to future diagnostics.
-    appliedResult = await client.query(
-      "SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version ASC"
-    );
-    validateAppliedMigrations(appliedResult.rows, migrations);
 
     const result = {
       appliedCount,
       skippedCount: migrations.length - appliedCount,
       currentVersion: migrations.length ? migrations[migrations.length - 1].version : 0,
-      migrations: appliedResult.rows,
+      migrations: finalAppliedRows,
     };
     if (!options.quiet) {
       console.log(
@@ -318,11 +349,9 @@ async function runMigrations(poolLike, options = {}) {
     }
     return result;
   } finally {
-    if (lockHeld) {
-      await client
-        .query("SELECT pg_advisory_unlock($1, $2)", MIGRATION_LOCK_KEYS)
-        .catch((err) => console.error("Failed to release database migration lock:", err));
-    }
+    // Transaction-scoped advisory locks are released automatically by COMMIT
+    // or ROLLBACK, so no session-level unlock query is required (or safe when
+    // running through PgBouncer transaction pooling).
     if (typeof client.release === "function") await client.release();
   }
 }
@@ -331,6 +360,7 @@ module.exports = {
   BASELINE_MIGRATIONS,
   DEFAULT_MIGRATION_LOCK_RETRY_MS,
   DEFAULT_MIGRATION_LOCK_TIMEOUT_MS,
+  LEGACY_MIGRATION_LOCK_KEYS,
   MIGRATION_FILE_PATTERN,
   MIGRATION_LOCK_KEYS,
   acquireMigrationLock,
