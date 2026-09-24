@@ -21,7 +21,9 @@ test(
     await Promise.all([holder.connect(), contender.connect()]);
 
     try {
-      await holder.query("SELECT pg_advisory_lock($1, $2)", lockKeys);
+      await holder.query("BEGIN");
+      await holder.query("SELECT pg_advisory_xact_lock($1, $2)", lockKeys);
+      await contender.query("BEGIN");
       const startedAt = Date.now();
 
       await assert.rejects(
@@ -42,10 +44,24 @@ test(
         elapsedMs < 2_000,
         `Expected bounded lock wait, but it took ${elapsedMs}ms.`
       );
+
+      await contender.query("ROLLBACK");
+      await holder.query("COMMIT");
+
+      // Transaction-scoped advisory locks release automatically at transaction
+      // end, so a new migration transaction can acquire the same key.
+      await contender.query("BEGIN");
+      await acquireMigrationLock(contender, {
+        lockKeys,
+        timeoutMs: 150,
+        retryMs: 20,
+      });
+      await contender.query("ROLLBACK");
     } finally {
-      await holder
-        .query("SELECT pg_advisory_unlock($1, $2)", lockKeys)
-        .catch(() => {});
+      await Promise.allSettled([
+        holder.query("ROLLBACK"),
+        contender.query("ROLLBACK"),
+      ]);
       await Promise.allSettled([holder.end(), contender.end()]);
     }
   }
