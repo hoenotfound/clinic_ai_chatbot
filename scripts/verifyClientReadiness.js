@@ -118,11 +118,19 @@ function updateReceiptReadiness(receiptPath, receipt, report) {
   if (!receiptPath || !receipt) return null;
   const absolute = path.resolve(process.cwd(), receiptPath);
   const tempPath = `${absolute}.${process.pid}.tmp`;
+  const stagedCompleted = receipt?.channelReadinessDeferred === true
+    && report?.ready === true;
   const updated = {
     ...receipt,
     version: Math.max(3, Number(receipt.version) || 0),
     lastVerifiedAt: report.checkedAt || new Date().toISOString(),
     readiness: JSON.parse(JSON.stringify(report)),
+    ...(stagedCompleted
+      ? {
+          channelReadinessDeferred: false,
+          stagedReadiness: null,
+        }
+      : {}),
   };
   fs.writeFileSync(tempPath, `${JSON.stringify(updated, null, 2)}\n`, { mode: 0o600 });
   fs.renameSync(tempPath, absolute);

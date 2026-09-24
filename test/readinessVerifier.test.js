@@ -309,6 +309,41 @@ test("runtime preflight catches deterministic missing purchased-channel/core cre
   );
 });
 
+
+test("runtime preflight can defer purchased-channel credentials for staged provisioning", () => {
+  const result = validateRuntimeReadinessContract({
+    ADMIN_USERNAME: "admin",
+    ADMIN_PASSWORD: "password",
+    GEMINI_API_KEY_1: "gemini-key",
+    R2_ACCOUNT_ID: "r2",
+    R2_ACCESS_KEY_ID: "access",
+    R2_SECRET_ACCESS_KEY: "secret",
+    R2_BUCKET_NAME: "bucket",
+  }, ["whatsapp", "facebook", "instagram"], {
+    deferChannelReadiness: true,
+  });
+
+  assert.deepEqual(result.channels, ["whatsapp", "facebook", "instagram"]);
+  assert.equal(result.channelReadinessDeferred, true);
+});
+
+test("staged runtime preflight still requires core runtime credentials", () => {
+  assert.throws(
+    () => validateRuntimeReadinessContract({
+      ADMIN_USERNAME: "admin",
+      ADMIN_PASSWORD: "password",
+      R2_ACCOUNT_ID: "r2",
+      R2_ACCESS_KEY_ID: "access",
+      R2_SECRET_ACCESS_KEY: "secret",
+      R2_BUCKET_NAME: "bucket",
+    }, ["whatsapp"], {
+      deferChannelReadiness: true,
+    }),
+    (err) => err.code === "READINESS_RUNTIME_CONFIG_MISSING"
+      && /GEMINI_API_KEYS\/GEMINI_API_KEY_\* or ANTHROPIC_API_KEY/.test(err.message)
+  );
+});
+
 test("verifier logs in, carries both signed session cookies, runs Setup Status and logs out", async () => {
   const calls = [];
   const adminPassword = "super-secret-admin-password";

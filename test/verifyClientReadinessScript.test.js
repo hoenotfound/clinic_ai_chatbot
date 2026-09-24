@@ -96,3 +96,71 @@ test("standalone verification atomically replaces stale readiness in the receipt
   assert.equal(saved.readiness.status, "ready");
   assert.equal(saved.readiness.ready, true);
 });
+
+test("successful verification clears completed staged onboarding state", (t) => {
+  const directory = tempDir(t);
+  const receiptPath = path.join(directory, "staged.json");
+  const original = {
+    version: 4,
+    industry: "tcm_clinic",
+    requiredChannels: ["whatsapp", "facebook", "instagram"],
+    render: { url: "https://staged.onrender.com" },
+    channelReadinessDeferred: true,
+    stagedReadiness: {
+      acceptable: true,
+      pendingChannelCount: 8,
+      pendingChannelKeys: ["whatsapp", "facebook", "instagram", "meta_webhook"],
+    },
+    readiness: { status: "needs_attention", ready: false },
+  };
+  fs.writeFileSync(receiptPath, JSON.stringify(original));
+
+  const report = {
+    status: "ready_with_warnings",
+    ready: true,
+    verificationCompleted: true,
+    checkedAt: "2026-09-24T06:00:00.000Z",
+    requiredChannels: ["whatsapp", "facebook", "instagram"],
+    blocking: [],
+    warnings: [{ key: "system_health_ai", status: "warning" }],
+  };
+
+  updateReceiptReadiness(receiptPath, original, report);
+  const saved = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+  assert.equal(saved.channelReadinessDeferred, false);
+  assert.equal(saved.stagedReadiness, null);
+  assert.equal(saved.readiness.status, "ready_with_warnings");
+});
+
+test("failed repeat verification keeps staged onboarding state", (t) => {
+  const directory = tempDir(t);
+  const receiptPath = path.join(directory, "staged-pending.json");
+  const original = {
+    version: 4,
+    industry: "tcm_clinic",
+    requiredChannels: ["whatsapp"],
+    render: { url: "https://staged.onrender.com" },
+    channelReadinessDeferred: true,
+    stagedReadiness: {
+      acceptable: true,
+      pendingChannelCount: 2,
+      pendingChannelKeys: ["whatsapp", "whatsapp_webhook"],
+    },
+  };
+  fs.writeFileSync(receiptPath, JSON.stringify(original));
+
+  const report = {
+    status: "needs_attention",
+    ready: false,
+    verificationCompleted: true,
+    checkedAt: "2026-09-24T06:05:00.000Z",
+    requiredChannels: ["whatsapp"],
+    blocking: [{ key: "whatsapp", status: "not_configured" }],
+    warnings: [],
+  };
+
+  updateReceiptReadiness(receiptPath, original, report);
+  const saved = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+  assert.equal(saved.channelReadinessDeferred, true);
+  assert.equal(saved.stagedReadiness.pendingChannelCount, 2);
+});
