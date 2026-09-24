@@ -306,7 +306,8 @@ function shouldStopLeadScoringSweep(error) {
       "ALL_GEMINI_KEYS_COOLING_DOWN",
       "ALL_GEMINI_KEYS_FAILED",
       "AI_PROVIDER_NOT_CONFIGURED",
-    ].includes(String(error?.code || ""));
+    ].includes(String(error?.code || ""))
+    || isTransientAiError(error);
 }
 
 function sleep(ms) {
@@ -386,7 +387,7 @@ async function scoreWithGemini(input) {
     // Stop the current batch after provider/model-wide failures, including a
     // confirmation attempt that ends in rate limiting or a network timeout,
     // rather than spending requests on every remaining lead in the sweep.
-    if (shouldStopLeadScoringSweep(error) || isTransientAiError(error)) {
+    if (shouldStopLeadScoringSweep(error)) {
       error.stopLeadScoringSweep = true;
     }
     throw error;
