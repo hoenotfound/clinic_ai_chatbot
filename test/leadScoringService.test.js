@@ -282,6 +282,57 @@ test("records a failed scoring attempt without stopping the sweep", async (t) =>
   assert.equal(flushed, true);
 });
 
+test("provider-wide AI outage stops the rest of the scoring batch", async (t) => {
+  const originalError = console.error;
+  t.after(() => {
+    console.error = originalError;
+  });
+  console.error = () => {};
+
+  const first = candidate({ lead_id: 7, contact_id: 12, through_message_id: 44 });
+  const second = candidate({ lead_id: 8, contact_id: 13, through_message_id: 45 });
+  const claimed = [];
+  const failed = [];
+  let scoreCalls = 0;
+  let flushCalls = 0;
+
+  const run = createLeadScoringRunner({
+    settingsGetter: () => settings,
+    repository: {
+      findCandidates: async () => [first, second],
+      claimCandidate: async (item) => {
+        claimed.push(item.lead_id);
+        return { id: 90 + item.lead_id };
+      },
+      getTranscript: async (_contactId, _startedId, _journey, throughMessageId) => [
+        { id: throughMessageId, role: "user", content: "Hello" },
+      ],
+      markScoreFailed: async (id, error) => {
+        failed.push({ id, error });
+        return { id, attempts: 1, terminal: false };
+      },
+    },
+    scoreConversation: async () => {
+      scoreCalls += 1;
+      const error = new Error("Gemini model is unavailable");
+      error.code = "GEMINI_MODEL_UNAVAILABLE";
+      error.stopLeadScoringSweep = true;
+      throw error;
+    },
+    flushConversationSummaries: async () => {
+      flushCalls += 1;
+    },
+  });
+
+  await run();
+
+  assert.deepEqual(claimed, [7]);
+  assert.equal(scoreCalls, 1);
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0].error.stopLeadScoringSweep, true);
+  assert.equal(flushCalls, 1);
+});
+
 test("terminal AI scoring failure queues a manual-review Telegram fallback without an AI summary", async (t) => {
   const originalError = console.error;
   t.after(() => {

@@ -293,6 +293,13 @@ function createLeadScoringRunner({
               );
             }
           }
+
+          // Provider-wide/model-wide failures are retried by the durable
+          // lead-scoring retry path. Stop this batch here so a Gemini outage
+          // does not burn requests on every remaining lead in the same sweep.
+          if (err?.stopLeadScoringSweep === true) {
+            break;
+          }
         }
       }
 
