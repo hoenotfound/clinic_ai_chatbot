@@ -11,6 +11,7 @@ const PROMPT_VERSION = "lead-temperature-v4-industry-neutral";
 const MAX_REASON_CHARS = 240;
 const MAX_EVIDENCE_MESSAGES = 5;
 const GEMINI_TRANSIENT_RETRY_DELAYS_MS = [2000, 5000, 10000];
+const LEAD_SCORING_GEMINI_RETRY_COUNT = 0;
 const TRANSIENT_HTTP_STATUSES = new Set([429, 500, 502, 503, 504]);
 const TRANSIENT_NETWORK_CODES = new Set([
   "ECONNRESET",
@@ -270,6 +271,43 @@ function isTransientAiError(error) {
   return TRANSIENT_NETWORK_CODES.has(code);
 }
 
+function isGeminiCapacityError(error) {
+  const status = getErrorStatus(error);
+  const providerStatus = String(
+    error?.error?.status
+      || error?.response?.data?.error?.status
+      || error?.response?.body?.error?.status
+      || error?.details?.error?.status
+      || ""
+  ).trim().toUpperCase();
+  const message = String(error?.message || "").toLowerCase();
+
+  return status === 503
+    || providerStatus === "UNAVAILABLE"
+    || /currently experiencing high demand|model[^.]{0,80}(?:high demand|overload|unavailable)/.test(message)
+    || (/\b503\b/.test(message) && /high demand|overload|unavailable|service unavailable/.test(message));
+}
+
+function createLeadScoringModelUnavailableError(error) {
+  const wrapped = new Error(`Gemini model ${GEMINI_MODEL} is temporarily unavailable.`);
+  wrapped.code = "GEMINI_MODEL_UNAVAILABLE";
+  wrapped.stopGeminiKeyRotation = true;
+  wrapped.stopLeadScoringSweep = true;
+  wrapped.model = GEMINI_MODEL;
+  wrapped.cause = error;
+  return wrapped;
+}
+
+function shouldStopLeadScoringSweep(error) {
+  return error?.stopLeadScoringSweep === true
+    || [
+      "GEMINI_MODEL_UNAVAILABLE",
+      "ALL_GEMINI_KEYS_COOLING_DOWN",
+      "ALL_GEMINI_KEYS_FAILED",
+      "AI_PROVIDER_NOT_CONFIGURED",
+    ].includes(String(error?.code || ""));
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -305,31 +343,52 @@ async function withTransientRetries(
 }
 
 async function scoreWithGemini(input) {
-  const score = await runWithGeminiKeys(
-    async (apiKey) => {
-      const ai = new GoogleGenAI({ apiKey });
-      const response = await generateGeminiContent(
-        ai,
-        {
-          model: GEMINI_MODEL,
-          contents: buildLeadScorePrompt(input),
-          config: {
-            maxOutputTokens: 700,
-            responseMimeType: "application/json",
-            responseJsonSchema: SCORE_JSON_SCHEMA,
-            thinkingConfig: { thinkingLevel: "minimal" },
-          },
-        },
-        { purpose: "lead_scoring" }
-      );
-      return parseLeadScore(response.text, input.messages);
-    },
-    {
-      healthScope: `model:${GEMINI_MODEL}`,
-      retryCount: GEMINI_TRANSIENT_RETRY_DELAYS_MS.length,
-      retryDelaysMs: GEMINI_TRANSIENT_RETRY_DELAYS_MS,
+  let score;
+  try {
+    score = await runWithGeminiKeys(
+      async (apiKey) => {
+        const ai = new GoogleGenAI({ apiKey });
+        try {
+          const response = await generateGeminiContent(
+            ai,
+            {
+              model: GEMINI_MODEL,
+              contents: buildLeadScorePrompt(input),
+              config: {
+                maxOutputTokens: 700,
+                responseMimeType: "application/json",
+                responseJsonSchema: SCORE_JSON_SCHEMA,
+                thinkingConfig: { thinkingLevel: "minimal" },
+              },
+            },
+            { purpose: "lead_scoring" }
+          );
+          return parseLeadScore(response.text, input.messages);
+        } catch (error) {
+          // A 503/high-demand response is model capacity, not a bad key.
+          // Ask the shared key pool to confirm it with one other healthy key
+          // and then stop instead of hammering every key repeatedly.
+          if (isGeminiCapacityError(error)) {
+            throw createLeadScoringModelUnavailableError(error);
+          }
+          throw error;
+        }
+      },
+      {
+        healthScope: `model:${GEMINI_MODEL}`,
+        retryCount: LEAD_SCORING_GEMINI_RETRY_COUNT,
+        smartRetry: true,
+      }
+    );
+  } catch (error) {
+    // Background scoring already has a durable two-minute whole-job retry.
+    // Mark provider-wide failures so the current batch stops after this lead
+    // rather than spending quota on every remaining candidate in the sweep.
+    if (shouldStopLeadScoringSweep(error)) {
+      error.stopLeadScoringSweep = true;
     }
-  );
+    throw error;
+  }
 
   return {
     ...score,
@@ -373,12 +432,16 @@ async function scoreLeadConversation(input) {
 module.exports = {
   GEMINI_MODEL,
   GEMINI_TRANSIENT_RETRY_DELAYS_MS,
+  LEAD_SCORING_GEMINI_RETRY_COUNT,
   PROMPT_VERSION,
   buildLeadScorePrompt,
   businessLeadContext,
+  createLeadScoringModelUnavailableError,
+  isGeminiCapacityError,
   isTransientAiError,
   parseConversationSummary,
   parseLeadScore,
   scoreLeadConversation,
+  shouldStopLeadScoringSweep,
   withTransientRetries,
 };
