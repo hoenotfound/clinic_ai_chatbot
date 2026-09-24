@@ -14,6 +14,7 @@ test("recover-client CLI parses deterministic recovery controls", () => {
     "--runtime-env-file", "./acme.env",
     "--r2-location", "apac",
     "--render-plan", "starter",
+    "--defer-channel-readiness",
     "--execute",
     "--json",
   ]);
@@ -23,6 +24,7 @@ test("recover-client CLI parses deterministic recovery controls", () => {
   assert.equal(args.runtimeEnvFile, "./acme.env");
   assert.equal(args.r2Location, "apac");
   assert.equal(args.renderPlan, "starter");
+  assert.equal(args.deferChannelReadiness, true);
   assert.equal(args.execute, true);
   assert.equal(args.json, true);
   assert.match(usage(), /non-destructive/i);
@@ -31,4 +33,16 @@ test("recover-client CLI parses deterministic recovery controls", () => {
 test("recover-client CLI rejects unknown options and missing values", () => {
   assert.throws(() => parseArgs(["--unknown", "x"]), /Unknown argument/);
   assert.throws(() => parseArgs(["--client"]), /requires a value/);
+});
+
+
+test("recover-client keeps deferred channel readiness opt-in", () => {
+  const args = parseArgs([
+    "--client", "acme",
+    "--industry", "generic",
+    "--channels", "whatsapp",
+    "--runtime-env-file", "./acme.env",
+  ]);
+  assert.equal(args.deferChannelReadiness, false);
+  assert.match(usage(), /--defer-channel-readiness/);
 });
