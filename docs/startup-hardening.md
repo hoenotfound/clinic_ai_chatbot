@@ -8,7 +8,7 @@ The chatbot now uses these bounded startup controls:
 
 - `DATABASE_CONNECT_TIMEOUT_MS=10000` — maximum PostgreSQL pool connection wait.
 - `DATABASE_MIGRATION_LOCK_TIMEOUT_MS=30000` — maximum time startup waits for the database migration advisory lock.
-- `DATABASE_MIGRATION_LOCK_RETRY_MS=250` — retry interval while another instance owns the migration lock.
+- `DATABASE_MIGRATION_LOCK_RETRY_MS=250` — retry interval while another instance owns the migration lock. The lock is transaction-scoped so it is safe with Neon pooled/PgBouncer connections.
 - `STARTUP_DEADLINE_MS=180000` — maximum time from `npm start` until the web port accepts HTTP connections.
 - `STARTUP_PROBE_INTERVAL_MS=1000` — local port-probe interval used by the startup watchdog.
 - `STARTUP_WARNING_INTERVAL_MS=15000` — cadence for "still waiting" startup diagnostics.
@@ -31,7 +31,7 @@ Server listening on port 10000
 [Startup] Web server is accepting HTTP connections on port 10000 after ...ms.
 ```
 
-If another deploy or process holds the migration lock for too long, startup exits with `MIGRATION_LOCK_TIMEOUT` instead of waiting indefinitely. If any later bootstrap step stalls and the web port still has not opened by `STARTUP_DEADLINE_MS`, the watchdog exits the process with a clear startup-deadline message so Render can fail/retry the deployment rather than waiting for the full platform port-scan timeout.
+If another deploy or process holds the migration lock for too long, startup exits with `MIGRATION_LOCK_TIMEOUT` instead of waiting indefinitely. The runner uses a transaction-scoped PostgreSQL advisory lock inside each migration transaction, so pooled Neon connections cannot strand a session-level lock on a PgBouncer backend. If any later bootstrap step stalls and the web port still has not opened by `STARTUP_DEADLINE_MS`, the watchdog exits the process with a clear startup-deadline message so Render can fail/retry the deployment rather than waiting for the full platform port-scan timeout.
 
 ## What this does not change
 
