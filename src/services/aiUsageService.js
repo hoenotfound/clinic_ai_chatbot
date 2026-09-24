@@ -64,7 +64,7 @@ function failureKind(error) {
   }
   if (
     providerCode === "quota_exceeded"
-    || /quota_exceeded|requests per day|per-day|per day|daily quota|\brpd\b/.test(message)
+    || /quota[_ ]exceeded|requests\s*per\s*day|requestsperday|generate.?requests.?per.?day.?per.?project.?per.?model|daily quota|\brpd\b/.test(message)
   ) {
     return "quota_exhausted";
   }

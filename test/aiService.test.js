@@ -233,6 +233,56 @@ test("a second healthy key can rescue the primary model after a first-key 503", 
   }
 });
 
+test("primary-model quota cooldown does not block the fallback reply model", async () => {
+  resetGeminiKeyPoolState();
+  resetGeminiModelHealth();
+  const originalGetReply = geminiService.getReply;
+  const calls = [];
+  const validReply = JSON.stringify({
+    reply: "hello from fallback",
+    outcome: "normal",
+    treatment: null,
+    branch: null,
+    appointmentPreference: null,
+  });
+
+  geminiService.getReply = async (_messages, _options, apiKey, model) => {
+    calls.push({ apiKey, model });
+    if (model === "gemini-3.8-flash") {
+      const err = new Error(
+        '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","details":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}}'
+      );
+      err.status = 429;
+      throw err;
+    }
+    return validReply;
+  };
+
+  try {
+    const result = await runGeminiReply(
+      [{ role: "user", content: "hi" }],
+      { channel: "whatsapp", isFirstMessage: false },
+      {
+        GEMINI_API_KEYS: "key-a",
+        GEMINI_MODEL: "gemini-3.8-flash",
+        GEMINI_FALLBACK_MODEL: "gemini-3.5-flash-lite",
+        GEMINI_QUOTA_COOLDOWN_MS: "3600000",
+        GEMINI_REPLY_5XX_RETRY_COUNT: "0",
+      }
+    );
+
+    assert.equal(result, validReply);
+    assert.deepEqual(calls, [
+      { apiKey: "key-a", model: "gemini-3.8-flash" },
+      { apiKey: "key-a", model: "gemini-3.5-flash-lite" },
+    ]);
+  } finally {
+    geminiService.getReply = originalGetReply;
+    resetGeminiKeyPoolState();
+    resetGeminiModelHealth();
+  }
+});
+
 test("transient provider errors and invalid model output are retryable", () => {
   assert.equal(isRetryableAiError({ status: 429, message: "quota" }), true);
   assert.equal(isRetryableAiError({ code: "ETIMEDOUT" }), true);
@@ -248,6 +298,13 @@ test("AI candidate health classifies quota, credential and temporary failures", 
   );
   assert.deepEqual(
     classifyCandidateHealthFailure({ status: 429, message: "quota_exceeded: requests per day" }),
+    { status: "rate_limited", failureKind: "quota_exhausted" }
+  );
+  assert.deepEqual(
+    classifyCandidateHealthFailure({
+      status: 429,
+      message: '{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}',
+    }),
     { status: "rate_limited", failureKind: "quota_exhausted" }
   );
   assert.deepEqual(

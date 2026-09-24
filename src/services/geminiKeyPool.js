@@ -7,7 +7,7 @@ const DEFAULT_UNAVAILABLE_COOLDOWN_MS = 30 * 1000;
 const DEFAULT_INVALID_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const MAX_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const runtimeCandidateHealth = new Map();
-let activeGeminiHealthKey = null;
+const activeGeminiHealthKeys = new Map();
 
 function positiveInt(value, fallback, max = MAX_COOLDOWN_MS) {
   const parsed = Number(value);
@@ -37,6 +37,18 @@ function credentialFingerprint(value) {
     .update(String(value || ""))
     .digest("hex")
     .slice(0, 24);
+}
+
+function normalizeHealthScope(value) {
+  const scope = String(value || "").trim();
+  if (!scope || scope === "shared") return "shared";
+  return scope.replace(/[^A-Za-z0-9_.:-]+/g, "_").slice(0, 120) || "shared";
+}
+
+function geminiCandidateHealthKey(apiKey, healthScope = "shared") {
+  const base = `gemini_${credentialFingerprint(apiKey)}`;
+  const scope = normalizeHealthScope(healthScope);
+  return scope === "shared" ? base : `${base}:${scope}`;
 }
 
 function getErrorStatus(err) {
@@ -106,7 +118,7 @@ function isRetryableAiError(err) {
 
 function looksLikeDailyQuota(message) {
   const text = String(message || "").toLowerCase();
-  return /quota_exceeded|requests per day|per-day|per day|daily quota|\brpd\b/.test(text);
+  return /quota_exceeded|requests\s*per\s*day|requestsperday|generate.?requests.?per.?day.?per.?project.?per.?model|daily quota|\brpd\b/.test(text);
 }
 
 function classifyCandidateHealthFailure(err) {
@@ -210,10 +222,12 @@ function recordCandidateHealth(
   });
 
   if (candidate.provider === "gemini") {
+    const healthScope = normalizeHealthScope(candidate.healthScope);
+    const activeHealthKey = activeGeminiHealthKeys.get(healthScope);
     if (outcome.status === "ready") {
-      activeGeminiHealthKey = candidate.healthKey;
-    } else if (candidate.healthKey === activeGeminiHealthKey && cooldownMs > 0) {
-      activeGeminiHealthKey = null;
+      activeGeminiHealthKeys.set(healthScope, candidate.healthKey);
+    } else if (candidate.healthKey === activeHealthKey && cooldownMs > 0) {
+      activeGeminiHealthKeys.delete(healthScope);
     }
   }
 
@@ -233,13 +247,15 @@ function getRuntimeCandidateHealth() {
   return [...runtimeCandidateHealth.values()].map((row) => ({ ...row }));
 }
 
-function getGeminiCandidateDescriptors(env = process.env) {
+function getGeminiCandidateDescriptors(env = process.env, healthScope = "shared") {
+  const scope = normalizeHealthScope(healthScope);
   return getGeminiApiKeys(env).map((apiKey, index) => ({
     apiKey,
     index,
     label: `Gemini key ${index + 1}`,
     provider: "gemini",
-    healthKey: `gemini_${credentialFingerprint(apiKey)}`,
+    healthKey: geminiCandidateHealthKey(apiKey, scope),
+    healthScope: scope,
   }));
 }
 
@@ -250,14 +266,20 @@ function cooldownUntilMs(candidate) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function getOrderedGeminiCandidates(env = process.env, nowMs = Date.now()) {
-  const candidates = getGeminiCandidateDescriptors(env);
+function getOrderedGeminiCandidates(
+  env = process.env,
+  nowMs = Date.now(),
+  healthScope = "shared"
+) {
+  const scope = normalizeHealthScope(healthScope);
+  const candidates = getGeminiCandidateDescriptors(env, scope);
   const available = candidates.filter((candidate) => cooldownUntilMs(candidate) <= nowMs);
   const cooling = candidates.filter((candidate) => cooldownUntilMs(candidate) > nowMs);
+  const activeHealthKey = activeGeminiHealthKeys.get(scope);
 
   available.sort((a, b) => {
-    if (a.healthKey === activeGeminiHealthKey) return -1;
-    if (b.healthKey === activeGeminiHealthKey) return 1;
+    if (a.healthKey === activeHealthKey) return -1;
+    if (b.healthKey === activeHealthKey) return 1;
     return a.index - b.index;
   });
   cooling.sort((a, b) => cooldownUntilMs(a) - cooldownUntilMs(b));
@@ -335,6 +357,7 @@ async function runWithGeminiKeys(
   operation,
   {
     env = process.env,
+    healthScope = "shared",
     retryCount = 1,
     retryDelaysMs = [],
     timeoutMs = 0,
@@ -354,7 +377,11 @@ async function runWithGeminiKeys(
   } = {}
 ) {
   const nowValue = now();
-  const { available, cooling } = getOrderedGeminiCandidates(env, nowValue.getTime());
+  const { available, cooling } = getOrderedGeminiCandidates(
+    env,
+    nowValue.getTime(),
+    healthScope
+  );
 
   if (!available.length) {
     const err = new Error(
@@ -542,7 +569,7 @@ async function runWithGeminiKeys(
 
 function resetGeminiKeyPoolState() {
   runtimeCandidateHealth.clear();
-  activeGeminiHealthKey = null;
+  activeGeminiHealthKeys.clear();
 }
 
 module.exports = {
@@ -554,6 +581,7 @@ module.exports = {
   computeAttemptTimeoutMs,
   cooldownMsForOutcome,
   credentialFingerprint,
+  geminiCandidateHealthKey,
   getGeminiApiKeys,
   getGeminiCandidateDescriptors,
   getOrderedGeminiCandidates,
