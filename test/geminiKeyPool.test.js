@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   computeAttemptTimeoutMs,
   credentialFingerprint,
+  geminiCandidateHealthKey,
   getRuntimeCandidateHealth,
   resetGeminiKeyPoolState,
   runWithGeminiKeys,
@@ -104,6 +105,100 @@ test("daily quota hints use the longer quota cooldown", async () => {
   );
   assert.equal(keyAHealth.last_failure_kind, "quota_exhausted");
   assert.equal(keyAHealth.cooldown_until.toISOString(), "2026-09-04T01:00:00.000Z");
+});
+
+test("Google free-tier per-project per-model daily quota is classified as exhausted", async () => {
+  resetGeminiKeyPoolState();
+  const nowMs = Date.parse("2026-09-24T13:47:00.000Z");
+  const healthScope = "lead_scoring:gemini-3.6-flash";
+  const env = {
+    GEMINI_API_KEYS: "key-a",
+    GEMINI_QUOTA_COOLDOWN_MS: "3600000",
+  };
+  const providerMessage = JSON.stringify({
+    error: {
+      code: 429,
+      status: "RESOURCE_EXHAUSTED",
+      message: "You exceeded your current quota.",
+      details: [{
+        quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+      }],
+    },
+  });
+
+  await assert.rejects(
+    () => runWithGeminiKeys(
+      async () => {
+        throw quotaError(providerMessage);
+      },
+      {
+        env,
+        healthScope,
+        persistHealth: false,
+        now: () => new Date(nowMs),
+      }
+    ),
+    (err) => err.code === "ALL_GEMINI_KEYS_FAILED"
+  );
+
+  const health = getRuntimeCandidateHealth().find(
+    (row) => row.candidate_key === geminiCandidateHealthKey("key-a", healthScope)
+  );
+  assert.equal(health.last_failure_kind, "quota_exhausted");
+  assert.equal(health.cooldown_until.toISOString(), "2026-09-24T14:47:00.000Z");
+});
+
+test("background quota cooldown does not block a customer-reply health scope", async () => {
+  resetGeminiKeyPoolState();
+  const nowMs = Date.parse("2026-09-24T13:47:00.000Z");
+  const env = {
+    GEMINI_API_KEYS: "key-a",
+    GEMINI_QUOTA_COOLDOWN_MS: "3600000",
+  };
+
+  await assert.rejects(
+    () => runWithGeminiKeys(
+      async () => {
+        throw quotaError("quota_exceeded: requests per day limit reached");
+      },
+      {
+        env,
+        healthScope: "lead_scoring:gemini-3.6-flash",
+        persistHealth: false,
+        now: () => new Date(nowMs),
+      }
+    ),
+    (err) => err.code === "ALL_GEMINI_KEYS_FAILED"
+  );
+
+  const reply = await runWithGeminiKeys(
+    async () => "customer-reply",
+    {
+      env,
+      healthScope: "reply:gemini-3.7-flash",
+      persistHealth: false,
+      now: () => new Date(nowMs),
+    }
+  );
+
+  assert.equal(reply, "customer-reply");
+  const health = getRuntimeCandidateHealth();
+  assert.ok(
+    health.some(
+      (row) => row.candidate_key === geminiCandidateHealthKey(
+        "key-a",
+        "lead_scoring:gemini-3.6-flash"
+      ) && row.last_status === "rate_limited"
+    )
+  );
+  assert.ok(
+    health.some(
+      (row) => row.candidate_key === geminiCandidateHealthKey(
+        "key-a",
+        "reply:gemini-3.7-flash"
+      ) && row.last_status === "ready"
+    )
+  );
 });
 
 test("generic temporary provider failures still retry the same key before rotating", async () => {
