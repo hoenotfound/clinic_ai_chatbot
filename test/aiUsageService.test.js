@@ -233,6 +233,12 @@ test("usage monitoring distinguishes daily quota exhaustion from short rate limi
   quotaError.error = { code: "quota_exceeded" };
   assert.equal(failureKind(quotaError), "quota_exhausted");
 
+  const freeTierRpdError = new Error(
+    '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","details":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}}'
+  );
+  freeTierRpdError.status = 429;
+  assert.equal(failureKind(freeTierRpdError), "quota_exhausted");
+
   const rateError = new Error("Too many requests; please retry shortly.");
   rateError.status = 429;
   assert.equal(failureKind(rateError), "rate_limit");
