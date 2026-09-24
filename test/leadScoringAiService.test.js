@@ -184,7 +184,7 @@ test("lead scoring treats Gemini high-demand 503s as model capacity failures", (
   assert.equal(shouldStopLeadScoringSweep(wrapped), true);
 });
 
-test("provider-wide key-pool failures stop the current lead-scoring sweep", () => {
+test("provider-wide and transient failures stop the current lead-scoring sweep", () => {
   for (const code of [
     "ALL_GEMINI_KEYS_COOLING_DOWN",
     "ALL_GEMINI_KEYS_FAILED",
@@ -192,7 +192,12 @@ test("provider-wide key-pool failures stop the current lead-scoring sweep", () =
   ]) {
     assert.equal(shouldStopLeadScoringSweep({ code }), true);
   }
+  assert.equal(shouldStopLeadScoringSweep({ status: 429 }), true);
+  assert.equal(shouldStopLeadScoringSweep({ status: 503 }), true);
+  assert.equal(shouldStopLeadScoringSweep({ code: "AI_TIMEOUT" }), true);
+  assert.equal(shouldStopLeadScoringSweep({ code: "ETIMEDOUT" }), true);
   assert.equal(shouldStopLeadScoringSweep({ code: "INVALID_AI_RESPONSE" }), false);
+  assert.equal(shouldStopLeadScoringSweep({ status: 400 }), false);
 });
 
 test("classifies temporary provider and network failures as retryable", () => {
@@ -200,6 +205,7 @@ test("classifies temporary provider and network failures as retryable", () => {
   assert.equal(isTransientAiError({ status: 429 }), true);
   assert.equal(isTransientAiError({ error: { code: 502 } }), true);
   assert.equal(isTransientAiError({ code: "ETIMEDOUT" }), true);
+  assert.equal(isTransientAiError({ code: "AI_TIMEOUT" }), true);
   assert.equal(isTransientAiError({ cause: { code: "ECONNRESET" } }), true);
 
   assert.equal(isTransientAiError({ status: 400 }), false);
