@@ -299,15 +299,30 @@ function createLeadScoringModelUnavailableError(error) {
   return wrapped;
 }
 
+function looksLikeProviderWideFailureMessage(message) {
+  const text = String(message || "").toLowerCase();
+  return /quota|rate limit|resource exhausted|too many requests|temporar|unavailable|high demand|overload|timeout|timed out|\b429\b|\b500\b|\b502\b|\b503\b|\b504\b|api.?key.*invalid|invalid.*api.?key|unauthorized|permission denied/.test(text);
+}
+
 function shouldStopLeadScoringSweep(error) {
-  return error?.stopLeadScoringSweep === true
-    || [
-      "GEMINI_MODEL_UNAVAILABLE",
-      "ALL_GEMINI_KEYS_COOLING_DOWN",
-      "ALL_GEMINI_KEYS_FAILED",
-      "AI_PROVIDER_NOT_CONFIGURED",
-    ].includes(String(error?.code || ""))
-    || isTransientAiError(error);
+  if (error?.stopLeadScoringSweep === true) return true;
+
+  const code = String(error?.code || "");
+  if ([
+    "GEMINI_MODEL_UNAVAILABLE",
+    "ALL_GEMINI_KEYS_COOLING_DOWN",
+    "AI_PROVIDER_NOT_CONFIGURED",
+  ].includes(code)) {
+    return true;
+  }
+
+  if (code === "ALL_GEMINI_KEYS_FAILED") {
+    const failures = Array.isArray(error?.failures) ? error.failures : [];
+    return failures.length > 0
+      && failures.every((failure) => looksLikeProviderWideFailureMessage(failure?.message));
+  }
+
+  return isTransientAiError(error);
 }
 
 function sleep(ms) {
@@ -442,6 +457,7 @@ module.exports = {
   createLeadScoringModelUnavailableError,
   isGeminiCapacityError,
   isTransientAiError,
+  looksLikeProviderWideFailureMessage,
   parseConversationSummary,
   parseLeadScore,
   scoreLeadConversation,
