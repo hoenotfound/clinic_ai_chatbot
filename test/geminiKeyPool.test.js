@@ -110,7 +110,7 @@ test("daily quota hints use the longer quota cooldown", async () => {
 test("Google free-tier per-project per-model daily quota is classified as exhausted", async () => {
   resetGeminiKeyPoolState();
   const nowMs = Date.parse("2026-09-24T13:47:00.000Z");
-  const healthScope = "lead_scoring:gemini-3.6-flash";
+  const healthScope = "model:gemini-3.6-flash";
   const env = {
     GEMINI_API_KEYS: "key-a",
     GEMINI_QUOTA_COOLDOWN_MS: "3600000",
@@ -148,7 +148,7 @@ test("Google free-tier per-project per-model daily quota is classified as exhaus
   assert.equal(health.cooldown_until.toISOString(), "2026-09-24T14:47:00.000Z");
 });
 
-test("background quota cooldown does not block a customer-reply health scope", async () => {
+test("quota cooldown on one Gemini model does not block another reply model", async () => {
   resetGeminiKeyPoolState();
   const nowMs = Date.parse("2026-09-24T13:47:00.000Z");
   const env = {
@@ -163,7 +163,7 @@ test("background quota cooldown does not block a customer-reply health scope", a
       },
       {
         env,
-        healthScope: "lead_scoring:gemini-3.6-flash",
+        healthScope: "model:gemini-3.6-flash",
         persistHealth: false,
         now: () => new Date(nowMs),
       }
@@ -175,7 +175,7 @@ test("background quota cooldown does not block a customer-reply health scope", a
     async () => "customer-reply",
     {
       env,
-      healthScope: "reply:gemini-3.7-flash",
+      healthScope: "model:gemini-3.7-flash",
       persistHealth: false,
       now: () => new Date(nowMs),
     }
@@ -187,7 +187,7 @@ test("background quota cooldown does not block a customer-reply health scope", a
     health.some(
       (row) => row.candidate_key === geminiCandidateHealthKey(
         "key-a",
-        "lead_scoring:gemini-3.6-flash"
+        "model:gemini-3.6-flash"
       ) && row.last_status === "rate_limited"
     )
   );
@@ -195,7 +195,7 @@ test("background quota cooldown does not block a customer-reply health scope", a
     health.some(
       (row) => row.candidate_key === geminiCandidateHealthKey(
         "key-a",
-        "reply:gemini-3.7-flash"
+        "model:gemini-3.7-flash"
       ) && row.last_status === "ready"
     )
   );
