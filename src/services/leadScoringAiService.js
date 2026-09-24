@@ -20,6 +20,7 @@ const TRANSIENT_NETWORK_CODES = new Set([
   "ETIMEDOUT",
   "UND_ERR_CONNECT_TIMEOUT",
   "UND_ERR_SOCKET",
+  "AI_TIMEOUT",
 ]);
 
 // Database column names remain unchanged for backward compatibility. In a
@@ -382,9 +383,10 @@ async function scoreWithGemini(input) {
     );
   } catch (error) {
     // Background scoring already has a durable two-minute whole-job retry.
-    // Mark provider-wide failures so the current batch stops after this lead
-    // rather than spending quota on every remaining candidate in the sweep.
-    if (shouldStopLeadScoringSweep(error)) {
+    // Stop the current batch after provider/model-wide failures, including a
+    // confirmation attempt that ends in rate limiting or a network timeout,
+    // rather than spending requests on every remaining lead in the sweep.
+    if (shouldStopLeadScoringSweep(error) || isTransientAiError(error)) {
       error.stopLeadScoringSweep = true;
     }
     throw error;
