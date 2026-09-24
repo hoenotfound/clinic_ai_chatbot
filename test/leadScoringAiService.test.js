@@ -11,6 +11,7 @@ const {
   createLeadScoringModelUnavailableError,
   isGeminiCapacityError,
   isTransientAiError,
+  looksLikeProviderWideFailureMessage,
   parseConversationSummary,
   parseLeadScore,
   shouldStopLeadScoringSweep,
@@ -187,11 +188,31 @@ test("lead scoring treats Gemini high-demand 503s as model capacity failures", (
 test("provider-wide and transient failures stop the current lead-scoring sweep", () => {
   for (const code of [
     "ALL_GEMINI_KEYS_COOLING_DOWN",
-    "ALL_GEMINI_KEYS_FAILED",
     "AI_PROVIDER_NOT_CONFIGURED",
   ]) {
     assert.equal(shouldStopLeadScoringSweep({ code }), true);
   }
+
+  assert.equal(shouldStopLeadScoringSweep({
+    code: "ALL_GEMINI_KEYS_FAILED",
+    failures: [
+      { message: "Quota exceeded for requests per day" },
+      { message: "503 model unavailable" },
+    ],
+  }), true);
+
+  assert.equal(shouldStopLeadScoringSweep({
+    code: "ALL_GEMINI_KEYS_FAILED",
+    failures: [
+      { message: "The AI did not return a readable lead score." },
+      { message: "The AI returned an invalid lead temperature." },
+    ],
+  }), false);
+
+  assert.equal(looksLikeProviderWideFailureMessage("rate limit 429"), true);
+  assert.equal(looksLikeProviderWideFailureMessage("invalid API key"), true);
+  assert.equal(looksLikeProviderWideFailureMessage("invalid structured output"), false);
+
   assert.equal(shouldStopLeadScoringSweep({ status: 429 }), true);
   assert.equal(shouldStopLeadScoringSweep({ status: 503 }), true);
   assert.equal(shouldStopLeadScoringSweep({ code: "AI_TIMEOUT" }), true);
