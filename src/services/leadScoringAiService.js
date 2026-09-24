@@ -325,6 +325,7 @@ async function scoreWithGemini(input) {
       return parseLeadScore(response.text, input.messages);
     },
     {
+      healthScope: `lead_scoring:${GEMINI_MODEL}`,
       retryCount: GEMINI_TRANSIENT_RETRY_DELAYS_MS.length,
       retryDelaysMs: GEMINI_TRANSIENT_RETRY_DELAYS_MS,
     }
