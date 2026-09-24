@@ -6,10 +6,14 @@ const { getIndustryProfile } = require("../src/config/industryProfiles");
 const {
   GEMINI_MODEL,
   GEMINI_TRANSIENT_RETRY_DELAYS_MS,
+  LEAD_SCORING_GEMINI_RETRY_COUNT,
   buildLeadScorePrompt,
+  createLeadScoringModelUnavailableError,
+  isGeminiCapacityError,
   isTransientAiError,
   parseConversationSummary,
   parseLeadScore,
+  shouldStopLeadScoringSweep,
   withTransientRetries,
 } = require("../src/services/leadScoringAiService");
 
@@ -154,6 +158,41 @@ test("rejects invalid or overly long scoring output", () => {
     }, messages),
     /overly long/
   );
+});
+
+test("lead scoring does not repeat the same Gemini request before rotating", () => {
+  assert.equal(LEAD_SCORING_GEMINI_RETRY_COUNT, 0);
+});
+
+test("lead scoring treats Gemini high-demand 503s as model capacity failures", () => {
+  assert.equal(isGeminiCapacityError({ status: 503 }), true);
+  assert.equal(isGeminiCapacityError({ error: { status: "UNAVAILABLE" } }), true);
+  assert.equal(
+    isGeminiCapacityError(new Error("This model is currently experiencing high demand.")),
+    true
+  );
+  assert.equal(isGeminiCapacityError({ status: 429 }), false);
+
+  const providerError = new Error("high demand");
+  providerError.status = 503;
+  const wrapped = createLeadScoringModelUnavailableError(providerError);
+  assert.equal(wrapped.code, "GEMINI_MODEL_UNAVAILABLE");
+  assert.equal(wrapped.stopGeminiKeyRotation, true);
+  assert.equal(wrapped.stopLeadScoringSweep, true);
+  assert.equal(wrapped.model, GEMINI_MODEL);
+  assert.equal(wrapped.cause, providerError);
+  assert.equal(shouldStopLeadScoringSweep(wrapped), true);
+});
+
+test("provider-wide key-pool failures stop the current lead-scoring sweep", () => {
+  for (const code of [
+    "ALL_GEMINI_KEYS_COOLING_DOWN",
+    "ALL_GEMINI_KEYS_FAILED",
+    "AI_PROVIDER_NOT_CONFIGURED",
+  ]) {
+    assert.equal(shouldStopLeadScoringSweep({ code }), true);
+  }
+  assert.equal(shouldStopLeadScoringSweep({ code: "INVALID_AI_RESPONSE" }), false);
 });
 
 test("classifies temporary provider and network failures as retryable", () => {
