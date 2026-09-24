@@ -187,6 +187,17 @@ const PROFILE_UI = {
   },
 };
 
+PROFILE_UI.tcm_clinic = {
+  ...PROFILE_UI.aesthetic_clinic,
+  conversionStageKeys: { ...PROFILE_UI.aesthetic_clinic.conversionStageKeys },
+  analytics: {
+    ...PROFILE_UI.aesthetic_clinic.analytics,
+    performanceTabs: { ...PROFILE_UI.aesthetic_clinic.analytics.performanceTabs },
+    rates: PROFILE_UI.aesthetic_clinic.analytics.rates.map((item) => ({ ...item })),
+  },
+  conversionStatusOptions: PROFILE_UI.aesthetic_clinic.conversionStatusOptions.map((item) => [...item]),
+};
+
 const DEFAULT_PROFILE = PROFILE_UI.generic;
 
 export function getBusinessTerminology(config = {}) {

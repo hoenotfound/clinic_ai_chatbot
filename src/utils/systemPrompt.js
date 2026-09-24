@@ -37,6 +37,12 @@ function listOrNone(items, render, emptyMessage) {
   return items.map(render).join("\n");
 }
 
+function configuredLocationNames() {
+  return (config.branches || [])
+    .map((location) => String(location?.name || "").trim())
+    .filter(Boolean);
+}
+
 function getBusinessContext() {
   const terminology = {
     customerSingular: "customer",
@@ -101,9 +107,15 @@ When booking_ready applies, the customer-facing reply should naturally say ${con
 Do not repeat booking_ready on a later "ok", "thanks", or similar acknowledgement after you already told the ${terms.customerSingular} the team will confirm. If both booking_ready and needs_human could apply, use needs_human — safety/human escalation always wins.`;
   }
 
+  const locationNames = configuredLocationNames();
+  const appointmentLocationRule =
+    config.businessType === "tcm_clinic" && locationNames.length === 1
+    ? `- This business has exactly one configured ${terms.locationSingular}: "${locationNames[0]}". Treat that location as selected automatically for booking readiness. Do not ask the ${terms.customerSingular} to choose a branch/location solely to become booking-ready.`
+    : `- A specific configured ${terms.locationSingular} has been chosen or clearly accepted, and it maps unambiguously to one of the configured ${terms.locationPlural} above.`;
+
   return `Use outcome "booking_ready" ONLY on the turn where ALL of these are true:
 - The ${terms.customerSingular} clearly wants to proceed with ${conversion.label}, not merely ask about price, availability, or how the process works.
-- A specific configured ${terms.locationSingular} has been chosen or clearly accepted, and it maps unambiguously to one of the configured ${terms.locationPlural} above.
+${appointmentLocationRule}
 - The ${terms.customerSingular} has given a usable schedule preference: a day/date PLUS a time, time range, or daypart such as morning/afternoon/evening.
 - The intent, configured location, and schedule preference belong to the ${terms.customerSingular}'s CURRENT attempt. Do not reuse details from an older completed, cancelled, visited, abandoned, or clearly separate discussion.
 - No safety, complaint, or human-handoff condition applies.
@@ -173,6 +185,13 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
   const serviceAreasSection = config.businessType === "home_renovation"
     ? `- Project service areas / coverage:\n${serviceAreasList}\n`
     : "";
+  const locationNames = configuredLocationNames();
+  const appointmentLocationOutputRule =
+    conversion.mode === "appointment" &&
+    config.businessType === "tcm_clinic" &&
+    locationNames.length === 1
+      ? `- For appointment-mode booking_ready, this business has exactly one configured ${terms.locationSingular} ("${locationNames[0]}"). Use that canonical location automatically even if the ${terms.customerSingular} did not name it, and do not ask them to choose a location solely for booking readiness.`
+      : `- For appointment-mode booking_ready, "branch" and "appointmentPreference" MUST be non-null and reflect the current attempt. Use the canonical configured location name rather than an abbreviation.`;
 
   return `You are ${config.aiAssistantName}, the chat assistant for ${context.businessName}. Business profile: ${context.businessDescription}. You are currently replying on ${channelLabel(channel)}.
 
@@ -249,7 +268,7 @@ Rules for structured fields:
 - The legacy internal field name "treatment" means the canonical configured ${terms.serviceSingular}; it is kept for backend compatibility while the product is migrated to industry-neutral naming.
 - The legacy internal field name "branch" means a canonical configured ${terms.locationSingular}; it is kept for backend compatibility. For renovation, the customer's property belongs in "projectLocation", not "branch".
 - The legacy internal field name "appointmentPreference" is still used for clinic scheduling. For renovation it carries a clearly stated site-visit timing preference and is REQUIRED when "nextStep" is "site_visit".
-- For appointment-mode booking_ready, "branch" and "appointmentPreference" MUST be non-null and reflect the current attempt. Use the canonical configured location name rather than an abbreviation.
+${appointmentLocationOutputRule}
 - For project-mode booking_ready, "treatment" MUST resolve to one canonical configured ${terms.serviceSingular}; "projectLocation", "projectSummary", and "nextStep" MUST also be non-null and reflect the current project.
 - For project-mode "quotation_discussion", the required fields are "treatment", "projectLocation", and "projectSummary". "appointmentPreference" may be null.
 - For project-mode "site_visit", the required fields are "treatment", "projectLocation", "projectSummary", and "appointmentPreference".

@@ -38,6 +38,31 @@ const CONVERSION_PROFILES = Object.freeze({
     activityDescription: "AI marked this conversation Booking Ready. Staff should verify the requested branch/time and confirm availability before setting the appointment.",
     alertAction: "Open the conversation, verify the requested branch/time, and confirm the appointment availability with the customer.",
   }),
+  tcm_clinic: Object.freeze({
+    enabled: true,
+    mode: "appointment",
+    label: "assessment or treatment appointment",
+    guidanceTitle: "BOOKING AN ASSESSMENT OR TREATMENT APPOINTMENT",
+    staffConfirmationText: "the clinic team will check availability and follow up shortly",
+    readyExamples: [
+      "Patient wants a configured treatment, has the required clinic location context, and says Saturday afternoon works.",
+      "Patient asks to book an assessment, then gives tomorrow around 3pm; if the clinic has one configured location, that location is used automatically.",
+      "Patient confirms the clinic branch and a usable day/time after you asked for booking details.",
+    ],
+    notReadyExamples: [
+      "Can this treatment help with my concern?",
+      "How much is an assessment?",
+      "Can I book?",
+      "Any slots this weekend?",
+      "A branch name when you still do not have a day/time preference.",
+      "Maybe next week or another hesitant/tentative answer.",
+    ],
+    requirements: Object.freeze({}),
+    alertTitle: "🔥 Booking Ready",
+    attentionReason: "Booking ready: patient provided scheduling preferences; clinic staff should confirm availability.",
+    activityDescription: "AI marked this TCM enquiry Booking Ready. Staff should verify the clinic location/time and confirm availability before setting the appointment.",
+    alertAction: "Open the conversation, verify the clinic location/time, and confirm the appointment availability with the patient.",
+  }),
   home_renovation: Object.freeze({
     enabled: true,
     mode: "project",
@@ -94,7 +119,7 @@ function configuredEnabled(base, configured, businessType) {
   if (configured.conversionReadyEnabled === true) return base.enabled;
   if (configured.conversionReadyEnabled === false) return false;
 
-  if (businessType === "aesthetic_clinic") {
+  if (businessType === "aesthetic_clinic" || businessType === "tcm_clinic") {
     return base.enabled && configured.bookingReadyEnabled !== false;
   }
 

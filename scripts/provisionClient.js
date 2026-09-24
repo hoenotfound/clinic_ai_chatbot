@@ -63,7 +63,7 @@ Usage:
 
 Required:
   --client <slug>             Stable client slug, e.g. acme-renovation
-  --industry <profile>        aesthetic_clinic | home_renovation | generic
+  --industry <profile>        aesthetic_clinic | tcm_clinic | home_renovation | generic
   --channels <csv>            Required channels: whatsapp, facebook, instagram
                               Example: whatsapp,instagram
 

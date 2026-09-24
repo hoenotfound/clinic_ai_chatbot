@@ -50,7 +50,7 @@ function getBusinessTerminology(config = {}) {
 
 function getOperationalLabels(config = {}) {
   const terms = getBusinessTerminology(config);
-  const clinic = terms.businessType === "aesthetic_clinic";
+  const clinic = ["aesthetic_clinic", "tcm_clinic"].includes(terms.businessType);
   return {
     ...terms,
     customerLabel: capitalizeTerm(terms.customerSingular),

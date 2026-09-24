@@ -28,6 +28,14 @@ const FLEXIBILITY_NOTE_BY_INDUSTRY = {
     "If a customer already gives the details needed for the next step, the AI can skip questions it no longer needs.",
 };
 
+QUALIFICATION_BY_INDUSTRY.tcm_clinic = [
+  { label: "Treatment or concern", detail: "Understand what the patient wants help with." },
+  { label: "Clinic location when needed", detail: "Ask for a preferred branch only when more than one clinic location is configured." },
+  { label: "Preferred day / time", detail: "Collect a useful timing preference before treating the enquiry as booking-ready." },
+];
+FLEXIBILITY_NOTE_BY_INDUSTRY.tcm_clinic =
+  "If a patient already gives the useful details needed to move forward, the AI can skip questions it no longer needs.";
+
 function list(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -65,7 +73,8 @@ function firstReply(introMessage, reply) {
 }
 
 function exampleSet(businessType, context) {
-  const { introMessage, conversionLabel, serviceName, locationName } = context;
+  const { introMessage, conversionLabel, serviceName, locationName, locationCount } = context;
+  const singleClinicLocation = businessType === "tcm_clinic" && locationCount === 1;
 
   if (businessType === "home_renovation") {
     return {
@@ -146,7 +155,7 @@ function exampleSet(businessType, context) {
     };
   }
 
-  if (businessType === "aesthetic_clinic") {
+  if (businessType === "aesthetic_clinic" || businessType === "tcm_clinic") {
     return {
       customerMessage: [
         chat(
@@ -180,7 +189,7 @@ function exampleSet(businessType, context) {
       ],
       qualify: [
         chat(
-          `I'd like to proceed at ${locationName}.`,
+          singleClinicLocation ? "I'd like to proceed." : `I'd like to proceed at ${locationName}.`,
           "Great. What day or time works best for you?"
         ),
         chat(
@@ -210,7 +219,7 @@ function exampleSet(businessType, context) {
       ],
       conversion: [
         chat(
-          `${locationName}, weekday afternoon works.`,
+          singleClinicLocation ? "Weekday afternoon works." : `${locationName}, weekday afternoon works.`,
           `Noted. The team will check availability and confirm the ${conversionLabel}.`
         ),
         chat(
@@ -314,14 +323,20 @@ export function buildConversationFlow(config = {}) {
     .filter(Boolean);
   const serviceName = firstServiceName(
     services,
-    businessType === "home_renovation" ? "a renovation project" : businessType === "aesthetic_clinic" ? "a treatment" : serviceSingular
+    businessType === "home_renovation" ? "a renovation project" : ["aesthetic_clinic", "tcm_clinic"].includes(businessType) ? "a treatment" : serviceSingular
   );
-  const locationName = businessType === "aesthetic_clinic"
+  const locationName = ["aesthetic_clinic", "tcm_clinic"].includes(businessType)
     ? compact(branches[0]?.name, "the branch near me")
     : businessType === "home_renovation"
       ? compact(serviceAreas[0], "a nearby area")
       : "my area";
-  const examples = exampleSet(businessType, { introMessage, conversionLabel, serviceName, locationName });
+  const examples = exampleSet(businessType, {
+    introMessage,
+    conversionLabel,
+    serviceName,
+    locationName,
+    locationCount: branches.length,
+  });
 
   const knowledgeSummary = [
     plural(services.length, serviceSingular, servicePlural),

@@ -51,7 +51,7 @@ Usage:
 
 Required:
   --client <slug>
-  --industry <profile>        aesthetic_clinic | home_renovation | generic
+  --industry <profile>        aesthetic_clinic | tcm_clinic | home_renovation | generic
   --channels <csv>            whatsapp, facebook, instagram
   --runtime-env-file <path>   Same secret runtime input used for the interrupted run
 
