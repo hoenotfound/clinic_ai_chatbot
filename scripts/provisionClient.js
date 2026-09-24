@@ -24,6 +24,7 @@ const {
   secretFreeR2ReceiptState,
 } = require("../src/provisioning/provisioningReceipt");
 const {
+  CHANNEL_CHECK_KEYS,
   ClientReadinessError,
   normalizeRequiredChannels,
   validateRuntimeReadinessContract,
@@ -75,6 +76,10 @@ Options:
   --execute                   Create infrastructure, wait for first deploy,
                               finalize the runtime, enroll Ops when enabled,
                               then verify production health
+  --defer-channel-readiness   Staged onboarding only. Allow purchased channel
+                              credentials to remain unset during infrastructure
+                              creation. Core runtime/readiness checks still run,
+                              and the client is not considered go-live ready.
   --runtime-env-file <path>   dotenv file containing client runtime variables.
                               With automated R2 enabled, do not include R2_*;
                               those values are generated and injected directly.
@@ -111,6 +116,11 @@ Automated R2 provisioning:
   tokens. Keep it only in the operator shell/control plane, never client config.
 
 Go-live rules:
+  Normal --execute remains strict: purchased-channel runtime credentials must be
+  present before any cloud resources are created. --defer-channel-readiness is
+  an explicit staged-onboarding exception for confirmed clients whose messaging
+  assets are still pending. It never marks missing channels as ready.
+
   Required Setup Status checks must be configured and ready. Database migrations
   and inbound processing must be healthy. AI runtime errors block go-live while
   degraded-but-usable AI is reported as READY WITH WARNINGS. Every purchased
@@ -162,7 +172,7 @@ into ordinary client configuration or provisioning receipts.
 }
 
 function parseArgs(argv) {
-  const result = { execute: false, json: false };
+  const result = { execute: false, json: false, deferChannelReadiness: false };
   const valueFlags = new Map([
     ["--client", "clientSlug"],
     ["--industry", "industry"],
@@ -183,6 +193,10 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === "--execute") {
       result.execute = true;
+      continue;
+    }
+    if (arg === "--defer-channel-readiness") {
+      result.deferChannelReadiness = true;
       continue;
     }
     if (arg === "--json") {
@@ -306,6 +320,10 @@ function buildProvisioningReceipt(result, now = new Date()) {
     clientSlug: result.clientSlug,
     industry: result.industry,
     requiredChannels: [...(result.requiredChannels || [])],
+    channelReadinessDeferred: result.channelReadinessDeferred === true,
+    stagedReadiness: result.stagedReadiness
+      ? JSON.parse(JSON.stringify(result.stagedReadiness))
+      : null,
     profileContract: { ...result.profileContract },
     neon: { ...result.neon },
     r2: secretFreeR2ReceiptState(result.r2),
@@ -353,6 +371,36 @@ function runtimeEnvForReadinessPreflight(runtimeEnv, plan) {
     R2_ACCESS_KEY_ID: "managed-by-provisioner",
     R2_SECRET_ACCESS_KEY: "managed-by-provisioner",
     R2_BUCKET_NAME: plan.r2.bucketName,
+  };
+}
+
+function deferredChannelBlockerKeys(channels = []) {
+  const keys = new Set();
+  for (const channel of channels) {
+    for (const key of CHANNEL_CHECK_KEYS[channel] || []) keys.add(key);
+    keys.add(`${channel}_runtime`);
+    keys.add(`${channel}_round_trip_inbound`);
+    keys.add(`${channel}_round_trip_outbound`);
+    keys.add(`${channel}_delivery_failure`);
+  }
+  return keys;
+}
+
+function evaluateDeferredChannelReadiness(readiness, channels = []) {
+  const allowed = deferredChannelBlockerKeys(channels);
+  const blocking = Array.isArray(readiness?.blocking) ? readiness.blocking : [];
+  const pendingChannel = blocking.filter((item) => allowed.has(item?.key));
+  const nonChannelBlocking = blocking.filter((item) => !allowed.has(item?.key));
+  const verificationCompleted = readiness?.verificationCompleted === true
+    && readiness?.status !== "verification_failed";
+
+  return {
+    acceptable: verificationCompleted && nonChannelBlocking.length === 0,
+    verificationCompleted,
+    pendingChannelCount: pendingChannel.length,
+    nonChannelBlockingCount: nonChannelBlocking.length,
+    pendingChannelKeys: [...new Set(pendingChannel.map((item) => item?.key).filter(Boolean))],
+    nonChannelBlockingKeys: [...new Set(nonChannelBlocking.map((item) => item?.key).filter(Boolean))],
   };
 }
 
@@ -416,6 +464,9 @@ function printHuman(result) {
     console.log(`Client:         ${plan.clientSlug}`);
     console.log(`Industry:       ${plan.industry}`);
     console.log(`Channels:       ${(plan.readiness?.requiredChannels || []).join(", ")}`);
+    if (plan.channelReadinessDeferred) {
+      console.log("Execution mode:  staged (channel readiness deferred)");
+    }
     console.log(`Neon project:   ${plan.neon.projectName} (${plan.neon.region})`);
     if (plan.r2) {
       const r2Label = plan.r2.enabled
@@ -450,6 +501,9 @@ function printHuman(result) {
   console.log("Client infrastructure provisioning completed; Render is live.\n");
   console.log(`Client:         ${result.clientSlug}`);
   console.log(`Industry:       ${result.industry}`);
+  if (result.channelReadinessDeferred) {
+    console.log("Execution mode:  staged (channel readiness deferred)");
+  }
   console.log(`Neon project:   ${result.neon.projectName} (${result.neon.projectId})`);
   if (result.r2?.enabled) {
     console.log(`R2 bucket:      ${result.r2.bucketName}`);
@@ -471,6 +525,16 @@ function printHuman(result) {
   }
   printOpsEnrollment(result.opsEnrollment);
   printReadiness(result.readiness);
+  if (result.channelReadinessDeferred && result.stagedReadiness) {
+    console.log("\nStaged onboarding");
+    console.log(`Status:         ${result.stagedReadiness.acceptable
+      ? "INFRASTRUCTURE READY; CHANNELS PENDING"
+      : "NEEDS ATTENTION"}`);
+    console.log(`Channel blockers deferred: ${result.stagedReadiness.pendingChannelCount}`);
+    if (result.stagedReadiness.nonChannelBlockingKeys.length) {
+      console.log(`Non-channel blockers: ${result.stagedReadiness.nonChannelBlockingKeys.join(", ")}`);
+    }
+  }
   if (result.receiptPath) console.log(`\nReceipt:        ${result.receiptPath}`);
   if (result.receiptWarning) console.log(`Receipt warning: ${result.receiptWarning}`);
 }
@@ -563,12 +627,17 @@ async function main() {
         plan: {
           ...publicPlan(plan),
           readiness: { requiredChannels: channels },
+          channelReadinessDeferred: args.deferChannelReadiness === true,
           opsEnrollment: opsPlan,
         },
       };
     } else {
       requireExecutionConfig(plan, process.env);
-      validateRuntimeReadinessContract(runtimeEnvForReadinessPreflight(runtimeEnv, plan), channels);
+      validateRuntimeReadinessContract(
+        runtimeEnvForReadinessPreflight(runtimeEnv, plan),
+        channels,
+        { deferChannelReadiness: args.deferChannelReadiness }
+      );
       const admin = requireReadinessAdminCredentials(runtimeEnv);
       lock = acquireProvisioningLock(plan.resourceName);
 
@@ -589,6 +658,7 @@ async function main() {
       result = {
         ...result,
         requiredChannels: channels,
+        channelReadinessDeferred: args.deferChannelReadiness === true,
         render: {
           ...result.render,
           deployedCommitSha: await captureInitialCommit(renderClient, result),
@@ -671,7 +741,17 @@ async function main() {
         readiness = readinessFailureReport(err, { industry: result.industry, channels });
       }
 
-      result = { ...result, runtimeFinalization, opsEnrollment, readiness };
+      const stagedReadiness = args.deferChannelReadiness
+        ? evaluateDeferredChannelReadiness(readiness, channels)
+        : null;
+
+      result = {
+        ...result,
+        runtimeFinalization,
+        opsEnrollment,
+        readiness,
+        stagedReadiness,
+      };
 
       try {
         const receipt = writeProvisioningReceipt(result);
@@ -689,6 +769,12 @@ async function main() {
         process.exitCode = READINESS_VERIFICATION_FAILED_EXIT_CODE;
       } else if (result.opsEnrollment?.enabled && result.opsEnrollment?.verified !== true) {
         process.exitCode = OPS_ENROLLMENT_FAILED_EXIT_CODE;
+      } else if (
+        result.channelReadinessDeferred
+        && result.stagedReadiness?.acceptable === true
+      ) {
+        // Staged provisioning succeeded: infrastructure/core health is ready
+        // and only purchased-channel readiness is intentionally pending.
       } else if (result.readiness?.ready !== true) {
         process.exitCode = READINESS_NEEDS_ATTENTION_EXIT_CODE;
       }
@@ -729,7 +815,9 @@ module.exports = {
   acquireProvisioningLock,
   buildProvisioningReceipt,
   captureInitialCommit,
+  deferredChannelBlockerKeys,
   ensureProvisioningStateDir,
+  evaluateDeferredChannelReadiness,
   isProcessRunning,
   loadRuntimeEnv,
   parseArgs,
