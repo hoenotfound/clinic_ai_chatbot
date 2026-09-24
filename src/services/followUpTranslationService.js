@@ -75,7 +75,7 @@ async function translateWithGemini(message) {
       return parseTranslations(response.text);
     },
     {
-      healthScope: `follow_up_translation:${GEMINI_MODEL}`,
+      healthScope: `model:${GEMINI_MODEL}`,
       retryCount: 1,
     }
   );
