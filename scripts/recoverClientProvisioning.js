@@ -30,6 +30,7 @@ const {
 const {
   acquireProvisioningLock,
   captureInitialCommit,
+  evaluateDeferredChannelReadiness,
   readinessFailureReport,
   requireReadinessAdminCredentials,
   runtimeEnvForReadinessPreflight,
@@ -58,6 +59,9 @@ Required:
 Options:
   --execute                   Actually mutate Cloudflare/Render. Without this flag,
                               only the deterministic recovery plan is printed.
+  --defer-channel-readiness   Recover a staged onboarding run while purchased
+                              messaging credentials are still pending. Core
+                              readiness remains mandatory.
   --r2-location <hint>        Default: apac
   --render-plan <plan>        Required for --execute unless set in the shell
   --render-region <region>    Default: singapore
@@ -83,7 +87,7 @@ DATABASE_URL, and runtime secrets are never written to the receipt or output.
 }
 
 function parseArgs(argv) {
-  const result = { execute: false, json: false };
+  const result = { execute: false, json: false, deferChannelReadiness: false };
   const valueFlags = new Map([
     ["--client", "clientSlug"],
     ["--industry", "industry"],
@@ -101,6 +105,10 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === "--execute") {
       result.execute = true;
+      continue;
+    }
+    if (arg === "--defer-channel-readiness") {
+      result.deferChannelReadiness = true;
       continue;
     }
     if (arg === "--json") {
@@ -132,6 +140,9 @@ function printHuman(result) {
     console.log("Interrupted provisioning recovery plan (dry run; no provider calls)\n");
     console.log(`Client:         ${plan.clientSlug}`);
     console.log(`Industry:       ${plan.industry}`);
+    if (result.channelReadinessDeferred) {
+      console.log("Recovery mode:   staged (channel readiness deferred)");
+    }
     console.log(`Neon project:   ${plan.neon.projectName}`);
     console.log(`R2 bucket:      ${plan.r2.bucketName}`);
     console.log(`R2 token:       ${plan.r2.tokenName}`);
@@ -142,6 +153,9 @@ function printHuman(result) {
 
   console.log("Interrupted provisioning recovery completed.\n");
   console.log(`Client:         ${result.clientSlug}`);
+  if (result.channelReadinessDeferred) {
+    console.log("Recovery mode:   staged (channel readiness deferred)");
+  }
   console.log(`Neon project:   ${result.neon.projectName} (${result.neon.projectId})`);
   console.log(`R2 bucket:      ${result.r2.bucketName}`);
   console.log(`R2 token:       ${result.r2.tokenName} (${result.r2.tokenId})`);
@@ -155,6 +169,11 @@ function printHuman(result) {
   }
   if (result.readiness) {
     console.log(`Readiness:      ${result.readiness.ready ? "READY" : String(result.readiness.status || "needs_attention").toUpperCase()}`);
+  }
+  if (result.channelReadinessDeferred && result.stagedReadiness) {
+    console.log(`Staged status:  ${result.stagedReadiness.acceptable
+      ? "INFRASTRUCTURE READY; CHANNELS PENDING"
+      : "NEEDS ATTENTION"}`);
   }
   if (result.receiptPath) console.log(`Receipt:        ${result.receiptPath}`);
   console.log("\nIf Ops Registry enrollment is enabled for production, run:");
@@ -211,14 +230,22 @@ async function main() {
     const channels = normalizeRequiredChannels(args.channels);
     const plan = buildProvisioningPlan(input, process.env);
     if (!args.execute) {
-      const result = { mode: "plan", plan: publicPlan(plan) };
+      const result = {
+        mode: "plan",
+        channelReadinessDeferred: args.deferChannelReadiness === true,
+        plan: publicPlan(plan),
+      };
       if (args.json) console.log(JSON.stringify(result, null, 2));
       else printHuman(result);
       return;
     }
 
     requireExecutionConfig(plan, process.env);
-    validateRuntimeReadinessContract(runtimeEnvForReadinessPreflight(runtimeEnv, plan), channels);
+    validateRuntimeReadinessContract(
+      runtimeEnvForReadinessPreflight(runtimeEnv, plan),
+      channels,
+      { deferChannelReadiness: args.deferChannelReadiness }
+    );
     const admin = requireReadinessAdminCredentials(runtimeEnv);
     lock = acquireProvisioningLock(plan.resourceName);
 
@@ -239,6 +266,7 @@ async function main() {
     result = {
       ...result,
       requiredChannels: channels,
+      channelReadinessDeferred: args.deferChannelReadiness === true,
       render: {
         ...result.render,
         deployedCommitSha: await captureInitialCommit(renderClient, result),
@@ -281,11 +309,16 @@ async function main() {
       readiness = readinessFailureReport(err, { industry: result.industry, channels });
     }
 
+    const stagedReadiness = args.deferChannelReadiness
+      ? evaluateDeferredChannelReadiness(readiness, channels)
+      : null;
+
     result = {
       ...result,
       runtimeFinalization,
       opsEnrollment: null,
       readiness,
+      stagedReadiness,
     };
     const receipt = writeProvisioningReceipt(result);
     result.receiptPath = path.relative(process.cwd(), receipt.receiptPath) || receipt.receiptPath;
@@ -295,6 +328,12 @@ async function main() {
 
     if (readiness?.status === "verification_failed") {
       process.exitCode = READINESS_VERIFICATION_FAILED_EXIT_CODE;
+    } else if (
+      result.channelReadinessDeferred
+      && result.stagedReadiness?.acceptable === true
+    ) {
+      // Recovery restored a staged client whose only remaining blockers are
+      // intentionally deferred messaging-channel readiness checks.
     } else if (readiness?.ready !== true) {
       process.exitCode = READINESS_NEEDS_ATTENTION_EXIT_CODE;
     }
