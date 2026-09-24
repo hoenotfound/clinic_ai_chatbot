@@ -94,6 +94,25 @@ When the client's real messaging assets are available:
 The client is not go-live ready until the normal verifier reports READY or READY
 WITH WARNINGS.
 
+## Recovering an interrupted staged run
+
+If staged provisioning is interrupted after some cloud resources have already
+been created, use the existing recovery command with the same staged flag:
+
+```bash
+npm run recover-client -- \
+  --client neutro-sense-tcm \
+  --industry tcm_clinic \
+  --channels whatsapp,facebook,instagram \
+  --runtime-env-file ./neutro-sense-tcm.client-runtime.env \
+  --defer-channel-readiness \
+  --execute
+```
+
+Normal recovery remains strict when the flag is omitted. Staged recovery
+preserves `channelReadinessDeferred` and the staged readiness summary in the
+new receipt.
+
 ## Safety rule
 
 Use staged provisioning only for a confirmed client. It creates billable cloud
