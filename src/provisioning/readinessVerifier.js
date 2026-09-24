@@ -153,7 +153,11 @@ function hasGeminiCredential(env) {
   });
 }
 
-function validateRuntimeReadinessContract(runtimeEnv = {}, requiredChannels = []) {
+function validateRuntimeReadinessContract(
+  runtimeEnv = {},
+  requiredChannels = [],
+  { deferChannelReadiness = false } = {}
+) {
   const channels = normalizeRequiredChannels(requiredChannels);
   const missing = [];
   const requireKey = (key) => {
@@ -171,8 +175,10 @@ function validateRuntimeReadinessContract(runtimeEnv = {}, requiredChannels = []
     requireKey(key);
   }
 
-  for (const channel of channels) {
-    for (const key of CHANNEL_RUNTIME_ENV_KEYS[channel]) requireKey(key);
+  if (!deferChannelReadiness) {
+    for (const channel of channels) {
+      for (const key of CHANNEL_RUNTIME_ENV_KEYS[channel]) requireKey(key);
+    }
   }
 
   if (missing.length) {
@@ -182,7 +188,11 @@ function validateRuntimeReadinessContract(runtimeEnv = {}, requiredChannels = []
     );
   }
 
-  return { channels, missing: [] };
+  return {
+    channels,
+    missing: [],
+    channelReadinessDeferred: deferChannelReadiness === true,
+  };
 }
 
 function extractSetCookieHeaders(headers) {
