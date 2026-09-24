@@ -32,11 +32,14 @@ The runner rejects gaps, duplicate migration names, renamed/applied migrations, 
 
 On startup the app:
 
-1. acquires a PostgreSQL advisory lock,
-2. creates/reads `schema_migrations`,
-3. verifies already-applied migration names and checksums,
-4. applies only missing migrations in order,
-5. records each successful migration in the same transaction,
-6. releases the advisory lock, then continues normal server startup.
+1. begins a migration transaction,
+2. acquires a transaction-scoped PostgreSQL advisory lock,
+3. creates/reads `schema_migrations`,
+4. verifies already-applied migration names and checksums,
+5. applies at most one missing migration and records it in that same transaction,
+6. commits, which automatically releases the advisory lock,
+7. repeats until the migration history is current, then continues normal server startup.
 
-This makes repeated Render restarts safe and prevents two app instances from migrating the same client database at the same time.
+The runner deliberately uses `pg_try_advisory_xact_lock` rather than a session-level advisory lock. This keeps the lock bound to the same transaction/backend when `DATABASE_URL` is a Neon pooled (PgBouncer transaction-pooling) connection and prevents stale session locks from being stranded in the pool.
+
+This makes repeated Render restarts safe and prevents two app instances from applying the same migration at the same time.
