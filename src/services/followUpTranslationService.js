@@ -74,7 +74,10 @@ async function translateWithGemini(message) {
       );
       return parseTranslations(response.text);
     },
-    { retryCount: 1 }
+    {
+      healthScope: `follow_up_translation:${GEMINI_MODEL}`,
+      retryCount: 1,
+    }
   );
 }
 
