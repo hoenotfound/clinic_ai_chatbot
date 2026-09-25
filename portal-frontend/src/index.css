@@ -149,3 +149,36 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
     transform: scale(1.45);
   }
 }
+
+/* Horizontal filter and stage rails stay touch-friendly without showing a
+   heavy browser scrollbar on compact laptop and tablet layouts. */
+.ui-scroll-x {
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ui-scroll-x::-webkit-scrollbar {
+  display: none;
+}
+
+/* Keep the Kanban scrollbar discoverable, but make it visually lighter. */
+.ui-kanban-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-text-muted) 35%, transparent) transparent;
+}
+
+.ui-kanban-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+
+.ui-kanban-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ui-kanban-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-muted) 28%, transparent);
+  background-clip: padding-box;
+}
