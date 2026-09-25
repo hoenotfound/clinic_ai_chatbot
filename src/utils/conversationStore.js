@@ -93,7 +93,8 @@ async function appendMessageForContact(
   whatsappMessageId = null,
   sentByUsername = null,
   mediaUrl = null,
-  mediaAttachment = null
+  mediaAttachment = null,
+  options = {}
 ) {
   const saved = await messagesRepo.saveMessage(
     contactId,
@@ -119,7 +120,9 @@ async function appendMessageForContact(
     }
   }
 
-  publishMessageChange(contactId, saved.id);
+  if (options.publish !== false) {
+    publishMessageChange(contactId, saved.id);
+  }
   return saved;
 }
 
