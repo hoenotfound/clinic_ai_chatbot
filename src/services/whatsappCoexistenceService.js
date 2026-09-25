@@ -71,10 +71,17 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
       return null;
     }
 
-    // Only a genuinely new app-originated staff action invalidates the AI turn.
-    // The pending flag was set synchronously before DB work so an in-flight AI
-    // can fail closed while this transaction is still being resolved.
-    confirmPendingAiForEcho(echo);
+    if (persisted.isNew) {
+      // Only a genuinely new app-originated staff action invalidates the AI
+      // turn. The pending flag was set synchronously before DB work so an
+      // in-flight AI can fail closed while this transaction is still resolving.
+      confirmPendingAiForEcho(echo);
+    } else {
+      // A Meta retry may still need post-ACK bookkeeping to run again, but it
+      // must not cancel a later AI turn or retake ownership.
+      releasePendingAiForEcho(echo);
+    }
+
     return persisted;
   } catch (err) {
     releasePendingAiForEcho(echo);
