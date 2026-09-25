@@ -71,8 +71,8 @@ export default function SettingsSectionLayout({ children }) {
   }
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--color-bg)] lg:flex-row">
-      <aside className="hidden h-full w-60 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] lg:flex">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--color-bg)] xl:flex-row">
+      <aside className="hidden h-full w-60 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] xl:flex">
         <div className="border-b border-[var(--color-border)] px-5 py-5">
           <h1 className="font-display text-lg font-bold">Settings</h1>
           <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">
@@ -120,12 +120,13 @@ export default function SettingsSectionLayout({ children }) {
       </aside>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-4 sm:px-5 lg:hidden">
-          <h1 className="font-display text-xl font-bold">Settings</h1>
-          <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">Manage configuration, team access and setup health.</p>
-          <label className="mt-3 block">
-            <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Section</span>
-            <select
+        <header className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-4 sm:px-5 xl:hidden">
+          <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
+            <h1 className="font-display text-xl font-bold">Settings</h1>
+            <label className="min-w-0">
+              <span className="sr-only">Section</span>
+              <select
+                aria-label="Settings section"
               value={mobileValue}
               onChange={(event) => handleMobileChange(event.target.value)}
               className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm font-semibold text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
@@ -137,8 +138,9 @@ export default function SettingsSectionLayout({ children }) {
               {clientSetupItem && <option value={clientSetupItem.id}>{clientSetupItem.label}</option>}
               {goLiveItem && <option value={goLiveItem.id}>{goLiveItem.label}</option>}
               {setupItem && <option value={setupItem.id}>{setupItem.label}</option>}
-            </select>
-          </label>
+              </select>
+            </label>
+          </div>
         </header>
 
         <div className="min-h-0 flex-1">{children}</div>
