@@ -336,6 +336,7 @@ export default function GoLive() {
       </main>
     </div>
   );
+}
 
 function ShieldIcon(props) {
   return (
