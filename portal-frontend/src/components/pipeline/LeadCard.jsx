@@ -19,6 +19,7 @@ export default function LeadCard({
   noReplyHours,
   onOpen,
   onDragStart,
+  onTouchDragStart,
   onPointerDragStart,
   onPointerDragMove,
   onPointerDragEnd,
@@ -31,7 +32,8 @@ export default function LeadCard({
   const overdue = isOverdue(lead, now);
   const noReply = isNoReply(lead, noReplyHours, now);
   const canMoveLead = permissions.manage_assigned_leads === true && typeof onDragStart === "function";
-  const canTouchMoveLead = permissions.manage_assigned_leads === true && typeof onPointerDragStart === "function";
+  const canTouchMoveLead = permissions.manage_assigned_leads === true
+    && (typeof onTouchDragStart === "function" || typeof onPointerDragStart === "function");
   const metaAdLabel = lead.attribution?.ad_name
     ? { prefix: "Ad", value: lead.attribution.ad_name }
     : lead.attribution?.headline
@@ -110,9 +112,10 @@ export default function LeadCard({
           <span>{formatRelative(lead.last_message_at, now)}</span>
           {canTouchMoveLead && (
             <span
-              className="touch-drag-handle h-8 w-8 touch-none select-none items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]"
+              className="touch-drag-handle inline-flex h-9 min-w-9 touch-none select-none items-center justify-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-[var(--color-text-muted)]"
               title="Drag to another stage"
-              onPointerDown={(event) => onPointerDragStart(event, lead)}
+              onTouchStart={(event) => onTouchDragStart?.(event, lead)}
+              onPointerDown={(event) => onPointerDragStart?.(event, lead)}
               onPointerMove={onPointerDragMove}
               onPointerUp={onPointerDragEnd}
               onPointerCancel={onPointerDragCancel}
@@ -122,6 +125,7 @@ export default function LeadCard({
               }}
             >
               <GripIcon />
+              <span className="text-[10px] font-semibold">Drag</span>
             </span>
           )}
         </span>
