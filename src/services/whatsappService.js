@@ -446,11 +446,17 @@ function parseSmbMessageEchoes(body) {
         if (change?.field !== "smb_message_echoes") continue;
         const value = change?.value || {};
         for (const message of value.message_echoes || []) {
-          if (!message?.id || !message?.to) continue;
+          const matchingContact = (value.contacts || []).find(
+            (contact) =>
+              (message?.to && contact?.wa_id === message.to) ||
+              (message?.to_user_id && contact?.user_id === message.to_user_id)
+          );
+          const customerNumber = message?.to || matchingContact?.wa_id || null;
+          if (!message?.id || !customerNumber) continue;
           parsed.push({
             id: message.id,
             from: message.from || value?.metadata?.display_phone_number || null,
-            to: message.to,
+            to: customerNumber,
             timestamp: normalizeWebhookTimestamp(message.timestamp),
             type: message.type || "unknown",
             ...parseWebhookMessageContent(message, "WhatsApp Business App staff"),
@@ -498,10 +504,18 @@ function parseSmbAppStateSync(body) {
   }
 }
 
-function historyPeerForMessage(thread, message) {
-  if (message?.to) return message.to;
-  if (message?.from && message.from !== thread?.id) return thread?.id || null;
-  return message?.from || thread?.id || null;
+function comparableWhatsAppId(value) {
+  return String(value || "").replace(/[^0-9A-Za-z_.:-]/g, "");
+}
+
+function historyDirection(thread, message, businessPhoneNumber) {
+  if (message?.to) return "business";
+  const from = comparableWhatsAppId(message?.from);
+  const threadId = comparableWhatsAppId(thread?.id);
+  const business = comparableWhatsAppId(businessPhoneNumber);
+  if (business && from === business) return "business";
+  if (threadId && from && from !== threadId) return "business";
+  return "customer";
 }
 
 /**
@@ -516,17 +530,19 @@ function parseCoexistenceHistory(body) {
       for (const change of entry?.changes || []) {
         if (change?.field !== "history") continue;
         const value = change?.value || {};
+        const businessPhoneNumber = value?.metadata?.display_phone_number || null;
         for (const batch of value.history || []) {
           for (const thread of batch?.threads || []) {
             for (const message of thread?.messages || []) {
               if (!message?.id) continue;
-              const peer = historyPeerForMessage(thread, message);
+              const peer = thread?.id || message?.to || message?.from || null;
               if (!peer) continue;
-              const businessOriginated = Boolean(message.to);
+              const direction = historyDirection(thread, message, businessPhoneNumber);
+              const businessOriginated = direction === "business";
               parsed.push({
                 id: message.id,
                 peer,
-                direction: businessOriginated ? "business" : "customer",
+                direction,
                 from: message.from || null,
                 to: message.to || null,
                 timestamp: normalizeWebhookTimestamp(message.timestamp),
