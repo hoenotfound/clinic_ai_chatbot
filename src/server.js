@@ -790,12 +790,13 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   let durableClaims;
   let durableStatusJobs;
   let staffEchoResults;
+  let historyJob;
   try {
     // Customer messages, delivery statuses and live Business App staff echoes
     // are durable before ACK. Most importantly, a staff echo flips the contact
     // to Staff mode here, before any in-flight AI generation can pass its final
     // ownership check.
-    [durableClaims, durableStatusJobs, staffEchoResults] = await Promise.all([
+    [durableClaims, durableStatusJobs, staffEchoResults, historyJob] = await Promise.all([
       Promise.all(
         incomingMessages.map(async (incoming) => ({
           queueKey: incoming.from,
@@ -804,6 +805,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
       ),
       storeDeliveryStatusUpdates(statusUpdates),
       Promise.all(staffEchoes.map((echo) => whatsappCoexistence.storeStaffEcho(echo))),
+      whatsappCoexistence.storeHistoryJob(historyRecords),
     ]);
   } catch (err) {
     console.error("Failed to durably accept WhatsApp webhook work:", err);
@@ -829,15 +831,16 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
     });
   }
 
-  // Coexistence history is explicitly historical context, not a live inbound
-  // turn. It bypasses the inbound reply/pipeline path and is marked so later AI
-  // and scoring reads ignore it. State-sync address-book entries are accepted
-  // conservatively without creating CRM leads or contacts by themselves.
-  if (historyRecords.length) {
-    whatsappCoexistence.storeHistory(historyRecords).catch((err) => {
-      console.error("Failed to import WhatsApp Business App history:", err);
+  // History was durably queued before ACK. Importing it now is only the fast
+  // path; the recovery worker reclaims failed/stale jobs after restarts.
+  if (historyJob) {
+    whatsappCoexistence.processStoredHistoryJob(historyJob).catch((err) => {
+      console.error("Failed to schedule WhatsApp Business App history import:", err);
     });
   }
+
+  // State-sync address-book entries are accepted conservatively without
+  // creating CRM leads or contacts by themselves.
   if (stateSync.length) {
     whatsappCoexistence.acceptStateSync(stateSync).catch((err) => {
       console.error("Failed to accept WhatsApp Business App state sync:", err);
@@ -991,6 +994,7 @@ async function start() {
 
   startInboundProcessingRecovery({ processBatch: processIncomingBatch });
   startWhatsAppDeliveryStatusRecovery();
+  whatsappCoexistence.startHistoryRecovery();
   startAutomatedFollowUps();
   startStaffWaitingAlerts();
   startLeadScoring();
