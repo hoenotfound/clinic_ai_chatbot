@@ -938,7 +938,7 @@ function ConversationList({
           >
             <span>Filters</span>
             {activeFilterCount > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-primary)] px-1 text-[9px] font-bold leading-none text-white">
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-primary)] px-1 text-[10px] font-bold leading-none text-white">
                 {activeFilterCount}
               </span>
             )}
@@ -1003,7 +1003,7 @@ function ConversationList({
                 />
               ) : (
                 <div className="min-w-0 rounded-lg border border-[var(--color-primary)]/15 bg-[var(--color-primary-light)]/60 px-2.5 py-2">
-                  <span className="block text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                  <span className="block text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
                     Lead owner
                   </span>
                   <span className="mt-1 inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-[var(--color-primary)]">
@@ -1023,7 +1023,7 @@ function ConversationList({
                 key={filter.key}
                 type="button"
                 onClick={() => updateFilter(filter.key, "all")}
-                className="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--color-primary-light)] px-2 py-1 text-[9px] font-semibold text-[var(--color-primary)] transition hover:bg-[var(--color-primary)] hover:text-white"
+                className="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--color-primary-light)] px-2 py-1 text-[10px] font-semibold text-[var(--color-primary)] transition hover:bg-[var(--color-primary)] hover:text-white"
                 title={`Remove ${filter.label} filter`}
               >
                 <span className="truncate">{filter.label}</span>
@@ -1122,7 +1122,7 @@ function ConversationList({
 function FilterSelect({ label, value, onChange, options }) {
   return (
     <label className="block min-w-0">
-      <span className="mb-1 block text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+      <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
         {label}
       </span>
       <span className="relative block">
@@ -1178,7 +1178,7 @@ function StatusBadge({ tone, children }) {
     danger: "bg-[var(--color-danger-light)] text-[var(--color-danger)]",
   };
   return (
-    <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-medium ${styles[tone]}`}>
+    <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${styles[tone]}`}>
       {children}
     </span>
   );
@@ -1629,7 +1629,7 @@ function ThreadView({
               onClick={handleBackToConversations}
               aria-label="Back to conversations"
               title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice message first" : "Back to conversations"}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] lg:hidden"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] lg:hidden"
             >
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
@@ -1694,7 +1694,7 @@ function ThreadView({
               aria-label="Conversation actions"
               aria-haspopup="menu"
               aria-expanded={actionsOpen}
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${
+              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${
                 actionsOpen
                   ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
                   : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
@@ -1942,7 +1942,7 @@ function ControlIndicator({ mode }) {
   return (
     <span
       title="Handled by staff"
-      className="inline-flex shrink-0 items-center gap-1 px-0.5 text-[9px] font-medium text-[var(--color-text-muted)]"
+      className="inline-flex shrink-0 items-center gap-1 px-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
     >
       <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)]" />
       Staff
