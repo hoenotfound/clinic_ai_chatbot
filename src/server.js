@@ -11,6 +11,7 @@ const ai = require("./services/aiService");
 const { transcribeAudio } = require("./services/transcriptionService");
 const { convertToMp3 } = require("./services/audioConvertService");
 const { getAiOwnedContact } = require("./services/automaticReplyGuard");
+const { automatedRepliesEnabled } = require("./services/automaticReplyControl");
 const {
   getPendingAiHandoffContact,
   pauseAiForHumanHandoff,
@@ -471,6 +472,11 @@ async function processIncomingMessage(
     // included in history, but only the last one gets an AI response. This is
     // what turns three short chat bubbles into one coherent assistant reply.
     if (suppressAutoReply) {
+      return { wasFirstMessage, keywordReason };
+    }
+
+    if (!automatedRepliesEnabled()) {
+      console.log(`Skipping AI reply for ${channel}:${from} — automated replies are globally paused.`);
       return { wasFirstMessage, keywordReason };
     }
 
