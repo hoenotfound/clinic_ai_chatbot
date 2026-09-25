@@ -394,7 +394,7 @@ export default function Tools() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-[var(--color-bg)] lg:flex-row">
+    <div className="flex h-full flex-col bg-[var(--color-bg)] xl:flex-row">
       <ToolsSidebar
         activeTool={activeTool}
         onSelect={selectTool}
@@ -500,7 +500,7 @@ function FollowUpTool({
         <div className="space-y-5">
           <Card>
             <SectionHeading number="1" title="Choose when it sends" description="Set the wait time and which outgoing messages should start the timer." />
-            <div className="mt-6 grid gap-6 lg:grid-cols-2">
+            <div className="mt-6 grid gap-6 xl:grid-cols-2">
               <div>
                 <label htmlFor="follow-up-delay" className="text-xs font-semibold">Wait before following up</label>
                 <div className="mt-2 flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)]">
@@ -749,7 +749,7 @@ function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChange
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--color-bg)]">
-      <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
+      <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 xl:px-10 xl:py-8">
         <div className="mx-auto max-w-6xl pb-10">
           <header className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
             <div className="max-w-3xl">
@@ -772,7 +772,7 @@ function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChange
         </div>
       </main>
 
-      <footer className="shrink-0 border-t border-[var(--color-border)] bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(24,39,33,0.04)] backdrop-blur sm:px-6 lg:px-10">
+      <footer className="shrink-0 border-t border-[var(--color-border)] bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(24,39,33,0.04)] backdrop-blur sm:px-6 xl:px-10">
         <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-2.5">
             <span className={`h-2 w-2 shrink-0 rounded-full ${hasUnsavedChanges ? "bg-[var(--color-accent)]" : "bg-[var(--color-primary)]"}`} />
@@ -791,21 +791,21 @@ function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChange
 
 function ToolsSidebar({ activeTool, onSelect, followUpActive, scoringActive, distributionActive }) {
   return (
-    <aside className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] p-4 lg:h-full lg:w-72 lg:border-b-0 lg:border-r lg:p-5">
-      <div className="flex items-start justify-between gap-3 lg:block">
+    <aside className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] p-4 xl:h-full xl:w-72 xl:border-b-0 xl:border-r xl:p-5">
+      <div className="flex items-start justify-between gap-3 xl:block">
         <div>
           <p className="font-display text-xl font-bold">Tools</p>
           <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">Automations that help your team follow up and convert more customers.</p>
         </div>
-        <span className="mt-0.5 shrink-0 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-[10px] font-semibold text-[var(--color-primary)] lg:hidden">More coming</span>
+        <span className="mt-0.5 shrink-0 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-[10px] font-semibold text-[var(--color-primary)] xl:hidden">More coming</span>
       </div>
 
-      <nav className="mt-4 flex gap-2 ui-scroll-x overflow-x-auto pb-1 lg:mt-5 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0" aria-label="Available tools">
+      <nav className="mt-4 flex gap-2 ui-scroll-x overflow-x-auto pb-1 xl:mt-5 xl:block xl:space-y-2 xl:overflow-visible xl:pb-0" aria-label="Available tools">
         <ToolNavButton active={activeTool === "followUp"} onClick={() => onSelect("followUp")} icon={<ClockIcon className="h-5 w-5" />} title="Automated follow-up" description="Follow up when a customer goes quiet" enabled={followUpActive} />
         <ToolNavButton active={activeTool === "leadScoring"} onClick={() => onSelect("leadScoring")} icon={<ScoreIcon className="h-5 w-5" />} title="Automatic Lead Temperature" description="Keep Hot / Warm / Cold updated" enabled={scoringActive} />
         <ToolNavButton active={activeTool === "leadDistribution"} onClick={() => onSelect("leadDistribution")} icon={<DistributionIcon className="h-5 w-5" />} title="Automatic Lead Distribution" description="Share new leads across Sales staff" enabled={distributionActive} />
 
-        <p className="hidden px-1 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)] lg:block">Coming soon</p>
+        <p className="hidden px-1 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)] xl:block">Coming soon</p>
         <ComingSoonTool icon={<CalendarIcon className="h-5 w-5" />} title="Appointment reminders" description="Reduce missed bookings automatically" />
         <ComingSoonTool icon={<MegaphoneIcon className="h-5 w-5" />} title="Promotional campaigns" description="Send offers to selected customers" />
         <ComingSoonTool icon={<StarIcon className="h-5 w-5" />} title="Review requests" description="Ask happy customers for a review" />
@@ -816,7 +816,7 @@ function ToolsSidebar({ activeTool, onSelect, followUpActive, scoringActive, dis
 
 function ToolNavButton({ active, onClick, icon, title, description, enabled }) {
   return (
-    <button type="button" onClick={onClick} className={`flex w-full min-w-[13.5rem] items-start gap-3 rounded-2xl border p-3.5 text-left transition-colors lg:min-w-0 ${active ? "border-[var(--color-primary)]/15 bg-[var(--color-primary-light)]" : "border-[var(--color-border)] bg-white hover:bg-[var(--color-bg)]"}`} aria-current={active ? "page" : undefined}>
+    <button type="button" onClick={onClick} className={`flex w-full min-w-[13.5rem] items-start gap-3 rounded-2xl border p-3.5 text-left transition-colors xl:min-w-0 ${active ? "border-[var(--color-primary)]/15 bg-[var(--color-primary-light)]" : "border-[var(--color-border)] bg-white hover:bg-[var(--color-bg)]"}`} aria-current={active ? "page" : undefined}>
       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-[var(--color-primary)] shadow-sm">{icon}</span>
       <span className="min-w-0 flex-1">
         <span className="block text-sm font-semibold text-[var(--color-text)]">{title}</span>
@@ -829,7 +829,7 @@ function ToolNavButton({ active, onClick, icon, title, description, enabled }) {
 
 function ComingSoonTool({ icon, title, description }) {
   return (
-    <div className="flex w-full min-w-[13.5rem] items-start gap-3 rounded-2xl border border-[var(--color-border)] bg-white p-3.5 lg:min-w-0" aria-disabled="true">
+    <div className="flex w-full min-w-[13.5rem] items-start gap-3 rounded-2xl border border-[var(--color-border)] bg-white p-3.5 xl:min-w-0" aria-disabled="true">
       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--color-bg)] text-[var(--color-text-muted)]">{icon}</span>
       <span className="min-w-0 flex-1">
         <span className="flex flex-wrap items-center gap-1.5">
