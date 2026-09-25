@@ -189,7 +189,7 @@ export default function SetupStatus() {
         <div className="w-full max-w-md rounded-3xl border border-[var(--color-border)] bg-white p-6 text-center shadow-sm">
           <h1 className="font-display text-lg font-bold">Couldn't load setup status</h1>
           <p className="mt-2 text-sm leading-6 text-[var(--color-danger)]">{error}</p>
-          <button type="button" onClick={() => window.location.reload()} className="mt-5 h-11 rounded-xl bg-[var(--color-primary)] px-5 text-sm font-semibold text-white">Try again</button>
+          <button type="button" onClick={() => window.location.reload()} className="mt-5 h-11 rounded-xl bg-[var(--color-primary)] px-5 text-sm font-semibold text-white transition hover:bg-[var(--color-primary-hover)]">Try again</button>
         </div>
       </div>
     );
@@ -620,7 +620,7 @@ function MetaReviewNote() {
     <details className="group mt-2.5 overflow-hidden rounded-xl border border-[var(--color-border)] bg-white shadow-sm">
       <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-3.5 py-2 text-xs font-semibold text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)]/30 [&::-webkit-details-marker]:hidden">
         <span className="flex min-w-0 items-center gap-2">
-          <InfoIcon className="h-4 w-4 shrink-0 text-[var(--color-accent)]" />
+          <InfoIcon className="h-4 w-4 shrink-0 text-[var(--color-accent-text)]" />
           <span>About Meta app review</span>
         </span>
         <ChevronIcon className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" />

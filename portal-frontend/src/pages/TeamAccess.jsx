@@ -581,7 +581,7 @@ function StaffEditorModal({
                 disabled={busy}
                 value={staff.role}
                 onChange={(event) => changeRole(event.target.value)}
-                className="h-9 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-xs font-semibold disabled:opacity-50"
+                className="h-10 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-xs font-semibold disabled:opacity-50"
               >
                 <option value="sales">Sales</option>
                 <option value="admin">Admin</option>
@@ -590,7 +590,7 @@ function StaffEditorModal({
                 type="button"
                 disabled={busy || isCurrent}
                 onClick={() => patch({ isActive: !staff.isActive })}
-                className="h-9 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold disabled:opacity-40"
+                className="h-10 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold disabled:opacity-40"
               >
                 {staff.isActive ? "Disable" : "Reactivate"}
               </button>
@@ -691,6 +691,14 @@ function StaffEditorModal({
 }
 
 function ModalShell({ title, subtitle, onClose, children, wide = false }) {
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-0 sm:p-4" role="presentation">
       <section
@@ -708,7 +716,7 @@ function ModalShell({ title, subtitle, onClose, children, wide = false }) {
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
           >
             <CloseIcon className="h-4 w-4" />
           </button>

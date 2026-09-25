@@ -420,7 +420,7 @@ function RateStrip({ cohort, labels }) {
         {rates.map(([label, value, detail]) => (
           <div key={label} className="rounded-xl bg-[var(--color-bg)] px-2.5 py-3 text-center sm:flex sm:items-end sm:justify-between sm:gap-3 sm:px-4 sm:text-left">
             <div className="min-w-0">
-              <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] sm:text-[10px]">{label}</p>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] sm:text-[10px]">{label}</p>
               <p className="mt-0.5 hidden text-[10px] text-[var(--color-text-muted)] sm:block">{detail}</p>
             </div>
             <p className="mt-1 font-display text-lg font-bold sm:mt-0 sm:text-xl">{value.toFixed(1)}%</p>
@@ -456,14 +456,14 @@ function FunnelChart({ stages }) {
               <div className="min-w-0">
                 <p className="truncate text-xs font-bold">{stage.label}</p>
                 {index > 0 && (
-                  <p className="mt-0.5 text-[9px] text-[var(--color-text-muted)] sm:text-[10px]">
+                  <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)] sm:text-[10px]">
                     {stage.fromPreviousRate.toFixed(1)}% reached · {stage.dropOff} drop-off
                   </p>
                 )}
               </div>
               <div className="shrink-0 text-right">
                 <p className="font-display text-lg font-bold">{stage.count}</p>
-                {index > 0 && <p className="text-[9px] text-[var(--color-primary)] sm:text-[10px]">{stage.fromLeadRate.toFixed(1)}% of leads</p>}
+                {index > 0 && <p className="text-[10px] text-[var(--color-primary)] sm:text-[10px]">{stage.fromLeadRate.toFixed(1)}% of leads</p>}
               </div>
             </div>
             <div className="h-7 overflow-hidden rounded-xl bg-[var(--color-bg)] sm:h-8">
@@ -504,7 +504,7 @@ function ActivityTrendChart({ data, labels }) {
     <div>
       <div className="mb-3 flex gap-1.5 ui-scroll-x overflow-x-auto pb-1">
         {Object.entries(metrics).map(([key, item]) => (
-          <button key={key} type="button" onClick={() => setMetric(key)} className={`h-9 shrink-0 rounded-lg px-2.5 text-[10px] font-bold transition ${metric === key ? "bg-[var(--color-primary)] text-white" : "bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{item.label}</button>
+          <button key={key} type="button" onClick={() => setMetric(key)} className={`h-10 shrink-0 rounded-lg px-2.5 text-[10px] font-bold transition ${metric === key ? "bg-[var(--color-primary)] text-white" : "bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{item.label}</button>
         ))}
       </div>
       <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" className="h-auto w-full" role="img" aria-label={`${metrics[metric].label} over time`}>
@@ -587,11 +587,11 @@ function ResponsePerformance({ stats }) {
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <div>
-                  <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Typical</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Typical</p>
                   <p className="mt-1 font-display text-lg font-bold">{hasSamples ? formatDuration(row.medianSeconds) : "—"}</p>
                 </div>
                 <div>
-                  <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">90% within</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">90% within</p>
                   <p className="mt-1 font-display text-lg font-bold">{hasSamples ? formatDuration(row.p90Seconds) : "—"}</p>
                 </div>
               </div>
@@ -668,7 +668,7 @@ function PerformanceBreakdown({ performance, tabs, primaryLabel, secondaryLabel,
                     </div>
                     <div className="shrink-0 text-right">
                       <p className="font-display text-lg font-bold text-[var(--color-primary)]">{row.conversionRate.toFixed(1)}%</p>
-                      <p className="text-[9px] text-[var(--color-text-muted)]">conversion {canOpen ? "→" : ""}</p>
+                      <p className="text-[10px] text-[var(--color-text-muted)]">conversion {canOpen ? "→" : ""}</p>
                     </div>
                   </div>
                   <div className="mt-3 grid grid-cols-3 gap-2 border-t border-[var(--color-border)]/70 pt-3 text-center">
@@ -719,7 +719,7 @@ function PerformanceBreakdown({ performance, tabs, primaryLabel, secondaryLabel,
 function MiniValue({ label, value }) {
   return (
     <div>
-      <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">{label}</p>
+      <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">{label}</p>
       <p className="mt-0.5 text-sm font-bold">{value}</p>
     </div>
   );
@@ -728,7 +728,7 @@ function MiniValue({ label, value }) {
 function SmallStat({ label, value }) {
   return (
     <div className="rounded-2xl bg-[var(--color-bg)] px-3 py-3 sm:px-4">
-      <p className="text-[9px] font-semibold leading-snug text-[var(--color-text-muted)] sm:text-[10px]">{label}</p>
+      <p className="text-[10px] font-semibold leading-snug text-[var(--color-text-muted)] sm:text-[10px]">{label}</p>
       <p className="mt-1 font-display text-lg font-bold sm:text-xl">{value}</p>
     </div>
   );

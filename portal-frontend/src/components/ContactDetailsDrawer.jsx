@@ -71,7 +71,7 @@ export default function ContactDetailsDrawer({ open, contact, onClose }) {
             type="button"
             onClick={onClose}
             aria-label="Close contact details"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--color-border)] bg-white text-lg text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--color-border)] bg-white text-lg text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
           >
             ×
           </button>

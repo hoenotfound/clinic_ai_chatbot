@@ -14,6 +14,14 @@ export default function StageManager({ stages, onClose, onSaveStage, onCreateSta
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  useEffect(() => {
     setDrafts((current) =>
       mergeStageDrafts(stages, current, dirtyFieldsById, orderDirty)
     );
@@ -164,5 +172,5 @@ export default function StageManager({ stages, onClose, onSaveStage, onCreateSta
 }
 
 function MoveButton({ children, label, disabled, onClick }) {
-  return <button type="button" aria-label={label} disabled={disabled} onClick={onClick} className="h-9 w-9 rounded-lg border border-[var(--color-border)] text-sm hover:bg-[var(--color-bg)] disabled:opacity-30">{children}</button>;
+  return <button type="button" aria-label={label} disabled={disabled} onClick={onClick} className="h-10 w-10 rounded-lg border border-[var(--color-border)] text-sm hover:bg-[var(--color-bg)] disabled:opacity-30">{children}</button>;
 }

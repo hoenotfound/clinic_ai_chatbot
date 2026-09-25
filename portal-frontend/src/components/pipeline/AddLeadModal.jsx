@@ -27,6 +27,14 @@ export default function AddLeadModal({ services, onClose, onCreated, onToast }) 
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  useEffect(() => {
     let cancelled = false;
 
     api.listContacts("")

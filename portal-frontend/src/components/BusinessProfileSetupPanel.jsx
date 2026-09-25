@@ -34,7 +34,7 @@ function AlignmentItem({ label, value, detail, warning = false }) {
     <div className="rounded-xl bg-[var(--color-bg)] px-3 py-3">
       <div className="flex items-start justify-between gap-3">
         <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">{label}</p>
-        <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${warning ? "bg-[var(--color-accent-light)] text-[var(--color-text)]" : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"}`}>
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${warning ? "bg-[var(--color-accent-light)] text-[var(--color-text)]" : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"}`}>
           {warning ? "Fallback" : "Aligned"}
         </span>
       </div>
@@ -148,7 +148,7 @@ export default function BusinessProfileSetupPanel({ profile }) {
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="text-sm font-bold">{option.label}</span>
                           {option.default && (
-                            <span className="rounded-full bg-white px-1.5 py-0.5 text-[9px] font-bold text-[var(--color-primary)]">Default</span>
+                            <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] font-bold text-[var(--color-primary)]">Default</span>
                           )}
                         </div>
                         <p className="mt-1 text-[10px] leading-4 text-[var(--color-text-muted)]">{option.description}</p>

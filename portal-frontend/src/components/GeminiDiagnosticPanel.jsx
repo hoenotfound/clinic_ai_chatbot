@@ -158,7 +158,7 @@ export default function GeminiDiagnosticPanel() {
           onClick={runDiagnostic}
           disabled={disabled}
           aria-busy={running}
-          className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--color-primary)] px-3 text-[11px] font-bold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-55"
+          className="inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--color-primary)] px-3 text-[11px] font-bold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-55"
         >
           {running ? <Spinner className="h-3.5 w-3.5" /> : null}
           {running
@@ -197,7 +197,7 @@ export default function GeminiDiagnosticPanel() {
                   <tr key={row.label} className="border-t border-[var(--color-border)]/70 align-top">
                     <td className="px-2.5 py-2.5">
                       <p className="text-[10px] font-bold text-[var(--color-text)]">{row.label}</p>
-                      <p className="mt-0.5 text-[9px] text-[var(--color-text-muted)]">{row.fingerprint}</p>
+                      <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{row.fingerprint}</p>
                     </td>
                     <td className="px-2.5 py-2.5"><DiagnosticResult item={row.models["gemini-3.8-flash"]} /></td>
                     <td className="px-2.5 py-2.5"><DiagnosticResult item={row.models["gemini-3.5-flash-lite"]} /></td>

@@ -11,9 +11,15 @@ const TEMPERATURE_STYLES = {
 };
 
 const TEMPERATURE_LABELS = {
-  hot: "🔥 Hot",
-  warm: "🟠 Warm",
-  cold: "🔵 Cold",
+  hot: "Hot",
+  warm: "Warm",
+  cold: "Cold",
+};
+
+const TEMPERATURE_DOTS = {
+  hot: "bg-red-500",
+  warm: "bg-orange-500",
+  cold: "bg-blue-500",
 };
 
 function valueOrFallback(value, fallback = "Not captured") {
@@ -53,7 +59,8 @@ function TemperatureBadge({ temperature }) {
   const normalized = String(temperature || "").toLowerCase();
   if (!TEMPERATURE_LABELS[normalized]) return null;
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${TEMPERATURE_STYLES[normalized]}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${TEMPERATURE_STYLES[normalized]}`}>
+      <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${TEMPERATURE_DOTS[normalized]}`} />
       {TEMPERATURE_LABELS[normalized]}
     </span>
   );
@@ -145,7 +152,7 @@ export default function ContactInsights({ contactId, className = "" }) {
       <div className="flex items-start justify-between gap-4 border-b border-[var(--color-border)] px-5 py-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[var(--color-primary-light)] text-base" aria-hidden="true">✨</span>
+            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[var(--color-primary-light)] text-[var(--color-primary)]" aria-hidden="true"><InsightIcon className="h-4 w-4" /></span>
             <div>
               <h3 className="text-sm font-bold">AI Conversation Insights</h3>
               <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">Latest saved conversation summary and lead details</p>
@@ -250,5 +257,15 @@ export default function ContactInsights({ contactId, className = "" }) {
         )}
       </div>
     </section>
+  );
+}
+
+
+function InsightIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" strokeLinecap="round" />
+      <circle cx="12" cy="12" r="3.5" />
+    </svg>
   );
 }

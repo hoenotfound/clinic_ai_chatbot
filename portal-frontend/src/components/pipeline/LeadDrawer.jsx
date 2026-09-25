@@ -33,6 +33,14 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
   const [form, setForm] = useState(() => formFromLead(lead));
   const [dirtyFields, setDirtyFields] = useState(() => new Set());
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
   const [activities, setActivities] = useState(null);
   const [note, setNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
@@ -208,7 +216,7 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h2 className="truncate font-display text-lg font-bold">{displayName(lead)}</h2>
-                {!canManageLeads && <span className="shrink-0 rounded-full bg-[var(--color-bg)] px-2 py-1 text-[9px] font-bold uppercase text-[var(--color-text-muted)]">View only</span>}
+                {!canManageLeads && <span className="shrink-0 rounded-full bg-[var(--color-bg)] px-2 py-1 text-[10px] font-bold uppercase text-[var(--color-text-muted)]">View only</span>}
               </div>
               <p className="truncate text-xs text-[var(--color-text-muted)]">{contactIdentifier(lead)}</p>
             </div>

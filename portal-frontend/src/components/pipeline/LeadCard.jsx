@@ -101,7 +101,7 @@ export default function LeadCard({ lead, now, noReplyHours, onOpen, onDragStart 
 }
 
 function Badge({ children, className }) {
-  return <span className={`rounded-full px-2 py-1 text-[9px] font-semibold uppercase tracking-wide ${className}`}>{children}</span>;
+  return <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${className}`}>{children}</span>;
 }
 
 function MetaRow({ icon, label, danger }) {

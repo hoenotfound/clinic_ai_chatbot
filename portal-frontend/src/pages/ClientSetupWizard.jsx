@@ -591,7 +591,7 @@ function LoadError({ error }) {
       <div className="w-full max-w-md rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center shadow-sm">
         <h1 className="font-display text-xl font-bold">Couldn't open client setup</h1>
         <p className="mt-2 text-sm leading-6 text-[var(--color-danger)]">{error || "The business configuration could not be loaded."}</p>
-        <button type="button" onClick={() => window.location.reload()} className="mt-5 h-11 rounded-xl bg-[var(--color-primary)] px-5 text-sm font-semibold text-white">Try again</button>
+        <button type="button" onClick={() => window.location.reload()} className="mt-5 h-11 rounded-xl bg-[var(--color-primary)] px-5 text-sm font-semibold text-white transition hover:bg-[var(--color-primary-hover)]">Try again</button>
       </div>
     </div>
   );
@@ -628,7 +628,7 @@ function SectionStateMark({ section }) {
   if (section.state === "needs_attention") {
     return <span aria-label="Needs attention">•</span>;
   }
-  return <span className="text-[9px] font-medium" aria-label="Optional">optional</span>;
+  return <span className="text-[10px] font-medium" aria-label="Optional">optional</span>;
 }
 
 function RailButton({ active, onClick, children }) {
@@ -706,7 +706,7 @@ function BusinessStep({ draft, config, setDraftValue, profileChoice, setProfileC
               {PROFILE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
             <p className="text-[11px] leading-5 text-[var(--color-text-muted)]">Confirm this before entering client-specific data. The profile becomes locked once selected.</p>
-            <button type="button" onClick={onConfirmProfile} disabled={profileSaving} className="inline-flex h-10 items-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 text-xs font-semibold text-white disabled:opacity-50">
+            <button type="button" onClick={onConfirmProfile} disabled={profileSaving} className="inline-flex h-10 items-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:opacity-50">
               {profileSaving && <Spinner className="h-3.5 w-3.5" />}{profileSaving ? "Confirming…" : "Confirm business profile"}
             </button>
           </div>
@@ -959,8 +959,8 @@ function GoLiveStep({ completion, technical, technicalLoading, technicalAttempte
         <p className="text-sm font-bold">Technical checks</p>
         <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">Run the existing connection/runtime checks here. This action does not send a test message to a real customer. Real round-trip proof only appears after actual inbound traffic and a verified automated reply.</p>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-          <button type="button" onClick={onRunChecks} disabled={technicalLoading} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 text-sm font-semibold text-white disabled:opacity-50">{technicalLoading && <Spinner className="h-4 w-4" />}{technicalLoading ? "Running checks…" : "Run technical checks"}</button>
-          <button type="button" onClick={onOpenSetup} className="h-11 rounded-xl border border-[var(--color-border)] bg-white px-4 text-sm font-semibold">Open full Setup Status</button>
+          <button type="button" onClick={onRunChecks} disabled={technicalLoading} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 text-sm font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:opacity-50">{technicalLoading && <Spinner className="h-4 w-4" />}{technicalLoading ? "Running checks…" : "Run technical checks"}</button>
+          <button type="button" onClick={onOpenSetup} className="h-11 rounded-xl border border-[var(--color-border)] bg-white px-4 text-sm font-semibold transition hover:bg-[var(--color-bg)]">Open full Setup Status</button>
         </div>
       </div>
       <p className="mt-4 text-xs leading-5 text-[var(--color-text-muted)]">Finishing here marks only the business-configuration wizard complete. A final go-live gate must also know which messaging channels were purchased for this client; configured-channel proof shown here does not replace that provisioning requirement.</p>
@@ -995,7 +995,7 @@ function ObjectList({ items, setItems, emptyItem, addLabel, fields, onError }) {
     <div className="space-y-3">
       {items.map((item, index) => (
         <div key={index} className="relative rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-          <div className="mb-3 flex items-center justify-between gap-3"><p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Entry {index + 1}</p><button type="button" onClick={() => setItems(items.filter((_, itemIndex) => itemIndex !== index))} className="h-9 rounded-lg px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]">Remove</button></div>
+          <div className="mb-3 flex items-center justify-between gap-3"><p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Entry {index + 1}</p><button type="button" onClick={() => setItems(items.filter((_, itemIndex) => itemIndex !== index))} className="min-h-10 rounded-lg px-3 text-xs font-semibold text-[var(--color-danger)] transition hover:bg-[var(--color-danger-light)]">Remove</button></div>
           <div className="grid gap-3 sm:grid-cols-2">
             {fields.map((field) => (
               <label key={field.key} className={field.textarea || field.type === "image" ? "sm:col-span-2" : ""}>
@@ -1027,7 +1027,7 @@ function AliasList({ items, services, setItems }) {
     <div className="space-y-3">
       {items.map((item, index) => (
         <div key={index} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-          <div className="mb-3 flex items-center justify-between"><p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Term {index + 1}</p><button type="button" onClick={() => setItems(items.filter((_, itemIndex) => itemIndex !== index))} className="h-9 rounded-lg px-3 text-xs font-semibold text-[var(--color-danger)]">Remove</button></div>
+          <div className="mb-3 flex items-center justify-between"><p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Term {index + 1}</p><button type="button" onClick={() => setItems(items.filter((_, itemIndex) => itemIndex !== index))} className="min-h-10 rounded-lg px-3 text-xs font-semibold text-[var(--color-danger)] transition hover:bg-[var(--color-danger-light)]">Remove</button></div>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="What customers type"><input className={INPUT_CLASS} value={item.alias || ""} onChange={(event) => change(index, "alias", event.target.value)} /></Field>
             <Field label="Maps to service"><select className={INPUT_CLASS} value={item.officialService || ""} onChange={(event) => change(index, "officialService", event.target.value)}><option value="">Choose a service</option>{services.map((service) => <option key={service} value={service}>{service}</option>)}</select></Field>

@@ -4,7 +4,7 @@ const AUTO_DISMISS_MS = 6000;
 
 const TYPE_STYLES = {
   error: "bg-[var(--color-danger-light)] text-[var(--color-danger)] border-[var(--color-danger)]/20",
-  warning: "bg-[var(--color-accent-light)] text-[var(--color-accent)] border-[var(--color-accent)]/20",
+  warning: "bg-[var(--color-accent-light)] text-[var(--color-accent-text)] border-[var(--color-accent)]/30",
   info: "bg-[var(--color-primary-light)] text-[var(--color-primary)] border-[var(--color-primary)]/20",
 };
 
@@ -36,7 +36,7 @@ export function useToasts() {
 export function ToastContainer({ toasts, onDismiss }) {
   if (!toasts.length) return null;
   return (
-    <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 w-80 max-w-[calc(100vw-2rem)]">
+    <div className="fixed left-3 right-3 top-3 z-[90] flex flex-col gap-2 sm:left-auto sm:right-4 sm:top-4 sm:w-80">
       {toasts.map((t) => (
         <div
           key={t.id}
@@ -49,7 +49,7 @@ export function ToastContainer({ toasts, onDismiss }) {
           <button
             onClick={() => onDismiss(t.id)}
             aria-label="Dismiss notification"
-            className="shrink-0 -mt-0.5 opacity-60 hover:opacity-100 transition-opacity"
+            className="-m-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg opacity-60 transition hover:bg-black/5 hover:opacity-100"
           >
             ✕
           </button>

@@ -54,7 +54,7 @@ export default function LeadAssignmentBadge({
           : "This lead is unassigned"
       }
       className={`inline-flex min-w-0 shrink-0 items-center gap-1 rounded-full font-semibold ${
-        compact ? "max-w-32 px-1.5 py-0.5 text-[9px]" : "max-w-full px-2.5 py-1 text-[10px]"
+        compact ? "max-w-32 px-1.5 py-0.5 text-[10px]" : "max-w-full px-2.5 py-1 text-[10px]"
       } ${
         assigned
           ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
