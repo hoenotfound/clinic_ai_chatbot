@@ -250,7 +250,7 @@ export default function Inbox() {
       setSelectedId(firstConversation.contact_id);
       if (requestedConversation) setMobileThreadOpen(true);
 
-      const threadIsVisible = window.matchMedia("(min-width: 768px)").matches;
+      const threadIsVisible = window.matchMedia("(min-width: 1024px)").matches;
       if (firstConversation.is_unread && threadIsVisible) {
         setConversations((current) =>
           current?.map((conversation) =>
@@ -709,7 +709,7 @@ export default function Inbox() {
   const selectedContact = conversations?.find((c) => c.contact_id === selectedId);
 
   return (
-    <div className="flex h-full bg-[var(--color-bg)]">
+    <div className="flex h-full min-w-0 overflow-hidden bg-[var(--color-bg)]">
       <ConversationList
         conversations={conversations}
         selectedId={selectedId}
@@ -887,7 +887,7 @@ function ConversationList({
 
   return (
     <aside
-      className={`${mobileThreadOpen ? "hidden md:flex" : "flex"} h-full w-full shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] md:w-[21.5rem] lg:w-[23rem] xl:w-[24.5rem]`}
+      className={`${mobileThreadOpen ? "hidden lg:flex" : "flex"} h-full w-full shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] lg:w-[19rem] xl:w-[20.5rem] 2xl:w-[22rem]`}
       aria-label="Conversation inbox"
     >
       <header className="shrink-0 border-b border-[var(--color-border)] px-4 pb-3 pt-4 sm:px-5">
@@ -1581,7 +1581,7 @@ function ThreadView({
 
   if (!contact) {
     return (
-      <div className="hidden flex-1 items-center justify-center bg-[var(--color-bg)] md:flex">
+      <div className="hidden flex-1 items-center justify-center bg-[var(--color-bg)] lg:flex">
         <div className="max-w-xs text-center">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-primary-light)] text-[var(--color-primary)]">
             <ChatOutlineIcon className="h-6 w-6" />
@@ -1620,7 +1620,7 @@ function ThreadView({
   }
 
   return (
-    <section className={`${mobileThreadOpen ? "flex" : "hidden md:flex"} min-w-0 flex-1 flex-col h-full bg-[var(--color-bg)]`} aria-label={`Conversation with ${displayName(contact)}`}>
+    <section className={`${mobileThreadOpen ? "flex" : "hidden lg:flex"} min-w-0 flex-1 flex-col h-full bg-[var(--color-bg)]`} aria-label={`Conversation with ${displayName(contact)}`}>
       <header className="relative z-10 shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className="flex items-center justify-between gap-3 px-3 py-2.5 sm:px-5">
           <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
@@ -1629,7 +1629,7 @@ function ThreadView({
               onClick={handleBackToConversations}
               aria-label="Back to conversations"
               title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice message first" : "Back to conversations"}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] md:hidden"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] lg:hidden"
             >
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
