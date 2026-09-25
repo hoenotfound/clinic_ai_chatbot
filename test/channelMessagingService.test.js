@@ -467,3 +467,28 @@ test("social sends ignore WhatsApp-only pre-send guard", async (t) => {
   assert.equal(calls, 1);
   assert.equal(result.success, true);
 });
+
+
+test("WhatsApp image pre-send guard cancels automatic promo before provider call", async (t) => {
+  const originalSendImage = whatsapp.sendImage;
+  t.after(() => {
+    whatsapp.sendImage = originalSendImage;
+  });
+
+  let providerCalls = 0;
+  whatsapp.sendImage = async () => {
+    providerCalls += 1;
+    return { success: true, wamid: "must-not-send-image" };
+  };
+
+  const result = await messaging.sendImageByUrl(
+    { id: 102, channel: "whatsapp", whatsapp_number: "60128881111" },
+    "https://example.test/promo.jpg",
+    "Promo",
+    { preSendCheck: () => false }
+  );
+
+  assert.equal(providerCalls, 0);
+  assert.equal(result.success, false);
+  assert.equal(result.cancelled, true);
+});
