@@ -27,10 +27,6 @@ function cancelPendingAiForEcho(echo) {
 async function persistBusinessAppEcho(echo) {
   if (!echo?.id || !echo?.to) return null;
 
-  // The synchronous webhook parser calls cancelPendingAiForEcho before any DB
-  // wait. Repeating it here protects direct callers and restart/retry paths.
-  cancelPendingAiForEcho(echo);
-
   const contact = await contactsRepo.getOrCreateContact(echo.to);
 
   // Insert the provider message and switch ownership in one DB transaction.
@@ -45,6 +41,10 @@ async function persistBusinessAppEcho(echo) {
   );
 
   if (!persisted) return null;
+
+  // Cancel only after atomic provider-ID dedupe confirms this is a new staff
+  // action. A delayed Meta retry must not suppress a later AI turn.
+  cancelPendingAiForEcho(echo);
 
   realtimeEvents.publish("conversation_changed", {
     contactId: contact.id,
