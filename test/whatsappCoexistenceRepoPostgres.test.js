@@ -56,6 +56,7 @@ test(
         "Handled from phone",
         "wamid.business-app-1",
         "WhatsApp Business App",
+        "AI handoff",
         client
       );
 
@@ -81,9 +82,51 @@ test(
         "Handled from phone",
         "wamid.business-app-1",
         "WhatsApp Business App",
+        "AI handoff",
         client
       );
       assert.equal(duplicate, null);
+
+      // A real portal owner must remain the owner if they also use the
+      // WhatsApp Business app. The app echo resolves unread/attention state,
+      // but does not replace the named staff owner with a generic label.
+      await client.query(
+        `UPDATE contacts
+         SET mode = 'human', takeover_by = 'caden', takeover_at = NOW(),
+             needs_attention = true, is_unread = true
+         WHERE id = $1`,
+        [contactId]
+      );
+      const namedOwnerEcho = await coexistenceRepo.persistStaffEchoIfNew(
+        contactId,
+        "Reply from phone while Caden owns chat",
+        "wamid.business-app-2",
+        "WhatsApp Business App",
+        "AI handoff",
+        client
+      );
+      assert.equal(namedOwnerEcho.contact.mode, "human");
+      assert.equal(namedOwnerEcho.contact.takeover_by, "caden");
+      assert.equal(namedOwnerEcho.contact.needs_attention, false);
+      assert.equal(namedOwnerEcho.contact.is_unread, false);
+
+      // A synthetic AI handoff is not a real staff owner. The first Business
+      // App reply must claim that conversation as real human ownership.
+      await client.query(
+        `UPDATE contacts
+         SET mode = 'human', takeover_by = 'AI handoff', takeover_at = NOW()
+         WHERE id = $1`,
+        [contactId]
+      );
+      const handoffEcho = await coexistenceRepo.persistStaffEchoIfNew(
+        contactId,
+        "Claim AI handoff from phone",
+        "wamid.business-app-3",
+        "WhatsApp Business App",
+        "AI handoff",
+        client
+      );
+      assert.equal(handoffEcho.contact.takeover_by, "WhatsApp Business App");
 
       const state = await client.query(
         `SELECT mode, takeover_by,
@@ -95,7 +138,7 @@ test(
       assert.deepEqual(state.rows[0], {
         mode: "ai",
         takeover_by: null,
-        message_count: 1,
+        message_count: 3,
       });
     } finally {
       await client.query("SET search_path TO public").catch(() => {});
