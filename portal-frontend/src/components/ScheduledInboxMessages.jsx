@@ -376,7 +376,7 @@ export default function ScheduledInboxMessages() {
         >
           <ClockIcon className="h-[18px] w-[18px]" />
           {activeItems.length > 0 && (
-            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-primary)] px-1 text-[9px] font-bold leading-none text-white shadow-sm">
+            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-primary)] px-1 text-[10px] font-bold leading-none text-white shadow-sm">
               {activeItems.length > 9 ? "9+" : activeItems.length}
             </span>
           )}
@@ -407,7 +407,7 @@ export default function ScheduledInboxMessages() {
                     <p className="mt-0.5 text-[10px] leading-4 text-[var(--color-text-muted)] sm:text-[11px]">Staff mode stays in control until you return this conversation to AI.</p>
                   </div>
                 </div>
-                <button type="button" onClick={() => !saving && setOpen(false)} disabled={saving} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] disabled:opacity-40" aria-label="Close scheduler">
+                <button type="button" onClick={() => !saving && setOpen(false)} disabled={saving} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] disabled:opacity-40" aria-label="Close scheduler">
                   <CloseIcon className="h-4 w-4" />
                 </button>
               </div>
