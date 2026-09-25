@@ -344,6 +344,61 @@ function parseIncomingMessages(body) {
 }
 
 /**
+ * Pulls out messages sent by staff from the WhatsApp Business app on a
+ * coexistence number. These are outbound business messages, not customer
+ * inbound messages, and must never enter the AI inbound path.
+ */
+function parseBusinessAppEchoes(body) {
+  try {
+    const parsed = [];
+
+    for (const entry of body?.entry || []) {
+      for (const change of entry?.changes || []) {
+        if (change?.field !== "smb_message_echoes") continue;
+
+        for (const message of change?.value?.message_echoes || []) {
+          if (!message?.id || !message?.to) continue;
+          const base = {
+            id: message.id,
+            from: message.from || null,
+            to: message.to,
+            timestamp: message.timestamp || null,
+            type: message.type || "unknown",
+            mediaId: null,
+            text: null,
+          };
+
+          if (message.type === "text") {
+            parsed.push({ ...base, text: message.text?.body || "" });
+          } else if (message.type === "image") {
+            parsed.push({
+              ...base,
+              text: message.image?.caption || null,
+              mediaId: message.image?.id || null,
+            });
+          } else if (message.type === "audio") {
+            parsed.push({ ...base, mediaId: message.audio?.id || null });
+          } else if (message.type === "video") {
+            parsed.push({
+              ...base,
+              text: message.video?.caption || null,
+              mediaId: message.video?.id || null,
+            });
+          } else {
+            parsed.push(base);
+          }
+        }
+      }
+    }
+
+    return parsed;
+  } catch (err) {
+    console.error("Failed to parse WhatsApp Business App echo payload:", err);
+    return [];
+  }
+}
+
+/**
  * Pulls out every delivery-status update from a WhatsApp webhook payload —
  * the async 'sent' / 'delivered' / 'read' / 'failed' callbacks Meta sends
  * for messages *we* sent (staff replies, AI replies, promo images). These
@@ -388,5 +443,6 @@ module.exports = {
   sendVoiceById,
   downloadMedia,
   parseIncomingMessages,
+  parseBusinessAppEchoes,
   parseStatusUpdates,
 };
