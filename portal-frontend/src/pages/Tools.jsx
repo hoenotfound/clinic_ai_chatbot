@@ -603,7 +603,7 @@ function FollowUpTool({
                     </button>
                   </div>
 
-                  <div className="mt-4 flex gap-1 overflow-x-auto border-b border-[var(--color-border)]" role="tablist" aria-label="Follow-up language">
+                  <div className="mt-4 flex gap-1 ui-scroll-x overflow-x-auto border-b border-[var(--color-border)]" role="tablist" aria-label="Follow-up language">
                     {FOLLOW_UP_LANGUAGES.map((language) => (
                       <button
                         key={language.key}
@@ -800,7 +800,7 @@ function ToolsSidebar({ activeTool, onSelect, followUpActive, scoringActive, dis
         <span className="mt-0.5 shrink-0 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-[10px] font-semibold text-[var(--color-primary)] lg:hidden">More coming</span>
       </div>
 
-      <nav className="mt-4 flex gap-2 overflow-x-auto pb-1 lg:mt-5 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0" aria-label="Available tools">
+      <nav className="mt-4 flex gap-2 ui-scroll-x overflow-x-auto pb-1 lg:mt-5 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0" aria-label="Available tools">
         <ToolNavButton active={activeTool === "followUp"} onClick={() => onSelect("followUp")} icon={<ClockIcon className="h-5 w-5" />} title="Automated follow-up" description="Follow up when a customer goes quiet" enabled={followUpActive} />
         <ToolNavButton active={activeTool === "leadScoring"} onClick={() => onSelect("leadScoring")} icon={<ScoreIcon className="h-5 w-5" />} title="Automatic Lead Temperature" description="Keep Hot / Warm / Cold updated" enabled={scoringActive} />
         <ToolNavButton active={activeTool === "leadDistribution"} onClick={() => onSelect("leadDistribution")} icon={<DistributionIcon className="h-5 w-5" />} title="Automatic Lead Distribution" description="Share new leads across Sales staff" enabled={distributionActive} />
