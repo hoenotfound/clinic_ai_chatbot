@@ -9,7 +9,7 @@ const NAV_ITEMS = [
   { to: "/pipeline", label: "Pipeline", icon: PipelineIcon, capabilities: LEAD_VIEW },
   { to: "/analytics", label: "Analytics", icon: AnalyticsIcon, capabilities: ["view_analytics"] },
   { to: "/tools", label: "Tools", icon: ToolsIcon, capabilities: ["manage_tools"] },
-  { to: "/conversation-flow", label: "Conversation Flow", icon: FlowIcon, capabilities: ["manage_settings"] },
+  { to: "/conversation-flow", label: "Conversation Flow", shortLabel: "Flow", icon: FlowIcon, capabilities: ["manage_settings"] },
   {
     to: "/settings",
     label: "Settings",
@@ -63,7 +63,7 @@ export default function Sidebar() {
             title={item.label}
             aria-label={item.label}
             className={({ isActive }) =>
-              `flex min-h-11 items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors min-[1440px]:justify-start min-[1440px]:px-3 ${
+              `flex min-h-[3.25rem] flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 text-[10px] font-medium leading-none transition-colors min-[1440px]:min-h-11 min-[1440px]:flex-row min-[1440px]:justify-start min-[1440px]:gap-3 min-[1440px]:px-3 min-[1440px]:py-2.5 min-[1440px]:text-sm min-[1440px]:leading-normal ${
                 isActive
                   ? "bg-[var(--color-primary)] text-white"
                   : "text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)]"
@@ -71,6 +71,7 @@ export default function Sidebar() {
             }
           >
             <item.icon className="h-[18px] w-[18px] shrink-0" />
+            <span className="max-w-full truncate min-[1440px]:hidden">{item.shortLabel || item.label}</span>
             <span className="hidden min-[1440px]:inline">{item.label}</span>
           </NavLink>
         ))}
@@ -91,9 +92,10 @@ export default function Sidebar() {
           onClick={handleLogout}
           title="Log out"
           aria-label="Log out"
-          className="flex min-h-11 w-full items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm text-[var(--color-sidebar-text-muted)] transition-colors hover:bg-[var(--color-sidebar-hover)] hover:text-white min-[1440px]:justify-start min-[1440px]:px-3"
+          className="flex min-h-[3.25rem] w-full flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 text-[10px] leading-none text-[var(--color-sidebar-text-muted)] transition-colors hover:bg-[var(--color-sidebar-hover)] hover:text-white min-[1440px]:min-h-11 min-[1440px]:flex-row min-[1440px]:justify-start min-[1440px]:gap-3 min-[1440px]:px-3 min-[1440px]:py-2.5 min-[1440px]:text-sm min-[1440px]:leading-normal"
         >
           <LogoutIcon className="h-[18px] w-[18px] shrink-0" />
+          <span className="min-[1440px]:hidden">Logout</span>
           <span className="hidden min-[1440px]:inline">Log out</span>
         </button>
       </div>
