@@ -68,6 +68,15 @@ npm run provision-client -- \
 
 The dry run performs no cloud mutation. Review the deterministic resources, R2 mode, profile, channels, and Render plan before executing. Add `--execute` only after the plan is correct. Add `--json` for machine-readable output.
 
+
+### Automated replies start paused
+
+Newly provisioned client services receive `AUTOMATED_REPLIES_ENABLED=false` in Render. While paused, inbound messages are still accepted and stored, but AI replies, automatic fallback replies, automatic promo sends, and automated follow-ups do not send. Staff can still reply manually from the Inbox.
+
+After channel setup and testing are complete, set `AUTOMATED_REPLIES_ENABLED=true` on that client's Render service and redeploy/restart it to begin automated customer replies.
+
+For backward compatibility, older deployments that do not have `AUTOMATED_REPLIES_ENABLED` keep their existing enabled behaviour. To pause one of those clients, add the variable in Render with value `false`.
+
 ## Exit codes
 
 ```text
