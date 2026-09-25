@@ -502,7 +502,7 @@ function ActivityTrendChart({ data, labels }) {
 
   return (
     <div>
-      <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
+      <div className="mb-3 flex gap-1.5 ui-scroll-x overflow-x-auto pb-1">
         {Object.entries(metrics).map(([key, item]) => (
           <button key={key} type="button" onClick={() => setMetric(key)} className={`h-9 shrink-0 rounded-lg px-2.5 text-[10px] font-bold transition ${metric === key ? "bg-[var(--color-primary)] text-white" : "bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{item.label}</button>
         ))}
@@ -637,7 +637,7 @@ function PerformanceBreakdown({ performance, tabs, primaryLabel, secondaryLabel,
   const title = tabs.find(([key]) => key === safeTab)?.[1] || "Source";
   return (
     <div>
-      <div className="mb-4 flex gap-1.5 overflow-x-auto pb-1">
+      <div className="mb-4 flex gap-1.5 ui-scroll-x overflow-x-auto pb-1">
         {availableTabs.map(([key, label]) => (
           <button key={key} type="button" onClick={() => onTabChange(key)} className={`h-10 shrink-0 whitespace-nowrap rounded-xl px-3 text-xs font-semibold transition ${safeTab === key ? "bg-[var(--color-primary)] text-white" : "bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{label}</button>
         ))}
