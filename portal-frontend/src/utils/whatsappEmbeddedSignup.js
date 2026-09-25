@@ -14,7 +14,6 @@ export function buildWhatsAppBusinessAppLoginOptions(config = {}) {
     extras: {
       setup: {},
       featureType: "whatsapp_business_app_onboarding",
-      sessionInfoVersion: String(config.sessionInfoVersion || "3"),
     },
   };
 }
