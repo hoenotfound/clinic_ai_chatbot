@@ -716,9 +716,9 @@ function LeadScoringTool({ form, setForm, savedEnabled, hasUnsavedChanges, savin
         <Card>
           <SectionHeading title="How it works" description="The AI only changes lead temperature when there is a clear sales signal." />
           <div className="mt-5 grid gap-3 md:grid-cols-3">
-            <OutcomeCard icon="🔥" title="Booking intent → Hot" text="Clear intent to book, schedule, pay or proceed can move a lead to Hot." />
-            <OutcomeCard icon="❄️" title="Clear rejection → Cold" text="A clear no, rejection or loss of interest can move a lead to Cold." />
-            <OutcomeCard icon="👤" title="Staff changes always win" text="A temperature set manually by staff is never overwritten automatically." />
+            <OutcomeCard icon={<HotIcon className="h-4 w-4" />} iconClass="bg-red-50 text-red-600" title="Booking intent → Hot" text="Clear intent to book, schedule, pay or proceed can move a lead to Hot." />
+            <OutcomeCard icon={<ColdIcon className="h-4 w-4" />} iconClass="bg-blue-50 text-blue-600" title="Clear rejection → Cold" text="A clear no, rejection or loss of interest can move a lead to Cold." />
+            <OutcomeCard icon={<StaffIcon className="h-4 w-4" />} iconClass="bg-[var(--color-primary-light)] text-[var(--color-primary)]" title="Staff changes always win" text="A temperature set manually by staff is never overwritten automatically." />
           </div>
           <p className="mt-4 text-[11px] leading-5 text-[var(--color-text-muted)]">AI conversation summaries can still run independently when automatic temperature is paused.</p>
         </Card>
@@ -888,10 +888,10 @@ function Choice({ checked, label, description, onChange }) {
   );
 }
 
-function OutcomeCard({ icon, title, text }) {
+function OutcomeCard({ icon, iconClass, title, text }) {
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-      <span className="text-lg" aria-hidden="true">{icon}</span>
+      <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${iconClass}`} aria-hidden="true">{icon}</span>
       <p className="mt-2 text-xs font-semibold">{title}</p>
       <p className="mt-1 text-[10px] leading-4 text-[var(--color-text-muted)]">{text}</p>
     </div>
@@ -938,3 +938,6 @@ function ImageIcon(props) { return <IconBase {...props}><rect x="3" y="4" width=
 function CalendarIcon(props) { return <IconBase {...props}><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M8 3v4M16 3v4M3 10h18" /></IconBase>; }
 function MegaphoneIcon(props) { return <IconBase {...props}><path d="m3 11 14-6v14L3 13z" strokeLinejoin="round" /><path d="M7 14v5" /></IconBase>; }
 function StarIcon(props) { return <IconBase {...props}><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z" strokeLinejoin="round" /></IconBase>; }
+function HotIcon(props) { return <IconBase {...props}><path d="M13 3c1 4-2 5-2 8 0 1.7 1.3 3 3 3 2.2 0 4-1.8 4-4 2 2.1 3 4.2 3 6.1A9 9 0 1 1 6.3 9.2C7 12 8.7 13 10 13c-1.5-4 1-6.8 3-10Z" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
+function ColdIcon(props) { return <IconBase {...props}><path d="M12 2v20M4.2 6.5l15.6 11M19.8 6.5l-15.6 11M8.5 4.5 12 7l3.5-2.5M8.5 19.5 12 17l3.5 2.5M3.5 10 7 12l-3.5 2M20.5 10 17 12l3.5 2" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
+function StaffIcon(props) { return <IconBase {...props}><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
