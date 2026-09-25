@@ -392,7 +392,7 @@ function ContactProfile({ contact, currentUsername, canManage, canCreateLeads, o
                 <span className="truncate">{displayName(contact)}</span>
                 {contact.mode === "human" && <ModeBadge mode="human" />}
               </h2>
-              {!canManage && <span className="shrink-0 rounded-full bg-[var(--color-bg)] px-2 py-1 text-[9px] font-bold uppercase text-[var(--color-text-muted)]">View only</span>}
+              {!canManage && <span className="shrink-0 rounded-full bg-[var(--color-bg)] px-2 py-1 text-[10px] font-bold uppercase text-[var(--color-text-muted)]">View only</span>}
             </div>
             <p className="mt-1 break-all text-sm text-[var(--color-text-muted)]">{contactIdentifier(contact)}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -628,8 +628,8 @@ function ModeBadge({ mode }) {
   const isHuman = mode === "human";
   return (
     <span
-      className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide ${
-        isHuman ? "bg-[var(--color-accent-light)] text-[var(--color-accent)]" : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+      className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
+        isHuman ? "bg-[var(--color-accent-light)] text-[var(--color-accent-text)]" : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
       }`}
     >
       {isHuman ? "Staff" : "AI"}
