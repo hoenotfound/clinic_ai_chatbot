@@ -414,3 +414,56 @@ test("Instagram voice is not delivered if Staff mode ends during temporary uploa
   assert.equal(deliveries, 0);
   assert.equal(cleanedKey, "meta-outbound/88/voice.m4a");
 });
+
+
+test("WhatsApp pre-send guard can cancel after policy approval without calling provider", async (t) => {
+  const originalWhatsappSend = whatsapp.sendMessage;
+  t.after(() => {
+    whatsapp.sendMessage = originalWhatsappSend;
+  });
+
+  let providerCalls = 0;
+  whatsapp.sendMessage = async () => {
+    providerCalls += 1;
+    return { success: true, wamid: "must-not-send" };
+  };
+
+  let guardCalls = 0;
+  const result = await messaging.sendText(
+    { id: 101, channel: "whatsapp", whatsapp_number: "60128880000" },
+    "AI draft",
+    {
+      preSendCheck: () => {
+        guardCalls += 1;
+        return false;
+      },
+    }
+  );
+
+  assert.equal(guardCalls, 1);
+  assert.equal(providerCalls, 0);
+  assert.equal(result.success, false);
+  assert.equal(result.cancelled, true);
+});
+
+test("social sends ignore WhatsApp-only pre-send guard", async (t) => {
+  const originalMetaSend = meta.sendText;
+  t.after(() => {
+    meta.sendText = originalMetaSend;
+  });
+
+  let calls = 0;
+  meta.sendText = async () => {
+    calls += 1;
+    return { success: true, externalMessageId: "fb-guard-test" };
+  };
+
+  const result = await messaging.sendText(
+    { channel: "facebook", channel_user_id: "psid-guard" },
+    "Hello",
+    { preSendCheck: () => false }
+  );
+
+  assert.equal(calls, 1);
+  assert.equal(result.success, true);
+});
