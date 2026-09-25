@@ -21,16 +21,21 @@ test("Business App echo is marked pending before webhook durability awaits", () 
   assert.ok(durabilityIndex > beginIndex);
 });
 
-test("Business App pipeline/realtime bookkeeping happens only after webhook ACK", () => {
+test("Business App bookkeeping completes after durable echo persistence and before webhook ACK", () => {
   const webhookStart = source.indexOf('app.post("/webhook"');
-  const ackIndex = source.indexOf("res.sendStatus(200)", webhookStart);
-  const finalizeIndex = source.indexOf(
-    "whatsappCoexistence.finalizeBusinessAppEcho(persisted)",
+  const persistIndex = source.indexOf(
+    "whatsappCoexistence.persistBusinessAppEcho(echo, { pendingStarted: true })",
     webhookStart
   );
+  const finalizeIndex = source.indexOf(
+    "await whatsappCoexistence.finalizeBusinessAppEcho(persisted)",
+    webhookStart
+  );
+  const ackIndex = source.indexOf("res.sendStatus(200)", webhookStart);
 
-  assert.ok(ackIndex > webhookStart);
-  assert.ok(finalizeIndex > ackIndex);
+  assert.ok(persistIndex > webhookStart);
+  assert.ok(finalizeIndex > persistIndex);
+  assert.ok(ackIndex > finalizeIndex);
 });
 
 test("final coexistence guard runs after final ownership lookup and before tracked AI send", () => {
