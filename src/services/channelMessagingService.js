@@ -207,6 +207,18 @@ async function sendText(contact, text, options = {}) {
   const blocked = await freeformGuard(contact, options.purpose);
   if (blocked) return blocked;
   if (channel === "whatsapp") {
+    if (
+      typeof options.preSendCheck === "function" &&
+      options.preSendCheck() !== true
+    ) {
+      return {
+        success: false,
+        wamid: null,
+        externalMessageId: null,
+        cancelled: true,
+        error: null,
+      };
+    }
     return whatsapp.sendMessage(contact.whatsapp_number, text);
   }
   return trackSocialOutbound(
