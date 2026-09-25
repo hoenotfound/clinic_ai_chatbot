@@ -87,6 +87,19 @@ test(
       );
       assert.equal(duplicate, null);
 
+      const duplicateState = await client.query(
+        `SELECT mode, takeover_by,
+                (SELECT COUNT(*)::int FROM messages WHERE contact_id = $1) AS message_count
+         FROM contacts
+         WHERE id = $1`,
+        [contactId]
+      );
+      assert.deepEqual(duplicateState.rows[0], {
+        mode: "ai",
+        takeover_by: null,
+        message_count: 1,
+      });
+
       // A real portal owner must remain the owner if they also use the
       // WhatsApp Business app. The app echo resolves unread/attention state,
       // but does not replace the named staff owner with a generic label.
@@ -136,8 +149,8 @@ test(
         [contactId]
       );
       assert.deepEqual(state.rows[0], {
-        mode: "ai",
-        takeover_by: null,
+        mode: "human",
+        takeover_by: "WhatsApp Business App",
         message_count: 3,
       });
     } finally {
