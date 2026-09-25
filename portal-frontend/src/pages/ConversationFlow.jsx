@@ -267,13 +267,13 @@ function ChatExample({ example }) {
   return (
     <div className="space-y-2.5 sm:space-y-3">
       <div>
-        <p className="mb-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Customer</p>
+        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Customer</p>
         <div className="w-fit max-w-[94%] break-words rounded-2xl rounded-tl-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-[13px] leading-5 text-[var(--color-text)] sm:max-w-[88%] sm:px-3.5">
           {example.customer}
         </div>
       </div>
       <div className="flex flex-col items-end">
-        <p className="mb-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--color-primary)]">AI</p>
+        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-primary)]">AI</p>
         <div className="w-fit max-w-[94%] break-words rounded-2xl rounded-tr-md bg-[var(--color-primary-light)] px-3 py-2.5 text-[13px] leading-5 text-[var(--color-text)] sm:max-w-[88%] sm:px-3.5">
           {example.ai}
         </div>
@@ -342,7 +342,7 @@ function outcomeStyles(kind) {
   if (kind === "Human") {
     return {
       card: "border-[var(--color-accent)]/50",
-      icon: "bg-[var(--color-accent-light)] text-[var(--color-accent)]",
+      icon: "bg-[var(--color-accent-light)] text-[var(--color-accent-text)]",
     };
   }
   return {
