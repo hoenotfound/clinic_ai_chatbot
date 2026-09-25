@@ -581,7 +581,7 @@ function StaffEditorModal({
                 disabled={busy}
                 value={staff.role}
                 onChange={(event) => changeRole(event.target.value)}
-                className="h-9 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-xs font-semibold disabled:opacity-50"
+                className="h-10 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-xs font-semibold disabled:opacity-50"
               >
                 <option value="sales">Sales</option>
                 <option value="admin">Admin</option>
@@ -590,7 +590,7 @@ function StaffEditorModal({
                 type="button"
                 disabled={busy || isCurrent}
                 onClick={() => patch({ isActive: !staff.isActive })}
-                className="h-9 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold disabled:opacity-40"
+                className="h-10 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold disabled:opacity-40"
               >
                 {staff.isActive ? "Disable" : "Reactivate"}
               </button>
