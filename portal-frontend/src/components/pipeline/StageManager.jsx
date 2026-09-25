@@ -98,9 +98,9 @@ export default function StageManager({ stages, onClose, onSaveStage, onCreateSta
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onMouseDown={onClose}>
-      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-[var(--color-surface)] shadow-2xl" role="dialog" aria-modal="true" aria-label="Manage pipeline stages" onMouseDown={(event) => event.stopPropagation()}>
-        <header className="sticky top-0 z-10 flex items-start justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-5">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-0 sm:items-center sm:p-4" onMouseDown={onClose}>
+      <div className="max-h-[96dvh] w-full max-w-3xl overflow-y-auto rounded-t-3xl bg-[var(--color-surface)] shadow-2xl sm:max-h-[90dvh] sm:rounded-3xl" role="dialog" aria-modal="true" aria-label="Manage pipeline stages" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="sticky top-0 z-10 flex items-start justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4 sm:px-6 sm:py-5">
           <div>
             <h2 className="font-display text-xl font-bold">Manage stages</h2>
             <p className="mt-1 text-sm text-[var(--color-text-muted)]">Rename, colour and reorder the columns your team works with.</p>
@@ -108,7 +108,7 @@ export default function StageManager({ stages, onClose, onSaveStage, onCreateSta
           <button type="button" onClick={onClose} className="rounded-lg p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]" aria-label="Close">✕</button>
         </header>
 
-        <div className="p-6">
+        <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-6">
           <div className="space-y-2">
             {drafts.map((stage, index) => (
               <div key={stage.id} className="grid items-center gap-2 rounded-2xl border border-[var(--color-border)] p-3 sm:grid-cols-[auto_1fr_9rem_auto_auto]">

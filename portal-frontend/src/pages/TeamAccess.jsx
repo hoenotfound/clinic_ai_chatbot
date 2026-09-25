@@ -697,7 +697,7 @@ function ModalShell({ title, subtitle, onClose, children, wide = false }) {
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`flex h-full w-full flex-col overflow-hidden bg-[var(--color-surface)] shadow-2xl sm:h-auto sm:max-h-[calc(100vh-2rem)] sm:rounded-3xl sm:border sm:border-[var(--color-border)] ${wide ? "sm:max-w-3xl" : "sm:max-w-xl"}`}
+        className={`flex h-full w-full flex-col overflow-hidden bg-[var(--color-surface)] shadow-2xl sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:rounded-3xl sm:border sm:border-[var(--color-border)] ${wide ? "sm:max-w-3xl" : "sm:max-w-xl"}`}
       >
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-[var(--color-border)] px-4 py-4 sm:px-5">
           <div className="min-w-0">

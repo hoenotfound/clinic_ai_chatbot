@@ -421,7 +421,7 @@ export default function Pipeline() {
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--color-bg)]">
-      <header className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-4 sm:px-5 lg:px-7">
+      <header className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3 sm:px-5 sm:py-3.5 lg:px-6 2xl:px-7 2xl:py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2.5">
@@ -445,7 +445,7 @@ export default function Pipeline() {
           )}
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3">
+        <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3">
           <Metric label="Active leads" value={metricActiveLeads.length} detail={`${metricLeads.length} total journeys`} />
           <Metric label="Hot leads" value={categoryCounts.hot || 0} detail="Priority follow-up" tone="danger" />
           <Metric className="col-span-2 sm:col-span-1" label="Pipeline value" value={formatMoney(pipelineValue) || "RM 0"} detail="Estimated open value" />
@@ -454,7 +454,7 @@ export default function Pipeline() {
 
       {hasAnalyticsDrilldown && (
         <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-primary-light)] px-3.5 py-2.5 text-xs sm:px-5 lg:px-7">
-          <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+          <div className="flex items-center gap-2 ui-scroll-x overflow-x-auto pb-0.5">
             <span className="shrink-0 font-bold text-[var(--color-primary)]">Analytics view</span>
             {analyticsFilters.from && analyticsFilters.to && <FilterPill>{analyticsFilters.from} → {analyticsFilters.to}</FilterPill>}
             {analyticsFilters.channel && <FilterPill>{analyticsFilters.channel}</FilterPill>}
@@ -467,8 +467,8 @@ export default function Pipeline() {
         </div>
       )}
 
-      <div className="shrink-0 border-b border-[var(--color-border)] px-3.5 py-3 sm:px-5 sm:py-4 lg:px-7">
-        <div className="flex gap-2.5 overflow-x-auto pb-1 sm:gap-3">
+      <div className="shrink-0 border-b border-[var(--color-border)] px-3.5 py-2.5 sm:px-5 sm:py-3 lg:px-6 2xl:px-7">
+        <div className="flex gap-2.5 ui-scroll-x overflow-x-auto pb-1 sm:gap-3">
           {branchCards.map((branch) => {
             const hotCount = branch.leads.filter((lead) => lead.temperature === "hot").length;
             const conversionCount = branch.leads.filter((lead) => lead.appointment_status === "set").length;
@@ -488,7 +488,7 @@ export default function Pipeline() {
         </div>
       </div>
 
-      <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3 sm:px-5 lg:px-7">
+      <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 sm:px-5 lg:px-6 2xl:px-7">
         <div className="flex items-center gap-2.5">
           <div className="relative min-w-0 flex-1 sm:max-w-sm">
             <SearchIcon />
@@ -508,7 +508,7 @@ export default function Pipeline() {
           </select>
           <span className="hidden shrink-0 text-[11px] font-medium text-[var(--color-text-muted)] md:block">{filteredLeads.length} shown</span>
         </div>
-        <div className="mt-2.5 flex gap-1.5 overflow-x-auto pb-0.5">
+        <div className="mt-2.5 flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5">
           {CATEGORY_OPTIONS.map(([key, label]) => (
             <button key={key} type="button" onClick={() => selectCategory(key)} className={`h-10 shrink-0 whitespace-nowrap rounded-xl px-3 text-xs font-semibold transition ${categoryFilter === key ? "bg-[var(--color-primary)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}>
               {label} <span className="ml-1 opacity-70">{categoryCounts[key] || 0}</span>
@@ -517,9 +517,9 @@ export default function Pipeline() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col md:hidden">
+      <div className="flex min-h-0 flex-1 flex-col lg:hidden">
         <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-2.5">
-          <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+          <div className="flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5">
             {stages.map((stage) => (
               <button
                 key={stage.id}
@@ -565,7 +565,7 @@ export default function Pipeline() {
         </main>
       </div>
 
-      <main className="hidden min-h-0 flex-1 overflow-x-auto overflow-y-hidden p-5 md:block lg:p-6">
+      <main className="ui-kanban-scroll hidden min-h-0 flex-1 overflow-x-auto overflow-y-hidden p-4 lg:block xl:p-5 2xl:p-6">
         <div className="flex h-full min-w-max gap-4">
           {stages.map((stage) => {
             const stageLeads = filteredLeads.filter((lead) => Number(lead.stage_id) === Number(stage.id));
@@ -575,7 +575,7 @@ export default function Pipeline() {
                 key={stage.id}
                 onDragOver={canManageLeads ? (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } : undefined}
                 onDrop={canManageLeads ? (event) => handleDrop(event, stage) : undefined}
-                className="flex h-full w-[19rem] flex-col rounded-2xl bg-[#f1f2ee]"
+                className="flex h-full w-[17rem] flex-col rounded-2xl bg-[#f1f2ee] xl:w-[18rem] 2xl:w-[19rem]"
               >
                 <header className="border-b border-black/5 px-3.5 py-3">
                   <div className="flex items-center gap-2">

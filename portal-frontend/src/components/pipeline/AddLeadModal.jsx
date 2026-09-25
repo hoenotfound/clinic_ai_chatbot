@@ -96,9 +96,9 @@ export default function AddLeadModal({ services, onClose, onCreated, onToast }) 
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onMouseDown={onClose}>
-      <div className="flex max-h-[88vh] w-full max-w-xl flex-col rounded-3xl bg-[var(--color-surface)] shadow-2xl" role="dialog" aria-modal="true" aria-label="Add lead" onMouseDown={(event) => event.stopPropagation()}>
-        <header className="flex items-start justify-between border-b border-[var(--color-border)] px-6 py-5">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-0 sm:items-center sm:p-4" onMouseDown={onClose}>
+      <div className="flex max-h-[96dvh] w-full max-w-xl flex-col rounded-t-3xl bg-[var(--color-surface)] shadow-2xl sm:max-h-[88dvh] sm:rounded-3xl" role="dialog" aria-modal="true" aria-label="Add lead" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="flex items-start justify-between border-b border-[var(--color-border)] px-4 py-4 sm:px-6 sm:py-5">
           <div>
             <h2 className="font-display text-xl font-bold">Add lead</h2>
             <p className="mt-1 text-sm text-[var(--color-text-muted)]">Choose an existing contact to start a sales journey.</p>
@@ -106,7 +106,7 @@ export default function AddLeadModal({ services, onClose, onCreated, onToast }) 
           <button type="button" onClick={onClose} className="rounded-lg p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]" aria-label="Close">✕</button>
         </header>
 
-        <div className="min-h-0 overflow-y-auto p-6">
+        <div className="min-h-0 overflow-y-auto p-4 sm:p-6">
           <input className={inputClass} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, number or social ID…" autoFocus />
           <div className="mt-3 max-h-60 overflow-y-auto rounded-2xl border border-[var(--color-border)]">
             {contacts === null ? (
@@ -154,7 +154,7 @@ export default function AddLeadModal({ services, onClose, onCreated, onToast }) 
           </label>
         </div>
 
-        <footer className="flex justify-end gap-2 border-t border-[var(--color-border)] px-6 py-4">
+        <footer className="flex justify-end gap-2 border-t border-[var(--color-border)] px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6 sm:py-4">
           <button type="button" onClick={onClose} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]">Cancel</button>
           <button type="button" onClick={handleCreate} disabled={!contactId || saving} className="inline-flex items-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50">
             {saving && <Spinner className="h-4 w-4" />}

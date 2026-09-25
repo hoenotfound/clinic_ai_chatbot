@@ -64,10 +64,13 @@ export default function Settings() {
   const clientSetupItem = user?.role === "admin"
     ? { id: "client-setup", label: "Client Setup", to: "/settings/client-setup" }
     : null;
+  const goLiveItem = user?.role === "admin"
+    ? { id: "go-live", label: "Go Live", to: "/settings/go-live" }
+    : null;
   const setupItem = user?.role === "admin"
     ? { id: "setup", label: "Setup Status", to: "/settings/setup" }
     : null;
-  const destinationItems = [teamItem, clientSetupItem, setupItem].filter(Boolean);
+  const destinationItems = [teamItem, clientSetupItem, goLiveItem, setupItem].filter(Boolean);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,11 +155,11 @@ export default function Settings() {
 
   const ui = getBusinessTerminology(config);
   const tabs = getSettingsTabs(config);
-  const systemItems = [clientSetupItem, setupItem].filter(Boolean);
+  const systemItems = [clientSetupItem, goLiveItem, setupItem].filter(Boolean);
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--color-bg)] md:flex-row">
-      <aside className="hidden h-full w-60 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] md:flex">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--color-bg)] xl:flex-row">
+      <aside className="hidden h-full w-60 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] xl:flex">
         <div className="border-b border-[var(--color-border)] px-5 py-5">
           <h1 className="font-display text-lg font-bold">Settings</h1>
           <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">
@@ -218,12 +221,13 @@ export default function Settings() {
       </aside>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-4 sm:px-5 md:hidden">
-          <h1 className="font-display text-xl font-bold">Settings</h1>
-          <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">Manage the information and rules your AI uses.</p>
-          <label className="mt-3 block">
-            <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Section</span>
-            <select
+        <header className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-4 sm:px-5 xl:hidden">
+          <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
+            <h1 className="font-display text-xl font-bold">Settings</h1>
+            <label className="min-w-0">
+              <span className="sr-only">Section</span>
+              <select
+                aria-label="Settings section"
               value={activeTab}
               onChange={(event) => handleSectionChange(event.target.value)}
               className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm font-semibold text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
@@ -241,8 +245,9 @@ export default function Settings() {
                   {systemItems.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
                 </optgroup>
               )}
-            </select>
-          </label>
+              </select>
+            </label>
+          </div>
         </header>
 
         <main className="min-h-0 flex-1 overflow-y-auto px-3.5 py-4 sm:px-5 sm:py-6 lg:px-8 lg:py-8">

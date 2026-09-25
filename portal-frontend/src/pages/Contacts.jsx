@@ -131,7 +131,7 @@ export default function Contacts() {
         currentUsername={username}
         hiddenOnMobile={mobilePanelOpen}
       />
-      <div className={`${mobilePanelOpen ? "block" : "hidden"} min-w-0 flex-1 overflow-y-auto md:block`}>
+      <div className={`${mobilePanelOpen ? "block" : "hidden"} min-w-0 flex-1 overflow-y-auto lg:block`}>
         {canCreateContacts && panelMode === "create" && (
           <div className="mx-auto w-full max-w-lg px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
             <MobileBackButton onClick={handleBackToList} label="Back to contacts" />
@@ -166,7 +166,7 @@ export default function Contacts() {
               onToast={showToast}
             />
           ) : (
-            <div className="hidden h-full items-center justify-center px-6 text-center md:flex">
+            <div className="hidden h-full items-center justify-center px-6 text-center lg:flex">
               <p className="text-sm text-[var(--color-text-muted)]">
                 {contacts?.length === 0
                   ? canCreateContacts ? "No contacts yet. Add one to get started." : "No accessible contacts yet."
@@ -205,7 +205,7 @@ function ContactList({
   const assignmentFilterActive = assignmentFilter !== "all";
 
   return (
-    <div className={`${hiddenOnMobile ? "hidden md:flex" : "flex"} h-full w-full min-w-0 shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-surface)] md:w-80`}>
+    <div className={`${hiddenOnMobile ? "hidden lg:flex" : "flex"} h-full w-full min-w-0 shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-surface)] lg:w-80`}>
       <div className="sticky top-0 z-10 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4 sm:px-5">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
@@ -515,7 +515,7 @@ function MobileBackButton({ onClick, label }) {
     <button
       type="button"
       onClick={onClick}
-      className="mb-4 inline-flex min-h-10 items-center gap-2 rounded-lg px-1 text-sm font-medium text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)] md:hidden"
+      className="mb-4 inline-flex min-h-10 items-center gap-2 rounded-lg px-1 text-sm font-medium text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)] lg:hidden"
     >
       <span aria-hidden="true">←</span>
       {label}
