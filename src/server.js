@@ -629,6 +629,14 @@ async function processIncomingMessage(
 
     if (contact && savedInbound) {
       try {
+        if (!automatedRepliesEnabled()) {
+          await pauseAiForHumanHandoff(
+            contact.id,
+            "Message processing failed. A staff reply is needed."
+          );
+          return { wasFirstMessage, keywordReason };
+        }
+
         const fallbackContact = await getAiOwnedContact(contact, {
           channel,
           from,
