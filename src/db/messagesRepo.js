@@ -337,6 +337,19 @@ async function acquireMessageRetryLock(messageId) {
  * Attach Meta's WAMID and mark the request as pending. "pending" means Meta
  * accepted the request, while sent/delivered/read still come from webhooks.
  */
+async function deleteUnsentAssistantMessage(messageId) {
+  const result = await pool.query(
+    `DELETE FROM messages
+     WHERE id = $1
+       AND role = 'assistant'
+       AND whatsapp_message_id IS NULL
+       AND delivery_status IS NULL
+     RETURNING id, contact_id`,
+    [messageId]
+  );
+  return result.rows[0] || null;
+}
+
 async function setWhatsappMessageId(messageId, whatsappMessageId) {
   if (!whatsappMessageId) return null;
   const result = await pool.query(
@@ -407,6 +420,7 @@ module.exports = {
   getMessageForRetry,
   getDeliveryStatusesForContact,
   acquireMessageRetryLock,
+  deleteUnsentAssistantMessage,
   setWhatsappMessageId,
   setDeliveryStatusById,
   updateDeliveryStatusByWamid,

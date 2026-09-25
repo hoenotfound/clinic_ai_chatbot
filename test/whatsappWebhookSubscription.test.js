@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   configureWhatsAppWebhook,
+  getWhatsAppCoexistenceStatus,
   subscriptionMatchesCallback,
   whatsappCallbackUrl,
 } = require("../src/provisioning/whatsappWebhookSubscription");
@@ -155,4 +156,122 @@ test("fails when Meta does not confirm the callback override for the expected ap
     }),
     (err) => err.code === "WHATSAPP_WEBHOOK_OVERRIDE_NOT_CONFIRMED",
   );
+});
+
+
+test("coexistence configuration subscribes the required message-path fields", async () => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.startsWith("https://client-a.example.test/webhook?")) {
+      const parsed = new URL(url);
+      return {
+        ok: true,
+        status: 200,
+        text: async () => parsed.searchParams.get("hub.challenge"),
+      };
+    }
+    if (options.method === "POST") {
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [{
+          override_callback_uri: "https://client-a.example.test/webhook",
+          whatsapp_business_api_data: { id: "app-id", name: "DA Chatbot" },
+        }],
+      }),
+    };
+  };
+
+  const result = await configureWhatsAppWebhook({
+    wabaId: "waba-123",
+    appId: "app-id",
+    accessToken: "access-token",
+    verifyToken: "verify-token",
+    clientBaseUrl: "https://client-a.example.test",
+    coexistence: true,
+    fetchImpl,
+  });
+
+  assert.equal(calls.length, 4);
+  assert.equal(calls[1].options.method, "POST");
+  const baselineBody = JSON.parse(calls[1].options.body);
+  assert.deepEqual(baselineBody.subscribed_fields, [
+    "messages",
+    "smb_message_echoes",
+    "smb_app_state_sync",
+    "history",
+  ]);
+
+  assert.equal(calls[2].options.method, "POST");
+  const overrideBody = JSON.parse(calls[2].options.body);
+  assert.equal(
+    overrideBody.override_callback_uri,
+    "https://client-a.example.test/webhook"
+  );
+  assert.equal(overrideBody.verify_token, "verify-token");
+  assert.deepEqual(overrideBody.subscribed_fields, baselineBody.subscribed_fields);
+  assert.equal(
+    calls[3].url,
+    "https://graph.facebook.com/v26.0/waba-123/subscribed_apps?limit=100"
+  );
+  assert.equal(result.coexistence, true);
+});
+
+
+test("coexistence status requires both Business App presence and Cloud API platform", async () => {
+  const fetchImpl = async (url, options = {}) => {
+    assert.equal(
+      url,
+      "https://graph.facebook.com/v26.0/phone-123?fields=is_on_biz_app,platform_type"
+    );
+    assert.equal(options.headers.Authorization, "Bearer access-token");
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: "phone-123",
+        is_on_biz_app: true,
+        platform_type: "CLOUD_API",
+      }),
+    };
+  };
+
+  assert.deepEqual(
+    await getWhatsAppCoexistenceStatus({
+      phoneNumberId: "phone-123",
+      accessToken: "access-token",
+      fetchImpl,
+    }),
+    {
+      phoneNumberId: "phone-123",
+      isOnBizApp: true,
+      platformType: "CLOUD_API",
+      coexistenceReady: true,
+    }
+  );
+});
+
+test("coexistence status does not treat Business App-only platform state as ready", async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      id: "phone-123",
+      is_on_biz_app: true,
+      platform_type: "ON_PREMISE",
+    }),
+  });
+
+  const result = await getWhatsAppCoexistenceStatus({
+    phoneNumberId: "phone-123",
+    accessToken: "access-token",
+    fetchImpl,
+  });
+  assert.equal(result.coexistenceReady, false);
+  assert.equal(result.isOnBizApp, true);
+  assert.equal(result.platformType, "ON_PREMISE");
 });

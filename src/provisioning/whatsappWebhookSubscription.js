@@ -206,6 +206,45 @@ async function graphRequest({
   }
 }
 
+async function getWhatsAppCoexistenceStatus({
+  phoneNumberId,
+  accessToken,
+  graphVersion = DEFAULT_GRAPH_API_VERSION,
+  fetchImpl = global.fetch,
+}) {
+  const id = text(phoneNumberId);
+  const token = text(accessToken);
+  if (!id) {
+    throw new WhatsAppWebhookSubscriptionError(
+      "WHATSAPP_PHONE_NUMBER_ID is required for the coexistence status check.",
+      { code: "WHATSAPP_COEXISTENCE_PHONE_NUMBER_ID_MISSING" },
+    );
+  }
+  if (!token) {
+    throw new WhatsAppWebhookSubscriptionError(
+      "A WhatsApp management access token is required for the coexistence status check.",
+      { code: "WHATSAPP_COEXISTENCE_ACCESS_TOKEN_MISSING" },
+    );
+  }
+
+  const payload = await graphRequest({
+    path: `${encodeURIComponent(id)}?fields=is_on_biz_app,platform_type`,
+    accessToken: token,
+    graphVersion,
+    fetchImpl,
+  });
+
+  const isOnBizApp = payload?.is_on_biz_app === true;
+  const platformType = text(payload?.platform_type) || null;
+
+  return {
+    phoneNumberId: text(payload?.id) || id,
+    isOnBizApp,
+    platformType,
+    coexistenceReady: isOnBizApp && platformType === "CLOUD_API",
+  };
+}
+
 async function getWabaSubscriptions({
   wabaId,
   accessToken,
@@ -255,6 +294,7 @@ async function configureWhatsAppWebhook({
   verifyToken,
   clientBaseUrl,
   appId = null,
+  coexistence = false,
   graphVersion = DEFAULT_GRAPH_API_VERSION,
   fetchImpl = global.fetch,
 }) {
@@ -269,6 +309,27 @@ async function configureWhatsAppWebhook({
     fetchImpl,
   });
 
+  const coexistenceFields = [
+    "messages",
+    "smb_message_echoes",
+    "smb_app_state_sync",
+    "history",
+  ];
+
+  if (coexistence) {
+    // Meta requires the app to be subscribed to the WABA before a per-WABA
+    // callback override can be applied. New coexistence onboarding can produce
+    // a WABA that has not yet established that baseline app subscription.
+    await graphRequest({
+      path: `${encodeURIComponent(credentials.wabaId)}/subscribed_apps`,
+      method: "POST",
+      accessToken: credentials.accessToken,
+      graphVersion,
+      fetchImpl,
+      body: { subscribed_fields: coexistenceFields },
+    });
+  }
+
   await graphRequest({
     path: `${encodeURIComponent(credentials.wabaId)}/subscribed_apps`,
     method: "POST",
@@ -278,6 +339,7 @@ async function configureWhatsAppWebhook({
     body: {
       override_callback_uri: callbackUrl,
       verify_token: credentials.verifyToken,
+      ...(coexistence ? { subscribed_fields: coexistenceFields } : {}),
     },
   });
 
@@ -306,6 +368,7 @@ async function configureWhatsAppWebhook({
     wabaId: credentials.wabaId,
     appId: subscriptionAppId(matched),
     callbackUrl,
+    ...(coexistence ? { coexistence: true } : {}),
     confirmed: true,
   };
 }
@@ -316,6 +379,7 @@ module.exports = {
   WhatsAppWebhookSubscriptionError,
   configureWhatsAppWebhook,
   fetchWithTimeout,
+  getWhatsAppCoexistenceStatus,
   getWabaSubscriptions,
   graphRequest,
   normalizedGraphVersion,

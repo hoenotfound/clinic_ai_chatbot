@@ -5,6 +5,8 @@ const bodyParser = require("body-parser");
 const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
+const whatsappCoexistence = require("./services/whatsappCoexistenceService");
+const aiReplyCancellation = require("./services/aiReplyCancellationService");
 const metaMessaging = require("./services/metaMessagingService");
 const channelMessaging = require("./services/channelMessagingService");
 const ai = require("./services/aiService");
@@ -137,13 +139,54 @@ async function recordReadinessSendEvidence(savedMessage, contact, sendResult, or
   }
 }
 
-async function sendTrackedText(contact, text, origin = "ai_reply") {
+async function sendTrackedText(
+  contact,
+  text,
+  origin = "ai_reply",
+  { canSend = null } = {}
+) {
+  const guarded = typeof canSend === "function";
+
+  if (guarded && canSend() !== true) {
+    return {
+      finalMessage: null,
+      sendResult: { success: false, wamid: null, cancelled: true, error: null },
+    };
+  }
+
+  // A coexistence-guarded AI reply stays unpublished until the provider send
+  // is actually allowed to begin. This avoids briefly showing a draft in the
+  // Inbox if a phone-app staff reply arrives during the DB insert.
   const saved = await conversationStore.appendMessageForContact(
     contact.id,
     "assistant",
-    text
+    text,
+    null,
+    null,
+    null,
+    null,
+    guarded ? { publish: false } : undefined
   );
-  const sendResult = await channelMessaging.sendText(contact, text);
+
+  const sendResult = await channelMessaging.sendText(
+    contact,
+    text,
+    guarded ? { preSendCheck: canSend } : {}
+  );
+
+  if (sendResult.cancelled) {
+    await messagesRepo.deleteUnsentAssistantMessage(saved.id);
+    return { finalMessage: null, sendResult };
+  }
+
+  if (guarded) {
+    realtimeEvents.publish("conversation_changed", {
+      contactId: saved.contact_id,
+      messageId: saved.id,
+      reason: "message",
+    });
+  }
+
   const errorText = sendResult.error || channelMessaging.rejectedError(contact.channel);
   const finalMessage = await persistSendOutcome(saved, sendResult, errorText);
   // Do not extend the durable inbound critical path after the provider has
@@ -281,6 +324,15 @@ async function processIncomingMessage(
     unsupportedType,
   } = incoming;
   const channel = incoming.channel || "whatsapp";
+  const aiCancellationKey =
+    channel === "whatsapp" && aiReplyCancellation.enabled()
+      ? aiReplyCancellation.keyForWhatsAppNumber(from)
+      : null;
+  const aiCancellationToken = aiReplyCancellation.snapshot(aiCancellationKey);
+  const canSendAutomatedReply = aiCancellationKey
+    ? () => aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
+    : null;
+
   const { customerLabel, customerSingular } = getOperationalLabels(clinicConfig);
   let contact = preclaimed?.contact || null;
   let savedInbound = preclaimed?.savedInbound || null;
@@ -322,7 +374,8 @@ async function processIncomingMessage(
           await sendTrackedText(
             contact,
             "Sorry, I can only read text, voice, or photo messages for now — could you type that out for me? 🙂",
-            "system_fallback"
+            "system_fallback",
+            { canSend: canSendAutomatedReply }
           );
         }
       }
@@ -375,7 +428,8 @@ async function processIncomingMessage(
             await sendTrackedText(
               contact,
               "Sorry, I couldn't quite catch that voice message — mind typing it out, or sending the voice note again? 🙂",
-              "system_fallback"
+              "system_fallback",
+              { canSend: canSendAutomatedReply }
             );
           }
         }
@@ -412,7 +466,8 @@ async function processIncomingMessage(
             await sendTrackedText(
               contact,
               "Sorry, I couldn't load that photo — mind sending it again? 🙂",
-              "system_fallback"
+              "system_fallback",
+              { canSend: canSendAutomatedReply }
             );
           }
         }
@@ -515,6 +570,22 @@ async function processIncomingMessage(
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
       : aiReply;
 
+    // Coexistence staff can reply from the phone while generation is in flight.
+    // Give the echo webhook a brief chance to arrive, then abort this AI turn
+    // if that staff action changed the cancellation epoch.
+    if (
+      aiCancellationKey &&
+      !(await aiReplyCancellation.settleBeforeSend(
+        aiCancellationKey,
+        aiCancellationToken
+      ))
+    ) {
+      console.log(
+        `Skipping AI reply for ${channel}:${from} — WhatsApp Business App staff replied.`
+      );
+      return { wasFirstMessage, keywordReason };
+    }
+
     // AI generation can take long enough for staff to take over after the
     // earlier ownership check. Re-check immediately before any AI-owned state
     // change or outbound send.
@@ -540,23 +611,64 @@ async function processIncomingMessage(
       const pendingHandoff = await getPendingAiHandoffContact(pausedContact.id);
       if (!pendingHandoff) return { wasFirstMessage, keywordReason };
       contact = pendingHandoff;
-    } else if (bookingReady) {
+    }
+
+    // The synthetic AI handoff is intentionally Staff mode, but the one
+    // customer-facing handoff acknowledgement is still allowed while that
+    // synthetic ownership remains unchanged. Normal replies require AI mode.
+    const finalSendContact = flagged
+      ? await getPendingAiHandoffContact(contact.id)
+      : await getAiOwnedContact(contact, {
+          channel,
+          from,
+          reason: "AI provider send",
+        });
+    if (!finalSendContact) return { wasFirstMessage, keywordReason };
+    contact = finalSendContact;
+
+    // Run this after the final ownership read, as close as possible to the
+    // tracked provider send. A Business App webhook marks its echo pending
+    // synchronously before any DB work, so a slow echo transaction also blocks
+    // the AI instead of allowing a competing reply.
+    if (
+      aiCancellationKey &&
+      !aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
+    ) {
+      console.log(
+        `Skipping AI reply for ${channel}:${from} — WhatsApp Business App staff activity is pending or confirmed.`
+      );
+      return { wasFirstMessage, keywordReason };
+    }
+
+    responseAttempted = true;
+    const sendOutcome = await sendTrackedText(
+      contact,
+      reply,
+      "ai_reply",
+      { canSend: canSendAutomatedReply }
+    );
+    if (sendOutcome.sendResult.cancelled) {
+      console.log(
+        `Skipping AI reply for ${channel}:${from} — WhatsApp Business App staff activity reached the final send boundary.`
+      );
+      return { wasFirstMessage, keywordReason };
+    }
+
+    // Apply conversion-ready state only after this AI turn was not suppressed
+    // by a staff phone reply. Provider rejection still keeps the existing
+    // behavior of surfacing Booking Ready for staff follow-up.
+    if (bookingReady) {
       try {
         await markBookingReadyForContact(contact.id, savedInbound.id, {
           details,
         });
       } catch (bookingOutcomeErr) {
-        // Sales bookkeeping/alerts must never prevent the customer from
-        // receiving the AI reply that tells them staff will confirm the slot.
         console.error(
           `Failed to apply booking-ready outcome for contact ${contact.id}:`,
           bookingOutcomeErr
         );
       }
     }
-
-    responseAttempted = true;
-    const sendOutcome = await sendTrackedText(contact, reply);
 
     // Never follow a sensitive handoff, deterministic safety match, Booking
     // Ready outcome, unresolved staff-attention state, or failed text delivery
@@ -583,19 +695,41 @@ async function processIncomingMessage(
         }
         contact = promoContact;
 
+        if (canSendAutomatedReply && canSendAutomatedReply() !== true) {
+          return { wasFirstMessage, keywordReason };
+        }
+
+        const guardedPromo = typeof canSendAutomatedReply === "function";
         const savedPromo = await conversationStore.appendMessageForContact(
           contact.id,
           "assistant",
           promo.caption || "",
           null,
           null,
-          promo.imageUrl
+          promo.imageUrl,
+          null,
+          guardedPromo ? { publish: false } : undefined
         );
         const promoResult = await channelMessaging.sendImageByUrl(
           contact,
           promo.imageUrl,
-          promo.caption
+          promo.caption,
+          guardedPromo ? { preSendCheck: canSendAutomatedReply } : {}
         );
+
+        if (promoResult.cancelled) {
+          await messagesRepo.deleteUnsentAssistantMessage(savedPromo.id);
+          return { wasFirstMessage, keywordReason };
+        }
+
+        if (guardedPromo) {
+          realtimeEvents.publish("conversation_changed", {
+            contactId: savedPromo.contact_id,
+            messageId: savedPromo.id,
+            reason: "message",
+          });
+        }
+
         const promoError = promoResult.error || channelMessaging.rejectedError(contact.channel);
         await persistSendOutcome(savedPromo, promoResult, promoError);
         if (!promoResult.success) {
@@ -666,7 +800,8 @@ async function processIncomingMessage(
           await sendTrackedText(
             pendingHandoff,
             "Sorry, something went wrong on our end — a team member will follow up with you shortly!",
-            "system_fallback"
+            "system_fallback",
+            { canSend: canSendAutomatedReply }
           );
         }
       } catch (fallbackErr) {
@@ -772,14 +907,20 @@ app.get("/webhook", (req, res) => {
 // ── Incoming WhatsApp messages and delivery statuses ──
 app.post("/webhook", webhookJsonParser, async (req, res) => {
   const incomingMessages = whatsapp.parseIncomingMessages(req.body);
+  const businessAppEchoes = whatsapp.parseBusinessAppEchoes(req.body);
   const statusUpdates = whatsapp.parseStatusUpdates(req.body);
+  const passiveSync = whatsappCoexistence.summarizePassiveSync(req.body);
+  for (const echo of businessAppEchoes) {
+    whatsappCoexistence.beginPendingAiForEcho(echo);
+  }
+
   let durableClaims;
   let durableStatusJobs;
+  let durableBusinessAppEchoes;
   try {
-    // Persist both customer messages and delivery-status callbacks before the
-    // ACK. If either durability write fails, return a retryable 503 so Meta can
-    // redeliver the signed webhook. Duplicate retries are safe in both stores.
-    [durableClaims, durableStatusJobs] = await Promise.all([
+    // Persist customer messages, phone-app staff echoes, and delivery statuses
+    // before ACK. A failed write returns 503 so Meta retries safely.
+    [durableClaims, durableStatusJobs, durableBusinessAppEchoes] = await Promise.all([
       Promise.all(
         incomingMessages.map(async (incoming) => ({
           queueKey: incoming.from,
@@ -787,15 +928,35 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
         }))
       ),
       storeDeliveryStatusUpdates(statusUpdates),
+      Promise.all(
+        businessAppEchoes.map((echo) =>
+          whatsappCoexistence.persistBusinessAppEcho(echo, { pendingStarted: true })
+        )
+      ),
     ]);
   } catch (err) {
+    for (const echo of businessAppEchoes) {
+      whatsappCoexistence.releasePendingAiForEcho(echo);
+    }
     console.error("Failed to durably accept WhatsApp webhook work:", err);
     return res.sendStatus(503);
   }
 
-  // Expensive/side-effecting work remains after the acknowledgement. Meta only
-  // waits for durable Postgres persistence, never AI/media/status processing.
+  // Complete idempotent Inbox/pipeline bookkeeping before ACK. If this process
+  // dies here, Meta can retry the webhook; duplicate echo persistence returns
+  // the existing row without retaking ownership or cancelling a later AI turn.
+  for (const persisted of durableBusinessAppEchoes) {
+    if (!persisted) continue;
+    await whatsappCoexistence.finalizeBusinessAppEcho(persisted);
+  }
+
   res.sendStatus(200);
+
+  if (passiveSync.historyChunks || passiveSync.appStateItems) {
+    console.log(
+      `Acknowledged WhatsApp coexistence sync event without operational import: history=${passiveSync.historyChunks}, app_state=${passiveSync.appStateItems}`
+    );
+  }
 
   setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
     console.error("Failed to record WhatsApp webhook activity:", err);
