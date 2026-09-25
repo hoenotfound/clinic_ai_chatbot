@@ -821,12 +821,6 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   const statusUpdates = whatsapp.parseStatusUpdates(req.body);
   const passiveSync = whatsappCoexistence.summarizePassiveSync(req.body);
 
-  // Cancel in-flight AI immediately, before any database/network await. The
-  // durable staff-mode transition below is the authoritative long-term guard.
-  for (const echo of businessAppEchoes) {
-    whatsappCoexistence.cancelPendingAiForEcho(echo);
-  }
-
   let durableClaims;
   let durableStatusJobs;
   let durableBusinessAppEchoes;
