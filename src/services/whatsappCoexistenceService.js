@@ -3,6 +3,7 @@ const whatsappCoexistenceRepo = require("../db/whatsappCoexistenceRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const aiReplyCancellation = require("./aiReplyCancellationService");
+const { AI_HANDOFF_OWNER } = require("./aiHandoffService");
 
 const BUSINESS_APP_ACTOR = "WhatsApp Business App";
 
@@ -18,56 +19,103 @@ function renderEchoContent(echo) {
   return `[${echo.type || "Message"} sent from WhatsApp Business App]`;
 }
 
-function cancelPendingAiForEcho(echo) {
-  return aiReplyCancellation.cancel(
-    aiReplyCancellation.keyForWhatsAppNumber(echo?.to)
+function cancellationKeyForEcho(echo) {
+  return aiReplyCancellation.keyForWhatsAppNumber(echo?.to);
+}
+
+function beginPendingAiForEcho(echo) {
+  return aiReplyCancellation.beginPendingEcho(
+    cancellationKeyForEcho(echo),
+    echo?.id
   );
 }
 
-async function persistBusinessAppEcho(echo) {
-  if (!echo?.id || !echo?.to) return null;
-
-  const contact = await contactsRepo.getOrCreateContact(echo.to);
-
-  // Insert the provider message and switch ownership in one DB transaction.
-  // A retried echo that already exists becomes a true no-op, so it cannot
-  // unexpectedly take the conversation back from AI after a staff member has
-  // deliberately pressed Return to AI.
-  const persisted = await whatsappCoexistenceRepo.persistStaffEchoIfNew(
-    contact.id,
-    renderEchoContent(echo),
-    echo.id,
-    BUSINESS_APP_ACTOR
+function releasePendingAiForEcho(echo) {
+  aiReplyCancellation.endPendingEcho(
+    cancellationKeyForEcho(echo),
+    echo?.id
   );
+}
 
-  if (!persisted) return null;
+function confirmPendingAiForEcho(echo) {
+  const key = cancellationKeyForEcho(echo);
+  aiReplyCancellation.cancel(key);
+  aiReplyCancellation.endPendingEcho(key, echo?.id);
+}
 
-  // Cancel only after atomic provider-ID dedupe confirms this is a new staff
-  // action. A delayed Meta retry must not suppress a later AI turn.
-  cancelPendingAiForEcho(echo);
+function cancelPendingAiForEcho(echo) {
+  return aiReplyCancellation.cancel(cancellationKeyForEcho(echo));
+}
+
+async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
+  if (!echo?.id || !echo?.to) return null;
+  if (!pendingStarted) beginPendingAiForEcho(echo);
+
+  try {
+    const contact = await contactsRepo.getOrCreateContact(echo.to);
+
+    // Insert the provider message and switch ownership in one DB transaction.
+    // A retried echo that already exists becomes a true no-op, so it cannot
+    // unexpectedly take the conversation back from AI after a staff member has
+    // deliberately pressed Return to AI.
+    const persisted = await whatsappCoexistenceRepo.persistStaffEchoIfNew(
+      contact.id,
+      renderEchoContent(echo),
+      echo.id,
+      BUSINESS_APP_ACTOR,
+      AI_HANDOFF_OWNER
+    );
+
+    if (!persisted) {
+      releasePendingAiForEcho(echo);
+      return null;
+    }
+
+    // Only a genuinely new app-originated staff action invalidates the AI turn.
+    // The pending flag was set synchronously before DB work so an in-flight AI
+    // can fail closed while this transaction is still being resolved.
+    confirmPendingAiForEcho(echo);
+    return persisted;
+  } catch (err) {
+    releasePendingAiForEcho(echo);
+    throw err;
+  }
+}
+
+async function finalizeBusinessAppEcho(persisted) {
+  if (!persisted?.contact?.id || !persisted?.message?.id) return;
 
   realtimeEvents.publish("conversation_changed", {
-    contactId: contact.id,
+    contactId: persisted.contact.id,
     reason: "contact_state",
   });
   realtimeEvents.publish("conversation_changed", {
-    contactId: contact.id,
+    contactId: persisted.contact.id,
     messageId: persisted.message.id,
     reason: "message",
   });
 
   try {
-    await pipelineRepo.markContactedForContact(contact.id, BUSINESS_APP_ACTOR);
+    // A Business App message can be the first message our system has ever seen
+    // for this contact, so make sure the existing pipeline has a journey before
+    // applying the normal "staff sent a message" Contacted transition.
+    await pipelineRepo.ensureLeadForContact(
+      persisted.contact.id,
+      BUSINESS_APP_ACTOR,
+      persisted.message.id
+    );
+    await pipelineRepo.markContactedForContact(
+      persisted.contact.id,
+      BUSINESS_APP_ACTOR
+    );
   } catch (err) {
-    // Pipeline bookkeeping must not make Meta retry an already-persisted staff
-    // message. The Inbox/ownership state remains authoritative.
+    // Pipeline bookkeeping must never make Meta retry an already-persisted
+    // staff message or alter the Inbox/ownership state.
     console.error(
-      `Failed to mark Business App contact ${contact.id} as contacted:`,
+      `Failed to align Business App pipeline state for contact ${persisted.contact.id}:`,
       err
     );
   }
-
-  return persisted;
 }
 
 function summarizePassiveSync(body) {
@@ -88,7 +136,11 @@ function summarizePassiveSync(body) {
 module.exports = {
   BUSINESS_APP_ACTOR,
   renderEchoContent,
+  beginPendingAiForEcho,
+  releasePendingAiForEcho,
+  confirmPendingAiForEcho,
   cancelPendingAiForEcho,
   persistBusinessAppEcho,
+  finalizeBusinessAppEcho,
   summarizePassiveSync,
 };
