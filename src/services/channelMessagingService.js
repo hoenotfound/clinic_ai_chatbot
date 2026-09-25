@@ -232,6 +232,18 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
   const blocked = await freeformGuard(contact, options.purpose);
   if (blocked) return blocked;
   if (channel === "whatsapp") {
+    if (
+      typeof options.preSendCheck === "function" &&
+      options.preSendCheck() !== true
+    ) {
+      return {
+        success: false,
+        wamid: null,
+        externalMessageId: null,
+        cancelled: true,
+        error: null,
+      };
+    }
     return whatsapp.sendImage(contact.whatsapp_number, imageUrl, caption);
   }
 
