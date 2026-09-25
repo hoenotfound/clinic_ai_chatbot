@@ -124,3 +124,27 @@ test("pipeline refreshes when messages and delivery states change", () => {
     /removeEventListener\("conversation_changed", scheduleRefresh\)/
   );
 });
+
+
+test("pipeline supports touch and pen stage moves without replacing mouse drag", () => {
+  const pipelineSource = fs.readFileSync(
+    path.join(__dirname, "..", "portal-frontend", "src", "pages", "Pipeline.jsx"),
+    "utf8"
+  );
+  const cardSource = fs.readFileSync(
+    path.join(__dirname, "..", "portal-frontend", "src", "components", "pipeline", "LeadCard.jsx"),
+    "utf8"
+  );
+  const cssSource = fs.readFileSync(
+    path.join(__dirname, "..", "portal-frontend", "src", "index.css"),
+    "utf8"
+  );
+
+  assert.match(pipelineSource, /function handleDragStart\(/);
+  assert.match(pipelineSource, /function handlePointerDragStart\(/);
+  assert.match(pipelineSource, /data-pipeline-stage-id=\{stage\.id\}/);
+  assert.match(pipelineSource, /document\.elementFromPoint/);
+  assert.match(cardSource, /touch-drag-handle/);
+  assert.match(cardSource, /onPointerDown/);
+  assert.match(cssSource, /@media \(any-pointer: coarse\)/);
+});
