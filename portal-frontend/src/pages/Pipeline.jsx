@@ -481,7 +481,7 @@ export default function Pipeline() {
                   <p className="truncate text-xs font-bold">{branch.label}</p>
                   <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-bold text-[var(--color-primary)]">{branch.leads.length}</span>
                 </div>
-                <p className="mt-1.5 truncate text-[9px] text-[var(--color-text-muted)] sm:mt-2 sm:text-[10px]">{hotCount} hot · {conversionCount} {conversionCountLabel}</p>
+                <p className="mt-1.5 truncate text-[10px] text-[var(--color-text-muted)] sm:mt-2 sm:text-[10px]">{hotCount} hot · {conversionCount} {conversionCountLabel}</p>
               </button>
             );
           })}
@@ -529,7 +529,7 @@ export default function Pipeline() {
               >
                 <span className="h-2 w-2 rounded-full" style={{ backgroundColor: stage.color }} />
                 <span>{stage.name}</span>
-                <span className={`rounded-full px-1.5 py-0.5 text-[9px] ${Number(mobileStage?.id) === Number(stage.id) ? "bg-white/15 text-white" : "bg-[var(--color-bg)]"}`}>{stageCounts[stage.id] || 0}</span>
+                <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${Number(mobileStage?.id) === Number(stage.id) ? "bg-white/15 text-white" : "bg-[var(--color-bg)]"}`}>{stageCounts[stage.id] || 0}</span>
               </button>
             ))}
           </div>
@@ -621,7 +621,7 @@ function matchesCategory(lead, category, now, noReplyHours) {
 function Metric({ label, value, detail, tone, className = "" }) {
   return (
     <div className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 sm:px-4 ${className}`}>
-      <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] sm:text-[10px]">{label}</p>
+      <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] sm:text-[10px]">{label}</p>
       <div className="mt-1 flex items-end justify-between gap-3">
         <p className={`font-display text-xl font-bold ${tone === "danger" ? "text-[var(--color-danger)]" : ""}`}>{value}</p>
         <p className="hidden pb-0.5 text-[10px] text-[var(--color-text-muted)] sm:block">{detail}</p>
