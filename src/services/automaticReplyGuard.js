@@ -1,4 +1,5 @@
 const contactsRepo = require("../db/contactsRepo");
+const { automatedRepliesEnabled } = require("./automaticReplyControl");
 
 /**
  * Re-checks the latest conversation owner immediately before any automatic
@@ -13,6 +14,12 @@ async function getAiOwnedContact(
 ) {
   if (!contact?.id) {
     throw new Error("Cannot verify automatic-reply ownership without a contact id.");
+  }
+
+  if (!automatedRepliesEnabled()) {
+    const target = from ? `${channel}:${from}` : `${channel}:contact-${contact.id}`;
+    console.log(`Skipping ${reason} for ${target} — automated replies are globally paused.`);
+    return null;
   }
 
   const latest = await contactsRepo.getContactById(contact.id);
