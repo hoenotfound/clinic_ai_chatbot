@@ -158,7 +158,7 @@ export default function GeminiDiagnosticPanel() {
           onClick={runDiagnostic}
           disabled={disabled}
           aria-busy={running}
-          className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--color-primary)] px-3 text-[11px] font-bold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-55"
+          className="inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--color-primary)] px-3 text-[11px] font-bold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-55"
         >
           {running ? <Spinner className="h-3.5 w-3.5" /> : null}
           {running
