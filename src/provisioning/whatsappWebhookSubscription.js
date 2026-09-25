@@ -206,6 +206,45 @@ async function graphRequest({
   }
 }
 
+async function getWhatsAppCoexistenceStatus({
+  phoneNumberId,
+  accessToken,
+  graphVersion = DEFAULT_GRAPH_API_VERSION,
+  fetchImpl = global.fetch,
+}) {
+  const id = text(phoneNumberId);
+  const token = text(accessToken);
+  if (!id) {
+    throw new WhatsAppWebhookSubscriptionError(
+      "WHATSAPP_PHONE_NUMBER_ID is required for the coexistence status check.",
+      { code: "WHATSAPP_COEXISTENCE_PHONE_NUMBER_ID_MISSING" },
+    );
+  }
+  if (!token) {
+    throw new WhatsAppWebhookSubscriptionError(
+      "A WhatsApp management access token is required for the coexistence status check.",
+      { code: "WHATSAPP_COEXISTENCE_ACCESS_TOKEN_MISSING" },
+    );
+  }
+
+  const payload = await graphRequest({
+    path: `${encodeURIComponent(id)}?fields=is_on_biz_app,platform_type`,
+    accessToken: token,
+    graphVersion,
+    fetchImpl,
+  });
+
+  const isOnBizApp = payload?.is_on_biz_app === true;
+  const platformType = text(payload?.platform_type) || null;
+
+  return {
+    phoneNumberId: text(payload?.id) || id,
+    isOnBizApp,
+    platformType,
+    coexistenceReady: isOnBizApp && platformType === "CLOUD_API",
+  };
+}
+
 async function getWabaSubscriptions({
   wabaId,
   accessToken,
@@ -328,6 +367,7 @@ module.exports = {
   WhatsAppWebhookSubscriptionError,
   configureWhatsAppWebhook,
   fetchWithTimeout,
+  getWhatsAppCoexistenceStatus,
   getWabaSubscriptions,
   graphRequest,
   normalizedGraphVersion,
