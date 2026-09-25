@@ -318,13 +318,14 @@ async function recoverInterruptedProvisioning(input = {}, {
     tokenName: plan.r2.tokenName,
     jurisdiction: plan.r2.jurisdiction,
   });
-  const managedRuntimeEnv = {
+  const managedRuntimeEnv = r2RuntimeEnv({
+    accountId: plan.r2.accountId,
+    bucketName: plan.r2.bucketName,
+    credentials,
+  });
+  const existingRenderManagedRuntimeEnv = {
     AUTOMATED_REPLIES_ENABLED: "false",
-    ...r2RuntimeEnv({
-      accountId: plan.r2.accountId,
-      bucketName: plan.r2.bucketName,
-      credentials,
-    }),
+    ...managedRuntimeEnv,
   };
 
   let service;
@@ -335,7 +336,7 @@ async function recoverInterruptedProvisioning(input = {}, {
     service = renderMatches[0];
     const redeployed = await redeployExistingRenderImpl({
       serviceId: service.id,
-      managedRuntimeEnv,
+      managedRuntimeEnv: existingRenderManagedRuntimeEnv,
       apiKey: env.PROVISIONING_RENDER_API_KEY,
       renderClient,
       fetchImpl,
