@@ -13,13 +13,25 @@ import {
   temperatureStyle,
 } from "./pipelineUtils";
 
-export default function LeadCard({ lead, now, noReplyHours, onOpen, onDragStart }) {
+export default function LeadCard({
+  lead,
+  now,
+  noReplyHours,
+  onOpen,
+  onDragStart,
+  onPointerDragStart,
+  onPointerDragMove,
+  onPointerDragEnd,
+  onPointerDragCancel,
+  pointerDragging = false,
+}) {
   const { permissions } = useAuth();
   const { config } = useBusinessConfig();
   const ui = getBusinessTerminology(config || {});
   const overdue = isOverdue(lead, now);
   const noReply = isNoReply(lead, noReplyHours, now);
   const canMoveLead = permissions.manage_assigned_leads === true && typeof onDragStart === "function";
+  const canTouchMoveLead = permissions.manage_assigned_leads === true && typeof onPointerDragStart === "function";
   const metaAdLabel = lead.attribution?.ad_name
     ? { prefix: "Ad", value: lead.attribution.ad_name }
     : lead.attribution?.headline
@@ -34,7 +46,7 @@ export default function LeadCard({ lead, now, noReplyHours, onOpen, onDragStart 
       draggable={canMoveLead}
       onDragStart={canMoveLead ? (event) => onDragStart(event, lead) : undefined}
       onClick={() => onOpen(lead.id)}
-      className="w-full rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--color-primary)]/40 hover:shadow-md active:translate-y-0"
+      className={`w-full rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--color-primary)]/40 hover:shadow-md active:translate-y-0 ${pointerDragging ? "opacity-60 ring-2 ring-[var(--color-primary)]/30" : ""}`}
     >
       <div className="flex items-start gap-3">
         <ContactAvatar src={lead.photo_url} channel={lead.channel} size={38} />
@@ -94,7 +106,25 @@ export default function LeadCard({ lead, now, noReplyHours, onOpen, onDragStart 
 
       <div className="mt-3 flex items-center justify-between gap-2 text-[10px] text-[var(--color-text-muted)]">
         <span className="truncate">{lead.owner_username ? `Owner: ${lead.owner_username}` : "No owner"}</span>
-        <span className="shrink-0">{formatRelative(lead.last_message_at, now)}</span>
+        <span className="flex shrink-0 items-center gap-1.5">
+          <span>{formatRelative(lead.last_message_at, now)}</span>
+          {canTouchMoveLead && (
+            <span
+              className="touch-drag-handle h-8 w-8 touch-none select-none items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]"
+              title="Drag to another stage"
+              onPointerDown={(event) => onPointerDragStart(event, lead)}
+              onPointerMove={onPointerDragMove}
+              onPointerUp={onPointerDragEnd}
+              onPointerCancel={onPointerDragCancel}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+            >
+              <GripIcon />
+            </span>
+          )}
+        </span>
       </div>
     </button>
   );
@@ -123,4 +153,18 @@ function CalendarIcon() {
 
 function ClockIcon() {
   return <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>;
+}
+
+
+function GripIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+      <circle cx="9" cy="7" r="1.5" />
+      <circle cx="15" cy="7" r="1.5" />
+      <circle cx="9" cy="12" r="1.5" />
+      <circle cx="15" cy="12" r="1.5" />
+      <circle cx="9" cy="17" r="1.5" />
+      <circle cx="15" cy="17" r="1.5" />
+    </svg>
+  );
 }

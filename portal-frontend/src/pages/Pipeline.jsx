@@ -11,7 +11,7 @@ import LeadDrawer from "../components/pipeline/LeadDrawer";
 import StageManager from "../components/pipeline/StageManager";
 import AddLeadModal from "../components/pipeline/AddLeadModal";
 import StageMoveDialog from "../components/pipeline/StageMoveDialog";
-import { formatMoney, isNoReply, isOverdue } from "../components/pipeline/pipelineUtils";
+import { displayName, formatMoney, isNoReply, isOverdue } from "../components/pipeline/pipelineUtils";
 import { shouldRefreshLeadActivities } from "../components/pipeline/realtimeQualification";
 import { sourceLabel } from "../components/pipeline/LeadAttributionPanel";
 
@@ -78,8 +78,11 @@ export default function Pipeline() {
   const [showStages, setShowStages] = useState(false);
   const [showAddLead, setShowAddLead] = useState(false);
   const [pendingMove, setPendingMove] = useState(null);
+  const [pointerDrag, setPointerDrag] = useState(null);
   const [now, setNow] = useState(() => Date.now());
   const refreshTimerRef = useRef(null);
+  const pointerDragRef = useRef(null);
+  const kanbanScrollRef = useRef(null);
   const selectedLeadIdRef = useRef(null);
   const pendingActivityRefreshRef = useRef(false);
   selectedLeadIdRef.current = selectedLeadId;
@@ -389,6 +392,75 @@ export default function Pipeline() {
     if (lead) requestStageMove(lead, stage);
   }
 
+  function stageIdAtPoint(clientX, clientY) {
+    if (typeof document === "undefined") return null;
+    const target = document.elementFromPoint(clientX, clientY)?.closest?.("[data-pipeline-stage-id]");
+    const stageId = Number(target?.getAttribute("data-pipeline-stage-id"));
+    return Number.isFinite(stageId) ? stageId : null;
+  }
+
+  function setPointerDragState(next) {
+    pointerDragRef.current = next;
+    setPointerDrag(next);
+  }
+
+  function handlePointerDragStart(event, lead) {
+    if (!canManageLeads || event.pointerType === "mouse") return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setPointerDragState({
+      pointerId: event.pointerId,
+      leadId: Number(lead.id),
+      leadName: displayName(lead),
+      clientX: event.clientX,
+      clientY: event.clientY,
+      overStageId: stageIdAtPoint(event.clientX, event.clientY),
+    });
+  }
+
+  function handlePointerDragMove(event) {
+    const drag = pointerDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const scroller = kanbanScrollRef.current;
+    if (scroller) {
+      const rect = scroller.getBoundingClientRect();
+      const edge = 72;
+      const step = 24;
+      if (event.clientX < rect.left + edge) scroller.scrollLeft -= step;
+      if (event.clientX > rect.right - edge) scroller.scrollLeft += step;
+    }
+
+    setPointerDragState({
+      ...drag,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      overStageId: stageIdAtPoint(event.clientX, event.clientY),
+    });
+  }
+
+  function finishPointerDrag(event, cancelled = false) {
+    const drag = pointerDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    const stageId = stageIdAtPoint(event.clientX, event.clientY) ?? drag.overStageId;
+    pointerDragRef.current = null;
+    setPointerDrag(null);
+    if (cancelled || !stageId) return;
+
+    const lead = leads.find((item) => Number(item.id) === Number(drag.leadId));
+    const stage = stages.find((item) => Number(item.id) === Number(stageId));
+    if (lead && stage) requestStageMove(lead, stage);
+  }
+
   async function handleLeadCreated(lead, created) {
     await refreshPipeline({ quiet: true });
     setShowAddLead(false);
@@ -520,18 +592,22 @@ export default function Pipeline() {
       <div className="flex min-h-0 flex-1 flex-col lg:hidden">
         <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-2.5">
           <div className="flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5">
-            {stages.map((stage) => (
+            {stages.map((stage) => {
+              const isPointerTarget = Number(pointerDrag?.overStageId) === Number(stage.id);
+              return (
               <button
                 key={stage.id}
                 type="button"
+                data-pipeline-stage-id={stage.id}
                 onClick={() => setMobileStageId(stage.id)}
-                className={`flex h-10 shrink-0 items-center gap-2 rounded-xl px-3 text-xs font-semibold transition ${Number(mobileStage?.id) === Number(stage.id) ? "bg-[var(--color-text)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)]"}`}
+                className={`flex h-10 shrink-0 items-center gap-2 rounded-xl px-3 text-xs font-semibold transition ${Number(mobileStage?.id) === Number(stage.id) ? "bg-[var(--color-text)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)]"} ${isPointerTarget ? "ring-2 ring-[var(--color-primary)] ring-offset-1" : ""}`}
               >
                 <span className="h-2 w-2 rounded-full" style={{ backgroundColor: stage.color }} />
                 <span>{stage.name}</span>
                 <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${Number(mobileStage?.id) === Number(stage.id) ? "bg-white/15 text-white" : "bg-[var(--color-bg)]"}`}>{stageCounts[stage.id] || 0}</span>
               </button>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -550,7 +626,7 @@ export default function Pipeline() {
               </div>
 
               <div className="space-y-2.5">
-                {mobileStageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} now={now} noReplyHours={noReplyHours} onOpen={openLead} onDragStart={canManageLeads ? handleDragStart : undefined} />)}
+                {mobileStageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} now={now} noReplyHours={noReplyHours} onOpen={openLead} onDragStart={canManageLeads ? handleDragStart : undefined} onPointerDragStart={canManageLeads ? handlePointerDragStart : undefined} onPointerDragMove={canManageLeads ? handlePointerDragMove : undefined} onPointerDragEnd={canManageLeads ? (event) => finishPointerDrag(event, false) : undefined} onPointerDragCancel={canManageLeads ? (event) => finishPointerDrag(event, true) : undefined} pointerDragging={Number(pointerDrag?.leadId) === Number(lead.id)} />)}
                 {mobileStageLeads.length === 0 && (
                   <div className="rounded-2xl border border-dashed border-[var(--color-border)] bg-white/60 px-4 py-10 text-center">
                     <p className="text-sm font-semibold">No leads here</p>
@@ -565,17 +641,19 @@ export default function Pipeline() {
         </main>
       </div>
 
-      <main className="ui-kanban-scroll hidden min-h-0 flex-1 overflow-x-auto overflow-y-hidden p-4 lg:block xl:p-5 2xl:p-6">
+      <main ref={kanbanScrollRef} className="ui-kanban-scroll hidden min-h-0 flex-1 overflow-x-auto overflow-y-hidden p-4 lg:block xl:p-5 2xl:p-6">
         <div className="flex h-full min-w-max gap-4">
           {stages.map((stage) => {
             const stageLeads = filteredLeads.filter((lead) => Number(lead.stage_id) === Number(stage.id));
             const value = stageLeads.reduce((sum, lead) => sum + (Number(lead.estimated_value) || 0), 0);
+            const isPointerTarget = Number(pointerDrag?.overStageId) === Number(stage.id);
             return (
               <section
                 key={stage.id}
+                data-pipeline-stage-id={stage.id}
                 onDragOver={canManageLeads ? (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } : undefined}
                 onDrop={canManageLeads ? (event) => handleDrop(event, stage) : undefined}
-                className="flex h-full w-[17rem] flex-col rounded-2xl bg-[#f1f2ee] xl:w-[18rem] 2xl:w-[19rem]"
+                className={`flex h-full w-[17rem] flex-col rounded-2xl bg-[#f1f2ee] transition-shadow xl:w-[18rem] 2xl:w-[19rem] ${isPointerTarget ? "ring-2 ring-[var(--color-primary)] ring-offset-2" : ""}`}
               >
                 <header className="border-b border-black/5 px-3.5 py-3">
                   <div className="flex items-center gap-2">
@@ -586,7 +664,7 @@ export default function Pipeline() {
                   <p className="mt-1.5 pl-[18px] text-[10px] text-[var(--color-text-muted)]">{formatMoney(value) || "RM 0"}</p>
                 </header>
                 <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-2.5">
-                  {stageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} now={now} noReplyHours={noReplyHours} onOpen={openLead} onDragStart={canManageLeads ? handleDragStart : undefined} />)}
+                  {stageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} now={now} noReplyHours={noReplyHours} onOpen={openLead} onDragStart={canManageLeads ? handleDragStart : undefined} onPointerDragStart={canManageLeads ? handlePointerDragStart : undefined} onPointerDragMove={canManageLeads ? handlePointerDragMove : undefined} onPointerDragEnd={canManageLeads ? (event) => finishPointerDrag(event, false) : undefined} onPointerDragCancel={canManageLeads ? (event) => finishPointerDrag(event, true) : undefined} pointerDragging={Number(pointerDrag?.leadId) === Number(lead.id)} />)}
                   {stageLeads.length === 0 && (
                     <div className="rounded-2xl border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-xs text-[var(--color-text-muted)]">{canManageLeads ? "Drop leads here" : "No leads here"}</div>
                   )}
@@ -596,6 +674,20 @@ export default function Pipeline() {
           })}
         </div>
       </main>
+
+      {pointerDrag && (
+        <div
+          className="pointer-events-none fixed z-[120] max-w-[13rem] rounded-xl border border-[var(--color-primary)]/20 bg-white/95 px-3 py-2 shadow-xl backdrop-blur"
+          style={{ left: pointerDrag.clientX + 14, top: pointerDrag.clientY + 14 }}
+        >
+          <p className="truncate text-xs font-bold">{pointerDrag.leadName}</p>
+          <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
+            {stages.find((stage) => Number(stage.id) === Number(pointerDrag.overStageId))?.name
+              ? `Drop in ${stages.find((stage) => Number(stage.id) === Number(pointerDrag.overStageId)).name}`
+              : "Drag over a stage"}
+          </p>
+        </div>
+      )}
 
       {selectedLead && <LeadDrawer key={selectedLead.id} lead={selectedLead} stages={stages} branches={data.branches || []} owners={data.owners || []} services={data.services || []} now={now} noReplyHours={noReplyHours} activityRefreshToken={activityRefreshToken} onClose={closeLead} onSaved={mergeLead} onToast={showToast} />}
       {canManageStages && showStages && <StageManager stages={stages} onClose={() => setShowStages(false)} onSaveStage={(id, patch) => api.updatePipelineStage(id, patch)} onCreateStage={(payload) => refreshAfterStageChange(() => api.createPipelineStage(payload))} onDeleteStage={(id) => refreshAfterStageChange(() => api.deletePipelineStage(id))} onReorder={(ids) => refreshAfterStageChange(() => api.reorderPipelineStages(ids))} onToast={showToast} />}
