@@ -38,7 +38,7 @@ export default function Login() {
   }
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[var(--color-sidebar)] px-4 py-10">
+    <div className="relative min-h-dvh overflow-hidden bg-[var(--color-sidebar)] px-4 py-10">
       {/* Ambient background accents */}
       <div
         className="pointer-events-none absolute -top-32 -left-24 h-80 w-80 rounded-full opacity-20 blur-3xl"
@@ -49,7 +49,7 @@ export default function Login() {
         style={{ background: "var(--color-accent)" }}
       />
 
-      <div className="relative flex min-h-[calc(100vh-5rem)] w-full flex-col items-center justify-center">
+      <div className="relative flex min-h-[calc(100dvh-5rem)] w-full flex-col items-center justify-center">
         <div className="w-full max-w-sm">
           {/* Client identity */}
           <div className="mb-8 flex flex-col items-center text-center">
