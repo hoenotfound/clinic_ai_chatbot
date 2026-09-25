@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Spinner from "../Spinner";
 import { displayName } from "./pipelineUtils";
 
@@ -8,6 +8,14 @@ export default function StageMoveDialog({ lead, stage, onCancel, onConfirm }) {
   const [saving, setSaving] = useState(false);
   const isLost = stage.stage_type === "lost";
   const isWon = stage.stage_type === "won";
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape") onCancel();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onCancel]);
 
   async function handleConfirm() {
     if (isLost && !lostReason.trim()) return;
