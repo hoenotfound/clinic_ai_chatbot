@@ -208,7 +208,7 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h2 className="truncate font-display text-lg font-bold">{displayName(lead)}</h2>
-                {!canManageLeads && <span className="shrink-0 rounded-full bg-[var(--color-bg)] px-2 py-1 text-[9px] font-bold uppercase text-[var(--color-text-muted)]">View only</span>}
+                {!canManageLeads && <span className="shrink-0 rounded-full bg-[var(--color-bg)] px-2 py-1 text-[10px] font-bold uppercase text-[var(--color-text-muted)]">View only</span>}
               </div>
               <p className="truncate text-xs text-[var(--color-text-muted)]">{contactIdentifier(lead)}</p>
             </div>
