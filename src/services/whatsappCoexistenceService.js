@@ -1,5 +1,5 @@
 const contactsRepo = require("../db/contactsRepo");
-const messagesRepo = require("../db/messagesRepo");
+const whatsappCoexistenceRepo = require("../db/whatsappCoexistenceRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const aiReplyCancellation = require("./aiReplyCancellationService");
@@ -33,23 +33,26 @@ async function persistBusinessAppEcho(echo) {
 
   const contact = await contactsRepo.getOrCreateContact(echo.to);
 
-  // A phone-app reply is an explicit human action. Keep the conversation in
-  // staff mode until someone intentionally returns it to AI from the Inbox.
-  const staffOwned = await contactsRepo.takeOver(contact.id, BUSINESS_APP_ACTOR);
-  if (!staffOwned) throw new Error(`Could not take over contact ${contact.id} for Business App echo.`);
-
-  const saved = await messagesRepo.saveStaffMessageIfNew(
+  // Insert the provider message and switch ownership in one DB transaction.
+  // A retried echo that already exists becomes a true no-op, so it cannot
+  // unexpectedly take the conversation back from AI after a staff member has
+  // deliberately pressed Return to AI.
+  const persisted = await whatsappCoexistenceRepo.persistStaffEchoIfNew(
     contact.id,
     renderEchoContent(echo),
     echo.id,
     BUSINESS_APP_ACTOR
   );
 
-  if (!saved) return null;
+  if (!persisted) return null;
 
   realtimeEvents.publish("conversation_changed", {
     contactId: contact.id,
-    messageId: saved.id,
+    reason: "contact_state",
+  });
+  realtimeEvents.publish("conversation_changed", {
+    contactId: contact.id,
+    messageId: persisted.message.id,
     reason: "message",
   });
 
@@ -64,7 +67,7 @@ async function persistBusinessAppEcho(echo) {
     );
   }
 
-  return { contact: staffOwned, message: saved };
+  return persisted;
 }
 
 function summarizePassiveSync(body) {
