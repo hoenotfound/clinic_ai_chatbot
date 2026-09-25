@@ -10,7 +10,7 @@ function read(relativePath) {
 test("browser launch uses the Business App coexistence feature and code response", () => {
   const source = read("portal-frontend/src/utils/whatsappEmbeddedSignup.js");
   assert.match(source, /featureType:\s*"whatsapp_business_app_onboarding"/);
-  assert.match(source, /sessionInfoVersion:\s*String\(config\.sessionInfoVersion \|\| "3"\)/);
+  assert.doesNotMatch(source, /sessionInfoVersion/);
   assert.match(source, /response_type:\s*"code"/);
   assert.match(source, /override_default_response_type:\s*true/);
 });
