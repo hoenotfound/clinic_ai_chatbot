@@ -125,7 +125,11 @@ test("in-flight AI settle guard suppresses send when a Business App echo arrives
   try {
     const key = aiReplyCancellation.keyForWhatsAppNumber("60137770000");
     const token = aiReplyCancellation.snapshot(key);
-    const guarded = aiReplyCancellation.settleBeforeSend(key, token, 25);
+    const guarded = aiReplyCancellation.settleBeforeSend(key, token, {
+      delayMs: 25,
+      pendingWaitMs: 100,
+      pollMs: 5,
+    });
     setTimeout(() => aiReplyCancellation.cancel(key), 5);
     assert.equal(await guarded, false);
   } finally {
@@ -141,9 +145,54 @@ test("non-coexistence clients keep the existing reply path without settle delay"
     const key = aiReplyCancellation.keyForWhatsAppNumber("60138880000");
     const token = aiReplyCancellation.snapshot(key);
     aiReplyCancellation.cancel(key);
-    assert.equal(await aiReplyCancellation.settleBeforeSend(key, token, 1000), true);
+    assert.equal(
+      await aiReplyCancellation.settleBeforeSend(key, token, {
+        delayMs: 1000,
+        pendingWaitMs: 1000,
+      }),
+      true
+    );
   } finally {
     if (previous == null) delete process.env.WHATSAPP_COEXISTENCE_ENABLED;
     else process.env.WHATSAPP_COEXISTENCE_ENABLED = previous;
   }
+});
+
+
+test("pending Business App echo blocks AI before durable persistence finishes", async () => {
+  const previous = process.env.WHATSAPP_COEXISTENCE_ENABLED;
+  process.env.WHATSAPP_COEXISTENCE_ENABLED = "true";
+  try {
+    const echo = { id: "wamid.pending-1", to: "60139990000" };
+    const key = aiReplyCancellation.keyForWhatsAppNumber(echo.to);
+    const token = aiReplyCancellation.snapshot(key);
+
+    coexistence.beginPendingAiForEcho(echo);
+    assert.equal(aiReplyCancellation.safeToSend(key, token), false);
+
+    const guarded = aiReplyCancellation.settleBeforeSend(key, token, {
+      delayMs: 1,
+      pendingWaitMs: 20,
+      pollMs: 2,
+    });
+    assert.equal(await guarded, false);
+
+    coexistence.releasePendingAiForEcho(echo);
+    assert.equal(aiReplyCancellation.safeToSend(key, token), true);
+  } finally {
+    if (previous == null) delete process.env.WHATSAPP_COEXISTENCE_ENABLED;
+    else process.env.WHATSAPP_COEXISTENCE_ENABLED = previous;
+  }
+});
+
+test("duplicate echo can be released without permanently cancelling a later AI turn", () => {
+  const echo = { id: "wamid.duplicate-1", to: "60131112222" };
+  const key = aiReplyCancellation.keyForWhatsAppNumber(echo.to);
+  const token = aiReplyCancellation.snapshot(key);
+
+  coexistence.beginPendingAiForEcho(echo);
+  assert.equal(aiReplyCancellation.safeToSend(key, token), false);
+  coexistence.releasePendingAiForEcho(echo);
+
+  assert.equal(aiReplyCancellation.safeToSend(key, token), true);
 });
