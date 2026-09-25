@@ -196,13 +196,28 @@ test("coexistence configuration subscribes the required message-path fields", as
     fetchImpl,
   });
 
-  const postBody = JSON.parse(calls[1].options.body);
-  assert.deepEqual(postBody.subscribed_fields, [
+  assert.equal(calls.length, 4);
+  assert.equal(calls[1].options.method, "POST");
+  const baselineBody = JSON.parse(calls[1].options.body);
+  assert.deepEqual(baselineBody.subscribed_fields, [
     "messages",
     "smb_message_echoes",
     "smb_app_state_sync",
     "history",
   ]);
+
+  assert.equal(calls[2].options.method, "POST");
+  const overrideBody = JSON.parse(calls[2].options.body);
+  assert.equal(
+    overrideBody.override_callback_uri,
+    "https://client-a.example.test/webhook"
+  );
+  assert.equal(overrideBody.verify_token, "verify-token");
+  assert.deepEqual(overrideBody.subscribed_fields, baselineBody.subscribed_fields);
+  assert.equal(
+    calls[3].url,
+    "https://graph.facebook.com/v26.0/waba-123/subscribed_apps?limit=100"
+  );
   assert.equal(result.coexistence, true);
 });
 
