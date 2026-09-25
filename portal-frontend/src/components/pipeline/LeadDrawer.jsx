@@ -33,6 +33,14 @@ export default function LeadDrawer({ lead, stages, owners, services, now, noRepl
   const [form, setForm] = useState(() => formFromLead(lead));
   const [dirtyFields, setDirtyFields] = useState(() => new Set());
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
   const [activities, setActivities] = useState(null);
   const [note, setNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
