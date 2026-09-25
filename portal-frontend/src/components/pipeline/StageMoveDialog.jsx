@@ -24,8 +24,8 @@ export default function StageMoveDialog({ lead, stage, onCancel, onConfirm }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onMouseDown={onCancel}>
-      <div className="w-full max-w-md rounded-3xl bg-[var(--color-surface)] p-6 shadow-2xl" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-0 sm:items-center sm:p-4" onMouseDown={onCancel}>
+      <div className="w-full max-w-md rounded-t-3xl bg-[var(--color-surface)] p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl sm:rounded-3xl sm:p-6" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
         <div className="flex items-center gap-3">
           <span className="h-3 w-3 rounded-full" style={{ backgroundColor: stage.color }} />
           <div>
