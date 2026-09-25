@@ -27,7 +27,7 @@ export default function Lightbox({ src, alt, onClose }) {
       <button
         onClick={onClose}
         aria-label="Close image"
-        className="absolute top-4 right-4 w-9 h-9 flex items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+        className="absolute right-4 top-4 flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
       >
         ✕
       </button>
