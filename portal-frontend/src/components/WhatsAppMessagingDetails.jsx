@@ -28,7 +28,7 @@ function policyField(contact, snakeCase, camelCase) {
 function PolicyDetail({ label, value, className = "" }) {
   return (
     <div className={`min-w-0 rounded-xl bg-[var(--color-bg)]/70 px-2.5 py-2.5 sm:px-3 ${className}`}>
-      <dt className="text-[9px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">{label}</dt>
+      <dt className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">{label}</dt>
       <dd className="mt-1 break-words text-[11px] leading-4 text-[var(--color-text)] sm:text-xs sm:leading-5">{value}</dd>
     </div>
   );
@@ -73,7 +73,7 @@ export default function WhatsAppMessagingDetails({ contact, className = "" }) {
       </div>
 
       <div className={`mt-3 rounded-xl border px-3 py-2.5 text-xs leading-5 ${statusTone}`}>
-        <p className="text-[9px] font-semibold uppercase tracking-[0.08em] opacity-70">Current reply window</p>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.08em] opacity-70">Current reply window</p>
         <p className="font-semibold">{policy.label}</p>
         {policy.explanation && (
           <p className="mt-0.5 break-words text-[11px] opacity-80">{policy.explanation}</p>
