@@ -39,22 +39,18 @@ test("Business App bookkeeping completes after durable echo persistence and befo
 });
 
 test("final coexistence guard runs after final ownership lookup and before tracked AI send", () => {
-  const aiBlock = source.indexOf('reason: "AI provider send"');
-  const ownershipIndex = source.lastIndexOf(
-    "const finalAiContact = await getAiOwnedContact",
-    aiBlock
-  );
+  const ownershipIndex = source.indexOf("const finalSendContact = flagged");
   const guardIndex = source.indexOf(
     "aiReplyCancellation.safeToSend",
-    aiBlock
+    ownershipIndex
   );
   const sendIndex = source.indexOf(
-    "const sendOutcome = await sendTrackedText(contact, reply)",
-    aiBlock
+    "const sendOutcome = await sendTrackedText(",
+    guardIndex
   );
 
   assert.ok(ownershipIndex >= 0);
-  assert.ok(guardIndex > aiBlock);
+  assert.ok(guardIndex > ownershipIndex);
   assert.ok(sendIndex > guardIndex);
 });
 
