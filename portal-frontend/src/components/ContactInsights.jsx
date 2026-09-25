@@ -11,9 +11,15 @@ const TEMPERATURE_STYLES = {
 };
 
 const TEMPERATURE_LABELS = {
-  hot: "🔥 Hot",
-  warm: "🟠 Warm",
-  cold: "🔵 Cold",
+  hot: "Hot",
+  warm: "Warm",
+  cold: "Cold",
+};
+
+const TEMPERATURE_DOTS = {
+  hot: "bg-red-500",
+  warm: "bg-orange-500",
+  cold: "bg-blue-500",
 };
 
 function valueOrFallback(value, fallback = "Not captured") {
@@ -53,7 +59,8 @@ function TemperatureBadge({ temperature }) {
   const normalized = String(temperature || "").toLowerCase();
   if (!TEMPERATURE_LABELS[normalized]) return null;
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${TEMPERATURE_STYLES[normalized]}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${TEMPERATURE_STYLES[normalized]}`}>
+      <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${TEMPERATURE_DOTS[normalized]}`} />
       {TEMPERATURE_LABELS[normalized]}
     </span>
   );
