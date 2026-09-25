@@ -53,6 +53,7 @@ async function findCandidates({
        SELECT m.id, m.created_at
        FROM messages m
        WHERE m.contact_id = l.contact_id
+         AND m.is_history_import = false
        ORDER BY m.id DESC
        LIMIT 1
      ) latest ON true
@@ -71,6 +72,7 @@ async function findCandidates({
          MAX(m.created_at) FILTER (WHERE m.role = 'user') AS latest_customer_at
        FROM messages m
        WHERE m.contact_id = l.contact_id
+         AND m.is_history_import = false
          AND m.id > COALESCE(last_score.through_message_id, 0)
          AND (
            (l.started_message_id IS NOT NULL AND m.id >= l.started_message_id)
@@ -136,6 +138,7 @@ async function claimCandidate(candidate) {
        AND (
          SELECT m.id FROM messages m
          WHERE m.contact_id = l.contact_id
+         AND m.is_history_import = false
          ORDER BY m.id DESC LIMIT 1
        ) = $2
      ON CONFLICT (lead_id, through_message_id) DO UPDATE
@@ -175,6 +178,7 @@ async function getTranscript(
     `SELECT id, role, content, sent_by_username, created_at
      FROM messages
      WHERE contact_id = $1
+       AND is_history_import = false
        AND (
          ($2::integer IS NOT NULL AND id >= $2)
          OR
@@ -216,6 +220,7 @@ async function findTerminalFailuresNeedingAlert({ limit = 5 } = {}) {
          SELECT 1
          FROM messages newer_customer
          WHERE newer_customer.contact_id = l.contact_id
+           AND newer_customer.is_history_import = false
            AND newer_customer.role = 'user'
            AND newer_customer.id > failed.through_message_id
        )
@@ -312,7 +317,7 @@ async function completeScore({
 
     const leadResult = await client.query(
       `SELECT l.*,
-              (SELECT m.id FROM messages m WHERE m.contact_id = l.contact_id ORDER BY m.id DESC LIMIT 1)
+              (SELECT m.id FROM messages m WHERE m.contact_id = l.contact_id AND m.is_history_import = false ORDER BY m.id DESC LIMIT 1)
                 AS latest_message_id
        FROM leads l
        WHERE l.id = $1
@@ -346,6 +351,7 @@ async function completeScore({
            AND (
              SELECT m.id FROM messages m
              WHERE m.contact_id = leads.contact_id
+               AND m.is_history_import = false
              ORDER BY m.id DESC LIMIT 1
            ) = $3
          RETURNING *`,
@@ -362,6 +368,7 @@ async function completeScore({
            AND (
              SELECT m.id FROM messages m
              WHERE m.contact_id = leads.contact_id
+               AND m.is_history_import = false
              ORDER BY m.id DESC LIMIT 1
            ) = $2
          RETURNING *`,
