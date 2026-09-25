@@ -2,6 +2,55 @@
 
 This integration lets a business keep using the WhatsApp Business mobile app while the DA Chatbot uses the WhatsApp Cloud API on the same phone number.
 
+## Embedded Signup onboarding
+
+The admin portal now exposes **Setup Status → WhatsApp Business App coexistence**. This is an authorization and validation step only.
+
+Required server environment:
+
+```env
+META_APP_ID=<shared Meta app id>
+META_APP_SECRET=<shared Meta app secret>
+META_EMBEDDED_SIGNUP_CONFIG_ID=<Facebook Login for Business configuration id>
+META_GRAPH_API_VERSION=v26.0
+```
+
+The Meta configuration must use the WhatsApp Embedded Signup variation and support WhatsApp Business App onboarding.
+
+The browser launches Facebook Login for Business with:
+
+- `response_type: "code"`;
+- `override_default_response_type: true`;
+- `extras.featureType: "whatsapp_business_app_onboarding"`.
+
+For new configurations, use Embedded Signup v4. The v4 configuration controls products,
+assets and permissions in Meta's configuration builder; the JavaScript launch still keeps
+the Business App coexistence selector via `featureType`. The server continues to accept
+Meta's versioned completion payload without relying on a v3 launch parameter.
+
+The portal accepts the onboarding only when Meta posts `WA_EMBEDDED_SIGNUP` with event `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING`. The short-lived authorization code is sent to the authenticated server, exchanged there, and never stored or returned to the browser.
+
+The server then:
+
+1. validates that the exchanged token belongs to the configured Meta app;
+2. requires `whatsapp_business_management`;
+3. verifies the WABA returned by the completion event;
+4. discovers the WABA phone numbers;
+5. verifies the selected phone belongs to that WABA;
+6. checks `is_on_biz_app` and `platform_type` when Meta has propagated those fields;
+7. stores only non-secret audit metadata.
+
+The authorization step deliberately does **not**:
+
+- call `/{PHONE_NUMBER_ID}/register`;
+- change `WHATSAPP_WABA_ID` or `WHATSAPP_PHONE_NUMBER_ID`;
+- change `WHATSAPP_TOKEN`;
+- set `WHATSAPP_COEXISTENCE_ENABLED=true`;
+- subscribe the WABA or move its callback override;
+- initiate history/contact synchronization.
+
+This separation is intentional. A successful Meta popup must never become an implicit production cutover.
+
 ## Runtime behavior
 
 Coexistence is additive. Standard Cloud API clients keep the existing WhatsApp flow.
@@ -111,7 +160,6 @@ Intentionally deferred:
 - importing Business App address-book/contact state;
 - downloading and storing Business App echo media bytes;
 - applying edit/revoke events to earlier stored messages;
-- the customized Embedded Signup UI/flow required to start Business App coexistence onboarding;
 - initiating Meta's one-time history/contact synchronization;
 - automatic production-number migration.
 
@@ -119,7 +167,7 @@ Intentionally deferred:
 
 Before changing a client's production number:
 
-1. Complete Meta's customized Embedded Signup flow for WhatsApp Business App coexistence.
+1. Complete the admin portal Embedded Signup authorization and require the validated WABA/phone result.
 2. Confirm the signup event is `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` and do not run the normal phone-number registration step.
 3. Run `npm run whatsapp-coexistence:status -- --runtime-env-file <file>` and require `is_on_biz_app=true` plus `platform_type=CLOUD_API`.
 4. Configure the client's runtime phone number/WABA credentials through the normal secret-management process.

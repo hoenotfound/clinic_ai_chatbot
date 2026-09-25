@@ -62,6 +62,7 @@ const configRoutes = require("./routes/config");
 const contactsRoutes = require("./routes/contacts");
 const pipelineRoutes = require("./routes/pipeline");
 const setupStatusRoutes = require("./routes/setupStatus");
+const whatsappCoexistenceOnboardingRoutes = require("./routes/whatsappCoexistenceOnboarding");
 const goLiveRoutes = require("./routes/goLive");
 const opsReadinessRoutes = require("./routes/opsReadiness");
 const { bootstrapAdminUser } = require("./db/bootstrapAdmin");
@@ -1065,6 +1066,7 @@ app.use("/api/config", requireAuth, configRoutes);
 app.use("/api/contacts", requireAuth, contactsRoutes);
 app.use("/api/pipeline", requireAuth, pipelineRoutes);
 app.use("/api/setup-status", requireAuth, setupStatusRoutes);
+app.use("/api/whatsapp-coexistence/onboarding", requireAuth, whatsappCoexistenceOnboardingRoutes);
 app.use("/api/go-live", requireAuth, goLiveRoutes);
 
 // ── Serve the built portal frontend in production ──
