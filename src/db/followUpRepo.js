@@ -39,6 +39,7 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
          SELECT recent_inbound.content
          FROM messages recent_inbound
          WHERE recent_inbound.contact_id = c.id
+           AND recent_inbound.is_history_import = false
            AND recent_inbound.role = 'user'
          ORDER BY recent_inbound.created_at DESC, recent_inbound.id DESC
          LIMIT 5
@@ -49,13 +50,14 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
               is_automated_follow_up
        FROM messages
        WHERE contact_id = c.id
+         AND is_history_import = false
        ORDER BY created_at DESC, id DESC
        LIMIT 1
      ) latest ON true
      JOIN LATERAL (
        SELECT id, created_at
        FROM messages
-       WHERE contact_id = c.id AND role = 'user'
+       WHERE contact_id = c.id AND role = 'user' AND is_history_import = false
        ORDER BY created_at DESC, id DESC
        LIMIT 1
      ) latest_inbound ON true
@@ -106,13 +108,14 @@ async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt })
               is_automated_follow_up
        FROM messages
        WHERE contact_id = c.id
+         AND is_history_import = false
        ORDER BY created_at DESC, id DESC
        LIMIT 1
      ) latest ON true
      JOIN LATERAL (
        SELECT id, created_at
        FROM messages
-       WHERE contact_id = c.id AND role = 'user'
+       WHERE contact_id = c.id AND role = 'user' AND is_history_import = false
        ORDER BY created_at DESC, id DESC
        LIMIT 1
      ) latest_inbound ON true
@@ -188,12 +191,13 @@ async function saveIfStillEligible({
               is_automated_follow_up
        FROM messages, conversation_lock
        WHERE contact_id = $1
+         AND is_history_import = false
        ORDER BY created_at DESC, id DESC
        LIMIT 1
      ), latest_inbound AS (
        SELECT id, created_at
        FROM messages
-       WHERE contact_id = $1 AND role = 'user'
+       WHERE contact_id = $1 AND role = 'user' AND is_history_import = false
        ORDER BY created_at DESC, id DESC
        LIMIT 1
      )
