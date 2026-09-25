@@ -532,7 +532,7 @@ async function processIncomingMessage(
     }
 
     const aiCancellationKey =
-      channel === "whatsapp"
+      channel === "whatsapp" && aiReplyCancellation.enabled()
         ? aiReplyCancellation.keyForWhatsAppNumber(from)
         : null;
     const aiCancellationToken = aiReplyCancellation.snapshot(aiCancellationKey);
