@@ -201,14 +201,12 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
 }
 
 
-/* iPad and other touch devices need a deliberate drag handle because Safari
-   does not reliably support HTML5 draggable cards with touch input. */
+/* Keep a visible drag affordance on every device. Mouse users may still drag
+   the whole card; touch users use this handle so scrolling and opening a lead
+   remain separate gestures. */
 .touch-drag-handle {
-  display: none;
-}
-
-@media (any-pointer: coarse) {
-  .touch-drag-handle {
-    display: inline-flex;
-  }
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
+  -webkit-touch-callout: none;
 }

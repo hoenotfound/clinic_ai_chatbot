@@ -126,7 +126,7 @@ test("pipeline refreshes when messages and delivery states change", () => {
 });
 
 
-test("pipeline supports touch and pen stage moves without replacing mouse drag", () => {
+test("pipeline supports iPad touch, pen and mouse stage moves", () => {
   const pipelineSource = fs.readFileSync(
     path.join(__dirname, "..", "portal-frontend", "src", "pages", "Pipeline.jsx"),
     "utf8"
@@ -141,10 +141,14 @@ test("pipeline supports touch and pen stage moves without replacing mouse drag",
   );
 
   assert.match(pipelineSource, /function handleDragStart\(/);
+  assert.match(pipelineSource, /function handleTouchDragStart\(/);
   assert.match(pipelineSource, /function handlePointerDragStart\(/);
+  assert.match(pipelineSource, /addEventListener\("touchmove", handleTouchMove, \{ passive: false \}\)/);
   assert.match(pipelineSource, /data-pipeline-stage-id=\{stage\.id\}/);
   assert.match(pipelineSource, /document\.elementFromPoint/);
   assert.match(cardSource, /touch-drag-handle/);
+  assert.match(cardSource, /onTouchStart/);
   assert.match(cardSource, /onPointerDown/);
-  assert.match(cssSource, /@media \(any-pointer: coarse\)/);
+  assert.match(cssSource, /touch-action: none/);
+  assert.doesNotMatch(cssSource, /\.touch-drag-handle\s*\{\s*display:\s*none/);
 });

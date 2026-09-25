@@ -83,6 +83,10 @@ export default function Pipeline() {
   const refreshTimerRef = useRef(null);
   const pointerDragRef = useRef(null);
   const kanbanScrollRef = useRef(null);
+  const mobileStageRailRef = useRef(null);
+  const leadsRef = useRef([]);
+  const stagesRef = useRef([]);
+  const requestStageMoveRef = useRef(null);
   const selectedLeadIdRef = useRef(null);
   const pendingActivityRefreshRef = useRef(false);
   selectedLeadIdRef.current = selectedLeadId;
@@ -181,6 +185,8 @@ export default function Pipeline() {
 
   const leads = useMemo(() => data?.leads || [], [data?.leads]);
   const stages = useMemo(() => data?.stages || [], [data?.stages]);
+  leadsRef.current = leads;
+  stagesRef.current = stages;
   const availableSources = useMemo(() => [...new Set(
     leads.map((lead) => lead.source || lead.attribution?.source).filter(Boolean)
   )].sort(), [leads]);
@@ -377,6 +383,7 @@ export default function Pipeline() {
     }
     await updateLead(lead.id, { stageId: Number(stage.id) });
   }
+  requestStageMoveRef.current = requestStageMove;
 
   function handleDragStart(event, lead) {
     if (!canManageLeads) return;
@@ -404,12 +411,66 @@ export default function Pipeline() {
     setPointerDrag(next);
   }
 
+  function autoScrollForDrag(clientX) {
+    const edge = 72;
+    const step = 28;
+    for (const scroller of [kanbanScrollRef.current, mobileStageRailRef.current]) {
+      if (!scroller || scroller.offsetParent === null) continue;
+      const rect = scroller.getBoundingClientRect();
+      if (clientX < rect.left + edge) scroller.scrollLeft -= step;
+      if (clientX > rect.right - edge) scroller.scrollLeft += step;
+    }
+  }
+
+  function moveActiveDrag(clientX, clientY) {
+    const drag = pointerDragRef.current;
+    if (!drag) return;
+    autoScrollForDrag(clientX);
+    setPointerDragState({
+      ...drag,
+      clientX,
+      clientY,
+      overStageId: stageIdAtPoint(clientX, clientY),
+    });
+  }
+
+  function completeActiveDrag(clientX, clientY, cancelled = false) {
+    const drag = pointerDragRef.current;
+    if (!drag) return;
+    const stageId = stageIdAtPoint(clientX, clientY) ?? drag.overStageId;
+    pointerDragRef.current = null;
+    setPointerDrag(null);
+    if (cancelled || !stageId) return;
+
+    const lead = leadsRef.current.find((item) => Number(item.id) === Number(drag.leadId));
+    const stage = stagesRef.current.find((item) => Number(item.id) === Number(stageId));
+    if (lead && stage) requestStageMoveRef.current?.(lead, stage);
+  }
+
+  function handleTouchDragStart(event, lead) {
+    if (!canManageLeads) return;
+    const touch = event.changedTouches?.[0] || event.touches?.[0];
+    if (!touch) return;
+    if (event.cancelable) event.preventDefault();
+    event.stopPropagation();
+    setPointerDragState({
+      input: "touch",
+      touchId: touch.identifier,
+      leadId: Number(lead.id),
+      leadName: displayName(lead),
+      clientX: touch.clientX,
+      clientY: touch.clientY,
+      overStageId: stageIdAtPoint(touch.clientX, touch.clientY),
+    });
+  }
+
   function handlePointerDragStart(event, lead) {
-    if (!canManageLeads || event.pointerType === "mouse") return;
+    if (!canManageLeads || event.pointerType !== "pen") return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     setPointerDragState({
+      input: "pen",
       pointerId: event.pointerId,
       leadId: Number(lead.id),
       leadName: displayName(lead),
@@ -421,45 +482,64 @@ export default function Pipeline() {
 
   function handlePointerDragMove(event) {
     const drag = pointerDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (!drag || drag.input !== "pen" || drag.pointerId !== event.pointerId) return;
     event.preventDefault();
     event.stopPropagation();
-
-    const scroller = kanbanScrollRef.current;
-    if (scroller) {
-      const rect = scroller.getBoundingClientRect();
-      const edge = 72;
-      const step = 24;
-      if (event.clientX < rect.left + edge) scroller.scrollLeft -= step;
-      if (event.clientX > rect.right - edge) scroller.scrollLeft += step;
-    }
-
-    setPointerDragState({
-      ...drag,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      overStageId: stageIdAtPoint(event.clientX, event.clientY),
-    });
+    moveActiveDrag(event.clientX, event.clientY);
   }
 
   function finishPointerDrag(event, cancelled = false) {
     const drag = pointerDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (!drag || drag.input !== "pen" || drag.pointerId !== event.pointerId) return;
     event.preventDefault();
     event.stopPropagation();
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-
-    const stageId = stageIdAtPoint(event.clientX, event.clientY) ?? drag.overStageId;
-    pointerDragRef.current = null;
-    setPointerDrag(null);
-    if (cancelled || !stageId) return;
-
-    const lead = leads.find((item) => Number(item.id) === Number(drag.leadId));
-    const stage = stages.find((item) => Number(item.id) === Number(stageId));
-    if (lead && stage) requestStageMove(lead, stage);
+    completeActiveDrag(event.clientX, event.clientY, cancelled);
   }
+
+  useEffect(() => {
+    function trackedTouch(list, id) {
+      return Array.from(list || []).find((touch) => touch.identifier === id) || null;
+    }
+
+    function handleTouchMove(event) {
+      const drag = pointerDragRef.current;
+      if (!drag || drag.input !== "touch") return;
+      const touch = trackedTouch(event.touches, drag.touchId) || trackedTouch(event.changedTouches, drag.touchId);
+      if (!touch) return;
+      if (event.cancelable) event.preventDefault();
+      moveActiveDrag(touch.clientX, touch.clientY);
+    }
+
+    function handleTouchEnd(event) {
+      const drag = pointerDragRef.current;
+      if (!drag || drag.input !== "touch") return;
+      const touch = trackedTouch(event.changedTouches, drag.touchId);
+      if (!touch) return;
+      if (event.cancelable) event.preventDefault();
+      completeActiveDrag(touch.clientX, touch.clientY, false);
+    }
+
+    function handleTouchCancel(event) {
+      const drag = pointerDragRef.current;
+      if (!drag || drag.input !== "touch") return;
+      const touch = trackedTouch(event.changedTouches, drag.touchId);
+      const clientX = touch?.clientX ?? drag.clientX;
+      const clientY = touch?.clientY ?? drag.clientY;
+      completeActiveDrag(clientX, clientY, true);
+    }
+
+    document.addEventListener("touchmove", handleTouchMove, { passive: false });
+    document.addEventListener("touchend", handleTouchEnd, { passive: false });
+    document.addEventListener("touchcancel", handleTouchCancel, { passive: false });
+    return () => {
+      document.removeEventListener("touchmove", handleTouchMove);
+      document.removeEventListener("touchend", handleTouchEnd);
+      document.removeEventListener("touchcancel", handleTouchCancel);
+    };
+  }, []);
 
   async function handleLeadCreated(lead, created) {
     await refreshPipeline({ quiet: true });
@@ -591,7 +671,7 @@ export default function Pipeline() {
 
       <div className="flex min-h-0 flex-1 flex-col lg:hidden">
         <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-2.5">
-          <div className="flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5">
+          <div ref={mobileStageRailRef} className="flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5">
             {stages.map((stage) => {
               const isPointerTarget = Number(pointerDrag?.overStageId) === Number(stage.id);
               return (
@@ -626,7 +706,7 @@ export default function Pipeline() {
               </div>
 
               <div className="space-y-2.5">
-                {mobileStageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} now={now} noReplyHours={noReplyHours} onOpen={openLead} onDragStart={canManageLeads ? handleDragStart : undefined} onPointerDragStart={canManageLeads ? handlePointerDragStart : undefined} onPointerDragMove={canManageLeads ? handlePointerDragMove : undefined} onPointerDragEnd={canManageLeads ? (event) => finishPointerDrag(event, false) : undefined} onPointerDragCancel={canManageLeads ? (event) => finishPointerDrag(event, true) : undefined} pointerDragging={Number(pointerDrag?.leadId) === Number(lead.id)} />)}
+                {mobileStageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} now={now} noReplyHours={noReplyHours} onOpen={openLead} onDragStart={canManageLeads ? handleDragStart : undefined} onTouchDragStart={canManageLeads ? handleTouchDragStart : undefined} onPointerDragStart={canManageLeads ? handlePointerDragStart : undefined} onPointerDragMove={canManageLeads ? handlePointerDragMove : undefined} onPointerDragEnd={canManageLeads ? (event) => finishPointerDrag(event, false) : undefined} onPointerDragCancel={canManageLeads ? (event) => finishPointerDrag(event, true) : undefined} pointerDragging={Number(pointerDrag?.leadId) === Number(lead.id)} />)}
                 {mobileStageLeads.length === 0 && (
                   <div className="rounded-2xl border border-dashed border-[var(--color-border)] bg-white/60 px-4 py-10 text-center">
                     <p className="text-sm font-semibold">No leads here</p>
@@ -664,7 +744,7 @@ export default function Pipeline() {
                   <p className="mt-1.5 pl-[18px] text-[10px] text-[var(--color-text-muted)]">{formatMoney(value) || "RM 0"}</p>
                 </header>
                 <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-2.5">
-                  {stageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} now={now} noReplyHours={noReplyHours} onOpen={openLead} onDragStart={canManageLeads ? handleDragStart : undefined} onPointerDragStart={canManageLeads ? handlePointerDragStart : undefined} onPointerDragMove={canManageLeads ? handlePointerDragMove : undefined} onPointerDragEnd={canManageLeads ? (event) => finishPointerDrag(event, false) : undefined} onPointerDragCancel={canManageLeads ? (event) => finishPointerDrag(event, true) : undefined} pointerDragging={Number(pointerDrag?.leadId) === Number(lead.id)} />)}
+                  {stageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} now={now} noReplyHours={noReplyHours} onOpen={openLead} onDragStart={canManageLeads ? handleDragStart : undefined} onTouchDragStart={canManageLeads ? handleTouchDragStart : undefined} onPointerDragStart={canManageLeads ? handlePointerDragStart : undefined} onPointerDragMove={canManageLeads ? handlePointerDragMove : undefined} onPointerDragEnd={canManageLeads ? (event) => finishPointerDrag(event, false) : undefined} onPointerDragCancel={canManageLeads ? (event) => finishPointerDrag(event, true) : undefined} pointerDragging={Number(pointerDrag?.leadId) === Number(lead.id)} />)}
                   {stageLeads.length === 0 && (
                     <div className="rounded-2xl border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-xs text-[var(--color-text-muted)]">{canManageLeads ? "Drop leads here" : "No leads here"}</div>
                   )}
