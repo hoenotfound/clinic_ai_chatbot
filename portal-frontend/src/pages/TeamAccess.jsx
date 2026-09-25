@@ -691,6 +691,14 @@ function StaffEditorModal({
 }
 
 function ModalShell({ title, subtitle, onClose, children, wide = false }) {
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-0 sm:p-4" role="presentation">
       <section
