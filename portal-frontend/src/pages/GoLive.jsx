@@ -87,7 +87,7 @@ function IssueList({ title, items, tone = "warning", onNavigate }) {
             <p>{item.summary || "Readiness item needs review."}</p>
             {item.action && <p className="mt-1.5 font-medium text-[var(--color-text)]">Next: {item.action}</p>}
             {item.remediationRoute && onNavigate && (
-              <button type="button" onClick={() => onNavigate(item.remediationRoute)} className="mt-2 h-8 rounded-lg border border-[var(--color-border)] px-2.5 text-[11px] font-semibold">
+              <button type="button" onClick={() => onNavigate(item.remediationRoute)} className="mt-2 min-h-10 rounded-lg border border-[var(--color-border)] px-3 text-[11px] font-semibold transition hover:bg-[var(--color-bg)]">
                 Open {item.category === "business_setup" ? "Client Setup" : "Setup Status"}
               </button>
             )}
@@ -191,7 +191,7 @@ export default function GoLive() {
         <div className="w-full max-w-md rounded-3xl border border-[var(--color-border)] bg-white p-6 text-center shadow-sm">
           <h1 className="font-display text-lg font-bold">Couldn't load Go Live</h1>
           <p className="mt-2 text-sm leading-6 text-[var(--color-danger)]">{error}</p>
-          <button type="button" onClick={() => window.location.reload()} className="mt-5 h-11 rounded-xl bg-[var(--color-primary)] px-5 text-sm font-semibold text-white">Try again</button>
+          <button type="button" onClick={() => window.location.reload()} className="mt-5 h-11 rounded-xl bg-[var(--color-primary)] px-5 text-sm font-semibold text-white transition hover:bg-[var(--color-primary-hover)]">Try again</button>
         </div>
       </div>
     );
@@ -213,7 +213,7 @@ export default function GoLive() {
                 One server-authoritative decision for business setup, system health and the messaging channels this client actually purchased.
               </p>
             </div>
-            <button type="button" onClick={runGate} disabled={running} className="inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-5 text-sm font-semibold text-white shadow-sm disabled:cursor-wait disabled:opacity-60 sm:w-auto">
+            <button type="button" onClick={runGate} disabled={running} className="inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-[var(--color-primary-hover)] disabled:cursor-wait disabled:opacity-60 sm:w-auto">
               {running && <Spinner className="h-4 w-4" />}
               {running ? "Checking…" : "Run go-live checks"}
             </button>
@@ -279,7 +279,7 @@ export default function GoLive() {
             ) : (
               <p className="mt-4 rounded-xl bg-[var(--color-primary-light)] px-3.5 py-3 text-xs leading-5 text-[var(--color-primary)]">All required business information is complete.</p>
             )}
-            <button type="button" onClick={() => navigate("/settings/client-setup")} className="mt-4 h-10 rounded-xl border border-[var(--color-border)] px-3.5 text-xs font-semibold">Open Client Setup</button>
+            <button type="button" onClick={() => navigate("/settings/client-setup")} className="mt-4 h-10 rounded-xl border border-[var(--color-border)] px-3.5 text-xs font-semibold transition hover:bg-[var(--color-bg)]">Open Client Setup</button>
           </section>
 
           <section className="rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-sm sm:p-5">
@@ -297,7 +297,7 @@ export default function GoLive() {
               <Signal ok={data.system?.health?.inbound?.status === "healthy"} label="Inbound worker" detail={data.system?.health?.inbound?.summary || "Health unavailable."} />
               <Signal ok={["healthy", "warning"].includes(data.system?.health?.ai?.status)} label="AI runtime" detail={data.system?.health?.ai?.summary || "Health unavailable."} />
             </div>
-            <button type="button" onClick={() => navigate("/settings/setup")} className="mt-4 h-10 rounded-xl border border-[var(--color-border)] px-3.5 text-xs font-semibold">Open Setup Status</button>
+            <button type="button" onClick={() => navigate("/settings/setup")} className="mt-4 h-10 rounded-xl border border-[var(--color-border)] px-3.5 text-xs font-semibold transition hover:bg-[var(--color-bg)]">Open Setup Status</button>
           </section>
         </div>
 
