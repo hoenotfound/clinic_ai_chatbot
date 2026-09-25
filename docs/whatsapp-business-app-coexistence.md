@@ -28,8 +28,8 @@ Staff mode remains active until someone explicitly uses **Return to AI** in the 
 
 There are three guards against a competing AI response:
 
-- the echo invalidates an in-memory cancellation epoch as soon as the signed webhook is parsed;
-- the echo persists `mode = 'human'` before the webhook is acknowledged;
+- the echo is atomically deduplicated and persisted with `mode = 'human'` before the webhook is acknowledged;
+- once that transaction confirms a genuinely new staff message, it invalidates the in-memory AI cancellation epoch;
 - the AI path checks both the cancellation epoch and current contact ownership again immediately before the provider send.
 
 The existing customer-message durability, typing burst, and ownership checks remain in place.
