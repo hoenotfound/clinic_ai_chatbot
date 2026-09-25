@@ -117,3 +117,33 @@ test("history and app-state sync are recognized without becoming AI inbound mess
     appStateItems: 1,
   });
 });
+
+
+test("in-flight AI settle guard suppresses send when a Business App echo arrives", async () => {
+  const previous = process.env.WHATSAPP_COEXISTENCE_ENABLED;
+  process.env.WHATSAPP_COEXISTENCE_ENABLED = "true";
+  try {
+    const key = aiReplyCancellation.keyForWhatsAppNumber("60137770000");
+    const token = aiReplyCancellation.snapshot(key);
+    const guarded = aiReplyCancellation.settleBeforeSend(key, token, 25);
+    setTimeout(() => aiReplyCancellation.cancel(key), 5);
+    assert.equal(await guarded, false);
+  } finally {
+    if (previous == null) delete process.env.WHATSAPP_COEXISTENCE_ENABLED;
+    else process.env.WHATSAPP_COEXISTENCE_ENABLED = previous;
+  }
+});
+
+test("non-coexistence clients keep the existing reply path without settle delay", async () => {
+  const previous = process.env.WHATSAPP_COEXISTENCE_ENABLED;
+  delete process.env.WHATSAPP_COEXISTENCE_ENABLED;
+  try {
+    const key = aiReplyCancellation.keyForWhatsAppNumber("60138880000");
+    const token = aiReplyCancellation.snapshot(key);
+    aiReplyCancellation.cancel(key);
+    assert.equal(await aiReplyCancellation.settleBeforeSend(key, token, 1000), true);
+  } finally {
+    if (previous == null) delete process.env.WHATSAPP_COEXISTENCE_ENABLED;
+    else process.env.WHATSAPP_COEXISTENCE_ENABLED = previous;
+  }
+});
