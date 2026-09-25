@@ -59,3 +59,30 @@ test("automatic reply ownership fails closed when the contact disappears", async
     /disappeared/
   );
 });
+
+
+test("global pause blocks automatic replies before ownership lookup", async (t) => {
+  const originalGetContact = contactsRepo.getContactById;
+  const originalFlag = process.env.AUTOMATED_REPLIES_ENABLED;
+  let lookupCalled = false;
+
+  t.after(() => {
+    contactsRepo.getContactById = originalGetContact;
+    if (originalFlag === undefined) delete process.env.AUTOMATED_REPLIES_ENABLED;
+    else process.env.AUTOMATED_REPLIES_ENABLED = originalFlag;
+  });
+
+  process.env.AUTOMATED_REPLIES_ENABLED = "false";
+  contactsRepo.getContactById = async () => {
+    lookupCalled = true;
+    return { id: 45, mode: "ai" };
+  };
+
+  const result = await getAiOwnedContact(
+    { id: 45, mode: "ai", channel: "whatsapp" },
+    { channel: "whatsapp", from: "60123456789", reason: "AI reply" }
+  );
+
+  assert.equal(result, null);
+  assert.equal(lookupCalled, false);
+});
