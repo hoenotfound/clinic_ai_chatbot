@@ -197,7 +197,7 @@ export default function GeminiDiagnosticPanel() {
                   <tr key={row.label} className="border-t border-[var(--color-border)]/70 align-top">
                     <td className="px-2.5 py-2.5">
                       <p className="text-[10px] font-bold text-[var(--color-text)]">{row.label}</p>
-                      <p className="mt-0.5 text-[9px] text-[var(--color-text-muted)]">{row.fingerprint}</p>
+                      <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{row.fingerprint}</p>
                     </td>
                     <td className="px-2.5 py-2.5"><DiagnosticResult item={row.models["gemini-3.8-flash"]} /></td>
                     <td className="px-2.5 py-2.5"><DiagnosticResult item={row.models["gemini-3.5-flash-lite"]} /></td>
