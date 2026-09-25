@@ -7,6 +7,7 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
 const channelMessaging = require("./channelMessagingService");
+const { automatedRepliesEnabled } = require("./automaticReplyControl");
 
 // Retained as the failure-retry delay/export. Normal operation now sleeps until
 // the next actual follow-up is due instead of polling Postgres every minute.
@@ -18,6 +19,8 @@ let sweepRunning = false;
 let followUpTimer = null;
 
 function getActiveSettings() {
+  if (!automatedRepliesEnabled()) return null;
+
   const settings = clinicConfig.automatedFollowUp;
   if (
     !settings?.enabled ||

@@ -1,5 +1,6 @@
 const {
   buildProvisioningPlan,
+  renderEnvVars,
   requireExecutionConfig,
 } = require("./clientProvisioner");
 const {
@@ -128,15 +129,7 @@ async function discoverNeonDefaults({
 }
 
 function fullRenderEnvVars(plan, databaseUrl, managedRuntimeEnv) {
-  return [
-    { key: "CLIENT_SLUG", value: plan.clientSlug },
-    { key: "INITIAL_BUSINESS_TYPE", value: plan.industry },
-    { key: "PURCHASED_CHANNELS", value: plan.requiredChannels.join(",") },
-    { key: "DATABASE_URL", value: databaseUrl },
-    { key: "SESSION_SECRET", generateValue: true },
-    ...Object.entries(managedRuntimeEnv).map(([key, value]) => ({ key, value })),
-    ...Object.entries(plan.runtimeEnv).map(([key, value]) => ({ key, value })),
-  ];
+  return renderEnvVars(plan, databaseUrl, managedRuntimeEnv);
 }
 
 function validateExistingRenderService(service, plan) {
@@ -330,6 +323,10 @@ async function recoverInterruptedProvisioning(input = {}, {
     bucketName: plan.r2.bucketName,
     credentials,
   });
+  const existingRenderManagedRuntimeEnv = {
+    AUTOMATED_REPLIES_ENABLED: "false",
+    ...managedRuntimeEnv,
+  };
 
   let service;
   let deployId;
@@ -339,7 +336,7 @@ async function recoverInterruptedProvisioning(input = {}, {
     service = renderMatches[0];
     const redeployed = await redeployExistingRenderImpl({
       serviceId: service.id,
-      managedRuntimeEnv,
+      managedRuntimeEnv: existingRenderManagedRuntimeEnv,
       apiKey: env.PROVISIONING_RENDER_API_KEY,
       renderClient,
       fetchImpl,

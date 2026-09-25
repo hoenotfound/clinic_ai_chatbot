@@ -70,6 +70,7 @@ const RESERVED_RUNTIME_ENV_KEYS = new Set([
   "INITIAL_BUSINESS_TYPE",
   "BUSINESS_TYPE",
   "PURCHASED_CHANNELS",
+  "AUTOMATED_REPLIES_ENABLED",
   "PUBLIC_BASE_URL",
   "PORT",
 ]);
@@ -309,6 +310,7 @@ function renderEnvVars(plan, databaseUrl, managedRuntimeEnv = {}) {
     { key: "CLIENT_SLUG", value: plan.clientSlug },
     { key: "INITIAL_BUSINESS_TYPE", value: plan.industry },
     { key: "PURCHASED_CHANNELS", value: plan.requiredChannels.join(",") },
+    { key: "AUTOMATED_REPLIES_ENABLED", value: "false" },
     { key: "DATABASE_URL", value: databaseUrl },
     { key: "SESSION_SECRET", generateValue: true },
     ...managed,

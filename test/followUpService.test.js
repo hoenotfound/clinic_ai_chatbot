@@ -252,6 +252,34 @@ test("marks a rejected follow-up as failed and needing attention", async () => {
   assert.equal(attentionContactId, 9);
 });
 
+test("global reply pause prevents automated follow-up candidate sends", async (t) => {
+  enableTool();
+  const originalFlag = process.env.AUTOMATED_REPLIES_ENABLED;
+  let candidateQueries = 0;
+  let sendCount = 0;
+
+  t.after(() => {
+    if (originalFlag === undefined) delete process.env.AUTOMATED_REPLIES_ENABLED;
+    else process.env.AUTOMATED_REPLIES_ENABLED = originalFlag;
+  });
+
+  process.env.AUTOMATED_REPLIES_ENABLED = "false";
+  followUpRepo.findCandidates = async () => {
+    candidateQueries += 1;
+    return [{ contact_id: 15, whatsapp_number: "60155555555", trigger_message_id: 80 }];
+  };
+  whatsapp.sendMessage = async () => {
+    sendCount += 1;
+    return { success: true, wamid: "unexpected" };
+  };
+
+  const result = await runAutomatedFollowUps();
+
+  assert.equal(result.enabled, false);
+  assert.equal(candidateQueries, 0);
+  assert.equal(sendCount, 0);
+});
+
 test("does not query conversations while the tool is disabled", async () => {
   clinicConfig.automatedFollowUp = {
     ...clinicConfig.automatedFollowUp,

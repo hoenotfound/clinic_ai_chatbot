@@ -11,6 +11,7 @@ const ai = require("./services/aiService");
 const { transcribeAudio } = require("./services/transcriptionService");
 const { convertToMp3 } = require("./services/audioConvertService");
 const { getAiOwnedContact } = require("./services/automaticReplyGuard");
+const { automatedRepliesEnabled } = require("./services/automaticReplyControl");
 const {
   getPendingAiHandoffContact,
   pauseAiForHumanHandoff,
@@ -474,6 +475,19 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
+    if (!automatedRepliesEnabled()) {
+      // Pausing customer replies must not disable the deterministic safety
+      // net. Preserve the normal ownership transition and staff alert for any
+      // keyword that requires human review, but do not send a customer-facing
+      // handoff acknowledgement while the global switch is off.
+      if (keywordReason) {
+        const pausedContact = await pauseAiForHumanHandoff(contact.id, keywordReason);
+        if (pausedContact) contact = pausedContact;
+      }
+      console.log(`Skipping AI reply for ${channel}:${from} — automated replies are globally paused.`);
+      return { wasFirstMessage, keywordReason };
+    }
+
     const history = await conversationStore.getHistoryForContact(contact.id, {
       throughMessageId: savedInbound.id,
     });
@@ -615,6 +629,14 @@ async function processIncomingMessage(
 
     if (contact && savedInbound) {
       try {
+        if (!automatedRepliesEnabled()) {
+          await pauseAiForHumanHandoff(
+            contact.id,
+            "Message processing failed. A staff reply is needed."
+          );
+          return { wasFirstMessage, keywordReason };
+        }
+
         const fallbackContact = await getAiOwnedContact(contact, {
           channel,
           from,

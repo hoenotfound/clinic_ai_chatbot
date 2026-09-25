@@ -169,6 +169,7 @@ test("recovery adopts existing Neon/R2/Render, rotates R2 credentials, and retur
   assert.equal(result.r2.bucketName, "da-chatbot-acme-media");
   assert.equal(result.render.serviceId, "srv-existing");
   assert.equal(redeploys.length, 1);
+  assert.equal(redeploys[0].managedRuntimeEnv.AUTOMATED_REPLIES_ENABLED, "false");
   assert.equal(redeploys[0].managedRuntimeEnv.R2_SECRET_ACCESS_KEY, "recovered-r2-secret");
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes("recovered-r2-secret"), false);
@@ -196,6 +197,7 @@ test("recovery can recreate the exact missing R2 bucket then create Render witho
   assert.equal(bucketCreate[1].name, "da-chatbot-acme-media");
   const renderCreate = deps.calls.find(([name]) => name === "render.create")[1];
   const envByKey = new Map(renderCreate.envVars.map((entry) => [entry.key, entry.value]));
+  assert.equal(envByKey.get("AUTOMATED_REPLIES_ENABLED"), "false");
   assert.equal(envByKey.get("R2_SECRET_ACCESS_KEY"), "recovered-r2-secret");
   assert.match(envByKey.get("DATABASE_URL"), /^postgresql:\/\//);
   assert.equal(JSON.stringify(result).includes("recovered-r2-secret"), false);
