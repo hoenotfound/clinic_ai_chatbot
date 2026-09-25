@@ -6,6 +6,7 @@ async function persistStaffEchoIfNew(
   content,
   whatsappMessageId,
   actor,
+  syntheticHandoffOwner,
   queryable = null
 ) {
   const ownsClient = queryable == null;
@@ -40,15 +41,27 @@ async function persistStaffEchoIfNew(
     const updated = await client.query(
       `UPDATE contacts
        SET mode = 'human',
-           takeover_by = $1,
-           takeover_at = now(),
+           takeover_by = CASE
+             WHEN mode = 'human'
+              AND takeover_by IS NOT NULL
+              AND takeover_by IS DISTINCT FROM $3
+             THEN takeover_by
+             ELSE $1
+           END,
+           takeover_at = CASE
+             WHEN mode = 'human'
+              AND takeover_by IS NOT NULL
+              AND takeover_by IS DISTINCT FROM $3
+             THEN takeover_at
+             ELSE now()
+           END,
            needs_attention = false,
            attention_reason = NULL,
            is_unread = false,
            updated_at = now()
        WHERE id = $2
        RETURNING *`,
-      [actor, contactId]
+      [actor, contactId, syntheticHandoffOwner || null]
     );
 
     const contact = updated.rows[0] || null;
