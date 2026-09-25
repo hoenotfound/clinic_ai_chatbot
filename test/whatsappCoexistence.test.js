@@ -111,6 +111,7 @@ test("parses coexistence history with customer and business directions", () => {
       changes: [{
         field: "history",
         value: {
+          metadata: { display_phone_number: "60122972817" },
           history: [{
             metadata: { phase: 1, chunk_order: 2, progress: 80 },
             threads: [{
@@ -126,7 +127,6 @@ test("parses coexistence history with customer and business directions", () => {
                 },
                 {
                   from: "60122972817",
-                  to: "60137770000",
                   id: "wamid.history-staff",
                   timestamp: "1789980060",
                   type: "text",
