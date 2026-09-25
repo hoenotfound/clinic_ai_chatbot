@@ -853,21 +853,20 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
     return res.sendStatus(503);
   }
 
-  // Expensive/side-effecting work remains after the acknowledgement. Meta only
-  // waits for durable Postgres persistence, never AI/media/status processing.
+  // Complete idempotent Inbox/pipeline bookkeeping before ACK. If this process
+  // dies here, Meta can retry the webhook; duplicate echo persistence returns
+  // the existing row without retaking ownership or cancelling a later AI turn.
+  for (const persisted of durableBusinessAppEchoes) {
+    if (!persisted) continue;
+    await whatsappCoexistence.finalizeBusinessAppEcho(persisted);
+  }
+
   res.sendStatus(200);
 
   if (passiveSync.historyChunks || passiveSync.appStateItems) {
     console.log(
       `Acknowledged WhatsApp coexistence sync event without operational import: history=${passiveSync.historyChunks}, app_state=${passiveSync.appStateItems}`
     );
-  }
-
-  for (const persisted of durableBusinessAppEchoes) {
-    if (!persisted) continue;
-    whatsappCoexistence.finalizeBusinessAppEcho(persisted).catch((err) => {
-      console.error("Failed to finalize Business App echo bookkeeping:", err);
-    });
   }
 
   setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
