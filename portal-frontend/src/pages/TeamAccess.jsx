@@ -708,7 +708,7 @@ function ModalShell({ title, subtitle, onClose, children, wide = false }) {
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
           >
             <CloseIcon className="h-4 w-4" />
           </button>
