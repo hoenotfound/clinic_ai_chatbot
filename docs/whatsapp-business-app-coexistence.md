@@ -58,9 +58,21 @@ npm run whatsapp-webhook:configure -- \
 
 Do not use `--coexistence` on an ordinary Cloud API WABA unless the number is intentionally being prepared for coexistence.
 
+## Status check
+
+After coexistence onboarding, confirm the number is still active in both systems with the read-only command:
+
+```bash
+npm run whatsapp-coexistence:status -- \
+  --runtime-env-file ./client-runtime.env
+```
+
+A ready result requires both `is_on_biz_app=true` and `platform_type=CLOUD_API`.
+The command never registers or modifies the number and does not accept tokens as CLI arguments.
+
 ## History and app state sync
 
-`history` and `smb_app_state_sync` events are recognized and acknowledged, but this release deliberately does not import them into operational conversation tables.
+Meta currently requires the optional history/contact synchronization to be started within 24 hours of coexistence onboarding, and the history initiation can only be performed once for that onboarding session. This release recognizes and acknowledges `history` and `smb_app_state_sync` events, but deliberately does not initiate or import the synchronization into operational conversation tables.
 
 That prevents old data from:
 
@@ -99,23 +111,26 @@ Intentionally deferred:
 - importing Business App address-book/contact state;
 - downloading and storing Business App echo media bytes;
 - applying edit/revoke events to earlier stored messages;
-- a dedicated onboarding UI;
+- the customized Embedded Signup UI/flow required to start Business App coexistence onboarding;
+- initiating Meta's one-time history/contact synchronization;
 - automatic production-number migration.
 
 ## Go-live checks for a coexistence number
 
 Before changing a client's production number:
 
-1. Complete Meta's WhatsApp Business App coexistence onboarding for that number.
-2. Confirm Meta reports the number as still on the Business App, including the current `is_on_biz_app` / platform status where available.
-3. Configure the client's runtime phone number/WABA credentials through the normal secret-management process.
-4. Set `WHATSAPP_COEXISTENCE_ENABLED=true` only on that client.
-5. Configure the per-WABA callback with `--coexistence`.
-6. Verify a normal customer inbound produces one AI reply.
-7. Verify a Business App staff reply appears in the DA Inbox and switches the conversation to Staff mode.
-8. Start an AI turn, reply from the Business App before it sends, and verify no Cloud API AI response is emitted.
-9. Retry the same echo payload and verify there is only one stored staff message.
-10. Verify Cloud API sends remain visible/deliver normally and do not recurse.
-11. Verify the existing test-number client path and Facebook/Instagram tests remain green.
+1. Complete Meta's customized Embedded Signup flow for WhatsApp Business App coexistence.
+2. Confirm the signup event is `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING` and do not run the normal phone-number registration step.
+3. Run `npm run whatsapp-coexistence:status -- --runtime-env-file <file>` and require `is_on_biz_app=true` plus `platform_type=CLOUD_API`.
+4. Configure the client's runtime phone number/WABA credentials through the normal secret-management process.
+5. Set `WHATSAPP_COEXISTENCE_ENABLED=true` only on that client.
+6. Configure the per-WABA callback with `--coexistence`.
+7. If history/contact sync is required, initiate it within Meta's 24-hour onboarding window using a dedicated import path before enabling operational automation.
+8. Verify a normal customer inbound produces one AI reply.
+9. Verify a Business App staff reply appears in the DA Inbox and switches the conversation to Staff mode.
+10. Start an AI turn, reply from the Business App before it sends, and verify no Cloud API AI response is emitted.
+11. Retry the same echo payload and verify there is only one stored staff message.
+12. Verify Cloud API sends remain visible/deliver normally and do not recurse.
+13. Verify the existing test-number client path and Facebook/Instagram tests remain green.
 
 Do not point a live production number at this branch before the branch test suite and PR regression review pass.
