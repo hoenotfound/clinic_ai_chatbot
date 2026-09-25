@@ -199,3 +199,16 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
   background: color-mix(in srgb, var(--color-text-muted) 28%, transparent);
   background-clip: padding-box;
 }
+
+
+/* iPad and other touch devices need a deliberate drag handle because Safari
+   does not reliably support HTML5 draggable cards with touch input. */
+.touch-drag-handle {
+  display: none;
+}
+
+@media (any-pointer: coarse) {
+  .touch-drag-handle {
+    display: inline-flex;
+  }
+}
