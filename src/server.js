@@ -579,6 +579,27 @@ async function processIncomingMessage(
       }
     }
 
+    // Final coexistence/ownership fence immediately before the provider send.
+    // This catches a Business App reply that arrived after the earlier AI
+    // generation guard but before the outbound call.
+    if (
+      aiCancellationKey &&
+      aiReplyCancellation.cancelledSince(aiCancellationKey, aiCancellationToken)
+    ) {
+      console.log(
+        `Skipping AI reply for ${channel}:${from} — WhatsApp Business App staff replied before send.`
+      );
+      return { wasFirstMessage, keywordReason };
+    }
+
+    const finalAiContact = await getAiOwnedContact(contact, {
+      channel,
+      from,
+      reason: "AI provider send",
+    });
+    if (!finalAiContact) return { wasFirstMessage, keywordReason };
+    contact = finalAiContact;
+
     responseAttempted = true;
     const sendOutcome = await sendTrackedText(contact, reply);
 
@@ -808,10 +829,11 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
 
   let durableClaims;
   let durableStatusJobs;
+  let durableBusinessAppEchoes;
   try {
     // Persist customer messages, phone-app staff echoes, and delivery statuses
     // before ACK. A failed write returns 503 so Meta retries safely.
-    [durableClaims, durableStatusJobs] = await Promise.all([
+    [durableClaims, durableStatusJobs, durableBusinessAppEchoes] = await Promise.all([
       Promise.all(
         incomingMessages.map(async (incoming) => ({
           queueKey: incoming.from,
@@ -829,6 +851,10 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
     console.error("Failed to durably accept WhatsApp webhook work:", err);
     return res.sendStatus(503);
   }
+
+  // Keep the echo results referenced so the durability contract remains clear:
+  // all app-originated staff messages are persisted before the ACK.
+  void durableBusinessAppEchoes;
 
   // Expensive/side-effecting work remains after the acknowledgement. Meta only
   // waits for durable Postgres persistence, never AI/media/status processing.
