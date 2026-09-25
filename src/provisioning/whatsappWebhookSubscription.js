@@ -309,6 +309,27 @@ async function configureWhatsAppWebhook({
     fetchImpl,
   });
 
+  const coexistenceFields = [
+    "messages",
+    "smb_message_echoes",
+    "smb_app_state_sync",
+    "history",
+  ];
+
+  if (coexistence) {
+    // Meta requires the app to be subscribed to the WABA before a per-WABA
+    // callback override can be applied. New coexistence onboarding can produce
+    // a WABA that has not yet established that baseline app subscription.
+    await graphRequest({
+      path: `${encodeURIComponent(credentials.wabaId)}/subscribed_apps`,
+      method: "POST",
+      accessToken: credentials.accessToken,
+      graphVersion,
+      fetchImpl,
+      body: { subscribed_fields: coexistenceFields },
+    });
+  }
+
   await graphRequest({
     path: `${encodeURIComponent(credentials.wabaId)}/subscribed_apps`,
     method: "POST",
@@ -318,16 +339,7 @@ async function configureWhatsAppWebhook({
     body: {
       override_callback_uri: callbackUrl,
       verify_token: credentials.verifyToken,
-      ...(coexistence
-        ? {
-            subscribed_fields: [
-              "messages",
-              "smb_message_echoes",
-              "smb_app_state_sync",
-              "history",
-            ],
-          }
-        : {}),
+      ...(coexistence ? { subscribed_fields: coexistenceFields } : {}),
     },
   });
 
