@@ -829,12 +829,12 @@ function ToolNavButton({ active, onClick, icon, title, description, enabled }) {
 
 function ComingSoonTool({ icon, title, description }) {
   return (
-    <div className="flex w-full min-w-[13.5rem] items-start gap-3 rounded-2xl border border-[var(--color-border)] bg-white p-3.5 xl:min-w-0" aria-disabled="true">
+    <div className="hidden w-full min-w-[13.5rem] items-start gap-3 rounded-2xl border border-[var(--color-border)] bg-white p-3.5 xl:flex xl:min-w-0" aria-disabled="true">
       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--color-bg)] text-[var(--color-text-muted)]">{icon}</span>
       <span className="min-w-0 flex-1">
         <span className="flex flex-wrap items-center gap-1.5">
           <span className="text-xs font-semibold text-[var(--color-text)]">{title}</span>
-          <span className="rounded bg-[var(--color-bg)] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Soon</span>
+          <span className="rounded bg-[var(--color-bg)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Soon</span>
         </span>
         <span className="mt-1 block text-[10px] leading-4 text-[var(--color-text-muted)]">{description}</span>
       </span>
