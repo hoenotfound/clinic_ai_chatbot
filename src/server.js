@@ -139,13 +139,54 @@ async function recordReadinessSendEvidence(savedMessage, contact, sendResult, or
   }
 }
 
-async function sendTrackedText(contact, text, origin = "ai_reply") {
+async function sendTrackedText(
+  contact,
+  text,
+  origin = "ai_reply",
+  { canSend = null } = {}
+) {
+  const guarded = typeof canSend === "function";
+
+  if (guarded && canSend() !== true) {
+    return {
+      finalMessage: null,
+      sendResult: { success: false, wamid: null, cancelled: true, error: null },
+    };
+  }
+
+  // A coexistence-guarded AI reply stays unpublished until the provider send
+  // is actually allowed to begin. This avoids briefly showing a draft in the
+  // Inbox if a phone-app staff reply arrives during the DB insert.
   const saved = await conversationStore.appendMessageForContact(
     contact.id,
     "assistant",
-    text
+    text,
+    null,
+    null,
+    null,
+    null,
+    guarded ? { publish: false } : undefined
   );
-  const sendResult = await channelMessaging.sendText(contact, text);
+
+  const sendResult = await channelMessaging.sendText(
+    contact,
+    text,
+    guarded ? { preSendCheck: canSend } : {}
+  );
+
+  if (sendResult.cancelled) {
+    await messagesRepo.deleteUnsentAssistantMessage(saved.id);
+    return { finalMessage: null, sendResult };
+  }
+
+  if (guarded) {
+    realtimeEvents.publish("conversation_changed", {
+      contactId: saved.contact_id,
+      messageId: saved.id,
+      reason: "message",
+    });
+  }
+
   const errorText = sendResult.error || channelMessaging.rejectedError(contact.channel);
   const finalMessage = await persistSendOutcome(saved, sendResult, errorText);
   // Do not extend the durable inbound critical path after the provider has
@@ -564,28 +605,20 @@ async function processIncomingMessage(
       const pendingHandoff = await getPendingAiHandoffContact(pausedContact.id);
       if (!pendingHandoff) return { wasFirstMessage, keywordReason };
       contact = pendingHandoff;
-    } else if (bookingReady) {
-      try {
-        await markBookingReadyForContact(contact.id, savedInbound.id, {
-          details,
-        });
-      } catch (bookingOutcomeErr) {
-        // Sales bookkeeping/alerts must never prevent the customer from
-        // receiving the AI reply that tells them staff will confirm the slot.
-        console.error(
-          `Failed to apply booking-ready outcome for contact ${contact.id}:`,
-          bookingOutcomeErr
-        );
-      }
     }
 
-    const finalAiContact = await getAiOwnedContact(contact, {
-      channel,
-      from,
-      reason: "AI provider send",
-    });
-    if (!finalAiContact) return { wasFirstMessage, keywordReason };
-    contact = finalAiContact;
+    // The synthetic AI handoff is intentionally Staff mode, but the one
+    // customer-facing handoff acknowledgement is still allowed while that
+    // synthetic ownership remains unchanged. Normal replies require AI mode.
+    const finalSendContact = flagged
+      ? await getPendingAiHandoffContact(contact.id)
+      : await getAiOwnedContact(contact, {
+          channel,
+          from,
+          reason: "AI provider send",
+        });
+    if (!finalSendContact) return { wasFirstMessage, keywordReason };
+    contact = finalSendContact;
 
     // Run this after the final ownership read, as close as possible to the
     // tracked provider send. A Business App webhook marks its echo pending
@@ -601,8 +634,39 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
+    const canSendAiReply = aiCancellationKey
+      ? () => aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
+      : null;
+
     responseAttempted = true;
-    const sendOutcome = await sendTrackedText(contact, reply);
+    const sendOutcome = await sendTrackedText(
+      contact,
+      reply,
+      "ai_reply",
+      { canSend: canSendAiReply }
+    );
+    if (sendOutcome.sendResult.cancelled) {
+      console.log(
+        `Skipping AI reply for ${channel}:${from} — WhatsApp Business App staff activity reached the final send boundary.`
+      );
+      return { wasFirstMessage, keywordReason };
+    }
+
+    // Apply conversion-ready state only after this AI turn was not suppressed
+    // by a staff phone reply. Provider rejection still keeps the existing
+    // behavior of surfacing Booking Ready for staff follow-up.
+    if (bookingReady) {
+      try {
+        await markBookingReadyForContact(contact.id, savedInbound.id, {
+          details,
+        });
+      } catch (bookingOutcomeErr) {
+        console.error(
+          `Failed to apply booking-ready outcome for contact ${contact.id}:`,
+          bookingOutcomeErr
+        );
+      }
+    }
 
     // Never follow a sensitive handoff, deterministic safety match, Booking
     // Ready outcome, unresolved staff-attention state, or failed text delivery
