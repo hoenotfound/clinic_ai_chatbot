@@ -343,6 +343,214 @@ function parseIncomingMessages(body) {
   }
 }
 
+function normalizeWebhookTimestamp(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return new Date(seconds * 1000).toISOString();
+}
+
+function parseWebhookMessageContent(message, senderLabel = "Staff") {
+  const type = message?.type || "unknown";
+  if (type === "text") {
+    return {
+      text: message.text?.body || "",
+      mediaId: null,
+      mediaType: null,
+      unsupportedType: null,
+    };
+  }
+  if (type === "image") {
+    return {
+      text: message.image?.caption || `📷 [${senderLabel} sent a photo]`,
+      mediaId: message.image?.id || null,
+      mediaType: "image",
+      unsupportedType: null,
+    };
+  }
+  if (type === "audio") {
+    return {
+      text: `🎤 [${senderLabel} sent a voice message]`,
+      mediaId: message.audio?.id || null,
+      mediaType: "audio",
+      unsupportedType: null,
+    };
+  }
+  if (type === "video") {
+    return {
+      text: message.video?.caption || `🎬 [${senderLabel} sent a video]`,
+      mediaId: message.video?.id || null,
+      mediaType: "video",
+      unsupportedType: null,
+    };
+  }
+  if (type === "document") {
+    return {
+      text: message.document?.caption || message.document?.filename || `📎 [${senderLabel} sent a document]`,
+      mediaId: message.document?.id || null,
+      mediaType: "document",
+      unsupportedType: null,
+    };
+  }
+  if (type === "sticker") {
+    return {
+      text: `[${senderLabel} sent a sticker]`,
+      mediaId: message.sticker?.id || null,
+      mediaType: "sticker",
+      unsupportedType: null,
+    };
+  }
+  if (type === "reaction") {
+    return {
+      text: message.reaction?.emoji
+        ? `Reaction: ${message.reaction.emoji}`
+        : `[${senderLabel} sent a reaction]`,
+      mediaId: null,
+      mediaType: null,
+      unsupportedType: null,
+    };
+  }
+  if (type === "edit") {
+    return {
+      text: message.edit?.text?.body || `[${senderLabel} edited a message]`,
+      mediaId: null,
+      mediaType: null,
+      unsupportedType: "edit",
+    };
+  }
+  if (type === "revoke") {
+    return {
+      text: `[${senderLabel} deleted a message]`,
+      mediaId: null,
+      mediaType: null,
+      unsupportedType: "revoke",
+    };
+  }
+  return {
+    text: `[${senderLabel} sent an unsupported ${type} message]`,
+    mediaId: null,
+    mediaType: null,
+    unsupportedType: type,
+  };
+}
+
+/**
+ * Business App coexistence staff messages arrive separately from customer
+ * messages. They must never enter parseIncomingMessages(), because doing so
+ * would invert the sender and can trigger an automatic reply to a staff action.
+ */
+function parseSmbMessageEchoes(body) {
+  try {
+    const parsed = [];
+    for (const entry of body?.entry || []) {
+      for (const change of entry?.changes || []) {
+        if (change?.field !== "smb_message_echoes") continue;
+        const value = change?.value || {};
+        for (const message of value.message_echoes || []) {
+          if (!message?.id || !message?.to) continue;
+          parsed.push({
+            id: message.id,
+            from: message.from || value?.metadata?.display_phone_number || null,
+            to: message.to,
+            timestamp: normalizeWebhookTimestamp(message.timestamp),
+            type: message.type || "unknown",
+            ...parseWebhookMessageContent(message, "WhatsApp Business App staff"),
+          });
+        }
+      }
+    }
+    return parsed;
+  } catch (err) {
+    console.error("Failed to parse WhatsApp Business App message echoes:", err);
+    return [];
+  }
+}
+
+/**
+ * Contact-state sync is intentionally parsed independently from CRM contact
+ * creation. The coexistence service can use these records conservatively
+ * without turning the business owner's address book into chatbot leads.
+ */
+function parseSmbAppStateSync(body) {
+  try {
+    const parsed = [];
+    for (const entry of body?.entry || []) {
+      for (const change of entry?.changes || []) {
+        if (change?.field !== "smb_app_state_sync") continue;
+        for (const item of change?.value?.state_sync || []) {
+          const contact = item?.contact || {};
+          const phoneNumber = contact.phone_number || contact.wa_id || null;
+          if (!phoneNumber) continue;
+          parsed.push({
+            type: item.type || "contact",
+            action: item.action || null,
+            phoneNumber,
+            fullName: contact.full_name || null,
+            firstName: contact.first_name || null,
+            timestamp: normalizeWebhookTimestamp(item?.metadata?.timestamp || item?.timestamp),
+          });
+        }
+      }
+    }
+    return parsed;
+  } catch (err) {
+    console.error("Failed to parse WhatsApp Business App state sync:", err);
+    return [];
+  }
+}
+
+function historyPeerForMessage(thread, message) {
+  if (message?.to) return message.to;
+  if (message?.from && message.from !== thread?.id) return thread?.id || null;
+  return message?.from || thread?.id || null;
+}
+
+/**
+ * History sync is data import, never a live inbound turn. The returned records
+ * carry an explicit direction so callers can persist them without invoking
+ * customer-message preparation, AI, lead scoring, unread state or follow-ups.
+ */
+function parseCoexistenceHistory(body) {
+  try {
+    const parsed = [];
+    for (const entry of body?.entry || []) {
+      for (const change of entry?.changes || []) {
+        if (change?.field !== "history") continue;
+        const value = change?.value || {};
+        for (const batch of value.history || []) {
+          for (const thread of batch?.threads || []) {
+            for (const message of thread?.messages || []) {
+              if (!message?.id) continue;
+              const peer = historyPeerForMessage(thread, message);
+              if (!peer) continue;
+              const businessOriginated = Boolean(message.to);
+              parsed.push({
+                id: message.id,
+                peer,
+                direction: businessOriginated ? "business" : "customer",
+                from: message.from || null,
+                to: message.to || null,
+                timestamp: normalizeWebhookTimestamp(message.timestamp),
+                type: message.type || "unknown",
+                historyStatus: message?.history_context?.status || null,
+                phase: batch?.metadata?.phase || null,
+                chunkOrder: batch?.metadata?.chunk_order ?? null,
+                progress: batch?.metadata?.progress ?? null,
+                ...parseWebhookMessageContent(
+                  message,
+                  businessOriginated ? "WhatsApp Business App staff" : "Customer"
+                ),
+              });
+            }
+          }
+        }
+    }
+    return parsed;
+  } catch (err) {
+    console.error("Failed to parse WhatsApp coexistence history:", err);
+    return [];
+  }
+}
+
 /**
  * Pulls out every delivery-status update from a WhatsApp webhook payload —
  * the async 'sent' / 'delivered' / 'read' / 'failed' callbacks Meta sends
@@ -389,4 +597,7 @@ module.exports = {
   downloadMedia,
   parseIncomingMessages,
   parseStatusUpdates,
+  parseSmbMessageEchoes,
+  parseSmbAppStateSync,
+  parseCoexistenceHistory,
 };
