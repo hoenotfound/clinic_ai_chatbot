@@ -34,8 +34,8 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="flex h-screen w-[4.25rem] shrink-0 flex-col bg-[var(--color-sidebar)] text-[var(--color-sidebar-text)] transition-[width] lg:w-60">
-      <div className="flex items-center justify-center gap-2.5 px-3 py-5 lg:justify-start lg:px-5">
+    <aside className="flex h-dvh w-[4.25rem] shrink-0 flex-col bg-[var(--color-sidebar)] text-[var(--color-sidebar-text)] transition-[width] min-[1440px]:w-60">
+      <div className="flex items-center justify-center gap-2.5 px-3 py-5 min-[1440px]:justify-start min-[1440px]:px-5">
         {branding.clientLogoUrl ? (
           <img
             src={branding.clientLogoUrl}
@@ -50,12 +50,12 @@ export default function Sidebar() {
             {branding.initials}
           </div>
         )}
-        <span className="hidden truncate font-display text-[15px] font-bold text-white lg:inline">
+        <span className="hidden truncate font-display text-[15px] font-bold text-white min-[1440px]:inline">
           {branding.clientName}
         </span>
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-2 lg:px-3">
+      <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-2 min-[1440px]:px-3">
         {visibleItems.map((item) => (
           <NavLink
             key={item.to}
@@ -63,7 +63,7 @@ export default function Sidebar() {
             title={item.label}
             aria-label={item.label}
             className={({ isActive }) =>
-              `flex items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors lg:justify-start lg:px-3 ${
+              `flex items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors min-[1440px]:justify-start min-[1440px]:px-3 ${
                 isActive
                   ? "bg-[var(--color-primary)] text-white"
                   : "text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)]"
@@ -71,13 +71,13 @@ export default function Sidebar() {
             }
           >
             <item.icon className="h-[18px] w-[18px] shrink-0" />
-            <span className="hidden lg:inline">{item.label}</span>
+            <span className="hidden min-[1440px]:inline">{item.label}</span>
           </NavLink>
         ))}
       </nav>
 
-      <div className="border-t border-white/10 px-2 py-4 lg:px-3">
-        <div className="mb-1 hidden px-3 py-2 lg:block">
+      <div className="border-t border-white/10 px-2 py-4 min-[1440px]:px-3">
+        <div className="mb-1 hidden px-3 py-2 min-[1440px]:block">
           <p className="truncate text-sm font-medium text-white">
             {user?.displayName || username}
           </p>
@@ -91,10 +91,10 @@ export default function Sidebar() {
           onClick={handleLogout}
           title="Log out"
           aria-label="Log out"
-          className="flex w-full items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm text-[var(--color-sidebar-text-muted)] transition-colors hover:bg-[var(--color-sidebar-hover)] hover:text-white lg:justify-start lg:px-3"
+          className="flex w-full items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm text-[var(--color-sidebar-text-muted)] transition-colors hover:bg-[var(--color-sidebar-hover)] hover:text-white min-[1440px]:justify-start min-[1440px]:px-3"
         >
           <LogoutIcon className="h-[18px] w-[18px] shrink-0" />
-          <span className="hidden lg:inline">Log out</span>
+          <span className="hidden min-[1440px]:inline">Log out</span>
         </button>
       </div>
     </aside>
