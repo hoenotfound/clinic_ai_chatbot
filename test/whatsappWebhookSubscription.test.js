@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   configureWhatsAppWebhook,
+  getWhatsAppCoexistenceStatus,
   subscriptionMatchesCallback,
   whatsappCallbackUrl,
 } = require("../src/provisioning/whatsappWebhookSubscription");
@@ -203,4 +204,59 @@ test("coexistence configuration subscribes the required message-path fields", as
     "history",
   ]);
   assert.equal(result.coexistence, true);
+});
+
+
+test("coexistence status requires both Business App presence and Cloud API platform", async () => {
+  const fetchImpl = async (url, options = {}) => {
+    assert.equal(
+      url,
+      "https://graph.facebook.com/v26.0/phone-123?fields=is_on_biz_app,platform_type"
+    );
+    assert.equal(options.headers.Authorization, "Bearer access-token");
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: "phone-123",
+        is_on_biz_app: true,
+        platform_type: "CLOUD_API",
+      }),
+    };
+  };
+
+  assert.deepEqual(
+    await getWhatsAppCoexistenceStatus({
+      phoneNumberId: "phone-123",
+      accessToken: "access-token",
+      fetchImpl,
+    }),
+    {
+      phoneNumberId: "phone-123",
+      isOnBizApp: true,
+      platformType: "CLOUD_API",
+      coexistenceReady: true,
+    }
+  );
+});
+
+test("coexistence status does not treat Business App-only platform state as ready", async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      id: "phone-123",
+      is_on_biz_app: true,
+      platform_type: "ON_PREMISE",
+    }),
+  });
+
+  const result = await getWhatsAppCoexistenceStatus({
+    phoneNumberId: "phone-123",
+    accessToken: "access-token",
+    fetchImpl,
+  });
+  assert.equal(result.coexistenceReady, false);
+  assert.equal(result.isOnBizApp, true);
+  assert.equal(result.platformType, "ON_PREMISE");
 });
