@@ -219,7 +219,7 @@ export default function GoLive() {
             </button>
           </div>
           <div className="mt-3 flex items-start gap-2 text-[11px] leading-5 text-[var(--color-text-muted)] sm:text-xs">
-            <span aria-hidden="true">🛡️</span>
+            <ShieldIcon className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-primary)]" />
             <p>This page never sends a synthetic customer message. Live proof only comes from a real inbound conversation followed by the normal AI reply path.</p>
           </div>
         </div>
@@ -335,5 +335,13 @@ export default function GoLive() {
         </section>
       </main>
     </div>
+  );
+
+function ShieldIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M12 3 20 6v5c0 5-3.4 8.3-8 10-4.6-1.7-8-5-8-10V6l8-3Z" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="m9 12 2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
