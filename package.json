@@ -22,7 +22,8 @@
     "ops:register-client": "node scripts/registerOpsClient.js",
     "ops:enroll-client": "node scripts/enrollOpsClient.js",
     "ops:generate-token": "node scripts/generateOpsReadinessToken.js",
-    "test": "node --test"
+    "test": "node --test",
+    "whatsapp-coexistence:status": "node scripts/checkWhatsAppCoexistence.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
