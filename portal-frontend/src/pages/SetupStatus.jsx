@@ -3,6 +3,7 @@ import { api } from "../api";
 import Spinner from "../components/Spinner";
 import GeminiDiagnosticPanel from "../components/GeminiDiagnosticPanel";
 import BusinessProfileSetupPanel from "../components/BusinessProfileSetupPanel";
+import WhatsAppCoexistenceOnboardingPanel from "../components/WhatsAppCoexistenceOnboardingPanel";
 
 const GROUP_ORDER = ["Core system", "AI", "Messaging channels", "Supporting services"];
 
@@ -285,6 +286,8 @@ export default function SetupStatus() {
             </div>
           </section>
         )}
+
+        <WhatsAppCoexistenceOnboardingPanel />
 
         <section>
           <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
