@@ -1668,7 +1668,7 @@ function ThreadView({
                 disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
                 title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice recording first" : "Return control to AI"}
                 aria-label="Return control to AI"
-                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-white px-2.5 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50 sm:h-auto sm:gap-2 sm:px-3 sm:py-2"
+                className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-white px-2.5 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50 sm:h-auto sm:gap-2 sm:px-3 sm:py-2"
               >
                 {actionPending ? <Spinner /> : <BotIcon className="h-4 w-4" />}
                 <span className="hidden min-[430px]:inline">Return to AI</span>
@@ -1682,7 +1682,7 @@ function ThreadView({
                 }}
                 disabled={actionPending}
                 aria-label="Take over conversation"
-                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-[var(--color-primary)] px-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50 sm:h-auto sm:gap-2 sm:px-3 sm:py-2"
+                className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-[var(--color-primary)] px-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50 sm:h-auto sm:gap-2 sm:px-3 sm:py-2"
               >
                 {actionPending ? <Spinner /> : <UserIcon className="h-4 w-4" />}
                 <span className="hidden min-[430px]:inline">Take over</span>
