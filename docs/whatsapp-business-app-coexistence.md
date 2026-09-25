@@ -21,8 +21,12 @@ The browser launches Facebook Login for Business with:
 
 - `response_type: "code"`;
 - `override_default_response_type: true`;
-- `extras.featureType: "whatsapp_business_app_onboarding"`;
-- `extras.sessionInfoVersion: "3"`.
+- `extras.featureType: "whatsapp_business_app_onboarding"`.
+
+For new configurations, use Embedded Signup v4. The v4 configuration controls products,
+assets and permissions in Meta's configuration builder; the JavaScript launch still keeps
+the Business App coexistence selector via `featureType`. The server continues to accept
+Meta's versioned completion payload without relying on a v3 launch parameter.
 
 The portal accepts the onboarding only when Meta posts `WA_EMBEDDED_SIGNUP` with event `FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING`. The short-lived authorization code is sent to the authenticated server, exchanged there, and never stored or returned to the browser.
 
