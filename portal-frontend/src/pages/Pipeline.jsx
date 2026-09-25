@@ -84,6 +84,9 @@ export default function Pipeline() {
   const pointerDragRef = useRef(null);
   const kanbanScrollRef = useRef(null);
   const mobileStageRailRef = useRef(null);
+  const leadsRef = useRef([]);
+  const stagesRef = useRef([]);
+  const requestStageMoveRef = useRef(null);
   const selectedLeadIdRef = useRef(null);
   const pendingActivityRefreshRef = useRef(false);
   selectedLeadIdRef.current = selectedLeadId;
@@ -182,6 +185,8 @@ export default function Pipeline() {
 
   const leads = useMemo(() => data?.leads || [], [data?.leads]);
   const stages = useMemo(() => data?.stages || [], [data?.stages]);
+  leadsRef.current = leads;
+  stagesRef.current = stages;
   const availableSources = useMemo(() => [...new Set(
     leads.map((lead) => lead.source || lead.attribution?.source).filter(Boolean)
   )].sort(), [leads]);
@@ -378,6 +383,7 @@ export default function Pipeline() {
     }
     await updateLead(lead.id, { stageId: Number(stage.id) });
   }
+  requestStageMoveRef.current = requestStageMove;
 
   function handleDragStart(event, lead) {
     if (!canManageLeads) return;
@@ -436,9 +442,9 @@ export default function Pipeline() {
     setPointerDrag(null);
     if (cancelled || !stageId) return;
 
-    const lead = leads.find((item) => Number(item.id) === Number(drag.leadId));
-    const stage = stages.find((item) => Number(item.id) === Number(stageId));
-    if (lead && stage) requestStageMove(lead, stage);
+    const lead = leadsRef.current.find((item) => Number(item.id) === Number(drag.leadId));
+    const stage = stagesRef.current.find((item) => Number(item.id) === Number(stageId));
+    if (lead && stage) requestStageMoveRef.current?.(lead, stage);
   }
 
   function handleTouchDragStart(event, lead) {
@@ -533,7 +539,7 @@ export default function Pipeline() {
       document.removeEventListener("touchend", handleTouchEnd);
       document.removeEventListener("touchcancel", handleTouchCancel);
     };
-  });
+  }, []);
 
   async function handleLeadCreated(lead, created) {
     await refreshPipeline({ quiet: true });
