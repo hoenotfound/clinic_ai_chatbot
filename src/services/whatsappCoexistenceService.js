@@ -1,5 +1,6 @@
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
+const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const aiReplyCancellation = require("./aiReplyCancellationService");
 
@@ -51,6 +52,17 @@ async function persistBusinessAppEcho(echo) {
     messageId: saved.id,
     reason: "message",
   });
+
+  try {
+    await pipelineRepo.markContactedForContact(contact.id, BUSINESS_APP_ACTOR);
+  } catch (err) {
+    // Pipeline bookkeeping must not make Meta retry an already-persisted staff
+    // message. The Inbox/ownership state remains authoritative.
+    console.error(
+      `Failed to mark Business App contact ${contact.id} as contacted:`,
+      err
+    );
+  }
 
   return { contact: staffOwned, message: saved };
 }
