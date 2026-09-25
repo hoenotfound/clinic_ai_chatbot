@@ -255,6 +255,7 @@ async function configureWhatsAppWebhook({
   verifyToken,
   clientBaseUrl,
   appId = null,
+  coexistence = false,
   graphVersion = DEFAULT_GRAPH_API_VERSION,
   fetchImpl = global.fetch,
 }) {
@@ -278,6 +279,16 @@ async function configureWhatsAppWebhook({
     body: {
       override_callback_uri: callbackUrl,
       verify_token: credentials.verifyToken,
+      ...(coexistence
+        ? {
+            subscribed_fields: [
+              "messages",
+              "smb_message_echoes",
+              "smb_app_state_sync",
+              "history",
+            ],
+          }
+        : {}),
     },
   });
 
@@ -306,6 +317,7 @@ async function configureWhatsAppWebhook({
     wabaId: credentials.wabaId,
     appId: subscriptionAppId(matched),
     callbackUrl,
+    coexistence: Boolean(coexistence),
     confirmed: true,
   };
 }
