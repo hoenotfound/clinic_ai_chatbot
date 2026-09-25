@@ -324,6 +324,15 @@ async function processIncomingMessage(
     unsupportedType,
   } = incoming;
   const channel = incoming.channel || "whatsapp";
+  const aiCancellationKey =
+    channel === "whatsapp" && aiReplyCancellation.enabled()
+      ? aiReplyCancellation.keyForWhatsAppNumber(from)
+      : null;
+  const aiCancellationToken = aiReplyCancellation.snapshot(aiCancellationKey);
+  const canSendAutomatedReply = aiCancellationKey
+    ? () => aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
+    : null;
+
   const { customerLabel, customerSingular } = getOperationalLabels(clinicConfig);
   let contact = preclaimed?.contact || null;
   let savedInbound = preclaimed?.savedInbound || null;
@@ -365,7 +374,8 @@ async function processIncomingMessage(
           await sendTrackedText(
             contact,
             "Sorry, I can only read text, voice, or photo messages for now — could you type that out for me? 🙂",
-            "system_fallback"
+            "system_fallback",
+            { canSend: canSendAutomatedReply }
           );
         }
       }
@@ -418,7 +428,8 @@ async function processIncomingMessage(
             await sendTrackedText(
               contact,
               "Sorry, I couldn't quite catch that voice message — mind typing it out, or sending the voice note again? 🙂",
-              "system_fallback"
+              "system_fallback",
+              { canSend: canSendAutomatedReply }
             );
           }
         }
@@ -531,12 +542,6 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
-    const aiCancellationKey =
-      channel === "whatsapp" && aiReplyCancellation.enabled()
-        ? aiReplyCancellation.keyForWhatsAppNumber(from)
-        : null;
-    const aiCancellationToken = aiReplyCancellation.snapshot(aiCancellationKey);
-
     const history = await conversationStore.getHistoryForContact(contact.id, {
       throughMessageId: savedInbound.id,
     });
@@ -634,16 +639,12 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
-    const canSendAiReply = aiCancellationKey
-      ? () => aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
-      : null;
-
     responseAttempted = true;
     const sendOutcome = await sendTrackedText(
       contact,
       reply,
       "ai_reply",
-      { canSend: canSendAiReply }
+      { canSend: canSendAutomatedReply }
     );
     if (sendOutcome.sendResult.cancelled) {
       console.log(
@@ -693,19 +694,41 @@ async function processIncomingMessage(
         }
         contact = promoContact;
 
+        if (canSendAutomatedReply && canSendAutomatedReply() !== true) {
+          return { wasFirstMessage, keywordReason };
+        }
+
+        const guardedPromo = typeof canSendAutomatedReply === "function";
         const savedPromo = await conversationStore.appendMessageForContact(
           contact.id,
           "assistant",
           promo.caption || "",
           null,
           null,
-          promo.imageUrl
+          promo.imageUrl,
+          null,
+          guardedPromo ? { publish: false } : undefined
         );
         const promoResult = await channelMessaging.sendImageByUrl(
           contact,
           promo.imageUrl,
-          promo.caption
+          promo.caption,
+          guardedPromo ? { preSendCheck: canSendAutomatedReply } : {}
         );
+
+        if (promoResult.cancelled) {
+          await messagesRepo.deleteUnsentAssistantMessage(savedPromo.id);
+          return { wasFirstMessage, keywordReason };
+        }
+
+        if (guardedPromo) {
+          realtimeEvents.publish("conversation_changed", {
+            contactId: savedPromo.contact_id,
+            messageId: savedPromo.id,
+            reason: "message",
+          });
+        }
+
         const promoError = promoResult.error || channelMessaging.rejectedError(contact.channel);
         await persistSendOutcome(savedPromo, promoResult, promoError);
         if (!promoResult.success) {
@@ -776,7 +799,8 @@ async function processIncomingMessage(
           await sendTrackedText(
             pendingHandoff,
             "Sorry, something went wrong on our end — a team member will follow up with you shortly!",
-            "system_fallback"
+            "system_fallback",
+            { canSend: canSendAutomatedReply }
           );
         }
       } catch (fallbackErr) {
