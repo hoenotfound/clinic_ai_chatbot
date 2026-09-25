@@ -5,6 +5,7 @@ const bodyParser = require("body-parser");
 const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
+const whatsappCoexistence = require("./services/whatsappCoexistenceService");
 const metaMessaging = require("./services/metaMessagingService");
 const channelMessaging = require("./services/channelMessagingService");
 const ai = require("./services/aiService");
@@ -555,6 +556,16 @@ async function processIncomingMessage(
       }
     }
 
+    if (!flagged) {
+      const finalAiReplyContact = await getAiOwnedContact(contact, {
+        channel,
+        from,
+        reason: "final AI send",
+      });
+      if (!finalAiReplyContact) return { wasFirstMessage, keywordReason };
+      contact = finalAiReplyContact;
+    }
+
     responseAttempted = true;
     const sendOutcome = await sendTrackedText(contact, reply);
 
@@ -773,13 +784,18 @@ app.get("/webhook", (req, res) => {
 app.post("/webhook", webhookJsonParser, async (req, res) => {
   const incomingMessages = whatsapp.parseIncomingMessages(req.body);
   const statusUpdates = whatsapp.parseStatusUpdates(req.body);
+  const staffEchoes = whatsapp.parseSmbMessageEchoes(req.body);
+  const stateSync = whatsapp.parseSmbAppStateSync(req.body);
+  const historyRecords = whatsapp.parseCoexistenceHistory(req.body);
   let durableClaims;
   let durableStatusJobs;
+  let staffEchoResults;
   try {
-    // Persist both customer messages and delivery-status callbacks before the
-    // ACK. If either durability write fails, return a retryable 503 so Meta can
-    // redeliver the signed webhook. Duplicate retries are safe in both stores.
-    [durableClaims, durableStatusJobs] = await Promise.all([
+    // Customer messages, delivery statuses and live Business App staff echoes
+    // are durable before ACK. Most importantly, a staff echo flips the contact
+    // to Staff mode here, before any in-flight AI generation can pass its final
+    // ownership check.
+    [durableClaims, durableStatusJobs, staffEchoResults] = await Promise.all([
       Promise.all(
         incomingMessages.map(async (incoming) => ({
           queueKey: incoming.from,
@@ -787,6 +803,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
         }))
       ),
       storeDeliveryStatusUpdates(statusUpdates),
+      Promise.all(staffEchoes.map((echo) => whatsappCoexistence.storeStaffEcho(echo))),
     ]);
   } catch (err) {
     console.error("Failed to durably accept WhatsApp webhook work:", err);
@@ -794,7 +811,7 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   }
 
   // Expensive/side-effecting work remains after the acknowledgement. Meta only
-  // waits for durable Postgres persistence, never AI/media/status processing.
+  // waits for live message/takeover durability, never AI or media downloads.
   res.sendStatus(200);
 
   setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
@@ -803,6 +820,27 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   for (const { queueKey, durableClaim } of durableClaims) {
     scheduleDurableClaim(queueKey, durableClaim).catch((err) => {
       console.error("Failed to schedule durable WhatsApp inbound work:", err);
+    });
+  }
+
+  for (const result of staffEchoResults) {
+    whatsappCoexistence.hydrateStaffEchoMedia(result).catch((err) => {
+      console.error("Failed to hydrate WhatsApp Business App staff media:", err);
+    });
+  }
+
+  // Coexistence history is explicitly historical context, not a live inbound
+  // turn. It bypasses the inbound reply/pipeline path and is marked so later AI
+  // and scoring reads ignore it. State-sync address-book entries are accepted
+  // conservatively without creating CRM leads or contacts by themselves.
+  if (historyRecords.length) {
+    whatsappCoexistence.storeHistory(historyRecords).catch((err) => {
+      console.error("Failed to import WhatsApp Business App history:", err);
+    });
+  }
+  if (stateSync.length) {
+    whatsappCoexistence.acceptStateSync(stateSync).catch((err) => {
+      console.error("Failed to accept WhatsApp Business App state sync:", err);
     });
   }
 
