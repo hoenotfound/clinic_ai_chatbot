@@ -22,6 +22,7 @@ Options:
   --runtime-env-file <path>   dotenv containing WHATSAPP_TOKEN, WHATSAPP_VERIFY_TOKEN,
                               and normally WHATSAPP_WABA_ID
   --graph-version <version>   Meta Graph API version, default v26.0
+  --coexistence               Subscribe messages + coexistence webhook fields
   --json                      Print machine-readable output
   --help                      Show this help
 
@@ -49,6 +50,10 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === "--json") {
       result.json = true;
+      continue;
+    }
+    if (arg === "--coexistence") {
+      result.coexistence = true;
       continue;
     }
     if (arg === "--help" || arg === "-h") {
@@ -101,6 +106,7 @@ async function main() {
       accessToken: selectManagementAccessToken({ runtimeEnv }),
       verifyToken: runtimeEnv.WHATSAPP_VERIFY_TOKEN,
       clientBaseUrl: args.clientBaseUrl,
+      coexistence: Boolean(args.coexistence),
       graphVersion: args.graphVersion || process.env.META_GRAPH_API_VERSION,
     });
 
@@ -110,6 +116,9 @@ async function main() {
       console.log(`WABA:     ${result.wabaId}`);
       if (result.appId) console.log(`Meta app: ${result.appId}`);
       console.log(`Callback: ${result.callbackUrl}`);
+      if (result.coexistence) {
+        console.log("Fields:   messages, smb_message_echoes, smb_app_state_sync, history");
+      }
     }
   } catch (err) {
     console.error(`WhatsApp webhook configuration failed: ${err.message}`);
