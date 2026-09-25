@@ -23,9 +23,12 @@ function publishMessageChange(contactId, messageId) {
 function aiVisibleRows(rows) {
   return (rows || []).filter(
     (row) =>
-      row.role !== "assistant" ||
-      row.delivery_status == null ||
-      !["failed", "unknown"].includes(row.delivery_status)
+      row.is_history_import !== true &&
+      (
+        row.role !== "assistant" ||
+        row.delivery_status == null ||
+        !["failed", "unknown"].includes(row.delivery_status)
+      )
   );
 }
 
