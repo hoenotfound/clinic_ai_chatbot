@@ -183,6 +183,13 @@ export const api = {
     }),
   getGeminiDiagnosticStatus: () => request("/setup-status/gemini-diagnostic/status"),
   runGeminiDiagnostic: () => request("/setup-status/gemini-diagnostic", { method: "POST" }),
+  getWhatsAppCoexistenceOnboardingConfig: () =>
+    request("/whatsapp-coexistence/onboarding/config"),
+  completeWhatsAppCoexistenceOnboarding: (payload) =>
+    request("/whatsapp-coexistence/onboarding/complete", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   createLead: (data) =>
     request("/pipeline/leads", { method: "POST", body: JSON.stringify(data) }),
   updateLead: (leadId, data) =>
