@@ -5,6 +5,8 @@ const bodyParser = require("body-parser");
 const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
+const whatsappCoexistence = require("./services/whatsappCoexistenceService");
+const aiReplyCancellation = require("./services/aiReplyCancellationService");
 const metaMessaging = require("./services/metaMessagingService");
 const channelMessaging = require("./services/channelMessagingService");
 const ai = require("./services/aiService");
@@ -488,6 +490,12 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
+    const aiCancellationKey =
+      channel === "whatsapp"
+        ? aiReplyCancellation.keyForWhatsAppNumber(from)
+        : null;
+    const aiCancellationToken = aiReplyCancellation.snapshot(aiCancellationKey);
+
     const history = await conversationStore.getHistoryForContact(contact.id, {
       throughMessageId: savedInbound.id,
     });
@@ -514,6 +522,22 @@ async function processIncomingMessage(
     const reply = isFirstMessage
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
       : aiReply;
+
+    // Coexistence staff can reply from the phone while generation is in flight.
+    // Give the echo webhook a brief chance to arrive, then abort this AI turn
+    // if that staff action changed the cancellation epoch.
+    if (
+      aiCancellationKey &&
+      !(await aiReplyCancellation.settleBeforeSend(
+        aiCancellationKey,
+        aiCancellationToken
+      ))
+    ) {
+      console.log(
+        `Skipping AI reply for ${channel}:${from} — WhatsApp Business App staff replied.`
+      );
+      return { wasFirstMessage, keywordReason };
+    }
 
     // AI generation can take long enough for staff to take over after the
     // earlier ownership check. Re-check immediately before any AI-owned state
@@ -772,13 +796,21 @@ app.get("/webhook", (req, res) => {
 // ── Incoming WhatsApp messages and delivery statuses ──
 app.post("/webhook", webhookJsonParser, async (req, res) => {
   const incomingMessages = whatsapp.parseIncomingMessages(req.body);
+  const businessAppEchoes = whatsapp.parseBusinessAppEchoes(req.body);
   const statusUpdates = whatsapp.parseStatusUpdates(req.body);
+  const passiveSync = whatsappCoexistence.summarizePassiveSync(req.body);
+
+  // Cancel in-flight AI immediately, before any database/network await. The
+  // durable staff-mode transition below is the authoritative long-term guard.
+  for (const echo of businessAppEchoes) {
+    whatsappCoexistence.cancelPendingAiForEcho(echo);
+  }
+
   let durableClaims;
   let durableStatusJobs;
   try {
-    // Persist both customer messages and delivery-status callbacks before the
-    // ACK. If either durability write fails, return a retryable 503 so Meta can
-    // redeliver the signed webhook. Duplicate retries are safe in both stores.
+    // Persist customer messages, phone-app staff echoes, and delivery statuses
+    // before ACK. A failed write returns 503 so Meta retries safely.
     [durableClaims, durableStatusJobs] = await Promise.all([
       Promise.all(
         incomingMessages.map(async (incoming) => ({
@@ -787,6 +819,11 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
         }))
       ),
       storeDeliveryStatusUpdates(statusUpdates),
+      Promise.all(
+        businessAppEchoes.map((echo) =>
+          whatsappCoexistence.persistBusinessAppEcho(echo)
+        )
+      ),
     ]);
   } catch (err) {
     console.error("Failed to durably accept WhatsApp webhook work:", err);
@@ -796,6 +833,12 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   // Expensive/side-effecting work remains after the acknowledgement. Meta only
   // waits for durable Postgres persistence, never AI/media/status processing.
   res.sendStatus(200);
+
+  if (passiveSync.historyChunks || passiveSync.appStateItems) {
+    console.log(
+      `Acknowledged WhatsApp coexistence sync event without operational import: history=${passiveSync.historyChunks}, app_state=${passiveSync.appStateItems}`
+    );
+  }
 
   setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
     console.error("Failed to record WhatsApp webhook activity:", err);
