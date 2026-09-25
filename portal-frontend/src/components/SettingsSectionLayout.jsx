@@ -71,8 +71,8 @@ export default function SettingsSectionLayout({ children }) {
   }
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--color-bg)] md:flex-row">
-      <aside className="hidden h-full w-60 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] md:flex">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--color-bg)] lg:flex-row">
+      <aside className="hidden h-full w-60 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] lg:flex">
         <div className="border-b border-[var(--color-border)] px-5 py-5">
           <h1 className="font-display text-lg font-bold">Settings</h1>
           <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">
@@ -120,7 +120,7 @@ export default function SettingsSectionLayout({ children }) {
       </aside>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-4 sm:px-5 md:hidden">
+        <header className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-4 sm:px-5 lg:hidden">
           <h1 className="font-display text-xl font-bold">Settings</h1>
           <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-text-muted)]">Manage configuration, team access and setup health.</p>
           <label className="mt-3 block">
