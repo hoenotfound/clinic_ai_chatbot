@@ -579,19 +579,6 @@ async function processIncomingMessage(
       }
     }
 
-    // Final coexistence/ownership fence immediately before the provider send.
-    // This catches a Business App reply that arrived after the earlier AI
-    // generation guard but before the outbound call.
-    if (
-      aiCancellationKey &&
-      aiReplyCancellation.cancelledSince(aiCancellationKey, aiCancellationToken)
-    ) {
-      console.log(
-        `Skipping AI reply for ${channel}:${from} — WhatsApp Business App staff replied before send.`
-      );
-      return { wasFirstMessage, keywordReason };
-    }
-
     const finalAiContact = await getAiOwnedContact(contact, {
       channel,
       from,
@@ -599,6 +586,20 @@ async function processIncomingMessage(
     });
     if (!finalAiContact) return { wasFirstMessage, keywordReason };
     contact = finalAiContact;
+
+    // Run this after the final ownership read, as close as possible to the
+    // tracked provider send. A Business App webhook marks its echo pending
+    // synchronously before any DB work, so a slow echo transaction also blocks
+    // the AI instead of allowing a competing reply.
+    if (
+      aiCancellationKey &&
+      !aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
+    ) {
+      console.log(
+        `Skipping AI reply for ${channel}:${from} — WhatsApp Business App staff activity is pending or confirmed.`
+      );
+      return { wasFirstMessage, keywordReason };
+    }
 
     responseAttempted = true;
     const sendOutcome = await sendTrackedText(contact, reply);
@@ -820,6 +821,9 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
   const businessAppEchoes = whatsapp.parseBusinessAppEchoes(req.body);
   const statusUpdates = whatsapp.parseStatusUpdates(req.body);
   const passiveSync = whatsappCoexistence.summarizePassiveSync(req.body);
+  for (const echo of businessAppEchoes) {
+    whatsappCoexistence.beginPendingAiForEcho(echo);
+  }
 
   let durableClaims;
   let durableStatusJobs;
@@ -837,18 +841,17 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
       storeDeliveryStatusUpdates(statusUpdates),
       Promise.all(
         businessAppEchoes.map((echo) =>
-          whatsappCoexistence.persistBusinessAppEcho(echo)
+          whatsappCoexistence.persistBusinessAppEcho(echo, { pendingStarted: true })
         )
       ),
     ]);
   } catch (err) {
+    for (const echo of businessAppEchoes) {
+      whatsappCoexistence.releasePendingAiForEcho(echo);
+    }
     console.error("Failed to durably accept WhatsApp webhook work:", err);
     return res.sendStatus(503);
   }
-
-  // Keep the echo results referenced so the durability contract remains clear:
-  // all app-originated staff messages are persisted before the ACK.
-  void durableBusinessAppEchoes;
 
   // Expensive/side-effecting work remains after the acknowledgement. Meta only
   // waits for durable Postgres persistence, never AI/media/status processing.
@@ -858,6 +861,13 @@ app.post("/webhook", webhookJsonParser, async (req, res) => {
     console.log(
       `Acknowledged WhatsApp coexistence sync event without operational import: history=${passiveSync.historyChunks}, app_state=${passiveSync.appStateItems}`
     );
+  }
+
+  for (const persisted of durableBusinessAppEchoes) {
+    if (!persisted) continue;
+    whatsappCoexistence.finalizeBusinessAppEcho(persisted).catch((err) => {
+      console.error("Failed to finalize Business App echo bookkeeping:", err);
+    });
   }
 
   setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
