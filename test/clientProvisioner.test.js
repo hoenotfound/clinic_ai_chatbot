@@ -129,6 +129,7 @@ test("runtime env cannot override app or control-plane provisioning values", () 
     "INITIAL_BUSINESS_TYPE",
     "BUSINESS_TYPE",
     "PURCHASED_CHANNELS",
+    "AUTOMATED_REPLIES_ENABLED",
     "DATABASE_URL",
     "SESSION_SECRET",
     "PORT",
@@ -232,6 +233,10 @@ test("successful provisioning waits for Render to become live before returning s
   });
   assert.equal(byKey.get("DATABASE_URL").value.includes("-pooler.example"), true);
   assert.deepEqual(byKey.get("SESSION_SECRET"), { key: "SESSION_SECRET", generateValue: true });
+  assert.deepEqual(byKey.get("AUTOMATED_REPLIES_ENABLED"), {
+    key: "AUTOMATED_REPLIES_ENABLED",
+    value: "false",
+  });
   assert.equal(byKey.get("GEMINI_API_KEY").value, "gemini-secret");
 
   const createIndex = clients.calls.findIndex(([name]) => name === "render.create");
@@ -352,12 +357,13 @@ test("renderEnvVars keeps provisioner-owned values ahead of custom runtime env",
     runtimeEnv: { AI_PROVIDER: "gemini" },
   }, {});
   const envVars = renderEnvVars(plan, "postgresql://pooled");
-  assert.deepEqual(envVars.slice(0, 5), [
+  assert.deepEqual(envVars.slice(0, 6), [
     { key: "CLIENT_SLUG", value: "client-one" },
     { key: "INITIAL_BUSINESS_TYPE", value: "aesthetic_clinic" },
     { key: "PURCHASED_CHANNELS", value: "" },
+    { key: "AUTOMATED_REPLIES_ENABLED", value: "false" },
     { key: "DATABASE_URL", value: "postgresql://pooled" },
     { key: "SESSION_SECRET", generateValue: true },
   ]);
-  assert.deepEqual(envVars[5], { key: "AI_PROVIDER", value: "gemini" });
+  assert.deepEqual(envVars[6], { key: "AI_PROVIDER", value: "gemini" });
 });
