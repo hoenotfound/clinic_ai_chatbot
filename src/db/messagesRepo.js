@@ -68,7 +68,8 @@ const LIGHTWEIGHT_MESSAGE_COLUMNS = `
   created_at,
   delivery_status,
   delivery_error,
-  is_automated_follow_up
+  is_automated_follow_up,
+  is_history_import
 `;
 
 /**
@@ -126,6 +127,64 @@ async function saveInboundMessageIfNew(
      ON CONFLICT (whatsapp_message_id) DO NOTHING
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
     [contactId, content, whatsappMessageId, mediaKey, mediaMimeType]
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Stores a provider-originated WhatsApp message with its provider timestamp.
+ * Used by Business App staff echoes and history import. The WAMID unique key
+ * makes Meta retries and overlap with an already-saved Cloud API outbound safe.
+ */
+async function saveExternalMessageIfNew({
+  contactId,
+  role,
+  content,
+  whatsappMessageId,
+  sentByUsername = null,
+  createdAt = null,
+  isHistoryImport = false,
+}) {
+  if (!["user", "assistant"].includes(role)) {
+    throw new TypeError("External message role must be user or assistant.");
+  }
+  if (!whatsappMessageId) {
+    throw new TypeError("External WhatsApp messages require a provider message id.");
+  }
+
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     )
+     INSERT INTO messages (
+       contact_id, role, content, whatsapp_message_id, sent_by_username,
+       created_at, is_history_import
+     )
+     SELECT $1, $2, $3, $4, $5, COALESCE($6::timestamptz, now()), $7
+     FROM conversation_lock
+     ON CONFLICT (whatsapp_message_id) DO NOTHING
+     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
+    [
+      contactId,
+      role,
+      content,
+      whatsappMessageId,
+      sentByUsername,
+      createdAt,
+      Boolean(isHistoryImport),
+    ]
+  );
+  return result.rows[0] || null;
+}
+
+async function findByWhatsappMessageId(whatsappMessageId) {
+  if (!whatsappMessageId) return null;
+  const result = await pool.query(
+    `SELECT ${LIGHTWEIGHT_MESSAGE_COLUMNS}
+     FROM messages
+     WHERE whatsapp_message_id = $1
+     LIMIT 1`,
+    [whatsappMessageId]
   );
   return result.rows[0] || null;
 }
@@ -200,7 +259,7 @@ async function getMessagePageForContact(
   if (afterId != null) {
     const result = await pool.query(
       `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
-              delivery_status, delivery_error, is_automated_follow_up
+              delivery_status, delivery_error, is_automated_follow_up, is_history_import
        FROM messages
        WHERE contact_id = $1 AND id > $2
        ORDER BY id ASC`,
@@ -219,7 +278,7 @@ async function getMessagePageForContact(
 
   const result = await pool.query(
     `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
-            delivery_status, delivery_error, is_automated_follow_up
+            delivery_status, delivery_error, is_automated_follow_up, is_history_import
      FROM messages
      WHERE contact_id = $1${cursorClause}
      ORDER BY id DESC
@@ -399,6 +458,8 @@ async function updateDeliveryStatusByWamid(whatsappMessageId, status, errorText 
 module.exports = {
   saveMessage,
   saveInboundMessageIfNew,
+  saveExternalMessageIfNew,
+  findByWhatsappMessageId,
   updateInboundMessage,
   getMessagesForContact,
   getMessagePageForContact,
