@@ -404,7 +404,7 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
                 </p>
                 <div className="flex items-center gap-3">
                   {permissions?.manage_users && <Link to="/settings/team" className="text-xs font-semibold text-[var(--color-primary)] hover:underline">Configure team</Link>}
-                  <button type="button" onClick={refreshAccounts} disabled={refreshing} className="inline-flex h-9 items-center gap-2 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold hover:bg-[var(--color-bg)] disabled:opacity-50">
+                  <button type="button" onClick={refreshAccounts} disabled={refreshing} className="inline-flex h-10 items-center gap-2 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold hover:bg-[var(--color-bg)] disabled:opacity-50">
                     {refreshing && <Spinner className="h-3.5 w-3.5" />}
                     {refreshing ? "Refreshing…" : "Refresh"}
                   </button>
