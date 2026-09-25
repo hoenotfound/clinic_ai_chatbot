@@ -34,7 +34,7 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="flex h-dvh w-[4.25rem] shrink-0 flex-col bg-[var(--color-sidebar)] text-[var(--color-sidebar-text)] transition-[width] min-[1440px]:w-60">
+    <aside className="flex h-dvh w-14 sm:w-[4.25rem] shrink-0 flex-col bg-[var(--color-sidebar)] text-[var(--color-sidebar-text)] transition-[width] min-[1440px]:w-60">
       <div className="flex items-center justify-center gap-2.5 px-3 py-5 min-[1440px]:justify-start min-[1440px]:px-5">
         {branding.clientLogoUrl ? (
           <img
@@ -63,7 +63,7 @@ export default function Sidebar() {
             title={item.label}
             aria-label={item.label}
             className={({ isActive }) =>
-              `flex items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors min-[1440px]:justify-start min-[1440px]:px-3 ${
+              `flex min-h-11 items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors min-[1440px]:justify-start min-[1440px]:px-3 ${
                 isActive
                   ? "bg-[var(--color-primary)] text-white"
                   : "text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)]"
@@ -91,7 +91,7 @@ export default function Sidebar() {
           onClick={handleLogout}
           title="Log out"
           aria-label="Log out"
-          className="flex w-full items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm text-[var(--color-sidebar-text-muted)] transition-colors hover:bg-[var(--color-sidebar-hover)] hover:text-white min-[1440px]:justify-start min-[1440px]:px-3"
+          className="flex min-h-11 w-full items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm text-[var(--color-sidebar-text-muted)] transition-colors hover:bg-[var(--color-sidebar-hover)] hover:text-white min-[1440px]:justify-start min-[1440px]:px-3"
         >
           <LogoutIcon className="h-[18px] w-[18px] shrink-0" />
           <span className="hidden min-[1440px]:inline">Log out</span>
