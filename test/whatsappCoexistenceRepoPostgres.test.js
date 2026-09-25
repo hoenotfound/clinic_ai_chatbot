@@ -61,6 +61,7 @@ test(
       );
 
       assert.ok(first?.message?.id);
+      assert.equal(first.isNew, true);
       assert.equal(first.message.role, "assistant");
       assert.equal(first.message.sent_by_username, "WhatsApp Business App");
       assert.equal(first.contact.mode, "human");
@@ -85,7 +86,8 @@ test(
         "AI handoff",
         client
       );
-      assert.equal(duplicate, null);
+      assert.equal(duplicate.isNew, false);
+      assert.equal(duplicate.message.id, first.message.id);
 
       const duplicateState = await client.query(
         `SELECT mode, takeover_by,
@@ -118,6 +120,7 @@ test(
         "AI handoff",
         client
       );
+      assert.equal(namedOwnerEcho.isNew, true);
       assert.equal(namedOwnerEcho.contact.mode, "human");
       assert.equal(namedOwnerEcho.contact.takeover_by, "caden");
       assert.equal(namedOwnerEcho.contact.needs_attention, false);
@@ -139,6 +142,7 @@ test(
         "AI handoff",
         client
       );
+      assert.equal(handoffEcho.isNew, true);
       assert.equal(handoffEcho.contact.takeover_by, "WhatsApp Business App");
 
       const state = await client.query(
