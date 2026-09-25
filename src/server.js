@@ -466,7 +466,8 @@ async function processIncomingMessage(
             await sendTrackedText(
               contact,
               "Sorry, I couldn't load that photo — mind sending it again? 🙂",
-              "system_fallback"
+              "system_fallback",
+              { canSend: canSendAutomatedReply }
             );
           }
         }
