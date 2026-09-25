@@ -6,10 +6,10 @@ async function persistStaffEchoIfNew(
   content,
   whatsappMessageId,
   actor,
-  queryable = pool
+  queryable = null
 ) {
-  const ownsClient = typeof queryable.connect === "function";
-  const client = ownsClient ? await queryable.connect() : queryable;
+  const ownsClient = queryable == null;
+  const client = ownsClient ? await pool.connect() : queryable;
   try {
     await client.query("BEGIN");
     await client.query(
