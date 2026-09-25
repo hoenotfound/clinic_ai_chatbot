@@ -100,28 +100,6 @@ async function saveMessage(
   return result.rows[0];
 }
 
-async function saveStaffMessageIfNew(
-  contactId,
-  content,
-  whatsappMessageId,
-  sentByUsername
-) {
-  const result = await pool.query(
-    `WITH conversation_lock AS MATERIALIZED (
-       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
-     )
-     INSERT INTO messages (
-       contact_id, role, content, whatsapp_message_id, sent_by_username
-     )
-     SELECT $1, 'assistant', $2, $3, $4
-     FROM conversation_lock
-     ON CONFLICT (whatsapp_message_id) DO NOTHING
-     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
-    [contactId, content, whatsappMessageId, sentByUsername]
-  );
-  return result.rows[0] || null;
-}
-
 /**
  * Atomically stores a newly received WhatsApp message. Meta can retry the same
  * webhook while an earlier request is still running, so a separate SELECT then
@@ -420,7 +398,6 @@ async function updateDeliveryStatusByWamid(whatsappMessageId, status, errorText 
 
 module.exports = {
   saveMessage,
-  saveStaffMessageIfNew,
   saveInboundMessageIfNew,
   updateInboundMessage,
   getMessagesForContact,
