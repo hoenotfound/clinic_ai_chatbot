@@ -547,7 +547,7 @@ function RoutingChoice({ checked, disabled, title, badge, description, onChange 
 function HealthItem({ value, label, attention = false }) {
   return (
     <span className="inline-flex items-baseline gap-1.5">
-      <strong className={attention ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"}>{value}</strong>
+      <strong className={attention ? "text-[var(--color-accent-text)]" : "text-[var(--color-text)]"}>{value}</strong>
       <span className="text-[var(--color-text-muted)]">{label}</span>
     </span>
   );
