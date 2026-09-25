@@ -121,14 +121,14 @@ export default function Login() {
                   autoComplete="current-password"
                   value={form.password}
                   onChange={(e) => setForm({ ...form, password: e.target.value })}
-                  className="w-full rounded-lg border border-[var(--color-border)] py-2 pl-9 pr-9 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                  className="w-full rounded-lg border border-[var(--color-border)] py-2 pl-9 pr-11 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
                   required
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((s) => !s)}
                   aria-label={showPassword ? "Hide password" : "Show password"}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                  className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"
                 >
                   {showPassword ? (
                     <EyeOffIcon className="h-4 w-4" />
@@ -145,7 +145,7 @@ export default function Login() {
                   type="checkbox"
                   checked={remember}
                   onChange={(e) => setRemember(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
+                  className="h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
                 />
                 Remember me
               </label>
@@ -153,7 +153,7 @@ export default function Login() {
                 className="cursor-default text-[var(--color-text-muted)]"
                 title="Contact your administrator to reset your password"
               >
-                Forgot password?
+                Need a password reset?
               </span>
             </div>
 
@@ -177,7 +177,7 @@ export default function Login() {
           </form>
 
           <p className="mt-6 text-center text-xs text-[var(--color-sidebar-text-muted)]">
-            Staff accounts are created by an admin. Contact the admin if you forgot the password or need more account.
+            Staff accounts are created by an admin. Contact the admin if you forgot your password or need another account.
           </p>
 
           {/* Agency credit */}
