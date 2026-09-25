@@ -156,3 +156,51 @@ test("fails when Meta does not confirm the callback override for the expected ap
     (err) => err.code === "WHATSAPP_WEBHOOK_OVERRIDE_NOT_CONFIRMED",
   );
 });
+
+
+test("coexistence configuration subscribes the required message-path fields", async () => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.startsWith("https://client-a.example.test/webhook?")) {
+      const parsed = new URL(url);
+      return {
+        ok: true,
+        status: 200,
+        text: async () => parsed.searchParams.get("hub.challenge"),
+      };
+    }
+    if (options.method === "POST") {
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [{
+          override_callback_uri: "https://client-a.example.test/webhook",
+          whatsapp_business_api_data: { id: "app-id", name: "DA Chatbot" },
+        }],
+      }),
+    };
+  };
+
+  const result = await configureWhatsAppWebhook({
+    wabaId: "waba-123",
+    appId: "app-id",
+    accessToken: "access-token",
+    verifyToken: "verify-token",
+    clientBaseUrl: "https://client-a.example.test",
+    coexistence: true,
+    fetchImpl,
+  });
+
+  const postBody = JSON.parse(calls[1].options.body);
+  assert.deepEqual(postBody.subscribed_fields, [
+    "messages",
+    "smb_message_echoes",
+    "smb_app_state_sync",
+    "history",
+  ]);
+  assert.equal(result.coexistence, true);
+});
