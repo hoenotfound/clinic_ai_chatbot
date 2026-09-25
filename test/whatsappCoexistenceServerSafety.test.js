@@ -57,3 +57,29 @@ test("final coexistence guard runs after final ownership lookup and before track
   assert.ok(guardIndex > aiBlock);
   assert.ok(sendIndex > guardIndex);
 });
+
+
+test("coexistence guard is opt-in and ordinary WhatsApp keeps the legacy send path", () => {
+  const keyBlock = source.slice(
+    source.indexOf("const aiCancellationKey ="),
+    source.indexOf("const aiCancellationToken =", source.indexOf("const aiCancellationKey ="))
+  );
+  assert.match(
+    keyBlock,
+    /channel === "whatsapp" && aiReplyCancellation\.enabled\(\)/
+  );
+});
+
+test("existing synthetic AI handoff acknowledgement remains sendable", () => {
+  const finalContactIndex = source.indexOf("const finalSendContact = flagged");
+  const guardIndex = source.indexOf(
+    "aiReplyCancellation.safeToSend",
+    finalContactIndex
+  );
+
+  assert.ok(finalContactIndex >= 0);
+  assert.ok(guardIndex > finalContactIndex);
+  const block = source.slice(finalContactIndex, guardIndex);
+  assert.match(block, /flagged[\s\S]*getPendingAiHandoffContact\(contact\.id\)/);
+  assert.match(block, /getAiOwnedContact\(contact/);
+});
