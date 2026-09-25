@@ -628,7 +628,7 @@ function SectionStateMark({ section }) {
   if (section.state === "needs_attention") {
     return <span aria-label="Needs attention">•</span>;
   }
-  return <span className="text-[9px] font-medium" aria-label="Optional">optional</span>;
+  return <span className="text-[10px] font-medium" aria-label="Optional">optional</span>;
 }
 
 function RailButton({ active, onClick, children }) {
