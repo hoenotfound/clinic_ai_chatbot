@@ -189,6 +189,27 @@ async function findByWhatsappMessageId(whatsappMessageId) {
   return result.rows[0] || null;
 }
 
+async function updateExternalMessageMedia(
+  messageId,
+  contactId,
+  mediaData,
+  mediaMimeType
+) {
+  const mediaKey = await persistMediaIfPresent(mediaData, mediaMimeType, contactId);
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $2::integer)
+     )
+     UPDATE messages
+     SET media_key = $3, media_mime_type = $4
+     FROM conversation_lock
+     WHERE id = $1 AND contact_id = $2
+     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
+    [messageId, contactId, mediaKey, mediaMimeType]
+  );
+  return result.rows[0] || null;
+}
+
 /** Updates the placeholder saved before media download/transcription finishes. */
 async function updateInboundMessage(messageId, contactId, content, mediaBase64, mediaMimeType) {
   const mediaKey = await persistMediaIfPresent(mediaBase64, mediaMimeType, contactId);
@@ -461,6 +482,7 @@ module.exports = {
   saveInboundMessageIfNew,
   saveExternalMessageIfNew,
   findByWhatsappMessageId,
+  updateExternalMessageMedia,
   updateInboundMessage,
   getMessagesForContact,
   getMessagePageForContact,
