@@ -317,7 +317,7 @@ async function configureWhatsAppWebhook({
     wabaId: credentials.wabaId,
     appId: subscriptionAppId(matched),
     callbackUrl,
-    coexistence: Boolean(coexistence),
+    ...(coexistence ? { coexistence: true } : {}),
     confirmed: true,
   };
 }
