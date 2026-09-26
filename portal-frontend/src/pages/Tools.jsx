@@ -987,7 +987,7 @@ function CommentAutomationTool({
               </div>
             ) : (
               <p className="mt-4 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                Check the connection before going live. A real test comment is the final confirmation that Meta allows comment replies for this account.
+                Check the connection before going live. A real test comment is the final check that comment replies are working.
               </p>
             )}
 
@@ -1150,9 +1150,9 @@ function CommentAutomationTool({
             <h3 className="mt-5 text-xs font-semibold">Good to know</h3>
             <ul className="mt-3 space-y-3">
               <Rule text="Only new comments received after the automation is turned on are handled." />
-              <Rule text="The same comment will not be replied to twice if Meta sends it more than once." />
+              <Rule text="The same comment will not be replied to twice if the platform sends it more than once." />
               <Rule text="Pausing the global AI reply switch pauses this automation too." />
-              <Rule text="A comment by itself does not open a general 24-hour private-message window." />
+              <Rule text="A comment does not start a normal 24-hour DM conversation. The customer still needs to reply privately." />
               <Rule text="Complaints, safety issues, and requests for a human can still be flagged for staff." />
             </ul>
           </Card>
@@ -1210,18 +1210,21 @@ function CommentChannelCard({
 
 function CommentActionChoice({ checked, recommended = false, title, description, onClick }) {
   return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={checked}
-      onClick={onClick}
-      className={`flex w-full items-start gap-3 rounded-2xl border p-4 text-left transition-colors ${
+    <label
+      className={`flex w-full cursor-pointer items-start gap-3 rounded-2xl border p-4 text-left transition-colors focus-within:ring-2 focus-within:ring-[var(--color-primary)]/25 ${
         checked
           ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/45"
           : "border-[var(--color-border)] bg-white hover:bg-[var(--color-bg)]"
       }`}
     >
-      <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${checked ? "border-[var(--color-primary)]" : "border-[var(--color-border)]"}`}>
+      <input
+        type="radio"
+        name="comment-action-mode"
+        checked={checked}
+        onChange={onClick}
+        className="sr-only"
+      />
+      <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${checked ? "border-[var(--color-primary)]" : "border-[var(--color-border)]"}`} aria-hidden="true">
         {checked && <span className="h-2.5 w-2.5 rounded-full bg-[var(--color-primary)]" />}
       </span>
       <span className="min-w-0">
@@ -1233,7 +1236,7 @@ function CommentActionChoice({ checked, recommended = false, title, description,
         </span>
         <span className="mt-1 block text-[11px] leading-5 text-[var(--color-text-muted)]">{description}</span>
       </span>
-    </button>
+    </label>
   );
 }
 
@@ -1265,7 +1268,7 @@ function CommentFlowPreview({ form }) {
             </CommentPreviewStep>
             <FlowArrow />
             <CommentPreviewStep label="Lead created" tone="success">
-              The customer appears in Inbox and Pipeline after Meta accepts the private reply.
+              The customer appears in Inbox and Pipeline after the private message is successfully sent.
             </CommentPreviewStep>
           </>
         )}
