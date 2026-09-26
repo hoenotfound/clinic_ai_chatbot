@@ -201,9 +201,8 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
 }
 
 
-/* Keep a visible drag affordance on every device. Mouse users may still drag
-   the whole card; touch users use this handle so scrolling and opening a lead
-   remain separate gestures. */
+/* The drag grip is rendered only when the browser reports touch points.
+   These styles keep the iPad gesture separate from scrolling and text selection. */
 .touch-drag-handle {
   -webkit-user-select: none;
   user-select: none;

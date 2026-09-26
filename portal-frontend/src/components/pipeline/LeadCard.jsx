@@ -34,6 +34,7 @@ export default function LeadCard({
   const canMoveLead = permissions.manage_assigned_leads === true && typeof onDragStart === "function";
   const canTouchMoveLead = permissions.manage_assigned_leads === true
     && (typeof onTouchDragStart === "function" || typeof onPointerDragStart === "function");
+  const hasTouchInput = typeof navigator !== "undefined" && navigator.maxTouchPoints > 0;
   const metaAdLabel = lead.attribution?.ad_name
     ? { prefix: "Ad", value: lead.attribution.ad_name }
     : lead.attribution?.headline
@@ -110,9 +111,11 @@ export default function LeadCard({
         <span className="truncate">{lead.owner_username ? `Owner: ${lead.owner_username}` : "No owner"}</span>
         <span className="flex shrink-0 items-center gap-1.5">
           <span>{formatRelative(lead.last_message_at, now)}</span>
-          {canTouchMoveLead && (
+          {hasTouchInput && canTouchMoveLead && (
             <span
-              className="touch-drag-handle inline-flex h-9 min-w-9 touch-none select-none items-center justify-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-[var(--color-text-muted)]"
+              className={`touch-drag-handle inline-flex h-8 w-8 shrink-0 touch-none select-none items-center justify-center rounded-lg border transition ${pointerDragging ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white shadow-sm" : "border-[var(--color-border)]/80 bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}
+              role="button"
+              aria-label="Drag lead to another stage"
               title="Drag to another stage"
               onTouchStart={(event) => onTouchDragStart?.(event, lead)}
               onPointerDown={(event) => onPointerDragStart?.(event, lead)}
@@ -125,7 +128,6 @@ export default function LeadCard({
               }}
             >
               <GripIcon />
-              <span className="text-[10px] font-semibold">Drag</span>
             </span>
           )}
         </span>
@@ -162,7 +164,7 @@ function ClockIcon() {
 
 function GripIcon() {
   return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
       <circle cx="9" cy="7" r="1.5" />
       <circle cx="15" cy="7" r="1.5" />
       <circle cx="9" cy="12" r="1.5" />
