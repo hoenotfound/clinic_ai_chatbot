@@ -278,6 +278,18 @@ async function getMessageForRetry(contactId, messageId) {
 // Resyncs the delivery state for messages that are already visible in an
 // Inbox thread after its SSE connection reconnects. Restricting by contact id
 // prevents message ids from another conversation being exposed accidentally.
+async function getMessageByProviderIdForContact(contactId, providerMessageId) {
+  if (!providerMessageId) return null;
+  const result = await pool.query(
+    `SELECT ${LIGHTWEIGHT_MESSAGE_COLUMNS}
+     FROM messages
+     WHERE contact_id = $1 AND whatsapp_message_id = $2
+     LIMIT 1`,
+    [contactId, providerMessageId]
+  );
+  return result.rows[0] || null;
+}
+
 async function getDeliveryStatusesForContact(contactId, messageIds) {
   if (!messageIds.length) return [];
   const result = await pool.query(
@@ -418,6 +430,7 @@ module.exports = {
   getMessageMediaReferenceForContact,
   getMessageMediaForContact,
   getMessageForRetry,
+  getMessageByProviderIdForContact,
   getDeliveryStatusesForContact,
   acquireMessageRetryLock,
   deleteUnsentAssistantMessage,
