@@ -210,3 +210,65 @@ After adding the environment variables and webhook subscriptions:
 8. take over the Instagram conversation in Inbox and send a staff text reply;
 9. configure/read back each WABA callback override and send a WhatsApp test message to confirm the existing reply, promo image, media handling, and delivery status still work;
 10. repeat the real inbound/outbound checks for every purchased channel before enabling the client's Go-Live Gate.
+
+
+## Facebook / Instagram Comment Automation
+
+Comment automation is disabled by default. Enable it from **Tools > Comment automation** only after the required Meta permissions and webhook fields are active for the client.
+
+The flow is intentionally separate from normal Messenger/Instagram DM handling:
+
+1. Meta sends a new top-level comment webhook.
+2. The app stores a durable, deduplicated comment job before acknowledging the webhook.
+3. The app fetches the parent Facebook post or Instagram media caption when available, so short comments such as "price?" are evaluated with the post/ad context instead of in isolation.
+4. The AI can write a short public reply and one private reply.
+5. The private reply uses Meta's comment private-reply mechanism, not the normal 24-hour conversation send path.
+6. When Meta returns the private-reply recipient ID, the app creates/updates the channel contact, records the outbound private reply in Inbox, creates the lead in Pipeline, and records first-touch comment attribution. If the webhook includes an exact Meta Ad ID, the existing Ad → Ad Set → Campaign enrichment worker is reused.
+7. If the person replies to that DM, the existing Messenger/Instagram inbound flow continues the conversation normally.
+
+Safeguards:
+
+- the global `AUTOMATED_REPLIES_ENABLED=false` switch also silences comment automation;
+- self-comments, duplicate webhook deliveries, emoji/punctuation-only comments, and nested replies are ignored by default;
+- enabling the tool records an activation timestamp so old comments are not picked up as new work;
+- public/private sends are checkpointed separately so recovery does not intentionally resend a step that was already recorded;
+- comments are not saved as customer DM messages, so a comment by itself does not make the normal DM/follow-up logic think a customer has opened a conversation window.
+
+### Facebook Page comments
+
+For a Page connected through the existing Facebook Login/Page-token setup:
+
+- subscribe the Page webhook to the `feed` field so new Page post comments reach `/meta-webhook`;
+- grant the current Meta permissions needed to read/manage Page comments, including `pages_manage_engagement` and the applicable Page read permissions;
+- keep `pages_messaging` for the private-reply/message path.
+
+Public replies are posted as replies to the source comment. Private replies are sent through the Page messages endpoint with the source `comment_id`.
+
+### Instagram comments
+
+This project continues to use the existing **Instagram API with Facebook Login** setup. Do not switch the chatbot to the separate Instagram Login transport just for this feature.
+
+For the linked Instagram Professional account:
+
+- keep `pages_show_list`, `instagram_basic`, and `pages_read_engagement`;
+- add/approve `instagram_manage_comments` for reading and replying to comments;
+- keep the Instagram messaging permission used by this app for private messaging;
+- subscribe the Instagram webhook to the `comments` field;
+- set `INSTAGRAM_ACCOUNT_ID` to the linked Instagram Professional Account ID.
+
+Public replies are posted to the Instagram comment reply edge. Because this project uses Instagram API with Facebook Login / Messenger from Meta, private comment replies stay on the existing linked Page messaging transport (`INSTAGRAM_PAGE_ID`) with `recipient.comment_id`. `INSTAGRAM_ACCOUNT_ID` remains the Instagram webhook/routing identity.
+
+Meta limits a comment-triggered private reply to the rules of its Private Replies feature. In particular, treat it as a one-time initial message rather than an open-ended DM conversation. The normal Messenger/Instagram conversation flow should continue only after the customer responds.
+
+### Recommended first live test
+
+Keep the tool paused while permissions are being configured. After the Page/Instagram account is receiving the new comment webhook field:
+
+1. enable only one channel in **Tools > Comment automation**;
+2. leave **Ignore nested replies** and **Ignore emoji-only comments** on;
+3. comment from a normal personal account on a test post;
+4. confirm exactly one public reply is created;
+5. confirm exactly one private message is received;
+6. confirm the private message appears in Inbox and the contact appears in Pipeline;
+7. reply to the private message and confirm the existing AI DM flow continues;
+8. repeat the test for the second channel before enabling it for the client.

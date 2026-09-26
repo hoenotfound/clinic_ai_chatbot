@@ -6,6 +6,7 @@ const usersRepo = require("../db/usersRepo");
 const leadDistributionRepo = require("../db/leadDistributionRepo");
 const followUpTranslationService = require("../services/followUpTranslationService");
 const telegramAlertService = require("../services/telegramAlertService");
+const commentAutomationReadiness = require("../services/commentAutomationReadinessService");
 const { normalizeIndustrySetup } = require("../config/industrySetup");
 const { evaluateClientSetup } = require("../services/clientSetupService");
 const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
@@ -43,6 +44,7 @@ const VALIDATORS = {
   aiAssistantName: isNonEmptyString,
   introMessage: isNonEmptyString,
   automatedFollowUp: isAutomatedFollowUpConfig,
+  commentAutomation: isCommentAutomationConfig,
   leadScoring: isLeadScoringConfig,
   leadDistribution: (v) => normalizeLeadDistributionConfig(v) !== null,
   tone: isString,
@@ -127,6 +129,33 @@ function isFollowUpTranslations(value) {
   );
 }
 
+function isCommentAutomationConfig(value) {
+  if (!isPlainObject(value)) return false;
+  const validDate =
+    value.activatedAt === null || !Number.isNaN(Date.parse(value.activatedAt));
+  return (
+    typeof value.enabled === "boolean" &&
+    typeof value.facebookEnabled === "boolean" &&
+    typeof value.instagramEnabled === "boolean" &&
+    typeof value.publicReplyEnabled === "boolean" &&
+    typeof value.privateReplyEnabled === "boolean" &&
+    ["ai", "fixed"].includes(value.publicReplyStyle) &&
+    typeof value.fixedPublicReply === "string" &&
+    value.fixedPublicReply.trim().length <= 300 &&
+    (
+      !value.enabled ||
+      !value.publicReplyEnabled ||
+      value.publicReplyStyle !== "fixed" ||
+      isNonEmptyString(value.fixedPublicReply)
+    ) &&
+    typeof value.skipEmojiOnly === "boolean" &&
+    typeof value.skipNestedReplies === "boolean" &&
+    validDate &&
+    (!value.enabled || value.facebookEnabled || value.instagramEnabled) &&
+    (!value.enabled || value.publicReplyEnabled || value.privateReplyEnabled)
+  );
+}
+
 function isLeadScoringConfig(value) {
   return (
     isPlainObject(value) &&
@@ -198,6 +227,41 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   };
 }
 
+function prepareCommentAutomationConfig(requested, current) {
+  if (!isPlainObject(requested)) return null;
+
+  const enabled = requested.enabled === true;
+  const prepared = {
+    enabled,
+    facebookEnabled: requested.facebookEnabled === true,
+    instagramEnabled: requested.instagramEnabled === true,
+    publicReplyEnabled: requested.publicReplyEnabled === true,
+    privateReplyEnabled: requested.privateReplyEnabled === true,
+    publicReplyStyle: requested.publicReplyStyle === "fixed" ? "fixed" : "ai",
+    fixedPublicReply:
+      typeof requested.fixedPublicReply === "string"
+        ? requested.fixedPublicReply.trim()
+        : "",
+    skipEmojiOnly: requested.skipEmojiOnly !== false,
+    skipNestedReplies: requested.skipNestedReplies !== false,
+    activatedAt: null,
+  };
+
+  const continuingCurrentActivation =
+    enabled &&
+    current?.enabled === true &&
+    typeof current.activatedAt === "string" &&
+    !Number.isNaN(Date.parse(current.activatedAt));
+
+  prepared.activatedAt = enabled
+    ? continuingCurrentActivation
+      ? current.activatedAt
+      : new Date().toISOString()
+    : null;
+
+  return isCommentAutomationConfig(prepared) ? prepared : null;
+}
+
 function prepareLeadScoringConfig(requested, current) {
   if (!isPlainObject(requested)) return null;
 
@@ -239,6 +303,21 @@ router.post("/automated-follow-up/translations", async (req, res) => {
     console.error("Failed to translate automated follow-up:", err);
     res.status(502).json({
       error: "The translations could not be generated. Please try again.",
+    });
+  }
+});
+
+router.get("/comment-automation/status", async (req, res) => {
+  try {
+    const requestBaseUrl = `${req.protocol}://${req.get("host")}`;
+    const status = await commentAutomationReadiness.getCommentAutomationReadiness({
+      requestBaseUrl,
+    });
+    res.json(status);
+  } catch (err) {
+    console.error("Failed to load comment automation channel status:", err);
+    res.status(500).json({
+      error: "Something went wrong loading comment automation channel status.",
     });
   }
 });
@@ -371,6 +450,19 @@ router.patch("/", async (req, res) => {
       updates.automatedFollowUp = prepared;
     }
 
+    if (Object.prototype.hasOwnProperty.call(updates, "commentAutomation")) {
+      const prepared = prepareCommentAutomationConfig(
+        updates.commentAutomation,
+        configRepo.getConfig().commentAutomation
+      );
+      if (!prepared) {
+        return res.status(400).json({
+          error: "Invalid comment automation settings. Enable at least one channel and one reply action.",
+        });
+      }
+      updates.commentAutomation = prepared;
+    }
+
     if (Object.prototype.hasOwnProperty.call(updates, "leadScoring")) {
       const prepared = prepareLeadScoringConfig(
         updates.leadScoring,
@@ -415,3 +507,5 @@ router.patch("/", async (req, res) => {
 
 module.exports = router;
 module.exports.decorateConfig = decorateConfig;
+module.exports.isCommentAutomationConfig = isCommentAutomationConfig;
+module.exports.prepareCommentAutomationConfig = prepareCommentAutomationConfig;

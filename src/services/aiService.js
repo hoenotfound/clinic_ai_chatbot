@@ -466,11 +466,21 @@ async function runClaudeReply(messages, options, timeoutMs, retryCount) {
 
 async function getReply(messages, optionsOrFirstMessage = false) {
   const options = typeof optionsOrFirstMessage === "boolean"
-    ? { isFirstMessage: optionsOrFirstMessage, channel: "whatsapp", privateSetupCheck: false }
+    ? {
+        isFirstMessage: optionsOrFirstMessage,
+        channel: "whatsapp",
+        privateSetupCheck: false,
+        surface: "conversation",
+        publicReplyEnabled: true,
+        privateReplyEnabled: true,
+      }
     : {
         isFirstMessage: Boolean(optionsOrFirstMessage?.isFirstMessage),
         channel: optionsOrFirstMessage?.channel || "whatsapp",
         privateSetupCheck: Boolean(optionsOrFirstMessage?.privateSetupCheck),
+        surface: optionsOrFirstMessage?.surface || "conversation",
+        publicReplyEnabled: optionsOrFirstMessage?.publicReplyEnabled !== false,
+        privateReplyEnabled: optionsOrFirstMessage?.privateReplyEnabled !== false,
       };
 
   const timeoutMs = positiveInt(process.env.AI_REPLY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);

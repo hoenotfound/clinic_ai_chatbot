@@ -18,6 +18,8 @@ const SOURCE_LABELS = {
   meta_post: "Meta post",
   facebook_referral: "Facebook referral",
   instagram_referral: "Instagram referral",
+  facebook_comment: "Facebook Comment",
+  instagram_comment: "Instagram Comment",
   facebook_organic: "Facebook organic / untracked",
   instagram_organic: "Instagram organic / untracked",
   whatsapp_unattributed: "WhatsApp direct / untracked",

@@ -25,6 +25,18 @@ const DEFAULT_LEAD_SCORING = {
   maxMessages: 40,
 };
 
+const DEFAULT_COMMENT_AUTOMATION = {
+  enabled: false,
+  facebookEnabled: true,
+  instagramEnabled: true,
+  publicReplyEnabled: true,
+  privateReplyEnabled: true,
+  publicReplyStyle: "ai",
+  fixedPublicReply: "Thanks for your comment! I’ll send you a private message 😊",
+  skipEmojiOnly: true,
+  skipNestedReplies: true,
+};
+
 const FOLLOW_UP_LANGUAGES = [
   { key: "en", label: "English" },
   { key: "ms", label: "Bahasa Malaysia" },
@@ -85,13 +97,30 @@ function scoringFormFromSettings(value = {}) {
   };
 }
 
+function commentFormFromSettings(value = {}) {
+  const settings = { ...DEFAULT_COMMENT_AUTOMATION, ...value };
+  return {
+    enabled: !!settings.enabled,
+    facebookEnabled: settings.facebookEnabled !== false,
+    instagramEnabled: settings.instagramEnabled !== false,
+    publicReplyEnabled: settings.publicReplyEnabled !== false,
+    privateReplyEnabled: settings.privateReplyEnabled !== false,
+    publicReplyStyle: settings.publicReplyStyle === "fixed" ? "fixed" : "ai",
+    fixedPublicReply: settings.fixedPublicReply || DEFAULT_COMMENT_AUTOMATION.fixedPublicReply,
+    skipEmojiOnly: settings.skipEmojiOnly !== false,
+    skipNestedReplies: settings.skipNestedReplies !== false,
+  };
+}
+
 function toolFromQuery(value) {
+  if (value === "comment-automation") return "commentAutomation";
   if (value === "lead-temperature") return "leadScoring";
   if (value === "lead-distribution") return "leadDistribution";
   return "followUp";
 }
 
 function queryForTool(tool) {
+  if (tool === "commentAutomation") return "comment-automation";
   if (tool === "leadScoring") return "lead-temperature";
   if (tool === "leadDistribution") return "lead-distribution";
   return "";
@@ -103,9 +132,14 @@ export default function Tools() {
   const [config, setConfig] = useState(null);
   const [form, setForm] = useState(DEFAULT_FOLLOW_UP);
   const [scoringForm, setScoringForm] = useState(DEFAULT_LEAD_SCORING);
+  const [commentForm, setCommentForm] = useState(DEFAULT_COMMENT_AUTOMATION);
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [scoringSaving, setScoringSaving] = useState(false);
+  const [commentSaving, setCommentSaving] = useState(false);
+  const [commentChannelStatus, setCommentChannelStatus] = useState(null);
+  const [commentStatusLoading, setCommentStatusLoading] = useState(false);
+  const [commentStatusError, setCommentStatusError] = useState("");
   const [translating, setTranslating] = useState(false);
   const [translationLanguage, setTranslationLanguage] = useState("en");
   const [translationsSource, setTranslationsSource] = useState(DEFAULT_FOLLOW_UP.message);
@@ -125,9 +159,11 @@ export default function Tools() {
         if (cancelled) return;
         const followUp = followUpFormFromSettings(data.automatedFollowUp);
         const scoring = scoringFormFromSettings(data.leadScoring);
+        const comments = commentFormFromSettings(data.commentAutomation);
         setConfig(data);
         setForm(followUp);
         setScoringForm(scoring);
+        setCommentForm(comments);
         setTranslationsSource(followUp.message);
         setManualTranslationEdits([]);
         setDistributionActive(Boolean(data.leadDistribution?.enabled));
@@ -140,6 +176,26 @@ export default function Tools() {
     };
   }, []);
 
+  const loadCommentChannelStatus = useCallback(async () => {
+    setCommentStatusLoading(true);
+    setCommentStatusError("");
+    try {
+      const status = await api.getCommentAutomationStatus();
+      setCommentChannelStatus(status);
+      return status;
+    } catch (err) {
+      setCommentStatusError(err.message || "Couldn't load channel status.");
+      return null;
+    } finally {
+      setCommentStatusLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTool !== "commentAutomation") return;
+    loadCommentChannelStatus();
+  }, [activeTool, loadCommentChannelStatus]);
+
   const savedSettings = normalizeFollowUpSettings(config?.automatedFollowUp);
   const savedEnabled = !!savedSettings.enabled;
   const savedScoring = { ...DEFAULT_LEAD_SCORING, ...(config?.leadScoring || {}) };
@@ -148,6 +204,11 @@ export default function Tools() {
     Number(scoringForm.inactivityMinutes) !== Number(savedScoring.inactivityMinutes) ||
     Number(scoringForm.maxConversationMinutes) !== Number(savedScoring.maxConversationMinutes) ||
     Number(scoringForm.maxMessages) !== Number(savedScoring.maxMessages);
+  const savedCommentSettings = commentFormFromSettings(config?.commentAutomation);
+  const hasUnsavedCommentChanges =
+    Object.keys(DEFAULT_COMMENT_AUTOMATION).some(
+      (key) => key !== "activatedAt" && commentForm[key] !== savedCommentSettings[key]
+    );
   const hasUnsavedChanges =
     form.enabled !== savedEnabled ||
     Number(form.delayMinutes) !== Number(savedSettings.delayMinutes) ||
@@ -163,6 +224,7 @@ export default function Tools() {
 
   function currentToolHasUnsavedChanges() {
     if (activeTool === "followUp") return hasUnsavedChanges;
+    if (activeTool === "commentAutomation") return hasUnsavedCommentChanges;
     if (activeTool === "leadScoring") return hasUnsavedScoringChanges;
     if (activeTool === "leadDistribution") return distributionDirty;
     return false;
@@ -176,6 +238,10 @@ export default function Tools() {
       setManualTranslationEdits([]);
       setReviewTranslations(false);
       setTranslationLanguage("en");
+      return;
+    }
+    if (activeTool === "commentAutomation") {
+      setCommentForm(commentFormFromSettings(config?.commentAutomation));
       return;
     }
     if (activeTool === "leadScoring") {
@@ -339,6 +405,47 @@ export default function Tools() {
     }
   }
 
+  async function handleSaveCommentAutomation() {
+    if (commentForm.enabled && !commentForm.facebookEnabled && !commentForm.instagramEnabled) {
+      showToast("Choose Facebook, Instagram, or both.", "error");
+      return;
+    }
+    if (commentForm.enabled && !commentForm.publicReplyEnabled && !commentForm.privateReplyEnabled) {
+      showToast("Enable a public reply, private message, or both.", "error");
+      return;
+    }
+    const fixedPublicReply = commentForm.fixedPublicReply.trim();
+    if (
+      commentForm.publicReplyEnabled &&
+      commentForm.publicReplyStyle === "fixed" &&
+      (!fixedPublicReply || fixedPublicReply.length > 300)
+    ) {
+      showToast("Keep the fixed public reply between 1 and 300 characters.", "error");
+      return;
+    }
+
+    setCommentSaving(true);
+    try {
+      const updated = await api.updateConfig({
+        commentAutomation: {
+          ...commentForm,
+          fixedPublicReply,
+        },
+      });
+      const saved = commentFormFromSettings(updated.commentAutomation);
+      setConfig(updated);
+      setCommentForm(saved);
+      showToast(
+        saved.enabled ? "Comment automation is active." : "Comment automation is paused.",
+        "info"
+      );
+    } catch (err) {
+      showToast(err.message || "Couldn't save comment automation.", "error");
+    } finally {
+      setCommentSaving(false);
+    }
+  }
+
   async function handleSaveScoring() {
     const inactivityMinutes = Number(scoringForm.inactivityMinutes);
     const maxConversationMinutes = Number(scoringForm.maxConversationMinutes);
@@ -399,6 +506,7 @@ export default function Tools() {
         activeTool={activeTool}
         onSelect={selectTool}
         followUpActive={savedEnabled}
+        commentActive={!!savedCommentSettings.enabled}
         scoringActive={!!savedScoring.enabled}
         distributionActive={distributionActive}
       />
@@ -427,6 +535,23 @@ export default function Tools() {
             onGenerateTranslations={handleGenerateTranslations}
             onImagePicked={handleImagePicked}
             onSave={handleSave}
+            toasts={toasts}
+            dismissToast={dismissToast}
+          />
+        )}
+
+        {activeTool === "commentAutomation" && (
+          <CommentAutomationTool
+            form={commentForm}
+            setForm={setCommentForm}
+            savedEnabled={!!savedCommentSettings.enabled}
+            hasUnsavedChanges={hasUnsavedCommentChanges}
+            saving={commentSaving}
+            channelStatus={commentChannelStatus}
+            statusLoading={commentStatusLoading}
+            statusError={commentStatusError}
+            onRefreshStatus={loadCommentChannelStatus}
+            onSave={handleSaveCommentAutomation}
             toasts={toasts}
             dismissToast={dismissToast}
           />
@@ -696,6 +821,282 @@ function FollowUpTool({
   );
 }
 
+function CommentAutomationTool({
+  form,
+  setForm,
+  savedEnabled,
+  hasUnsavedChanges,
+  saving,
+  channelStatus,
+  statusLoading,
+  statusError,
+  onRefreshStatus,
+  onSave,
+  toasts,
+  dismissToast,
+}) {
+  const noChannelSelected =
+    form.enabled && !form.facebookEnabled && !form.instagramEnabled;
+  const noReplyActionSelected =
+    form.enabled && !form.publicReplyEnabled && !form.privateReplyEnabled;
+  const fixedReplyInvalid =
+    form.enabled &&
+    form.publicReplyEnabled &&
+    form.publicReplyStyle === "fixed" &&
+    !form.fixedPublicReply.trim();
+  const hasInvalidState =
+    noChannelSelected || noReplyActionSelected || fixedReplyInvalid;
+
+  return (
+    <ToolShell
+      title="Comment automation"
+      description="Reply to relevant Facebook and Instagram comments, then move enquiries into private messages."
+      enabled={form.enabled}
+      savedEnabled={savedEnabled}
+      hasUnsavedChanges={hasUnsavedChanges}
+      onToggle={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
+      saveLabel="Save changes"
+      saving={saving}
+      saveDisabled={saving || !hasUnsavedChanges || hasInvalidState}
+      onSave={onSave}
+      toasts={toasts}
+      dismissToast={dismissToast}
+    >
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.22fr)_minmax(18rem,0.78fr)]">
+        <div className="space-y-5">
+          <Card>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <SectionHeading
+                number="1"
+                title="Choose channels"
+                description="Turn on the social channels where you want new top-level comments handled."
+              />
+              <button
+                type="button"
+                onClick={onRefreshStatus}
+                disabled={statusLoading}
+                className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 self-start rounded-xl border border-[var(--color-border)] bg-white px-3.5 text-xs font-semibold text-[var(--color-text)] transition-colors hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {statusLoading && <Spinner className="h-3.5 w-3.5" />}
+                {statusLoading ? "Checking…" : "Refresh status"}
+              </button>
+            </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <ToggleSetting
+                label="Facebook"
+                description="Handle new comments on connected Facebook Page posts."
+                status={channelStatus?.facebook || null}
+                statusLoading={statusLoading && !channelStatus}
+                checked={form.facebookEnabled}
+                onChange={() =>
+                  setForm((current) => ({ ...current, facebookEnabled: !current.facebookEnabled }))
+                }
+              />
+              <ToggleSetting
+                label="Instagram"
+                description="Handle new comments on the connected Instagram Professional account."
+                status={channelStatus?.instagram || null}
+                statusLoading={statusLoading && !channelStatus}
+                checked={form.instagramEnabled}
+                onChange={() =>
+                  setForm((current) => ({ ...current, instagramEnabled: !current.instagramEnabled }))
+                }
+              />
+            </div>
+            <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3">
+              {statusError ? (
+                <p className="text-[11px] leading-5 text-[var(--color-danger)]">
+                  Live channel status is temporarily unavailable. The automation settings can still be edited.
+                </p>
+              ) : (
+                <p className="text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  {channelStatus?.note ||
+                    "Status is based on the existing messaging connection and signed Meta webhook evidence. A live comment test is still required to confirm comment permissions and the comment subscription."}
+                </p>
+              )}
+            </div>
+            {noChannelSelected && (
+              <InlineWarning>
+                Choose Facebook, Instagram, or both before turning this automation on.
+              </InlineWarning>
+            )}
+          </Card>
+
+          <Card>
+            <SectionHeading
+              number="2"
+              title="Choose what happens"
+              description="You can reply publicly, send one private reply from the comment, or do both."
+            />
+            <div className="mt-5 space-y-3">
+              <ToggleSetting
+                label="Reply publicly"
+                description="Post a short reply under the customer's comment. Useful for showing that the Page is responsive."
+                checked={form.publicReplyEnabled}
+                onChange={() =>
+                  setForm((current) => ({ ...current, publicReplyEnabled: !current.publicReplyEnabled }))
+                }
+              />
+              <ToggleSetting
+                label="Send a private message · Recommended"
+                description="Send one private reply, create the lead in Inbox / Pipeline, and continue normally if the customer replies."
+                checked={form.privateReplyEnabled}
+                onChange={() =>
+                  setForm((current) => ({ ...current, privateReplyEnabled: !current.privateReplyEnabled }))
+                }
+              />
+            </div>
+
+            {noReplyActionSelected && (
+              <InlineWarning>
+                Choose at least one action: a public reply, a private message, or both.
+              </InlineWarning>
+            )}
+
+            {form.publicReplyEnabled && (
+              <div className="mt-6 border-t border-[var(--color-border)] pt-5">
+                <p className="text-xs font-semibold">Public reply style</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    aria-pressed={form.publicReplyStyle === "ai"}
+                    onClick={() => setForm((current) => ({ ...current, publicReplyStyle: "ai" }))}
+                    className={`rounded-xl border p-4 text-left transition-colors ${
+                      form.publicReplyStyle === "ai"
+                        ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/55"
+                        : "border-[var(--color-border)] hover:bg-[var(--color-bg)]"
+                    }`}
+                  >
+                    <span className="block text-xs font-semibold">AI-generated</span>
+                    <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">
+                      Match the comment language and context while keeping the public reply short.
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={form.publicReplyStyle === "fixed"}
+                    onClick={() => setForm((current) => ({ ...current, publicReplyStyle: "fixed" }))}
+                    className={`rounded-xl border p-4 text-left transition-colors ${
+                      form.publicReplyStyle === "fixed"
+                        ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/55"
+                        : "border-[var(--color-border)] hover:bg-[var(--color-bg)]"
+                    }`}
+                  >
+                    <span className="block text-xs font-semibold">Fixed message</span>
+                    <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">
+                      Use the same public reply for every eligible comment.
+                    </span>
+                  </button>
+                </div>
+
+                {form.publicReplyStyle === "fixed" && (
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <label htmlFor="comment-fixed-reply" className="text-xs font-semibold">
+                        Public reply
+                      </label>
+                      <span className="text-[10px] text-[var(--color-text-muted)]">
+                        {form.fixedPublicReply.length}/300
+                      </span>
+                    </div>
+                    <textarea
+                      id="comment-fixed-reply"
+                      rows="3"
+                      maxLength="300"
+                      value={form.fixedPublicReply}
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, fixedPublicReply: event.target.value }))
+                      }
+                      className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+                    />
+                    {fixedReplyInvalid && (
+                      <p className="mt-2 text-[11px] font-medium text-[var(--color-danger)]">
+                        Add the public reply text before saving.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+
+          <Card>
+            <SectionHeading
+              number="3"
+              title="Safeguards"
+              description="Keep low-value or risky comment events out of the automated flow."
+            />
+            <div className="mt-5 space-y-3">
+              <ToggleSetting
+                label="Ignore emoji-only comments"
+                description="Skip comments such as 🔥🔥 or 👍 that do not contain words or numbers."
+                checked={form.skipEmojiOnly}
+                onChange={() =>
+                  setForm((current) => ({ ...current, skipEmojiOnly: !current.skipEmojiOnly }))
+                }
+              />
+              <ToggleSetting
+                label="Ignore nested replies"
+                description="Handle only top-level comments and avoid the bot joining reply threads."
+                checked={form.skipNestedReplies}
+                onChange={() =>
+                  setForm((current) => ({ ...current, skipNestedReplies: !current.skipNestedReplies }))
+                }
+              />
+            </div>
+          </Card>
+        </div>
+
+        <aside className="space-y-5 xl:sticky xl:top-6 xl:self-start">
+          <Card>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+              Example flow
+            </p>
+            <div className="mt-4 space-y-3">
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                <p className="text-[11px] font-semibold text-[var(--color-text-muted)]">Customer comment</p>
+                <p className="mt-1 text-xs">How much is this?</p>
+                <p className="mt-1.5 text-[11px] leading-4 text-[var(--color-text-muted)]">
+                  AI also reads the Facebook post or Instagram caption when available.
+                </p>
+              </div>
+              {form.publicReplyEnabled && (
+                <div className="rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/45 p-3">
+                  <p className="text-[11px] font-semibold text-[var(--color-primary)]">Public reply</p>
+                  <p className="mt-1 text-xs">
+                    {form.publicReplyStyle === "fixed"
+                      ? form.fixedPublicReply || "Your fixed reply will appear here."
+                      : "Thanks for asking 😊 I’ll send you the details in a private message."}
+                  </p>
+                </div>
+              )}
+              {form.privateReplyEnabled && (
+                <div className="rounded-xl border border-[var(--color-border)] bg-white p-3 shadow-sm">
+                  <p className="text-[11px] font-semibold text-[var(--color-primary)]">Private message</p>
+                  <p className="mt-1 text-xs">
+                    AI answers using the post/comment context. The lead appears in Inbox and Pipeline after Meta accepts the private reply.
+                  </p>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card>
+            <h2 className="font-display text-sm font-bold">How it stays safe</h2>
+            <ul className="mt-4 space-y-3">
+              <Rule text="Old comments are not processed when you first enable the tool." />
+              <Rule text="Duplicate Meta webhook deliveries are deduplicated before sending." />
+              <Rule text="The global AI reply switch pauses this automation too." />
+              <Rule text="A comment alone is not treated as an open 24-hour DM conversation." />
+              <Rule text="Complaints, safety issues, and human requests can be flagged for staff." />
+            </ul>
+          </Card>
+        </aside>
+      </div>
+    </ToolShell>
+  );
+}
+
 function LeadScoringTool({ form, setForm, savedEnabled, hasUnsavedChanges, saving, onSave, toasts, dismissToast }) {
   return (
     <ToolShell
@@ -789,7 +1190,7 @@ function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChange
   );
 }
 
-function ToolsSidebar({ activeTool, onSelect, followUpActive, scoringActive, distributionActive }) {
+function ToolsSidebar({ activeTool, onSelect, followUpActive, commentActive, scoringActive, distributionActive }) {
   return (
     <aside className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] p-4 xl:h-full xl:w-72 xl:border-b-0 xl:border-r xl:p-5">
       <div className="flex items-start justify-between gap-3 xl:block">
@@ -802,6 +1203,7 @@ function ToolsSidebar({ activeTool, onSelect, followUpActive, scoringActive, dis
 
       <nav className="mt-4 flex gap-2 ui-scroll-x overflow-x-auto pb-1 xl:mt-5 xl:block xl:space-y-2 xl:overflow-visible xl:pb-0" aria-label="Available tools">
         <ToolNavButton active={activeTool === "followUp"} onClick={() => onSelect("followUp")} icon={<ClockIcon className="h-5 w-5" />} title="Automated follow-up" description="Follow up when a customer goes quiet" enabled={followUpActive} />
+        <ToolNavButton active={activeTool === "commentAutomation"} onClick={() => onSelect("commentAutomation")} icon={<CommentIcon className="h-5 w-5" />} title="Comment automation" description="Reply to FB / IG comments and move to DM" enabled={commentActive} />
         <ToolNavButton active={activeTool === "leadScoring"} onClick={() => onSelect("leadScoring")} icon={<ScoreIcon className="h-5 w-5" />} title="Automatic Lead Temperature" description="Keep Hot / Warm / Cold updated" enabled={scoringActive} />
         <ToolNavButton active={activeTool === "leadDistribution"} onClick={() => onSelect("leadDistribution")} icon={<DistributionIcon className="h-5 w-5" />} title="Automatic Lead Distribution" description="Share new leads across Sales staff" enabled={distributionActive} />
 
@@ -875,6 +1277,83 @@ function Switch({ checked, onChange, ariaLabel, disabled = false }) {
   );
 }
 
+function ToggleSetting({ label, description, status = null, statusLoading = false, checked, onChange }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={onChange}
+      className="flex w-full items-start justify-between gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 text-left transition-colors hover:border-[var(--color-primary)]/30 hover:bg-white"
+    >
+      <span className="min-w-0">
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="block text-xs font-semibold">{label}</span>
+          {(status || statusLoading) && (
+            <ChannelReadinessBadge status={status} loading={statusLoading} />
+          )}
+        </span>
+        <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">{description}</span>
+        {status?.detail && (
+          <span className="mt-1.5 block text-[10px] leading-4 text-[var(--color-text-muted)]">
+            {status.detail}
+          </span>
+        )}
+      </span>
+      <span
+        aria-hidden="true"
+        className={`relative mt-0.5 h-8 w-14 shrink-0 rounded-full transition-colors ${checked ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`}
+      >
+        <span
+          className={`absolute left-0 top-1 h-6 w-6 rounded-full bg-white shadow-sm transition-transform ${checked ? "translate-x-7" : "translate-x-1"}`}
+        />
+      </span>
+    </button>
+  );
+}
+
+function ChannelReadinessBadge({ status, loading = false }) {
+  if (loading) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-white px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--color-text-muted)]" />
+        Checking
+      </span>
+    );
+  }
+
+  const state = status?.state || "setup_needed";
+  const classes =
+    state === "ready"
+      ? "border-[var(--color-primary)]/20 bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+      : state === "not_connected"
+        ? "border-[var(--color-border)] bg-white text-[var(--color-text-muted)]"
+        : "border-[var(--color-accent)]/25 bg-[var(--color-accent-light)] text-[var(--color-accent-text)]";
+  const dot =
+    state === "ready"
+      ? "bg-[var(--color-primary)]"
+      : state === "not_connected"
+        ? "bg-[var(--color-border)]"
+        : "bg-[var(--color-accent)]";
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${classes}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+      {status?.label || "Setup needed"}
+    </span>
+  );
+}
+
+function InlineWarning({ children }) {
+  return (
+    <div role="alert" className="mt-4 flex items-start gap-2.5 rounded-xl border border-[var(--color-accent)]/30 bg-[var(--color-accent-light)] px-3.5 py-3">
+      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white text-[11px] font-bold text-[var(--color-accent-text)]">!</span>
+      <p className="text-[11px] leading-5 text-[var(--color-text)]">{children}</p>
+    </div>
+  );
+}
+
 function Choice({ checked, label, description, onChange }) {
   return (
     <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors ${checked ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/55" : "border-[var(--color-border)] hover:bg-[var(--color-bg)]"}`}>
@@ -932,6 +1411,7 @@ function IconBase({ children, ...props }) {
   return <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">{children}</svg>;
 }
 function ClockIcon(props) { return <IconBase {...props}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
+function CommentIcon(props) { return <IconBase {...props}><path d="M4 5h16v11H9l-5 4V5Z" strokeLinecap="round" strokeLinejoin="round" /><path d="M8 9h8M8 12h5" strokeLinecap="round" /></IconBase>; }
 function ScoreIcon(props) { return <IconBase {...props}><path d="M4 19V9M10 19V5M16 19v-7M22 19V8" strokeLinecap="round" /><path d="m3 7 6-4 6 7 6-4" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
 function DistributionIcon(props) { return <IconBase {...props}><circle cx="6" cy="6" r="2" /><circle cx="18" cy="6" r="2" /><circle cx="12" cy="18" r="2" /><path d="M7.7 7.1 10.8 16M16.3 7.1 13.2 16M8 6h8" strokeLinecap="round" /></IconBase>; }
 function ImageIcon(props) { return <IconBase {...props}><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m21 15-5-5L5 20" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
