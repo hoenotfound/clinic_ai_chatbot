@@ -28,6 +28,7 @@ const CONFIG_KEYS = [
   "contact",
   "introMessage",
   "automatedFollowUp",
+  "commentAutomation",
   "leadScoring",
   "leadDistribution",
   "promotions",
@@ -66,6 +67,10 @@ function hydrateStoredConfig(storedConfig = {}) {
     automatedFollowUp: {
       ...hydratedConfig.automatedFollowUp,
       ...(storedConfig.automatedFollowUp || {}),
+    },
+    commentAutomation: {
+      ...hydratedConfig.commentAutomation,
+      ...(storedConfig.commentAutomation || {}),
     },
     leadScoring: {
       ...hydratedConfig.leadScoring,
