@@ -167,6 +167,60 @@ test("skip rules ignore self comments, emoji-only comments, and nested replies",
   );
 });
 
+test("does not persist comment jobs while the feature or global automated replies are paused", async () => {
+  let stores = 0;
+  const repo = {
+    storeIncomingComment: async () => {
+      stores += 1;
+      return { id: stores };
+    },
+  };
+  const body = {
+    object: "facebook",
+    entry: [{
+      id: "page-1",
+      changes: [{
+        field: "feed",
+        value: {
+          item: "comment",
+          verb: "add",
+          comment_id: "comment-kill-switch",
+          post_id: "page-1_post-1",
+          parent_id: "page-1_post-1",
+          message: "Price?",
+          from: { id: "user-1", name: "Jane" },
+        },
+      }],
+    }],
+  };
+
+  const disabled = createMetaCommentAutomationService({
+    repo,
+    config: {
+      commentAutomation: {
+        ...DEFAULT_COMMENT_AUTOMATION,
+        enabled: false,
+      },
+    },
+    repliesEnabled: () => true,
+  });
+  assert.deepEqual(await disabled.acceptIncomingComments(body), []);
+  assert.equal(stores, 0);
+
+  const globallyPaused = createMetaCommentAutomationService({
+    repo,
+    config: {
+      commentAutomation: {
+        ...DEFAULT_COMMENT_AUTOMATION,
+        enabled: true,
+      },
+    },
+    repliesEnabled: () => false,
+  });
+  assert.deepEqual(await globallyPaused.acceptIncomingComments(body), []);
+  assert.equal(stores, 0);
+});
+
 test("processes one comment with public + private reply and creates a lead only after private reply succeeds", async () => {
   const calls = [];
   const stored = {
