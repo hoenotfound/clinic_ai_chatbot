@@ -45,6 +45,18 @@ function neutralAutomationDefaults() {
       imageUrl: "",
       activatedAt: null,
     },
+    commentAutomation: {
+      enabled: false,
+      facebookEnabled: true,
+      instagramEnabled: true,
+      publicReplyEnabled: true,
+      privateReplyEnabled: true,
+      publicReplyStyle: "ai",
+      fixedPublicReply: "Thanks for your comment! I've sent you a private message 😊",
+      skipEmojiOnly: true,
+      skipNestedReplies: true,
+      activatedAt: null,
+    },
     leadScoring: {
       enabled: false,
       inactivityMinutes: 10,
