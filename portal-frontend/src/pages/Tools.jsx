@@ -25,6 +25,18 @@ const DEFAULT_LEAD_SCORING = {
   maxMessages: 40,
 };
 
+const DEFAULT_COMMENT_AUTOMATION = {
+  enabled: false,
+  facebookEnabled: true,
+  instagramEnabled: true,
+  publicReplyEnabled: true,
+  privateReplyEnabled: true,
+  publicReplyStyle: "ai",
+  fixedPublicReply: "Thanks for your comment! I've sent you a private message 😊",
+  skipEmojiOnly: true,
+  skipNestedReplies: true,
+};
+
 const FOLLOW_UP_LANGUAGES = [
   { key: "en", label: "English" },
   { key: "ms", label: "Bahasa Malaysia" },
@@ -85,13 +97,30 @@ function scoringFormFromSettings(value = {}) {
   };
 }
 
+function commentFormFromSettings(value = {}) {
+  const settings = { ...DEFAULT_COMMENT_AUTOMATION, ...value };
+  return {
+    enabled: !!settings.enabled,
+    facebookEnabled: settings.facebookEnabled !== false,
+    instagramEnabled: settings.instagramEnabled !== false,
+    publicReplyEnabled: settings.publicReplyEnabled !== false,
+    privateReplyEnabled: settings.privateReplyEnabled !== false,
+    publicReplyStyle: settings.publicReplyStyle === "fixed" ? "fixed" : "ai",
+    fixedPublicReply: settings.fixedPublicReply || DEFAULT_COMMENT_AUTOMATION.fixedPublicReply,
+    skipEmojiOnly: settings.skipEmojiOnly !== false,
+    skipNestedReplies: settings.skipNestedReplies !== false,
+  };
+}
+
 function toolFromQuery(value) {
+  if (value === "comment-automation") return "commentAutomation";
   if (value === "lead-temperature") return "leadScoring";
   if (value === "lead-distribution") return "leadDistribution";
   return "followUp";
 }
 
 function queryForTool(tool) {
+  if (tool === "commentAutomation") return "comment-automation";
   if (tool === "leadScoring") return "lead-temperature";
   if (tool === "leadDistribution") return "lead-distribution";
   return "";
@@ -103,9 +132,11 @@ export default function Tools() {
   const [config, setConfig] = useState(null);
   const [form, setForm] = useState(DEFAULT_FOLLOW_UP);
   const [scoringForm, setScoringForm] = useState(DEFAULT_LEAD_SCORING);
+  const [commentForm, setCommentForm] = useState(DEFAULT_COMMENT_AUTOMATION);
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [scoringSaving, setScoringSaving] = useState(false);
+  const [commentSaving, setCommentSaving] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [translationLanguage, setTranslationLanguage] = useState("en");
   const [translationsSource, setTranslationsSource] = useState(DEFAULT_FOLLOW_UP.message);
@@ -125,9 +156,11 @@ export default function Tools() {
         if (cancelled) return;
         const followUp = followUpFormFromSettings(data.automatedFollowUp);
         const scoring = scoringFormFromSettings(data.leadScoring);
+        const comments = commentFormFromSettings(data.commentAutomation);
         setConfig(data);
         setForm(followUp);
         setScoringForm(scoring);
+        setCommentForm(comments);
         setTranslationsSource(followUp.message);
         setManualTranslationEdits([]);
         setDistributionActive(Boolean(data.leadDistribution?.enabled));
@@ -148,6 +181,11 @@ export default function Tools() {
     Number(scoringForm.inactivityMinutes) !== Number(savedScoring.inactivityMinutes) ||
     Number(scoringForm.maxConversationMinutes) !== Number(savedScoring.maxConversationMinutes) ||
     Number(scoringForm.maxMessages) !== Number(savedScoring.maxMessages);
+  const savedCommentSettings = commentFormFromSettings(config?.commentAutomation);
+  const hasUnsavedCommentChanges =
+    Object.keys(DEFAULT_COMMENT_AUTOMATION).some(
+      (key) => key !== "activatedAt" && commentForm[key] !== savedCommentSettings[key]
+    );
   const hasUnsavedChanges =
     form.enabled !== savedEnabled ||
     Number(form.delayMinutes) !== Number(savedSettings.delayMinutes) ||
@@ -163,6 +201,7 @@ export default function Tools() {
 
   function currentToolHasUnsavedChanges() {
     if (activeTool === "followUp") return hasUnsavedChanges;
+    if (activeTool === "commentAutomation") return hasUnsavedCommentChanges;
     if (activeTool === "leadScoring") return hasUnsavedScoringChanges;
     if (activeTool === "leadDistribution") return distributionDirty;
     return false;
@@ -176,6 +215,10 @@ export default function Tools() {
       setManualTranslationEdits([]);
       setReviewTranslations(false);
       setTranslationLanguage("en");
+      return;
+    }
+    if (activeTool === "commentAutomation") {
+      setCommentForm(commentFormFromSettings(config?.commentAutomation));
       return;
     }
     if (activeTool === "leadScoring") {
@@ -339,6 +382,43 @@ export default function Tools() {
     }
   }
 
+  async function handleSaveCommentAutomation() {
+    if (commentForm.enabled && !commentForm.facebookEnabled && !commentForm.instagramEnabled) {
+      showToast("Choose Facebook, Instagram, or both.", "error");
+      return;
+    }
+    if (commentForm.enabled && !commentForm.publicReplyEnabled && !commentForm.privateReplyEnabled) {
+      showToast("Enable a public reply, private message, or both.", "error");
+      return;
+    }
+    const fixedPublicReply = commentForm.fixedPublicReply.trim();
+    if (!fixedPublicReply || fixedPublicReply.length > 300) {
+      showToast("Keep the fixed public reply between 1 and 300 characters.", "error");
+      return;
+    }
+
+    setCommentSaving(true);
+    try {
+      const updated = await api.updateConfig({
+        commentAutomation: {
+          ...commentForm,
+          fixedPublicReply,
+        },
+      });
+      const saved = commentFormFromSettings(updated.commentAutomation);
+      setConfig(updated);
+      setCommentForm(saved);
+      showToast(
+        saved.enabled ? "Comment automation is active." : "Comment automation is paused.",
+        "info"
+      );
+    } catch (err) {
+      showToast(err.message || "Couldn't save comment automation.", "error");
+    } finally {
+      setCommentSaving(false);
+    }
+  }
+
   async function handleSaveScoring() {
     const inactivityMinutes = Number(scoringForm.inactivityMinutes);
     const maxConversationMinutes = Number(scoringForm.maxConversationMinutes);
@@ -399,6 +479,7 @@ export default function Tools() {
         activeTool={activeTool}
         onSelect={selectTool}
         followUpActive={savedEnabled}
+        commentActive={!!savedCommentSettings.enabled}
         scoringActive={!!savedScoring.enabled}
         distributionActive={distributionActive}
       />
@@ -427,6 +508,19 @@ export default function Tools() {
             onGenerateTranslations={handleGenerateTranslations}
             onImagePicked={handleImagePicked}
             onSave={handleSave}
+            toasts={toasts}
+            dismissToast={dismissToast}
+          />
+        )}
+
+        {activeTool === "commentAutomation" && (
+          <CommentAutomationTool
+            form={commentForm}
+            setForm={setCommentForm}
+            savedEnabled={!!savedCommentSettings.enabled}
+            hasUnsavedChanges={hasUnsavedCommentChanges}
+            saving={commentSaving}
+            onSave={handleSaveCommentAutomation}
             toasts={toasts}
             dismissToast={dismissToast}
           />
