@@ -146,9 +146,12 @@ test("pipeline supports iPad touch, pen and mouse stage moves", () => {
   assert.match(pipelineSource, /addEventListener\("touchmove", handleTouchMove, \{ passive: false \}\)/);
   assert.match(pipelineSource, /data-pipeline-stage-id=\{stage\.id\}/);
   assert.match(pipelineSource, /document\.elementFromPoint/);
+  assert.match(cardSource, /navigator\.maxTouchPoints > 0/);
+  assert.match(cardSource, /hasTouchInput && canTouchMoveLead/);
   assert.match(cardSource, /touch-drag-handle/);
+  assert.match(cardSource, /aria-label="Drag lead to another stage"/);
   assert.match(cardSource, /onTouchStart/);
   assert.match(cardSource, /onPointerDown/);
   assert.match(cssSource, /touch-action: none/);
-  assert.doesNotMatch(cssSource, /\.touch-drag-handle\s*\{\s*display:\s*none/);
+  assert.doesNotMatch(cardSource, />Drag<\/span>/);
 });
