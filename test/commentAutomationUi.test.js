@@ -30,10 +30,13 @@ test("comment automation separates connection readiness from channel selection",
 
   assert.match(source, /function CommentChannelCard\(/);
   assert.match(source, /Connection<\/span>/);
-  assert.match(source, /Automation \{checked \? "selected" : "not selected"\}/);
+  assert.match(source, /Included in automation/);
+  assert.match(source, /Not included/);
   assert.match(source, /Check connection/);
   assert.match(source, /Connections look ready/);
   assert.match(source, /One or more selected channels still need setup/);
+  assert.match(source, /Fix connection/);
+  assert.match(source, /unsaved Comment automation changes/);
 });
 
 test("comment automation keeps advanced controls collapsed and delays split layout until wide desktop", () => {
@@ -43,6 +46,7 @@ test("comment automation keeps advanced controls collapsed and delays split layo
   );
 
   assert.match(source, /<details className="group/);
+  assert.match(source, /\[&::-webkit-details-marker\]:hidden/);
   assert.match(source, /min-\[1800px\]:grid-cols/);
   assert.match(source, /min-\[1800px\]:sticky/);
   assert.match(source, /role="radiogroup"/);
