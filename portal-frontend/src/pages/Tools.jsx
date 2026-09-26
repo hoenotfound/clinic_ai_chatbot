@@ -978,8 +978,19 @@ function CommentAutomationTool({
                   </p>
                 </div>
                 {isAdmin && (
-                  <Link to="/settings/setup" className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-xl border border-[var(--color-accent)]/30 bg-white px-3 text-xs font-semibold text-[var(--color-accent-text)] transition hover:bg-white/70">
-                    Open Setup Status
+                  <Link
+                    to="/settings/setup"
+                    onClick={(event) => {
+                      if (
+                        hasUnsavedChanges &&
+                        !window.confirm("You have unsaved Comment automation changes. Open connection setup without saving them?")
+                      ) {
+                        event.preventDefault();
+                      }
+                    }}
+                    className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-xl border border-[var(--color-accent)]/30 bg-white px-3 text-xs font-semibold text-[var(--color-accent-text)] transition hover:bg-white/70"
+                  >
+                    Fix connection
                   </Link>
                 )}
               </div>
@@ -1109,7 +1120,7 @@ function CommentAutomationTool({
           </Card>
 
           <details className="group rounded-2xl border border-[var(--color-border)] bg-white shadow-[0_8px_30px_rgba(24,39,33,0.035)]">
-            <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 font-display text-sm font-bold sm:px-6">
+            <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 rounded-2xl px-5 py-4 font-display text-sm font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)]/30 sm:px-6 [&::-webkit-details-marker]:hidden">
               <span>
                 Advanced settings
                 <span className="mt-1 block font-sans text-[11px] font-normal leading-5 text-[var(--color-text-muted)]">
@@ -1145,19 +1156,19 @@ function CommentAutomationTool({
           <CommentFlowPreview form={form} />
 
           <Card>
-            <h2 className="font-display text-sm font-bold">Before you turn it on</h2>
+            <h2 className="font-display text-sm font-bold">{form.enabled || savedEnabled ? "Test your automation" : "Before you turn it on"}</h2>
             <div className="mt-4 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/45 p-3.5">
               <p className="text-xs font-semibold text-[var(--color-primary)]">Run one real comment test</p>
               <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                After saving, leave a new comment on a recent Facebook or Instagram post. Confirm the reply appears and, if enabled, the private message arrives.
+                Leave a new comment on a recent Facebook or Instagram post. Confirm the reply appears and, if enabled, the private message arrives.
               </p>
             </div>
             <h3 className="mt-5 text-xs font-semibold">Good to know</h3>
             <ul className="mt-3 space-y-3">
               <Rule text="Only new comments received after the automation is turned on are handled." />
               <Rule text="The same comment will not be replied to twice if the platform sends it more than once." />
-              <Rule text="Pausing the global AI reply switch pauses this automation too." />
-              <Rule text="A comment does not start a normal 24-hour DM conversation. The customer still needs to reply privately." />
+              <Rule text="If AI replies are paused for the whole account, this automation pauses too." />
+              <Rule text="A comment alone does not let the bot keep messaging privately. The customer must reply to the private message first." />
               <Rule text="Complaints, safety issues, and requests for a human can still be flagged for staff." />
             </ul>
           </Card>
@@ -1200,7 +1211,7 @@ function CommentChannelCard({
         </span>
         <span className="mt-1.5 block text-[11px] leading-5 text-[var(--color-text-muted)]">{description}</span>
         <span className={`mt-2 block text-[10px] font-semibold ${checked ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
-          Automation {checked ? "selected" : "not selected"}
+          {checked ? "Included in automation" : "Not included"}
         </span>
       </span>
       <span
