@@ -46,6 +46,7 @@ test("comment automation keeps advanced controls collapsed and delays split layo
   assert.match(source, /min-\[1800px\]:grid-cols/);
   assert.match(source, /min-\[1800px\]:sticky/);
   assert.match(source, /role="radiogroup"/);
-  assert.match(source, /role="radio"/);
+  assert.match(source, /name="comment-action-mode"/);
+  assert.match(source, /type="radio"/);
   assert.match(source, /text-base leading-6[\s\S]*sm:text-sm/);
 });
