@@ -5,7 +5,9 @@ export default function ToolsRoute() {
   const [searchParams] = useSearchParams();
   const selectedTool = searchParams.get("tool");
   const isFollowUpSelected =
-    selectedTool !== "lead-temperature" && selectedTool !== "lead-distribution";
+    selectedTool !== "comment-automation" &&
+    selectedTool !== "lead-temperature" &&
+    selectedTool !== "lead-distribution";
 
   return (
     <div className="flex h-full min-h-0 flex-col">
