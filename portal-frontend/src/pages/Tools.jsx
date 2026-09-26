@@ -809,6 +809,7 @@ function CommentAutomationTool({
   const noReplyActionSelected =
     form.enabled && !form.publicReplyEnabled && !form.privateReplyEnabled;
   const fixedReplyInvalid =
+    form.enabled &&
     form.publicReplyEnabled &&
     form.publicReplyStyle === "fixed" &&
     !form.fixedPublicReply.trim();
