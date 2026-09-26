@@ -155,3 +155,21 @@ test("pipeline supports iPad touch, pen and mouse stage moves", () => {
   assert.match(cssSource, /touch-action: none/);
   assert.doesNotMatch(cardSource, />Drag<\/span>/);
 });
+
+
+test("pipeline keeps secondary controls compact below wide desktop", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "portal-frontend", "src", "pages", "Pipeline.jsx"),
+    "utf8"
+  );
+
+  assert.match(source, /QUICK_CATEGORY_KEYS = new Set\(\["all", "hot", "warm", "attention"\]\)/);
+  assert.match(source, /showCompactFilters/);
+  assert.match(source, /hasSecondaryCategoryFilter/);
+  assert.match(source, /min-\[1600px\]:hidden/);
+  assert.match(source, /min-\[1600px\]:grid/);
+  assert.match(source, /min-\[1600px\]:flex/);
+  assert.match(source, /function CompactMetric\(/);
+  assert.match(source, /function FilterIcon\(/);
+  assert.match(source, /max-w-40 truncate/);
+});
