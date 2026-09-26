@@ -3,6 +3,8 @@ const SOURCE_LABELS = {
   meta_post: "Meta post",
   facebook_referral: "Facebook referral",
   instagram_referral: "Instagram referral",
+  facebook_comment: "Facebook Comment",
+  instagram_comment: "Instagram Comment",
   facebook_organic: "Facebook organic / untracked",
   instagram_organic: "Instagram organic / untracked",
   whatsapp_unattributed: "WhatsApp direct / untracked",
@@ -14,8 +16,8 @@ export function sourceLabel(value) {
 
 export function sourceTone(value) {
   if (value === "meta_ads") return "bg-blue-50 text-blue-700";
-  if (value === "instagram_organic" || value === "instagram_referral") return "bg-pink-50 text-pink-700";
-  if (value === "facebook_organic" || value === "facebook_referral" || value === "meta_post") return "bg-indigo-50 text-indigo-700";
+  if (value === "instagram_organic" || value === "instagram_referral" || value === "instagram_comment") return "bg-pink-50 text-pink-700";
+  if (value === "facebook_organic" || value === "facebook_referral" || value === "facebook_comment" || value === "meta_post") return "bg-indigo-50 text-indigo-700";
   return "bg-slate-100 text-slate-600";
 }
 
