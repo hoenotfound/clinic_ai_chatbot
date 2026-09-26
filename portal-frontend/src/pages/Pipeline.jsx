@@ -602,13 +602,13 @@ export default function Pipeline() {
           )}
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-[var(--color-text-muted)] 2xl:hidden">
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-[var(--color-text-muted)] min-[1600px]:hidden">
           <CompactMetric label="Active" value={metricActiveLeads.length} />
           <CompactMetric label="Hot" value={categoryCounts.hot || 0} tone="danger" />
           <CompactMetric label="Pipeline" value={formatMoney(pipelineValue) || "RM 0"} />
           <span className="hidden sm:inline">· {metricLeads.length} total journeys</span>
         </div>
-        <div className="mt-3 hidden grid-cols-3 gap-3 2xl:grid">
+        <div className="mt-3 hidden grid-cols-3 gap-3 min-[1600px]:grid">
           <Metric label="Active leads" value={metricActiveLeads.length} detail={`${metricLeads.length} total journeys`} />
           <Metric label="Hot leads" value={categoryCounts.hot || 0} detail="Priority follow-up" tone="danger" />
           <Metric label="Pipeline value" value={formatMoney(pipelineValue) || "RM 0"} detail="Estimated open value" />
@@ -631,7 +631,7 @@ export default function Pipeline() {
       )}
 
       <div className="shrink-0 border-b border-[var(--color-border)] px-3.5 py-2 sm:px-5 lg:px-6 2xl:px-7 2xl:py-3">
-        <div className="flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5 2xl:hidden">
+        <div className="flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5 min-[1600px]:hidden">
           {branchCards.map((branch) => (
             <button
               key={branch.key}
@@ -645,7 +645,7 @@ export default function Pipeline() {
           ))}
         </div>
 
-        <div className="hidden gap-3 ui-scroll-x overflow-x-auto pb-1 2xl:flex">
+        <div className="hidden gap-3 ui-scroll-x overflow-x-auto pb-1 min-[1600px]:flex">
           {branchCards.map((branch) => {
             const hotCount = branch.leads.filter((lead) => lead.temperature === "hot").length;
             const conversionCount = branch.leads.filter((lead) => lead.appointment_status === "set").length;
@@ -687,16 +687,16 @@ export default function Pipeline() {
             type="button"
             onClick={() => setShowCompactFilters((value) => !value)}
             aria-expanded={showCompactFilters}
-            className={`flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-xs font-semibold transition sm:h-11 2xl:hidden ${showCompactFilters || hasSecondaryCategoryFilter ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
+            className={`flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-xs font-semibold transition sm:h-11 min-[1600px]:hidden ${showCompactFilters || hasSecondaryCategoryFilter ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
           >
             <FilterIcon />
             Filters
             {hasSecondaryCategoryFilter && <span className="rounded-full bg-[var(--color-primary)] px-1.5 py-0.5 text-[10px] text-white">1</span>}
           </button>
-          <span className="hidden shrink-0 text-[11px] font-medium text-[var(--color-text-muted)] 2xl:block">{filteredLeads.length} shown</span>
+          <span className="hidden shrink-0 text-[11px] font-medium text-[var(--color-text-muted)] min-[1600px]:block">{filteredLeads.length} shown</span>
         </div>
 
-        <div className="mt-2 flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5 2xl:hidden">
+        <div className="mt-2 flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5 min-[1600px]:hidden">
           {quickCategoryOptions.map(([key, label]) => (
             <button key={key} type="button" onClick={() => selectCategory(key)} className={`h-9 shrink-0 whitespace-nowrap rounded-xl px-3 text-xs font-semibold transition ${categoryFilter === key ? "bg-[var(--color-primary)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}>
               {label} <span className="ml-1 opacity-70">{categoryCounts[key] || 0}</span>
@@ -710,7 +710,7 @@ export default function Pipeline() {
         </div>
 
         {showCompactFilters && (
-          <div className="mt-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-2.5 2xl:hidden">
+          <div className="mt-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-2.5 min-[1600px]:hidden">
             <div className="flex flex-wrap gap-1.5">
               {secondaryCategoryOptions.map(([key, label]) => (
                 <button
@@ -729,7 +729,7 @@ export default function Pipeline() {
           </div>
         )}
 
-        <div className="mt-2.5 hidden gap-1.5 ui-scroll-x overflow-x-auto pb-0.5 2xl:flex">
+        <div className="mt-2.5 hidden gap-1.5 ui-scroll-x overflow-x-auto pb-0.5 min-[1600px]:flex">
           {CATEGORY_OPTIONS.map(([key, label]) => (
             <button key={key} type="button" onClick={() => selectCategory(key)} className={`h-10 shrink-0 whitespace-nowrap rounded-xl px-3 text-xs font-semibold transition ${categoryFilter === key ? "bg-[var(--color-primary)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}>
               {label} <span className="ml-1 opacity-70">{categoryCounts[key] || 0}</span>
