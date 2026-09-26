@@ -790,6 +790,218 @@ function FollowUpTool({
   );
 }
 
+function CommentAutomationTool({
+  form,
+  setForm,
+  savedEnabled,
+  hasUnsavedChanges,
+  saving,
+  onSave,
+  toasts,
+  dismissToast,
+}) {
+  return (
+    <ToolShell
+      title="Comment automation"
+      description="Reply to Facebook and Instagram comments, then continue qualified enquiries in private messages."
+      enabled={form.enabled}
+      savedEnabled={savedEnabled}
+      hasUnsavedChanges={hasUnsavedChanges}
+      onToggle={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
+      saveLabel="Save changes"
+      saving={saving}
+      saveDisabled={saving || !hasUnsavedChanges}
+      onSave={onSave}
+      toasts={toasts}
+      dismissToast={dismissToast}
+    >
+      <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.25fr)_minmax(19rem,0.75fr)]">
+        <div className="space-y-5">
+          <Card>
+            <SectionHeading
+              number="1"
+              title="Choose channels"
+              description="Turn on the social channels where you want new top-level comments handled."
+            />
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <ToggleSetting
+                label="Facebook"
+                description="Handle new comments on connected Facebook Page posts."
+                checked={form.facebookEnabled}
+                onChange={() =>
+                  setForm((current) => ({ ...current, facebookEnabled: !current.facebookEnabled }))
+                }
+              />
+              <ToggleSetting
+                label="Instagram"
+                description="Handle new comments on the connected Instagram Professional account."
+                checked={form.instagramEnabled}
+                onChange={() =>
+                  setForm((current) => ({ ...current, instagramEnabled: !current.instagramEnabled }))
+                }
+              />
+            </div>
+          </Card>
+
+          <Card>
+            <SectionHeading
+              number="2"
+              title="Choose what happens"
+              description="You can reply publicly, send one private reply from the comment, or do both."
+            />
+            <div className="mt-5 space-y-3">
+              <ToggleSetting
+                label="Reply publicly"
+                description="Post a short reply under the customer's comment."
+                checked={form.publicReplyEnabled}
+                onChange={() =>
+                  setForm((current) => ({ ...current, publicReplyEnabled: !current.publicReplyEnabled }))
+                }
+              />
+              <ToggleSetting
+                label="Send a private message"
+                description="Use Meta's comment private-reply path, then continue in Inbox if the customer responds."
+                checked={form.privateReplyEnabled}
+                onChange={() =>
+                  setForm((current) => ({ ...current, privateReplyEnabled: !current.privateReplyEnabled }))
+                }
+              />
+            </div>
+
+            {form.publicReplyEnabled && (
+              <div className="mt-6 border-t border-[var(--color-border)] pt-5">
+                <p className="text-xs font-semibold">Public reply style</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setForm((current) => ({ ...current, publicReplyStyle: "ai" }))}
+                    className={`rounded-xl border p-4 text-left transition-colors ${
+                      form.publicReplyStyle === "ai"
+                        ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/55"
+                        : "border-[var(--color-border)] hover:bg-[var(--color-bg)]"
+                    }`}
+                  >
+                    <span className="block text-xs font-semibold">AI-generated</span>
+                    <span className="mt-1 block text-[10px] leading-4 text-[var(--color-text-muted)]">
+                      Match the comment language and context while keeping the public reply short.
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm((current) => ({ ...current, publicReplyStyle: "fixed" }))}
+                    className={`rounded-xl border p-4 text-left transition-colors ${
+                      form.publicReplyStyle === "fixed"
+                        ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/55"
+                        : "border-[var(--color-border)] hover:bg-[var(--color-bg)]"
+                    }`}
+                  >
+                    <span className="block text-xs font-semibold">Fixed message</span>
+                    <span className="mt-1 block text-[10px] leading-4 text-[var(--color-text-muted)]">
+                      Use the same public reply for every eligible comment.
+                    </span>
+                  </button>
+                </div>
+
+                {form.publicReplyStyle === "fixed" && (
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <label htmlFor="comment-fixed-reply" className="text-xs font-semibold">
+                        Public reply
+                      </label>
+                      <span className="text-[10px] text-[var(--color-text-muted)]">
+                        {form.fixedPublicReply.length}/300
+                      </span>
+                    </div>
+                    <textarea
+                      id="comment-fixed-reply"
+                      rows="3"
+                      maxLength="300"
+                      value={form.fixedPublicReply}
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, fixedPublicReply: event.target.value }))
+                      }
+                      className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+
+          <Card>
+            <SectionHeading
+              number="3"
+              title="Safeguards"
+              description="Keep low-value or risky comment events out of the automated flow."
+            />
+            <div className="mt-5 space-y-3">
+              <ToggleSetting
+                label="Ignore emoji-only comments"
+                description="Skip comments such as 🔥🔥 or 👍 that do not contain words or numbers."
+                checked={form.skipEmojiOnly}
+                onChange={() =>
+                  setForm((current) => ({ ...current, skipEmojiOnly: !current.skipEmojiOnly }))
+                }
+              />
+              <ToggleSetting
+                label="Ignore nested replies"
+                description="Handle only top-level comments and avoid the bot joining reply threads."
+                checked={form.skipNestedReplies}
+                onChange={() =>
+                  setForm((current) => ({ ...current, skipNestedReplies: !current.skipNestedReplies }))
+                }
+              />
+            </div>
+          </Card>
+        </div>
+
+        <aside className="space-y-5 2xl:sticky 2xl:top-6 2xl:self-start">
+          <Card>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+              Example flow
+            </p>
+            <div className="mt-4 space-y-3">
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                <p className="text-[10px] font-semibold text-[var(--color-text-muted)]">Customer comment</p>
+                <p className="mt-1 text-xs">How much is this?</p>
+              </div>
+              {form.publicReplyEnabled && (
+                <div className="rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/45 p-3">
+                  <p className="text-[10px] font-semibold text-[var(--color-primary)]">Public reply</p>
+                  <p className="mt-1 text-xs">
+                    {form.publicReplyStyle === "fixed"
+                      ? form.fixedPublicReply || "Your fixed reply will appear here."
+                      : "AI replies naturally and can mention that details were sent privately."}
+                  </p>
+                </div>
+              )}
+              {form.privateReplyEnabled && (
+                <div className="rounded-xl border border-[var(--color-border)] bg-white p-3 shadow-sm">
+                  <p className="text-[10px] font-semibold text-[var(--color-primary)]">Private message</p>
+                  <p className="mt-1 text-xs">
+                    AI answers the comment privately and asks one useful next question when appropriate.
+                  </p>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card>
+            <h2 className="font-display text-sm font-bold">How it stays safe</h2>
+            <ul className="mt-4 space-y-3">
+              <Rule text="Old comments are not processed when you first enable the tool." />
+              <Rule text="Duplicate Meta webhook deliveries are deduplicated before sending." />
+              <Rule text="The global AI reply switch pauses this automation too." />
+              <Rule text="A comment alone is not treated as an open 24-hour DM conversation." />
+              <Rule text="Complaints, safety issues, and human requests can be flagged for staff." />
+            </ul>
+          </Card>
+        </aside>
+      </div>
+    </ToolShell>
+  );
+}
+
 function LeadScoringTool({ form, setForm, savedEnabled, hasUnsavedChanges, saving, onSave, toasts, dismissToast }) {
   return (
     <ToolShell
@@ -883,7 +1095,7 @@ function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChange
   );
 }
 
-function ToolsSidebar({ activeTool, onSelect, followUpActive, scoringActive, distributionActive }) {
+function ToolsSidebar({ activeTool, onSelect, followUpActive, commentActive, scoringActive, distributionActive }) {
   return (
     <aside className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] p-4 xl:h-full xl:w-72 xl:border-b-0 xl:border-r xl:p-5">
       <div className="flex items-start justify-between gap-3 xl:block">
@@ -896,6 +1108,7 @@ function ToolsSidebar({ activeTool, onSelect, followUpActive, scoringActive, dis
 
       <nav className="mt-4 flex gap-2 ui-scroll-x overflow-x-auto pb-1 xl:mt-5 xl:block xl:space-y-2 xl:overflow-visible xl:pb-0" aria-label="Available tools">
         <ToolNavButton active={activeTool === "followUp"} onClick={() => onSelect("followUp")} icon={<ClockIcon className="h-5 w-5" />} title="Automated follow-up" description="Follow up when a customer goes quiet" enabled={followUpActive} />
+        <ToolNavButton active={activeTool === "commentAutomation"} onClick={() => onSelect("commentAutomation")} icon={<CommentIcon className="h-5 w-5" />} title="Comment automation" description="Reply to FB / IG comments and move to DM" enabled={commentActive} />
         <ToolNavButton active={activeTool === "leadScoring"} onClick={() => onSelect("leadScoring")} icon={<ScoreIcon className="h-5 w-5" />} title="Automatic Lead Temperature" description="Keep Hot / Warm / Cold updated" enabled={scoringActive} />
         <ToolNavButton active={activeTool === "leadDistribution"} onClick={() => onSelect("leadDistribution")} icon={<DistributionIcon className="h-5 w-5" />} title="Automatic Lead Distribution" description="Share new leads across Sales staff" enabled={distributionActive} />
 
@@ -969,6 +1182,18 @@ function Switch({ checked, onChange, ariaLabel, disabled = false }) {
   );
 }
 
+function ToggleSetting({ label, description, checked, onChange }) {
+  return (
+    <div className="flex items-start justify-between gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+      <div className="min-w-0">
+        <p className="text-xs font-semibold">{label}</p>
+        <p className="mt-1 text-[10px] leading-4 text-[var(--color-text-muted)]">{description}</p>
+      </div>
+      <Switch checked={checked} onChange={onChange} ariaLabel={label} />
+    </div>
+  );
+}
+
 function Choice({ checked, label, description, onChange }) {
   return (
     <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors ${checked ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/55" : "border-[var(--color-border)] hover:bg-[var(--color-bg)]"}`}>
@@ -1026,6 +1251,7 @@ function IconBase({ children, ...props }) {
   return <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">{children}</svg>;
 }
 function ClockIcon(props) { return <IconBase {...props}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
+function CommentIcon(props) { return <IconBase {...props}><path d="M4 5h16v11H9l-5 4V5Z" strokeLinecap="round" strokeLinejoin="round" /><path d="M8 9h8M8 12h5" strokeLinecap="round" /></IconBase>; }
 function ScoreIcon(props) { return <IconBase {...props}><path d="M4 19V9M10 19V5M16 19v-7M22 19V8" strokeLinecap="round" /><path d="m3 7 6-4 6 7 6-4" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
 function DistributionIcon(props) { return <IconBase {...props}><circle cx="6" cy="6" r="2" /><circle cx="18" cy="6" r="2" /><circle cx="12" cy="18" r="2" /><path d="M7.7 7.1 10.8 16M16.3 7.1 13.2 16M8 6h8" strokeLinecap="round" /></IconBase>; }
 function ImageIcon(props) { return <IconBase {...props}><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m21 15-5-5L5 20" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
