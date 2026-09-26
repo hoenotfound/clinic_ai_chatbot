@@ -392,7 +392,11 @@ export default function Tools() {
       return;
     }
     const fixedPublicReply = commentForm.fixedPublicReply.trim();
-    if (!fixedPublicReply || fixedPublicReply.length > 300) {
+    if (
+      commentForm.publicReplyEnabled &&
+      commentForm.publicReplyStyle === "fixed" &&
+      (!fixedPublicReply || fixedPublicReply.length > 300)
+    ) {
       showToast("Keep the fixed public reply between 1 and 300 characters.", "error");
       return;
     }
