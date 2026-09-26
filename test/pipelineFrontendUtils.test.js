@@ -174,5 +174,8 @@ test("pipeline keeps secondary controls compact below wide desktop", () => {
   assert.match(source, /max-w-40 truncate/);
   assert.match(source, /basis-full flex-1 sm:min-w-\[12rem\] sm:basis-auto/);
   assert.match(source, /flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between/);
-  assert.match(source, /hidden max-w-2xl text-xs[\s\S]*sm:block/);
+  assert.match(source, /hidden max-w-2xl text-sm[\s\S]*lg:block/);
+  assert.match(source, /aria-controls="pipeline-secondary-filters"/);
+  assert.match(source, /text-base focus:outline-none[\s\S]*sm:text-sm/);
+  assert.match(source, /text-base font-semibold[\s\S]*sm:text-xs/);
 });
