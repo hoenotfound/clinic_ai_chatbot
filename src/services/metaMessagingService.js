@@ -232,6 +232,150 @@ async function sendImage(channel, recipientId, imageUrl, caption) {
   });
 }
 
+async function postGraphJson(url, token, body, label) {
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    const raw = await res.text();
+    let data = {};
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch (_) {
+      data = {};
+    }
+    if (!res.ok) {
+      return {
+        success: false,
+        data,
+        error: extractErrorText(data, raw || `${label} returned HTTP ${res.status}.`),
+      };
+    }
+    return { success: true, data, error: null };
+  } catch (err) {
+    return {
+      success: false,
+      data: {},
+      error: err?.message || `${label} failed.`,
+    };
+  }
+}
+
+function commentSenderId(channel) {
+  if (channel === "instagram") {
+    return process.env.INSTAGRAM_ACCOUNT_ID || process.env.INSTAGRAM_PAGE_ID || null;
+  }
+  if (channel === "facebook") return process.env.FACEBOOK_PAGE_ID || null;
+  return null;
+}
+
+async function replyToComment(channel, commentId, text) {
+  const config = getChannelConfig(channel);
+  const label = channelLabel(channel);
+  const cleanedCommentId = String(commentId || "").trim();
+  const message = String(text || "").trim();
+
+  if (!config.token || !config.baseUrl) {
+    return { success: false, replyId: null, error: `${label} is not configured on this server.` };
+  }
+  if (!cleanedCommentId || !message) {
+    return { success: false, replyId: null, error: "Comment ID and reply text are required." };
+  }
+
+  const edge = channel === "instagram" ? "replies" : "comments";
+  const url =
+    `${config.baseUrl}/${GRAPH_API_VERSION}/${encodeURIComponent(cleanedCommentId)}/${edge}`;
+  const result = await postGraphJson(url, config.token, { message }, `${label} comment reply`);
+
+  if (!result.success) {
+    console.error(`${label} comment reply failed:`, result.error);
+    return { success: false, replyId: null, error: result.error };
+  }
+
+  return {
+    success: true,
+    replyId: result.data?.id || result.data?.comment_id || null,
+    externalMessageId: result.data?.id || result.data?.comment_id || null,
+    error: null,
+  };
+}
+
+function looksLikePrivateReplyAlreadySent(data, errorText) {
+  const subcode = Number(data?.error?.error_subcode);
+  if (subcode === 2534014) return true;
+  const message = String(errorText || data?.error?.message || "").toLowerCase();
+  return (
+    /private reply/.test(message) &&
+    /(already|one.*reply|only.*reply|previously)/.test(message)
+  );
+}
+
+async function sendPrivateReplyToComment(channel, commentId, text) {
+  const config = getChannelConfig(channel);
+  const label = channelLabel(channel);
+  const senderId = commentSenderId(channel);
+  const cleanedCommentId = String(commentId || "").trim();
+  const message = String(text || "").trim();
+
+  if (!config.token || !config.baseUrl || !senderId) {
+    return {
+      success: false,
+      alreadySent: false,
+      messageId: null,
+      recipientId: null,
+      error: `${label} comment private replies are not fully configured on this server.`,
+    };
+  }
+  if (!cleanedCommentId || !message) {
+    return {
+      success: false,
+      alreadySent: false,
+      messageId: null,
+      recipientId: null,
+      error: "Comment ID and private reply text are required.",
+    };
+  }
+
+  const url =
+    `${config.baseUrl}/${GRAPH_API_VERSION}/${encodeURIComponent(senderId)}/messages`;
+  const result = await postGraphJson(
+    url,
+    config.token,
+    {
+      recipient: { comment_id: cleanedCommentId },
+      message: { text: message },
+    },
+    `${label} comment private reply`
+  );
+
+  if (!result.success) {
+    const alreadySent = looksLikePrivateReplyAlreadySent(result.data, result.error);
+    if (!alreadySent) {
+      console.error(`${label} comment private reply failed:`, result.error);
+    }
+    return {
+      success: false,
+      alreadySent,
+      messageId: null,
+      recipientId: null,
+      error: result.error,
+    };
+  }
+
+  return {
+    success: true,
+    alreadySent: false,
+    messageId: result.data?.message_id || result.data?.id || null,
+    recipientId: result.data?.recipient_id ? String(result.data.recipient_id) : null,
+    error: null,
+  };
+}
+
 function firstAttachment(message) {
   return Array.isArray(message?.attachments) && message.attachments.length
     ? message.attachments[0]
@@ -614,6 +758,8 @@ module.exports = {
   fetchUserProfile,
   sendText,
   sendImage,
+  replyToComment,
+  sendPrivateReplyToComment,
   parseIncomingMessages,
   resolveClaimedMessageEditJob,
   resolveMessageEditEvents,
