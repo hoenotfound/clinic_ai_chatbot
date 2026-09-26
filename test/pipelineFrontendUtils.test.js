@@ -166,10 +166,13 @@ test("pipeline keeps secondary controls compact below wide desktop", () => {
   assert.match(source, /QUICK_CATEGORY_KEYS = new Set\(\["all", "hot", "warm", "attention"\]\)/);
   assert.match(source, /showCompactFilters/);
   assert.match(source, /hasSecondaryCategoryFilter/);
-  assert.match(source, /min-\[1600px\]:hidden/);
-  assert.match(source, /min-\[1600px\]:grid/);
-  assert.match(source, /min-\[1600px\]:flex/);
+  assert.match(source, /min-\[1800px\]:hidden/);
+  assert.match(source, /min-\[1800px\]:grid/);
+  assert.match(source, /min-\[1800px\]:flex/);
   assert.match(source, /function CompactMetric\(/);
   assert.match(source, /function FilterIcon\(/);
   assert.match(source, /max-w-40 truncate/);
+  assert.match(source, /basis-full flex-1 sm:min-w-\[12rem\] sm:basis-auto/);
+  assert.match(source, /flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between/);
+  assert.match(source, /hidden max-w-2xl text-xs[\s\S]*sm:block/);
 });
