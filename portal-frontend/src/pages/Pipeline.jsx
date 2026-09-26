@@ -586,7 +586,7 @@ export default function Pipeline() {
               <span className="shrink-0 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--color-primary)]">Live</span>
               {!canManageLeads && <span className="shrink-0 rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">View only</span>}
             </div>
-            <p className="mt-1 hidden max-w-2xl text-xs leading-relaxed text-[var(--color-text-muted)] sm:block sm:text-sm">Track every enquiry, next action and sales outcome in one place.</p>
+            <p className="mt-1 hidden max-w-2xl text-sm leading-relaxed text-[var(--color-text-muted)] lg:block">Track every enquiry, next action and sales outcome in one place.</p>
           </div>
           {(canManageStages || canCreateLeads) && (
             <div className="flex w-full shrink-0 gap-2 sm:w-auto">
@@ -606,7 +606,7 @@ export default function Pipeline() {
           <CompactMetric label="Active" value={metricActiveLeads.length} />
           <CompactMetric label="Hot" value={categoryCounts.hot || 0} tone="danger" />
           <CompactMetric label="Pipeline" value={formatMoney(pipelineValue) || "RM 0"} />
-          <span className="hidden sm:inline">· {metricLeads.length} total journeys</span>
+          <span className="hidden md:inline">· {metricLeads.length} total journeys</span>
         </div>
         <div className="mt-3 hidden grid-cols-3 gap-3 min-[1800px]:grid">
           <Metric label="Active leads" value={metricActiveLeads.length} detail={`${metricLeads.length} total journeys`} />
@@ -669,14 +669,14 @@ export default function Pipeline() {
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-0 basis-full flex-1 sm:min-w-[12rem] sm:basis-auto sm:max-w-sm">
             <SearchIcon />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search leads…" className="h-10 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] pl-9 pr-9 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15 sm:h-11" />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search leads…" className="h-10 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] pl-9 pr-9 text-base focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15 sm:h-11 sm:text-sm" />
             {search && <button type="button" onClick={() => setSearch("")} aria-label="Clear search" className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-sm text-[var(--color-text-muted)] hover:bg-white">✕</button>}
           </div>
           <select
             value={sourceFilter}
             onChange={(event) => selectSource(event.target.value)}
             aria-label="Filter by lead source"
-            className="h-10 min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 text-xs font-semibold text-[var(--color-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15 sm:h-11 sm:max-w-[13rem] sm:flex-none sm:px-3"
+            className="h-10 min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 text-base font-semibold text-[var(--color-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15 sm:h-11 sm:max-w-[13rem] sm:flex-none sm:px-3 sm:text-xs"
           >
             <option value="all">All sources</option>
             {availableSources.map((source) => (
@@ -687,6 +687,7 @@ export default function Pipeline() {
             type="button"
             onClick={() => setShowCompactFilters((value) => !value)}
             aria-expanded={showCompactFilters}
+            aria-controls="pipeline-secondary-filters"
             className={`flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-xs font-semibold transition sm:h-11 min-[1800px]:hidden ${showCompactFilters || hasSecondaryCategoryFilter ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
           >
             <FilterIcon />
@@ -718,7 +719,7 @@ export default function Pipeline() {
         </div>
 
         {showCompactFilters && (
-          <div className="mt-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-2.5 min-[1800px]:hidden">
+          <div id="pipeline-secondary-filters" className="mt-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-2.5 min-[1800px]:hidden">
             <div className="flex flex-wrap gap-1.5">
               {secondaryCategoryOptions.map(([key, label]) => (
                 <button
