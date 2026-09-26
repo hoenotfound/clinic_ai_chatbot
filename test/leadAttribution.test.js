@@ -66,6 +66,24 @@ test("normalizes Facebook or Instagram ADS referrals with explicit ad id", () =>
   assert.equal(attribution.referralType, "OPEN_THREAD");
 });
 
+test("keeps organic Facebook and Instagram comment leads distinct from normal DMs", () => {
+  const instagram = normalizeSocialReferral("instagram", {
+    source: "COMMENT",
+    type: "comment",
+    source_id: "ig-media-1",
+  });
+  const facebook = normalizeSocialReferral("facebook", {
+    source: "COMMENT",
+    type: "comment",
+    source_id: "page-1_post-1",
+  });
+
+  assert.equal(instagram.source, "instagram_comment");
+  assert.equal(instagram.sourceId, "ig-media-1");
+  assert.equal(facebook.source, "facebook_comment");
+  assert.equal(facebook.sourceId, "page-1_post-1");
+});
+
 test("keeps non-ad Instagram referral separate from organic direct messages", () => {
   const attribution = normalizeSocialReferral("instagram", {
     source: "SHORTLINK",
