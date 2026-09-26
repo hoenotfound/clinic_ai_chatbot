@@ -1,6 +1,7 @@
 const clinicConfig = require("../config/clinicConfig");
 const commentRepo = require("../db/metaCommentAutomationRepo");
 const contactsRepo = require("../db/contactsRepo");
+const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const conversationStore = require("../utils/conversationStore");
 const metaMessaging = require("./metaMessagingService");
@@ -15,7 +16,7 @@ const DEFAULT_COMMENT_AUTOMATION = Object.freeze({
   publicReplyEnabled: true,
   privateReplyEnabled: true,
   publicReplyStyle: "ai",
-  fixedPublicReply: "Thanks for your comment! I've sent you a private message 😊",
+  fixedPublicReply: "Thanks for your comment! I’ll send you a private message 😊",
   skipEmojiOnly: true,
   skipNestedReplies: true,
   activatedAt: null,
@@ -269,6 +270,7 @@ async function ensureCommentLead({
   copy,
   sendResult,
   contacts = contactsRepo,
+  messages = messagesRepo,
   pipeline = pipelineRepo,
   store = conversationStore,
 }) {
@@ -280,7 +282,10 @@ async function ensureCommentLead({
     recipientId,
     event.authorName || null
   );
-  const saved = await store.appendMessageForContact(
+  const existing = sendResult.messageId
+    ? await messages.getMessageByProviderIdForContact(contact.id, sendResult.messageId)
+    : null;
+  const saved = existing || await store.appendMessageForContact(
     contact.id,
     "assistant",
     copy.privateReply,
@@ -304,6 +309,7 @@ function createMetaCommentAutomationService({
   meta = metaMessaging,
   aiClient = ai,
   contacts = contactsRepo,
+  messages = messagesRepo,
   pipeline = pipelineRepo,
   store = conversationStore,
   config = clinicConfig,
@@ -372,19 +378,29 @@ function createMetaCommentAutomationService({
 
         liveJob = await repo.markPrivateReplySent(job.id, {
           messageId: privateResult.messageId || (privateResult.alreadySent ? "already-sent" : "sent"),
-          recipientId: privateResult.recipientId || null,
+          recipientId:
+            privateResult.recipientId ||
+            (privateResult.alreadySent ? event.authorId : null),
         });
+      }
 
-        if (privateResult.success && privateResult.recipientId) {
-          await ensureCommentLead({
-            event,
-            copy,
-            sendResult: privateResult,
-            contacts,
-            pipeline,
-            store,
-          });
-        }
+      if (
+        settings.privateReplyEnabled &&
+        liveJob.privateReplyMessageId &&
+        liveJob.privateReplyRecipientId
+      ) {
+        await ensureCommentLead({
+          event,
+          copy,
+          sendResult: {
+            messageId: liveJob.privateReplyMessageId,
+            recipientId: liveJob.privateReplyRecipientId,
+          },
+          contacts,
+          messages,
+          pipeline,
+          store,
+        });
       }
 
       return repo.markCompleted(job.id);
