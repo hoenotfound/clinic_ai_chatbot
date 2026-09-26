@@ -267,9 +267,7 @@ async function postGraphJson(url, token, body, label) {
 }
 
 function commentSenderId(channel) {
-  if (channel === "instagram") {
-    return process.env.INSTAGRAM_ACCOUNT_ID || process.env.INSTAGRAM_PAGE_ID || null;
-  }
+  if (channel === "instagram") return process.env.INSTAGRAM_ACCOUNT_ID || null;
   if (channel === "facebook") return process.env.FACEBOOK_PAGE_ID || null;
   return null;
 }
