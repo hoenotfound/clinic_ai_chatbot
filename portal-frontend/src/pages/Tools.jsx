@@ -804,22 +804,33 @@ function CommentAutomationTool({
   toasts,
   dismissToast,
 }) {
+  const noChannelSelected =
+    form.enabled && !form.facebookEnabled && !form.instagramEnabled;
+  const noReplyActionSelected =
+    form.enabled && !form.publicReplyEnabled && !form.privateReplyEnabled;
+  const fixedReplyInvalid =
+    form.publicReplyEnabled &&
+    form.publicReplyStyle === "fixed" &&
+    !form.fixedPublicReply.trim();
+  const hasInvalidState =
+    noChannelSelected || noReplyActionSelected || fixedReplyInvalid;
+
   return (
     <ToolShell
       title="Comment automation"
-      description="Reply to Facebook and Instagram comments, then continue qualified enquiries in private messages."
+      description="Reply to relevant Facebook and Instagram comments, then move enquiries into private messages."
       enabled={form.enabled}
       savedEnabled={savedEnabled}
       hasUnsavedChanges={hasUnsavedChanges}
       onToggle={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
       saveLabel="Save changes"
       saving={saving}
-      saveDisabled={saving || !hasUnsavedChanges}
+      saveDisabled={saving || !hasUnsavedChanges || hasInvalidState}
       onSave={onSave}
       toasts={toasts}
       dismissToast={dismissToast}
     >
-      <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.25fr)_minmax(19rem,0.75fr)]">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.22fr)_minmax(18rem,0.78fr)]">
         <div className="space-y-5">
           <Card>
             <SectionHeading
@@ -959,7 +970,7 @@ function CommentAutomationTool({
           </Card>
         </div>
 
-        <aside className="space-y-5 2xl:sticky 2xl:top-6 2xl:self-start">
+        <aside className="space-y-5 xl:sticky xl:top-6 xl:self-start">
           <Card>
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
               Example flow
