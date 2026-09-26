@@ -220,10 +220,11 @@ The flow is intentionally separate from normal Messenger/Instagram DM handling:
 
 1. Meta sends a new top-level comment webhook.
 2. The app stores a durable, deduplicated comment job before acknowledging the webhook.
-3. The AI can write a short public reply and one private reply.
-4. The private reply uses Meta's comment private-reply mechanism, not the normal 24-hour conversation send path.
-5. When Meta returns the private-reply recipient ID, the app creates/updates the channel contact, records the outbound private reply in Inbox, and creates the lead in Pipeline.
-6. If the person replies to that DM, the existing Messenger/Instagram inbound flow continues the conversation normally.
+3. The app fetches the parent Facebook post or Instagram media caption when available, so short comments such as "price?" are evaluated with the post/ad context instead of in isolation.
+4. The AI can write a short public reply and one private reply.
+5. The private reply uses Meta's comment private-reply mechanism, not the normal 24-hour conversation send path.
+6. When Meta returns the private-reply recipient ID, the app creates/updates the channel contact, records the outbound private reply in Inbox, creates the lead in Pipeline, and records first-touch comment attribution. If the webhook includes an exact Meta Ad ID, the existing Ad → Ad Set → Campaign enrichment worker is reused.
+7. If the person replies to that DM, the existing Messenger/Instagram inbound flow continues the conversation normally.
 
 Safeguards:
 
@@ -255,7 +256,7 @@ For the linked Instagram Professional account:
 - subscribe the Instagram webhook to the `comments` field;
 - set `INSTAGRAM_ACCOUNT_ID` to the linked Instagram Professional Account ID.
 
-Public replies are posted to the Instagram comment reply edge. Private comment replies use the Instagram Professional Account as the sender and `recipient.comment_id`.
+Public replies are posted to the Instagram comment reply edge. Because this project uses Instagram API with Facebook Login / Messenger from Meta, private comment replies stay on the existing linked Page messaging transport (`INSTAGRAM_PAGE_ID`) with `recipient.comment_id`. `INSTAGRAM_ACCOUNT_ID` remains the Instagram webhook/routing identity.
 
 Meta limits a comment-triggered private reply to the rules of its Private Replies feature. In particular, treat it as a one-time initial message rather than an open-ended DM conversation. The normal Messenger/Instagram conversation flow should continue only after the customer responds.
 
