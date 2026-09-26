@@ -3,11 +3,14 @@ const MAX_REMOTE_MEDIA_BYTES = 16 * 1024 * 1024;
 const PROFILE_FETCH_TIMEOUT_MS = 5000;
 const PROFILE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const PROFILE_FAILURE_CACHE_TTL_MS = 5 * 60 * 1000;
+const COMMENT_CONTEXT_CACHE_TTL_MS = 10 * 60 * 1000;
 const { normalizeSocialReferral } = require("../utils/leadAttribution");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 
 const profileCache = new Map();
 const profileRequests = new Map();
+const commentContextCache = new Map();
+const commentContextRequests = new Map();
 
 function channelLabel(channel) {
   if (channel === "facebook") return "Facebook Messenger";
@@ -267,7 +270,11 @@ async function postGraphJson(url, token, body, label) {
 }
 
 function commentSenderId(channel) {
-  if (channel === "instagram") return process.env.INSTAGRAM_ACCOUNT_ID || null;
+  // This project uses Instagram API with Facebook Login / Messenger from Meta.
+  // Keep comment private replies on the same proven Page-based messaging
+  // transport as normal Instagram DMs. INSTAGRAM_ACCOUNT_ID remains the
+  // Instagram webhook/routing identity, not the sender for this transport.
+  if (channel === "instagram") return process.env.INSTAGRAM_PAGE_ID || null;
   if (channel === "facebook") return process.env.FACEBOOK_PAGE_ID || null;
   return null;
 }
@@ -372,6 +379,102 @@ async function sendPrivateReplyToComment(channel, commentId, text) {
     recipientId: result.data?.recipient_id ? String(result.data.recipient_id) : null,
     error: null,
   };
+}
+
+function cleanCommentContextValue(value, maxLength = 4000) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text ? text.slice(0, maxLength) : null;
+}
+
+function commentContextSourceId(channel, source = {}) {
+  if (channel === "instagram") {
+    return cleanCommentContextValue(source.mediaId, 200);
+  }
+  if (channel === "facebook") {
+    return cleanCommentContextValue(source.postId, 200);
+  }
+  return null;
+}
+
+async function fetchCommentSourceContext(channel, source = {}) {
+  if (!["facebook", "instagram"].includes(channel)) return null;
+
+  const sourceId = commentContextSourceId(channel, source);
+  if (!sourceId) return null;
+
+  const config = getChannelConfig(channel);
+  if (!config.token || !config.baseUrl) return null;
+
+  const key = `${channel}:${sourceId}`;
+  const cached = commentContextCache.get(key);
+  if (cached?.expiresAt > Date.now()) return cached.value;
+  if (commentContextRequests.has(key)) return commentContextRequests.get(key);
+
+  const request = (async () => {
+    const fields = channel === "instagram"
+      ? "id,caption,media_type,permalink"
+      : "id,message,permalink_url";
+    const url =
+      `${config.baseUrl}/${GRAPH_API_VERSION}/${encodeURIComponent(sourceId)}` +
+      `?fields=${encodeURIComponent(fields)}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), PROFILE_FETCH_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${config.token}` },
+        signal: controller.signal,
+      });
+      const raw = await response.text();
+      let data = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch (_) {
+        data = {};
+      }
+
+      if (!response.ok) {
+        console.warn(
+          `[${channelLabel(channel)}] Failed to fetch comment source context ${sourceId}: ` +
+            extractErrorText(data, raw || `HTTP ${response.status}`)
+        );
+        commentContextCache.set(key, {
+          value: null,
+          expiresAt: Date.now() + PROFILE_FAILURE_CACHE_TTL_MS,
+        });
+        return null;
+      }
+
+      const value = {
+        sourceId,
+        text: cleanCommentContextValue(
+          channel === "instagram" ? data?.caption : data?.message
+        ),
+        mediaType: cleanCommentContextValue(data?.media_type, 80),
+        sourceUrl: cleanCommentContextValue(
+          channel === "instagram" ? data?.permalink : data?.permalink_url,
+          2000
+        ),
+      };
+      commentContextCache.set(key, {
+        value,
+        expiresAt: Date.now() + COMMENT_CONTEXT_CACHE_TTL_MS,
+      });
+      return value;
+    } catch (err) {
+      console.warn(
+        `[${channelLabel(channel)}] Comment source context lookup failed for ${sourceId}:`,
+        err?.message || err
+      );
+      return null;
+    } finally {
+      clearTimeout(timeout);
+      commentContextRequests.delete(key);
+    }
+  })();
+
+  commentContextRequests.set(key, request);
+  return request;
 }
 
 function firstAttachment(message) {
@@ -758,6 +861,7 @@ module.exports = {
   sendImage,
   replyToComment,
   sendPrivateReplyToComment,
+  fetchCommentSourceContext,
   parseIncomingMessages,
   resolveClaimedMessageEditJob,
   resolveMessageEditEvents,
