@@ -827,6 +827,10 @@ function CommentAutomationTool({
   savedEnabled,
   hasUnsavedChanges,
   saving,
+  channelStatus,
+  statusLoading,
+  statusError,
+  onRefreshStatus,
   onSave,
   toasts,
   dismissToast,
@@ -861,15 +865,28 @@ function CommentAutomationTool({
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.22fr)_minmax(18rem,0.78fr)]">
         <div className="space-y-5">
           <Card>
-            <SectionHeading
-              number="1"
-              title="Choose channels"
-              description="Turn on the social channels where you want new top-level comments handled."
-            />
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <SectionHeading
+                number="1"
+                title="Choose channels"
+                description="Turn on the social channels where you want new top-level comments handled."
+              />
+              <button
+                type="button"
+                onClick={onRefreshStatus}
+                disabled={statusLoading}
+                className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 self-start rounded-xl border border-[var(--color-border)] bg-white px-3.5 text-xs font-semibold text-[var(--color-text)] transition-colors hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {statusLoading && <Spinner className="h-3.5 w-3.5" />}
+                {statusLoading ? "Checking…" : "Refresh status"}
+              </button>
+            </div>
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <ToggleSetting
                 label="Facebook"
                 description="Handle new comments on connected Facebook Page posts."
+                status={channelStatus?.facebook || null}
+                statusLoading={statusLoading && !channelStatus}
                 checked={form.facebookEnabled}
                 onChange={() =>
                   setForm((current) => ({ ...current, facebookEnabled: !current.facebookEnabled }))
@@ -878,6 +895,8 @@ function CommentAutomationTool({
               <ToggleSetting
                 label="Instagram"
                 description="Handle new comments on the connected Instagram Professional account."
+                status={channelStatus?.instagram || null}
+                statusLoading={statusLoading && !channelStatus}
                 checked={form.instagramEnabled}
                 onChange={() =>
                   setForm((current) => ({ ...current, instagramEnabled: !current.instagramEnabled }))
@@ -885,9 +904,16 @@ function CommentAutomationTool({
               />
             </div>
             <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3">
-              <p className="text-[11px] leading-5 text-[var(--color-text-muted)]">
-                These switches only control the automation. Facebook / Instagram permissions and comment webhook subscriptions must already be configured for the client.
-              </p>
+              {statusError ? (
+                <p className="text-[11px] leading-5 text-[var(--color-danger)]">
+                  Live channel status is temporarily unavailable. The automation settings can still be edited.
+                </p>
+              ) : (
+                <p className="text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  {channelStatus?.note ||
+                    "Status is based on the existing messaging connection and signed Meta webhook evidence. A live comment test is still required to confirm comment permissions and the comment subscription."}
+                </p>
+              )}
             </div>
             {noChannelSelected && (
               <InlineWarning>
@@ -1251,7 +1277,7 @@ function Switch({ checked, onChange, ariaLabel, disabled = false }) {
   );
 }
 
-function ToggleSetting({ label, description, checked, onChange }) {
+function ToggleSetting({ label, description, status = null, statusLoading = false, checked, onChange }) {
   return (
     <button
       type="button"
@@ -1262,8 +1288,18 @@ function ToggleSetting({ label, description, checked, onChange }) {
       className="flex w-full items-start justify-between gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 text-left transition-colors hover:border-[var(--color-primary)]/30 hover:bg-white"
     >
       <span className="min-w-0">
-        <span className="block text-xs font-semibold">{label}</span>
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="block text-xs font-semibold">{label}</span>
+          {(status || statusLoading) && (
+            <ChannelReadinessBadge status={status} loading={statusLoading} />
+          )}
+        </span>
         <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">{description}</span>
+        {status?.detail && (
+          <span className="mt-1.5 block text-[10px] leading-4 text-[var(--color-text-muted)]">
+            {status.detail}
+          </span>
+        )}
       </span>
       <span
         aria-hidden="true"
@@ -1274,6 +1310,38 @@ function ToggleSetting({ label, description, checked, onChange }) {
         />
       </span>
     </button>
+  );
+}
+
+function ChannelReadinessBadge({ status, loading = false }) {
+  if (loading) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-white px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--color-text-muted)]" />
+        Checking
+      </span>
+    );
+  }
+
+  const state = status?.state || "setup_needed";
+  const classes =
+    state === "ready"
+      ? "border-[var(--color-primary)]/20 bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+      : state === "not_connected"
+        ? "border-[var(--color-border)] bg-white text-[var(--color-text-muted)]"
+        : "border-[var(--color-accent)]/25 bg-[var(--color-accent-light)] text-[var(--color-accent-text)]";
+  const dot =
+    state === "ready"
+      ? "bg-[var(--color-primary)]"
+      : state === "not_connected"
+        ? "bg-[var(--color-border)]"
+        : "bg-[var(--color-accent)]";
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${classes}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+      {status?.label || "Setup needed"}
+    </span>
   );
 }
 
