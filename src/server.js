@@ -1029,7 +1029,7 @@ app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
   }
 
   for (const job of commentJobs || []) {
-    metaCommentAutomation.processJob(job.id).catch((err) => {
+    metaCommentAutomation.scheduleJob(job.id).catch((err) => {
       console.error("Failed to schedule Meta comment automation work:", err);
     });
   }
