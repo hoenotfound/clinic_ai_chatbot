@@ -52,7 +52,7 @@ function neutralAutomationDefaults() {
       publicReplyEnabled: true,
       privateReplyEnabled: true,
       publicReplyStyle: "ai",
-      fixedPublicReply: "Thanks for your comment! I've sent you a private message 😊",
+      fixedPublicReply: "Thanks for your comment! I’ll send you a private message 😊",
       skipEmojiOnly: true,
       skipNestedReplies: true,
       activatedAt: null,
