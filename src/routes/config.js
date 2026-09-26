@@ -139,8 +139,13 @@ function isCommentAutomationConfig(value) {
     typeof value.publicReplyEnabled === "boolean" &&
     typeof value.privateReplyEnabled === "boolean" &&
     ["ai", "fixed"].includes(value.publicReplyStyle) &&
-    isNonEmptyString(value.fixedPublicReply) &&
+    typeof value.fixedPublicReply === "string" &&
     value.fixedPublicReply.trim().length <= 300 &&
+    (
+      !value.publicReplyEnabled ||
+      value.publicReplyStyle !== "fixed" ||
+      isNonEmptyString(value.fixedPublicReply)
+    ) &&
     typeof value.skipEmojiOnly === "boolean" &&
     typeof value.skipNestedReplies === "boolean" &&
     validDate &&
