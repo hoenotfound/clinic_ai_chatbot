@@ -6,6 +6,7 @@ const usersRepo = require("../db/usersRepo");
 const leadDistributionRepo = require("../db/leadDistributionRepo");
 const followUpTranslationService = require("../services/followUpTranslationService");
 const telegramAlertService = require("../services/telegramAlertService");
+const commentAutomationReadiness = require("../services/commentAutomationReadinessService");
 const { normalizeIndustrySetup } = require("../config/industrySetup");
 const { evaluateClientSetup } = require("../services/clientSetupService");
 const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
@@ -302,6 +303,21 @@ router.post("/automated-follow-up/translations", async (req, res) => {
     console.error("Failed to translate automated follow-up:", err);
     res.status(502).json({
       error: "The translations could not be generated. Please try again.",
+    });
+  }
+});
+
+router.get("/comment-automation/status", async (req, res) => {
+  try {
+    const requestBaseUrl = `${req.protocol}://${req.get("host")}`;
+    const status = await commentAutomationReadiness.getCommentAutomationReadiness({
+      requestBaseUrl,
+    });
+    res.json(status);
+  } catch (err) {
+    console.error("Failed to load comment automation channel status:", err);
+    res.status(500).json({
+      error: "Something went wrong loading comment automation channel status.",
     });
   }
 });
