@@ -698,7 +698,15 @@ export default function Pipeline() {
 
         <div className="mt-2 flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5 min-[1600px]:hidden">
           {quickCategoryOptions.map(([key, label]) => (
-            <button key={key} type="button" onClick={() => selectCategory(key)} className={`h-9 shrink-0 whitespace-nowrap rounded-xl px-3 text-xs font-semibold transition ${categoryFilter === key ? "bg-[var(--color-primary)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}>
+            <button
+              key={key}
+              type="button"
+              onClick={() => {
+                selectCategory(key);
+                setShowCompactFilters(false);
+              }}
+              className={`h-9 shrink-0 whitespace-nowrap rounded-xl px-3 text-xs font-semibold transition ${categoryFilter === key ? "bg-[var(--color-primary)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
+            >
               {label} <span className="ml-1 opacity-70">{categoryCounts[key] || 0}</span>
             </button>
           ))}
