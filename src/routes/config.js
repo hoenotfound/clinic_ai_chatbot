@@ -142,6 +142,7 @@ function isCommentAutomationConfig(value) {
     typeof value.fixedPublicReply === "string" &&
     value.fixedPublicReply.trim().length <= 300 &&
     (
+      !value.enabled ||
       !value.publicReplyEnabled ||
       value.publicReplyStyle !== "fixed" ||
       isNonEmptyString(value.fixedPublicReply)
