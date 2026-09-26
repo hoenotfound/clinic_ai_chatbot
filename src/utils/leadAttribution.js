@@ -3,6 +3,8 @@ const SOURCE_LABELS = Object.freeze({
   meta_post: "Meta post",
   facebook_referral: "Facebook referral",
   instagram_referral: "Instagram referral",
+  facebook_comment: "Facebook Comment",
+  instagram_comment: "Instagram Comment",
   facebook_organic: "Facebook organic",
   instagram_organic: "Instagram organic",
   whatsapp_unattributed: "WhatsApp direct / untracked",
@@ -29,9 +31,14 @@ function defaultSourceForChannel(channel) {
 function sourceFromReferral(channel, referral = {}) {
   const sourceType = clean(referral.sourceType)?.toLowerCase();
   const referralSource = clean(referral.referralSource)?.toUpperCase();
+  const referralType = clean(referral.referralType)?.toLowerCase();
   const adId = clean(referral.adId);
 
   if (adId || sourceType === "ad" || referralSource === "ADS") return "meta_ads";
+  if (referralType === "comment") {
+    if (channel === "facebook") return "facebook_comment";
+    if (channel === "instagram") return "instagram_comment";
+  }
   if (sourceType === "post") return "meta_post";
   if (channel === "facebook" && referralSource) return "facebook_referral";
   if (channel === "instagram" && referralSource) return "instagram_referral";
@@ -74,10 +81,12 @@ function normalizeAttribution(channel, referral = null) {
     referral.adId ?? referral.ad_id ?? referral.adsContextData?.ad_id ?? referral.ads_context_data?.ad_id
   );
   const adId = explicitAdId || (sourceType?.toLowerCase() === "ad" ? sourceId : null);
+  const referralType = clean(referral.referralType ?? referral.type);
   const source = sourceFromReferral(normalized, {
     adId,
     sourceType,
     referralSource,
+    referralType,
   });
 
   const mediaUrl = clean(
@@ -98,7 +107,7 @@ function normalizeAttribution(channel, referral = null) {
     sourceUrl: clean(referral.sourceUrl ?? referral.source_url),
     referralRef: clean(referral.referralRef ?? referral.ref),
     referralSource,
-    referralType: clean(referral.referralType ?? referral.type),
+    referralType,
     ctwaClid: clean(referral.ctwaClid ?? referral.ctwa_clid),
     headline: clean(referral.headline ?? referral.ad_title),
     body: clean(referral.body ?? referral.ad_body),
