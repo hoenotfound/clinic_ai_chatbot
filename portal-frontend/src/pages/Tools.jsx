@@ -858,6 +858,8 @@ function CommentAutomationTool({
         : form.publicReplyEnabled
           ? "public"
           : "none";
+  const selectedChannelCount =
+    Number(form.facebookEnabled) + Number(form.instagramEnabled);
   const selectedStatuses = [
     form.facebookEnabled ? channelStatus?.facebook : null,
     form.instagramEnabled ? channelStatus?.instagram : null,
@@ -866,7 +868,8 @@ function CommentAutomationTool({
     (status) => status?.state && status.state !== "ready"
   );
   const selectedChannelsLookReady =
-    selectedStatuses.length > 0 &&
+    selectedChannelCount > 0 &&
+    selectedStatuses.length === selectedChannelCount &&
     selectedStatuses.every((status) => status?.state === "ready");
   const saveLabel =
     form.enabled !== savedEnabled
@@ -1258,7 +1261,9 @@ function CommentFlowPreview({ form }) {
             <CommentPreviewStep label="Public reply" tone="primary">
               {form.publicReplyStyle === "fixed"
                 ? form.fixedPublicReply || "Your fixed reply will appear here."
-                : "Thanks for asking 😊 I’ll send you the details in a private message."}
+                : form.privateReplyEnabled
+                  ? "Thanks for asking 😊 I’ll send you the details in a private message."
+                  : "Thanks for asking 😊 Send us a DM and we’ll help you there."}
             </CommentPreviewStep>
           </>
         )}
