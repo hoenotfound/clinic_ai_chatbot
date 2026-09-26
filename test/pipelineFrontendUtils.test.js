@@ -155,3 +155,27 @@ test("pipeline supports iPad touch, pen and mouse stage moves", () => {
   assert.match(cssSource, /touch-action: none/);
   assert.doesNotMatch(cardSource, />Drag<\/span>/);
 });
+
+
+test("pipeline keeps secondary controls compact below wide desktop", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "portal-frontend", "src", "pages", "Pipeline.jsx"),
+    "utf8"
+  );
+
+  assert.match(source, /QUICK_CATEGORY_KEYS = new Set\(\["all", "hot", "warm", "attention"\]\)/);
+  assert.match(source, /showCompactFilters/);
+  assert.match(source, /hasSecondaryCategoryFilter/);
+  assert.match(source, /min-\[1800px\]:hidden/);
+  assert.match(source, /min-\[1800px\]:grid/);
+  assert.match(source, /min-\[1800px\]:flex/);
+  assert.match(source, /function CompactMetric\(/);
+  assert.match(source, /function FilterIcon\(/);
+  assert.match(source, /max-w-40 truncate/);
+  assert.match(source, /basis-full flex-1 sm:min-w-\[12rem\] sm:basis-auto/);
+  assert.match(source, /flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between/);
+  assert.match(source, /hidden max-w-2xl text-sm[\s\S]*lg:block/);
+  assert.match(source, /aria-controls="pipeline-secondary-filters"/);
+  assert.match(source, /text-base focus:outline-none[\s\S]*sm:text-sm/);
+  assert.match(source, /text-base font-semibold[\s\S]*sm:text-xs/);
+});
