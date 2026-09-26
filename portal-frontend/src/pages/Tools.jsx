@@ -969,7 +969,9 @@ function CommentAutomationTool({
                 <div>
                   <p className="text-xs font-semibold text-[var(--color-text)]">One or more selected channels still need setup.</p>
                   <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                    Finish the connection first, then come back and run one live comment test.
+                    {isAdmin
+                      ? "Finish the connection first, then come back and run one live comment test."
+                      : "Ask an admin to finish the connection first, then come back and run one live comment test."}
                   </p>
                 </div>
                 {isAdmin && (
