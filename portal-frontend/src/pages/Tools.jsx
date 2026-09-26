@@ -137,6 +137,9 @@ export default function Tools() {
   const [saving, setSaving] = useState(false);
   const [scoringSaving, setScoringSaving] = useState(false);
   const [commentSaving, setCommentSaving] = useState(false);
+  const [commentChannelStatus, setCommentChannelStatus] = useState(null);
+  const [commentStatusLoading, setCommentStatusLoading] = useState(false);
+  const [commentStatusError, setCommentStatusError] = useState("");
   const [translating, setTranslating] = useState(false);
   const [translationLanguage, setTranslationLanguage] = useState("en");
   const [translationsSource, setTranslationsSource] = useState(DEFAULT_FOLLOW_UP.message);
@@ -172,6 +175,26 @@ export default function Tools() {
       cancelled = true;
     };
   }, []);
+
+  const loadCommentChannelStatus = useCallback(async () => {
+    setCommentStatusLoading(true);
+    setCommentStatusError("");
+    try {
+      const status = await api.getCommentAutomationStatus();
+      setCommentChannelStatus(status);
+      return status;
+    } catch (err) {
+      setCommentStatusError(err.message || "Couldn't load channel status.");
+      return null;
+    } finally {
+      setCommentStatusLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTool !== "commentAutomation") return;
+    loadCommentChannelStatus();
+  }, [activeTool, loadCommentChannelStatus]);
 
   const savedSettings = normalizeFollowUpSettings(config?.automatedFollowUp);
   const savedEnabled = !!savedSettings.enabled;
@@ -524,6 +547,10 @@ export default function Tools() {
             savedEnabled={!!savedCommentSettings.enabled}
             hasUnsavedChanges={hasUnsavedCommentChanges}
             saving={commentSaving}
+            channelStatus={commentChannelStatus}
+            statusLoading={commentStatusLoading}
+            statusError={commentStatusError}
+            onRefreshStatus={loadCommentChannelStatus}
             onSave={handleSaveCommentAutomation}
             toasts={toasts}
             dismissToast={dismissToast}
