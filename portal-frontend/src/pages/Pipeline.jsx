@@ -581,7 +581,7 @@ export default function Pipeline() {
       <header className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3 sm:px-5 sm:py-3.5 lg:px-6 2xl:px-7 2xl:py-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
-            <div className="flex items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2">
               <h1 className="truncate font-display text-xl font-bold">Lead Pipeline</h1>
               <span className="shrink-0 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--color-primary)]">Live</span>
               {!canManageLeads && <span className="shrink-0 rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">View only</span>}
@@ -591,12 +591,12 @@ export default function Pipeline() {
           {(canManageStages || canCreateLeads) && (
             <div className="flex w-full shrink-0 gap-2 sm:w-auto">
               {canManageStages && (
-                <button type="button" onClick={() => setShowStages(true)} className="h-11 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold transition hover:bg-[var(--color-bg)] sm:px-3.5 sm:text-sm">
+                <button type="button" onClick={() => setShowStages(true)} className="h-11 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold transition hover:bg-[var(--color-bg)] sm:flex-none sm:px-3.5 sm:text-sm">
                   <span className="sm:hidden">Stages</span><span className="hidden sm:inline">Manage stages</span>
                 </button>
               )}
               {canCreateLeads && (
-                <button type="button" onClick={() => setShowAddLead(true)} className="h-11 flex-1 rounded-xl bg-[var(--color-primary)] px-3.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[var(--color-primary-hover)] sm:px-4 sm:text-sm">+ Add lead</button>
+                <button type="button" onClick={() => setShowAddLead(true)} className="h-11 flex-1 rounded-xl bg-[var(--color-primary)] px-3.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[var(--color-primary-hover)] sm:flex-none sm:px-4 sm:text-sm">+ Add lead</button>
               )}
             </div>
           )}
