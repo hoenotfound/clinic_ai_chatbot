@@ -8,6 +8,7 @@ const whatsapp = require("./services/whatsappService");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
 const aiReplyCancellation = require("./services/aiReplyCancellationService");
 const metaMessaging = require("./services/metaMessagingService");
+const metaCommentAutomation = require("./services/metaCommentAutomationService");
 const channelMessaging = require("./services/channelMessagingService");
 const ai = require("./services/aiService");
 const { transcribeAudio } = require("./services/transcriptionService");
@@ -993,21 +994,26 @@ app.get("/meta-webhook", (req, res) => {
 app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
   const incomingMessages = metaMessaging.parseIncomingMessages(req.body);
   let durableClaims;
+  let commentJobs;
   try {
     // Standard Messenger/Instagram message events contain enough data to store
     // the customer message immediately. Persist those before the 200 ACK just
-    // like WhatsApp. Profile enrichment remains presentation-only/background.
-    durableClaims = await Promise.all(
-      incomingMessages.map(async (incoming) => {
-        const queueKey = `${incoming.channel}:${incoming.from}`;
-        return {
-          queueKey,
-          durableClaim: await durablyClaimIncoming(queueKey, incoming),
-        };
-      })
-    );
+    // like WhatsApp. Comment automation also records its work before ACK so a
+    // process restart cannot silently lose a newly received comment.
+    [durableClaims, commentJobs] = await Promise.all([
+      Promise.all(
+        incomingMessages.map(async (incoming) => {
+          const queueKey = `${incoming.channel}:${incoming.from}`;
+          return {
+            queueKey,
+            durableClaim: await durablyClaimIncoming(queueKey, incoming),
+          };
+        })
+      ),
+      metaCommentAutomation.acceptIncomingComments(req.body),
+    ]);
   } catch (err) {
-    console.error("Failed to durably accept incoming Meta message(s):", err);
+    console.error("Failed to durably accept incoming Meta event(s):", err);
     return res.sendStatus(503);
   }
 
@@ -1019,6 +1025,12 @@ app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
   for (const { queueKey, durableClaim } of durableClaims) {
     scheduleDurableClaim(queueKey, durableClaim).catch((err) => {
       console.error("Failed to schedule durable Meta inbound work:", err);
+    });
+  }
+
+  for (const job of commentJobs || []) {
+    metaCommentAutomation.processJob(job.id).catch((err) => {
+      console.error("Failed to schedule Meta comment automation work:", err);
     });
   }
 
@@ -1119,6 +1131,7 @@ async function start() {
   startAutomatedFollowUps();
   startStaffWaitingAlerts();
   startLeadScoring();
+  metaCommentAutomation.startRecovery();
   console.log("[Startup] Maintenance and recovery workers started.");
 }
 
