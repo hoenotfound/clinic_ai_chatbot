@@ -857,6 +857,11 @@ function CommentAutomationTool({
                 }
               />
             </div>
+            <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3">
+              <p className="text-[11px] leading-5 text-[var(--color-text-muted)]">
+                These switches only control the automation. Facebook / Instagram permissions and comment webhook subscriptions must already be configured for the client.
+              </p>
+            </div>
             {noChannelSelected && (
               <InlineWarning>
                 Choose Facebook, Instagram, or both before turning this automation on.
