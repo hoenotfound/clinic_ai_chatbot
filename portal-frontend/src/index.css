@@ -209,3 +209,139 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
   touch-action: none;
   -webkit-touch-callout: none;
 }
+
+
+/* Sidebar layout is defined explicitly instead of coupling width and item
+   direction to separate arbitrary Tailwind breakpoints. The rail has three
+   deliberate states: phone, compact tablet/laptop, and wide desktop. */
+.app-sidebar {
+  width: 4rem;
+  overflow-x: hidden;
+}
+
+.app-sidebar-brand {
+  justify-content: center;
+  padding: 1rem 0.5rem;
+}
+
+.app-sidebar-nav {
+  overflow-x: hidden;
+  padding: 0.375rem;
+}
+
+.app-sidebar-nav-item,
+.app-sidebar-logout {
+  min-height: 3.25rem;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0.375rem 0.25rem;
+  font-size: 0.5625rem;
+  line-height: 1;
+}
+
+.app-sidebar-compact-label {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-sidebar-full-label,
+.app-sidebar-user {
+  display: none;
+}
+
+.app-sidebar-account {
+  padding: 0.625rem 0.375rem;
+}
+
+/* Tablets, iPad, small laptops and normal Mac browser windows keep a compact
+   but fully labelled rail so content receives the available width. */
+@media (min-width: 640px) and (max-width: 1599px) {
+  .app-sidebar {
+    width: 4.5rem;
+  }
+
+  .app-sidebar-brand {
+    padding: 1.25rem 0.75rem;
+  }
+
+  .app-sidebar-nav {
+    padding: 0.5rem;
+  }
+
+  .app-sidebar-nav-item,
+  .app-sidebar-logout {
+    min-height: 3.5rem;
+    font-size: 0.625rem;
+  }
+
+  .app-sidebar-account {
+    padding: 0.75rem 0.5rem;
+  }
+}
+
+/* Short landscape screens get a little more vertical room. The nav itself
+   remains scrollable, so no item becomes unreachable. */
+@media (max-height: 640px) and (max-width: 1599px) {
+  .app-sidebar-brand {
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+
+  .app-sidebar-nav-item,
+  .app-sidebar-logout {
+    min-height: 3rem;
+  }
+
+  .app-sidebar-account {
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
+}
+
+/* Only genuinely wide desktop viewports spend 240px on persistent navigation.
+   Width, direction, labels and account details all switch together. */
+@media (min-width: 1600px) {
+  .app-sidebar {
+    width: 15rem;
+  }
+
+  .app-sidebar-brand {
+    justify-content: flex-start;
+    padding: 1.25rem;
+  }
+
+  .app-sidebar-nav {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .app-sidebar-nav-item,
+  .app-sidebar-logout {
+    min-height: 2.75rem;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 0.75rem;
+    padding: 0.625rem 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+  }
+
+  .app-sidebar-compact-label {
+    display: none;
+  }
+
+  .app-sidebar-full-label {
+    display: inline;
+  }
+
+  .app-sidebar-user {
+    display: block;
+  }
+
+  .app-sidebar-account {
+    padding: 1rem 0.75rem;
+  }
+}
