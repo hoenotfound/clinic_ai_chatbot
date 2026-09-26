@@ -914,7 +914,7 @@ function CommentAutomationTool({
       toasts={toasts}
       dismissToast={dismissToast}
     >
-      <div className="grid gap-5 min-[1536px]:grid-cols-[minmax(0,1.28fr)_minmax(19rem,0.72fr)]">
+      <div className="grid gap-5 min-[1800px]:grid-cols-[minmax(0,1.28fr)_minmax(19rem,0.72fr)]">
         <div className="space-y-5">
           <Card>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -1005,7 +1005,7 @@ function CommentAutomationTool({
               description="Pick the experience you want customers to receive. You can change it later."
             />
 
-            <div className="mt-5 grid gap-3">
+            <div className="mt-5 grid gap-3" role="radiogroup" aria-label="What should happen when someone comments?">
               <CommentActionChoice
                 checked={replyMode === "both"}
                 recommended
@@ -1136,7 +1136,7 @@ function CommentAutomationTool({
           </details>
         </div>
 
-        <aside className="space-y-5 min-[1536px]:sticky min-[1536px]:top-6 min-[1536px]:self-start">
+        <aside className="space-y-5 min-[1800px]:sticky min-[1800px]:top-6 min-[1800px]:self-start">
           <CommentFlowPreview form={form} />
 
           <Card>
@@ -1617,6 +1617,7 @@ function IconBase({ children, ...props }) {
 }
 function ClockIcon(props) { return <IconBase {...props}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
 function CommentIcon(props) { return <IconBase {...props}><path d="M4 5h16v11H9l-5 4V5Z" strokeLinecap="round" strokeLinejoin="round" /><path d="M8 9h8M8 12h5" strokeLinecap="round" /></IconBase>; }
+function ChevronDownIcon(props) { return <IconBase {...props}><path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
 function ScoreIcon(props) { return <IconBase {...props}><path d="M4 19V9M10 19V5M16 19v-7M22 19V8" strokeLinecap="round" /><path d="m3 7 6-4 6 7 6-4" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
 function DistributionIcon(props) { return <IconBase {...props}><circle cx="6" cy="6" r="2" /><circle cx="18" cy="6" r="2" /><circle cx="12" cy="18" r="2" /><path d="M7.7 7.1 10.8 16M16.3 7.1 13.2 16M8 6h8" strokeLinecap="round" /></IconBase>; }
 function ImageIcon(props) { return <IconBase {...props}><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m21 15-5-5L5 20" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
