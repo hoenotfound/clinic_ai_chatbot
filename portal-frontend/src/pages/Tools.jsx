@@ -900,6 +900,7 @@ function CommentAutomationTool({
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <button
                     type="button"
+                    aria-pressed={form.publicReplyStyle === "ai"}
                     onClick={() => setForm((current) => ({ ...current, publicReplyStyle: "ai" }))}
                     className={`rounded-xl border p-4 text-left transition-colors ${
                       form.publicReplyStyle === "ai"
@@ -908,12 +909,13 @@ function CommentAutomationTool({
                     }`}
                   >
                     <span className="block text-xs font-semibold">AI-generated</span>
-                    <span className="mt-1 block text-[10px] leading-4 text-[var(--color-text-muted)]">
+                    <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">
                       Match the comment language and context while keeping the public reply short.
                     </span>
                   </button>
                   <button
                     type="button"
+                    aria-pressed={form.publicReplyStyle === "fixed"}
                     onClick={() => setForm((current) => ({ ...current, publicReplyStyle: "fixed" }))}
                     className={`rounded-xl border p-4 text-left transition-colors ${
                       form.publicReplyStyle === "fixed"
@@ -922,7 +924,7 @@ function CommentAutomationTool({
                     }`}
                   >
                     <span className="block text-xs font-semibold">Fixed message</span>
-                    <span className="mt-1 block text-[10px] leading-4 text-[var(--color-text-muted)]">
+                    <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">
                       Use the same public reply for every eligible comment.
                     </span>
                   </button>
@@ -993,24 +995,27 @@ function CommentAutomationTool({
             </p>
             <div className="mt-4 space-y-3">
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-                <p className="text-[10px] font-semibold text-[var(--color-text-muted)]">Customer comment</p>
+                <p className="text-[11px] font-semibold text-[var(--color-text-muted)]">Customer comment</p>
                 <p className="mt-1 text-xs">How much is this?</p>
+                <p className="mt-1.5 text-[11px] leading-4 text-[var(--color-text-muted)]">
+                  AI also reads the Facebook post or Instagram caption when available.
+                </p>
               </div>
               {form.publicReplyEnabled && (
                 <div className="rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/45 p-3">
-                  <p className="text-[10px] font-semibold text-[var(--color-primary)]">Public reply</p>
+                  <p className="text-[11px] font-semibold text-[var(--color-primary)]">Public reply</p>
                   <p className="mt-1 text-xs">
                     {form.publicReplyStyle === "fixed"
                       ? form.fixedPublicReply || "Your fixed reply will appear here."
-                      : "AI replies naturally and can mention that details were sent privately."}
+                      : "Thanks for asking 😊 I’ll send you the details in a private message."}
                   </p>
                 </div>
               )}
               {form.privateReplyEnabled && (
                 <div className="rounded-xl border border-[var(--color-border)] bg-white p-3 shadow-sm">
-                  <p className="text-[10px] font-semibold text-[var(--color-primary)]">Private message</p>
+                  <p className="text-[11px] font-semibold text-[var(--color-primary)]">Private message</p>
                   <p className="mt-1 text-xs">
-                    AI answers the comment privately and asks one useful next question when appropriate.
+                    AI answers using the post/comment context. The lead appears in Inbox and Pipeline after Meta accepts the private reply.
                   </p>
                 </div>
               )}
@@ -1221,6 +1226,15 @@ function ToggleSetting({ label, description, checked, onChange }) {
         <p className="mt-1 text-[10px] leading-4 text-[var(--color-text-muted)]">{description}</p>
       </div>
       <Switch checked={checked} onChange={onChange} ariaLabel={label} />
+    </div>
+  );
+}
+
+function InlineWarning({ children }) {
+  return (
+    <div role="alert" className="mt-4 flex items-start gap-2.5 rounded-xl border border-[var(--color-accent)]/30 bg-[var(--color-accent-light)] px-3.5 py-3">
+      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white text-[11px] font-bold text-[var(--color-accent-text)]">!</span>
+      <p className="text-[11px] leading-5 text-[var(--color-text)]">{children}</p>
     </div>
   );
 }
