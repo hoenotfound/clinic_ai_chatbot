@@ -336,7 +336,7 @@ test("Instagram comment replies use the replies edge", async (t) => {
   assert.equal(result.replyId, "ig-reply-1");
 });
 
-test("Instagram private comment reply uses the Instagram Professional Account ID", async (t) => {
+test("Instagram private comment reply stays on the linked Page messaging transport", async (t) => {
   const originalFetch = global.fetch;
   const old = {
     token: process.env.INSTAGRAM_PAGE_ACCESS_TOKEN,
@@ -358,7 +358,7 @@ test("Instagram private comment reply uses the Instagram Professional Account ID
   process.env.INSTAGRAM_PAGE_ID = "linked-page-123";
 
   global.fetch = async (url, options) => {
-    assert.equal(url, "https://graph.facebook.com/v26.0/ig-professional-123/messages");
+    assert.equal(url, "https://graph.facebook.com/v26.0/linked-page-123/messages");
     assert.deepEqual(JSON.parse(options.body), {
       recipient: { comment_id: "ig-comment-9" },
       message: { text: "Hi! How can I help?" },
@@ -384,6 +384,81 @@ test("Instagram private comment reply uses the Instagram Professional Account ID
     messageId: "ig-private-1",
     recipientId: "igsid-9",
     error: null,
+  });
+});
+
+test("fetches Instagram post context for comment AI using the existing Page token", async (t) => {
+  const originalFetch = global.fetch;
+  const oldToken = process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (oldToken === undefined) delete process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
+    else process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = oldToken;
+  });
+  process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = "ig-context-token";
+
+  global.fetch = async (url, options) => {
+    const parsed = new URL(url);
+    assert.equal(parsed.pathname, "/v26.0/ig-media-context-1");
+    assert.equal(parsed.searchParams.get("fields"), "id,caption,media_type,permalink");
+    assert.equal(options.headers.Authorization, "Bearer ig-context-token");
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: "ig-media-context-1",
+        caption: "Acne scar Buy 1 Free 1 promotion",
+        media_type: "IMAGE",
+        permalink: "https://instagram.example/p/context",
+      }),
+    };
+  };
+
+  const result = await meta.fetchCommentSourceContext("instagram", {
+    mediaId: "ig-media-context-1",
+  });
+  assert.deepEqual(result, {
+    sourceId: "ig-media-context-1",
+    text: "Acne scar Buy 1 Free 1 promotion",
+    mediaType: "IMAGE",
+    sourceUrl: "https://instagram.example/p/context",
+  });
+});
+
+test("fetches Facebook post context for comment AI", async (t) => {
+  const originalFetch = global.fetch;
+  const oldToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (oldToken === undefined) delete process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    else process.env.FACEBOOK_PAGE_ACCESS_TOKEN = oldToken;
+  });
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN = "fb-context-token";
+
+  global.fetch = async (url, options) => {
+    const parsed = new URL(url);
+    assert.equal(parsed.pathname, "/v26.0/page-1_post-1");
+    assert.equal(parsed.searchParams.get("fields"), "id,message,permalink_url");
+    assert.equal(options.headers.Authorization, "Bearer fb-context-token");
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        id: "page-1_post-1",
+        message: "Pelvic alignment consultation",
+        permalink_url: "https://facebook.example/posts/1",
+      }),
+    };
+  };
+
+  const result = await meta.fetchCommentSourceContext("facebook", {
+    postId: "page-1_post-1",
+  });
+  assert.deepEqual(result, {
+    sourceId: "page-1_post-1",
+    text: "Pelvic alignment consultation",
+    mediaType: null,
+    sourceUrl: "https://facebook.example/posts/1",
   });
 });
 
