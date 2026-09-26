@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import { useAuth } from "../context/AuthContext";
 import Spinner from "../components/Spinner";
 import { ToastContainer, useToasts } from "../components/Toast";
 import LeadDistribution from "./LeadDistribution";
@@ -149,6 +150,7 @@ export default function Tools() {
   const [distributionDirty, setDistributionDirty] = useState(false);
   const [distributionActive, setDistributionActive] = useState(false);
   const imageInputRef = useRef(null);
+  const { user } = useAuth();
   const { toasts, showToast, dismissToast } = useToasts();
 
   useEffect(() => {
@@ -548,6 +550,7 @@ export default function Tools() {
             hasUnsavedChanges={hasUnsavedCommentChanges}
             saving={commentSaving}
             channelStatus={commentChannelStatus}
+            isAdmin={user?.role === "admin"}
             statusLoading={commentStatusLoading}
             statusError={commentStatusError}
             onRefreshStatus={loadCommentChannelStatus}
@@ -828,6 +831,7 @@ function CommentAutomationTool({
   hasUnsavedChanges,
   saving,
   channelStatus,
+  isAdmin,
   statusLoading,
   statusError,
   onRefreshStatus,
@@ -846,30 +850,78 @@ function CommentAutomationTool({
     !form.fixedPublicReply.trim();
   const hasInvalidState =
     noChannelSelected || noReplyActionSelected || fixedReplyInvalid;
+  const replyMode =
+    form.publicReplyEnabled && form.privateReplyEnabled
+      ? "both"
+      : form.privateReplyEnabled
+        ? "private"
+        : form.publicReplyEnabled
+          ? "public"
+          : "none";
+  const selectedStatuses = [
+    form.facebookEnabled ? channelStatus?.facebook : null,
+    form.instagramEnabled ? channelStatus?.instagram : null,
+  ].filter(Boolean);
+  const selectedChannelNeedsSetup = selectedStatuses.some(
+    (status) => status?.state && status.state !== "ready"
+  );
+  const selectedChannelsLookReady =
+    selectedStatuses.length > 0 &&
+    selectedStatuses.every((status) => status?.state === "ready");
+  const saveLabel =
+    form.enabled !== savedEnabled
+      ? form.enabled
+        ? "Save & turn on"
+        : "Save & pause"
+      : "Save changes";
+
+  function setReplyMode(mode) {
+    if (mode === "both") {
+      setForm((current) => ({
+        ...current,
+        publicReplyEnabled: true,
+        privateReplyEnabled: true,
+      }));
+      return;
+    }
+    if (mode === "private") {
+      setForm((current) => ({
+        ...current,
+        publicReplyEnabled: false,
+        privateReplyEnabled: true,
+      }));
+      return;
+    }
+    setForm((current) => ({
+      ...current,
+      publicReplyEnabled: true,
+      privateReplyEnabled: false,
+    }));
+  }
 
   return (
     <ToolShell
       title="Comment automation"
-      description="Reply to relevant Facebook and Instagram comments, then move enquiries into private messages."
+      description="Automatically reply to Facebook and Instagram comments and turn interested commenters into leads."
       enabled={form.enabled}
       savedEnabled={savedEnabled}
       hasUnsavedChanges={hasUnsavedChanges}
       onToggle={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
-      saveLabel="Save changes"
+      saveLabel={saveLabel}
       saving={saving}
       saveDisabled={saving || !hasUnsavedChanges || hasInvalidState}
       onSave={onSave}
       toasts={toasts}
       dismissToast={dismissToast}
     >
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.22fr)_minmax(18rem,0.78fr)]">
+      <div className="grid gap-5 min-[1536px]:grid-cols-[minmax(0,1.28fr)_minmax(19rem,0.72fr)]">
         <div className="space-y-5">
           <Card>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <SectionHeading
                 number="1"
-                title="Choose channels"
-                description="Turn on the social channels where you want new top-level comments handled."
+                title="Where should this work?"
+                description="Choose the social accounts where you want new comments handled automatically."
               />
               <button
                 type="button"
@@ -878,13 +930,14 @@ function CommentAutomationTool({
                 className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 self-start rounded-xl border border-[var(--color-border)] bg-white px-3.5 text-xs font-semibold text-[var(--color-text)] transition-colors hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {statusLoading && <Spinner className="h-3.5 w-3.5" />}
-                {statusLoading ? "Checking…" : "Refresh status"}
+                {statusLoading ? "Checking…" : "Check connection"}
               </button>
             </div>
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <ToggleSetting
+
+            <div className="mt-5 grid gap-3 md:grid-cols-2">
+              <CommentChannelCard
                 label="Facebook"
-                description="Handle new comments on connected Facebook Page posts."
+                description="Reply to comments on your connected Facebook Page posts."
                 status={channelStatus?.facebook || null}
                 statusLoading={statusLoading && !channelStatus}
                 checked={form.facebookEnabled}
@@ -892,9 +945,9 @@ function CommentAutomationTool({
                   setForm((current) => ({ ...current, facebookEnabled: !current.facebookEnabled }))
                 }
               />
-              <ToggleSetting
+              <CommentChannelCard
                 label="Instagram"
-                description="Handle new comments on the connected Instagram Professional account."
+                description="Reply to comments on your connected Instagram posts."
                 status={channelStatus?.instagram || null}
                 statusLoading={statusLoading && !channelStatus}
                 checked={form.instagramEnabled}
@@ -903,18 +956,41 @@ function CommentAutomationTool({
                 }
               />
             </div>
-            <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3">
-              {statusError ? (
-                <p className="text-[11px] leading-5 text-[var(--color-danger)]">
-                  Live channel status is temporarily unavailable. The automation settings can still be edited.
+
+            {statusError ? (
+              <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3">
+                <p className="text-xs font-semibold">We couldn't check the connections right now.</p>
+                <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  You can keep editing. Try Check connection again before turning the automation on.
                 </p>
-              ) : (
-                <p className="text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  {channelStatus?.note ||
-                    "Status is based on the existing messaging connection and signed Meta webhook evidence. A live comment test is still required to confirm comment permissions and the comment subscription."}
+              </div>
+            ) : selectedChannelNeedsSetup ? (
+              <div className="mt-4 flex flex-col gap-2 rounded-xl border border-[var(--color-accent)]/30 bg-[var(--color-accent-light)] px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-[var(--color-text)]">One or more selected channels still need setup.</p>
+                  <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                    Finish the connection first, then come back and run one live comment test.
+                  </p>
+                </div>
+                {isAdmin && (
+                  <Link to="/settings/setup" className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-xl border border-[var(--color-accent)]/30 bg-white px-3 text-xs font-semibold text-[var(--color-accent-text)] transition hover:bg-white/70">
+                    Open Setup Status
+                  </Link>
+                )}
+              </div>
+            ) : selectedChannelsLookReady ? (
+              <div className="mt-4 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/55 px-3.5 py-3">
+                <p className="text-xs font-semibold text-[var(--color-primary)]">Connections look ready.</p>
+                <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  After you turn this on, leave one new test comment to confirm the public reply and private message work as expected.
                 </p>
-              )}
-            </div>
+              </div>
+            ) : (
+              <p className="mt-4 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                Check the connection before going live. A real test comment is the final confirmation that Meta allows comment replies for this account.
+              </p>
+            )}
+
             {noChannelSelected && (
               <InlineWarning>
                 Choose Facebook, Instagram, or both before turning this automation on.
@@ -925,37 +1001,41 @@ function CommentAutomationTool({
           <Card>
             <SectionHeading
               number="2"
-              title="Choose what happens"
-              description="You can reply publicly, send one private reply from the comment, or do both."
+              title="What should happen when someone comments?"
+              description="Pick the experience you want customers to receive. You can change it later."
             />
-            <div className="mt-5 space-y-3">
-              <ToggleSetting
-                label="Reply publicly"
-                description="Post a short reply under the customer's comment. Useful for showing that the Page is responsive."
-                checked={form.publicReplyEnabled}
-                onChange={() =>
-                  setForm((current) => ({ ...current, publicReplyEnabled: !current.publicReplyEnabled }))
-                }
+
+            <div className="mt-5 grid gap-3">
+              <CommentActionChoice
+                checked={replyMode === "both"}
+                recommended
+                title="Reply publicly + send a private message"
+                description="Acknowledge the customer under the post, then continue the enquiry privately and add the lead to Inbox / Pipeline."
+                onClick={() => setReplyMode("both")}
               />
-              <ToggleSetting
-                label="Send a private message · Recommended"
-                description="Send one private reply, create the lead in Inbox / Pipeline, and continue normally if the customer replies."
-                checked={form.privateReplyEnabled}
-                onChange={() =>
-                  setForm((current) => ({ ...current, privateReplyEnabled: !current.privateReplyEnabled }))
-                }
+              <CommentActionChoice
+                checked={replyMode === "private"}
+                title="Send a private message only"
+                description="Move the enquiry straight to DM without posting a public reply under the comment."
+                onClick={() => setReplyMode("private")}
+              />
+              <CommentActionChoice
+                checked={replyMode === "public"}
+                title="Reply publicly only"
+                description="Reply under the post without starting a private conversation or creating a lead from the private reply."
+                onClick={() => setReplyMode("public")}
               />
             </div>
 
             {noReplyActionSelected && (
               <InlineWarning>
-                Choose at least one action: a public reply, a private message, or both.
+                Choose what should happen before turning this automation on.
               </InlineWarning>
             )}
 
             {form.publicReplyEnabled && (
               <div className="mt-6 border-t border-[var(--color-border)] pt-5">
-                <p className="text-xs font-semibold">Public reply style</p>
+                <p className="text-sm font-semibold">How should the public reply be written?</p>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <button
                     type="button"
@@ -967,9 +1047,12 @@ function CommentAutomationTool({
                         : "border-[var(--color-border)] hover:bg-[var(--color-bg)]"
                     }`}
                   >
-                    <span className="block text-xs font-semibold">AI-generated</span>
-                    <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">
-                      Match the comment language and context while keeping the public reply short.
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-semibold">Let AI write it</span>
+                      <span className="rounded-full bg-[var(--color-primary-light)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">Recommended</span>
+                    </span>
+                    <span className="mt-1.5 block text-[11px] leading-5 text-[var(--color-text-muted)]">
+                      Match the customer's language and the post context while keeping the reply short.
                     </span>
                   </button>
                   <button
@@ -982,9 +1065,9 @@ function CommentAutomationTool({
                         : "border-[var(--color-border)] hover:bg-[var(--color-bg)]"
                     }`}
                   >
-                    <span className="block text-xs font-semibold">Fixed message</span>
-                    <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">
-                      Use the same public reply for every eligible comment.
+                    <span className="block text-xs font-semibold">Always use the same reply</span>
+                    <span className="mt-1.5 block text-[11px] leading-5 text-[var(--color-text-muted)]">
+                      Best when you want every eligible comment to receive identical wording.
                     </span>
                   </button>
                 </div>
@@ -1007,7 +1090,7 @@ function CommentAutomationTool({
                       onChange={(event) =>
                         setForm((current) => ({ ...current, fixedPublicReply: event.target.value }))
                       }
-                      className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+                      className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-base leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)] sm:text-sm"
                     />
                     {fixedReplyInvalid && (
                       <p className="mt-2 text-[11px] font-medium text-[var(--color-danger)]">
@@ -1020,80 +1103,202 @@ function CommentAutomationTool({
             )}
           </Card>
 
-          <Card>
-            <SectionHeading
-              number="3"
-              title="Safeguards"
-              description="Keep low-value or risky comment events out of the automated flow."
-            />
-            <div className="mt-5 space-y-3">
-              <ToggleSetting
-                label="Ignore emoji-only comments"
-                description="Skip comments such as 🔥🔥 or 👍 that do not contain words or numbers."
-                checked={form.skipEmojiOnly}
-                onChange={() =>
-                  setForm((current) => ({ ...current, skipEmojiOnly: !current.skipEmojiOnly }))
-                }
-              />
-              <ToggleSetting
-                label="Ignore nested replies"
-                description="Handle only top-level comments and avoid the bot joining reply threads."
-                checked={form.skipNestedReplies}
-                onChange={() =>
-                  setForm((current) => ({ ...current, skipNestedReplies: !current.skipNestedReplies }))
-                }
-              />
+          <details className="group rounded-2xl border border-[var(--color-border)] bg-white shadow-[0_8px_30px_rgba(24,39,33,0.035)]">
+            <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 font-display text-sm font-bold sm:px-6">
+              <span>
+                Advanced settings
+                <span className="mt-1 block font-sans text-[11px] font-normal leading-5 text-[var(--color-text-muted)]">
+                  The recommended defaults work well for most businesses.
+                </span>
+              </span>
+              <ChevronDownIcon className="h-4 w-4 shrink-0 text-[var(--color-text-muted)] transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="border-t border-[var(--color-border)] px-5 py-5 sm:px-6">
+              <div className="space-y-3">
+                <ToggleSetting
+                  label="Ignore comments containing only emojis"
+                  description="Skip comments such as 👍 or 🔥🔥 when there are no words or numbers."
+                  checked={form.skipEmojiOnly}
+                  onChange={() =>
+                    setForm((current) => ({ ...current, skipEmojiOnly: !current.skipEmojiOnly }))
+                  }
+                />
+                <ToggleSetting
+                  label="Only respond to the original comment"
+                  description="Do not let the automation join conversations happening underneath a comment."
+                  checked={form.skipNestedReplies}
+                  onChange={() =>
+                    setForm((current) => ({ ...current, skipNestedReplies: !current.skipNestedReplies }))
+                  }
+                />
+              </div>
             </div>
-          </Card>
+          </details>
         </div>
 
-        <aside className="space-y-5 xl:sticky xl:top-6 xl:self-start">
-          <Card>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
-              Example flow
-            </p>
-            <div className="mt-4 space-y-3">
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-                <p className="text-[11px] font-semibold text-[var(--color-text-muted)]">Customer comment</p>
-                <p className="mt-1 text-xs">How much is this?</p>
-                <p className="mt-1.5 text-[11px] leading-4 text-[var(--color-text-muted)]">
-                  AI also reads the Facebook post or Instagram caption when available.
-                </p>
-              </div>
-              {form.publicReplyEnabled && (
-                <div className="rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/45 p-3">
-                  <p className="text-[11px] font-semibold text-[var(--color-primary)]">Public reply</p>
-                  <p className="mt-1 text-xs">
-                    {form.publicReplyStyle === "fixed"
-                      ? form.fixedPublicReply || "Your fixed reply will appear here."
-                      : "Thanks for asking 😊 I’ll send you the details in a private message."}
-                  </p>
-                </div>
-              )}
-              {form.privateReplyEnabled && (
-                <div className="rounded-xl border border-[var(--color-border)] bg-white p-3 shadow-sm">
-                  <p className="text-[11px] font-semibold text-[var(--color-primary)]">Private message</p>
-                  <p className="mt-1 text-xs">
-                    AI answers using the post/comment context. The lead appears in Inbox and Pipeline after Meta accepts the private reply.
-                  </p>
-                </div>
-              )}
-            </div>
-          </Card>
+        <aside className="space-y-5 min-[1536px]:sticky min-[1536px]:top-6 min-[1536px]:self-start">
+          <CommentFlowPreview form={form} />
 
           <Card>
-            <h2 className="font-display text-sm font-bold">How it stays safe</h2>
-            <ul className="mt-4 space-y-3">
-              <Rule text="Old comments are not processed when you first enable the tool." />
-              <Rule text="Duplicate Meta webhook deliveries are deduplicated before sending." />
-              <Rule text="The global AI reply switch pauses this automation too." />
-              <Rule text="A comment alone is not treated as an open 24-hour DM conversation." />
-              <Rule text="Complaints, safety issues, and human requests can be flagged for staff." />
+            <h2 className="font-display text-sm font-bold">Before you turn it on</h2>
+            <div className="mt-4 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/45 p-3.5">
+              <p className="text-xs font-semibold text-[var(--color-primary)]">Run one real comment test</p>
+              <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                After saving, leave a new comment on a recent Facebook or Instagram post. Confirm the reply appears and, if enabled, the private message arrives.
+              </p>
+            </div>
+            <h3 className="mt-5 text-xs font-semibold">Good to know</h3>
+            <ul className="mt-3 space-y-3">
+              <Rule text="Only new comments received after the automation is turned on are handled." />
+              <Rule text="The same comment will not be replied to twice if Meta sends it more than once." />
+              <Rule text="Pausing the global AI reply switch pauses this automation too." />
+              <Rule text="A comment by itself does not open a general 24-hour private-message window." />
+              <Rule text="Complaints, safety issues, and requests for a human can still be flagged for staff." />
             </ul>
           </Card>
         </aside>
       </div>
     </ToolShell>
+  );
+}
+
+function CommentChannelCard({
+  label,
+  description,
+  status,
+  statusLoading,
+  checked,
+  onChange,
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={`Use ${label} for comment automation`}
+      onClick={onChange}
+      className={`flex w-full items-start justify-between gap-4 rounded-2xl border p-4 text-left transition-colors ${
+        checked
+          ? "border-[var(--color-primary)]/35 bg-[var(--color-primary-light)]/35"
+          : "border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-white"
+      }`}
+    >
+      <span className="min-w-0">
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold">{label}</span>
+          {(status || statusLoading) && (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="text-[10px] font-medium text-[var(--color-text-muted)]">Connection</span>
+              <ChannelReadinessBadge status={status} loading={statusLoading} />
+            </span>
+          )}
+        </span>
+        <span className="mt-1.5 block text-[11px] leading-5 text-[var(--color-text-muted)]">{description}</span>
+        <span className={`mt-2 block text-[10px] font-semibold ${checked ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
+          Automation {checked ? "selected" : "not selected"}
+        </span>
+      </span>
+      <span
+        aria-hidden="true"
+        className={`relative mt-0.5 h-8 w-14 shrink-0 rounded-full transition-colors ${checked ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`}
+      >
+        <span className={`absolute left-0 top-1 h-6 w-6 rounded-full bg-white shadow-sm transition-transform ${checked ? "translate-x-7" : "translate-x-1"}`} />
+      </span>
+    </button>
+  );
+}
+
+function CommentActionChoice({ checked, recommended = false, title, description, onClick }) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={checked}
+      onClick={onClick}
+      className={`flex w-full items-start gap-3 rounded-2xl border p-4 text-left transition-colors ${
+        checked
+          ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/45"
+          : "border-[var(--color-border)] bg-white hover:bg-[var(--color-bg)]"
+      }`}
+    >
+      <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${checked ? "border-[var(--color-primary)]" : "border-[var(--color-border)]"}`}>
+        {checked && <span className="h-2.5 w-2.5 rounded-full bg-[var(--color-primary)]" />}
+      </span>
+      <span className="min-w-0">
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold">{title}</span>
+          {recommended && (
+            <span className="rounded-full bg-[var(--color-primary-light)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">Recommended</span>
+          )}
+        </span>
+        <span className="mt-1 block text-[11px] leading-5 text-[var(--color-text-muted)]">{description}</span>
+      </span>
+    </button>
+  );
+}
+
+function CommentFlowPreview({ form }) {
+  return (
+    <Card>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+        Customer experience preview
+      </p>
+      <div className="mt-4 space-y-2.5">
+        <CommentPreviewStep label="Customer comment" tone="neutral">
+          How much is this?
+        </CommentPreviewStep>
+        {form.publicReplyEnabled && (
+          <>
+            <FlowArrow />
+            <CommentPreviewStep label="Public reply" tone="primary">
+              {form.publicReplyStyle === "fixed"
+                ? form.fixedPublicReply || "Your fixed reply will appear here."
+                : "Thanks for asking 😊 I’ll send you the details in a private message."}
+            </CommentPreviewStep>
+          </>
+        )}
+        {form.privateReplyEnabled && (
+          <>
+            <FlowArrow />
+            <CommentPreviewStep label="Private message" tone="surface">
+              AI answers using the post and comment context, then continues the conversation privately.
+            </CommentPreviewStep>
+            <FlowArrow />
+            <CommentPreviewStep label="Lead created" tone="success">
+              The customer appears in Inbox and Pipeline after Meta accepts the private reply.
+            </CommentPreviewStep>
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function CommentPreviewStep({ label, tone, children }) {
+  const classes =
+    tone === "primary"
+      ? "border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/45"
+      : tone === "success"
+        ? "border-[var(--color-primary)]/20 bg-white"
+        : tone === "surface"
+          ? "border-[var(--color-border)] bg-white shadow-sm"
+          : "border-[var(--color-border)] bg-[var(--color-bg)]";
+
+  return (
+    <div className={`rounded-xl border p-3.5 ${classes}`}>
+      <p className={`text-[11px] font-semibold ${tone === "primary" || tone === "success" ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>{label}</p>
+      <p className="mt-1 text-xs leading-5">{children}</p>
+    </div>
+  );
+}
+
+function FlowArrow() {
+  return (
+    <div className="flex justify-center" aria-hidden="true">
+      <svg viewBox="0 0 24 24" className="h-4 w-4 text-[var(--color-text-muted)]" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M12 4v15m0 0-5-5m5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
   );
 }
 
