@@ -856,6 +856,11 @@ function CommentAutomationTool({
                 }
               />
             </div>
+            {noChannelSelected && (
+              <InlineWarning>
+                Choose Facebook, Instagram, or both before turning this automation on.
+              </InlineWarning>
+            )}
           </Card>
 
           <Card>
@@ -867,21 +872,27 @@ function CommentAutomationTool({
             <div className="mt-5 space-y-3">
               <ToggleSetting
                 label="Reply publicly"
-                description="Post a short reply under the customer's comment."
+                description="Post a short reply under the customer's comment. Useful for showing that the Page is responsive."
                 checked={form.publicReplyEnabled}
                 onChange={() =>
                   setForm((current) => ({ ...current, publicReplyEnabled: !current.publicReplyEnabled }))
                 }
               />
               <ToggleSetting
-                label="Send a private message"
-                description="Use Meta's comment private-reply path, then continue in Inbox if the customer responds."
+                label="Send a private message · Recommended"
+                description="Send one private reply, create the lead in Inbox / Pipeline, and continue normally if the customer replies."
                 checked={form.privateReplyEnabled}
                 onChange={() =>
                   setForm((current) => ({ ...current, privateReplyEnabled: !current.privateReplyEnabled }))
                 }
               />
             </div>
+
+            {noReplyActionSelected && (
+              <InlineWarning>
+                Choose at least one action: a public reply, a private message, or both.
+              </InlineWarning>
+            )}
 
             {form.publicReplyEnabled && (
               <div className="mt-6 border-t border-[var(--color-border)] pt-5">
@@ -937,6 +948,11 @@ function CommentAutomationTool({
                       }
                       className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
                     />
+                    {fixedReplyInvalid && (
+                      <p className="mt-2 text-[11px] font-medium text-[var(--color-danger)]">
+                        Add the public reply text before saving.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
