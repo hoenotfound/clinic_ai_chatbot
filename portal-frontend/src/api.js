@@ -109,6 +109,7 @@ export const api = {
     }),
   getConfig: () => request("/config"),
   updateConfig: (updates) => request("/config", { method: "PATCH", body: JSON.stringify(updates) }),
+  getCommentAutomationStatus: () => request("/config/comment-automation/status"),
   getLeadDistributionStatus: () => request("/config/lead-distribution/status"),
   recoverUnassignedLeads: () =>
     request("/config/lead-distribution/recover-unassigned", { method: "POST" }),
