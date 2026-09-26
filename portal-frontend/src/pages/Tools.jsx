@@ -1220,13 +1220,27 @@ function Switch({ checked, onChange, ariaLabel, disabled = false }) {
 
 function ToggleSetting({ label, description, checked, onChange }) {
   return (
-    <div className="flex items-start justify-between gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-      <div className="min-w-0">
-        <p className="text-xs font-semibold">{label}</p>
-        <p className="mt-1 text-[10px] leading-4 text-[var(--color-text-muted)]">{description}</p>
-      </div>
-      <Switch checked={checked} onChange={onChange} ariaLabel={label} />
-    </div>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={onChange}
+      className="flex w-full items-start justify-between gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 text-left transition-colors hover:border-[var(--color-primary)]/30 hover:bg-white"
+    >
+      <span className="min-w-0">
+        <span className="block text-xs font-semibold">{label}</span>
+        <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">{description}</span>
+      </span>
+      <span
+        aria-hidden="true"
+        className={`relative mt-0.5 h-8 w-14 shrink-0 rounded-full transition-colors ${checked ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`}
+      >
+        <span
+          className={`absolute left-0 top-1 h-6 w-6 rounded-full bg-white shadow-sm transition-transform ${checked ? "translate-x-7" : "translate-x-1"}`}
+        />
+      </span>
+    </button>
   );
 }
 
