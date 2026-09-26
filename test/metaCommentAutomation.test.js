@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  buildCommentAttribution,
   createMetaCommentAutomationService,
   parseIncomingCommentEvents,
   skipReason,
@@ -87,6 +88,53 @@ test("parses Instagram comments webhook payloads", () => {
   );
 });
 
+test("comment attribution keeps channel-specific comment source and exact Meta ad ids when available", () => {
+  const organic = buildCommentAttribution(
+    {
+      channel: "instagram",
+      commentId: "ig-comment-organic",
+      mediaId: "ig-media-organic",
+      postId: null,
+      text: "Price?",
+      rawEvent: { value: {} },
+    },
+    {
+      text: "Radiance Therapy",
+      mediaType: "IMAGE",
+      sourceUrl: "https://instagram.example/p/radiance",
+    }
+  );
+  assert.equal(organic.source, "instagram_comment");
+  assert.equal(organic.sourceId, "ig-media-organic");
+  assert.equal(organic.referralType, "comment");
+  assert.equal(organic.headline, "Radiance Therapy");
+  assert.match(organic.body, /Price\?/);
+
+  const paid = buildCommentAttribution(
+    {
+      channel: "facebook",
+      commentId: "fb-comment-ad",
+      postId: "page-1_post-9",
+      mediaId: null,
+      text: "Can I know more?",
+      rawEvent: {
+        value: {
+          ad_id: "123456789",
+          ad_title: "Pelvic care campaign",
+        },
+      },
+    },
+    {
+      text: "Post copy",
+      sourceUrl: "https://facebook.example/posts/9",
+    }
+  );
+  assert.equal(paid.source, "meta_ads");
+  assert.equal(paid.adId, "123456789");
+  assert.equal(paid.referralType, "comment");
+  assert.equal(paid.headline, "Pelvic care campaign");
+});
+
 test("skip rules ignore self comments, emoji-only comments, and nested replies", () => {
   const settings = { ...DEFAULT_COMMENT_AUTOMATION, enabled: true };
   assert.match(
@@ -155,6 +203,15 @@ test("processes one comment with public + private reply and creates a lead only 
     listRecoverable: async () => [],
   };
   const meta = {
+    fetchCommentSourceContext: async (channel, source) => {
+      calls.push(["context", channel, source.mediaId]);
+      return {
+        sourceId: source.mediaId,
+        text: "Skin consultation promotion RM588",
+        mediaType: "IMAGE",
+        sourceUrl: "https://instagram.example/p/skin",
+      };
+    },
     replyToComment: async (channel, id, text) => {
       calls.push(["public", channel, id, text]);
       return { success: true, replyId: "pub-1" };
@@ -169,7 +226,9 @@ test("processes one comment with public + private reply and creates a lead only 
     },
   };
   const aiClient = {
-    getReply: async () => JSON.stringify({
+    getReply: async (messages) => {
+      calls.push(["ai", messages[0].content]);
+      return JSON.stringify({
       reply: "Hi! Which area are you asking about?",
       outcome: "normal",
       treatment: null,
@@ -181,7 +240,8 @@ test("processes one comment with public + private reply and creates a lead only 
       publicReply: "Hi! I've sent you a DM 😊",
       privateReply: "Hi! Which area are you asking about?",
       shouldRespond: true,
-    }),
+      });
+    },
   };
   const contacts = {
     getOrCreateChannelContact: async (...args) => {
@@ -205,7 +265,16 @@ test("processes one comment with public + private reply and creates a lead only 
   const pipeline = {
     ensureLeadForContact: async (...args) => {
       calls.push(["lead", ...args]);
-      return { created: true };
+      return {
+        created: true,
+        lead: { id: 707, started_message_id: args[2] },
+      };
+    },
+  };
+  const attribution = {
+    captureForInbound: async (payload) => {
+      calls.push(["attribution", payload]);
+      return { id: 1 };
     },
   };
   const config = {
@@ -225,18 +294,105 @@ test("processes one comment with public + private reply and creates a lead only 
     messages,
     pipeline,
     store,
+    attribution,
     config,
     repliesEnabled: () => true,
   });
 
   await service.processJob(stored.id);
 
-  assert.equal(calls[0][0], "public");
-  assert.equal(calls[1][0], "private");
-  assert.deepEqual(calls[2].slice(0, 4), ["contact", "instagram", "igsid-77", "Alicia"]);
-  assert.deepEqual(calls[3], ["lookup", 99, "dm-1"]);
-  assert.equal(calls[4][0], "message");
-  assert.deepEqual(calls[5].slice(0, 3), ["lead", 99, "Comment Automation"]);
+  assert.deepEqual(calls[0], ["context", "instagram", "m-7"]);
+  assert.equal(calls[1][0], "ai");
+  assert.match(calls[1][1], /Post\/ad context: Skin consultation promotion RM588/);
+  assert.equal(calls[2][0], "public");
+  assert.equal(calls[3][0], "private");
+  assert.deepEqual(calls[4].slice(0, 4), ["contact", "instagram", "igsid-77", "Alicia"]);
+  assert.deepEqual(calls[5], ["lookup", 99, "dm-1"]);
+  assert.equal(calls[6][0], "message");
+  assert.deepEqual(calls[7].slice(0, 3), ["lead", 99, "Comment Automation"]);
+  assert.equal(calls[8][0], "attribution");
+  assert.equal(calls[8][1].lead.id, 707);
+  assert.equal(calls[8][1].incoming.attribution.source, "instagram_comment");
+  assert.equal(calls[8][1].incoming.attribution.sourceId, "m-7");
+  assert.match(calls[8][1].incoming.attribution.headline, /Skin consultation promotion/);
+});
+
+test("comment scheduler serializes jobs so bursts do not consume AI capacity concurrently", async () => {
+  const order = [];
+  let releaseFirst;
+  const firstGate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const jobs = new Map([
+    [1, {
+      id: 1, channel: "facebook", commentId: "c1", entryId: "page",
+      authorId: "u1", authorName: "One", text: "one", postId: "post1",
+      mediaId: null, parentCommentId: null, sourceCreatedAt: new Date().toISOString(),
+      rawEvent: {}, attemptCount: 1, publicReplyId: null, privateReplyMessageId: null,
+    }],
+    [2, {
+      id: 2, channel: "facebook", commentId: "c2", entryId: "page",
+      authorId: "u2", authorName: "Two", text: "two", postId: "post2",
+      mediaId: null, parentCommentId: null, sourceCreatedAt: new Date().toISOString(),
+      rawEvent: {}, attemptCount: 1, publicReplyId: null, privateReplyMessageId: null,
+    }],
+  ]);
+  const repo = {
+    claimJob: async (id) => jobs.get(id),
+    markPublicReplySent: async (id, replyId) => ({ ...jobs.get(id), publicReplyId: replyId }),
+    markCompleted: async (id) => ({ ...jobs.get(id), status: "completed" }),
+    markFailed: async () => assert.fail("should not fail"),
+    markSkipped: async () => assert.fail("should not skip"),
+    listRecoverable: async () => [],
+  };
+  const meta = {
+    fetchCommentSourceContext: async () => null,
+    replyToComment: async (channel, commentId) => {
+      order.push(`start:${commentId}`);
+      if (commentId === "c1") await firstGate;
+      order.push(`end:${commentId}`);
+      return { success: true, replyId: `reply:${commentId}` };
+    },
+  };
+  const aiClient = {
+    getReply: async () => JSON.stringify({
+      reply: "Thanks",
+      outcome: "normal",
+      treatment: null,
+      branch: null,
+      appointmentPreference: null,
+      projectLocation: null,
+      projectSummary: null,
+      nextStep: null,
+      publicReply: "Thanks",
+      privateReply: "",
+      shouldRespond: true,
+    }),
+  };
+  const config = {
+    commentAutomation: {
+      ...DEFAULT_COMMENT_AUTOMATION,
+      enabled: true,
+      privateReplyEnabled: false,
+      activatedAt: new Date(Date.now() - 1000).toISOString(),
+    },
+  };
+  const service = createMetaCommentAutomationService({
+    repo,
+    meta,
+    aiClient,
+    config,
+    repliesEnabled: () => true,
+  });
+
+  const first = service.scheduleJob(1);
+  const second = service.scheduleJob(2);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(order, ["start:c1"]);
+
+  releaseFirst();
+  await Promise.all([first, second]);
+  assert.deepEqual(order, ["start:c1", "end:c1", "start:c2", "end:c2"]);
 });
 
 test("repairs Inbox and Pipeline state after a private reply was already checkpointed without resending it", async () => {
