@@ -1,5 +1,6 @@
 const contactsRepo = require("../db/contactsRepo");
 const metaStaffEchoRepo = require("../db/metaStaffEchoRepo");
+const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const aiReplyCancellation = require("./aiReplyCancellationService");
@@ -61,6 +62,25 @@ async function persistStaffEcho(echo, { pendingStarted = false } = {}) {
       echo.to
     );
     const providerMessageId = `${echo.channel}:${echo.id}`;
+
+    // An echo can reach the webhook a few milliseconds before the outbound
+    // request finishes attaching Meta's message id to its Inbox row. Give that
+    // write a short grace period so our own send cannot become a fake staff
+    // takeover merely because webhook delivery won the race.
+    for (const delayMs of [0, 75, 175]) {
+      if (delayMs) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+      const existing = await messagesRepo.getMessageByProviderIdForContact(
+        contact.id,
+        providerMessageId
+      );
+      if (existing) {
+        releasePendingAiForEcho(echo);
+        return null;
+      }
+    }
+
     const persisted = await metaStaffEchoRepo.persistStaffEchoIfNew(
       contact.id,
       renderEchoContent(echo),
@@ -74,10 +94,13 @@ async function persistStaffEcho(echo, { pendingStarted = false } = {}) {
       return null;
     }
 
-    if (persisted.isNew) confirmPendingAiForEcho(echo);
-    else releasePendingAiForEcho(echo);
+    if (persisted.isNew) {
+      confirmPendingAiForEcho(echo);
+      return persisted;
+    }
 
-    return persisted;
+    releasePendingAiForEcho(echo);
+    return null;
   } catch (err) {
     releasePendingAiForEcho(echo);
     throw err;
