@@ -278,12 +278,88 @@ async function getMessageForRetry(contactId, messageId) {
 // Resyncs the delivery state for messages that are already visible in an
 // Inbox thread after its SSE connection reconnects. Restricting by contact id
 // prevents message ids from another conversation being exposed accidentally.
-async function getMessageByProviderIdForContact(contactId, providerMessageId) {
+async function getMessageByProviderIdForContact(
+  contactId,
+  providerMessageId,
+  queryable = pool
+) {
   if (!providerMessageId) return null;
-  const result = await pool.query(
+  const result = await queryable.query(
     `SELECT ${LIGHTWEIGHT_MESSAGE_COLUMNS}
      FROM messages
      WHERE contact_id = $1 AND whatsapp_message_id = $2
+     LIMIT 1`,
+    [contactId, providerMessageId]
+  );
+  return result.rows[0] || null;
+}
+
+async function registerSocialProviderMessageAlias(
+  messageId,
+  providerMessageId,
+  queryable = pool
+) {
+  const normalized = String(providerMessageId || "").trim();
+  const separator = normalized.indexOf(":");
+  const channel = separator > 0 ? normalized.slice(0, separator) : "";
+  if (!["facebook", "instagram"].includes(channel)) {
+    throw new TypeError("Social provider message ids must be prefixed with facebook: or instagram:.");
+  }
+
+  const inserted = await queryable.query(
+    `INSERT INTO social_provider_message_ids (
+       provider_message_id, message_id, contact_id, channel
+     )
+     SELECT $2, m.id, m.contact_id, $3
+     FROM messages m
+     WHERE m.id = $1
+     ON CONFLICT (provider_message_id) DO NOTHING
+     RETURNING provider_message_id, message_id, contact_id, channel`,
+    [messageId, normalized, channel]
+  );
+  if (inserted.rows[0]) return inserted.rows[0];
+
+  const existing = await queryable.query(
+    `SELECT provider_message_id, message_id, contact_id, channel
+     FROM social_provider_message_ids
+     WHERE provider_message_id = $1
+     LIMIT 1`,
+    [normalized]
+  );
+  return existing.rows[0] || null;
+}
+
+async function getMessageByAnyProviderIdForContact(
+  contactId,
+  providerMessageId,
+  queryable = pool
+) {
+  const direct = await getMessageByProviderIdForContact(
+    contactId,
+    providerMessageId,
+    queryable
+  );
+  if (direct) return direct;
+
+  const result = await queryable.query(
+    `SELECT
+       m.id,
+       m.contact_id,
+       m.role,
+       m.content,
+       m.whatsapp_message_id,
+       m.sent_by_username,
+       m.media_url,
+       (m.media_key IS NOT NULL) AS has_media_attachment,
+       m.media_mime_type,
+       m.created_at,
+       m.delivery_status,
+       m.delivery_error,
+       m.is_automated_follow_up
+     FROM social_provider_message_ids s
+     JOIN messages m ON m.id = s.message_id
+     WHERE s.contact_id = $1
+       AND s.provider_message_id = $2
      LIMIT 1`,
     [contactId, providerMessageId]
   );
@@ -387,7 +463,11 @@ async function setSocialProviderMessageId(
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
     [messageId, providerMessageId, deliveryStatus]
   );
-  return result.rows[0] || null;
+  const row = result.rows[0] || null;
+  if (row) {
+    await registerSocialProviderMessageAlias(messageId, providerMessageId);
+  }
+  return row;
 }
 
 // Records an outcome for a send attempt that produced no new WAMID. Clearing
@@ -447,6 +527,8 @@ module.exports = {
   getMessageMediaForContact,
   getMessageForRetry,
   getMessageByProviderIdForContact,
+  getMessageByAnyProviderIdForContact,
+  registerSocialProviderMessageAlias,
   getDeliveryStatusesForContact,
   acquireMessageRetryLock,
   deleteUnsentAssistantMessage,
