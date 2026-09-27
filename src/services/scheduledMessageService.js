@@ -129,7 +129,17 @@ async function processScheduledMessage(item) {
 
   let sendResult;
   try {
-    sendResult = await channelMessaging.sendText(contact, item.content);
+    const providerRecorder = messagesRepo.socialProviderAliasRecorder(
+      saved.id,
+      contact.channel
+    );
+    sendResult = await channelMessaging.sendText(
+      contact,
+      item.content,
+      providerRecorder
+        ? { onProviderMessageId: providerRecorder }
+        : {}
+    );
   } catch (err) {
     console.error(`Scheduled message ${item.id} send failed:`, err);
     sendResult = { success: false, wamid: null, error: err?.message || "Send failed." };
