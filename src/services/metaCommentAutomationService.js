@@ -324,14 +324,23 @@ async function ensureCommentLead({
     recipientId,
     event.authorName || null
   );
-  const existing = sendResult.messageId
-    ? await messages.getMessageByProviderIdForContact(contact.id, sendResult.messageId)
+  const providerMessageId = sendResult.messageId
+    ? `${event.channel}:${sendResult.messageId}`
+    : null;
+  const existing = providerMessageId
+    ? (
+        await messages.getMessageByProviderIdForContact(contact.id, providerMessageId)
+      ) || (
+        // Backward compatibility for private replies saved before provider ids
+        // became channel-prefixed.
+        await messages.getMessageByProviderIdForContact(contact.id, sendResult.messageId)
+      )
     : null;
   const saved = existing || await store.appendMessageForContact(
     contact.id,
     "assistant",
     copy.privateReply,
-    sendResult.messageId || null
+    providerMessageId
   );
 
   const leadOutcome = await pipeline.ensureLeadForContact(
