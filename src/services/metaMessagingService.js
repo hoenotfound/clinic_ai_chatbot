@@ -703,6 +703,39 @@ async function resolveMessageEditEvents(
   return resolved.filter(Boolean);
 }
 
+function parseStaffEchoes(body) {
+  const channel = messageEditChannel(body);
+  if (!channel) return [];
+
+  const parsed = [];
+  for (const entry of body?.entry || []) {
+    for (const event of entry?.messaging || []) {
+      const message = event?.message;
+      const senderId = event?.sender?.id;
+      const recipientId = event?.recipient?.id;
+      if (!message?.mid || !recipientId) continue;
+
+      const isOutgoing =
+        message.is_echo === true ||
+        message.is_self === true ||
+        (senderId != null && entry?.id != null && String(senderId) === String(entry.id));
+      if (!isOutgoing) continue;
+
+      const attachment = firstAttachment(message);
+      const attachmentType = attachment?.type || null;
+      parsed.push({
+        id: String(message.mid),
+        channel,
+        to: String(recipientId),
+        text: typeof message.text === "string" ? message.text : null,
+        mediaType: attachmentType,
+        isDeleted: message.is_deleted === true,
+      });
+    }
+  }
+  return parsed;
+}
+
 function parseIncomingMessages(body) {
   const channel = messageEditChannel(body);
   if (!channel) return [];
@@ -863,6 +896,7 @@ module.exports = {
   sendPrivateReplyToComment,
   fetchCommentSourceContext,
   parseIncomingMessages,
+  parseStaffEchoes,
   resolveClaimedMessageEditJob,
   resolveMessageEditEvents,
   downloadMedia,
