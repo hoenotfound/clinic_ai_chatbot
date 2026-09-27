@@ -294,10 +294,11 @@ async function getMessageByProviderIdForContact(
   return result.rows[0] || null;
 }
 
-async function registerSocialProviderMessageAlias(
+async function insertSocialProviderMessageAlias(
+  client,
   messageId,
   providerMessageId,
-  queryable = pool
+  contactId
 ) {
   const normalized = String(providerMessageId || "").trim();
   const separator = normalized.indexOf(":");
@@ -306,20 +307,18 @@ async function registerSocialProviderMessageAlias(
     throw new TypeError("Social provider message ids must be prefixed with facebook: or instagram:.");
   }
 
-  const inserted = await queryable.query(
+  const inserted = await client.query(
     `INSERT INTO social_provider_message_ids (
        provider_message_id, message_id, contact_id, channel
      )
-     SELECT $2, m.id, m.contact_id, $3
-     FROM messages m
-     WHERE m.id = $1
+     VALUES ($1, $2, $3, $4)
      ON CONFLICT (provider_message_id) DO NOTHING
      RETURNING provider_message_id, message_id, contact_id, channel`,
-    [messageId, normalized, channel]
+    [normalized, messageId, contactId, channel]
   );
   if (inserted.rows[0]) return inserted.rows[0];
 
-  const existing = await queryable.query(
+  const existing = await client.query(
     `SELECT provider_message_id, message_id, contact_id, channel
      FROM social_provider_message_ids
      WHERE provider_message_id = $1
@@ -327,6 +326,45 @@ async function registerSocialProviderMessageAlias(
     [normalized]
   );
   return existing.rows[0] || null;
+}
+
+async function registerSocialProviderMessageAlias(
+  messageId,
+  providerMessageId,
+  queryable = null
+) {
+  const ownsClient = queryable == null;
+  const client = ownsClient ? await pool.connect() : queryable;
+  try {
+    await client.query("BEGIN");
+    const messageResult = await client.query(
+      "SELECT contact_id FROM messages WHERE id = $1",
+      [messageId]
+    );
+    const contactId = messageResult.rows[0]?.contact_id;
+    if (!contactId) {
+      await client.query("COMMIT");
+      return null;
+    }
+
+    await client.query(
+      `SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)`,
+      [contactId]
+    );
+    const alias = await insertSocialProviderMessageAlias(
+      client,
+      messageId,
+      providerMessageId,
+      contactId
+    );
+    await client.query("COMMIT");
+    return alias;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    if (ownsClient) client.release();
+  }
 }
 
 async function getMessageByAnyProviderIdForContact(
@@ -470,18 +508,48 @@ async function setSocialProviderMessageId(
   deliveryStatus = null
 ) {
   if (!providerMessageId) return null;
-  const result = await pool.query(
-    `UPDATE messages
-     SET whatsapp_message_id = $2, delivery_status = $3, delivery_error = NULL
-     WHERE id = $1
-     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
-    [messageId, providerMessageId, deliveryStatus]
-  );
-  const row = result.rows[0] || null;
-  if (row) {
-    await registerSocialProviderMessageAlias(messageId, providerMessageId);
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const contactResult = await client.query(
+      "SELECT contact_id FROM messages WHERE id = $1",
+      [messageId]
+    );
+    const contactId = contactResult.rows[0]?.contact_id;
+    if (!contactId) {
+      await client.query("COMMIT");
+      return null;
+    }
+
+    await client.query(
+      `SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)`,
+      [contactId]
+    );
+    const result = await client.query(
+      `UPDATE messages
+       SET whatsapp_message_id = $2, delivery_status = $3, delivery_error = NULL
+       WHERE id = $1
+       RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
+      [messageId, providerMessageId, deliveryStatus]
+    );
+    const row = result.rows[0] || null;
+    if (row) {
+      await insertSocialProviderMessageAlias(
+        client,
+        messageId,
+        providerMessageId,
+        contactId
+      );
+    }
+    await client.query("COMMIT");
+    return row;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
   }
-  return row;
 }
 
 // Records an outcome for a send attempt that produced no new WAMID. Clearing
