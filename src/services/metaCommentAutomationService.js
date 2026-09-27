@@ -423,6 +423,8 @@ function createMetaCommentAutomationService({
       : skipReason(event, settings);
     if (reason) return repo.markSkipped(job.id, reason);
 
+    let preservePrivateReplyPendingOnFailure = false;
+
     try {
       let sourceContext = null;
       try {
@@ -480,12 +482,18 @@ function createMetaCommentAutomationService({
           throw new Error(privateResult.error || "Meta rejected the private comment reply.");
         }
 
+        // From this point Meta has accepted the DM (or confirmed it was
+        // already sent). If the DB checkpoint itself fails, retain the durable
+        // pending marker so a slightly later message echo can recover the real
+        // provider MID instead of being mistaken for manual staff activity.
+        preservePrivateReplyPendingOnFailure = true;
         liveJob = await repo.markPrivateReplySent(job.id, {
           messageId: privateResult.messageId || (privateResult.alreadySent ? "already-sent" : "sent"),
           recipientId:
             privateResult.recipientId ||
             (privateResult.alreadySent ? event.authorId : null),
         });
+        preservePrivateReplyPendingOnFailure = false;
       }
 
       if (
@@ -515,6 +523,16 @@ function createMetaCommentAutomationService({
         `Comment automation failed for ${job.channel}:${job.commentId}:`,
         err
       );
+      if (
+        preservePrivateReplyPendingOnFailure &&
+        typeof repo.markFailedPreservingPrivateReplyPending === "function"
+      ) {
+        return repo.markFailedPreservingPrivateReplyPending(
+          job.id,
+          err,
+          job.attemptCount
+        );
+      }
       return repo.markFailed(job.id, err, job.attemptCount);
     }
   }
