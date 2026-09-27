@@ -35,6 +35,12 @@ test.beforeEach(() => {
     whatsapp_message_id: wamid,
     delivery_status: "pending",
   });
+  messagesRepo.setSocialProviderMessageId = async (id, providerId, status) => ({
+    id,
+    contact_id: 1,
+    whatsapp_message_id: providerId,
+    delivery_status: status,
+  });
   messagesRepo.setDeliveryStatusById = async (id, status, error) => ({
     id,
     contact_id: 1,
