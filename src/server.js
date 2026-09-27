@@ -101,11 +101,17 @@ function publishDeliveryStatus(message) {
 async function persistSendOutcome(
   savedMessage,
   sendResult,
-  errorText = WHATSAPP_SEND_REJECTED_ERROR
+  errorText = WHATSAPP_SEND_REJECTED_ERROR,
+  channel = "whatsapp"
 ) {
   let updated = null;
   if (sendResult.wamid) {
     updated = await messagesRepo.setWhatsappMessageId(savedMessage.id, sendResult.wamid);
+  } else if (sendResult.externalMessageId && channel !== "whatsapp") {
+    updated = await messagesRepo.setWhatsappMessageId(
+      savedMessage.id,
+      `${channel}:${sendResult.externalMessageId}`
+    );
   } else if (!sendResult.success) {
     updated = await messagesRepo.setDeliveryStatusById(savedMessage.id, "failed", errorText);
   }
@@ -191,7 +197,12 @@ async function sendTrackedText(
   }
 
   const errorText = sendResult.error || channelMessaging.rejectedError(contact.channel);
-  const finalMessage = await persistSendOutcome(saved, sendResult, errorText);
+  const finalMessage = await persistSendOutcome(
+    saved,
+    sendResult,
+    errorText,
+    contact.channel || "whatsapp"
+  );
   // Do not extend the durable inbound critical path after the provider has
   // already accepted/rejected the customer reply. Missing telemetry fails the
   // later go-live check closed; it must never delay or duplicate customer work.
@@ -738,7 +749,12 @@ async function processIncomingMessage(
         }
 
         const promoError = promoResult.error || channelMessaging.rejectedError(contact.channel);
-        await persistSendOutcome(savedPromo, promoResult, promoError);
+        await persistSendOutcome(
+          savedPromo,
+          promoResult,
+          promoError,
+          contact.channel || "whatsapp"
+        );
         if (!promoResult.success) {
           console.warn(`Promo image failed to send to ${channel}:${from}, continuing without it.`);
           await contactsRepo.setDeliveryAttention(
