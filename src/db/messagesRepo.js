@@ -374,6 +374,22 @@ async function setWhatsappMessageId(messageId, whatsappMessageId) {
   return result.rows[0] || null;
 }
 
+async function setSocialProviderMessageId(
+  messageId,
+  providerMessageId,
+  deliveryStatus = null
+) {
+  if (!providerMessageId) return null;
+  const result = await pool.query(
+    `UPDATE messages
+     SET whatsapp_message_id = $2, delivery_status = $3, delivery_error = NULL
+     WHERE id = $1
+     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
+    [messageId, providerMessageId, deliveryStatus]
+  );
+  return result.rows[0] || null;
+}
+
 // Records an outcome for a send attempt that produced no new WAMID. Clearing
 // the previous WAMID keeps a delayed webhook from an older attempt from being
 // applied to the current failure.
@@ -435,6 +451,7 @@ module.exports = {
   acquireMessageRetryLock,
   deleteUnsentAssistantMessage,
   setWhatsappMessageId,
+  setSocialProviderMessageId,
   setDeliveryStatusById,
   updateDeliveryStatusByWamid,
 };
