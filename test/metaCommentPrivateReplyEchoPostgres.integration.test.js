@@ -62,6 +62,19 @@ test(
       );
       assert.ok(pending.privateReplyPendingAt);
 
+      const failedAfterAccept = await repo.markFailedPreservingPrivateReplyPending(
+        stored.id,
+        new Error("simulated DB checkpoint failure after Meta accepted the DM"),
+        1,
+        client
+      );
+      assert.equal(failedAfterAccept.status, "failed");
+      assert.equal(
+        failedAfterAccept.privateReplyPendingText,
+        "Hi! Which area are you asking about?"
+      );
+      assert.ok(failedAfterAccept.privateReplyPendingAt);
+
       const wrongText = await repo.recordPendingPrivateReplyEcho(
         {
           channel: "instagram",
