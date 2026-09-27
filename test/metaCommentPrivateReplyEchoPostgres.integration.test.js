@@ -112,6 +112,32 @@ test(
       );
       assert.equal(finalized.privateReplyMessageId, "ig-private-mid");
       assert.equal(finalized.privateReplyRecipientId, "igsid-1");
+
+      // A later Inbox/Pipeline repair can fail after the Meta MID itself is
+      // already durable. Even if normal failure cleanup removes the pending
+      // reservation, a delayed echo carrying that exact MID must still be
+      // recognized as comment-automation outbound work.
+      const downstreamFailed = await repo.markFailed(
+        stored.id,
+        new Error("simulated Inbox repair failure"),
+        1,
+        client
+      );
+      assert.equal(downstreamFailed.status, "failed");
+      assert.equal(downstreamFailed.privateReplyPendingText, null);
+      assert.equal(downstreamFailed.privateReplyPendingAt, null);
+
+      const knownMidEcho = await repo.recordPendingPrivateReplyEcho(
+        {
+          channel: "instagram",
+          recipientId: "igsid-1",
+          text: "Hi! Which area are you asking about?",
+          messageId: "ig-private-mid",
+        },
+        client
+      );
+      assert.equal(knownMidEcho.id, stored.id);
+      assert.equal(knownMidEcho.privateReplyMessageId, "ig-private-mid");
     } finally {
       await client.query("SET search_path TO public").catch(() => {});
       await client
