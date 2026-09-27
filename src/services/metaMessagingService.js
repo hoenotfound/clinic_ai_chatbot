@@ -721,6 +721,11 @@ function parseStaffEchoes(body) {
         (senderId != null && entry?.id != null && String(senderId) === String(entry.id));
       if (!isOutgoing) continue;
 
+      // Send API echoes identify the app that produced the message. They are
+      // already persisted by our outbound path and must never be mistaken for
+      // a human reply from Business Suite / Facebook / Instagram.
+      if (message.app_id != null) continue;
+
       const attachment = firstAttachment(message);
       const attachmentType = attachment?.type || null;
       parsed.push({
