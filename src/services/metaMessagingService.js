@@ -218,21 +218,44 @@ async function sendText(channel, recipientId, text) {
   return postMessage(channel, recipientId, { text });
 }
 
-async function sendImage(channel, recipientId, imageUrl, caption) {
+async function notifyProviderMessageId(options, externalMessageId, channel) {
+  if (!externalMessageId || typeof options?.onProviderMessageId !== "function") return;
+  try {
+    await options.onProviderMessageId(String(externalMessageId));
+  } catch (err) {
+    // Provider-ID bookkeeping is for echo dedupe and must never turn a
+    // provider-accepted customer message into an application-level failure.
+    console.error(
+      `Failed to record ${channelLabel(channel)} provider message id ${externalMessageId}:`,
+      err
+    );
+  }
+}
+
+async function sendImage(channel, recipientId, imageUrl, caption, options = {}) {
   // Messenger and Instagram send the image attachment and caption as separate
-  // messages. Keep the caption first so the customer has context even if the
-  // media CDN later rejects the image request.
+  // messages. Record the caption MID before starting the slower media send so
+  // an echo cannot race ahead and be mistaken for a manual staff reply.
   if (caption?.trim()) {
     const captionResult = await sendText(channel, recipientId, caption.trim());
     if (!captionResult.success) return captionResult;
+    await notifyProviderMessageId(
+      options,
+      captionResult.externalMessageId,
+      channel
+    );
   }
 
-  return postMessage(channel, recipientId, {
+  const imageResult = await postMessage(channel, recipientId, {
     attachment: {
       type: "image",
       payload: { url: imageUrl },
     },
   });
+  if (imageResult.success) {
+    await notifyProviderMessageId(options, imageResult.externalMessageId, channel);
+  }
+  return imageResult;
 }
 
 async function postGraphJson(url, token, body, label) {
@@ -721,10 +744,20 @@ function parseStaffEchoes(body) {
         (senderId != null && entry?.id != null && String(senderId) === String(entry.id));
       if (!isOutgoing) continue;
 
-      // Send API echoes identify the app that produced the message. They are
-      // already persisted by our outbound path and must never be mistaken for
-      // a human reply from Business Suite / Facebook / Instagram.
-      if (message.app_id != null) continue;
+      // Facebook echoes can identify the originating app. Ignore only this
+      // chatbot's own Meta app; a different connected CRM/app is external
+      // activity and should still be reflected in the Inbox. Instagram often
+      // omits app_id, so provider-message-id dedupe remains the primary guard.
+      const ownAppId = String(
+        process.env.META_APP_ID || process.env.WHATSAPP_APP_ID || ""
+      ).trim();
+      if (
+        message.app_id != null &&
+        ownAppId &&
+        String(message.app_id) === ownAppId
+      ) {
+        continue;
+      }
 
       const attachment = firstAttachment(message);
       const attachmentType = attachment?.type || null;
