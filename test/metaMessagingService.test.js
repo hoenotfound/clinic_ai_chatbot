@@ -86,6 +86,52 @@ test("does not classify Send API echoes with app_id as manual staff replies", ()
   assert.deepEqual(parsed, []);
 });
 
+test("treats a different connected Facebook app as external when META_APP_ID is known", (t) => {
+  const previous = process.env.META_APP_ID;
+  t.after(() => {
+    if (previous === undefined) delete process.env.META_APP_ID;
+    else process.env.META_APP_ID = previous;
+  });
+  process.env.META_APP_ID = "111";
+
+  const own = meta.parseStaffEchoes({
+    object: "page",
+    entry: [{
+      id: "page-1",
+      messaging: [{
+        sender: { id: "page-1" },
+        recipient: { id: "psid-1" },
+        message: {
+          mid: "fb-own-app",
+          text: "Our app reply",
+          is_echo: true,
+          app_id: "111",
+        },
+      }],
+    }],
+  });
+  assert.deepEqual(own, []);
+
+  const external = meta.parseStaffEchoes({
+    object: "page",
+    entry: [{
+      id: "page-1",
+      messaging: [{
+        sender: { id: "page-1" },
+        recipient: { id: "psid-1" },
+        message: {
+          mid: "fb-other-app",
+          text: "Other CRM reply",
+          is_echo: true,
+          app_id: "222",
+        },
+      }],
+    }],
+  });
+  assert.equal(external.length, 1);
+  assert.equal(external[0].id, "fb-other-app");
+});
+
 test("parses Instagram image messages and skips message echoes", () => {
   const parsed = meta.parseIncomingMessages({
     object: "instagram",
