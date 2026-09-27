@@ -41,6 +41,97 @@ test("parses Facebook Messenger text messages and skips outgoing echoes", () => 
   });
 });
 
+test("parses Facebook outgoing message echoes as staff replies", () => {
+  const parsed = meta.parseStaffEchoes({
+    object: "page",
+    entry: [{
+      id: "page-1",
+      messaging: [{
+        sender: { id: "page-1" },
+        recipient: { id: "psid-1" },
+        message: { mid: "fb-echo-1", text: "Manual Facebook reply", is_echo: true },
+      }],
+    }],
+  });
+
+  assert.deepEqual(parsed, [{
+    id: "fb-echo-1",
+    channel: "facebook",
+    to: "psid-1",
+    text: "Manual Facebook reply",
+    mediaType: null,
+    isDeleted: false,
+  }]);
+});
+
+
+test("does not classify Send API echoes with app_id as manual staff replies", () => {
+  const parsed = meta.parseStaffEchoes({
+    object: "page",
+    entry: [{
+      id: "page-1",
+      messaging: [{
+        sender: { id: "page-1" },
+        recipient: { id: "psid-1" },
+        message: {
+          mid: "fb-app-echo-1",
+          text: "Automated reply",
+          is_echo: true,
+          app_id: 1029862536608134,
+        },
+      }],
+    }],
+  });
+
+  assert.deepEqual(parsed, []);
+});
+
+test("treats a different connected Facebook app as external when META_APP_ID is known", (t) => {
+  const previous = process.env.META_APP_ID;
+  t.after(() => {
+    if (previous === undefined) delete process.env.META_APP_ID;
+    else process.env.META_APP_ID = previous;
+  });
+  process.env.META_APP_ID = "111";
+
+  const own = meta.parseStaffEchoes({
+    object: "page",
+    entry: [{
+      id: "page-1",
+      messaging: [{
+        sender: { id: "page-1" },
+        recipient: { id: "psid-1" },
+        message: {
+          mid: "fb-own-app",
+          text: "Our app reply",
+          is_echo: true,
+          app_id: "111",
+        },
+      }],
+    }],
+  });
+  assert.deepEqual(own, []);
+
+  const external = meta.parseStaffEchoes({
+    object: "page",
+    entry: [{
+      id: "page-1",
+      messaging: [{
+        sender: { id: "page-1" },
+        recipient: { id: "psid-1" },
+        message: {
+          mid: "fb-other-app",
+          text: "Other CRM reply",
+          is_echo: true,
+          app_id: "222",
+        },
+      }],
+    }],
+  });
+  assert.equal(external.length, 1);
+  assert.equal(external[0].id, "fb-other-app");
+});
+
 test("parses Instagram image messages and skips message echoes", () => {
   const parsed = meta.parseIncomingMessages({
     object: "instagram",
@@ -75,6 +166,33 @@ test("parses Instagram image messages and skips message echoes", () => {
   assert.equal(parsed[0].mediaType, "image");
   assert.equal(parsed[0].mediaUrl, "https://cdn.example.test/photo.jpg");
   assert.equal(parsed[0].text, "This one");
+});
+
+test("parses Instagram outgoing message echoes as staff replies", () => {
+  const parsed = meta.parseStaffEchoes({
+    object: "instagram",
+    entry: [{
+      id: "ig-business-1",
+      messaging: [{
+        sender: { id: "ig-business-1" },
+        recipient: { id: "igsid-1" },
+        message: {
+          mid: "ig-echo-1",
+          text: "Manual Instagram reply",
+          is_echo: true,
+        },
+      }],
+    }],
+  });
+
+  assert.deepEqual(parsed, [{
+    id: "ig-echo-1",
+    channel: "instagram",
+    to: "igsid-1",
+    text: "Manual Instagram reply",
+    mediaType: null,
+    isDeleted: false,
+  }]);
 });
 
 test("Facebook sends through the Page messages endpoint without returning a WhatsApp WAMID", async (t) => {
@@ -145,6 +263,57 @@ test("Instagram sends through the Facebook Page messages endpoint with its Page 
   assert.equal(result.success, true);
   assert.equal(result.wamid, null);
   assert.equal(result.externalMessageId, "ig-out-1");
+});
+
+test("Instagram image send records caption and image provider ids before returning", async (t) => {
+  const originalFetch = global.fetch;
+  const oldPageId = process.env.INSTAGRAM_PAGE_ID;
+  const oldToken = process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (oldPageId === undefined) delete process.env.INSTAGRAM_PAGE_ID;
+    else process.env.INSTAGRAM_PAGE_ID = oldPageId;
+    if (oldToken === undefined) delete process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
+    else process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = oldToken;
+  });
+
+  process.env.INSTAGRAM_PAGE_ID = "ig-page-multipart";
+  process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = "ig-page-token";
+
+  const payloads = [];
+  global.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    payloads.push(body);
+    const isCaption = typeof body.message?.text === "string";
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        recipient_id: "igsid-20",
+        message_id: isCaption ? "ig-caption-20" : "ig-image-20",
+      }),
+    };
+  };
+
+  const recorded = [];
+  const result = await meta.sendImage(
+    "instagram",
+    "igsid-20",
+    "https://cdn.example.test/promo.jpg",
+    "Promo caption",
+    {
+      onProviderMessageId: async (id) => {
+        recorded.push(id);
+      },
+    }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.externalMessageId, "ig-image-20");
+  assert.deepEqual(recorded, ["ig-caption-20", "ig-image-20"]);
+  assert.equal(payloads.length, 2);
+  assert.deepEqual(payloads[0].message, { text: "Promo caption" });
+  assert.equal(payloads[1].message.attachment.type, "image");
 });
 
 test("legacy Instagram Login credentials alone no longer configure Instagram Messaging", (t) => {

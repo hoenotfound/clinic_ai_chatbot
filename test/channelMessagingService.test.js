@@ -110,6 +110,53 @@ test("Facebook contacts never fall through to WhatsApp", async (t) => {
   });
 });
 
+test("Facebook text pre-send guard cancels before Meta is called", async (t) => {
+  const originalMetaSend = meta.sendText;
+  t.after(() => {
+    meta.sendText = originalMetaSend;
+  });
+
+  let metaCalls = 0;
+  meta.sendText = async () => {
+    metaCalls += 1;
+    return { success: true, externalMessageId: "must-not-send" };
+  };
+
+  const result = await messaging.sendText(
+    { channel: "facebook", channel_user_id: "psid-guard" },
+    "AI reply",
+    { preSendCheck: () => false }
+  );
+
+  assert.equal(metaCalls, 0);
+  assert.equal(result.cancelled, true);
+  assert.equal(result.success, false);
+});
+
+test("Instagram image URL pre-send guard cancels before Meta is called", async (t) => {
+  const originalMetaSend = meta.sendImage;
+  t.after(() => {
+    meta.sendImage = originalMetaSend;
+  });
+
+  let metaCalls = 0;
+  meta.sendImage = async () => {
+    metaCalls += 1;
+    return { success: true, externalMessageId: "must-not-send" };
+  };
+
+  const result = await messaging.sendImageByUrl(
+    { channel: "instagram", channel_user_id: "igsid-guard" },
+    "https://example.com/promo.jpg",
+    undefined,
+    { preSendCheck: () => false }
+  );
+
+  assert.equal(metaCalls, 0);
+  assert.equal(result.cancelled, true);
+  assert.equal(result.success, false);
+});
+
 test("Instagram image bytes use a short-lived media URL instead of attachment_id", async (t) => {
   const originalMetaSend = meta.sendText;
   const originalUploadTemporary = mediaStorage.uploadTemporaryMedia;
@@ -176,6 +223,52 @@ test("Instagram image bytes use a short-lived media URL instead of attachment_id
     },
     { kind: "cleanup", key: "meta-outbound/44/image.jpg" },
   ]);
+});
+
+test("Instagram image bytes record both caption and image provider ids", async (t) => {
+  const originalMetaSend = meta.sendText;
+  const originalUploadTemporary = mediaStorage.uploadTemporaryMedia;
+  const originalScheduleDelete = mediaStorage.scheduleTemporaryMediaDelete;
+  const originalUrlSend = metaAttachments.sendUrlAttachment;
+  t.after(() => {
+    meta.sendText = originalMetaSend;
+    mediaStorage.uploadTemporaryMedia = originalUploadTemporary;
+    mediaStorage.scheduleTemporaryMediaDelete = originalScheduleDelete;
+    metaAttachments.sendUrlAttachment = originalUrlSend;
+  });
+
+  meta.sendText = async () => ({
+    success: true,
+    wamid: null,
+    externalMessageId: "ig-caption-alias",
+  });
+  mediaStorage.uploadTemporaryMedia = async () => ({
+    key: "meta-outbound/66/image.jpg",
+    url: "https://r2.example/image.jpg?signed=1",
+  });
+  mediaStorage.scheduleTemporaryMediaDelete = () => {};
+  metaAttachments.sendUrlAttachment = async () => ({
+    success: true,
+    wamid: null,
+    externalMessageId: "ig-image-alias",
+  });
+
+  const recorded = [];
+  const result = await messaging.sendImageBuffer(
+    { id: 66, channel: "instagram", channel_user_id: "igsid-alias" },
+    Buffer.from("image-data"),
+    "image/jpeg",
+    "Caption",
+    "photo.jpg",
+    {
+      onProviderMessageId: async (id) => {
+        recorded.push(id);
+      },
+    }
+  );
+
+  assert.equal(result.success, true);
+  assert.deepEqual(recorded, ["ig-caption-alias", "ig-image-alias"]);
 });
 
 test("Facebook voice bytes route to an audio attachment without WhatsApp", async (t) => {
@@ -446,7 +539,7 @@ test("WhatsApp pre-send guard can cancel after policy approval without calling p
   assert.equal(result.cancelled, true);
 });
 
-test("social sends ignore WhatsApp-only pre-send guard", async (t) => {
+test("social sends honor the same final pre-send guard as WhatsApp", async (t) => {
   const originalMetaSend = meta.sendText;
   t.after(() => {
     meta.sendText = originalMetaSend;
@@ -464,8 +557,9 @@ test("social sends ignore WhatsApp-only pre-send guard", async (t) => {
     { preSendCheck: () => false }
   );
 
-  assert.equal(calls, 1);
-  assert.equal(result.success, true);
+  assert.equal(calls, 0);
+  assert.equal(result.success, false);
+  assert.equal(result.cancelled, true);
 });
 
 

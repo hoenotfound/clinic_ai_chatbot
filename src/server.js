@@ -8,6 +8,7 @@ const whatsapp = require("./services/whatsappService");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
 const aiReplyCancellation = require("./services/aiReplyCancellationService");
 const metaMessaging = require("./services/metaMessagingService");
+const metaStaffEcho = require("./services/metaStaffEchoService");
 const metaCommentAutomation = require("./services/metaCommentAutomationService");
 const channelMessaging = require("./services/channelMessagingService");
 const ai = require("./services/aiService");
@@ -100,11 +101,18 @@ function publishDeliveryStatus(message) {
 async function persistSendOutcome(
   savedMessage,
   sendResult,
-  errorText = WHATSAPP_SEND_REJECTED_ERROR
+  errorText = WHATSAPP_SEND_REJECTED_ERROR,
+  channel = "whatsapp"
 ) {
   let updated = null;
   if (sendResult.wamid) {
     updated = await messagesRepo.setWhatsappMessageId(savedMessage.id, sendResult.wamid);
+  } else if (sendResult.externalMessageId && channel !== "whatsapp") {
+    updated = await messagesRepo.setSocialProviderMessageId(
+      savedMessage.id,
+      `${channel}:${sendResult.externalMessageId}`,
+      null
+    );
   } else if (!sendResult.success) {
     updated = await messagesRepo.setDeliveryStatusById(savedMessage.id, "failed", errorText);
   }
@@ -170,10 +178,19 @@ async function sendTrackedText(
     guarded ? { publish: false } : undefined
   );
 
+  const socialProviderRecorder = messagesRepo.socialProviderAliasRecorder(
+    saved.id,
+    contact.channel
+  );
   const sendResult = await channelMessaging.sendText(
     contact,
     text,
-    guarded ? { preSendCheck: canSend } : {}
+    {
+      ...(guarded ? { preSendCheck: canSend } : {}),
+      ...(socialProviderRecorder
+        ? { onProviderMessageId: socialProviderRecorder }
+        : {}),
+    }
   );
 
   if (sendResult.cancelled) {
@@ -190,7 +207,12 @@ async function sendTrackedText(
   }
 
   const errorText = sendResult.error || channelMessaging.rejectedError(contact.channel);
-  const finalMessage = await persistSendOutcome(saved, sendResult, errorText);
+  const finalMessage = await persistSendOutcome(
+    saved,
+    sendResult,
+    errorText,
+    contact.channel || "whatsapp"
+  );
   // Do not extend the durable inbound critical path after the provider has
   // already accepted/rejected the customer reply. Missing telemetry fails the
   // later go-live check closed; it must never delay or duplicate customer work.
@@ -329,7 +351,9 @@ async function processIncomingMessage(
   const aiCancellationKey =
     channel === "whatsapp" && aiReplyCancellation.enabled()
       ? aiReplyCancellation.keyForWhatsAppNumber(from)
-      : null;
+      : (channel === "facebook" || channel === "instagram")
+        ? aiReplyCancellation.keyForChannelContact(channel, from)
+        : null;
   const aiCancellationToken = aiReplyCancellation.snapshot(aiCancellationKey);
   const canSendAutomatedReply = aiCancellationKey
     ? () => aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
@@ -712,11 +736,22 @@ async function processIncomingMessage(
           null,
           guardedPromo ? { publish: false } : undefined
         );
+        const promoProviderRecorder = messagesRepo.socialProviderAliasRecorder(
+          savedPromo.id,
+          contact.channel
+        );
         const promoResult = await channelMessaging.sendImageByUrl(
           contact,
           promo.imageUrl,
           promo.caption,
-          guardedPromo ? { preSendCheck: canSendAutomatedReply } : {}
+          {
+            ...(guardedPromo
+              ? { preSendCheck: canSendAutomatedReply }
+              : {}),
+            ...(promoProviderRecorder
+              ? { onProviderMessageId: promoProviderRecorder }
+              : {}),
+          }
         );
 
         if (promoResult.cancelled) {
@@ -733,7 +768,12 @@ async function processIncomingMessage(
         }
 
         const promoError = promoResult.error || channelMessaging.rejectedError(contact.channel);
-        await persistSendOutcome(savedPromo, promoResult, promoError);
+        await persistSendOutcome(
+          savedPromo,
+          promoResult,
+          promoError,
+          contact.channel || "whatsapp"
+        );
         if (!promoResult.success) {
           console.warn(`Promo image failed to send to ${channel}:${from}, continuing without it.`);
           await contactsRepo.setDeliveryAttention(
@@ -993,14 +1033,20 @@ app.get("/meta-webhook", (req, res) => {
 
 app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
   const incomingMessages = metaMessaging.parseIncomingMessages(req.body);
+  const staffEchoes = metaMessaging.parseStaffEchoes(req.body);
+  for (const echo of staffEchoes) {
+    metaStaffEcho.beginPendingAiForEcho(echo);
+  }
+
   let durableClaims;
   let commentJobs;
+  let durableStaffEchoes;
   try {
     // Standard Messenger/Instagram message events contain enough data to store
     // the customer message immediately. Persist those before the 200 ACK just
     // like WhatsApp. Comment automation also records its work before ACK so a
     // process restart cannot silently lose a newly received comment.
-    [durableClaims, commentJobs] = await Promise.all([
+    [durableClaims, commentJobs, durableStaffEchoes] = await Promise.all([
       Promise.all(
         incomingMessages.map(async (incoming) => {
           const queueKey = `${incoming.channel}:${incoming.from}`;
@@ -1011,10 +1057,23 @@ app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
         })
       ),
       metaCommentAutomation.acceptIncomingComments(req.body),
+      Promise.all(
+        staffEchoes.map((echo) =>
+          metaStaffEcho.persistStaffEcho(echo, { pendingStarted: true })
+        )
+      ),
     ]);
   } catch (err) {
+    for (const echo of staffEchoes) {
+      metaStaffEcho.releasePendingAiForEcho(echo);
+    }
     console.error("Failed to durably accept incoming Meta event(s):", err);
     return res.sendStatus(503);
+  }
+
+  for (const persisted of durableStaffEchoes) {
+    if (!persisted) continue;
+    await metaStaffEcho.finalizeStaffEcho(persisted);
   }
 
   res.sendStatus(200);

@@ -218,21 +218,38 @@ async function sendText(channel, recipientId, text) {
   return postMessage(channel, recipientId, { text });
 }
 
-async function sendImage(channel, recipientId, imageUrl, caption) {
+async function notifyProviderMessageId(options, externalMessageId, channel) {
+  if (!externalMessageId || typeof options?.onProviderMessageId !== "function") return;
+  try {
+    await options.onProviderMessageId(String(externalMessageId));
+  } catch (err) {
+    console.error(
+      `Failed to record ${channelLabel(channel)} provider message id ${externalMessageId}:`,
+      err
+    );
+  }
+}
+
+async function sendImage(channel, recipientId, imageUrl, caption, options = {}) {
   // Messenger and Instagram send the image attachment and caption as separate
-  // messages. Keep the caption first so the customer has context even if the
-  // media CDN later rejects the image request.
+  // messages. Record the caption MID before starting the slower media send so
+  // an echo cannot race ahead and be mistaken for a manual staff reply.
   if (caption?.trim()) {
     const captionResult = await sendText(channel, recipientId, caption.trim());
     if (!captionResult.success) return captionResult;
+    await notifyProviderMessageId(options, captionResult.externalMessageId, channel);
   }
 
-  return postMessage(channel, recipientId, {
+  const imageResult = await postMessage(channel, recipientId, {
     attachment: {
       type: "image",
       payload: { url: imageUrl },
     },
   });
+  if (imageResult.success) {
+    await notifyProviderMessageId(options, imageResult.externalMessageId, channel);
+  }
+  return imageResult;
 }
 
 async function postGraphJson(url, token, body, label) {
@@ -703,6 +720,53 @@ async function resolveMessageEditEvents(
   return resolved.filter(Boolean);
 }
 
+function parseStaffEchoes(body) {
+  const channel = messageEditChannel(body);
+  if (!channel) return [];
+
+  const parsed = [];
+  for (const entry of body?.entry || []) {
+    for (const event of entry?.messaging || []) {
+      const message = event?.message;
+      const senderId = event?.sender?.id;
+      const recipientId = event?.recipient?.id;
+      if (!message?.mid || !recipientId) continue;
+
+      const isOutgoing =
+        message.is_echo === true ||
+        message.is_self === true ||
+        (senderId != null && entry?.id != null && String(senderId) === String(entry.id));
+      if (!isOutgoing) continue;
+
+      // Facebook echoes can identify the originating app. Ignore only this
+      // chatbot's own app when META_APP_ID is known. If it is not configured,
+      // retain the conservative behavior of ignoring app-tagged echoes. An echo
+      // from a different app is external staff/CRM activity and belongs in Inbox.
+      const ownAppId = String(
+        process.env.META_APP_ID || process.env.WHATSAPP_APP_ID || ""
+      ).trim();
+      if (
+        message.app_id != null &&
+        (!ownAppId || String(message.app_id) === ownAppId)
+      ) {
+        continue;
+      }
+
+      const attachment = firstAttachment(message);
+      const attachmentType = attachment?.type || null;
+      parsed.push({
+        id: String(message.mid),
+        channel,
+        to: String(recipientId),
+        text: typeof message.text === "string" ? message.text : null,
+        mediaType: attachmentType,
+        isDeleted: message.is_deleted === true,
+      });
+    }
+  }
+  return parsed;
+}
+
 function parseIncomingMessages(body) {
   const channel = messageEditChannel(body);
   if (!channel) return [];
@@ -863,6 +927,7 @@ module.exports = {
   sendPrivateReplyToComment,
   fetchCommentSourceContext,
   parseIncomingMessages,
+  parseStaffEchoes,
   resolveClaimedMessageEditJob,
   resolveMessageEditEvents,
   downloadMedia,

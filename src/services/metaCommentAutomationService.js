@@ -324,14 +324,23 @@ async function ensureCommentLead({
     recipientId,
     event.authorName || null
   );
-  const existing = sendResult.messageId
-    ? await messages.getMessageByProviderIdForContact(contact.id, sendResult.messageId)
+  const providerMessageId = sendResult.messageId
+    ? `${event.channel}:${sendResult.messageId}`
+    : null;
+  const existing = providerMessageId
+    ? (
+        await messages.getMessageByProviderIdForContact(contact.id, providerMessageId)
+      ) || (
+        // Backward compatibility for private replies saved before provider ids
+        // became channel-prefixed.
+        await messages.getMessageByProviderIdForContact(contact.id, sendResult.messageId)
+      )
     : null;
   const saved = existing || await store.appendMessageForContact(
     contact.id,
     "assistant",
     copy.privateReply,
-    sendResult.messageId || null
+    providerMessageId
   );
 
   const leadOutcome = await pipeline.ensureLeadForContact(
@@ -414,6 +423,8 @@ function createMetaCommentAutomationService({
       : skipReason(event, settings);
     if (reason) return repo.markSkipped(job.id, reason);
 
+    let preservePrivateReplyPendingOnFailure = false;
+
     try {
       let sourceContext = null;
       try {
@@ -451,6 +462,17 @@ function createMetaCommentAutomationService({
       }
 
       if (settings.privateReplyEnabled && !liveJob.privateReplyMessageId) {
+        // Make the outbound intent durable before calling Meta. An Instagram
+        // or Facebook echo can arrive before the Send API response gets back to
+        // this process; the echo handler uses this marker to recognize that
+        // early event as our own comment-automation DM instead of a staff reply.
+        liveJob = await repo.markPrivateReplyPending(job.id, {
+          text: copy.privateReply,
+        });
+        if (!liveJob) {
+          throw new Error("Could not reserve the comment private reply before sending.");
+        }
+
         const privateResult = await meta.sendPrivateReplyToComment(
           event.channel,
           event.commentId,
@@ -460,12 +482,24 @@ function createMetaCommentAutomationService({
           throw new Error(privateResult.error || "Meta rejected the private comment reply.");
         }
 
-        liveJob = await repo.markPrivateReplySent(job.id, {
+        // From this point Meta has accepted the DM (or confirmed it was
+        // already sent). If the DB checkpoint itself fails, retain the durable
+        // pending marker so a slightly later message echo can recover the real
+        // provider MID instead of being mistaken for manual staff activity.
+        preservePrivateReplyPendingOnFailure = true;
+        const checkpointedPrivateReply = await repo.markPrivateReplySent(job.id, {
           messageId: privateResult.messageId || (privateResult.alreadySent ? "already-sent" : "sent"),
           recipientId:
             privateResult.recipientId ||
             (privateResult.alreadySent ? event.authorId : null),
         });
+        if (!checkpointedPrivateReply) {
+          throw new Error(
+            "Meta accepted the private comment reply, but its delivery checkpoint was not saved."
+          );
+        }
+        liveJob = checkpointedPrivateReply;
+        preservePrivateReplyPendingOnFailure = false;
       }
 
       if (
@@ -495,6 +529,16 @@ function createMetaCommentAutomationService({
         `Comment automation failed for ${job.channel}:${job.commentId}:`,
         err
       );
+      if (
+        preservePrivateReplyPendingOnFailure &&
+        typeof repo.markFailedPreservingPrivateReplyPending === "function"
+      ) {
+        return repo.markFailedPreservingPrivateReplyPending(
+          job.id,
+          err,
+          job.attemptCount
+        );
+      }
       return repo.markFailed(job.id, err, job.attemptCount);
     }
   }

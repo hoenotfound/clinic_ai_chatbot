@@ -10,6 +10,13 @@ function keyForWhatsAppNumber(number) {
   return value ? `whatsapp:${value}` : null;
 }
 
+function keyForChannelContact(channel, externalId) {
+  const normalizedChannel = String(channel || "").trim().toLowerCase();
+  const normalizedId = String(externalId || "").trim();
+  if (!normalizedChannel || !normalizedId) return null;
+  return `${normalizedChannel}:${normalizedId}`;
+}
+
 function snapshot(key) {
   if (!key) return 0;
   return epochs.get(String(key)) || 0;
@@ -68,7 +75,8 @@ async function settleBeforeSend(
     pollMs = 10,
   } = {}
 ) {
-  if (!enabled()) return true;
+  if (!key) return true;
+  if (String(key).startsWith("whatsapp:") && !enabled()) return true;
   if (cancelledSince(key, token)) return false;
 
   await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -88,6 +96,7 @@ async function settleBeforeSend(
 module.exports = {
   enabled,
   keyForWhatsAppNumber,
+  keyForChannelContact,
   snapshot,
   cancel,
   cancelledSince,

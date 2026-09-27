@@ -129,7 +129,17 @@ async function processScheduledMessage(item) {
 
   let sendResult;
   try {
-    sendResult = await channelMessaging.sendText(contact, item.content);
+    const providerRecorder = messagesRepo.socialProviderAliasRecorder(
+      saved.id,
+      contact.channel
+    );
+    sendResult = await channelMessaging.sendText(
+      contact,
+      item.content,
+      providerRecorder
+        ? { onProviderMessageId: providerRecorder }
+        : {}
+    );
   } catch (err) {
     console.error(`Scheduled message ${item.id} send failed:`, err);
     sendResult = { success: false, wamid: null, error: err?.message || "Send failed." };
@@ -142,11 +152,19 @@ async function processScheduledMessage(item) {
   } else if (!sendResult.success) {
     finalMessage =
       (await messagesRepo.setDeliveryStatusById(saved.id, "failed", errorText)) || saved;
+  } else if (
+    ["facebook", "instagram"].includes(contact.channel) &&
+    sendResult.externalMessageId
+  ) {
+    finalMessage =
+      (await messagesRepo.setSocialProviderMessageId(
+        saved.id,
+        `${contact.channel}:${sendResult.externalMessageId}`,
+        null
+      )) || saved;
   } else {
-    // Facebook/Instagram accepted sends intentionally have no WhatsApp WAMID.
-    // Keep their delivery state neutral, matching the existing manual-send
-    // pipeline rather than inventing a delivery receipt those channels did not
-    // provide.
+    // Social sends stay neutral because only WhatsApp uses the async
+    // sent/delivered/read status pipeline.
     finalMessage =
       (await messagesRepo.setDeliveryStatusById(saved.id, null, null)) || saved;
   }

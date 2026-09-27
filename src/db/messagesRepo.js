@@ -278,9 +278,13 @@ async function getMessageForRetry(contactId, messageId) {
 // Resyncs the delivery state for messages that are already visible in an
 // Inbox thread after its SSE connection reconnects. Restricting by contact id
 // prevents message ids from another conversation being exposed accidentally.
-async function getMessageByProviderIdForContact(contactId, providerMessageId) {
+async function getMessageByProviderIdForContact(
+  contactId,
+  providerMessageId,
+  queryable = pool
+) {
   if (!providerMessageId) return null;
-  const result = await pool.query(
+  const result = await queryable.query(
     `SELECT ${LIGHTWEIGHT_MESSAGE_COLUMNS}
      FROM messages
      WHERE contact_id = $1 AND whatsapp_message_id = $2
@@ -288,6 +292,130 @@ async function getMessageByProviderIdForContact(contactId, providerMessageId) {
     [contactId, providerMessageId]
   );
   return result.rows[0] || null;
+}
+
+async function insertSocialProviderMessageAlias(
+  client,
+  messageId,
+  providerMessageId,
+  contactId
+) {
+  const normalized = String(providerMessageId || "").trim();
+  const separator = normalized.indexOf(":");
+  const channel = separator > 0 ? normalized.slice(0, separator) : "";
+  if (!["facebook", "instagram"].includes(channel)) {
+    throw new TypeError("Social provider message ids must be prefixed with facebook: or instagram:.");
+  }
+
+  const inserted = await client.query(
+    `INSERT INTO social_provider_message_ids (
+       provider_message_id, message_id, contact_id, channel
+     )
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (provider_message_id) DO NOTHING
+     RETURNING provider_message_id, message_id, contact_id, channel`,
+    [normalized, messageId, contactId, channel]
+  );
+  if (inserted.rows[0]) return inserted.rows[0];
+
+  const existing = await client.query(
+    `SELECT provider_message_id, message_id, contact_id, channel
+     FROM social_provider_message_ids
+     WHERE provider_message_id = $1
+     LIMIT 1`,
+    [normalized]
+  );
+  return existing.rows[0] || null;
+}
+
+async function registerSocialProviderMessageAlias(
+  messageId,
+  providerMessageId,
+  queryable = null
+) {
+  const ownsClient = queryable == null;
+  const client = ownsClient ? await pool.connect() : queryable;
+  try {
+    await client.query("BEGIN");
+    const messageResult = await client.query(
+      "SELECT contact_id FROM messages WHERE id = $1",
+      [messageId]
+    );
+    const contactId = messageResult.rows[0]?.contact_id;
+    if (!contactId) {
+      await client.query("COMMIT");
+      return null;
+    }
+
+    await client.query(
+      `SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)`,
+      [contactId]
+    );
+    const alias = await insertSocialProviderMessageAlias(
+      client,
+      messageId,
+      providerMessageId,
+      contactId
+    );
+    await client.query("COMMIT");
+    return alias;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    if (ownsClient) client.release();
+  }
+}
+
+async function getMessageByAnyProviderIdForContact(
+  contactId,
+  providerMessageId,
+  queryable = pool
+) {
+  const direct = await getMessageByProviderIdForContact(
+    contactId,
+    providerMessageId,
+    queryable
+  );
+  if (direct) return direct;
+
+  const result = await queryable.query(
+    `SELECT
+       m.id,
+       m.contact_id,
+       m.role,
+       m.content,
+       m.whatsapp_message_id,
+       m.sent_by_username,
+       m.media_url,
+       (m.media_key IS NOT NULL) AS has_media_attachment,
+       m.media_mime_type,
+       m.created_at,
+       m.delivery_status,
+       m.delivery_error,
+       m.is_automated_follow_up
+     FROM social_provider_message_ids s
+     JOIN messages m ON m.id = s.message_id
+     WHERE s.contact_id = $1
+       AND s.provider_message_id = $2
+     LIMIT 1`,
+    [contactId, providerMessageId]
+  );
+  return result.rows[0] || null;
+}
+
+function socialProviderAliasRecorder(messageId, channel) {
+  const normalizedChannel = String(channel || "").trim().toLowerCase();
+  if (!["facebook", "instagram"].includes(normalizedChannel)) return null;
+
+  return async (externalMessageId) => {
+    const externalId = String(externalMessageId || "").trim();
+    if (!externalId) return null;
+    return registerSocialProviderMessageAlias(
+      messageId,
+      `${normalizedChannel}:${externalId}`
+    );
+  };
 }
 
 async function getDeliveryStatusesForContact(contactId, messageIds) {
@@ -374,6 +502,56 @@ async function setWhatsappMessageId(messageId, whatsappMessageId) {
   return result.rows[0] || null;
 }
 
+async function setSocialProviderMessageId(
+  messageId,
+  providerMessageId,
+  deliveryStatus = null
+) {
+  if (!providerMessageId) return null;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const contactResult = await client.query(
+      "SELECT contact_id FROM messages WHERE id = $1",
+      [messageId]
+    );
+    const contactId = contactResult.rows[0]?.contact_id;
+    if (!contactId) {
+      await client.query("COMMIT");
+      return null;
+    }
+
+    await client.query(
+      `SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)`,
+      [contactId]
+    );
+    const result = await client.query(
+      `UPDATE messages
+       SET whatsapp_message_id = $2, delivery_status = $3, delivery_error = NULL
+       WHERE id = $1
+       RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
+      [messageId, providerMessageId, deliveryStatus]
+    );
+    const row = result.rows[0] || null;
+    if (row) {
+      await insertSocialProviderMessageAlias(
+        client,
+        messageId,
+        providerMessageId,
+        contactId
+      );
+    }
+    await client.query("COMMIT");
+    return row;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // Records an outcome for a send attempt that produced no new WAMID. Clearing
 // the previous WAMID keeps a delayed webhook from an older attempt from being
 // applied to the current failure.
@@ -431,10 +609,14 @@ module.exports = {
   getMessageMediaForContact,
   getMessageForRetry,
   getMessageByProviderIdForContact,
+  getMessageByAnyProviderIdForContact,
+  registerSocialProviderMessageAlias,
+  socialProviderAliasRecorder,
   getDeliveryStatusesForContact,
   acquireMessageRetryLock,
   deleteUnsentAssistantMessage,
   setWhatsappMessageId,
+  setSocialProviderMessageId,
   setDeliveryStatusById,
   updateDeliveryStatusByWamid,
 };
