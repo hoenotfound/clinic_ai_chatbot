@@ -161,7 +161,7 @@ async function recordPendingPrivateReplyEcho(
     `SELECT *
      FROM meta_comment_automation_jobs
      WHERE channel = $1
-       AND private_reply_message_id = $4
+       AND private_reply_message_id = $3
        AND (
          private_reply_recipient_id = $2
          OR (private_reply_recipient_id IS NULL AND author_id = $2)
@@ -171,7 +171,6 @@ async function recordPendingPrivateReplyEcho(
     [
       normalizedChannel,
       normalizedRecipient,
-      normalizedText,
       normalizedMessageId,
     ]
   );
