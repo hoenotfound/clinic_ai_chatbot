@@ -223,8 +223,6 @@ async function notifyProviderMessageId(options, externalMessageId, channel) {
   try {
     await options.onProviderMessageId(String(externalMessageId));
   } catch (err) {
-    // The provider already accepted this send. Provider-id bookkeeping is for
-    // echo dedupe and must not turn a successful send into an application error.
     console.error(
       `Failed to record ${channelLabel(channel)} provider message id ${externalMessageId}:`,
       err
@@ -926,3 +924,11 @@ module.exports = {
   sendText,
   sendImage,
   replyToComment,
+  sendPrivateReplyToComment,
+  fetchCommentSourceContext,
+  parseIncomingMessages,
+  parseStaffEchoes,
+  resolveClaimedMessageEditJob,
+  resolveMessageEditEvents,
+  downloadMedia,
+};
