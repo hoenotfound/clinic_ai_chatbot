@@ -361,14 +361,16 @@ test("processes one comment with public + private reply and creates a lead only 
   assert.equal(calls[2][0], "public");
   assert.equal(calls[3][0], "private");
   assert.deepEqual(calls[4].slice(0, 4), ["contact", "instagram", "igsid-77", "Alicia"]);
-  assert.deepEqual(calls[5], ["lookup", 99, "dm-1"]);
-  assert.equal(calls[6][0], "message");
-  assert.deepEqual(calls[7].slice(0, 3), ["lead", 99, "Comment Automation"]);
-  assert.equal(calls[8][0], "attribution");
-  assert.equal(calls[8][1].lead.id, 707);
-  assert.equal(calls[8][1].incoming.attribution.source, "instagram_comment");
-  assert.equal(calls[8][1].incoming.attribution.sourceId, "m-7");
-  assert.match(calls[8][1].incoming.attribution.headline, /Skin consultation promotion/);
+  assert.deepEqual(calls[5], ["lookup", 99, "instagram:dm-1"]);
+  assert.deepEqual(calls[6], ["lookup", 99, "dm-1"]);
+  assert.equal(calls[7][0], "message");
+  assert.equal(calls[7][4], "instagram:dm-1");
+  assert.deepEqual(calls[8].slice(0, 3), ["lead", 99, "Comment Automation"]);
+  assert.equal(calls[9][0], "attribution");
+  assert.equal(calls[9][1].lead.id, 707);
+  assert.equal(calls[9][1].incoming.attribution.source, "instagram_comment");
+  assert.equal(calls[9][1].incoming.attribution.sourceId, "m-7");
+  assert.match(calls[9][1].incoming.attribution.headline, /Skin consultation promotion/);
 });
 
 test("comment scheduler serializes jobs so bursts do not consume AI capacity concurrently", async () => {
@@ -503,7 +505,7 @@ test("repairs Inbox and Pipeline state after a private reply was already checkpo
     },
     setAttention: async () => {},
   };
-  const existing = { id: 808, contact_id: 108, whatsapp_message_id: "dm-8" };
+  const existing = { id: 808, contact_id: 108, whatsapp_message_id: "facebook:dm-8" };
   const messages = {
     getMessageByProviderIdForContact: async (...args) => {
       calls.push(["lookup", ...args]);
@@ -542,6 +544,6 @@ test("repairs Inbox and Pipeline state after a private reply was already checkpo
   await service.processJob(stored.id);
 
   assert.deepEqual(calls[0].slice(0, 4), ["contact", "facebook", "psid-8", "Ben"]);
-  assert.deepEqual(calls[1], ["lookup", 108, "dm-8"]);
+  assert.deepEqual(calls[1], ["lookup", 108, "facebook:dm-8"]);
   assert.deepEqual(calls[2].slice(0, 4), ["lead", 108, "Comment Automation", 808]);
 });
