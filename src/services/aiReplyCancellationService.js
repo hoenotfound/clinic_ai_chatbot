@@ -76,6 +76,7 @@ async function settleBeforeSend(
   } = {}
 ) {
   if (!key) return true;
+  if (String(key).startsWith("whatsapp:") && !enabled()) return true;
   if (cancelledSince(key, token)) return false;
 
   await new Promise((resolve) => setTimeout(resolve, delayMs));
