@@ -265,7 +265,13 @@ async function markFailedPreservingPrivateReplyPending(
   database = pool
 ) {
   const boundedAttempt = Math.max(1, Number(attemptCount) || 1);
-  const retrySeconds = Math.min(3600, 15 * 2 ** Math.min(8, boundedAttempt - 1));
+  // Give the delayed echo the full reservation window before allowing the
+  // recovery worker to attempt another private reply. Higher normal backoff
+  // values still win on later attempts.
+  const retrySeconds = Math.max(
+    120,
+    Math.min(3600, 15 * 2 ** Math.min(8, boundedAttempt - 1))
+  );
   const message = String(
     error?.message || error || "Comment automation failed after Meta accepted the private reply."
   ).slice(0, 2000);
