@@ -178,10 +178,19 @@ async function sendTrackedText(
     guarded ? { publish: false } : undefined
   );
 
+  const socialProviderRecorder = messagesRepo.socialProviderAliasRecorder(
+    saved.id,
+    contact.channel
+  );
   const sendResult = await channelMessaging.sendText(
     contact,
     text,
-    guarded ? { preSendCheck: canSend } : {}
+    {
+      ...(guarded ? { preSendCheck: canSend } : {}),
+      ...(socialProviderRecorder
+        ? { onProviderMessageId: socialProviderRecorder }
+        : {}),
+    }
   );
 
   if (sendResult.cancelled) {
@@ -727,11 +736,22 @@ async function processIncomingMessage(
           null,
           guardedPromo ? { publish: false } : undefined
         );
+        const promoProviderRecorder = messagesRepo.socialProviderAliasRecorder(
+          savedPromo.id,
+          contact.channel
+        );
         const promoResult = await channelMessaging.sendImageByUrl(
           contact,
           promo.imageUrl,
           promo.caption,
-          guardedPromo ? { preSendCheck: canSendAutomatedReply } : {}
+          {
+            ...(guardedPromo
+              ? { preSendCheck: canSendAutomatedReply }
+              : {}),
+            ...(promoProviderRecorder
+              ? { onProviderMessageId: promoProviderRecorder }
+              : {}),
+          }
         );
 
         if (promoResult.cancelled) {
