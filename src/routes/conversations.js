@@ -128,10 +128,20 @@ async function requireFreeformPolicy(contact, res, purpose = "service") {
   }
 }
 
-async function persistSendOutcome(savedMessage, sendResult, errorText = SEND_REJECTED_ERROR) {
+async function persistSendOutcome(
+  savedMessage,
+  sendResult,
+  errorText = SEND_REJECTED_ERROR,
+  channel = "whatsapp"
+) {
   let updated = null;
   if (sendResult.wamid) {
     updated = await messagesRepo.setWhatsappMessageId(savedMessage.id, sendResult.wamid);
+  } else if (sendResult.externalMessageId && channel !== "whatsapp") {
+    updated = await messagesRepo.setWhatsappMessageId(
+      savedMessage.id,
+      `${channel}:${sendResult.externalMessageId}`
+    );
   } else if (!sendResult.success) {
     updated = await messagesRepo.setDeliveryStatusById(savedMessage.id, "failed", errorText);
   } else {
@@ -499,7 +509,12 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
 
     const sendResult = await sendStoredMessage(contact, message);
     const errorText = sendResult.error || rejectedErrorFor(contact);
-    const updated = await persistSendOutcome(message, sendResult, errorText);
+    const updated = await persistSendOutcome(
+      message,
+      sendResult,
+      errorText,
+      contact.channel || "whatsapp"
+    );
 
     if (sendResult.success) {
       await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(contact.id);
