@@ -55,6 +55,26 @@ function preSendCancelled(options = {}) {
   return null;
 }
 
+async function notifyProviderMessageId(options, result, channel) {
+  if (
+    !result?.success ||
+    !result.externalMessageId ||
+    typeof options?.onProviderMessageId !== "function"
+  ) {
+    return;
+  }
+  try {
+    await options.onProviderMessageId(String(result.externalMessageId));
+  } catch (err) {
+    // The provider already accepted this send. Alias persistence is best-effort
+    // here; the caller still stores the final provider id as a second guard.
+    console.error(
+      `Failed to record ${labelForChannel(channel)} provider message id ${result.externalMessageId}:`,
+      err
+    );
+  }
+}
+
 function recordAcceptedSocialOutbound(channel, result) {
   if (!result?.success || !["facebook", "instagram"].includes(channel)) {
     return result;
@@ -201,6 +221,7 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
       caption.trim()
     );
     if (!captionResult.success) return captionResult;
+    await notifyProviderMessageId(options, captionResult, "facebook");
   }
 
   // Do not ask Meta to fetch our /promo-images/:id URL. In production Meta can
@@ -210,7 +231,7 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
   const cancelled = preSendCancelled(options);
   if (cancelled) return cancelled;
 
-  return trackSocialOutbound(
+  const result = await trackSocialOutbound(
     "facebook",
     metaAttachments.sendBuffer(
       "facebook",
@@ -221,6 +242,8 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
       storedImageFilename(imageId, image.mime_type)
     )
   );
+  await notifyProviderMessageId(options, result, "facebook");
+  return result;
 }
 
 async function sendText(contact, text, options = {}) {
@@ -234,10 +257,12 @@ async function sendText(contact, text, options = {}) {
   if (channel === "whatsapp") {
     return whatsapp.sendMessage(contact.whatsapp_number, text);
   }
-  return trackSocialOutbound(
+  const result = await trackSocialOutbound(
     channel,
     meta.sendText(channel, recipientFor(contact), text)
   );
+  await notifyProviderMessageId(options, result, channel);
+  return result;
 }
 
 async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
@@ -259,7 +284,13 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
   if (cancelled) return cancelled;
   return trackSocialOutbound(
     channel,
-    meta.sendImage(channel, recipientFor(contact), imageUrl, caption)
+    meta.sendImage(
+      channel,
+      recipientFor(contact),
+      imageUrl,
+      caption,
+      { onProviderMessageId: options.onProviderMessageId }
+    )
   );
 }
 
@@ -294,6 +325,7 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
       caption.trim()
     );
     if (!captionResult.success) return captionResult;
+    await notifyProviderMessageId(options, captionResult, channel);
   }
 
   // Live Instagram testing showed that this Page-linked Instagram setup can
@@ -309,10 +341,12 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
         mediaUrl
       )
     );
-    return recordAcceptedSocialOutbound(channel, result);
+    const tracked = recordAcceptedSocialOutbound(channel, result);
+    await notifyProviderMessageId(options, tracked, channel);
+    return tracked;
   }
 
-  return trackSocialOutbound(
+  const result = await trackSocialOutbound(
     channel,
     metaAttachments.sendBuffer(
       channel,
@@ -323,6 +357,8 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
       filename
     )
   );
+  await notifyProviderMessageId(options, result, channel);
+  return result;
 }
 
 async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3", options = {}) {
@@ -376,7 +412,9 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
         );
       }
     );
-    return recordAcceptedSocialOutbound(channel, result);
+    const tracked = recordAcceptedSocialOutbound(channel, result);
+    await notifyProviderMessageId(options, tracked, channel);
+    return tracked;
   }
 
   // Facebook Messenger keeps the attachment upload path. Active Staff sends
@@ -384,7 +422,7 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
   // upload finishes; retries/tests without an active takeover keep the simple
   // generic path.
   if (contact?.mode !== "human" || !contact?.id) {
-    return trackSocialOutbound(
+    const result = await trackSocialOutbound(
       channel,
       metaAttachments.sendBuffer(
         channel,
@@ -395,6 +433,8 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
         filename
       )
     );
+    await notifyProviderMessageId(options, result, channel);
+    return result;
   }
 
   const uploaded = await metaAttachments.uploadAttachment(
@@ -417,7 +457,7 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
     return staffModeChangedResult();
   }
 
-  return trackSocialOutbound(
+  const result = await trackSocialOutbound(
     channel,
     metaAttachments.sendAttachmentId(
       channel,
@@ -426,6 +466,8 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
       uploaded.attachmentId
     )
   );
+  await notifyProviderMessageId(options, result, channel);
+  return result;
 }
 
 async function downloadIncomingMedia(incoming) {
