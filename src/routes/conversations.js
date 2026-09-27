@@ -570,7 +570,12 @@ router.post("/:contactId/messages", async (req, res) => {
 
     const sendResult = await channelMessaging.sendText(contact, text.trim());
     const errorText = sendResult.error || rejectedErrorFor(contact);
-    const finalMessage = await persistSendOutcome(saved, sendResult, errorText);
+    const finalMessage = await persistSendOutcome(
+      saved,
+      sendResult,
+      errorText,
+      contact.channel || "whatsapp"
+    );
     if (!sendResult.success) {
       await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${errorText}`);
     } else {
@@ -645,7 +650,12 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       req.file.originalname || "image"
     );
     const errorText = sendResult.error || rejectedErrorFor(contact);
-    const finalMessage = await persistSendOutcome(saved, sendResult, errorText);
+    const finalMessage = await persistSendOutcome(
+      saved,
+      sendResult,
+      errorText,
+      contact.channel || "whatsapp"
+    );
     if (!sendResult.success) {
       await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${errorText}`);
     } else {
@@ -719,7 +729,12 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       outboundAudio.filename
     );
     const errorText = sendResult.error || rejectedErrorFor(currentContact);
-    const finalMessage = await persistSendOutcome(saved, sendResult, errorText);
+    const finalMessage = await persistSendOutcome(
+      saved,
+      sendResult,
+      errorText,
+      contact.channel || "whatsapp"
+    );
     try {
       if (sendResult.success) {
         await contactsRepo.setAttention(currentContact.id, false);
