@@ -18,6 +18,7 @@ const originals = {
   saveSocialImageCompanion: followUpRepo.saveSocialImageCompanion,
   markStaleClaimsUnconfirmed: followUpRepo.markStaleClaimsUnconfirmed,
   setWhatsappMessageId: messagesRepo.setWhatsappMessageId,
+  setSocialProviderMessageId: messagesRepo.setSocialProviderMessageId,
   setDeliveryStatusById: messagesRepo.setDeliveryStatusById,
   setDeliveryAttention: contactsRepo.setDeliveryAttention,
   markContactedForContact: pipelineRepo.markContactedForContact,
@@ -37,6 +38,7 @@ test.after(() => {
   });
   Object.assign(messagesRepo, {
     setWhatsappMessageId: originals.setWhatsappMessageId,
+    setSocialProviderMessageId: originals.setSocialProviderMessageId,
     setDeliveryStatusById: originals.setDeliveryStatusById,
   });
   contactsRepo.setDeliveryAttention = originals.setDeliveryAttention;
@@ -74,6 +76,8 @@ test.beforeEach(() => {
   messagesRepo.setWhatsappMessageId = async () => {
     throw new Error("A social follow-up must not enter the WhatsApp WAMID pipeline.");
   };
+  messagesRepo.setSocialProviderMessageId = async (id, providerId, status) =>
+    messagesRepo.setDeliveryStatusById(id, status, null);
 });
 
 test("Facebook Messenger follow-up uses the scoped recipient and records an accepted social send", async () => {
