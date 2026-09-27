@@ -39,6 +39,22 @@ function staffModeChangedResult() {
   };
 }
 
+function preSendCancelled(options = {}) {
+  if (
+    typeof options.preSendCheck === "function" &&
+    options.preSendCheck() !== true
+  ) {
+    return {
+      success: false,
+      wamid: null,
+      externalMessageId: null,
+      cancelled: true,
+      error: null,
+    };
+  }
+  return null;
+}
+
 function recordAcceptedSocialOutbound(channel, result) {
   if (!result?.success || !["facebook", "instagram"].includes(channel)) {
     return result;
@@ -152,7 +168,7 @@ function storedImageFilename(id, mimeType) {
   return `promo-${id}.${extension}`;
 }
 
-async function sendStoredFacebookImage(contact, imageUrl, caption) {
+async function sendStoredFacebookImage(contact, imageUrl, caption, options = {}) {
   const imageId = storedPromoImageId(imageUrl);
   if (!imageId) return null;
 
@@ -174,6 +190,8 @@ async function sendStoredFacebookImage(contact, imageUrl, caption) {
   }
 
   if (caption?.trim()) {
+    const cancelled = preSendCancelled(options);
+    if (cancelled) return cancelled;
     // Messenger keeps caption text separate from the media attachment. This is
     // the same ordering as the URL path: preserve customer context even if the
     // later binary attachment upload is rejected by Meta.
@@ -189,6 +207,9 @@ async function sendStoredFacebookImage(contact, imageUrl, caption) {
   // reject an otherwise valid Render-hosted image with (#100) Upload failed.
   // The exact JPG/PNG bytes are already in Postgres, so upload them directly to
   // Messenger's message_attachments endpoint and send the returned attachment.
+  const cancelled = preSendCancelled(options);
+  if (cancelled) return cancelled;
+
   return trackSocialOutbound(
     "facebook",
     metaAttachments.sendBuffer(
@@ -206,19 +227,11 @@ async function sendText(contact, text, options = {}) {
   const channel = channelOf(contact);
   const blocked = await freeformGuard(contact, options.purpose);
   if (blocked) return blocked;
+
+  const cancelled = preSendCancelled(options);
+  if (cancelled) return cancelled;
+
   if (channel === "whatsapp") {
-    if (
-      typeof options.preSendCheck === "function" &&
-      options.preSendCheck() !== true
-    ) {
-      return {
-        success: false,
-        wamid: null,
-        externalMessageId: null,
-        cancelled: true,
-        error: null,
-      };
-    }
     return whatsapp.sendMessage(contact.whatsapp_number, text);
   }
   return trackSocialOutbound(
@@ -232,26 +245,18 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
   const blocked = await freeformGuard(contact, options.purpose);
   if (blocked) return blocked;
   if (channel === "whatsapp") {
-    if (
-      typeof options.preSendCheck === "function" &&
-      options.preSendCheck() !== true
-    ) {
-      return {
-        success: false,
-        wamid: null,
-        externalMessageId: null,
-        cancelled: true,
-        error: null,
-      };
-    }
+    const cancelled = preSendCancelled(options);
+    if (cancelled) return cancelled;
     return whatsapp.sendImage(contact.whatsapp_number, imageUrl, caption);
   }
 
   if (channel === "facebook") {
-    const storedResult = await sendStoredFacebookImage(contact, imageUrl, caption);
+    const storedResult = await sendStoredFacebookImage(contact, imageUrl, caption, options);
     if (storedResult) return storedResult;
   }
 
+  const cancelled = preSendCancelled(options);
+  if (cancelled) return cancelled;
   return trackSocialOutbound(
     channel,
     meta.sendImage(channel, recipientFor(contact), imageUrl, caption)
