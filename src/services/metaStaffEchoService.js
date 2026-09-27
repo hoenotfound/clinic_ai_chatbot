@@ -1,5 +1,6 @@
 const contactsRepo = require("../db/contactsRepo");
 const metaStaffEchoRepo = require("../db/metaStaffEchoRepo");
+const metaCommentAutomationRepo = require("../db/metaCommentAutomationRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
@@ -57,11 +58,29 @@ async function persistStaffEcho(echo, { pendingStarted = false } = {}) {
   if (!pendingStarted) beginPendingAiForEcho(echo);
 
   try {
+    const providerMessageId = `${echo.channel}:${echo.id}`;
+
+    // Comment automation reserves its private DM before calling Meta. If this
+    // webhook echo arrives before the Send API response/checkpoint, attach the
+    // real provider MID to that durable job and release the temporary AI guard.
+    // The normal comment job then creates/repairs the Inbox message from the
+    // checkpointed MID without ever switching the conversation to Staff mode.
+    const pendingCommentReply =
+      await metaCommentAutomationRepo.recordPendingPrivateReplyEcho({
+        channel: echo.channel,
+        recipientId: echo.to,
+        text: echo.text,
+        messageId: echo.id,
+      });
+    if (pendingCommentReply) {
+      releasePendingAiForEcho(echo);
+      return null;
+    }
+
     const contact = await contactsRepo.getOrCreateChannelContact(
       echo.channel,
       echo.to
     );
-    const providerMessageId = `${echo.channel}:${echo.id}`;
 
     // An echo can reach the webhook a few milliseconds before the outbound
     // request finishes attaching Meta's message id to its Inbox row. Give that
