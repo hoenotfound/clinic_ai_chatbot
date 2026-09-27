@@ -225,6 +225,52 @@ test("Instagram image bytes use a short-lived media URL instead of attachment_id
   ]);
 });
 
+test("Instagram image bytes record both caption and image provider ids", async (t) => {
+  const originalMetaSend = meta.sendText;
+  const originalUploadTemporary = mediaStorage.uploadTemporaryMedia;
+  const originalScheduleDelete = mediaStorage.scheduleTemporaryMediaDelete;
+  const originalUrlSend = metaAttachments.sendUrlAttachment;
+  t.after(() => {
+    meta.sendText = originalMetaSend;
+    mediaStorage.uploadTemporaryMedia = originalUploadTemporary;
+    mediaStorage.scheduleTemporaryMediaDelete = originalScheduleDelete;
+    metaAttachments.sendUrlAttachment = originalUrlSend;
+  });
+
+  meta.sendText = async () => ({
+    success: true,
+    wamid: null,
+    externalMessageId: "ig-caption-alias",
+  });
+  mediaStorage.uploadTemporaryMedia = async () => ({
+    key: "meta-outbound/66/image.jpg",
+    url: "https://r2.example/image.jpg?signed=1",
+  });
+  mediaStorage.scheduleTemporaryMediaDelete = () => {};
+  metaAttachments.sendUrlAttachment = async () => ({
+    success: true,
+    wamid: null,
+    externalMessageId: "ig-image-alias",
+  });
+
+  const recorded = [];
+  const result = await messaging.sendImageBuffer(
+    { id: 66, channel: "instagram", channel_user_id: "igsid-alias" },
+    Buffer.from("image-data"),
+    "image/jpeg",
+    "Caption",
+    "photo.jpg",
+    {
+      onProviderMessageId: async (id) => {
+        recorded.push(id);
+      },
+    }
+  );
+
+  assert.equal(result.success, true);
+  assert.deepEqual(recorded, ["ig-caption-alias", "ig-image-alias"]);
+});
+
 test("Facebook voice bytes route to an audio attachment without WhatsApp", async (t) => {
   const originalWhatsappUpload = whatsapp.uploadMedia;
   const originalAttachmentSend = metaAttachments.sendBuffer;
