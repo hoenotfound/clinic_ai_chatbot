@@ -154,6 +154,29 @@ async function recordPendingPrivateReplyEcho(
     return null;
   }
 
+  // If the Send API response was already checkpointed on the durable comment
+  // job but later Inbox/lead bookkeeping failed, the Inbox message row may not
+  // exist yet. Treat an echo carrying that exact MID as our own outbound work.
+  const exact = await database.query(
+    `SELECT *
+     FROM meta_comment_automation_jobs
+     WHERE channel = $1
+       AND private_reply_message_id = $4
+       AND (
+         private_reply_recipient_id = $2
+         OR (private_reply_recipient_id IS NULL AND author_id = $2)
+       )
+     ORDER BY updated_at DESC, id DESC
+     LIMIT 1`,
+    [
+      normalizedChannel,
+      normalizedRecipient,
+      normalizedText,
+      normalizedMessageId,
+    ]
+  );
+  if (exact.rows[0]) return rowToJob(exact.rows[0]);
+
   const result = await database.query(
     `WITH candidate AS (
        SELECT id
