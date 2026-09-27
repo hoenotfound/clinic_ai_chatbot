@@ -559,3 +559,190 @@ test("repairs Inbox and Pipeline state after a private reply was already checkpo
   assert.deepEqual(calls[1], ["lookup", 108, "facebook:dm-8"]);
   assert.deepEqual(calls[2].slice(0, 4), ["lead", 108, "Comment Automation", 808]);
 });
+
+test("preserves pending comment DM reservation when Meta accepted but checkpointing the MID fails", async () => {
+  const stored = {
+    id: 70,
+    channel: "instagram",
+    commentId: "c-70",
+    entryId: "ig-business",
+    authorId: "igsid-70",
+    authorName: "Alicia",
+    text: "Price?",
+    postId: null,
+    mediaId: "m-70",
+    parentCommentId: null,
+    sourceCreatedAt: new Date().toISOString(),
+    rawEvent: {},
+    attemptCount: 1,
+    publicReplyId: null,
+    privateReplyMessageId: null,
+  };
+
+  let reserved = false;
+  let preservedFailure = false;
+  const repo = {
+    claimJob: async () => stored,
+    markPrivateReplyPending: async (_id, data) => {
+      reserved = true;
+      return { ...stored, privateReplyPendingText: data.text };
+    },
+    markPrivateReplySent: async () => {
+      throw new Error("database checkpoint failed");
+    },
+    markFailedPreservingPrivateReplyPending: async (id, err, attemptCount) => {
+      assert.equal(id, stored.id);
+      assert.match(err.message, /checkpoint failed/);
+      assert.equal(attemptCount, 1);
+      preservedFailure = true;
+      return { ...stored, status: "failed", privateReplyPendingText: "DM copy" };
+    },
+    markFailed: async () => assert.fail("accepted Meta send must retain the reservation"),
+    markCompleted: async () => assert.fail("job should not complete"),
+    markSkipped: async () => assert.fail("job should not skip"),
+    listRecoverable: async () => [],
+  };
+  const meta = {
+    fetchCommentSourceContext: async () => null,
+    sendPrivateReplyToComment: async () => {
+      assert.equal(reserved, true);
+      return {
+        success: true,
+        alreadySent: false,
+        messageId: "ig-accepted-mid",
+        recipientId: "igsid-70",
+      };
+    },
+  };
+  const aiClient = {
+    getReply: async () => JSON.stringify({
+      reply: "DM copy",
+      outcome: "normal",
+      treatment: null,
+      branch: null,
+      appointmentPreference: null,
+      projectLocation: null,
+      projectSummary: null,
+      nextStep: null,
+      publicReply: "",
+      privateReply: "DM copy",
+      shouldRespond: true,
+    }),
+  };
+  const config = {
+    commentAutomation: {
+      ...DEFAULT_COMMENT_AUTOMATION,
+      enabled: true,
+      publicReplyEnabled: false,
+      privateReplyEnabled: true,
+      activatedAt: new Date(Date.now() - 1000).toISOString(),
+    },
+  };
+
+  const service = createMetaCommentAutomationService({
+    repo,
+    meta,
+    aiClient,
+    config,
+    repliesEnabled: () => true,
+  });
+
+  const result = await service.processJob(stored.id);
+  assert.equal(preservedFailure, true);
+  assert.equal(result.status, "failed");
+});
+
+test("clears pending comment DM reservation through normal failure path when Meta rejects the send", async () => {
+  const stored = {
+    id: 71,
+    channel: "facebook",
+    commentId: "c-71",
+    entryId: "page-71",
+    authorId: "psid-71",
+    authorName: "Ben",
+    text: "More info?",
+    postId: "page-71_post-71",
+    mediaId: null,
+    parentCommentId: null,
+    sourceCreatedAt: new Date().toISOString(),
+    rawEvent: {},
+    attemptCount: 1,
+    publicReplyId: null,
+    privateReplyMessageId: null,
+  };
+
+  let normalFailure = false;
+  const repo = {
+    claimJob: async () => stored,
+    markPrivateReplyPending: async (_id, data) => ({
+      ...stored,
+      privateReplyPendingText: data.text,
+    }),
+    markPrivateReplySent: async () => assert.fail("rejected send must not checkpoint"),
+    markFailedPreservingPrivateReplyPending: async () =>
+      assert.fail("rejected Meta send must not preserve the reservation"),
+    markFailed: async (id, err, attemptCount) => {
+      assert.equal(id, stored.id);
+      assert.match(err.message, /Meta rejected private reply/);
+      assert.equal(attemptCount, 1);
+      normalFailure = true;
+      return {
+        ...stored,
+        status: "failed",
+        privateReplyPendingText: null,
+        privateReplyPendingAt: null,
+      };
+    },
+    markCompleted: async () => assert.fail("job should not complete"),
+    markSkipped: async () => assert.fail("job should not skip"),
+    listRecoverable: async () => [],
+  };
+  const meta = {
+    fetchCommentSourceContext: async () => null,
+    sendPrivateReplyToComment: async () => ({
+      success: false,
+      alreadySent: false,
+      messageId: null,
+      recipientId: null,
+      error: "Meta rejected private reply",
+    }),
+  };
+  const aiClient = {
+    getReply: async () => JSON.stringify({
+      reply: "DM copy",
+      outcome: "normal",
+      treatment: null,
+      branch: null,
+      appointmentPreference: null,
+      projectLocation: null,
+      projectSummary: null,
+      nextStep: null,
+      publicReply: "",
+      privateReply: "DM copy",
+      shouldRespond: true,
+    }),
+  };
+  const config = {
+    commentAutomation: {
+      ...DEFAULT_COMMENT_AUTOMATION,
+      enabled: true,
+      publicReplyEnabled: false,
+      privateReplyEnabled: true,
+      activatedAt: new Date(Date.now() - 1000).toISOString(),
+    },
+  };
+
+  const service = createMetaCommentAutomationService({
+    repo,
+    meta,
+    aiClient,
+    config,
+    repliesEnabled: () => true,
+  });
+
+  const result = await service.processJob(stored.id);
+  assert.equal(normalFailure, true);
+  assert.equal(result.status, "failed");
+  assert.equal(result.privateReplyPendingText, null);
+});
+
