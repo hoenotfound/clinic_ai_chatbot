@@ -165,6 +165,16 @@ async function markLeadContacted(contactId, actor, sendResult) {
   }
 }
 
+function socialProviderSendOptions(message, contact, options = {}) {
+  const recorder = messagesRepo.socialProviderAliasRecorder(
+    message?.id,
+    contact?.channel
+  );
+  return recorder
+    ? { ...options, onProviderMessageId: recorder }
+    : options;
+}
+
 async function sendStoredMessage(contact, message) {
   const mimeType = String(message.media_mime_type || "").toLowerCase();
   const channel = contact.channel || "whatsapp";
@@ -180,10 +190,17 @@ async function sendStoredMessage(contact, message) {
         contact,
         converted.whatsapp.buffer,
         converted.whatsapp.mimeType,
-        converted.whatsapp.filename
+        converted.whatsapp.filename,
+        socialProviderSendOptions(message, contact)
       );
     }
-    return channelMessaging.sendAudioBuffer(contact, storedBuffer, mimeType, "voice.mp3");
+    return channelMessaging.sendAudioBuffer(
+      contact,
+      storedBuffer,
+      mimeType,
+      "voice.mp3",
+      socialProviderSendOptions(message, contact)
+    );
   }
 
   if (mimeType.startsWith("image/") && message.media_base64) {
@@ -192,7 +209,8 @@ async function sendStoredMessage(contact, message) {
       Buffer.from(message.media_base64, "base64"),
       mimeType,
       message.content || undefined,
-      "image"
+      "image",
+      socialProviderSendOptions(message, contact)
     );
   }
 
@@ -200,12 +218,17 @@ async function sendStoredMessage(contact, message) {
     return channelMessaging.sendImageByUrl(
       contact,
       message.media_url,
-      message.content || undefined
+      message.content || undefined,
+      socialProviderSendOptions(message, contact)
     );
   }
 
   if (message.content?.trim()) {
-    return channelMessaging.sendText(contact, message.content.trim());
+    return channelMessaging.sendText(
+      contact,
+      message.content.trim(),
+      socialProviderSendOptions(message, contact)
+    );
   }
 
   return { success: false, wamid: null, error: "This message has no retryable content." };
@@ -569,7 +592,11 @@ router.post("/:contactId/messages", async (req, res) => {
       req.session.username
     );
 
-    const sendResult = await channelMessaging.sendText(contact, text.trim());
+    const sendResult = await channelMessaging.sendText(
+      contact,
+      text.trim(),
+      socialProviderSendOptions(saved, contact)
+    );
     const errorText = sendResult.error || rejectedErrorFor(contact);
     const finalMessage = await persistSendOutcome(
       saved,
@@ -648,7 +675,8 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       req.file.buffer,
       req.file.mimetype,
       caption || undefined,
-      req.file.originalname || "image"
+      req.file.originalname || "image",
+      socialProviderSendOptions(saved, contact)
     );
     const errorText = sendResult.error || rejectedErrorFor(contact);
     const finalMessage = await persistSendOutcome(
@@ -727,7 +755,8 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       currentContact,
       outboundAudio.buffer,
       outboundAudio.mimeType,
-      outboundAudio.filename
+      outboundAudio.filename,
+      socialProviderSendOptions(saved, currentContact)
     );
     const errorText = sendResult.error || rejectedErrorFor(currentContact);
     const finalMessage = await persistSendOutcome(
