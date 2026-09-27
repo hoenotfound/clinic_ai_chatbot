@@ -493,7 +493,7 @@ test("WhatsApp pre-send guard can cancel after policy approval without calling p
   assert.equal(result.cancelled, true);
 });
 
-test("social sends ignore WhatsApp-only pre-send guard", async (t) => {
+test("social sends honor the same final pre-send guard as WhatsApp", async (t) => {
   const originalMetaSend = meta.sendText;
   t.after(() => {
     meta.sendText = originalMetaSend;
@@ -511,8 +511,9 @@ test("social sends ignore WhatsApp-only pre-send guard", async (t) => {
     { preSendCheck: () => false }
   );
 
-  assert.equal(calls, 1);
-  assert.equal(result.success, true);
+  assert.equal(calls, 0);
+  assert.equal(result.success, false);
+  assert.equal(result.cancelled, true);
 });
 
 
