@@ -487,12 +487,18 @@ function createMetaCommentAutomationService({
         // pending marker so a slightly later message echo can recover the real
         // provider MID instead of being mistaken for manual staff activity.
         preservePrivateReplyPendingOnFailure = true;
-        liveJob = await repo.markPrivateReplySent(job.id, {
+        const checkpointedPrivateReply = await repo.markPrivateReplySent(job.id, {
           messageId: privateResult.messageId || (privateResult.alreadySent ? "already-sent" : "sent"),
           recipientId:
             privateResult.recipientId ||
             (privateResult.alreadySent ? event.authorId : null),
         });
+        if (!checkpointedPrivateReply) {
+          throw new Error(
+            "Meta accepted the private comment reply, but its delivery checkpoint was not saved."
+          );
+        }
+        liveJob = checkpointedPrivateReply;
         preservePrivateReplyPendingOnFailure = false;
       }
 
