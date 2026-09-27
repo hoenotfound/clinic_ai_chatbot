@@ -41,6 +41,29 @@ test("parses Facebook Messenger text messages and skips outgoing echoes", () => 
   });
 });
 
+test("parses Facebook outgoing message echoes as staff replies", () => {
+  const parsed = meta.parseStaffEchoes({
+    object: "page",
+    entry: [{
+      id: "page-1",
+      messaging: [{
+        sender: { id: "page-1" },
+        recipient: { id: "psid-1" },
+        message: { mid: "fb-echo-1", text: "Manual Facebook reply", is_echo: true },
+      }],
+    }],
+  });
+
+  assert.deepEqual(parsed, [{
+    id: "fb-echo-1",
+    channel: "facebook",
+    to: "psid-1",
+    text: "Manual Facebook reply",
+    mediaType: null,
+    isDeleted: false,
+  }]);
+});
+
 test("parses Instagram image messages and skips message echoes", () => {
   const parsed = meta.parseIncomingMessages({
     object: "instagram",
@@ -75,6 +98,33 @@ test("parses Instagram image messages and skips message echoes", () => {
   assert.equal(parsed[0].mediaType, "image");
   assert.equal(parsed[0].mediaUrl, "https://cdn.example.test/photo.jpg");
   assert.equal(parsed[0].text, "This one");
+});
+
+test("parses Instagram outgoing message echoes as staff replies", () => {
+  const parsed = meta.parseStaffEchoes({
+    object: "instagram",
+    entry: [{
+      id: "ig-business-1",
+      messaging: [{
+        sender: { id: "ig-business-1" },
+        recipient: { id: "igsid-1" },
+        message: {
+          mid: "ig-echo-1",
+          text: "Manual Instagram reply",
+          is_echo: true,
+        },
+      }],
+    }],
+  });
+
+  assert.deepEqual(parsed, [{
+    id: "ig-echo-1",
+    channel: "instagram",
+    to: "igsid-1",
+    text: "Manual Instagram reply",
+    mediaType: null,
+    isDeleted: false,
+  }]);
 });
 
 test("Facebook sends through the Page messages endpoint without returning a WhatsApp WAMID", async (t) => {
