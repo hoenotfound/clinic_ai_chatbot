@@ -110,6 +110,53 @@ test("Facebook contacts never fall through to WhatsApp", async (t) => {
   });
 });
 
+test("Facebook text pre-send guard cancels before Meta is called", async (t) => {
+  const originalMetaSend = meta.sendText;
+  t.after(() => {
+    meta.sendText = originalMetaSend;
+  });
+
+  let metaCalls = 0;
+  meta.sendText = async () => {
+    metaCalls += 1;
+    return { success: true, externalMessageId: "must-not-send" };
+  };
+
+  const result = await messaging.sendText(
+    { channel: "facebook", channel_user_id: "psid-guard" },
+    "AI reply",
+    { preSendCheck: () => false }
+  );
+
+  assert.equal(metaCalls, 0);
+  assert.equal(result.cancelled, true);
+  assert.equal(result.success, false);
+});
+
+test("Instagram image URL pre-send guard cancels before Meta is called", async (t) => {
+  const originalMetaSend = meta.sendImage;
+  t.after(() => {
+    meta.sendImage = originalMetaSend;
+  });
+
+  let metaCalls = 0;
+  meta.sendImage = async () => {
+    metaCalls += 1;
+    return { success: true, externalMessageId: "must-not-send" };
+  };
+
+  const result = await messaging.sendImageByUrl(
+    { channel: "instagram", channel_user_id: "igsid-guard" },
+    "https://example.com/promo.jpg",
+    undefined,
+    { preSendCheck: () => false }
+  );
+
+  assert.equal(metaCalls, 0);
+  assert.equal(result.cancelled, true);
+  assert.equal(result.success, false);
+});
+
 test("Instagram image bytes use a short-lived media URL instead of attachment_id", async (t) => {
   const originalMetaSend = meta.sendText;
   const originalUploadTemporary = mediaStorage.uploadTemporaryMedia;
