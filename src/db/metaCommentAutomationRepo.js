@@ -24,6 +24,8 @@ function rowToJob(row) {
     publicReplyId: row.public_reply_id || null,
     privateReplyMessageId: row.private_reply_message_id || null,
     privateReplyRecipientId: row.private_reply_recipient_id || null,
+    privateReplyPendingText: row.private_reply_pending_text || null,
+    privateReplyPendingAt: row.private_reply_pending_at || null,
     lastError: row.last_error || null,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
@@ -106,6 +108,86 @@ async function markPublicReplySent(id, replyId, database = pool) {
   return rowToJob(result.rows[0]);
 }
 
+async function markPrivateReplyPending(
+  id,
+  { text = null } = {},
+  database = pool
+) {
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    throw new TypeError("Pending private reply text is required.");
+  }
+
+  const result = await database.query(
+    `UPDATE meta_comment_automation_jobs
+     SET private_reply_pending_text = $2,
+         private_reply_pending_at = now(),
+         updated_at = now()
+     WHERE id = $1
+       AND private_reply_message_id IS NULL
+     RETURNING *`,
+    [id, normalized]
+  );
+  return rowToJob(result.rows[0]);
+}
+
+async function recordPendingPrivateReplyEcho(
+  {
+    channel,
+    recipientId,
+    text,
+    messageId,
+  } = {},
+  database = pool
+) {
+  const normalizedChannel = String(channel || "").trim().toLowerCase();
+  const normalizedRecipient = String(recipientId || "").trim();
+  const normalizedText = String(text || "").trim();
+  const normalizedMessageId = String(messageId || "").trim();
+
+  if (
+    !["facebook", "instagram"].includes(normalizedChannel) ||
+    !normalizedRecipient ||
+    !normalizedText ||
+    !normalizedMessageId
+  ) {
+    return null;
+  }
+
+  const result = await database.query(
+    `WITH candidate AS (
+       SELECT id
+       FROM meta_comment_automation_jobs
+       WHERE channel = $1
+         AND author_id = $2
+         AND private_reply_message_id IS NULL
+         AND private_reply_pending_text = $3
+         AND private_reply_pending_at IS NOT NULL
+         AND private_reply_pending_at >= now() - INTERVAL '2 minutes'
+         AND status = 'processing'
+       ORDER BY private_reply_pending_at DESC, id DESC
+       LIMIT 1
+       FOR UPDATE SKIP LOCKED
+     )
+     UPDATE meta_comment_automation_jobs job
+     SET private_reply_message_id = $4,
+         private_reply_recipient_id = COALESCE(job.private_reply_recipient_id, $2),
+         private_reply_pending_text = NULL,
+         private_reply_pending_at = NULL,
+         updated_at = now()
+     FROM candidate
+     WHERE job.id = candidate.id
+     RETURNING job.*`,
+    [
+      normalizedChannel,
+      normalizedRecipient,
+      normalizedText,
+      normalizedMessageId,
+    ]
+  );
+  return rowToJob(result.rows[0]);
+}
+
 async function markPrivateReplySent(
   id,
   { messageId = null, recipientId = null } = {},
@@ -115,6 +197,8 @@ async function markPrivateReplySent(
     `UPDATE meta_comment_automation_jobs
      SET private_reply_message_id = COALESCE(private_reply_message_id, $2),
          private_reply_recipient_id = COALESCE(private_reply_recipient_id, $3),
+         private_reply_pending_text = NULL,
+         private_reply_pending_at = NULL,
          updated_at = now()
      WHERE id = $1
      RETURNING *`,
@@ -127,6 +211,8 @@ async function markCompleted(id, database = pool) {
   const result = await database.query(
     `UPDATE meta_comment_automation_jobs
      SET status = 'completed',
+         private_reply_pending_text = NULL,
+         private_reply_pending_at = NULL,
          completed_at = now(),
          updated_at = now(),
          last_error = NULL
@@ -141,6 +227,8 @@ async function markSkipped(id, reason, database = pool) {
   const result = await database.query(
     `UPDATE meta_comment_automation_jobs
      SET status = 'skipped',
+         private_reply_pending_text = NULL,
+         private_reply_pending_at = NULL,
          completed_at = now(),
          updated_at = now(),
          last_error = $2
@@ -158,6 +246,8 @@ async function markFailed(id, error, attemptCount = 1, database = pool) {
   const result = await database.query(
     `UPDATE meta_comment_automation_jobs
      SET status = 'failed',
+         private_reply_pending_text = NULL,
+         private_reply_pending_at = NULL,
          last_error = $2,
          next_attempt_at = now() + ($3 * INTERVAL '1 second'),
          updated_at = now()
@@ -175,6 +265,8 @@ module.exports = {
   listRecoverable,
   markCompleted,
   markFailed,
+  markPrivateReplyPending,
+  recordPendingPrivateReplyEcho,
   markPrivateReplySent,
   markPublicReplySent,
   markSkipped,
