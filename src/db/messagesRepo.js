@@ -366,6 +366,20 @@ async function getMessageByAnyProviderIdForContact(
   return result.rows[0] || null;
 }
 
+function socialProviderAliasRecorder(messageId, channel) {
+  const normalizedChannel = String(channel || "").trim().toLowerCase();
+  if (!["facebook", "instagram"].includes(normalizedChannel)) return null;
+
+  return async (externalMessageId) => {
+    const externalId = String(externalMessageId || "").trim();
+    if (!externalId) return null;
+    return registerSocialProviderMessageAlias(
+      messageId,
+      `${normalizedChannel}:${externalId}`
+    );
+  };
+}
+
 async function getDeliveryStatusesForContact(contactId, messageIds) {
   if (!messageIds.length) return [];
   const result = await pool.query(
@@ -529,6 +543,7 @@ module.exports = {
   getMessageByProviderIdForContact,
   getMessageByAnyProviderIdForContact,
   registerSocialProviderMessageAlias,
+  socialProviderAliasRecorder,
   getDeliveryStatusesForContact,
   acquireMessageRetryLock,
   deleteUnsentAssistantMessage,
