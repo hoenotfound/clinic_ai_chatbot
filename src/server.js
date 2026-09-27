@@ -108,9 +108,10 @@ async function persistSendOutcome(
   if (sendResult.wamid) {
     updated = await messagesRepo.setWhatsappMessageId(savedMessage.id, sendResult.wamid);
   } else if (sendResult.externalMessageId && channel !== "whatsapp") {
-    updated = await messagesRepo.setWhatsappMessageId(
+    updated = await messagesRepo.setSocialProviderMessageId(
       savedMessage.id,
-      `${channel}:${sendResult.externalMessageId}`
+      `${channel}:${sendResult.externalMessageId}`,
+      null
     );
   } else if (!sendResult.success) {
     updated = await messagesRepo.setDeliveryStatusById(savedMessage.id, "failed", errorText);
@@ -339,10 +340,8 @@ async function processIncomingMessage(
   } = incoming;
   const channel = incoming.channel || "whatsapp";
   const aiCancellationKey =
-    channel === "whatsapp"
-      ? (aiReplyCancellation.enabled()
-          ? aiReplyCancellation.keyForWhatsAppNumber(from)
-          : null)
+    channel === "whatsapp" && aiReplyCancellation.enabled()
+      ? aiReplyCancellation.keyForWhatsAppNumber(from)
       : (channel === "facebook" || channel === "instagram")
         ? aiReplyCancellation.keyForChannelContact(channel, from)
         : null;
