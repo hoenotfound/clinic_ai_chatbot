@@ -133,11 +133,20 @@ async function sendSocialImageCompanion(contact, contactId, imageUrl) {
     // image in the same API message. The follow-up text has already been sent
     // and recorded, so this companion must contain only the image. A retry can
     // then resend the image without duplicating the customer-facing text.
+    const imageProviderRecorder = messagesRepo.socialProviderAliasRecorder(
+      imageMessage.id,
+      contact.channel
+    );
     imageResult = await channelMessaging.sendImageByUrl(
       contact,
       imageUrl,
       undefined,
-      { purpose: "marketing" }
+      {
+        purpose: "marketing",
+        ...(imageProviderRecorder
+          ? { onProviderMessageId: imageProviderRecorder }
+          : {}),
+      }
     );
   } catch (err) {
     console.error("Optional social follow-up image send failed:", err);
@@ -214,10 +223,19 @@ async function sendCandidate(candidate) {
     if (isSocial) {
       // Record the follow-up text separately from an optional image so an image
       // failure/retry can never duplicate a text message Meta already accepted.
+      const textProviderRecorder = messagesRepo.socialProviderAliasRecorder(
+        saved.id,
+        channel
+      );
       sendResult = await channelMessaging.sendText(
         contact,
         followUpMessage,
-        { purpose: "marketing" }
+        {
+          purpose: "marketing",
+          ...(textProviderRecorder
+            ? { onProviderMessageId: textProviderRecorder }
+            : {}),
+        }
       );
     } else {
       const policyOptions = { purpose: "marketing" };
