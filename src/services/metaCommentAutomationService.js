@@ -460,6 +460,17 @@ function createMetaCommentAutomationService({
       }
 
       if (settings.privateReplyEnabled && !liveJob.privateReplyMessageId) {
+        // Make the outbound intent durable before calling Meta. An Instagram
+        // or Facebook echo can arrive before the Send API response gets back to
+        // this process; the echo handler uses this marker to recognize that
+        // early event as our own comment-automation DM instead of a staff reply.
+        liveJob = await repo.markPrivateReplyPending(job.id, {
+          text: copy.privateReply,
+        });
+        if (!liveJob) {
+          throw new Error("Could not reserve the comment private reply before sending.");
+        }
+
         const privateResult = await meta.sendPrivateReplyToComment(
           event.channel,
           event.commentId,
