@@ -241,10 +241,21 @@ test("processes one comment with public + private reply and creates a lead only 
     privateReplyMessageId: null,
   };
 
+  let privateReplyReserved = false;
   const repo = {
     storeIncomingComment: async () => stored,
     claimJob: async () => stored,
     markPublicReplySent: async (id, replyId) => ({ ...stored, publicReplyId: replyId }),
+    markPrivateReplyPending: async (id, data) => {
+      assert.equal(id, stored.id);
+      assert.equal(data.text, "Hi! Which area are you asking about?");
+      privateReplyReserved = true;
+      return {
+        ...stored,
+        publicReplyId: "pub-1",
+        privateReplyPendingText: data.text,
+      };
+    },
     markPrivateReplySent: async (id, data) => ({
       ...stored,
       publicReplyId: "pub-1",
@@ -271,6 +282,7 @@ test("processes one comment with public + private reply and creates a lead only 
       return { success: true, replyId: "pub-1" };
     },
     sendPrivateReplyToComment: async (channel, id, text) => {
+      assert.equal(privateReplyReserved, true);
       calls.push(["private", channel, id, text]);
       return {
         success: true,
