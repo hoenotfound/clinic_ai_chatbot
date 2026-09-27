@@ -164,7 +164,7 @@ async function recordPendingPrivateReplyEcho(
          AND private_reply_pending_text = $3
          AND private_reply_pending_at IS NOT NULL
          AND private_reply_pending_at >= now() - INTERVAL '2 minutes'
-         AND status = 'processing'
+         AND status IN ('processing', 'failed')
        ORDER BY private_reply_pending_at DESC, id DESC
        LIMIT 1
        FOR UPDATE SKIP LOCKED
@@ -258,6 +258,30 @@ async function markFailed(id, error, attemptCount = 1, database = pool) {
   return rowToJob(result.rows[0]);
 }
 
+async function markFailedPreservingPrivateReplyPending(
+  id,
+  error,
+  attemptCount = 1,
+  database = pool
+) {
+  const boundedAttempt = Math.max(1, Number(attemptCount) || 1);
+  const retrySeconds = Math.min(3600, 15 * 2 ** Math.min(8, boundedAttempt - 1));
+  const message = String(
+    error?.message || error || "Comment automation failed after Meta accepted the private reply."
+  ).slice(0, 2000);
+  const result = await database.query(
+    `UPDATE meta_comment_automation_jobs
+     SET status = 'failed',
+         last_error = $2,
+         next_attempt_at = now() + ($3 * INTERVAL '1 second'),
+         updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [id, message, retrySeconds]
+  );
+  return rowToJob(result.rows[0]);
+}
+
 module.exports = {
   MAX_ATTEMPTS,
   STALE_PROCESSING_MINUTES,
@@ -265,6 +289,7 @@ module.exports = {
   listRecoverable,
   markCompleted,
   markFailed,
+  markFailedPreservingPrivateReplyPending,
   markPrivateReplyPending,
   recordPendingPrivateReplyEcho,
   markPrivateReplySent,
