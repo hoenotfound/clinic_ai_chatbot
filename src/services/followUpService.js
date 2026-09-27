@@ -147,12 +147,22 @@ async function sendSocialImageCompanion(contact, contactId, imageUrl) {
   const imageError = imageResult?.policyBlocked && imageResult.error
     ? imageResult.error
     : `${channelMessaging.labelForChannel(contact.channel)} did not accept the optional follow-up graphic. The follow-up text was sent; retry this image from the Inbox if needed.`;
-  const finalImageMessage =
-    (await messagesRepo.setDeliveryStatusById(
-      imageMessage.id,
-      imageResult?.success ? "sent" : "failed",
-      imageResult?.success ? null : imageError
-    )) || imageMessage;
+  let finalImageMessage = imageMessage;
+  if (imageResult?.success && imageResult.externalMessageId) {
+    finalImageMessage =
+      (await messagesRepo.setSocialProviderMessageId(
+        imageMessage.id,
+        `${contact.channel}:${imageResult.externalMessageId}`,
+        "sent"
+      )) || imageMessage;
+  } else {
+    finalImageMessage =
+      (await messagesRepo.setDeliveryStatusById(
+        imageMessage.id,
+        imageResult?.success ? "sent" : "failed",
+        imageResult?.success ? null : imageError
+      )) || imageMessage;
+  }
   publishConversationChange(finalImageMessage, "delivery_status");
 
   if (!imageResult?.success) {
@@ -243,11 +253,15 @@ async function sendCandidate(candidate) {
         deliveryError
       )) || saved;
   } else if (isSocial) {
-    // Messenger/Instagram return an accepted send result but do not use the
-    // WhatsApp WAMID webhook pipeline. Mark the text accepted before doing any
-    // optional image work, so a later image failure cannot make the text retryable.
-    finalMessage =
-      (await messagesRepo.setDeliveryStatusById(saved.id, "sent", null)) || saved;
+    // Keep Meta's provider id for echo dedupe without entering WhatsApp's
+    // asynchronous delivery-status pipeline.
+    finalMessage = sendResult.externalMessageId
+      ? (await messagesRepo.setSocialProviderMessageId(
+          saved.id,
+          `${channel}:${sendResult.externalMessageId}`,
+          "sent"
+        )) || saved
+      : (await messagesRepo.setDeliveryStatusById(saved.id, "sent", null)) || saved;
   }
 
   publishConversationChange(finalMessage, "delivery_status");
