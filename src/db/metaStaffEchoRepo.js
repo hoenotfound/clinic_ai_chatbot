@@ -18,6 +18,40 @@ async function persistStaffEchoIfNew(
       [contactId]
     );
 
+    // Multipart social sends can have more than one Meta MID for one Inbox
+    // bubble (for example Instagram caption + image). The outbound path records
+    // every MID in social_provider_message_ids under this same conversation
+    // lock. If this echo belongs to one of those MIDs, it is our own send and
+    // must not create a duplicate or take the conversation into Staff mode.
+    const knownOutbound = await client.query(
+      `SELECT m.id, m.contact_id, m.role, m.content, m.whatsapp_message_id,
+              m.sent_by_username, m.media_url,
+              (m.media_key IS NOT NULL) AS has_media_attachment,
+              m.media_mime_type, m.created_at, m.delivery_status,
+              m.delivery_error, m.is_automated_follow_up
+       FROM social_provider_message_ids s
+       JOIN messages m ON m.id = s.message_id
+       WHERE s.provider_message_id = $1
+         AND s.contact_id = $2
+       LIMIT 1`,
+      [providerMessageId, contactId]
+    );
+    if (knownOutbound.rows[0]) {
+      const existingContact = await client.query(
+        "SELECT * FROM contacts WHERE id = $1",
+        [contactId]
+      );
+      await client.query("COMMIT");
+      return existingContact.rows[0]
+        ? {
+            contact: existingContact.rows[0],
+            message: knownOutbound.rows[0],
+            isNew: false,
+            isOutbound: true,
+          }
+        : null;
+    }
+
     const inserted = await client.query(
       `INSERT INTO messages (
          contact_id, role, content, whatsapp_message_id, sent_by_username
