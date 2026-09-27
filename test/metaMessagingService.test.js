@@ -64,6 +64,28 @@ test("parses Facebook outgoing message echoes as staff replies", () => {
   }]);
 });
 
+
+test("does not classify Send API echoes with app_id as manual staff replies", () => {
+  const parsed = meta.parseStaffEchoes({
+    object: "page",
+    entry: [{
+      id: "page-1",
+      messaging: [{
+        sender: { id: "page-1" },
+        recipient: { id: "psid-1" },
+        message: {
+          mid: "fb-app-echo-1",
+          text: "Automated reply",
+          is_echo: true,
+          app_id: 1029862536608134,
+        },
+      }],
+    }],
+  });
+
+  assert.deepEqual(parsed, []);
+});
+
 test("parses Instagram image messages and skips message echoes", () => {
   const parsed = meta.parseIncomingMessages({
     object: "instagram",
