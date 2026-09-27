@@ -265,6 +265,57 @@ test("Instagram sends through the Facebook Page messages endpoint with its Page 
   assert.equal(result.externalMessageId, "ig-out-1");
 });
 
+test("Instagram image send records caption and image provider ids before returning", async (t) => {
+  const originalFetch = global.fetch;
+  const oldPageId = process.env.INSTAGRAM_PAGE_ID;
+  const oldToken = process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (oldPageId === undefined) delete process.env.INSTAGRAM_PAGE_ID;
+    else process.env.INSTAGRAM_PAGE_ID = oldPageId;
+    if (oldToken === undefined) delete process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
+    else process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = oldToken;
+  });
+
+  process.env.INSTAGRAM_PAGE_ID = "ig-page-multipart";
+  process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = "ig-page-token";
+
+  const payloads = [];
+  global.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    payloads.push(body);
+    const isCaption = typeof body.message?.text === "string";
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        recipient_id: "igsid-20",
+        message_id: isCaption ? "ig-caption-20" : "ig-image-20",
+      }),
+    };
+  };
+
+  const recorded = [];
+  const result = await meta.sendImage(
+    "instagram",
+    "igsid-20",
+    "https://cdn.example.test/promo.jpg",
+    "Promo caption",
+    {
+      onProviderMessageId: async (id) => {
+        recorded.push(id);
+      },
+    }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.externalMessageId, "ig-image-20");
+  assert.deepEqual(recorded, ["ig-caption-20", "ig-image-20"]);
+  assert.equal(payloads.length, 2);
+  assert.deepEqual(payloads[0].message, { text: "Promo caption" });
+  assert.equal(payloads[1].message.attachment.type, "image");
+});
+
 test("legacy Instagram Login credentials alone no longer configure Instagram Messaging", (t) => {
   const keys = [
     "INSTAGRAM_PAGE_ID",
