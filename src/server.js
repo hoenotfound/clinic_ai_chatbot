@@ -8,6 +8,7 @@ const whatsapp = require("./services/whatsappService");
 const whatsappCoexistence = require("./services/whatsappCoexistenceService");
 const aiReplyCancellation = require("./services/aiReplyCancellationService");
 const metaMessaging = require("./services/metaMessagingService");
+const metaStaffEcho = require("./services/metaStaffEchoService");
 const metaCommentAutomation = require("./services/metaCommentAutomationService");
 const channelMessaging = require("./services/channelMessagingService");
 const ai = require("./services/aiService");
@@ -327,9 +328,13 @@ async function processIncomingMessage(
   } = incoming;
   const channel = incoming.channel || "whatsapp";
   const aiCancellationKey =
-    channel === "whatsapp" && aiReplyCancellation.enabled()
-      ? aiReplyCancellation.keyForWhatsAppNumber(from)
-      : null;
+    channel === "whatsapp"
+      ? (aiReplyCancellation.enabled()
+          ? aiReplyCancellation.keyForWhatsAppNumber(from)
+          : null)
+      : (channel === "facebook" || channel === "instagram")
+        ? aiReplyCancellation.keyForChannelContact(channel, from)
+        : null;
   const aiCancellationToken = aiReplyCancellation.snapshot(aiCancellationKey);
   const canSendAutomatedReply = aiCancellationKey
     ? () => aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
@@ -993,14 +998,20 @@ app.get("/meta-webhook", (req, res) => {
 
 app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
   const incomingMessages = metaMessaging.parseIncomingMessages(req.body);
+  const staffEchoes = metaMessaging.parseStaffEchoes(req.body);
+  for (const echo of staffEchoes) {
+    metaStaffEcho.beginPendingAiForEcho(echo);
+  }
+
   let durableClaims;
   let commentJobs;
+  let durableStaffEchoes;
   try {
     // Standard Messenger/Instagram message events contain enough data to store
     // the customer message immediately. Persist those before the 200 ACK just
     // like WhatsApp. Comment automation also records its work before ACK so a
     // process restart cannot silently lose a newly received comment.
-    [durableClaims, commentJobs] = await Promise.all([
+    [durableClaims, commentJobs, durableStaffEchoes] = await Promise.all([
       Promise.all(
         incomingMessages.map(async (incoming) => {
           const queueKey = `${incoming.channel}:${incoming.from}`;
@@ -1011,10 +1022,23 @@ app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
         })
       ),
       metaCommentAutomation.acceptIncomingComments(req.body),
+      Promise.all(
+        staffEchoes.map((echo) =>
+          metaStaffEcho.persistStaffEcho(echo, { pendingStarted: true })
+        )
+      ),
     ]);
   } catch (err) {
+    for (const echo of staffEchoes) {
+      metaStaffEcho.releasePendingAiForEcho(echo);
+    }
     console.error("Failed to durably accept incoming Meta event(s):", err);
     return res.sendStatus(503);
+  }
+
+  for (const persisted of durableStaffEchoes) {
+    if (!persisted) continue;
+    await metaStaffEcho.finalizeStaffEcho(persisted);
   }
 
   res.sendStatus(200);
