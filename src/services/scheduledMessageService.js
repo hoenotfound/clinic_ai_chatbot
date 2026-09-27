@@ -142,11 +142,19 @@ async function processScheduledMessage(item) {
   } else if (!sendResult.success) {
     finalMessage =
       (await messagesRepo.setDeliveryStatusById(saved.id, "failed", errorText)) || saved;
+  } else if (
+    ["facebook", "instagram"].includes(contact.channel) &&
+    sendResult.externalMessageId
+  ) {
+    finalMessage =
+      (await messagesRepo.setSocialProviderMessageId(
+        saved.id,
+        `${contact.channel}:${sendResult.externalMessageId}`,
+        null
+      )) || saved;
   } else {
-    // Facebook/Instagram accepted sends intentionally have no WhatsApp WAMID.
-    // Keep their delivery state neutral, matching the existing manual-send
-    // pipeline rather than inventing a delivery receipt those channels did not
-    // provide.
+    // Social sends stay neutral because only WhatsApp uses the async
+    // sent/delivered/read status pipeline.
     finalMessage =
       (await messagesRepo.setDeliveryStatusById(saved.id, null, null)) || saved;
   }
