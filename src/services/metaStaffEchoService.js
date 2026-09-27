@@ -71,7 +71,7 @@ async function persistStaffEcho(echo, { pendingStarted = false } = {}) {
       if (delayMs) {
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
-      const existing = await messagesRepo.getMessageByProviderIdForContact(
+      const existing = await messagesRepo.getMessageByAnyProviderIdForContact(
         contact.id,
         providerMessageId
       );
