@@ -20,20 +20,6 @@ ALTER TABLE telegram_immediate_alerts
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 
-DO $
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint
-    WHERE conname = 'telegram_immediate_alerts_lead_id_fkey'
-      AND conrelid = 'telegram_immediate_alerts'::regclass
-  ) THEN
-    ALTER TABLE telegram_immediate_alerts
-      ADD CONSTRAINT telegram_immediate_alerts_lead_id_fkey
-      FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE SET NULL;
-  END IF;
-END
-$;
 
 UPDATE telegram_immediate_alerts
 SET status = 'sent',
