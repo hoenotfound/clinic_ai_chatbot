@@ -15,7 +15,7 @@ function createPortalJsonParser() {
 }
 
 function isPayloadTooLargeError(err) {
-  return err?.type === "entity.too.large" || err?.status === 413 || err?.statusCode === 413;
+  return err?.type === "entity.too.large";
 }
 
 function payloadTooLargeErrorHandler(err, _req, res, next) {
