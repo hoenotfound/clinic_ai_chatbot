@@ -5,6 +5,7 @@ const HUMAN_ALERT_LOCK_NAMESPACE = 24682;
 const IMMEDIATE_ALERT_MAX_ATTEMPTS = 5;
 const IMMEDIATE_ALERT_STALE_AFTER_SECONDS = 60;
 const IMMEDIATE_ALERT_BATCH_SIZE = 5;
+const IMMEDIATE_ALERT_MAX_STALE_RECOVERIES = 1;
 
 function newLeaseToken() {
   return crypto.randomBytes(16).toString("hex");
@@ -14,11 +15,17 @@ function cleanText(value) {
   return String(value || "").trim();
 }
 
+function safeLeadId(value) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 async function insertAlert(
   {
     eventKey,
     type,
     contactId,
+    leadId = null,
     messageText,
   },
   query
@@ -27,6 +34,7 @@ async function insertAlert(
   const alertType = cleanText(type);
   const text = cleanText(messageText);
   const numericContactId = Number(contactId);
+  const numericLeadId = safeLeadId(leadId);
 
   if (!key || !alertType || !text) {
     throw new Error("Immediate Telegram alerts require eventKey, type, and messageText.");
@@ -40,18 +48,48 @@ async function insertAlert(
        event_key,
        alert_type,
        contact_id,
+       lead_id,
        message_text,
        status,
        attempts,
        next_attempt_at,
        updated_at
      )
-     VALUES ($1, $2, $3, $4, 'pending', 0, now(), now())
+     VALUES ($1, $2, $3, $4, $5, 'pending', 0, now(), now())
      ON CONFLICT (event_key) DO NOTHING
      RETURNING *`,
-    [key, alertType, numericContactId, text]
+    [key, alertType, numericContactId, numericLeadId, text]
   );
   return result.rows[0] || null;
+}
+
+async function cancelOlderPendingBookingReady(
+  {
+    eventKey,
+    contactId,
+    leadId,
+  },
+  query
+) {
+  const result = await query(
+    `UPDATE telegram_immediate_alerts
+     SET status = 'cancelled',
+         terminal_at = COALESCE(terminal_at, now()),
+         claimed_at = NULL,
+         lease_token = NULL,
+         next_attempt_at = NULL,
+         error_text = 'Superseded by newer Booking Ready details before delivery.',
+         updated_at = now()
+     WHERE contact_id = $1
+       AND alert_type = 'booking_ready'
+       AND status = 'pending'
+       AND terminal_at IS NULL
+       AND event_key <> $3
+       AND lead_id IS NOT DISTINCT FROM $2::integer
+     RETURNING *`,
+    [Number(contactId), safeLeadId(leadId), cleanText(eventKey)]
+  );
+  return result.rows;
 }
 
 async function queueAlert(
@@ -59,16 +97,18 @@ async function queueAlert(
     eventKey,
     type,
     contactId,
+    leadId = null,
     messageText,
     cooldownMinutes = 0,
   },
   database = pool
 ) {
   const safeCooldown = Math.max(0, Number(cooldownMinutes) || 0);
+  const needsSerializedQueue = safeCooldown > 0 || type === "booking_ready";
 
-  if (safeCooldown <= 0) {
+  if (!needsSerializedQueue) {
     return insertAlert(
-      { eventKey, type, contactId, messageText },
+      { eventKey, type, contactId, leadId, messageText },
       database.query.bind(database)
     );
   }
@@ -81,24 +121,34 @@ async function queueAlert(
       [HUMAN_ALERT_LOCK_NAMESPACE, Number(contactId)]
     );
 
-    const recent = await client.query(
-      `SELECT id
-       FROM telegram_immediate_alerts
-       WHERE contact_id = $1
-         AND alert_type = $3
-         AND created_at > now() - ($2::integer * interval '1 minute')
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [Number(contactId), Math.ceil(safeCooldown), String(type)]
-    );
+    if (type === "booking_ready") {
+      await cancelOlderPendingBookingReady(
+        { eventKey, contactId, leadId },
+        client.query.bind(client)
+      );
+    }
 
-    if (recent.rows[0]) {
-      await client.query("COMMIT");
-      return null;
+    if (safeCooldown > 0) {
+      const recent = await client.query(
+        `SELECT id
+         FROM telegram_immediate_alerts
+         WHERE contact_id = $1
+           AND alert_type = $3
+           AND status IN ('pending', 'sending', 'sent')
+           AND created_at > now() - ($2::integer * interval '1 minute')
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [Number(contactId), Math.ceil(safeCooldown), String(type)]
+      );
+
+      if (recent.rows[0]) {
+        await client.query("COMMIT");
+        return null;
+      }
     }
 
     const queued = await insertAlert(
-      { eventKey, type, contactId, messageText },
+      { eventKey, type, contactId, leadId, messageText },
       client.query.bind(client)
     );
     await client.query("COMMIT");
@@ -244,24 +294,49 @@ async function markExhaustedStale(
   {
     staleAfterSeconds = IMMEDIATE_ALERT_STALE_AFTER_SECONDS,
     maxAttempts = IMMEDIATE_ALERT_MAX_ATTEMPTS,
+    maxStaleRecoveries = IMMEDIATE_ALERT_MAX_STALE_RECOVERIES,
   } = {},
   query = pool.query.bind(pool)
 ) {
   const result = await query(
     `UPDATE telegram_immediate_alerts
-     SET status = 'failed',
-         terminal_at = COALESCE(terminal_at, now()),
+     SET status = CASE
+           WHEN stale_recoveries < $3 THEN 'pending'
+           ELSE 'failed'
+         END,
+         attempts = CASE
+           WHEN stale_recoveries < $3 THEN GREATEST(0, $2 - 1)
+           ELSE attempts
+         END,
+         stale_recoveries = CASE
+           WHEN stale_recoveries < $3 THEN stale_recoveries + 1
+           ELSE stale_recoveries
+         END,
+         terminal_at = CASE
+           WHEN stale_recoveries < $3 THEN NULL
+           ELSE COALESCE(terminal_at, now())
+         END,
          claimed_at = NULL,
          lease_token = NULL,
-         next_attempt_at = NULL,
-         error_text = COALESCE(error_text, 'Telegram alert worker stopped during the final send attempt.'),
+         next_attempt_at = CASE
+           WHEN stale_recoveries < $3 THEN now()
+           ELSE NULL
+         END,
+         error_text = CASE
+           WHEN stale_recoveries < $3
+             THEN 'Recovered ambiguous final Telegram attempt after worker restart; one final retry allowed.'
+           ELSE COALESCE(
+             error_text,
+             'Telegram alert worker stopped repeatedly during the final send attempt.'
+           )
+         END,
          updated_at = now()
      WHERE terminal_at IS NULL
        AND status = 'sending'
        AND attempts >= $2
        AND claimed_at <= now() - ($1::integer * interval '1 second')
-     RETURNING id`,
-    [staleAfterSeconds, maxAttempts]
+     RETURNING *`,
+    [staleAfterSeconds, maxAttempts, maxStaleRecoveries]
   );
   return result.rows;
 }
@@ -299,7 +374,9 @@ module.exports = {
   HUMAN_ALERT_LOCK_NAMESPACE,
   IMMEDIATE_ALERT_BATCH_SIZE,
   IMMEDIATE_ALERT_MAX_ATTEMPTS,
+  IMMEDIATE_ALERT_MAX_STALE_RECOVERIES,
   IMMEDIATE_ALERT_STALE_AFTER_SECONDS,
+  cancelOlderPendingBookingReady,
   claimReady,
   findNextDueAt,
   insertAlert,
@@ -308,4 +385,5 @@ module.exports = {
   markFailed,
   markSent,
   queueAlert,
+  safeLeadId,
 };
