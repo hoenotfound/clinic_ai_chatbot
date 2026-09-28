@@ -261,7 +261,7 @@ async function supersedeCoveredSummaries(
          a.status = 'pending'
          OR (
            a.status = 'sending'
-           AND a.claimed_at <= now() - (10 * interval '1 minute')
+           AND a.claimed_at <= now() - (${CLAIM_STALE_MINUTES} * interval '1 minute')
          )
        )
        AND COALESCE(a.score_data->>'alertType', '') <> 'ai_scoring_failed'
