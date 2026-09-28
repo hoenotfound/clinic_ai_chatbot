@@ -338,6 +338,21 @@ test("overview exposes masked candidate health without any key material", async 
         last_rate_limited_at: "2026-09-03T11:30:00.000Z",
       },
     ]),
+    ai: {
+      getRuntimeCandidateHealth() {
+        return [{
+          candidate_key: candidateKey,
+          provider: "gemini",
+          last_status: "rate_limited",
+          last_failure_kind: "rate_limit",
+          last_attempt_at: "2026-09-03T11:30:00.000Z",
+          last_success_at: "2026-09-03T09:00:00.000Z",
+          last_failure_at: "2026-09-03T11:30:00.000Z",
+          last_rate_limited_at: "2026-09-03T11:30:00.000Z",
+          cooldown_until: "2026-09-03T12:00:30.000Z",
+        }];
+      },
+    },
   });
 
   const status = await service.getOverview();
@@ -345,6 +360,7 @@ test("overview exposes masked candidate health without any key material", async 
   assert.equal(ai.candidateHealth[0].label, "Gemini key 1");
   assert.equal(ai.candidateHealth[0].status, "rate_limited");
   assert.equal(ai.candidateHealth[0].lastRateLimitedAt, "2026-09-03T11:30:00.000Z");
+  assert.equal(ai.candidateHealth[0].cooldownUntil, "2026-09-03T12:00:30.000Z");
   assert.equal(JSON.stringify(status).includes(env.GEMINI_API_KEY), false);
   assert.equal(JSON.stringify(status).includes(candidateKey), false);
 });
