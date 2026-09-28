@@ -169,6 +169,7 @@ test("migration upgrades old sent markers without replaying them", () => {
 
   assert.match(source, /UPDATE telegram_immediate_alerts[\s\S]*status = 'sent'/);
   assert.match(source, /sent_at = COALESCE\(sent_at, created_at\)/);
-  assert.match(source, /ALTER COLUMN status SET DEFAULT 'pending'/);
+  assert.match(source, /ALTER COLUMN status SET DEFAULT 'sent'/);
+  assert.match(source, /new queue writer explicitly[\s\S]*status='pending'/);
   assert.match(source, /status IN \('pending', 'sending', 'sent', 'failed'\)/);
 });
