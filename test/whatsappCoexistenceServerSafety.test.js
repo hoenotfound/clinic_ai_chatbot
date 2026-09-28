@@ -3,18 +3,22 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const source = fs.readFileSync(
+const serverSource = fs.readFileSync(
   path.join(__dirname, "../src/server.js"),
+  "utf8"
+);
+const appSource = fs.readFileSync(
+  path.join(__dirname, "../src/createApp.js"),
   "utf8"
 );
 
 test("Business App echo is marked pending before webhook durability awaits", () => {
-  const webhookStart = source.indexOf('app.post("/webhook"');
-  const beginIndex = source.indexOf(
+  const webhookStart = appSource.indexOf('app.post("/webhook"');
+  const beginIndex = appSource.indexOf(
     "whatsappCoexistence.beginPendingAiForEcho(echo)",
     webhookStart
   );
-  const durabilityIndex = source.indexOf("await Promise.all([", webhookStart);
+  const durabilityIndex = appSource.indexOf("await Promise.all([", webhookStart);
 
   assert.ok(webhookStart >= 0);
   assert.ok(beginIndex > webhookStart);
@@ -22,16 +26,16 @@ test("Business App echo is marked pending before webhook durability awaits", () 
 });
 
 test("Business App bookkeeping completes after durable echo persistence and before webhook ACK", () => {
-  const webhookStart = source.indexOf('app.post("/webhook"');
-  const persistIndex = source.indexOf(
+  const webhookStart = appSource.indexOf('app.post("/webhook"');
+  const persistIndex = appSource.indexOf(
     "whatsappCoexistence.persistBusinessAppEcho(echo, { pendingStarted: true })",
     webhookStart
   );
-  const finalizeIndex = source.indexOf(
+  const finalizeIndex = appSource.indexOf(
     "await whatsappCoexistence.finalizeBusinessAppEcho(persisted)",
     webhookStart
   );
-  const ackIndex = source.indexOf("res.sendStatus(200)", webhookStart);
+  const ackIndex = appSource.indexOf("res.sendStatus(200)", webhookStart);
 
   assert.ok(persistIndex > webhookStart);
   assert.ok(finalizeIndex > persistIndex);
@@ -39,12 +43,12 @@ test("Business App bookkeeping completes after durable echo persistence and befo
 });
 
 test("final coexistence guard runs after final ownership lookup and before tracked AI send", () => {
-  const ownershipIndex = source.indexOf("const finalSendContact = flagged");
-  const guardIndex = source.indexOf(
+  const ownershipIndex = appSource.indexOf("const finalSendContact = flagged");
+  const guardIndex = appSource.indexOf(
     "aiReplyCancellation.safeToSend",
     ownershipIndex
   );
-  const sendIndex = source.indexOf(
+  const sendIndex = appSource.indexOf(
     "const sendOutcome = await sendTrackedText(",
     guardIndex
   );
@@ -56,9 +60,9 @@ test("final coexistence guard runs after final ownership lookup and before track
 
 
 test("coexistence guard is opt-in and ordinary WhatsApp keeps the legacy send path", () => {
-  const keyBlock = source.slice(
-    source.indexOf("const aiCancellationKey ="),
-    source.indexOf("const aiCancellationToken =", source.indexOf("const aiCancellationKey ="))
+  const keyBlock = serverSource.slice(
+    appSource.indexOf("const aiCancellationKey ="),
+    appSource.indexOf("const aiCancellationToken =", appSource.indexOf("const aiCancellationKey ="))
   );
   assert.match(
     keyBlock,
@@ -67,15 +71,15 @@ test("coexistence guard is opt-in and ordinary WhatsApp keeps the legacy send pa
 });
 
 test("existing synthetic AI handoff acknowledgement remains sendable", () => {
-  const finalContactIndex = source.indexOf("const finalSendContact = flagged");
-  const guardIndex = source.indexOf(
+  const finalContactIndex = appSource.indexOf("const finalSendContact = flagged");
+  const guardIndex = appSource.indexOf(
     "aiReplyCancellation.safeToSend",
     finalContactIndex
   );
 
   assert.ok(finalContactIndex >= 0);
   assert.ok(guardIndex > finalContactIndex);
-  const block = source.slice(finalContactIndex, guardIndex);
+  const block = serverSource.slice(finalContactIndex, guardIndex);
   assert.match(block, /flagged[\s\S]*getPendingAiHandoffContact\(contact\.id\)/);
   assert.match(block, /getAiOwnedContact\(contact/);
 });
