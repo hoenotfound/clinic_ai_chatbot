@@ -79,16 +79,16 @@ test("actionable alert coverage is state-aware and manual-review summaries are e
       assert.match(sql, /alertType', ''\) <> 'ai_scoring_failed'/);
       return { rows: [{ status: "sent" }] };
     }
+    if (/UPDATE telegram_summary_alerts a/.test(sql) && /FROM leads l/.test(sql)) {
+      assert.match(sql, /immediate\.status = 'sent'/);
+      assert.match(sql, /alertType', ''\) <> 'ai_scoring_failed'/);
+      return { rows: [{ id: 33 }] };
+    }
     if (/SET status = 'superseded'/.test(sql)) {
       return { rows: [{ id: 31, status: "superseded" }] };
     }
     if (/SET status = 'pending'/.test(sql) && /attempts = GREATEST/.test(sql)) {
       return { rows: [{ id: 32, status: "pending", attempts: 0 }] };
-    }
-    if (/UPDATE telegram_summary_alerts a/.test(sql) && /FROM leads l/.test(sql)) {
-      assert.match(sql, /immediate\.status = 'sent'/);
-      assert.match(sql, /alertType', ''\) <> 'ai_scoring_failed'/);
-      return { rows: [{ id: 33 }] };
     }
     throw new Error("Unexpected SQL in anti-spam repo test");
   };
