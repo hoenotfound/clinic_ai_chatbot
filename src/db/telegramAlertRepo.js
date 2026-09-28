@@ -3,6 +3,7 @@ const { pool } = require("./db");
 const CLAIM_STALE_MINUTES = 10;
 const MAX_ATTEMPTS = 3;
 const QUEUE_LOCK_NAMESPACE = 24684;
+const ACTIONABLE_SUMMARY_SUPPRESSION_MINUTES = 60;
 
 async function withTransaction(work) {
   const client = await pool.connect();
@@ -59,7 +60,11 @@ async function queueSummary({ leadId, throughMessageId, score }) {
   });
 }
 
-async function findReadySummaries({ inactivityMinutes, limit = 5 }) {
+async function findReadySummaries({
+  inactivityMinutes,
+  limit = 5,
+  suppressionMinutes = ACTIONABLE_SUMMARY_SUPPRESSION_MINUTES,
+}) {
   const result = await pool.query(
     `SELECT
        a.id AS alert_id, a.lead_id, a.through_message_id, a.score_data,
@@ -93,15 +98,33 @@ async function findReadySummaries({ inactivityMinutes, limit = 5 }) {
            AND newer_customer.role = 'user'
            AND newer_customer.id > a.through_message_id
        )
+       AND (
+         COALESCE(a.score_data->>'alertType', '') = 'ai_scoring_failed'
+         OR NOT EXISTS (
+           SELECT 1
+           FROM telegram_immediate_alerts immediate
+           WHERE immediate.contact_id = l.contact_id
+             AND immediate.alert_type IN ('human_intervention', 'booking_ready', 'staff_waiting')
+             AND immediate.status IN ('pending', 'sending', 'sent')
+             AND immediate.created_at >=
+                 a.created_at - ($3::integer * interval '1 minute')
+             AND immediate.created_at <=
+                 a.created_at + ($3::integer * interval '1 minute')
+         )
+       )
        AND latest.created_at <= now() - ($1::integer * interval '1 minute')
      ORDER BY latest.created_at ASC, a.id ASC
      LIMIT $2`,
-    [inactivityMinutes, limit]
+    [inactivityMinutes, limit, suppressionMinutes]
   );
   return result.rows;
 }
 
-async function claimSummary(alertId, inactivityMinutes) {
+async function claimSummary(
+  alertId,
+  inactivityMinutes,
+  suppressionMinutes = ACTIONABLE_SUMMARY_SUPPRESSION_MINUTES
+) {
   // Re-check the customer-message boundary and inactivity threshold in the
   // same SQL statement that claims the row. A customer reply arriving after
   // findReadySummaries() but before this claim therefore cancels the send.
@@ -131,6 +154,20 @@ async function claimSummary(alertId, inactivityMinutes) {
            AND newer_customer.id > a.through_message_id
        )
        AND (
+         COALESCE(a.score_data->>'alertType', '') = 'ai_scoring_failed'
+         OR NOT EXISTS (
+           SELECT 1
+           FROM telegram_immediate_alerts immediate
+           WHERE immediate.contact_id = l.contact_id
+             AND immediate.alert_type IN ('human_intervention', 'booking_ready', 'staff_waiting')
+             AND immediate.status IN ('pending', 'sending', 'sent')
+             AND immediate.created_at >=
+                 a.created_at - ($3::integer * interval '1 minute')
+             AND immediate.created_at <=
+                 a.created_at + ($3::integer * interval '1 minute')
+         )
+       )
+       AND (
          SELECT latest.created_at
          FROM messages latest
          WHERE latest.contact_id = l.contact_id
@@ -145,9 +182,98 @@ async function claimSummary(alertId, inactivityMinutes) {
        u.display_name AS owner_display_name, s.name AS stage_name,
        c.whatsapp_number, c.name, c.whatsapp_profile_name,
        c.channel, c.channel_user_id`,
-    [alertId, inactivityMinutes]
+    [alertId, inactivityMinutes, suppressionMinutes]
   );
   return result.rows[0] || null;
+}
+
+async function findActionableCoverage(
+  alertId,
+  suppressionMinutes = ACTIONABLE_SUMMARY_SUPPRESSION_MINUTES
+) {
+  const result = await pool.query(
+    `SELECT immediate.status
+     FROM telegram_summary_alerts a
+     JOIN leads l ON l.id = a.lead_id
+     JOIN telegram_immediate_alerts immediate
+       ON immediate.contact_id = l.contact_id
+     WHERE a.id = $1
+       AND COALESCE(a.score_data->>'alertType', '') <> 'ai_scoring_failed'
+       AND immediate.alert_type IN ('human_intervention', 'booking_ready', 'staff_waiting')
+       AND immediate.status IN ('pending', 'sending', 'sent')
+       AND immediate.created_at >=
+           a.created_at - ($2::integer * interval '1 minute')
+       AND immediate.created_at <=
+           a.created_at + ($2::integer * interval '1 minute')
+     ORDER BY
+       CASE immediate.status WHEN 'sent' THEN 0 WHEN 'sending' THEN 1 ELSE 2 END,
+       immediate.created_at DESC,
+       immediate.id DESC
+     LIMIT 1`,
+    [alertId, suppressionMinutes]
+  );
+  return result.rows[0]?.status || null;
+}
+
+async function markSuperseded(alertId) {
+  const result = await pool.query(
+    `UPDATE telegram_summary_alerts
+     SET status = 'superseded',
+         claimed_at = NULL,
+         error_text = NULL,
+         updated_at = now()
+     WHERE id = $1
+       AND status IN ('pending', 'sending')
+     RETURNING *`,
+    [alertId]
+  );
+  return result.rows[0] || null;
+}
+
+async function releaseClaim(alertId) {
+  const result = await pool.query(
+    `UPDATE telegram_summary_alerts
+     SET status = 'pending',
+         attempts = GREATEST(0, attempts - 1),
+         claimed_at = NULL,
+         error_text = NULL,
+         updated_at = now()
+     WHERE id = $1
+       AND status = 'sending'
+     RETURNING *`,
+    [alertId]
+  );
+  return result.rows[0] || null;
+}
+
+async function supersedeCoveredSummaries(
+  suppressionMinutes = ACTIONABLE_SUMMARY_SUPPRESSION_MINUTES
+) {
+  const result = await pool.query(
+    `UPDATE telegram_summary_alerts a
+     SET status = 'superseded',
+         claimed_at = NULL,
+         error_text = NULL,
+         updated_at = now()
+     FROM leads l
+     WHERE a.lead_id = l.id
+       AND a.status = 'pending'
+       AND COALESCE(a.score_data->>'alertType', '') <> 'ai_scoring_failed'
+       AND EXISTS (
+         SELECT 1
+         FROM telegram_immediate_alerts immediate
+         WHERE immediate.contact_id = l.contact_id
+           AND immediate.alert_type IN ('human_intervention', 'booking_ready', 'staff_waiting')
+           AND immediate.status = 'sent'
+           AND immediate.created_at >=
+               a.created_at - ($1::integer * interval '1 minute')
+           AND immediate.created_at <=
+               a.created_at + ($1::integer * interval '1 minute')
+       )
+     RETURNING a.id`,
+    [suppressionMinutes]
+  );
+  return result.rows;
 }
 
 async function markSent(alertId) {
@@ -176,12 +302,17 @@ async function markFailed(alertId, error) {
 }
 
 module.exports = {
+  ACTIONABLE_SUMMARY_SUPPRESSION_MINUTES,
   CLAIM_STALE_MINUTES,
   MAX_ATTEMPTS,
   QUEUE_LOCK_NAMESPACE,
   claimSummary,
+  findActionableCoverage,
   findReadySummaries,
   markFailed,
   markSent,
+  markSuperseded,
   queueSummary,
+  releaseClaim,
+  supersedeCoveredSummaries,
 };
