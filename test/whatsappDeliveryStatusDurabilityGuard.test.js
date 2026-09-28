@@ -3,17 +3,18 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const source = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
+const appSource = fs.readFileSync(path.join(__dirname, "../src/createApp.js"), "utf8");
+const startupSource = fs.readFileSync(
+  path.join(__dirname, "../src/services/applicationStartup.js"),
+  "utf8"
+);
 
 function whatsappRoute() {
-  const start = source.indexOf('app.post("/webhook", webhookJsonParser');
-  const end = source.indexOf(
-    "// ── Facebook Messenger + Instagram Messaging webhook verification",
-    start
-  );
+  const start = appSource.indexOf('app.post("/webhook", webhookJsonParser');
+  const end = appSource.indexOf('app.get("/meta-webhook"', start);
   assert.notEqual(start, -1);
   assert.notEqual(end, -1);
-  return source.slice(start, end);
+  return appSource.slice(start, end);
 }
 
 test("WhatsApp delivery-status jobs are persisted before the webhook ACK", () => {
@@ -42,8 +43,8 @@ test("delivery-status side effects happen only after the durable webhook ACK", (
 });
 
 test("startup launches delivery-status restart recovery after migrations", () => {
-  const migration = source.indexOf("await initSchema()");
-  const recovery = source.indexOf("startWhatsAppDeliveryStatusRecovery()");
+  const migration = startupSource.indexOf("await initSchema()");
+  const recovery = startupSource.indexOf("startWhatsAppDeliveryStatusRecovery()");
 
   assert.ok(migration >= 0);
   assert.ok(recovery > migration);
