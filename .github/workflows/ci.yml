@@ -51,7 +51,7 @@ jobs:
       - run: npm run build
       - name: Install Playwright test runner
         run: npm install --no-save @playwright/test@1.55.0
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
       - name: Run Playwright smoke tests
         run: npx playwright test
