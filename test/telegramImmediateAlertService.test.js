@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  DELIVERY_ALERT_COOLDOWN_MINUTES,
   HUMAN_ALERT_COOLDOWN_MINUTES,
   IMMEDIATE_ALERT_RETRY_DELAYS_MS,
   buildImmediateAlertMessage,
@@ -242,7 +243,7 @@ test("delivery failures are durably queued with the rendered alert text", async 
   assert.equal(queued.length, 1);
   assert.equal(queued[0].type, "delivery_failure");
   assert.equal(queued[0].contactId, 12);
-  assert.equal(queued[0].cooldownMinutes, 0);
+  assert.equal(queued[0].cooldownMinutes, DELIVERY_ALERT_COOLDOWN_MINUTES);
   assert.match(queued[0].eventKey, /^delivery:12:event:/);
   assert.match(queued[0].messageText, /outside reply window/);
 });
