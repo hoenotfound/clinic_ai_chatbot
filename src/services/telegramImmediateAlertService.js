@@ -85,6 +85,65 @@ function deliveryFailureEventKey(contactId) {
   return `delivery:${contactId}:event:${crypto.randomUUID()}`;
 }
 
+function staffWaitingReference(alert) {
+  if (alert?.alert_type !== "staff_waiting") return null;
+  const match = /^staff_waiting:(\d+):(\d+)$/.exec(String(alert.event_key || ""));
+  if (!match) return null;
+
+  const contactId = Number(match[1]);
+  const waitingMessageId = Number(match[2]);
+  if (
+    !Number.isSafeInteger(contactId) ||
+    contactId < 1 ||
+    !Number.isSafeInteger(waitingMessageId) ||
+    waitingMessageId < 1 ||
+    Number(alert.contact_id) !== contactId
+  ) {
+    return null;
+  }
+
+  return { contactId, waitingMessageId };
+}
+
+async function shouldSendImmediateAlert(
+  alert,
+  query = pool.query.bind(pool)
+) {
+  if (alert?.alert_type !== "staff_waiting") return true;
+
+  const reference = staffWaitingReference(alert);
+  if (!reference) return false;
+
+  const result = await query(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM contacts c
+       JOIN messages waiting_message
+         ON waiting_message.id = $2
+        AND waiting_message.contact_id = c.id
+        AND waiting_message.role = 'user'
+       WHERE c.id = $1
+         AND (c.mode = 'human' OR c.needs_attention = true)
+         AND NOT EXISTS (
+           SELECT 1
+           FROM messages outbound
+           WHERE outbound.contact_id = c.id
+             AND outbound.role = 'assistant'
+             AND outbound.sent_by_username IS NOT NULL
+             AND outbound.is_automated_follow_up = false
+             AND (
+               outbound.delivery_status IS NULL
+               OR outbound.delivery_status NOT IN ('failed', 'unknown')
+             )
+             AND (outbound.created_at, outbound.id) >
+                 (waiting_message.created_at, waiting_message.id)
+         )
+     ) AS waiting`,
+    [reference.contactId, reference.waitingMessageId]
+  );
+  return Boolean(result.rows[0]?.waiting);
+}
+
 function nextStepLabel(value) {
   if (value === "site_visit") return "Site visit";
   if (value === "quotation_discussion") return "Quotation discussion";
@@ -182,6 +241,7 @@ function createImmediateAlertQueueRunner({
   env = process.env,
   repository = telegramImmediateAlertRepo,
   sendMessage = postTelegramMessage,
+  shouldSendAlert = shouldSendImmediateAlert,
   logger = console,
 } = {}) {
   let running = false;
@@ -201,6 +261,18 @@ function createImmediateAlertQueueRunner({
 
       for (const alert of alerts) {
         try {
+          const stillApplies = await shouldSendAlert(alert);
+          if (!stillApplies) {
+            await repository.markCancelled(
+              alert.id,
+              alert.lease_token,
+              alert.alert_type === "staff_waiting"
+                ? "Staff-waiting reminder resolved before Telegram delivery."
+                : "Alert no longer applies."
+            );
+            continue;
+          }
+
           await sendMessage({
             token: env.TELEGRAM_BOT_TOKEN,
             chatId: env.TELEGRAM_CHAT_ID,
@@ -366,6 +438,8 @@ module.exports = {
   deliveryFailureEventKey,
   getImmediateAlertContext,
   humanInterventionEventKey,
+  shouldSendImmediateAlert,
+  staffWaitingReference,
   queuePreparedAlert: defaultService.queuePreparedAlert,
   retryDelayMsForAttempt,
   runImmediateAlertQueue,
