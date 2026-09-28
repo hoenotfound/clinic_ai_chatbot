@@ -2,13 +2,14 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("crypto");
 const express = require("express");
-const bodyParser = require("body-parser");
 
 const { verifyWebhookSignature } = require("../src/middleware/verifyWebhookSignature");
 const { verifyMetaWebhookSignature } = require("../src/middleware/verifyMetaWebhookSignature");
 const {
   PORTAL_JSON_LIMIT,
   WEBHOOK_JSON_LIMIT,
+  createPortalJsonParser,
+  createWebhookJsonParser,
   payloadTooLargeErrorHandler,
 } = require("../src/middleware/requestBodyLimits");
 const {
@@ -103,7 +104,7 @@ test("signed WhatsApp webhook batch above 100 KB is accepted below the 2 MB webh
   const app = express();
   app.post(
     "/webhook",
-    bodyParser.json({ limit: WEBHOOK_JSON_LIMIT, verify: verifyWebhookSignature }),
+    createWebhookJsonParser(verifyWebhookSignature),
     (req, res) => res.json({ ok: true, statuses: req.body.entry[0].changes[0].value.statuses.length }),
   );
   app.use(payloadTooLargeErrorHandler);
@@ -132,7 +133,7 @@ test("signed Facebook/Instagram webhook batch above 100 KB is accepted below the
   const app = express();
   app.post(
     "/meta-webhook",
-    bodyParser.json({ limit: WEBHOOK_JSON_LIMIT, verify: verifyMetaWebhookSignature }),
+    createWebhookJsonParser(verifyMetaWebhookSignature),
     (req, res) => res.json({ ok: true, messages: req.body.entry[0].messaging.length }),
   );
   app.use(payloadTooLargeErrorHandler);
@@ -161,7 +162,7 @@ test("WhatsApp webhook rejects payloads above 2 MB with a clean 413 response", a
   const app = express();
   app.post(
     "/webhook",
-    bodyParser.json({ limit: WEBHOOK_JSON_LIMIT, verify: verifyWebhookSignature }),
+    createWebhookJsonParser(verifyWebhookSignature),
     (_req, res) => res.sendStatus(200),
   );
   app.use(payloadTooLargeErrorHandler);
@@ -191,7 +192,7 @@ test("social webhook rejects payloads above 2 MB with a clean 413 response", asy
   const app = express();
   app.post(
     "/meta-webhook",
-    bodyParser.json({ limit: WEBHOOK_JSON_LIMIT, verify: verifyMetaWebhookSignature }),
+    createWebhookJsonParser(verifyMetaWebhookSignature),
     (_req, res) => res.sendStatus(200),
   );
   app.use(payloadTooLargeErrorHandler);
@@ -209,7 +210,7 @@ test("social webhook rejects payloads above 2 MB with a clean 413 response", asy
 
 test("portal API JSON remains capped at the existing 100 KB behavior", async () => {
   const app = express();
-  app.use("/api", bodyParser.json({ limit: PORTAL_JSON_LIMIT }));
+  app.use("/api", createPortalJsonParser());
   app.post("/api/test", (req, res) => res.json({ ok: true, value: req.body.value }));
   app.use(payloadTooLargeErrorHandler);
 
@@ -235,7 +236,7 @@ test("signature verification still rejects a wrong signature below the size limi
   const app = express();
   app.post(
     "/webhook",
-    bodyParser.json({ limit: WEBHOOK_JSON_LIMIT, verify: verifyWebhookSignature }),
+    createWebhookJsonParser(verifyWebhookSignature),
     (_req, res) => res.sendStatus(200),
   );
   app.use(payloadTooLargeErrorHandler);
