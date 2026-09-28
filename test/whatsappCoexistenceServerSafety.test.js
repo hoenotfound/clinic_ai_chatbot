@@ -43,12 +43,12 @@ test("Business App bookkeeping completes after durable echo persistence and befo
 });
 
 test("final coexistence guard runs after final ownership lookup and before tracked AI send", () => {
-  const ownershipIndex = appSource.indexOf("const finalSendContact = flagged");
-  const guardIndex = appSource.indexOf(
+  const ownershipIndex = serverSource.indexOf("const finalSendContact = flagged");
+  const guardIndex = serverSource.indexOf(
     "aiReplyCancellation.safeToSend",
     ownershipIndex
   );
-  const sendIndex = appSource.indexOf(
+  const sendIndex = serverSource.indexOf(
     "const sendOutcome = await sendTrackedText(",
     guardIndex
   );
@@ -60,9 +60,10 @@ test("final coexistence guard runs after final ownership lookup and before track
 
 
 test("coexistence guard is opt-in and ordinary WhatsApp keeps the legacy send path", () => {
+  const keyStart = serverSource.indexOf("const aiCancellationKey =");
   const keyBlock = serverSource.slice(
-    appSource.indexOf("const aiCancellationKey ="),
-    appSource.indexOf("const aiCancellationToken =", appSource.indexOf("const aiCancellationKey ="))
+    keyStart,
+    serverSource.indexOf("const aiCancellationToken =", keyStart)
   );
   assert.match(
     keyBlock,
@@ -71,8 +72,8 @@ test("coexistence guard is opt-in and ordinary WhatsApp keeps the legacy send pa
 });
 
 test("existing synthetic AI handoff acknowledgement remains sendable", () => {
-  const finalContactIndex = appSource.indexOf("const finalSendContact = flagged");
-  const guardIndex = appSource.indexOf(
+  const finalContactIndex = serverSource.indexOf("const finalSendContact = flagged");
+  const guardIndex = serverSource.indexOf(
     "aiReplyCancellation.safeToSend",
     finalContactIndex
   );
