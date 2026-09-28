@@ -1,6 +1,9 @@
 -- Upgrade the historical immediate-alert sent-marker table into a durable
 -- delivery queue. Existing rows represent alerts that were already sent before
--- this migration, so they are backfilled as sent. New alerts default to pending.
+-- this migration, so they are backfilled as sent. Keep the database default as
+-- sent for rolling-deploy/rollback compatibility with the old app, which inserts
+-- a sent marker only after Telegram succeeds. The new queue writer explicitly
+-- inserts status='pending' for new durable work.
 
 ALTER TABLE telegram_immediate_alerts
   ADD COLUMN IF NOT EXISTS message_text TEXT,
@@ -21,7 +24,7 @@ SET status = 'sent',
 WHERE status IS NULL;
 
 ALTER TABLE telegram_immediate_alerts
-  ALTER COLUMN status SET DEFAULT 'pending',
+  ALTER COLUMN status SET DEFAULT 'sent',
   ALTER COLUMN status SET NOT NULL;
 
 ALTER TABLE telegram_immediate_alerts
