@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const source = fs.readFileSync(
-  path.join(__dirname, "../src/server.js"),
+  path.join(__dirname, "../src/createApp.js"),
   "utf8"
 );
 
@@ -19,7 +19,7 @@ function routeBody(startMarker, endMarker) {
 test("WhatsApp persists inbound jobs before returning HTTP 200", () => {
   const route = routeBody(
     'app.post("/webhook", webhookJsonParser',
-    "// ── Facebook Messenger + Instagram Messaging webhook verification"
+    'app.get("/meta-webhook"'
   );
   const durable = route.indexOf("await durablyClaimIncoming");
   const ack = route.indexOf("res.sendStatus(200)");
@@ -32,7 +32,7 @@ test("WhatsApp persists inbound jobs before returning HTTP 200", () => {
 test("standard Messenger/Instagram messages persist before returning HTTP 200", () => {
   const route = routeBody(
     'app.post("/meta-webhook", metaWebhookJsonParser',
-    "// ── Promo graphics uploaded from Settings"
+    'app.get("/promo-images/:id"'
   );
   const durable = route.indexOf("await durablyClaimIncoming");
   const ack = route.indexOf("res.sendStatus(200)");
@@ -45,11 +45,11 @@ test("standard Messenger/Instagram messages persist before returning HTTP 200", 
 test("AI/media work remains after webhook acknowledgement", () => {
   const whatsappRoute = routeBody(
     'app.post("/webhook", webhookJsonParser',
-    "// ── Facebook Messenger + Instagram Messaging webhook verification"
+    'app.get("/meta-webhook"'
   );
   const metaRoute = routeBody(
     'app.post("/meta-webhook", metaWebhookJsonParser',
-    "// ── Promo graphics uploaded from Settings"
+    'app.get("/promo-images/:id"'
   );
 
   assert.ok(

@@ -10,10 +10,10 @@ function source(relativePath) {
 }
 
 test("go-live API is authenticated and administrator-only", () => {
-  const server = source("src/server.js");
+  const app = source("src/createApp.js");
   const route = source("src/routes/goLive.js");
 
-  assert.match(server, /app\.use\("\/api\/go-live", requireAuth, goLiveRoutes\)/);
+  assert.match(app, /app\.use\("\/api\/go-live", requireAuth, goLiveRoutes\)/);
   assert.match(route, /router\.use\(requireAdministrator\)/);
   assert.match(route, /req\.user\?\.role !== "admin"/);
 });

@@ -13,10 +13,10 @@ function source(relativePath) {
 }
 
 test("client ops readiness endpoint is machine-token protected and bypasses user-session auth", () => {
-  const server = source("src/server.js");
-  assert.match(server, /app\.use\("\/api\/ops\/readiness", opsReadinessRoutes\)/);
-  const opsIndex = server.indexOf('app.use("/api/ops/readiness", opsReadinessRoutes)');
-  const managementIndex = server.indexOf('app.use("/api/auth", authRoutes)');
+  const app = source("src/createApp.js");
+  assert.match(app, /app\.use\("\/api\/ops\/readiness", opsReadinessRoutes\)/);
+  const opsIndex = app.indexOf('app.use("/api/ops/readiness", opsReadinessRoutes)');
+  const managementIndex = app.indexOf('app.use("/api/auth", authRoutes)');
   assert.equal(opsIndex >= 0 && managementIndex >= 0 && opsIndex < managementIndex, true);
 });
 

@@ -1,14 +1,7 @@
 require("dotenv").config();
-const path = require("path");
-const express = require("express");
-const cookieSession = require("cookie-session");
 
-const whatsapp = require("./services/whatsappService");
-const whatsappCoexistence = require("./services/whatsappCoexistenceService");
 const aiReplyCancellation = require("./services/aiReplyCancellationService");
 const metaMessaging = require("./services/metaMessagingService");
-const metaStaffEcho = require("./services/metaStaffEchoService");
-const metaCommentAutomation = require("./services/metaCommentAutomationService");
 const channelMessaging = require("./services/channelMessagingService");
 const ai = require("./services/aiService");
 const { transcribeAudio } = require("./services/transcriptionService");
@@ -26,13 +19,7 @@ const {
 } = require("./services/inboundMessageClaimService");
 const {
   processClaimedBatch,
-  startInboundProcessingRecovery,
 } = require("./services/inboundProcessingService");
-const {
-  processStoredDeliveryStatuses,
-  startWhatsAppDeliveryStatusRecovery,
-  storeDeliveryStatusUpdates,
-} = require("./services/whatsappDeliveryStatusService");
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const conversationStore = require("./utils/conversationStore");
 const { getActivePromotion } = require("./utils/activePromotion");
@@ -46,52 +33,18 @@ const { getOperationalLabels } = require("./utils/businessTerminology");
 const messagesRepo = require("./db/messagesRepo");
 const outboundMessageEvidenceRepo = require("./db/outboundMessageEvidenceRepo");
 const contactsRepo = require("./db/contactsRepo");
-const pipelineRepo = require("./db/pipelineRepo");
 const { checkKeywordTriggers } = require("./utils/attentionTriggers");
 const realtimeEvents = require("./utils/realtimeEvents");
 const {
   enqueueConversation,
   enqueueConversationBurst,
 } = require("./utils/conversationQueue");
-const { verifyWebhookSignature } = require("./middleware/verifyWebhookSignature");
-const { verifyMetaWebhookSignature } = require("./middleware/verifyMetaWebhookSignature");
-const {
-  createPortalJsonParser,
-  createWebhookJsonParser,
-  payloadTooLargeErrorHandler,
-} = require("./middleware/requestBodyLimits");
-const { requireAuth } = require("./middleware/requireAuth");
-
-const authRoutes = require("./routes/auth");
-const conversationsRoutes = require("./routes/conversations");
-const configRoutes = require("./routes/config");
-const contactsRoutes = require("./routes/contacts");
-const pipelineRoutes = require("./routes/pipeline");
-const setupStatusRoutes = require("./routes/setupStatus");
-const whatsappCoexistenceOnboardingRoutes = require("./routes/whatsappCoexistenceOnboarding");
-const goLiveRoutes = require("./routes/goLive");
-const opsReadinessRoutes = require("./routes/opsReadiness");
-const { bootstrapAdminUser } = require("./db/bootstrapAdmin");
-const configRepo = require("./db/configRepo");
-const { pruneOrphanedPromoImages } = configRepo;
-const promoImagesRepo = require("./db/promoImagesRepo");
-const { initSchema } = require("./db/db");
-const setupStatusRepo = require("./db/setupStatusRepo");
-const { startAutomatedFollowUps } = require("./services/followUpService");
-const { startLeadScoring } = require("./services/leadScoringService");
-const { startStaffWaitingAlerts } = require("./services/staffWaitingAlertService");
-const startupReadiness = require("./services/startupReadinessService");
-const {
-  closeHttpServer,
-  listenHttpServer,
-} = require("./services/httpServerStartup");
 const {
   reviewLeadTemperatureForMessage,
 } = require("./services/leadTemperatureAutomation");
+const { createApp } = require("./createApp");
+const { startApplication } = require("./services/applicationStartup");
 
-// How often the backstop sweep for abandoned promo-image uploads runs —
-// see the setInterval call in start() below.
-const PROMO_IMAGE_PRUNE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 const WHATSAPP_SEND_REJECTED_ERROR =
   "WhatsApp did not accept this message. Check the reply window or connection and try again.";
 
@@ -873,17 +826,8 @@ async function processIncomingMessage(
   }
 }
 
-const app = express();
-
-// Needed so req.protocol correctly reflects the original https scheme when
-// running behind a reverse proxy (Render, most PaaS hosts) — used to build a
-// correct public URL for uploaded promo images.
-app.set("trust proxy", true);
-
-const PORT = process.env.PORT || 3000;
-
-// ── WhatsApp webhook: needs the raw body for signature verification, so it
-// gets its own JSON parser instance separate from the portal API's. ──
+// Runtime secret checks stay in the entry point so a misconfigured production
+// deployment still fails before the Express application is constructed.
 if (!process.env.WHATSAPP_APP_SECRET && process.env.NODE_ENV === "production") {
   console.error(
     "❌ WHATSAPP_APP_SECRET is not set. Refusing to start, since without it " +
@@ -892,11 +836,7 @@ if (!process.env.WHATSAPP_APP_SECRET && process.env.NODE_ENV === "production") {
   );
   process.exit(1);
 }
-const webhookJsonParser = createWebhookJsonParser(verifyWebhookSignature);
 
-// Facebook and Instagram use a separate callback and app secret. Keeping this
-// parser separate means enabling social channels cannot change how WhatsApp's
-// existing webhook signature verification behaves.
 const socialMessagingConfigured =
   metaMessaging.configured("facebook") || metaMessaging.configured("instagram");
 if (
@@ -910,10 +850,7 @@ if (
   );
   process.exit(1);
 }
-const metaWebhookJsonParser = createWebhookJsonParser(verifyMetaWebhookSignature);
 
-// ── Portal API: normal JSON parsing + signed session cookie for staff login. ──
-app.use("/api", createPortalJsonParser());
 const SESSION_SECRET = process.env.SESSION_SECRET;
 if (!SESSION_SECRET) {
   console.error(
@@ -924,306 +861,19 @@ if (!SESSION_SECRET) {
   process.exit(1);
 }
 
-app.use(
-  "/api",
-  cookieSession({
-    name: "session",
-    secret: SESSION_SECRET,
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-    httpOnly: true,
-    sameSite: "lax",
-  })
-);
-
-// ── Startup health ──
-// Keep "/" as the Render-compatible readiness check for existing deployments.
-// The dedicated endpoints make liveness vs readiness explicit for diagnostics.
-app.get("/", startupReadiness.rootReadinessHandler);
-app.get("/health/live", startupReadiness.livenessHandler);
-app.get("/health/ready", startupReadiness.readinessHandler);
-
-// The socket opens before database/config initialization so Render can detect
-// the port, but customer/API traffic stays blocked until startup is complete.
-app.use(startupReadiness.requireReady);
-
-// ── WhatsApp webhook verification (unchanged callback) ──
-app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
-    console.log("WhatsApp webhook verified successfully.");
-    return res.status(200).send(challenge);
-  }
-
-  console.warn("WhatsApp webhook verification failed — token mismatch.");
-  return res.sendStatus(403);
+const PORT = process.env.PORT || 3000;
+const app = createApp({
+  sessionSecret: SESSION_SECRET,
+  durablyClaimIncoming,
+  scheduleDurableClaim,
+  queueIncomingForReply,
 });
 
-// ── Incoming WhatsApp messages and delivery statuses ──
-app.post("/webhook", webhookJsonParser, async (req, res) => {
-  const incomingMessages = whatsapp.parseIncomingMessages(req.body);
-  const businessAppEchoes = whatsapp.parseBusinessAppEchoes(req.body);
-  const statusUpdates = whatsapp.parseStatusUpdates(req.body);
-  const passiveSync = whatsappCoexistence.summarizePassiveSync(req.body);
-  for (const echo of businessAppEchoes) {
-    whatsappCoexistence.beginPendingAiForEcho(echo);
-  }
-
-  let durableClaims;
-  let durableStatusJobs;
-  let durableBusinessAppEchoes;
-  try {
-    // Persist customer messages, phone-app staff echoes, and delivery statuses
-    // before ACK. A failed write returns 503 so Meta retries safely.
-    [durableClaims, durableStatusJobs, durableBusinessAppEchoes] = await Promise.all([
-      Promise.all(
-        incomingMessages.map(async (incoming) => ({
-          queueKey: incoming.from,
-          durableClaim: await durablyClaimIncoming(incoming.from, incoming),
-        }))
-      ),
-      storeDeliveryStatusUpdates(statusUpdates),
-      Promise.all(
-        businessAppEchoes.map((echo) =>
-          whatsappCoexistence.persistBusinessAppEcho(echo, { pendingStarted: true })
-        )
-      ),
-    ]);
-  } catch (err) {
-    for (const echo of businessAppEchoes) {
-      whatsappCoexistence.releasePendingAiForEcho(echo);
-    }
-    console.error("Failed to durably accept WhatsApp webhook work:", err);
-    return res.sendStatus(503);
-  }
-
-  // Complete idempotent Inbox/pipeline bookkeeping before ACK. If this process
-  // dies here, Meta can retry the webhook; duplicate echo persistence returns
-  // the existing row without retaking ownership or cancelling a later AI turn.
-  for (const persisted of durableBusinessAppEchoes) {
-    if (!persisted) continue;
-    await whatsappCoexistence.finalizeBusinessAppEcho(persisted);
-  }
-
-  res.sendStatus(200);
-
-  if (passiveSync.historyChunks || passiveSync.appStateItems) {
-    console.log(
-      `Acknowledged WhatsApp coexistence sync event without operational import: history=${passiveSync.historyChunks}, app_state=${passiveSync.appStateItems}`
-    );
-  }
-
-  setupStatusRepo.recordWebhook("whatsapp_webhook").catch((err) => {
-    console.error("Failed to record WhatsApp webhook activity:", err);
-  });
-  for (const { queueKey, durableClaim } of durableClaims) {
-    scheduleDurableClaim(queueKey, durableClaim).catch((err) => {
-      console.error("Failed to schedule durable WhatsApp inbound work:", err);
-    });
-  }
-
-  processStoredDeliveryStatuses(durableStatusJobs).catch((err) => {
-    // The rows are already durable. A process crash or unexpected live-path
-    // failure is recovered by the periodic delivery-status worker.
-    console.error("Failed to schedule durable WhatsApp delivery-status work:", err);
-  });
-});
-
-// ── Facebook Messenger + Instagram Messaging webhook verification ──
-app.get("/meta-webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (mode === "subscribe" && token === process.env.META_VERIFY_TOKEN) {
-    console.log("Facebook/Instagram webhook verified successfully.");
-    return res.status(200).send(challenge);
-  }
-
-  console.warn("Facebook/Instagram webhook verification failed — token mismatch.");
-  return res.sendStatus(403);
-});
-
-app.post("/meta-webhook", metaWebhookJsonParser, async (req, res) => {
-  const incomingMessages = metaMessaging.parseIncomingMessages(req.body);
-  const staffEchoes = metaMessaging.parseStaffEchoes(req.body);
-  for (const echo of staffEchoes) {
-    metaStaffEcho.beginPendingAiForEcho(echo);
-  }
-
-  let durableClaims;
-  let commentJobs;
-  let durableStaffEchoes;
-  try {
-    // Standard Messenger/Instagram message events contain enough data to store
-    // the customer message immediately. Persist those before the 200 ACK just
-    // like WhatsApp. Comment automation also records its work before ACK so a
-    // process restart cannot silently lose a newly received comment.
-    [durableClaims, commentJobs, durableStaffEchoes] = await Promise.all([
-      Promise.all(
-        incomingMessages.map(async (incoming) => {
-          const queueKey = `${incoming.channel}:${incoming.from}`;
-          return {
-            queueKey,
-            durableClaim: await durablyClaimIncoming(queueKey, incoming),
-          };
-        })
-      ),
-      metaCommentAutomation.acceptIncomingComments(req.body),
-      Promise.all(
-        staffEchoes.map((echo) =>
-          metaStaffEcho.persistStaffEcho(echo, { pendingStarted: true })
-        )
-      ),
-    ]);
-  } catch (err) {
-    for (const echo of staffEchoes) {
-      metaStaffEcho.releasePendingAiForEcho(echo);
-    }
-    console.error("Failed to durably accept incoming Meta event(s):", err);
-    return res.sendStatus(503);
-  }
-
-  for (const persisted of durableStaffEchoes) {
-    if (!persisted) continue;
-    await metaStaffEcho.finalizeStaffEcho(persisted);
-  }
-
-  res.sendStatus(200);
-  setupStatusRepo.recordWebhook("meta_webhook").catch((err) => {
-    console.error("Failed to record Meta webhook activity:", err);
-  });
-
-  for (const { queueKey, durableClaim } of durableClaims) {
-    scheduleDurableClaim(queueKey, durableClaim).catch((err) => {
-      console.error("Failed to schedule durable Meta inbound work:", err);
-    });
-  }
-
-  for (const job of commentJobs || []) {
-    metaCommentAutomation.scheduleJob(job.id).catch((err) => {
-      console.error("Failed to schedule Meta comment automation work:", err);
-    });
-  }
-
-  // message_edit payloads do not include sender/text, so they require a Graph
-  // lookup before they can become a normal durable message. Resolve them after
-  // the ACK to avoid making Meta wait on its own API, then enter the exact same
-  // durable queue. Direct message events above are already safely persisted.
-  metaMessaging.resolveMessageEditEvents(req.body)
-    .then((resolvedEditMessages) => Promise.all(
-      resolvedEditMessages.map((incoming) =>
-        queueIncomingForReply(
-          `${incoming.channel}:${incoming.from}`,
-          incoming
-        )
-      )
-    ))
-    .catch((err) => {
-      console.error("Failed to process Meta message-edit event(s):", err);
-    });
-});
-
-// ── Promo graphics uploaded from Settings > Promotions — served publicly.
-app.get("/promo-images/:id", async (req, res) => {
-  try {
-    const image = await promoImagesRepo.getImage(req.params.id);
-    if (!image) return res.status(404).send("Not found");
-
-    res.set("Content-Type", image.mime_type);
-    res.set("Cache-Control", "public, max-age=3600");
-    res.send(Buffer.from(image.data, "base64"));
-  } catch (err) {
-    console.error("Failed to serve promo image:", err);
-    res.status(500).send("Something went wrong.");
-  }
-});
-
-// ── Read-only machine endpoint for the separate Ops Registry. ──
-// This intentionally bypasses portal sessions and has its own bearer-token guard.
-app.use("/api/ops/readiness", opsReadinessRoutes);
-
-// ── Management portal API ──
-app.use("/api/auth", authRoutes);
-app.use("/api/conversations", requireAuth, conversationsRoutes);
-app.use("/api/config", requireAuth, configRoutes);
-app.use("/api/contacts", requireAuth, contactsRoutes);
-app.use("/api/pipeline", requireAuth, pipelineRoutes);
-app.use("/api/setup-status", requireAuth, setupStatusRoutes);
-app.use("/api/whatsapp-coexistence/onboarding", requireAuth, whatsappCoexistenceOnboardingRoutes);
-app.use("/api/go-live", requireAuth, goLiveRoutes);
-
-// Keep oversized JSON failures predictable for Meta retries and portal callers.
-// Other parser/signature errors continue through the existing Express error path.
-app.use(payloadTooLargeErrorHandler);
-
-// ── Serve the built portal frontend in production ──
-const portalBuildPath = path.join(__dirname, "../portal-frontend/dist");
-app.use(express.static(portalBuildPath));
-app.get(/^(?!\/(webhook|meta-webhook|api)).*/, (req, res) => {
-  res.sendFile(path.join(portalBuildPath, "index.html"), (err) => {
-    if (err) res.status(404).send("Portal not built yet — run `npm run build` in portal-frontend/, or use `npm run dev` there for local development.");
-  });
-});
-
-async function start() {
-  console.log(
-    `[Startup] Opening HTTP server on 0.0.0.0:${PORT} before initialization...`
-  );
-  const server = await listenHttpServer(app, { port: PORT });
-
-  try {
-    console.log("[Startup] Initializing database schema and migrations...");
-    // Create tables if they don't exist yet — safe to run every startup.
-    await initSchema();
-    console.log("[Startup] Database schema and migrations ready.");
-
-    console.log("[Startup] Loading client configuration...");
-    // Loads the clinic config (branches, services, AI tone/playbook/SOP, etc.)
-    // from Postgres into the shared, in-memory clinicConfig object.
-    await configRepo.loadConfig();
-    console.log("[Startup] Client configuration loaded.");
-
-    console.log("[Startup] Backfilling existing conversations into the lead pipeline...");
-    // Bring existing conversations into the first pipeline stage on the
-    // initial deployment.
-    const backfilledLeadCount = await pipelineRepo.backfillLeadsForExistingContacts();
-    console.log(
-      `[Startup] Lead pipeline backfill complete (${backfilledLeadCount} conversation(s) added).`
-    );
-    if (backfilledLeadCount > 0) {
-      console.log(`Added ${backfilledLeadCount} existing conversation(s) to the lead pipeline.`);
-    }
-
-    console.log("[Startup] Bootstrapping admin user...");
-    await bootstrapAdminUser();
-    console.log("[Startup] Admin user bootstrap complete.");
-
-    console.log("[Startup] Starting maintenance and recovery workers...");
-    pruneOrphanedPromoImages();
-    setInterval(pruneOrphanedPromoImages, PROMO_IMAGE_PRUNE_INTERVAL_MS);
-
-    startInboundProcessingRecovery({ processBatch: processIncomingBatch });
-    startWhatsAppDeliveryStatusRecovery();
-    startAutomatedFollowUps();
-    startStaffWaitingAlerts();
-    startLeadScoring();
-    metaCommentAutomation.startRecovery();
-    console.log("[Startup] Maintenance and recovery workers started.");
-
-    startupReadiness.markReady();
-    console.log("[Startup] Service initialization complete; readiness checks are passing.");
-    return server;
-  } catch (err) {
-    startupReadiness.markFailed();
-    await closeHttpServer(server);
-    throw err;
-  }
-}
-
-start().catch((err) => {
+startApplication({
+  app,
+  port: PORT,
+  processIncomingBatch,
+}).catch((err) => {
   console.error("Failed to start server:", err);
   process.exit(1);
 });

@@ -138,22 +138,26 @@ test("HTTP listener binds on 0.0.0.0 and can accept a local request", async () =
   }
 });
 
-test("server opens the Render port before database initialization and marks ready last", () => {
-  const source = fs.readFileSync(
-    path.join(__dirname, "../src/server.js"),
+test("application startup opens the Render port before initialization and marks ready last", () => {
+  const startupSource = fs.readFileSync(
+    path.join(__dirname, "../src/services/applicationStartup.js"),
+    "utf8"
+  );
+  const appSource = fs.readFileSync(
+    path.join(__dirname, "../src/createApp.js"),
     "utf8"
   );
 
-  const listenAt = source.indexOf("await listenHttpServer(app, { port: PORT })");
-  const initAt = source.indexOf("await initSchema()");
-  const workersAt = source.indexOf('console.log("[Startup] Maintenance and recovery workers started.")');
-  const readyAt = source.indexOf("startupReadiness.markReady()");
+  const listenAt = startupSource.indexOf("await listenHttpServer(app, { port })");
+  const initAt = startupSource.indexOf("await initSchema()");
+  const workersAt = startupSource.indexOf('console.log("[Startup] Maintenance and recovery workers started.")');
+  const readyAt = startupSource.indexOf("startupReadiness.markReady()");
 
-  assert.ok(listenAt >= 0, "server should open through listenHttpServer");
+  assert.ok(listenAt >= 0, "startup module should open through listenHttpServer");
   assert.ok(initAt > listenAt, "database initialization must happen after the port is bound");
   assert.ok(workersAt > initAt, "workers should start after database initialization");
   assert.ok(readyAt > workersAt, "readiness must only turn green after worker startup");
-  assert.match(source, /app\.get\("\/health\/live", startupReadiness\.livenessHandler\)/);
-  assert.match(source, /app\.get\("\/health\/ready", startupReadiness\.readinessHandler\)/);
-  assert.match(source, /app\.use\(startupReadiness\.requireReady\)/);
+  assert.match(appSource, /app\.get\("\/health\/live", startupReadiness\.livenessHandler\)/);
+  assert.match(appSource, /app\.get\("\/health\/ready", startupReadiness\.readinessHandler\)/);
+  assert.match(appSource, /app\.use\(startupReadiness\.requireReady\)/);
 });
