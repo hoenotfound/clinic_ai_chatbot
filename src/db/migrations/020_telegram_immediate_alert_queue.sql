@@ -1,0 +1,43 @@
+-- Upgrade the historical immediate-alert sent-marker table into a durable
+-- delivery queue. Existing rows represent alerts that were already sent before
+-- this migration, so they are backfilled as sent. New alerts default to pending.
+
+ALTER TABLE telegram_immediate_alerts
+  ADD COLUMN IF NOT EXISTS message_text TEXT,
+  ADD COLUMN IF NOT EXISTS status TEXT,
+  ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS lease_token TEXT,
+  ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS terminal_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS error_text TEXT,
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+UPDATE telegram_immediate_alerts
+SET status = 'sent',
+    sent_at = COALESCE(sent_at, created_at),
+    updated_at = COALESCE(updated_at, created_at)
+WHERE status IS NULL;
+
+ALTER TABLE telegram_immediate_alerts
+  ALTER COLUMN status SET DEFAULT 'pending',
+  ALTER COLUMN status SET NOT NULL;
+
+ALTER TABLE telegram_immediate_alerts
+  DROP CONSTRAINT IF EXISTS telegram_immediate_alerts_status_check;
+
+ALTER TABLE telegram_immediate_alerts
+  ADD CONSTRAINT telegram_immediate_alerts_status_check
+  CHECK (status IN ('pending', 'sending', 'sent', 'failed'));
+
+ALTER TABLE telegram_immediate_alerts
+  DROP CONSTRAINT IF EXISTS telegram_immediate_alerts_attempts_check;
+
+ALTER TABLE telegram_immediate_alerts
+  ADD CONSTRAINT telegram_immediate_alerts_attempts_check
+  CHECK (attempts >= 0);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_immediate_alerts_recovery
+  ON telegram_immediate_alerts (status, next_attempt_at, claimed_at, created_at, id)
+  WHERE terminal_at IS NULL AND status IN ('pending', 'sending');
