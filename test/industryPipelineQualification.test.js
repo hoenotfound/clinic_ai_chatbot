@@ -349,7 +349,10 @@ test("clinic drawer profile keeps appointment stage linkage while renovation doe
 test("config load reconciles industry defaults before server backfill and LeadDrawer stays profile-driven", () => {
   const root = path.join(__dirname, "..");
   const configRepo = fs.readFileSync(path.join(root, "src/db/configRepo.js"), "utf8");
-  const server = fs.readFileSync(path.join(root, "src/server.js"), "utf8");
+  const startup = fs.readFileSync(
+    path.join(root, "src/services/applicationStartup.js"),
+    "utf8"
+  );
   const drawer = fs.readFileSync(
     path.join(root, "portal-frontend/src/components/pipeline/LeadDrawer.jsx"),
     "utf8"
@@ -357,8 +360,8 @@ test("config load reconciles industry defaults before server backfill and LeadDr
 
   assert.match(configRepo, /ensureIndustryPipelineDefaults/);
   assert.ok(
-    server.indexOf("await configRepo.loadConfig()") <
-      server.indexOf("await pipelineRepo.backfillLeadsForExistingContacts()")
+    startup.indexOf("await configRepo.loadConfig()") <
+      startup.indexOf("await pipelineRepo.backfillLeadsForExistingContacts()")
   );
   assert.match(drawer, /ui\.qualificationView/);
   assert.match(drawer, /ui\.conversionStageKeys/);
