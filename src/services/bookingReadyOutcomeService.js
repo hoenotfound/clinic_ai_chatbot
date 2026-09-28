@@ -41,6 +41,7 @@ function normalizeBookingDetails(details = {}) {
     branch: canonicalConfiguredValue(details.branch, clinicConfig.branches),
     treatment: canonicalConfiguredValue(details.treatment, clinicConfig.services),
     appointmentPreference: safeText(details.appointmentPreference),
+    staffSummary: safeText(details.staffSummary, 600),
   };
 
   // Project metadata belongs only to project-mode conversion contracts. Keep a
@@ -219,6 +220,7 @@ function createBookingReadyOutcomeService({
             ...(details.projectLocation ? { projectLocation: details.projectLocation } : {}),
             ...(details.projectSummary ? { projectSummary: details.projectSummary } : {}),
             ...(details.nextStep ? { nextStep: details.nextStep } : {}),
+            ...(details.staffSummary ? { staffSummary: details.staffSummary } : {}),
           };
           const activityResult = await client.query(
             `INSERT INTO lead_activities (
