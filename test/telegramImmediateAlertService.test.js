@@ -459,6 +459,7 @@ test("Telegram timeout stays queued with backoff instead of being lost", async (
   const run = createImmediateAlertQueueRunner({
     env: enabledEnv,
     repository,
+    shouldSendAlert: async () => true,
     async sendMessage() {
       throw new Error("Telegram send timed out.");
     },
