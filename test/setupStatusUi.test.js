@@ -30,7 +30,7 @@ test("setup status UI includes private-credential copy and responsive controls",
   assert.match(page, /About Meta app review/);
   assert.match(page, /cannot confirm that Meta has approved public messaging access/);
   assert.match(page, /<details/);
-  assert.match(page, /View AI key checks/);
+  assert.match(page, /View AI provider checks/);
   assert.match(page, /Run all checks refreshes every configured Gemini key/);
   assert.match(page, /does not generate AI text or consume prompt\/output tokens/);
   assert.match(page, /Runtime history comes from real AI traffic and is kept separately/);
