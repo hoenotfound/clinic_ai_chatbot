@@ -60,8 +60,9 @@ async function getLeadReengagementContext(
        current_message.created_at AS current_message_at,
        previous_message.id AS previous_customer_message_id,
        previous_message.created_at AS previous_customer_message_at,
+       previous_activity.created_at AS previous_activity_at,
        EXTRACT(EPOCH FROM (
-         current_message.created_at - previous_message.created_at
+         current_message.created_at - previous_activity.created_at
        )) / 3600.0 AS gap_hours,
        current_lead.id AS lead_id,
        current_lead.temperature,
@@ -89,6 +90,15 @@ async function getLeadReengagementContext(
        ORDER BY m.created_at DESC, m.id DESC
        LIMIT 1
      ) previous_message ON true
+     LEFT JOIN LATERAL (
+       SELECT m.id, m.created_at
+       FROM messages m
+       WHERE m.contact_id = c.id
+         AND (m.created_at, m.id) <
+             (current_message.created_at, current_message.id)
+       ORDER BY m.created_at DESC, m.id DESC
+       LIMIT 1
+     ) previous_activity ON true
      LEFT JOIN LATERAL (
        SELECT score.summary_data
        FROM lead_temperature_scores score
