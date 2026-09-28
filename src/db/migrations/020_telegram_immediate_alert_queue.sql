@@ -32,7 +32,7 @@ ALTER TABLE telegram_immediate_alerts
 
 ALTER TABLE telegram_immediate_alerts
   ADD CONSTRAINT telegram_immediate_alerts_status_check
-  CHECK (status IN ('pending', 'sending', 'sent', 'failed'));
+  CHECK (status IN ('pending', 'sending', 'sent', 'failed', 'cancelled'));
 
 ALTER TABLE telegram_immediate_alerts
   DROP CONSTRAINT IF EXISTS telegram_immediate_alerts_attempts_check;
