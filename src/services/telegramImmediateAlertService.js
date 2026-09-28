@@ -4,6 +4,7 @@ const clinicConfig = require("../config/clinicConfig");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const { getOperationalLabels } = require("../utils/businessTerminology");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
+const realtimeEvents = require("../utils/realtimeEvents");
 const {
   channelLabel,
   formatContactIdentifier,
@@ -106,10 +107,49 @@ function staffWaitingReference(alert) {
   return { contactId, waitingMessageId };
 }
 
+async function isLatestBookingReadyAlert(
+  alert,
+  query = pool.query.bind(pool)
+) {
+  const result = await query(
+    `SELECT NOT EXISTS (
+       SELECT 1
+       FROM telegram_immediate_alerts newer
+       WHERE newer.contact_id = $1
+         AND newer.alert_type = 'booking_ready'
+         AND newer.id > $2
+         AND newer.lead_id IS NOT DISTINCT FROM $3::integer
+     ) AS is_latest`,
+    [Number(alert.contact_id), Number(alert.id), alert.lead_id || null]
+  );
+  return Boolean(result.rows[0]?.is_latest);
+}
+
+function shouldWakeConversationSummary(alert) {
+  return ["human_intervention", "booking_ready", "staff_waiting"].includes(
+    String(alert?.alert_type || "")
+  );
+}
+
+function publishImmediateTerminalState(alert) {
+  if (!alert || !["sent", "failed", "cancelled"].includes(alert.status)) return;
+  if (!shouldWakeConversationSummary(alert)) return;
+  realtimeEvents.publishInternal("telegram_alert_terminal", {
+    alertId: alert.id,
+    contactId: alert.contact_id,
+    leadId: alert.lead_id || null,
+    alertType: alert.alert_type,
+    status: alert.status,
+  });
+}
+
 async function shouldSendImmediateAlert(
   alert,
   query = pool.query.bind(pool)
 ) {
+  if (alert?.alert_type === "booking_ready") {
+    return isLatestBookingReadyAlert(alert, query);
+  }
   if (alert?.alert_type !== "staff_waiting") return true;
 
   const reference = staffWaitingReference(alert);
@@ -265,20 +305,26 @@ function createImmediateAlertQueueRunner({
     let failedCount = 0;
 
     try {
-      await repository.markExhaustedStale();
+      const recovered = await repository.markExhaustedStale();
+      for (const alert of recovered) {
+        if (alert.status === "failed") publishImmediateTerminalState(alert);
+      }
       const alerts = await repository.claimReady();
 
       for (const alert of alerts) {
         try {
           const stillApplies = await shouldSendAlert(alert);
           if (!stillApplies) {
-            await repository.markCancelled(
+            const cancelled = await repository.markCancelled(
               alert.id,
               alert.lease_token,
               alert.alert_type === "staff_waiting"
                 ? "Staff-waiting reminder resolved before Telegram delivery."
-                : "Alert no longer applies."
+                : alert.alert_type === "booking_ready"
+                  ? "Superseded by newer Booking Ready details before Telegram delivery."
+                  : "Alert no longer applies."
             );
+            publishImmediateTerminalState(cancelled);
             continue;
           }
 
@@ -287,19 +333,21 @@ function createImmediateAlertQueueRunner({
             chatId: env.TELEGRAM_CHAT_ID,
             text: alert.message_text,
           });
-          await repository.markSent(alert.id, alert.lease_token);
+          const sent = await repository.markSent(alert.id, alert.lease_token);
+          publishImmediateTerminalState(sent);
           sentCount += 1;
         } catch (err) {
           failedCount += 1;
           const retryDelaySeconds = Math.ceil(
             retryDelayMsForAttempt(alert.attempts) / 1000
           );
-          await repository.markFailed(
+          const failed = await repository.markFailed(
             alert.id,
             alert.lease_token,
             err,
             { retryDelaySeconds }
           );
+          publishImmediateTerminalState(failed);
           logger.error(
             `Telegram immediate alert failed for contact ${alert.contact_id} (${alert.alert_type}); queued for retry:`,
             err
@@ -352,6 +400,7 @@ function createTelegramImmediateAlertService({
     eventKey,
     type,
     contactId,
+    leadId = null,
     messageText,
     cooldownMinutes = 0,
   }) {
@@ -361,6 +410,7 @@ function createTelegramImmediateAlertService({
       eventKey,
       type,
       contactId,
+      leadId,
       messageText,
       cooldownMinutes,
     });
@@ -413,6 +463,7 @@ function createTelegramImmediateAlertService({
       eventKey,
       type,
       contactId,
+      leadId: context.lead_id,
       messageText,
       cooldownMinutes,
     });
@@ -449,6 +500,8 @@ module.exports = {
   deliveryFailureEventKey,
   getImmediateAlertContext,
   humanInterventionEventKey,
+  isLatestBookingReadyAlert,
+  publishImmediateTerminalState,
   shouldSendImmediateAlert,
   staffWaitingReference,
   queuePreparedAlert: defaultService.queuePreparedAlert,
