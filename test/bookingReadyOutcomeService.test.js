@@ -140,6 +140,7 @@ test("structured Booking Ready persists canonical clinic metadata and discards p
       branch: "Petaling Jaya",
       treatment: "HIFU Non-Surgical Facelift",
       appointmentPreference: "Saturday afternoon",
+      staffSummary: "Customer wants HIFU in PJ on Saturday afternoon and is ready for staff confirmation.",
       projectLocation: "Cheras",
       projectSummary: "This stray project data must not enter a clinic outcome.",
       nextStep: "site_visit",
@@ -150,6 +151,7 @@ test("structured Booking Ready persists canonical clinic metadata and discards p
     branch: "Petaling Jaya",
     treatment: "HIFU Non-Surgical Facelift",
     appointmentPreference: "Saturday afternoon",
+    staffSummary: "Customer wants HIFU in PJ on Saturday afternoon and is ready for staff confirmation.",
   });
   const contactUpdate = calls.find(({ sql }) => sql.startsWith("UPDATE contacts"));
   assert.match(contactUpdate.sql, /latest_booking\.metadata->>'branch' IS DISTINCT FROM \$3/);
@@ -172,6 +174,10 @@ test("structured Booking Ready persists canonical clinic metadata and discards p
   assert.equal(leadUpdate.params[2], "HIFU Non-Surgical Facelift");
   const activity = calls.find(({ sql }) => sql.startsWith("INSERT INTO lead_activities"));
   assert.equal(activity.params[2].appointmentPreference, "Saturday afternoon");
+  assert.equal(
+    activity.params[2].staffSummary,
+    "Customer wants HIFU in PJ on Saturday afternoon and is ready for staff confirmation."
+  );
   assert.equal(Object.hasOwn(activity.params[2], "projectLocation"), false);
   assert.equal(Object.hasOwn(activity.params[2], "projectSummary"), false);
   assert.equal(Object.hasOwn(activity.params[2], "nextStep"), false);
