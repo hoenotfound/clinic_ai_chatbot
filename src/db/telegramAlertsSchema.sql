@@ -52,7 +52,6 @@ CREATE TABLE IF NOT EXISTS telegram_immediate_alerts (
   event_key TEXT NOT NULL UNIQUE,
   alert_type TEXT NOT NULL,
   contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-  lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
