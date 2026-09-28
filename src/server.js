@@ -80,6 +80,11 @@ const setupStatusRepo = require("./db/setupStatusRepo");
 const { startAutomatedFollowUps } = require("./services/followUpService");
 const { startLeadScoring } = require("./services/leadScoringService");
 const { startStaffWaitingAlerts } = require("./services/staffWaitingAlertService");
+const startupReadiness = require("./services/startupReadinessService");
+const {
+  closeHttpServer,
+  listenHttpServer,
+} = require("./services/httpServerStartup");
 const {
   reviewLeadTemperatureForMessage,
 } = require("./services/leadTemperatureAutomation");
@@ -930,10 +935,16 @@ app.use(
   })
 );
 
-// ── Health check ──
-app.get("/", (req, res) => {
-  res.send("AI messaging bot is running.");
-});
+// ── Startup health ──
+// Keep "/" as the Render-compatible readiness check for existing deployments.
+// The dedicated endpoints make liveness vs readiness explicit for diagnostics.
+app.get("/", startupReadiness.rootReadinessHandler);
+app.get("/health/live", startupReadiness.livenessHandler);
+app.get("/health/ready", startupReadiness.readinessHandler);
+
+// The socket opens before database/config initialization so Render can detect
+// the port, but customer/API traffic stays blocked until startup is complete.
+app.use(startupReadiness.requireReady);
 
 // ── WhatsApp webhook verification (unchanged callback) ──
 app.get("/webhook", (req, res) => {
@@ -1158,48 +1169,58 @@ app.get(/^(?!\/(webhook|meta-webhook|api)).*/, (req, res) => {
 });
 
 async function start() {
-  console.log("[Startup] Initializing database schema and migrations...");
-  // Create tables if they don't exist yet — safe to run every startup.
-  await initSchema();
-  console.log("[Startup] Database schema and migrations ready.");
-
-  console.log("[Startup] Loading client configuration...");
-  // Loads the clinic config (branches, services, AI tone/playbook/SOP, etc.)
-  // from Postgres into the shared, in-memory clinicConfig object.
-  await configRepo.loadConfig();
-  console.log("[Startup] Client configuration loaded.");
-
-  console.log("[Startup] Backfilling existing conversations into the lead pipeline...");
-  // Bring existing conversations into the first pipeline stage on the
-  // initial deployment.
-  const backfilledLeadCount = await pipelineRepo.backfillLeadsForExistingContacts();
   console.log(
-    `[Startup] Lead pipeline backfill complete (${backfilledLeadCount} conversation(s) added).`
+    `[Startup] Opening HTTP server on 0.0.0.0:${PORT} before initialization...`
   );
-  if (backfilledLeadCount > 0) {
-    console.log(`Added ${backfilledLeadCount} existing conversation(s) to the lead pipeline.`);
+  const server = await listenHttpServer(app, { port: PORT });
+
+  try {
+    console.log("[Startup] Initializing database schema and migrations...");
+    // Create tables if they don't exist yet — safe to run every startup.
+    await initSchema();
+    console.log("[Startup] Database schema and migrations ready.");
+
+    console.log("[Startup] Loading client configuration...");
+    // Loads the clinic config (branches, services, AI tone/playbook/SOP, etc.)
+    // from Postgres into the shared, in-memory clinicConfig object.
+    await configRepo.loadConfig();
+    console.log("[Startup] Client configuration loaded.");
+
+    console.log("[Startup] Backfilling existing conversations into the lead pipeline...");
+    // Bring existing conversations into the first pipeline stage on the
+    // initial deployment.
+    const backfilledLeadCount = await pipelineRepo.backfillLeadsForExistingContacts();
+    console.log(
+      `[Startup] Lead pipeline backfill complete (${backfilledLeadCount} conversation(s) added).`
+    );
+    if (backfilledLeadCount > 0) {
+      console.log(`Added ${backfilledLeadCount} existing conversation(s) to the lead pipeline.`);
+    }
+
+    console.log("[Startup] Bootstrapping admin user...");
+    await bootstrapAdminUser();
+    console.log("[Startup] Admin user bootstrap complete.");
+
+    console.log("[Startup] Starting maintenance and recovery workers...");
+    pruneOrphanedPromoImages();
+    setInterval(pruneOrphanedPromoImages, PROMO_IMAGE_PRUNE_INTERVAL_MS);
+
+    startInboundProcessingRecovery({ processBatch: processIncomingBatch });
+    startWhatsAppDeliveryStatusRecovery();
+    startAutomatedFollowUps();
+    startStaffWaitingAlerts();
+    startLeadScoring();
+    metaCommentAutomation.startRecovery();
+    console.log("[Startup] Maintenance and recovery workers started.");
+
+    startupReadiness.markReady();
+    console.log("[Startup] Service initialization complete; readiness checks are passing.");
+    return server;
+  } catch (err) {
+    startupReadiness.markFailed();
+    await closeHttpServer(server);
+    throw err;
   }
-
-  console.log("[Startup] Bootstrapping admin user...");
-  await bootstrapAdminUser();
-  console.log("[Startup] Admin user bootstrap complete.");
-
-  console.log(`[Startup] Opening HTTP server on port ${PORT}...`);
-  app.listen(PORT, () => {
-    console.log(`[Startup] Server listening on port ${PORT}`);
-  });
-
-  console.log("[Startup] Starting maintenance and recovery workers...");
-  pruneOrphanedPromoImages();
-  setInterval(pruneOrphanedPromoImages, PROMO_IMAGE_PRUNE_INTERVAL_MS);
-
-  startInboundProcessingRecovery({ processBatch: processIncomingBatch });
-  startWhatsAppDeliveryStatusRecovery();
-  startAutomatedFollowUps();
-  startStaffWaitingAlerts();
-  startLeadScoring();
-  metaCommentAutomation.startRecovery();
-  console.log("[Startup] Maintenance and recovery workers started.");
 }
 
 start().catch((err) => {
