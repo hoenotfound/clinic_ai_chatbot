@@ -90,6 +90,11 @@ function writeEvent(client, event, payload) {
   client.res.write(message);
 }
 
+function publishInternal(event, payload = {}) {
+  // Worker-to-worker signals should not create browser SSE traffic.
+  notifyListeners(event, payload);
+}
+
 function publish(event, payload = {}) {
   // Runtime workers subscribe here so message/config activity can wake a
   // sleeping timer without polling Postgres. Listener failures are isolated
@@ -110,4 +115,4 @@ function publish(event, payload = {}) {
   }
 }
 
-module.exports = { addClient, disconnectUser, publish, subscribe };
+module.exports = { addClient, disconnectUser, publish, publishInternal, subscribe };
