@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   HUMAN_ALERT_LOCK_NAMESPACE,
   claimReady,
+  markCancelled,
   markFailed,
   queueAlert,
 } = require("../src/db/telegramImmediateAlertRepo");
@@ -159,6 +160,25 @@ test("failed queue work is fenced by lease and schedules retry or terminal state
   ]);
 });
 
+test("resolved reminders are cancelled terminally under the active lease", async () => {
+  let captured = null;
+  const row = await markCancelled(
+    9,
+    "lease-9",
+    "Staff already replied.",
+    async (sql, params) => {
+      captured = { sql, params };
+      return { rows: [{ id: 9, status: "cancelled" }] };
+    }
+  );
+
+  assert.deepEqual(row, { id: 9, status: "cancelled" });
+  assert.match(captured.sql, /status = 'cancelled'/);
+  assert.match(captured.sql, /terminal_at = COALESCE\(terminal_at, now\(\)\)/);
+  assert.match(captured.sql, /lease_token = \$2/);
+  assert.deepEqual(captured.params, [9, "lease-9", "Staff already replied."]);
+});
+
 test("migration upgrades old sent markers without replaying them", () => {
   const fs = require("node:fs");
   const path = require("node:path");
@@ -171,5 +191,5 @@ test("migration upgrades old sent markers without replaying them", () => {
   assert.match(source, /sent_at = COALESCE\(sent_at, created_at\)/);
   assert.match(source, /ALTER COLUMN status SET DEFAULT 'sent'/);
   assert.match(source, /new queue writer explicitly[\s\S]*status='pending'/);
-  assert.match(source, /status IN \('pending', 'sending', 'sent', 'failed'\)/);
+  assert.match(source, /status IN \('pending', 'sending', 'sent', 'failed', 'cancelled'\)/);
 });
