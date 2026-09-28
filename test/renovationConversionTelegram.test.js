@@ -90,9 +90,9 @@ test("renovation site-visit alert includes the captured preferred timing", async
   });
 });
 
-test("renovation alert service carries structured project details through to Telegram", async () => {
+test("renovation alert service carries structured project details into the durable queue", async () => {
   await withProfile(getIndustryProfile("home_renovation"), async () => {
-    const sent = [];
+    const queued = [];
     const service = createTelegramImmediateAlertService({
       env: {
         TELEGRAM_ALERTS_ENABLED: "true",
@@ -102,14 +102,13 @@ test("renovation alert service carries structured project details through to Tel
       async getContext() {
         return context;
       },
-      async claimAlert() {
-        return true;
+      repository: {
+        async queueAlert(input) {
+          queued.push(input);
+          return { id: 321 };
+        },
       },
-      async releaseAlert() {},
-      async sendMessage(input) {
-        sent.push(input);
-        return { ok: true };
-      },
+      wakeQueue() {},
     });
 
     const result = await service.sendBookingReadyAlert({
@@ -123,9 +122,9 @@ test("renovation alert service carries structured project details through to Tel
       },
     });
 
-    assert.equal(result.status, "sent");
-    assert.equal(sent.length, 1);
-    assert.match(sent[0].text, /^🔥 Renovation Lead Ready/);
-    assert.match(sent[0].text, /Project location: Cheras/);
+    assert.deepEqual(result, { status: "queued", alertId: 321 });
+    assert.equal(queued.length, 1);
+    assert.match(queued[0].messageText, /^🔥 Renovation Lead Ready/);
+    assert.match(queued[0].messageText, /Project location: Cheras/);
   });
 });
