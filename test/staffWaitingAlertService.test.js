@@ -20,6 +20,7 @@ const renovation = getIndustryProfile("home_renovation");
 
 const context = {
   contact_id: 12,
+  lead_id: 7,
   whatsapp_number: "60123456789",
   name: null,
   whatsapp_profile_name: "Kit Leong",
@@ -186,11 +187,13 @@ test("waiting service revalidates then queues without sending Telegram inline", 
       eventKey: queued.eventKey,
       type: queued.type,
       contactId: queued.contactId,
+      leadId: queued.leadId,
     },
     {
       eventKey: "staff_waiting:12:45",
       type: "staff_waiting",
       contactId: 12,
+      leadId: 7,
     }
   );
   assert.match(queued.messageText, /Waiting: 11 minutes/);
