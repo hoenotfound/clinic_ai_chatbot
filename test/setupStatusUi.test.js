@@ -60,9 +60,9 @@ test("setup status keeps metadata checks distinct from historical AI runtime lab
 });
 
 test("legacy public Instagram diagnostic routes were removed", () => {
-  const server = read("src/server.js");
-  assert.doesNotMatch(server, /debug-instagram-token/);
-  assert.doesNotMatch(server, /debug-instagram-conversations/);
+  const sources = `${read("src/server.js")}\n${read("src/createApp.js")}`;
+  assert.doesNotMatch(sources, /debug-instagram-token/);
+  assert.doesNotMatch(sources, /debug-instagram-conversations/);
 });
 
 test("setup schema is included in startup migrations and stores no credentials", () => {
@@ -82,15 +82,15 @@ test("setup schema is included in startup migrations and stores no credentials",
 });
 
 test("WhatsApp webhook activity is recorded without delaying the durable ACK", () => {
-  const server = read("src/server.js");
+  const app = read("src/createApp.js");
   const repository = read("src/db/setupStatusRepo.js");
 
-  const handlerStart = server.indexOf('app.post("/webhook"');
-  const handlerEnd = server.indexOf('app.get("/meta-webhook"', handlerStart);
+  const handlerStart = app.indexOf('app.post("/webhook"');
+  const handlerEnd = app.indexOf('app.get("/meta-webhook"', handlerStart);
   assert.ok(handlerStart >= 0, "WhatsApp webhook handler should exist");
   assert.ok(handlerEnd > handlerStart, "WhatsApp webhook handler should have a bounded source section");
 
-  const handler = server.slice(handlerStart, handlerEnd);
+  const handler = app.slice(handlerStart, handlerEnd);
   const durableInboundIndex = handler.indexOf("durablyClaimIncoming(incoming.from, incoming)");
   const durableStatusIndex = handler.indexOf("storeDeliveryStatusUpdates(statusUpdates)");
   const ackIndex = handler.indexOf("res.sendStatus(200);");
@@ -118,7 +118,7 @@ test("WhatsApp webhook activity is recorded without delaying the durable ACK", (
   );
   assert.match(handler, /recordWebhook\("whatsapp_webhook"\)\.catch\(/);
   assert.doesNotMatch(handler, /await\s+setupStatusRepo\.recordWebhook\("whatsapp_webhook"\)/);
-  assert.doesNotMatch(server, /recordWebhook\("whatsapp"\)/);
+  assert.doesNotMatch(app, /recordWebhook\("whatsapp"\)/);
   assert.match(repository, /listLatestInboundActivity/);
   assert.match(repository, /m\.role = 'user'/);
 });
