@@ -483,7 +483,8 @@ test("Comment Automation saves the exact customer-flow choice", async ({ page })
   await expect(page.getByText("Connections look ready.", { exact: true })).toBeVisible();
 
   await page.getByRole("switch", { name: "Enable Comment automation" }).click();
-  await page.getByRole("radio", { name: /Send a private message only/ }).check();
+  await page.getByText("Send a private message only", { exact: true }).click();
+  await expect(page.getByRole("radio", { name: /Send a private message only/ })).toBeChecked();
 
   await page.getByRole("button", { name: "Save & turn on" }).click();
 
