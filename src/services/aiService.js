@@ -620,7 +620,13 @@ async function getReplyWithEnv(
     const remainingBudgetMs = policy.globalBudgetMs - elapsedMs;
     if (remainingBudgetMs <= 0) break;
 
-    const hasLaterProvider = providerIndex < configuredProviders.length - 1;
+    const hasLaterProvider = configuredProviders
+      .slice(providerIndex + 1)
+      .some((laterProvider) => {
+        if (laterProvider !== "claude") return true;
+        const candidate = buildCandidates(env).find((item) => item.provider === "claude");
+        return !candidate || getCandidateCooldownUntilMs(candidate) <= clock();
+      });
     const providerBudgetMs = computeProviderBudgetMs(
       remainingBudgetMs,
       hasLaterProvider,
