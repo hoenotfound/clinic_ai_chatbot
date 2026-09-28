@@ -415,8 +415,19 @@ test("desktop Pipeline drag moves a lead through the existing stage update API",
 test("iPad touch drag moves a lead through the same stage update API", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "ipad-landscape", "iPad/WebKit touch path");
 
+  // Playwright's WebKit device emulation supports touch input but does not
+  // consistently expose maxTouchPoints. Real iPads do, and the UI deliberately
+  // uses that hardware signal to show the touch-only drag grip.
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "maxTouchPoints", {
+      configurable: true,
+      get: () => 5,
+    });
+  });
+
   const apiState = await installApi(page);
   await page.goto("/pipeline");
+  expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
 
   const handle = page.locator('[aria-label="Drag lead to another stage"]').first();
   const contactedStage = page.locator('section[data-pipeline-stage-id="2"]');
