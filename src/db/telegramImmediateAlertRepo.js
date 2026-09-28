@@ -66,7 +66,7 @@ async function queueAlert(
 ) {
   const safeCooldown = Math.max(0, Number(cooldownMinutes) || 0);
 
-  if (type !== "human_intervention" || safeCooldown <= 0) {
+  if (safeCooldown <= 0) {
     return insertAlert(
       { eventKey, type, contactId, messageText },
       database.query.bind(database)
@@ -85,11 +85,11 @@ async function queueAlert(
       `SELECT id
        FROM telegram_immediate_alerts
        WHERE contact_id = $1
-         AND alert_type = 'human_intervention'
+         AND alert_type = $3
          AND created_at > now() - ($2::integer * interval '1 minute')
        ORDER BY created_at DESC
        LIMIT 1`,
-      [Number(contactId), Math.ceil(safeCooldown)]
+      [Number(contactId), Math.ceil(safeCooldown), String(type)]
     );
 
     if (recent.rows[0]) {
