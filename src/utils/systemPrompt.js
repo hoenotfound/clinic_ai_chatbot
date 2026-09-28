@@ -328,7 +328,8 @@ STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code f
   "appointmentPreference": "brief current day/date + time/range/daypart preference if clearly known, otherwise null",
   "projectLocation": "customer property/project location for project-based conversion profiles if clearly known, otherwise null",
   "projectSummary": "concise current project scope/context for project-based conversion profiles if clearly known, otherwise null",
-  "nextStep": "site_visit | quotation_discussion | null"
+  "nextStep": "site_visit | quotation_discussion | null",
+  "staffSummary": "for booking_ready only: a concise internal staff recap of the conversation and what the customer wants; otherwise null"
 }
 
 Rules for structured fields:
@@ -340,7 +341,9 @@ ${appointmentLocationOutputRule}
 - For project-mode booking_ready, "treatment" MUST resolve to one canonical configured ${terms.serviceSingular}; "projectLocation", "projectSummary", and "nextStep" MUST also be non-null and reflect the current project.
 - For project-mode "quotation_discussion", the required fields are "treatment", "projectLocation", and "projectSummary". "appointmentPreference" may be null.
 - For project-mode "site_visit", the required fields are "treatment", "projectLocation", "projectSummary", and "appointmentPreference".
-- For normal or needs_human, structured fields may be null unless clearly known. Do not invent a configured service merely to fill "treatment".
+- For booking_ready, "staffSummary" should be 1-3 concise sentences for staff only. Summarize the customer's main need, relevant service/project context, stated location/timing preference, and any important unresolved point. Use only facts from the conversation and configured business context. Do not include internal reasoning.
+- "staffSummary" is internal metadata and MUST NOT be copied into "reply". For normal or needs_human, set it to null.
+- For normal or needs_human, other structured fields may be null unless clearly known. Do not invent a configured service merely to fill "treatment".
 - Legacy tokens such as [[NEEDS_HUMAN]] and [[BOOKING_READY]] are backend compatibility controls only. Do NOT output them when following this JSON contract.
 
 LANGUAGE:
