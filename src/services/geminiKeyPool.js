@@ -277,9 +277,6 @@ function getCandidateCooldownUntilMs(candidate) {
   return cooldownUntilMs(candidate);
 }
 
-function isCandidateCoolingDown(candidate, nowMs = Date.now()) {
-  return cooldownUntilMs(candidate) > nowMs;
-}
 
 function getOrderedGeminiCandidates(
   env = process.env,
@@ -606,7 +603,6 @@ module.exports = {
   getGeminiCandidateDescriptors,
   getOrderedGeminiCandidates,
   getRuntimeCandidateHealth,
-  isCandidateCoolingDown,
   isRetryableAiError,
   recordCandidateHealth,
   resetGeminiKeyPoolState,
