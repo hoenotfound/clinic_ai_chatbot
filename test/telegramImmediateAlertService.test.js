@@ -10,6 +10,8 @@ const {
   delayUntilNextImmediateAlert,
   humanInterventionEventKey,
   retryDelayMsForAttempt,
+  shouldSendImmediateAlert,
+  staffWaitingReference,
 } = require("../src/services/telegramImmediateAlertService");
 
 const context = {
@@ -80,6 +82,109 @@ test("automated human alerts for the same inbound customer message share one eve
     "human:12:44"
   );
   assert.equal(humanInterventionEventKey(context, "Flagged by staff."), null);
+});
+
+test("staff-waiting event keys identify the exact unanswered episode for send-time revalidation", async () => {
+  const alert = {
+    alert_type: "staff_waiting",
+    event_key: "staff_waiting:12:45",
+    contact_id: 12,
+  };
+  assert.deepEqual(staffWaitingReference(alert), {
+    contactId: 12,
+    waitingMessageId: 45,
+  });
+  assert.equal(
+    staffWaitingReference({ ...alert, event_key: "staff_waiting:13:45" }),
+    null
+  );
+  assert.equal(
+    staffWaitingReference({ ...alert, event_key: "staff_waiting:bad:key" }),
+    null
+  );
+
+  let captured = null;
+  const stillWaiting = await shouldSendImmediateAlert(
+    alert,
+    async (sql, params) => {
+      captured = { sql, params };
+      return { rows: [{ waiting: true }] };
+    }
+  );
+  assert.equal(stillWaiting, true);
+  assert.deepEqual(captured.params, [12, 45]);
+  assert.match(captured.sql, /sent_by_username IS NOT NULL/);
+  assert.match(captured.sql, /delivery_status NOT IN \('failed', 'unknown'\)/);
+});
+
+test("resolved staff-waiting retry is cancelled before Telegram is called", async () => {
+  const calls = [];
+  let sends = 0;
+  const repository = {
+    async markExhaustedStale() {
+      calls.push(["markExhaustedStale"]);
+      return [];
+    },
+    async claimReady() {
+      calls.push(["claimReady"]);
+      return [{
+        id: 77,
+        event_key: "staff_waiting:12:45",
+        contact_id: 12,
+        alert_type: "staff_waiting",
+        message_text: "Customer is waiting",
+        attempts: 2,
+        lease_token: "lease-waiting",
+      }];
+    },
+    async markCancelled(id, leaseToken, reason) {
+      calls.push(["markCancelled", id, leaseToken, reason]);
+      return { id, status: "cancelled" };
+    },
+    async markSent() {
+      throw new Error("resolved reminder must not be marked sent");
+    },
+    async markFailed() {
+      throw new Error("resolved reminder must not be retried");
+    },
+    async findNextDueAt() {
+      calls.push(["findNextDueAt"]);
+      return null;
+    },
+  };
+
+  const run = createImmediateAlertQueueRunner({
+    env: enabledEnv,
+    repository,
+    shouldSendAlert: async (alert) => {
+      assert.equal(alert.event_key, "staff_waiting:12:45");
+      return false;
+    },
+    async sendMessage() {
+      sends += 1;
+    },
+  });
+
+  const result = await run();
+
+  assert.equal(sends, 0);
+  assert.deepEqual(result, {
+    claimedCount: 1,
+    sentCount: 0,
+    failedCount: 0,
+    nextDueAt: null,
+  });
+  assert.deepEqual(calls, [
+    ["markExhaustedStale"],
+    ["claimReady"],
+    [
+      "markCancelled",
+      77,
+      "lease-waiting",
+      "Staff-waiting reminder resolved before Telegram delivery.",
+    ],
+    ["findNextDueAt"],
+  ]);
 });
 
 test("disabled immediate alerts do not load context or touch the queue", async () => {
