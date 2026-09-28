@@ -6,7 +6,7 @@
 -- inserts status='pending' for new durable work.
 
 ALTER TABLE telegram_immediate_alerts
-  ADD COLUMN IF NOT EXISTS lead_id INTEGER,
+  ADD COLUMN IF NOT EXISTS lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS message_text TEXT,
   ADD COLUMN IF NOT EXISTS status TEXT,
   ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0,
