@@ -429,7 +429,7 @@ test("iPad touch drag moves a lead through the same stage update API", async ({ 
   await page.goto("/pipeline");
   expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
 
-  const handle = page.locator('[aria-label="Drag lead to another stage"]').first();
+  const handle = page.locator('main.ui-kanban-scroll [aria-label="Drag lead to another stage"]');
   const contactedStage = page.locator('section[data-pipeline-stage-id="2"]');
 
   await expect(handle).toBeVisible();
@@ -446,7 +446,7 @@ test("iPad touch drag moves a lead through the same stage update API", async ({ 
   const endY = targetBox.y + Math.min(120, targetBox.height / 2);
 
   await page.evaluate(({ startX, startY, endX, endY }) => {
-    const handle = document.querySelector('[aria-label="Drag lead to another stage"]');
+    const handle = document.querySelector('main.ui-kanban-scroll [aria-label="Drag lead to another stage"]');
     if (!handle) throw new Error("Touch drag handle not found");
 
     const makeTouch = (x, y) => new Touch({
