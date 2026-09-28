@@ -425,10 +425,14 @@ function createTelegramImmediateAlertService({
     reason,
     messageId = null,
     details = {},
+    transactionClient = null,
   }) {
     if (!isTelegramEnabled(env)) return { status: "disabled" };
 
-    const context = await getContext(contactId);
+    const context = await getContext(
+      contactId,
+      transactionClient ? transactionClient.query.bind(transactionClient) : undefined
+    );
     if (!context) return { status: "skipped", reason: "contact-not-found" };
 
     let eventKey;
@@ -459,14 +463,28 @@ function createTelegramImmediateAlertService({
       config,
     });
 
-    return queuePreparedAlert({
+    const alertInput = {
       eventKey,
       type,
       contactId,
       leadId: context.lead_id,
       messageText,
       cooldownMinutes,
-    });
+    };
+
+    // The contact row is locked by the Booking Ready transaction. Persist its
+    // alert in that same transaction so a crash cannot commit the outcome
+    // without leaving recoverable Telegram work behind.
+    if (type === "booking_ready" && transactionClient) {
+      const queryInTransaction = transactionClient.query.bind(transactionClient);
+      await repository.cancelOlderPendingBookingReady(alertInput, queryInTransaction);
+      const queued = await repository.insertAlert(alertInput, queryInTransaction);
+      return queued
+        ? { status: "queued", alertId: queued.id }
+        : { status: "suppressed" };
+    }
+
+    return queuePreparedAlert(alertInput);
   }
 
   return {
