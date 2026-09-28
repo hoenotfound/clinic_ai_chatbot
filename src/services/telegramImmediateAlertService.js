@@ -305,7 +305,7 @@ function createImmediateAlertQueueRunner({
     let failedCount = 0;
 
     try {
-      const recovered = await repository.markExhaustedStale();
+      const recovered = await repository.markExhaustedStale() || [];
       for (const alert of recovered) {
         if (alert.status === "failed") publishImmediateTerminalState(alert);
       }
