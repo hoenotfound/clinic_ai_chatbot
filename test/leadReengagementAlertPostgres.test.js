@@ -74,7 +74,7 @@ test(
           id, contact_id, role, content, created_at
         ) VALUES
           (44, 12, 'user', 'How much is HIFU?', '2026-09-24T04:00:00Z'),
-          (45, 12, 'assistant', 'The current promo starts from RM...', '2026-09-24T04:01:00Z'),
+          (45, 12, 'assistant', 'The current promo starts from RM...', '2026-09-24T04:00:00Z'),
           (90, 12, 'user', 'Hi, the promo still have?', '2026-09-28T04:00:00Z');
 
         INSERT INTO lead_temperature_scores (
@@ -96,6 +96,7 @@ test(
       assert.equal(context.contact_id, 12);
       assert.equal(context.current_message_id, 90);
       assert.equal(context.previous_customer_message_id, 44);
+      assert.equal(new Date(context.previous_activity_at).toISOString(), "2026-09-24T04:00:00.000Z");
       assert.equal(Number(context.gap_hours), 96);
       assert.equal(context.lead_id, 7);
       assert.equal(context.temperature, "hot");
