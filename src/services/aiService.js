@@ -108,8 +108,11 @@ async function runCandidate(
       return raw;
     } catch (err) {
       lastError = err;
-      candidate.reportOutcome?.(classifyCandidateHealthFailure(err));
-      const retry = attempt < retryCount && isRetryableAiError(err);
+      const outcome = classifyCandidateHealthFailure(err);
+      candidate.reportOutcome?.(outcome);
+      const retry = attempt < retryCount
+        && !["rate_limit", "quota_exhausted", "authentication"].includes(outcome.failureKind)
+        && isRetryableAiError(err);
       console.warn(
         `${candidate.label} attempt ${attempt + 1} failed${retry ? "; retrying" : ""}:`,
         err?.message || err
