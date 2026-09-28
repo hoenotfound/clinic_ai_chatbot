@@ -29,6 +29,7 @@ const context = {
   current_customer_message: "Hi, the HIFU promo still have?",
   previous_customer_message_id: 44,
   previous_customer_message_at: "2026-09-24T04:00:00.000Z",
+  previous_activity_at: "2026-09-24T04:01:00.000Z",
   current_message_at: "2026-09-28T04:00:00.000Z",
   gap_hours: 96,
   lead_id: 7,
@@ -217,6 +218,8 @@ test("re-engagement context reads the previous customer turn and latest stored A
   assert.deepEqual(result, row);
   assert.deepEqual(captured.params, [12, 90, 7]);
   assert.match(captured.sql, /previous_message\.created_at/);
+  assert.match(captured.sql, /previous_activity\.created_at/);
+  assert.match(captured.sql, /current_message\.created_at - previous_activity\.created_at/);
   assert.match(captured.sql, /lead_temperature_scores score/);
   assert.match(captured.sql, /score\.summary_data->>'chatSummary'/);
   assert.match(captured.sql, /score\.through_message_id < current_message\.id/);
