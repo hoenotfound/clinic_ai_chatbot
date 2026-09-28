@@ -177,6 +177,33 @@ async function markSent(id, leaseToken, query = pool.query.bind(pool)) {
   return result.rows[0] || null;
 }
 
+async function markCancelled(
+  id,
+  leaseToken,
+  reason = "Alert no longer applies.",
+  query = pool.query.bind(pool)
+) {
+  if (!leaseToken) return null;
+  const message = String(reason || "Alert no longer applies.").slice(0, 1000);
+  const result = await query(
+    `UPDATE telegram_immediate_alerts
+     SET status = 'cancelled',
+         terminal_at = COALESCE(terminal_at, now()),
+         claimed_at = NULL,
+         lease_token = NULL,
+         next_attempt_at = NULL,
+         error_text = $3,
+         updated_at = now()
+     WHERE id = $1
+       AND lease_token = $2
+       AND status = 'sending'
+       AND terminal_at IS NULL
+     RETURNING *`,
+    [id, leaseToken, message]
+  );
+  return result.rows[0] || null;
+}
+
 async function markFailed(
   id,
   leaseToken,
@@ -276,6 +303,7 @@ module.exports = {
   claimReady,
   findNextDueAt,
   insertAlert,
+  markCancelled,
   markExhaustedStale,
   markFailed,
   markSent,
