@@ -449,47 +449,34 @@ test("iPad touch drag moves a lead through the same stage update API", async ({ 
     const handle = document.querySelector('main.ui-kanban-scroll [aria-label="Drag lead to another stage"]');
     if (!handle) throw new Error("Touch drag handle not found");
 
-    const makeTouch = (x, y) => new Touch({
+    const makeTouch = (x, y) => ({
       identifier: 7,
-      target: handle,
       clientX: x,
       clientY: y,
       pageX: x + window.scrollX,
       pageY: y + window.scrollY,
       screenX: x,
       screenY: y,
-      radiusX: 1,
-      radiusY: 1,
-      rotationAngle: 0,
-      force: 0.5,
     });
 
-    const start = makeTouch(startX, startY);
-    handle.dispatchEvent(new TouchEvent("touchstart", {
-      bubbles: true,
-      cancelable: true,
-      touches: [start],
-      targetTouches: [start],
-      changedTouches: [start],
-    }));
+    const dispatchTouch = (target, type, touches, changedTouches) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperties(event, {
+        touches: { value: touches },
+        targetTouches: { value: touches },
+        changedTouches: { value: changedTouches },
+      });
+      target.dispatchEvent(event);
+    };
 
-    const move = makeTouch(endX, endY);
-    document.dispatchEvent(new TouchEvent("touchmove", {
-      bubbles: true,
-      cancelable: true,
-      touches: [move],
-      targetTouches: [move],
-      changedTouches: [move],
-    }));
+    const startTouch = makeTouch(startX, startY);
+    dispatchTouch(handle, "touchstart", [startTouch], [startTouch]);
 
-    const end = makeTouch(endX, endY);
-    document.dispatchEvent(new TouchEvent("touchend", {
-      bubbles: true,
-      cancelable: true,
-      touches: [],
-      targetTouches: [],
-      changedTouches: [end],
-    }));
+    const moveTouch = makeTouch(endX, endY);
+    dispatchTouch(document, "touchmove", [moveTouch], [moveTouch]);
+
+    const endTouch = makeTouch(endX, endY);
+    dispatchTouch(document, "touchend", [], [endTouch]);
   }, { startX, startY, endX, endY });
 
   await expect.poll(() => findCall(apiState, "PATCH", "/api/pipeline/leads/501")?.body)
