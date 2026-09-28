@@ -41,8 +41,9 @@ function normalizeBookingDetails(details = {}) {
     branch: canonicalConfiguredValue(details.branch, clinicConfig.branches),
     treatment: canonicalConfiguredValue(details.treatment, clinicConfig.services),
     appointmentPreference: safeText(details.appointmentPreference),
-    staffSummary: safeText(details.staffSummary, 600),
   };
+  const staffSummary = safeText(details.staffSummary, 600);
+  if (staffSummary) normalized.staffSummary = staffSummary;
 
   // Project metadata belongs only to project-mode conversion contracts. Keep a
   // second defensive boundary here so clinic outcomes stay clean even if a
