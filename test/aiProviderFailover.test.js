@@ -148,6 +148,82 @@ test("Claude rate-limit failure cools the candidate and skips the next immediate
   }
 });
 
+
+test("Claude 429 does not immediately retry the same limited provider", async () => {
+  resetGeminiKeyPoolState();
+  const originalClaude = claudeService.getReply;
+  let calls = 0;
+  const env = baseEnv({
+    AI_PROVIDER: "claude",
+    GEMINI_API_KEY: "",
+    AI_REPLY_RETRY_COUNT: "1",
+    CLAUDE_RATE_LIMIT_COOLDOWN_MS: "60000",
+  });
+
+  claudeService.getReply = async () => {
+    calls += 1;
+    const err = new Error("rate limit exceeded");
+    err.status = 429;
+    throw err;
+  };
+
+  try {
+    await assert.rejects(
+      runClaudeReply(
+        [{ role: "user", content: "hello" }],
+        { channel: "whatsapp", isFirstMessage: false, privateSetupCheck: true },
+        100,
+        1,
+        env,
+        { globalBudgetMs: 200 }
+      ),
+      (err) => err.status === 429
+    );
+    assert.equal(calls, 1);
+  } finally {
+    claudeService.getReply = originalClaude;
+    resetGeminiKeyPoolState();
+  }
+});
+
+test("Claude transient 503 can still use one bounded retry", async () => {
+  resetGeminiKeyPoolState();
+  const originalClaude = claudeService.getReply;
+  let calls = 0;
+  const env = baseEnv({
+    AI_PROVIDER: "claude",
+    GEMINI_API_KEY: "",
+    AI_REPLY_RETRY_COUNT: "1",
+    CLAUDE_UNAVAILABLE_COOLDOWN_MS: "30000",
+  });
+
+  claudeService.getReply = async () => {
+    calls += 1;
+    if (calls === 1) {
+      const err = new Error("service unavailable");
+      err.status = 503;
+      throw err;
+    }
+    return VALID_REPLY;
+  };
+
+  try {
+    const result = await runClaudeReply(
+      [{ role: "user", content: "hello" }],
+      { channel: "whatsapp", isFirstMessage: false, privateSetupCheck: true },
+      100,
+      1,
+      env,
+      { globalBudgetMs: 200 }
+    );
+    assert.equal(result, VALID_REPLY);
+    assert.equal(calls, 2);
+  } finally {
+    claudeService.getReply = originalClaude;
+    resetGeminiKeyPoolState();
+  }
+});
+
 test("a cooled Claude fallback does not steal provider reserve from healthy Gemini", async () => {
   resetGeminiKeyPoolState();
   const originalGemini = geminiService.getReply;
