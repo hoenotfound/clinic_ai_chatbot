@@ -32,12 +32,17 @@ test("booking-ready Telegram message is distinct from human escalation", () => {
     type: "booking_ready",
     context,
     reason: "Booking ready: customer provided scheduling preferences; staff should confirm availability.",
+    details: {
+      staffSummary: "Customer wants HIFU at Puchong and prefers Saturday afternoon. Staff should confirm an available slot.",
+    },
     env: { PUBLIC_BASE_URL: "https://clinic.example" },
   });
 
   assert.match(text, /^🔥 Booking Ready/);
   assert.match(text, /Temperature: 🔥 Hot/i);
   assert.match(text, /Branch: Puchong/);
+  assert.match(text, /AI Summary:/);
+  assert.match(text, /Customer wants HIFU at Puchong and prefers Saturday afternoon/);
   assert.match(text, /confirm the appointment availability/i);
   assert.doesNotMatch(text, /Human Intervention Required/);
 });
