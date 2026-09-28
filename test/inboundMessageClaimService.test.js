@@ -5,7 +5,11 @@ const {
   createInboundMessageClaimService,
 } = require("../src/services/inboundMessageClaimService");
 
-function makeService({ duplicate = false, policy = undefined } = {}) {
+function makeService({
+  duplicate = false,
+  policy = undefined,
+  reengagement = undefined,
+} = {}) {
   const calls = [];
   let completed = false;
   const contacts = {
@@ -109,6 +113,11 @@ function makeService({ duplicate = false, policy = undefined } = {}) {
       calls.push(["event", event, payload.messageId]);
     },
   };
+  const reengagementService = reengagement || {
+    async notifyIfReengaged() {
+      return { status: "skipped", reason: "test-default" };
+    },
+  };
 
   const claim = createInboundMessageClaimService({
     contacts,
@@ -117,6 +126,7 @@ function makeService({ duplicate = false, policy = undefined } = {}) {
     messages,
     attribution,
     events,
+    reengagement: reengagementService,
     ...(policy ? { policy } : {}),
   });
 
@@ -171,6 +181,61 @@ test("live preparation leases the durable job and preserves the persistence-time
     "prepared",
   ]);
   assert.equal(calls.some((call) => call[0] === "first-message"), false);
+});
+
+test("live preparation evaluates lead re-engagement after the lead is resolved", async () => {
+  const reengagementCalls = [];
+  const { claim } = makeService({
+    reengagement: {
+      async notifyIfReengaged(input) {
+        reengagementCalls.push(input);
+        return { status: "queued", alertId: 501 };
+      },
+    },
+  });
+
+  const durable = await claim.storeIncomingMessage({
+    id: "wamid-returning",
+    from: "60123456789",
+    profileName: "Patient",
+    text: "Hi, is the promo still available?",
+    channel: "whatsapp",
+  });
+  await claim.prepareIncomingClaim(durable);
+
+  assert.deepEqual(reengagementCalls, [{
+    contactId: 42,
+    currentMessageId: 777,
+    leadId: 9,
+  }]);
+});
+
+test("lead re-engagement alert failures never fail inbound preparation", async (t) => {
+  const originalError = console.error;
+  t.after(() => {
+    console.error = originalError;
+  });
+  console.error = () => {};
+
+  const { claim } = makeService({
+    reengagement: {
+      async notifyIfReengaged() {
+        throw new Error("Telegram re-engagement lookup failed");
+      },
+    },
+  });
+
+  const durable = await claim.storeIncomingMessage({
+    id: "wamid-returning-error",
+    from: "60123456789",
+    profileName: "Patient",
+    text: "Hello again",
+    channel: "whatsapp",
+  });
+  const prepared = await claim.prepareIncomingClaim(durable);
+
+  assert.equal(prepared.savedInbound.id, 777);
+  assert.equal(prepared.processingJobId, 91);
 });
 
 test("duplicate webhook claims stop before later side effects", async () => {
