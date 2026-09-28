@@ -59,6 +59,30 @@ test(
       assert.ok(legacy.rows[0].sent_at);
       assert.equal(legacy.rows[0].terminal_at, null);
 
+      // Simulate the previous app version still serving traffic during a rolling
+      // deploy (or after a rollback). It sends Telegram first and then inserts
+      // only the historical sent-marker columns. The migrated schema must treat
+      // that row as already sent rather than enqueueing it for replay.
+      const oldVersionInsert = await client.query(
+        `INSERT INTO telegram_immediate_alerts (
+           event_key, alert_type, contact_id
+         )
+         VALUES ('old-version:12:2', 'human_intervention', 12)
+         RETURNING status, message_text, next_attempt_at`
+      );
+      assert.deepEqual(oldVersionInsert.rows[0], {
+        status: "sent",
+        message_text: null,
+        next_attempt_at: null,
+      });
+
+      const oldVersionClaim = await repo.claimReady({
+        limit: 5,
+        staleAfterSeconds: 60,
+        maxAttempts: 5,
+      }, client.query.bind(client));
+      assert.deepEqual(oldVersionClaim, []);
+
       const poolLike = {
         query: (...args) => client.query(...args),
         async connect() {
