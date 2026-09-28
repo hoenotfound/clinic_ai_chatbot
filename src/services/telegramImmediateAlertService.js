@@ -16,6 +16,7 @@ const { pool } = require("../db/db");
 const IMMEDIATE_MESSAGE_LIMIT = 4000;
 const LATEST_MESSAGE_LIMIT = 600;
 const HUMAN_ALERT_COOLDOWN_MINUTES = 30;
+const DELIVERY_ALERT_COOLDOWN_MINUTES = 15;
 const IMMEDIATE_ALERT_RETRY_DELAYS_MS = Object.freeze([
   60 * 1000,
   2 * 60 * 1000,
@@ -196,6 +197,14 @@ function buildImmediateAlertMessage({
     lines.push(
       `${labels.serviceInterestLabel}: ${clean(context.treatment_interest)}`,
       `${labels.locationLabel}: ${clean(context.branch_name)}`
+    );
+  }
+
+  if (isBookingReady && String(details.staffSummary || "").trim()) {
+    lines.push(
+      "",
+      "AI Summary:",
+      String(details.staffSummary).trim().slice(0, 600)
     );
   }
 
@@ -388,6 +397,7 @@ function createTelegramImmediateAlertService({
       }
     } else {
       eventKey = deliveryFailureEventKey(contactId);
+      cooldownMinutes = DELIVERY_ALERT_COOLDOWN_MINUTES;
     }
 
     const messageText = buildImmediateAlertMessage({
@@ -425,6 +435,7 @@ function createTelegramImmediateAlertService({
 const defaultService = createTelegramImmediateAlertService();
 
 module.exports = {
+  DELIVERY_ALERT_COOLDOWN_MINUTES,
   HUMAN_ALERT_COOLDOWN_MINUTES,
   HUMAN_ALERT_LOCK_NAMESPACE: telegramImmediateAlertRepo.HUMAN_ALERT_LOCK_NAMESPACE,
   IMMEDIATE_ALERT_RETRY_DELAYS_MS,
