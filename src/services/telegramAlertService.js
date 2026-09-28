@@ -244,25 +244,47 @@ function createTelegramAlertService({
     async flushConversationSummaries({
       inactivityMinutes,
       limit = TELEGRAM_FLUSH_BATCH_SIZE,
+      suppressionMinutes = telegramAlertRepo.ACTIONABLE_SUMMARY_SUPPRESSION_MINUTES,
     }) {
       if (!isTelegramEnabled(env)) {
         return { status: "disabled", sent: 0 };
       }
 
+      if (typeof repository.supersedeCoveredSummaries === "function") {
+        await repository.supersedeCoveredSummaries(suppressionMinutes);
+      }
+
       const candidates = await repository.findReadySummaries({
         inactivityMinutes,
         limit,
+        suppressionMinutes,
       });
       let sent = 0;
 
       for (const candidate of candidates) {
         const claim = await repository.claimSummary(
           candidate.alert_id,
-          inactivityMinutes
+          inactivityMinutes,
+          suppressionMinutes
         );
         if (!claim) continue;
 
         try {
+          if (typeof repository.findActionableCoverage === "function") {
+            const coverage = await repository.findActionableCoverage(
+              claim.alert_id,
+              suppressionMinutes
+            );
+            if (coverage === "sent") {
+              await repository.markSuperseded(claim.alert_id);
+              continue;
+            }
+            if (coverage === "pending" || coverage === "sending") {
+              await repository.releaseClaim(claim.alert_id);
+              continue;
+            }
+          }
+
           const text = buildConversationSummaryMessage({
             lead: claim,
             score: claim.score_data,
