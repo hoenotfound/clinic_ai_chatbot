@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const { getIndustryProfile } = require("../src/config/industryProfiles");
 const {
@@ -297,4 +299,19 @@ test("waiting sweep continues to later candidates if one queue attempt fails", a
   const result = await run();
   assert.deepEqual(queued, [12, 13]);
   assert.equal(result.failedCount, 1);
+});
+
+test("staff-waiting service only queues alerts and never performs Telegram I/O inside a transaction", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/services/staffWaitingAlertService.js"),
+    "utf8"
+  );
+  const start = source.indexOf("function createStaffWaitingAlertService");
+  const end = source.indexOf("const sendStaffWaitingAlert =", start);
+  const block = source.slice(start, end);
+
+  assert.doesNotMatch(block, /postTelegramMessage/);
+  assert.doesNotMatch(block, /BEGIN|COMMIT|ROLLBACK/);
+  assert.doesNotMatch(block, /pg_advisory_xact_lock/);
+  assert.match(block, /queueAlert\(\{/);
 });
