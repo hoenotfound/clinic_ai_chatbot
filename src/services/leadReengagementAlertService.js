@@ -1,5 +1,6 @@
 const clinicConfig = require("../config/clinicConfig");
 const { pool } = require("../db/db");
+const { NO_REPLY_HOURS } = require("../db/pipelineRepo");
 const { getOperationalLabels } = require("../utils/businessTerminology");
 const {
   formatContactIdentifier,
@@ -10,7 +11,7 @@ const {
   queuePreparedAlert,
 } = require("./telegramImmediateAlertService");
 
-const LEAD_REENGAGED_MIN_HOURS = 24;
+const LEAD_REENGAGED_MIN_HOURS = NO_REPLY_HOURS;
 const LEAD_REENGAGED_SUMMARY_LIMIT = 600;
 const LEAD_REENGAGED_MESSAGE_LIMIT = 4000;
 
