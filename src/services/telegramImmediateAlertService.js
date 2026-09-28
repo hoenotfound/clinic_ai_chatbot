@@ -1,8 +1,9 @@
 const crypto = require("crypto");
-const { pool } = require("../db/db");
+const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
 const clinicConfig = require("../config/clinicConfig");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const { getOperationalLabels } = require("../utils/businessTerminology");
+const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const {
   channelLabel,
   formatContactIdentifier,
@@ -10,11 +11,20 @@ const {
   postTelegramMessage,
   temperatureLabel,
 } = require("./telegramAlertService");
+const { pool } = require("../db/db");
 
 const IMMEDIATE_MESSAGE_LIMIT = 4000;
 const LATEST_MESSAGE_LIMIT = 600;
 const HUMAN_ALERT_COOLDOWN_MINUTES = 30;
-const HUMAN_ALERT_LOCK_NAMESPACE = 24682;
+const IMMEDIATE_ALERT_RETRY_DELAYS_MS = Object.freeze([
+  60 * 1000,
+  2 * 60 * 1000,
+  5 * 60 * 1000,
+  15 * 60 * 1000,
+]);
+const IMMEDIATE_ALERT_WORKER_ERROR_RETRY_MS = 60 * 1000;
+
+let immediateAlertWorker = null;
 
 function clean(value, fallback = "Not captured") {
   const text = String(value || "").trim();
@@ -56,70 +66,6 @@ async function getImmediateAlertContext(contactId, query = pool.query.bind(pool)
   return result.rows[0] || null;
 }
 
-async function claimImmediateAlert(
-  {
-    eventKey,
-    type,
-    contactId,
-    cooldownMinutes = HUMAN_ALERT_COOLDOWN_MINUTES,
-  },
-  database = pool
-) {
-  if (!eventKey) return true;
-
-  const client = await database.connect();
-  try {
-    await client.query("BEGIN");
-
-    if (type === "human_intervention") {
-      // Serialize claims for this contact. The cooldown SELECT runs only after
-      // the lock is acquired, so under READ COMMITTED it sees any alert that a
-      // competing app instance committed while this claim was waiting.
-      await client.query(
-        "SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
-        [HUMAN_ALERT_LOCK_NAMESPACE, contactId]
-      );
-
-      const recent = await client.query(
-        `SELECT id
-         FROM telegram_immediate_alerts
-         WHERE contact_id = $1
-           AND alert_type = 'human_intervention'
-           AND created_at > now() - ($2::integer * interval '1 minute')
-         ORDER BY created_at DESC
-         LIMIT 1`,
-        [contactId, cooldownMinutes]
-      );
-
-      if (recent.rows[0]) {
-        await client.query("COMMIT");
-        return false;
-      }
-    }
-
-    const result = await client.query(
-      `INSERT INTO telegram_immediate_alerts (event_key, alert_type, contact_id)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (event_key) DO NOTHING
-       RETURNING id`,
-      [eventKey, type, contactId]
-    );
-
-    await client.query("COMMIT");
-    return Boolean(result.rows[0]);
-  } catch (err) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw err;
-  } finally {
-    client.release();
-  }
-}
-
-async function releaseImmediateAlert(eventKey, query = pool.query.bind(pool)) {
-  if (!eventKey) return;
-  await query("DELETE FROM telegram_immediate_alerts WHERE event_key = $1", [eventKey]);
-}
-
 function humanInterventionEventKey(context, reason, messageId = null) {
   // Automated paths tied to an inbound message use a stable key, preserving
   // exact-message dedupe in addition to the wider per-conversation cooldown.
@@ -133,6 +79,10 @@ function bookingReadyEventKey(context, messageId = null) {
   const capturedMessageId = Number(messageId || context.latest_customer_message_id);
   if (!Number.isSafeInteger(capturedMessageId) || capturedMessageId < 1) return null;
   return `booking-ready:${context.contact_id}:${capturedMessageId}`;
+}
+
+function deliveryFailureEventKey(contactId) {
+  return `delivery:${contactId}:event:${crypto.randomUUID()}`;
 }
 
 function nextStepLabel(value) {
@@ -214,72 +164,188 @@ function buildImmediateAlertMessage({
     : `${message.slice(0, IMMEDIATE_MESSAGE_LIMIT - 3)}...`;
 }
 
+function retryDelayMsForAttempt(attempts) {
+  const attempt = Math.max(1, Number(attempts) || 1);
+  return IMMEDIATE_ALERT_RETRY_DELAYS_MS[
+    Math.min(attempt - 1, IMMEDIATE_ALERT_RETRY_DELAYS_MS.length - 1)
+  ];
+}
+
+function delayUntilNextImmediateAlert(result) {
+  if (!result?.nextDueAt) return null;
+  const timestamp = Date.parse(result.nextDueAt);
+  if (Number.isNaN(timestamp)) return IMMEDIATE_ALERT_WORKER_ERROR_RETRY_MS;
+  return Math.max(1000, timestamp - Date.now());
+}
+
+function createImmediateAlertQueueRunner({
+  env = process.env,
+  repository = telegramImmediateAlertRepo,
+  sendMessage = postTelegramMessage,
+  logger = console,
+} = {}) {
+  let running = false;
+
+  return async function runImmediateAlertQueue() {
+    if (running || !isTelegramEnabled(env)) {
+      return { claimedCount: 0, sentCount: 0, failedCount: 0, nextDueAt: null };
+    }
+
+    running = true;
+    let sentCount = 0;
+    let failedCount = 0;
+
+    try {
+      await repository.markExhaustedStale();
+      const alerts = await repository.claimReady();
+
+      for (const alert of alerts) {
+        try {
+          await sendMessage({
+            token: env.TELEGRAM_BOT_TOKEN,
+            chatId: env.TELEGRAM_CHAT_ID,
+            text: alert.message_text,
+          });
+          await repository.markSent(alert.id, alert.lease_token);
+          sentCount += 1;
+        } catch (err) {
+          failedCount += 1;
+          const retryDelaySeconds = Math.ceil(
+            retryDelayMsForAttempt(alert.attempts) / 1000
+          );
+          await repository.markFailed(
+            alert.id,
+            alert.lease_token,
+            err,
+            { retryDelaySeconds }
+          );
+          logger.error(
+            `Telegram immediate alert failed for contact ${alert.contact_id} (${alert.alert_type}); queued for retry:`,
+            err
+          );
+        }
+      }
+
+      const nextDueAt = await repository.findNextDueAt();
+      return {
+        claimedCount: alerts.length,
+        sentCount,
+        failedCount,
+        nextDueAt,
+      };
+    } finally {
+      running = false;
+    }
+  };
+}
+
+function wakeImmediateAlertQueue(delayMs = 0) {
+  return immediateAlertWorker?.wake(delayMs) || false;
+}
+
+const runImmediateAlertQueue = createImmediateAlertQueueRunner();
+
+function startTelegramImmediateAlertRecovery() {
+  if (!isTelegramEnabled()) return () => {};
+  if (immediateAlertWorker && !immediateAlertWorker.state().stopped) {
+    return () => immediateAlertWorker.stop();
+  }
+
+  immediateAlertWorker = createAdaptiveWorkerTimer({
+    run: runImmediateAlertQueue,
+    delayForResult: delayUntilNextImmediateAlert,
+    errorRetryDelayMs: IMMEDIATE_ALERT_WORKER_ERROR_RETRY_MS,
+    label: "Telegram immediate alert worker",
+  });
+  return immediateAlertWorker.start();
+}
+
 function createTelegramImmediateAlertService({
   env = process.env,
   getContext = getImmediateAlertContext,
-  claimAlert = claimImmediateAlert,
-  releaseAlert = releaseImmediateAlert,
-  sendMessage = postTelegramMessage,
+  repository = telegramImmediateAlertRepo,
+  wakeQueue = wakeImmediateAlertQueue,
   config = clinicConfig,
 } = {}) {
-  async function send(type, { contactId, reason, messageId = null, details = {} }) {
+  async function queuePreparedAlert({
+    eventKey,
+    type,
+    contactId,
+    messageText,
+    cooldownMinutes = 0,
+  }) {
+    if (!isTelegramEnabled(env)) return { status: "disabled" };
+
+    const queued = await repository.queueAlert({
+      eventKey,
+      type,
+      contactId,
+      messageText,
+      cooldownMinutes,
+    });
+    if (!queued) return { status: "suppressed" };
+
+    wakeQueue(0);
+    return { status: "queued", alertId: queued.id };
+  }
+
+  async function queue(type, {
+    contactId,
+    reason,
+    messageId = null,
+    details = {},
+  }) {
     if (!isTelegramEnabled(env)) return { status: "disabled" };
 
     const context = await getContext(contactId);
     if (!context) return { status: "skipped", reason: "contact-not-found" };
 
-    let eventKey = null;
+    let eventKey;
+    let cooldownMinutes = 0;
+
     if (type === "human_intervention") {
       eventKey = humanInterventionEventKey(context, reason, messageId);
-      // Manual flags and rare attention paths without an inbound message still
-      // participate in the same conversation cooldown. They just need a unique
-      // event key because there is no stable inbound message id to use.
       if (!eventKey) {
         eventKey = `human:${contactId}:event:${crypto.randomUUID()}`;
       }
-      const claimed = await claimAlert({
-        eventKey,
-        type,
-        contactId,
-        cooldownMinutes: HUMAN_ALERT_COOLDOWN_MINUTES,
-      });
-      if (!claimed) return { status: "suppressed" };
+      cooldownMinutes = HUMAN_ALERT_COOLDOWN_MINUTES;
     } else if (type === "booking_ready") {
       eventKey = bookingReadyEventKey(context, messageId);
       if (!eventKey) {
         eventKey = `booking-ready:${contactId}:event:${crypto.randomUUID()}`;
       }
-      const claimed = await claimAlert({ eventKey, type, contactId });
-      if (!claimed) return { status: "suppressed" };
+    } else {
+      eventKey = deliveryFailureEventKey(contactId);
     }
 
-    try {
-      const text = buildImmediateAlertMessage({ type, context, reason, details, env, config });
-      const result = await sendMessage({
-        token: env.TELEGRAM_BOT_TOKEN,
-        chatId: env.TELEGRAM_CHAT_ID,
-        text,
-      });
-      return { status: "sent", result };
-    } catch (err) {
-      // A failed send must not consume the claim. Release the event so a later
-      // attempt can retry instead of being permanently suppressed.
-      if (eventKey) {
-        await releaseAlert(eventKey).catch(() => {});
-      }
-      throw err;
-    }
+    const messageText = buildImmediateAlertMessage({
+      type,
+      context,
+      reason,
+      details,
+      env,
+      config,
+    });
+
+    return queuePreparedAlert({
+      eventKey,
+      type,
+      contactId,
+      messageText,
+      cooldownMinutes,
+    });
   }
 
   return {
+    queuePreparedAlert,
     sendHumanInterventionAlert(input) {
-      return send("human_intervention", input);
+      return queue("human_intervention", input);
     },
     sendDeliveryFailureAlert(input) {
-      return send("delivery_failure", input);
+      return queue("delivery_failure", input);
     },
     sendBookingReadyAlert(input) {
-      return send("booking_ready", input);
+      return queue("booking_ready", input);
     },
   };
 }
@@ -288,14 +354,23 @@ const defaultService = createTelegramImmediateAlertService();
 
 module.exports = {
   HUMAN_ALERT_COOLDOWN_MINUTES,
-  HUMAN_ALERT_LOCK_NAMESPACE,
+  HUMAN_ALERT_LOCK_NAMESPACE: telegramImmediateAlertRepo.HUMAN_ALERT_LOCK_NAMESPACE,
+  IMMEDIATE_ALERT_RETRY_DELAYS_MS,
+  IMMEDIATE_ALERT_WORKER_ERROR_RETRY_MS,
+  IMMEDIATE_MESSAGE_LIMIT,
   buildImmediateAlertMessage,
   bookingReadyEventKey,
-  claimImmediateAlert,
+  createImmediateAlertQueueRunner,
   createTelegramImmediateAlertService,
+  delayUntilNextImmediateAlert,
+  deliveryFailureEventKey,
   getImmediateAlertContext,
   humanInterventionEventKey,
-  releaseImmediateAlert,
+  queuePreparedAlert: defaultService.queuePreparedAlert,
+  retryDelayMsForAttempt,
+  runImmediateAlertQueue,
+  startTelegramImmediateAlertRecovery,
+  wakeImmediateAlertQueue,
   sendHumanInterventionAlert: defaultService.sendHumanInterventionAlert,
   sendDeliveryFailureAlert: defaultService.sendDeliveryFailureAlert,
   sendBookingReadyAlert: defaultService.sendBookingReadyAlert,
