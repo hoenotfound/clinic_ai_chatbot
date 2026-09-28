@@ -4,7 +4,7 @@ const { pool } = require("./db");
 const HUMAN_ALERT_LOCK_NAMESPACE = 24682;
 const IMMEDIATE_ALERT_MAX_ATTEMPTS = 5;
 const IMMEDIATE_ALERT_STALE_AFTER_SECONDS = 60;
-const IMMEDIATE_ALERT_BATCH_SIZE = 20;
+const IMMEDIATE_ALERT_BATCH_SIZE = 5;
 
 function newLeaseToken() {
   return crypto.randomBytes(16).toString("hex");
