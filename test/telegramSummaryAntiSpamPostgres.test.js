@@ -75,6 +75,7 @@ test(
         CREATE TABLE telegram_immediate_alerts (
           id INTEGER PRIMARY KEY,
           contact_id INTEGER NOT NULL REFERENCES contacts(id),
+          lead_id INTEGER REFERENCES leads(id),
           alert_type TEXT NOT NULL,
           status TEXT NOT NULL,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -104,8 +105,8 @@ test(
         );
 
         INSERT INTO telegram_immediate_alerts (
-          id, contact_id, alert_type, status, created_at
-        ) VALUES (80, 12, 'booking_ready', 'pending', now());
+          id, contact_id, lead_id, alert_type, status, created_at
+        ) VALUES (80, 12, 7, 'booking_ready', 'pending', now());
       `);
 
       pool.query = (...args) => client.query(...args);
@@ -166,6 +167,36 @@ test(
       const manualClaim = await telegramAlertRepo.claimSummary(32, 10);
       assert.equal(manualClaim.alert_id, 32);
       assert.equal(manualClaim.score_data.alertType, "ai_scoring_failed");
+      await telegramAlertRepo.markSent(32);
+
+      // A sent alert from an older lead for the same contact must not suppress a
+      // later journey. Anti-spam ownership is lead-specific, not contact-only.
+      await client.query(`
+        INSERT INTO leads (
+          id, contact_id, temperature, stage_id, appointment_status
+        ) VALUES (8, 12, 'warm', 1, 'none');
+
+        INSERT INTO messages (id, contact_id, role, created_at)
+        VALUES (45, 12, 'user', now() - interval '20 minutes');
+
+        INSERT INTO telegram_summary_alerts (
+          id, lead_id, through_message_id, score_data, created_at
+        ) VALUES (
+          33,
+          8,
+          45,
+          '{"temperature":"warm","summary":{"chatSummary":"New enquiry on a later lead."}}'::jsonb,
+          now()
+        );
+      `);
+
+      const laterLeadCandidates = await telegramAlertRepo.findReadySummaries({
+        inactivityMinutes: 10,
+        limit: 5,
+      });
+      assert.equal(laterLeadCandidates.length, 1);
+      assert.equal(laterLeadCandidates[0].alert_id, 33);
+      assert.equal(laterLeadCandidates[0].lead_id, 8);
     } finally {
       pool.query = originalQuery;
       await client.query("SET search_path TO public").catch(() => {});
