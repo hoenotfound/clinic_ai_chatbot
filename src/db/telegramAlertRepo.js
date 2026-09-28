@@ -104,6 +104,7 @@ async function findReadySummaries({
            SELECT 1
            FROM telegram_immediate_alerts immediate
            WHERE immediate.contact_id = l.contact_id
+             AND immediate.lead_id = l.id
              AND immediate.alert_type IN ('human_intervention', 'booking_ready', 'staff_waiting')
              AND immediate.status IN ('pending', 'sending', 'sent')
              AND immediate.created_at >=
@@ -159,6 +160,7 @@ async function claimSummary(
            SELECT 1
            FROM telegram_immediate_alerts immediate
            WHERE immediate.contact_id = l.contact_id
+             AND immediate.lead_id = l.id
              AND immediate.alert_type IN ('human_intervention', 'booking_ready', 'staff_waiting')
              AND immediate.status IN ('pending', 'sending', 'sent')
              AND immediate.created_at >=
@@ -197,6 +199,7 @@ async function findActionableCoverage(
      JOIN leads l ON l.id = a.lead_id
      JOIN telegram_immediate_alerts immediate
        ON immediate.contact_id = l.contact_id
+      AND immediate.lead_id = l.id
      WHERE a.id = $1
        AND COALESCE(a.score_data->>'alertType', '') <> 'ai_scoring_failed'
        AND immediate.alert_type IN ('human_intervention', 'booking_ready', 'staff_waiting')
@@ -269,6 +272,7 @@ async function supersedeCoveredSummaries(
          SELECT 1
          FROM telegram_immediate_alerts immediate
          WHERE immediate.contact_id = l.contact_id
+           AND immediate.lead_id = l.id
            AND immediate.alert_type IN ('human_intervention', 'booking_ready', 'staff_waiting')
            AND immediate.status = 'sent'
            AND immediate.created_at >=
