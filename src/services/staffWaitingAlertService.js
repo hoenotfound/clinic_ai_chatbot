@@ -236,6 +236,7 @@ function createStaffWaitingAlertService({
       eventKey,
       type: "staff_waiting",
       contactId,
+      leadId: context.lead_id,
       messageText,
     });
   };
