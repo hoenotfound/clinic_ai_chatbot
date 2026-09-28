@@ -156,6 +156,42 @@ test(
       assert.ok(sent.sent_at);
       assert.equal(sent.lease_token, null);
 
+      const waitingAlert = await repo.queueAlert({
+        eventKey: "staff_waiting:12:45",
+        type: "staff_waiting",
+        contactId: 12,
+        messageText: "Customer is waiting for staff",
+      }, poolLike);
+      assert.equal(waitingAlert.status, "pending");
+
+      const waitingClaim = await repo.claimReady({
+        limit: 5,
+        staleAfterSeconds: 60,
+        maxAttempts: 5,
+      }, query);
+      const claimedWaiting = waitingClaim.find((row) => row.id === waitingAlert.id);
+      assert.ok(claimedWaiting);
+
+      const cancelled = await repo.markCancelled(
+        waitingAlert.id,
+        claimedWaiting.lease_token,
+        "Staff replied before Telegram delivery.",
+        query
+      );
+      assert.equal(cancelled.status, "cancelled");
+      assert.ok(cancelled.terminal_at);
+      assert.equal(cancelled.lease_token, null);
+
+      const afterCancelClaim = await repo.claimReady({
+        limit: 5,
+        staleAfterSeconds: 60,
+        maxAttempts: 5,
+      }, query);
+      assert.equal(
+        afterCancelClaim.some((row) => row.id === waitingAlert.id),
+        false
+      );
+
       const firstHuman = await repo.queueAlert({
         eventKey: "human:13:100",
         type: "human_intervention",
