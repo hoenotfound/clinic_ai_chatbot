@@ -50,13 +50,36 @@ test("human immediate queue serializes per contact and suppresses the 30-minute 
   assert.match(fake.calls[1].sql, /pg_advisory_xact_lock/);
   assert.deepEqual(fake.calls[1].params, [HUMAN_ALERT_LOCK_NAMESPACE, 12]);
   assert.match(fake.calls[2].sql, /created_at > now\(\) - \(\$2::integer \* interval '1 minute'\)/);
-  assert.deepEqual(fake.calls[2].params, [12, 30]);
+  assert.deepEqual(fake.calls[2].params, [12, 30, "human_intervention"]);
   assert.equal(fake.calls.at(-2).sql, "COMMIT");
   assert.equal(fake.calls.at(-1).sql, "RELEASE");
   assert.equal(
     fake.calls.some((call) => /INSERT INTO telegram_immediate_alerts/.test(call.sql)),
     false
   );
+});
+
+test("delivery alerts use the same per-contact type cooldown without suppressing other alert types", async () => {
+  const fake = fakeDatabase(async (sql, params) => {
+    if (/FROM telegram_immediate_alerts/.test(sql) && /created_at > now\(\)/.test(sql)) {
+      assert.deepEqual(params, [12, 15, "delivery_failure"]);
+      return { rows: [{ id: 88 }] };
+    }
+    return { rows: [] };
+  });
+
+  const result = await queueAlert({
+    eventKey: "delivery:12:event:test",
+    type: "delivery_failure",
+    contactId: 12,
+    messageText: "Delivery failed",
+    cooldownMinutes: 15,
+  }, fake.database);
+
+  assert.equal(result, null);
+  assert.equal(fake.calls[0].sql, "BEGIN");
+  assert.match(fake.calls[2].sql, /alert_type = \$3/);
+  assert.equal(fake.calls.at(-2).sql, "COMMIT");
 });
 
 test("new human immediate alert is committed as pending queue work", async () => {
