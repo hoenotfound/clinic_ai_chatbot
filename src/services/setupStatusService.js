@@ -305,6 +305,7 @@ function mergeOverview(
           lastSuccessAt: iso(savedCandidate?.last_success_at),
           lastFailureAt: iso(savedCandidate?.last_failure_at),
           lastRateLimitedAt: iso(savedCandidate?.last_rate_limited_at),
+          cooldownUntil: iso(savedCandidate?.cooldown_until),
         };
       });
     }

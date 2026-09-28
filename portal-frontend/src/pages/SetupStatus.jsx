@@ -535,7 +535,7 @@ function AiKeyHealth({ candidates, metadataMode }) {
   return (
     <details className="group mt-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]">
       <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-3 py-2 text-xs font-bold text-[var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)]/30 [&::-webkit-details-marker]:hidden">
-        <span>View AI key checks</span>
+        <span>View AI provider checks</span>
         <ChevronIcon className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" />
       </summary>
       <div className="space-y-2 border-t border-[var(--color-border)] bg-white p-2.5">
@@ -596,6 +596,12 @@ function AiKeyHealth({ candidates, metadataMode }) {
                       <div className="flex items-start justify-between gap-2">
                         <dt>Last rate limited</dt>
                         <dd className="text-right font-medium text-[var(--color-danger)]">{formatTime(candidate.lastRateLimitedAt)}</dd>
+                      </div>
+                    )}
+                    {candidate.cooldownUntil && new Date(candidate.cooldownUntil).getTime() > Date.now() && (
+                      <div className="flex items-start justify-between gap-2">
+                        <dt>Cooling down until</dt>
+                        <dd className="text-right font-medium text-[var(--color-accent)]">{formatTime(candidate.cooldownUntil)}</dd>
                       </div>
                     )}
                   </dl>

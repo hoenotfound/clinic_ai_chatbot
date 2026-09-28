@@ -5,6 +5,10 @@ const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
 const DEFAULT_QUOTA_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_UNAVAILABLE_COOLDOWN_MS = 30 * 1000;
 const DEFAULT_INVALID_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_CLAUDE_RATE_LIMIT_COOLDOWN_MS = 60 * 1000;
+const DEFAULT_CLAUDE_QUOTA_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+const DEFAULT_CLAUDE_UNAVAILABLE_COOLDOWN_MS = 30 * 1000;
+const DEFAULT_CLAUDE_INVALID_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const MAX_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const runtimeCandidateHealth = new Map();
 const activeGeminiHealthKeys = new Map();
@@ -163,29 +167,32 @@ function classifyCandidateHealthFailure(err) {
 }
 
 function cooldownMsForOutcome(candidate, outcome, env = process.env) {
-  if (candidate?.provider !== "gemini") return 0;
+  const provider = candidate?.provider;
+  if (!["gemini", "claude"].includes(provider)) return 0;
+
+  const isClaude = provider === "claude";
   if (outcome?.status === "rate_limited") {
     if (outcome.failureKind === "quota_exhausted") {
       return positiveInt(
-        env.GEMINI_QUOTA_COOLDOWN_MS,
-        DEFAULT_QUOTA_COOLDOWN_MS
+        isClaude ? env.CLAUDE_QUOTA_COOLDOWN_MS : env.GEMINI_QUOTA_COOLDOWN_MS,
+        isClaude ? DEFAULT_CLAUDE_QUOTA_COOLDOWN_MS : DEFAULT_QUOTA_COOLDOWN_MS
       );
     }
     return positiveInt(
-      env.GEMINI_RATE_LIMIT_COOLDOWN_MS,
-      DEFAULT_RATE_LIMIT_COOLDOWN_MS
+      isClaude ? env.CLAUDE_RATE_LIMIT_COOLDOWN_MS : env.GEMINI_RATE_LIMIT_COOLDOWN_MS,
+      isClaude ? DEFAULT_CLAUDE_RATE_LIMIT_COOLDOWN_MS : DEFAULT_RATE_LIMIT_COOLDOWN_MS
     );
   }
   if (outcome?.status === "unavailable") {
     return positiveInt(
-      env.GEMINI_UNAVAILABLE_COOLDOWN_MS,
-      DEFAULT_UNAVAILABLE_COOLDOWN_MS
+      isClaude ? env.CLAUDE_UNAVAILABLE_COOLDOWN_MS : env.GEMINI_UNAVAILABLE_COOLDOWN_MS,
+      isClaude ? DEFAULT_CLAUDE_UNAVAILABLE_COOLDOWN_MS : DEFAULT_UNAVAILABLE_COOLDOWN_MS
     );
   }
   if (outcome?.status === "invalid") {
     return positiveInt(
-      env.GEMINI_INVALID_KEY_COOLDOWN_MS,
-      DEFAULT_INVALID_COOLDOWN_MS
+      isClaude ? env.CLAUDE_INVALID_KEY_COOLDOWN_MS : env.GEMINI_INVALID_KEY_COOLDOWN_MS,
+      isClaude ? DEFAULT_CLAUDE_INVALID_COOLDOWN_MS : DEFAULT_INVALID_COOLDOWN_MS
     );
   }
   return 0;
@@ -265,6 +272,11 @@ function cooldownUntilMs(candidate) {
   const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
 }
+
+function getCandidateCooldownUntilMs(candidate) {
+  return cooldownUntilMs(candidate);
+}
+
 
 function getOrderedGeminiCandidates(
   env = process.env,
@@ -573,6 +585,10 @@ function resetGeminiKeyPoolState() {
 }
 
 module.exports = {
+  DEFAULT_CLAUDE_INVALID_COOLDOWN_MS,
+  DEFAULT_CLAUDE_QUOTA_COOLDOWN_MS,
+  DEFAULT_CLAUDE_RATE_LIMIT_COOLDOWN_MS,
+  DEFAULT_CLAUDE_UNAVAILABLE_COOLDOWN_MS,
   DEFAULT_INVALID_COOLDOWN_MS,
   DEFAULT_QUOTA_COOLDOWN_MS,
   DEFAULT_RATE_LIMIT_COOLDOWN_MS,
@@ -583,6 +599,7 @@ module.exports = {
   credentialFingerprint,
   geminiCandidateHealthKey,
   getGeminiApiKeys,
+  getCandidateCooldownUntilMs,
   getGeminiCandidateDescriptors,
   getOrderedGeminiCandidates,
   getRuntimeCandidateHealth,
