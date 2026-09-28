@@ -257,7 +257,13 @@ async function supersedeCoveredSummaries(
          updated_at = now()
      FROM leads l
      WHERE a.lead_id = l.id
-       AND a.status = 'pending'
+       AND (
+         a.status = 'pending'
+         OR (
+           a.status = 'sending'
+           AND a.claimed_at <= now() - (10 * interval '1 minute')
+         )
+       )
        AND COALESCE(a.score_data->>'alertType', '') <> 'ai_scoring_failed'
        AND EXISTS (
          SELECT 1
