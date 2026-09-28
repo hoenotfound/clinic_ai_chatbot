@@ -1,7 +1,6 @@
 require("dotenv").config();
 const path = require("path");
 const express = require("express");
-const bodyParser = require("body-parser");
 const cookieSession = require("cookie-session");
 
 const whatsapp = require("./services/whatsappService");
@@ -56,6 +55,11 @@ const {
 } = require("./utils/conversationQueue");
 const { verifyWebhookSignature } = require("./middleware/verifyWebhookSignature");
 const { verifyMetaWebhookSignature } = require("./middleware/verifyMetaWebhookSignature");
+const {
+  createPortalJsonParser,
+  createWebhookJsonParser,
+  payloadTooLargeErrorHandler,
+} = require("./middleware/requestBodyLimits");
 const { requireAuth } = require("./middleware/requireAuth");
 
 const authRoutes = require("./routes/auth");
@@ -883,7 +887,7 @@ if (!process.env.WHATSAPP_APP_SECRET && process.env.NODE_ENV === "production") {
   );
   process.exit(1);
 }
-const webhookJsonParser = bodyParser.json({ verify: verifyWebhookSignature });
+const webhookJsonParser = createWebhookJsonParser(verifyWebhookSignature);
 
 // Facebook and Instagram use a separate callback and app secret. Keeping this
 // parser separate means enabling social channels cannot change how WhatsApp's
@@ -901,10 +905,10 @@ if (
   );
   process.exit(1);
 }
-const metaWebhookJsonParser = bodyParser.json({ verify: verifyMetaWebhookSignature });
+const metaWebhookJsonParser = createWebhookJsonParser(verifyMetaWebhookSignature);
 
 // ── Portal API: normal JSON parsing + signed session cookie for staff login. ──
-app.use("/api", bodyParser.json());
+app.use("/api", createPortalJsonParser());
 const SESSION_SECRET = process.env.SESSION_SECRET;
 if (!SESSION_SECRET) {
   console.error(
@@ -1139,6 +1143,10 @@ app.use("/api/pipeline", requireAuth, pipelineRoutes);
 app.use("/api/setup-status", requireAuth, setupStatusRoutes);
 app.use("/api/whatsapp-coexistence/onboarding", requireAuth, whatsappCoexistenceOnboardingRoutes);
 app.use("/api/go-live", requireAuth, goLiveRoutes);
+
+// Keep oversized JSON failures predictable for Meta retries and portal callers.
+// Other parser/signature errors continue through the existing Express error path.
+app.use(payloadTooLargeErrorHandler);
 
 // ── Serve the built portal frontend in production ──
 const portalBuildPath = path.join(__dirname, "../portal-frontend/dist");

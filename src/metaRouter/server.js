@@ -4,11 +4,15 @@ const crypto = require("crypto");
 const express = require("express");
 const { createMetaRouterPool } = require("./db");
 const { createMetaWebhookRouteRepo } = require("./routeRepo");
+const {
+  WEBHOOK_JSON_LIMIT,
+  payloadTooLargeErrorHandler,
+} = require("../middleware/requestBodyLimits");
 
 const DEFAULT_PORT = 10002;
 const DEFAULT_FORWARD_TIMEOUT_MS = 8000;
 const MAX_FORWARD_TIMEOUT_MS = 30000;
-const MAX_WEBHOOK_BYTES = "2mb";
+const MAX_WEBHOOK_BYTES = WEBHOOK_JSON_LIMIT;
 
 function text(value) {
   return String(value || "").trim();
@@ -286,6 +290,8 @@ function createMetaRouterApp({
       }
     },
   );
+
+  app.use(payloadTooLargeErrorHandler);
 
   return app;
 }
