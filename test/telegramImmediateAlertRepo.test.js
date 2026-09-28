@@ -3,8 +3,10 @@ const assert = require("node:assert/strict");
 
 const {
   HUMAN_ALERT_LOCK_NAMESPACE,
+  IMMEDIATE_ALERT_MAX_STALE_RECOVERIES,
   claimReady,
   markCancelled,
+  markExhaustedStale,
   markFailed,
   queueAlert,
 } = require("../src/db/telegramImmediateAlertRepo");
@@ -108,6 +110,7 @@ test("new human immediate alert is committed as pending queue work", async () =>
     "human:12:46",
     "human_intervention",
     12,
+    null,
     "Queued human alert",
   ]);
   assert.match(insert.sql, /'pending'/);
@@ -115,7 +118,7 @@ test("new human immediate alert is committed as pending queue work", async () =>
   assert.equal(fake.calls.at(-2).sql, "COMMIT");
 });
 
-test("non-human alerts enqueue without opening an explicit transaction", async () => {
+test("staff-waiting alerts enqueue without opening an explicit transaction", async () => {
   const calls = [];
   const database = {
     async query(sql, params = []) {
@@ -125,16 +128,51 @@ test("non-human alerts enqueue without opening an explicit transaction", async (
   };
 
   const result = await queueAlert({
-    eventKey: "booking-ready:12:44",
-    type: "booking_ready",
+    eventKey: "staff_waiting:12:44",
+    type: "staff_waiting",
     contactId: 12,
-    messageText: "Booking ready",
+    leadId: 7,
+    messageText: "Customer waiting",
   }, database);
 
   assert.equal(result.id, 55);
   assert.equal(calls.length, 1);
   assert.match(calls[0].sql, /INSERT INTO telegram_immediate_alerts/);
-  assert.doesNotMatch(calls[0].sql, /BEGIN/);
+  assert.deepEqual(calls[0].params, [
+    "staff_waiting:12:44",
+    "staff_waiting",
+    12,
+    7,
+    "Customer waiting",
+  ]);
+});
+
+test("Booking Ready serializes per contact and cancels older pending versions for the same lead", async () => {
+  const fake = fakeDatabase(async (sql, params) => {
+    if (/SET status = 'cancelled'/.test(sql) && /alert_type = 'booking_ready'/.test(sql)) {
+      assert.deepEqual(params, [12, 7, "booking-ready:12:45"]);
+      return { rows: [{ id: 41, status: "cancelled" }] };
+    }
+    if (/INSERT INTO telegram_immediate_alerts/.test(sql)) {
+      return { rows: [{ id: 42, status: "pending", lead_id: 7 }] };
+    }
+    return { rows: [] };
+  });
+
+  const result = await queueAlert({
+    eventKey: "booking-ready:12:45",
+    type: "booking_ready",
+    contactId: 12,
+    leadId: 7,
+    messageText: "Latest booking details",
+  }, fake.database);
+
+  assert.equal(result.id, 42);
+  assert.equal(fake.calls[0].sql, "BEGIN");
+  assert.match(fake.calls[1].sql, /pg_advisory_xact_lock/);
+  assert.match(fake.calls[2].sql, /Superseded by newer Booking Ready details/);
+  assert.match(fake.calls[3].sql, /INSERT INTO telegram_immediate_alerts/);
+  assert.equal(fake.calls.at(-2).sql, "COMMIT");
 });
 
 test("ready queue claims use SKIP LOCKED and lease fencing", async () => {
@@ -215,4 +253,33 @@ test("migration upgrades old sent markers without replaying them", () => {
   assert.match(source, /ALTER COLUMN status SET DEFAULT 'sent'/);
   assert.match(source, /new queue writer explicitly[\s\S]*status='pending'/);
   assert.match(source, /status IN \('pending', 'sending', 'sent', 'failed', 'cancelled'\)/);
+  assert.match(source, /ADD COLUMN IF NOT EXISTS lead_id INTEGER/);
+  assert.match(source, /ADD COLUMN IF NOT EXISTS stale_recoveries INTEGER NOT NULL DEFAULT 0/);
+});
+
+test("ambiguous final stale attempts get one bounded recovery chance", async () => {
+  let captured = null;
+  const first = await markExhaustedStale(
+    { staleAfterSeconds: 60, maxAttempts: 5, maxStaleRecoveries: 1 },
+    async (sql, params) => {
+      captured = { sql, params };
+      return {
+        rows: [{
+          id: 9,
+          status: "pending",
+          attempts: 4,
+          stale_recoveries: 1,
+          terminal_at: null,
+        }],
+      };
+    }
+  );
+
+  assert.equal(IMMEDIATE_ALERT_MAX_STALE_RECOVERIES, 1);
+  assert.deepEqual(captured.params, [60, 5, 1]);
+  assert.match(captured.sql, /stale_recoveries < \$3 THEN 'pending'/);
+  assert.match(captured.sql, /THEN GREATEST\(0, \$2 - 1\)/);
+  assert.equal(first[0].status, "pending");
+  assert.equal(first[0].attempts, 4);
+  assert.equal(first[0].stale_recoveries, 1);
 });
