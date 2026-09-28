@@ -3,11 +3,13 @@ const assert = require("node:assert/strict");
 
 const {
   HUMAN_ALERT_COOLDOWN_MINUTES,
-  HUMAN_ALERT_LOCK_NAMESPACE,
+  IMMEDIATE_ALERT_RETRY_DELAYS_MS,
   buildImmediateAlertMessage,
-  claimImmediateAlert,
+  createImmediateAlertQueueRunner,
   createTelegramImmediateAlertService,
+  delayUntilNextImmediateAlert,
   humanInterventionEventKey,
+  retryDelayMsForAttempt,
 } = require("../src/services/telegramImmediateAlertService");
 
 const context = {
@@ -15,6 +17,8 @@ const context = {
   whatsapp_number: "60123456789",
   name: null,
   whatsapp_profile_name: "Kit Leong",
+  channel: "whatsapp",
+  channel_user_id: null,
   temperature: "hot",
   stage_name: "Contacted",
   treatment_interest: "HIFU",
@@ -23,12 +27,19 @@ const context = {
   latest_customer_message: "Can someone help me book for Saturday?",
 };
 
+const enabledEnv = {
+  TELEGRAM_ALERTS_ENABLED: "true",
+  TELEGRAM_BOT_TOKEN: "bot-token",
+  TELEGRAM_CHAT_ID: "-100123",
+  PUBLIC_BASE_URL: "https://clinic.example.com",
+};
+
 test("formats human intervention and delivery failure alerts", () => {
   const human = buildImmediateAlertMessage({
     type: "human_intervention",
     context,
     reason: "AI handed off this conversation.",
-    env: { PUBLIC_BASE_URL: "https://clinic.example.com" },
+    env: enabledEnv,
   });
   assert.match(human, /🚨 Human Intervention Required/);
   assert.match(human, /AI handed off this conversation/);
@@ -71,87 +82,19 @@ test("automated human alerts for the same inbound customer message share one eve
   assert.equal(humanInterventionEventKey(context, "Flagged by staff."), null);
 });
 
-test("human alert claim serializes per contact and suppresses alerts inside 30 minutes", async () => {
-  const calls = [];
-  const client = {
-    async query(sql, params = []) {
-      calls.push({ sql, params });
-      if (/FROM telegram_immediate_alerts/.test(sql) && /created_at > now\(\)/.test(sql)) {
-        return { rows: [{ id: 99 }] };
-      }
-      return { rows: [] };
-    },
-    release() {
-      calls.push({ sql: "RELEASE", params: [] });
-    },
-  };
-  const database = { connect: async () => client };
-
-  const claimed = await claimImmediateAlert(
-    {
-      eventKey: "human:12:45",
-      type: "human_intervention",
-      contactId: 12,
-    },
-    database
-  );
-
-  assert.equal(claimed, false);
-  assert.equal(HUMAN_ALERT_COOLDOWN_MINUTES, 30);
-  assert.equal(calls[0].sql, "BEGIN");
-  assert.match(calls[1].sql, /pg_advisory_xact_lock/);
-  assert.deepEqual(calls[1].params, [HUMAN_ALERT_LOCK_NAMESPACE, 12]);
-  assert.match(calls[2].sql, /contact_id = \$1/);
-  assert.match(calls[2].sql, /created_at > now\(\) - \(\$2::integer \* interval '1 minute'\)/);
-  assert.deepEqual(calls[2].params, [12, 30]);
-  assert.equal(calls[3].sql, "COMMIT");
-  assert.equal(calls[4].sql, "RELEASE");
-});
-
-test("a new inbound event can claim after the cooldown has expired", async () => {
-  const calls = [];
-  const client = {
-    async query(sql, params = []) {
-      calls.push({ sql, params });
-      if (/FROM telegram_immediate_alerts/.test(sql) && /created_at > now\(\)/.test(sql)) {
-        return { rows: [] };
-      }
-      if (/INSERT INTO telegram_immediate_alerts/.test(sql)) {
-        return { rows: [{ id: 100 }] };
-      }
-      return { rows: [] };
-    },
-    release() {},
-  };
-
-  const claimed = await claimImmediateAlert(
-    {
-      // This represents a later customer message. Reusing an old event key
-      // would correctly remain blocked by the table's UNIQUE(event_key).
-      eventKey: "human:12:46",
-      type: "human_intervention",
-      contactId: 12,
-    },
-    { connect: async () => client }
-  );
-
-  assert.equal(claimed, true);
-  const insert = calls.find((call) => /INSERT INTO telegram_immediate_alerts/.test(call.sql));
-  assert.deepEqual(insert.params, ["human:12:46", "human_intervention", 12]);
-  assert.equal(calls.at(-1).sql, "COMMIT");
-});
-
-test("disabled immediate alerts do not load context or send", async () => {
+test("disabled immediate alerts do not load context or touch the queue", async () => {
   let contextCalls = 0;
-  let sends = 0;
+  let queueCalls = 0;
   const service = createTelegramImmediateAlertService({
     env: { TELEGRAM_ALERTS_ENABLED: "false" },
     getContext: async () => {
       contextCalls += 1;
       return context;
     },
-    sendMessage: async () => {
-      sends += 1;
+    repository: {
+      queueAlert: async () => {
+        queueCalls += 1;
+      },
     },
   });
 
@@ -160,27 +103,27 @@ test("disabled immediate alerts do not load context or send", async () => {
     { status: "disabled" }
   );
   assert.equal(contextCalls, 0);
-  assert.equal(sends, 0);
+  assert.equal(queueCalls, 0);
 });
 
-test("enabled immediate alerts send to the configured Telegram group", async () => {
-  let sent = null;
-  const env = {
-    TELEGRAM_ALERTS_ENABLED: "true",
-    TELEGRAM_BOT_TOKEN: "bot-token",
-    TELEGRAM_CHAT_ID: "-100123",
-    PUBLIC_BASE_URL: "https://clinic.example.com",
-  };
+test("delivery failures are durably queued with the rendered alert text", async () => {
+  const queued = [];
+  let wakes = 0;
   const service = createTelegramImmediateAlertService({
-    env,
+    env: enabledEnv,
     getContext: async (contactId) => {
       assert.equal(contactId, 12);
       return context;
     },
-    claimAlert: async () => true,
-    sendMessage: async (input) => {
-      sent = input;
-      return { message_id: 88 };
+    repository: {
+      async queueAlert(input) {
+        queued.push(input);
+        return { id: 88 };
+      },
+    },
+    wakeQueue(delayMs) {
+      assert.equal(delayMs, 0);
+      wakes += 1;
     },
   });
 
@@ -189,37 +132,36 @@ test("enabled immediate alerts send to the configured Telegram group", async () 
     reason: "Delivery failed: outside reply window.",
   });
 
-  assert.equal(sent.token, "bot-token");
-  assert.equal(sent.chatId, "-100123");
-  assert.match(sent.text, /outside reply window/);
-  assert.deepEqual(result, { status: "sent", result: { message_id: 88 } });
+  assert.deepEqual(result, { status: "queued", alertId: 88 });
+  assert.equal(wakes, 1);
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].type, "delivery_failure");
+  assert.equal(queued[0].contactId, 12);
+  assert.equal(queued[0].cooldownMinutes, 0);
+  assert.match(queued[0].eventKey, /^delivery:12:event:/);
+  assert.match(queued[0].messageText, /outside reply window/);
 });
 
-test("different human intervention triggers inside the cooldown send only once", async () => {
-  const env = {
-    TELEGRAM_ALERTS_ENABLED: "true",
-    TELEGRAM_BOT_TOKEN: "bot-token",
-    TELEGRAM_CHAT_ID: "-100123",
-  };
-  let claims = 0;
-  let sends = 0;
+test("human interventions keep the 30-minute cooldown while queueing instead of sending inline", async () => {
+  const queued = [];
+  let queueCount = 0;
   const service = createTelegramImmediateAlertService({
-    env,
+    env: enabledEnv,
     getContext: async () => context,
-    claimAlert: async () => {
-      claims += 1;
-      return claims === 1;
+    repository: {
+      async queueAlert(input) {
+        queued.push(input);
+        queueCount += 1;
+        return queueCount === 1 ? { id: 91 } : null;
+      },
     },
-    sendMessage: async () => {
-      sends += 1;
-      return { message_id: sends };
-    },
+    wakeQueue() {},
   });
 
   const first = await service.sendHumanInterventionAlert({
     contactId: 12,
     messageId: 44,
-    reason: "Message may need human attention (auto-detected keyword).",
+    reason: "AI handed off this conversation.",
   });
   const second = await service.sendHumanInterventionAlert({
     contactId: 12,
@@ -227,37 +169,140 @@ test("different human intervention triggers inside the cooldown send only once",
     reason: "New message — conversation is staff-owned.",
   });
 
-  assert.equal(first.status, "sent");
+  assert.deepEqual(first, { status: "queued", alertId: 91 });
   assert.deepEqual(second, { status: "suppressed" });
-  assert.equal(sends, 1);
+  assert.equal(queued[0].eventKey, "human:12:44");
+  assert.equal(queued[0].cooldownMinutes, HUMAN_ALERT_COOLDOWN_MINUTES);
+  assert.equal(queued[1].eventKey, "human:12:45");
 });
 
-test("a failed human alert releases its cooldown claim so a later path can retry", async () => {
-  const env = {
-    TELEGRAM_ALERTS_ENABLED: "true",
-    TELEGRAM_BOT_TOKEN: "bot-token",
-    TELEGRAM_CHAT_ID: "-100123",
-  };
-  let released = null;
-  const service = createTelegramImmediateAlertService({
-    env,
-    getContext: async () => context,
-    claimAlert: async () => true,
-    releaseAlert: async (eventKey) => {
-      released = eventKey;
+test("immediate queue runner sends claimed rows and marks them sent", async () => {
+  const calls = [];
+  const repository = {
+    async markExhaustedStale() {
+      calls.push(["markExhaustedStale"]);
+      return [];
     },
-    sendMessage: async () => {
-      throw new Error("Telegram unavailable");
+    async claimReady() {
+      calls.push(["claimReady"]);
+      return [{
+        id: 7,
+        contact_id: 12,
+        alert_type: "human_intervention",
+        message_text: "queued text",
+        attempts: 1,
+        lease_token: "lease-1",
+      }];
+    },
+    async markSent(id, leaseToken) {
+      calls.push(["markSent", id, leaseToken]);
+      return { id };
+    },
+    async markFailed() {
+      throw new Error("should not fail");
+    },
+    async findNextDueAt() {
+      calls.push(["findNextDueAt"]);
+      return null;
+    },
+  };
+  const sent = [];
+  const run = createImmediateAlertQueueRunner({
+    env: enabledEnv,
+    repository,
+    async sendMessage(input) {
+      sent.push(input);
+      return { message_id: 99 };
     },
   });
 
-  await assert.rejects(
-    () => service.sendHumanInterventionAlert({
-      contactId: 12,
-      messageId: 44,
-      reason: "AI handed off this conversation.",
-    }),
-    /Telegram unavailable/
-  );
-  assert.equal(released, "human:12:44");
+  const result = await run();
+
+  assert.deepEqual(result, {
+    claimedCount: 1,
+    sentCount: 1,
+    failedCount: 0,
+    nextDueAt: null,
+  });
+  assert.deepEqual(sent, [{
+    token: "bot-token",
+    chatId: "-100123",
+    text: "queued text",
+  }]);
+  assert.deepEqual(calls, [
+    ["markExhaustedStale"],
+    ["claimReady"],
+    ["markSent", 7, "lease-1"],
+    ["findNextDueAt"],
+  ]);
+});
+
+test("Telegram timeout stays queued with backoff instead of being lost", async (t) => {
+  const originalError = console.error;
+  t.after(() => {
+    console.error = originalError;
+  });
+  console.error = () => {};
+
+  const failures = [];
+  const repository = {
+    async markExhaustedStale() {
+      return [];
+    },
+    async claimReady() {
+      return [{
+        id: 8,
+        contact_id: 12,
+        alert_type: "booking_ready",
+        message_text: "retry me",
+        attempts: 1,
+        lease_token: "lease-2",
+      }];
+    },
+    async markSent() {
+      throw new Error("should not mark sent");
+    },
+    async markFailed(id, leaseToken, err, options) {
+      failures.push({ id, leaseToken, message: err.message, options });
+      return { id, status: "pending" };
+    },
+    async findNextDueAt() {
+      return "2026-09-28T23:00:00.000Z";
+    },
+  };
+  const run = createImmediateAlertQueueRunner({
+    env: enabledEnv,
+    repository,
+    async sendMessage() {
+      throw new Error("Telegram send timed out.");
+    },
+  });
+
+  const result = await run();
+
+  assert.equal(result.claimedCount, 1);
+  assert.equal(result.sentCount, 0);
+  assert.equal(result.failedCount, 1);
+  assert.equal(result.nextDueAt, "2026-09-28T23:00:00.000Z");
+  assert.deepEqual(failures, [{
+    id: 8,
+    leaseToken: "lease-2",
+    message: "Telegram send timed out.",
+    options: { retryDelaySeconds: 60 },
+  }]);
+});
+
+test("immediate retry schedule is bounded and adaptive", () => {
+  assert.deepEqual(IMMEDIATE_ALERT_RETRY_DELAYS_MS, [
+    60_000,
+    120_000,
+    300_000,
+    900_000,
+  ]);
+  assert.equal(retryDelayMsForAttempt(1), 60_000);
+  assert.equal(retryDelayMsForAttempt(2), 120_000);
+  assert.equal(retryDelayMsForAttempt(3), 300_000);
+  assert.equal(retryDelayMsForAttempt(4), 900_000);
+  assert.equal(retryDelayMsForAttempt(99), 900_000);
+  assert.equal(delayUntilNextImmediateAlert({ nextDueAt: null }), null);
 });
