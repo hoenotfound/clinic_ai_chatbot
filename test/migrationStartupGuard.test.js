@@ -4,7 +4,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const dbSource = fs.readFileSync(path.join(__dirname, "../src/db/db.js"), "utf8");
-const serverSource = fs.readFileSync(path.join(__dirname, "../src/server.js"), "utf8");
+const startupSource = fs.readFileSync(
+  path.join(__dirname, "../src/services/applicationStartup.js"),
+  "utf8"
+);
+const appSource = fs.readFileSync(path.join(__dirname, "../src/createApp.js"), "utf8");
 
 test("database bootstrap uses the versioned runner instead of replaying schema files directly", () => {
   assert.match(dbSource, /runMigrations\(pool(?:\s*,|\s*\))/);
@@ -14,11 +18,11 @@ test("database bootstrap uses the versioned runner instead of replaying schema f
 });
 
 test("port binds before migrations but readiness and workers wait for migrations", () => {
-  const listenIndex = serverSource.indexOf("await listenHttpServer(app, { port: PORT })");
-  const migrationIndex = serverSource.indexOf("await initSchema()");
-  const recoveryIndex = serverSource.indexOf("startInboundProcessingRecovery({");
-  const followUpIndex = serverSource.indexOf("startAutomatedFollowUps()");
-  const readyIndex = serverSource.indexOf("startupReadiness.markReady()");
+  const listenIndex = startupSource.indexOf("await listenHttpServer(app, { port })");
+  const migrationIndex = startupSource.indexOf("await initSchema()");
+  const recoveryIndex = startupSource.indexOf("startInboundProcessingRecovery({");
+  const followUpIndex = startupSource.indexOf("startAutomatedFollowUps()");
+  const readyIndex = startupSource.indexOf("startupReadiness.markReady()");
 
   assert.ok(listenIndex >= 0, "server must bind the Render port through the startup listener");
   assert.ok(migrationIndex > listenIndex, "migrations should run after the socket opens");
@@ -27,13 +31,13 @@ test("port binds before migrations but readiness and workers wait for migrations
   assert.ok(readyIndex > recoveryIndex, "service must not become ready before recovery workers start");
   assert.ok(readyIndex > followUpIndex, "service must not become ready before follow-up workers start");
   assert.match(
-    serverSource,
+    appSource,
     /app\.use\(startupReadiness\.requireReady\)/,
     "application traffic must stay gated until startup is ready"
   );
   assert.doesNotMatch(
-    serverSource,
-    /app\.listen\(PORT/,
+    startupSource,
+    /app\.listen\(/,
     "server startup must use the explicit 0.0.0.0 listener helper"
   );
 });
