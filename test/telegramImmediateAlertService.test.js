@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const realtimeEvents = require("../src/utils/realtimeEvents");
 
 const {
   DELIVERY_ALERT_COOLDOWN_MINUTES,
@@ -10,6 +11,7 @@ const {
   createTelegramImmediateAlertService,
   delayUntilNextImmediateAlert,
   humanInterventionEventKey,
+  isLatestBookingReadyAlert,
   retryDelayMsForAttempt,
   shouldSendImmediateAlert,
   staffWaitingReference,
@@ -17,6 +19,7 @@ const {
 
 const context = {
   contact_id: 12,
+  lead_id: 7,
   whatsapp_number: "60123456789",
   name: null,
   whatsapp_profile_name: "Kit Leong",
@@ -116,6 +119,81 @@ test("staff-waiting event keys identify the exact unanswered episode for send-ti
   assert.deepEqual(captured.params, [12, 45]);
   assert.match(captured.sql, /sent_by_username IS NOT NULL/);
   assert.match(captured.sql, /delivery_status NOT IN \('failed', 'unknown'\)/);
+});
+
+test("older claimed Booking Ready alert is rejected when a newer same-lead version exists", async () => {
+  const alert = {
+    id: 41,
+    contact_id: 12,
+    lead_id: 7,
+    alert_type: "booking_ready",
+  };
+  let captured = null;
+  const current = await isLatestBookingReadyAlert(
+    alert,
+    async (sql, params) => {
+      captured = { sql, params };
+      return { rows: [{ is_latest: false }] };
+    }
+  );
+
+  assert.equal(current, false);
+  assert.deepEqual(captured.params, [12, 41, 7]);
+  assert.match(captured.sql, /newer\.id > \$2/);
+  assert.match(captured.sql, /newer\.lead_id IS NOT DISTINCT FROM \$3::integer/);
+});
+
+test("terminal actionable alert emits an internal summary-worker wake signal", async (t) => {
+  const events = [];
+  const unsubscribe = realtimeEvents.subscribe("telegram_alert_terminal", (payload) => {
+    events.push(payload);
+  });
+  t.after(unsubscribe);
+
+  const repository = {
+    async markExhaustedStale() { return []; },
+    async claimReady() {
+      return [{
+        id: 42,
+        contact_id: 12,
+        lead_id: 7,
+        alert_type: "booking_ready",
+        message_text: "Latest booking details",
+        attempts: 1,
+        lease_token: "lease-42",
+      }];
+    },
+    async markSent() {
+      return {
+        id: 42,
+        contact_id: 12,
+        lead_id: 7,
+        alert_type: "booking_ready",
+        status: "sent",
+      };
+    },
+    async markFailed() {
+      throw new Error("should not fail");
+    },
+    async findNextDueAt() { return null; },
+  };
+
+  const run = createImmediateAlertQueueRunner({
+    env: enabledEnv,
+    repository,
+    shouldSendAlert: async () => true,
+    sendMessage: async () => ({ message_id: 100 }),
+  });
+
+  await run();
+
+  assert.deepEqual(events, [{
+    alertId: 42,
+    contactId: 12,
+    leadId: 7,
+    alertType: "booking_ready",
+    status: "sent",
+  }]);
 });
 
 test("resolved staff-waiting retry is cancelled before Telegram is called", async () => {
@@ -243,6 +321,7 @@ test("delivery failures are durably queued with the rendered alert text", async 
   assert.equal(queued.length, 1);
   assert.equal(queued[0].type, "delivery_failure");
   assert.equal(queued[0].contactId, 12);
+  assert.equal(queued[0].leadId, 7);
   assert.equal(queued[0].cooldownMinutes, DELIVERY_ALERT_COOLDOWN_MINUTES);
   assert.match(queued[0].eventKey, /^delivery:12:event:/);
   assert.match(queued[0].messageText, /outside reply window/);
@@ -278,6 +357,7 @@ test("human interventions keep the 30-minute cooldown while queueing instead of 
   assert.deepEqual(first, { status: "queued", alertId: 91 });
   assert.deepEqual(second, { status: "suppressed" });
   assert.equal(queued[0].eventKey, "human:12:44");
+  assert.equal(queued[0].leadId, 7);
   assert.equal(queued[0].cooldownMinutes, HUMAN_ALERT_COOLDOWN_MINUTES);
   assert.equal(queued[1].eventKey, "human:12:45");
 });
