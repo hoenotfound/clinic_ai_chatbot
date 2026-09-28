@@ -28,6 +28,11 @@ test(
           id SERIAL PRIMARY KEY
         );
 
+        CREATE TABLE leads (
+          id INTEGER PRIMARY KEY,
+          contact_id INTEGER NOT NULL REFERENCES contacts(id)
+        );
+
         CREATE TABLE telegram_immediate_alerts (
           id SERIAL PRIMARY KEY,
           event_key TEXT NOT NULL UNIQUE,
@@ -37,6 +42,7 @@ test(
         );
 
         INSERT INTO contacts (id) VALUES (12), (13);
+        INSERT INTO leads (id, contact_id) VALUES (7, 12), (8, 13);
         INSERT INTO telegram_immediate_alerts (
           event_key, alert_type, contact_id, created_at
         )
@@ -98,10 +104,12 @@ test(
         eventKey: "booking-ready:12:44",
         type: "booking_ready",
         contactId: 12,
+        leadId: 7,
         messageText: "Booking ready queued alert",
       }, poolLike);
       assert.equal(queued.status, "pending");
       assert.equal(queued.attempts, 0);
+      assert.equal(queued.lead_id, 7);
 
       const firstClaim = await repo.claimReady({
         limit: 5,
@@ -156,10 +164,59 @@ test(
       assert.ok(sent.sent_at);
       assert.equal(sent.lease_token, null);
 
+      const olderBooking = await repo.queueAlert({
+        eventKey: "booking-ready:12:45",
+        type: "booking_ready",
+        contactId: 12,
+        leadId: 7,
+        messageText: "Saturday afternoon",
+      }, poolLike);
+      assert.equal(olderBooking.status, "pending");
+
+      const newerBooking = await repo.queueAlert({
+        eventKey: "booking-ready:12:46",
+        type: "booking_ready",
+        contactId: 12,
+        leadId: 7,
+        messageText: "Sunday evening",
+      }, poolLike);
+      assert.equal(newerBooking.status, "pending");
+
+      const bookingStates = await client.query(
+        `SELECT event_key, status
+         FROM telegram_immediate_alerts
+         WHERE event_key IN ('booking-ready:12:45', 'booking-ready:12:46')
+         ORDER BY event_key`
+      );
+      assert.deepEqual(bookingStates.rows, [
+        { event_key: "booking-ready:12:45", status: "cancelled" },
+        { event_key: "booking-ready:12:46", status: "pending" },
+      ]);
+
+      const latestBookingClaim = await repo.claimReady({
+        limit: 5,
+        staleAfterSeconds: 60,
+        maxAttempts: 5,
+      }, query);
+      const claimedLatestBooking = latestBookingClaim.find(
+        (row) => row.id === newerBooking.id
+      );
+      assert.ok(claimedLatestBooking);
+      assert.equal(
+        latestBookingClaim.some((row) => row.id === olderBooking.id),
+        false
+      );
+      await repo.markSent(
+        newerBooking.id,
+        claimedLatestBooking.lease_token,
+        query
+      );
+
       const waitingAlert = await repo.queueAlert({
         eventKey: "staff_waiting:12:45",
         type: "staff_waiting",
         contactId: 12,
+        leadId: 7,
         messageText: "Customer is waiting for staff",
       }, poolLike);
       assert.equal(waitingAlert.status, "pending");
@@ -196,6 +253,7 @@ test(
         eventKey: "human:13:100",
         type: "human_intervention",
         contactId: 13,
+        leadId: 8,
         messageText: "First human alert",
         cooldownMinutes: 30,
       }, poolLike);
@@ -205,6 +263,7 @@ test(
         eventKey: "human:13:101",
         type: "human_intervention",
         contactId: 13,
+        leadId: 8,
         messageText: "Second human alert",
         cooldownMinutes: 30,
       }, poolLike);
@@ -214,6 +273,7 @@ test(
         eventKey: "delivery:12:event:final",
         type: "delivery_failure",
         contactId: 12,
+        leadId: 7,
         messageText: "Final attempt",
       }, poolLike);
       const finalClaim = await repo.claimReady({
@@ -232,14 +292,44 @@ test(
          WHERE id = $1`,
         [finalAttempt.id]
       );
-      const exhausted = await repo.markExhaustedStale({
+      const recoveredFinal = await repo.markExhaustedStale({
+        staleAfterSeconds: 60,
+        maxAttempts: 5,
+        maxStaleRecoveries: 1,
+      }, query);
+      const recoveredRow = recoveredFinal.find((row) => row.id === finalAttempt.id);
+      assert.ok(recoveredRow);
+      assert.equal(recoveredRow.status, "pending");
+      assert.equal(recoveredRow.attempts, 4);
+      assert.equal(recoveredRow.stale_recoveries, 1);
+      assert.equal(recoveredRow.terminal_at, null);
+
+      const recoveredClaim = await repo.claimReady({
+        limit: 5,
         staleAfterSeconds: 60,
         maxAttempts: 5,
       }, query);
-      assert.ok(exhausted.some((row) => row.id === finalAttempt.id));
+      const retriedFinal = recoveredClaim.find((row) => row.id === finalAttempt.id);
+      assert.ok(retriedFinal);
+      assert.equal(retriedFinal.attempts, 5);
+
+      await client.query(
+        `UPDATE telegram_immediate_alerts
+         SET claimed_at = now() - interval '2 minutes'
+         WHERE id = $1`,
+        [finalAttempt.id]
+      );
+      const exhaustedAgain = await repo.markExhaustedStale({
+        staleAfterSeconds: 60,
+        maxAttempts: 5,
+        maxStaleRecoveries: 1,
+      }, query);
+      const terminalRow = exhaustedAgain.find((row) => row.id === finalAttempt.id);
+      assert.ok(terminalRow);
+      assert.equal(terminalRow.status, "failed");
 
       const terminal = await client.query(
-        `SELECT status, terminal_at, lease_token
+        `SELECT status, terminal_at, lease_token, stale_recoveries
          FROM telegram_immediate_alerts
          WHERE id = $1`,
         [finalAttempt.id]
@@ -247,6 +337,7 @@ test(
       assert.equal(terminal.rows[0].status, "failed");
       assert.ok(terminal.rows[0].terminal_at);
       assert.equal(terminal.rows[0].lease_token, null);
+      assert.equal(terminal.rows[0].stale_recoveries, 1);
     } finally {
       await client.query("SET search_path TO public").catch(() => {});
       await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`).catch(() => {});
