@@ -43,6 +43,17 @@ function readinessHandler(_req, res) {
   });
 }
 
+function rootReadinessHandler(_req, res) {
+  if (isReady()) {
+    return res.status(200).send("AI messaging bot is running.");
+  }
+  return res.status(503).send(
+    phase === "failed"
+      ? "AI messaging bot startup failed."
+      : "AI messaging bot is starting."
+  );
+}
+
 function requireReady(_req, res, next) {
   if (isReady()) return next();
   return res.status(503).json({
@@ -68,6 +79,7 @@ module.exports = {
   markReady,
   readinessHandler,
   requireReady,
+  rootReadinessHandler,
   resetForTests,
   snapshot,
 };
