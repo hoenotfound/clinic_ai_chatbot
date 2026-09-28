@@ -181,7 +181,7 @@ test("login page is usable without horizontal overflow", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Test Clinic" })).toBeVisible();
   await expect(page.getByLabel("Username")).toBeVisible();
-  await expect(page.getByLabel("Password")).toBeVisible();
+  await expect(page.locator("#password")).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
 });
