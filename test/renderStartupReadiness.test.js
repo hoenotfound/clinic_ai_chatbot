@@ -1,0 +1,159 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const http = require("node:http");
+const fs = require("node:fs");
+const path = require("node:path");
+const express = require("express");
+
+const startupReadiness = require("../src/services/startupReadinessService");
+const {
+  closeHttpServer,
+  listenHttpServer,
+} = require("../src/services/httpServerStartup");
+
+function responseRecorder() {
+  return {
+    statusCode: 200,
+    body: null,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(body) {
+      this.body = body;
+      return this;
+    },
+    send(body) {
+      this.body = body;
+      return this;
+    },
+  };
+}
+
+test.beforeEach(() => {
+  startupReadiness.resetForTests();
+});
+
+test("readiness stays unhealthy until startup is explicitly complete", () => {
+  const before = responseRecorder();
+  startupReadiness.readinessHandler({}, before);
+  assert.equal(before.statusCode, 503);
+  assert.deepEqual(before.body, { status: "starting", ready: false });
+
+  const rootBefore = responseRecorder();
+  startupReadiness.rootReadinessHandler({}, rootBefore);
+  assert.equal(rootBefore.statusCode, 503);
+  assert.equal(rootBefore.body, "AI messaging bot is starting.");
+
+  startupReadiness.markReady(new Date("2026-09-28T11:30:00.000Z"));
+
+  const after = responseRecorder();
+  startupReadiness.readinessHandler({}, after);
+  assert.equal(after.statusCode, 200);
+  assert.deepEqual(after.body, { status: "ready", ready: true });
+
+  const rootAfter = responseRecorder();
+  startupReadiness.rootReadinessHandler({}, rootAfter);
+  assert.equal(rootAfter.statusCode, 200);
+  assert.equal(rootAfter.body, "AI messaging bot is running.");
+});
+
+test("liveness is healthy while readiness is still starting", () => {
+  const res = responseRecorder();
+  startupReadiness.livenessHandler({}, res);
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body, { status: "alive" });
+});
+
+test("application traffic is blocked until startup becomes ready", () => {
+  let nextCalls = 0;
+
+  const blocked = responseRecorder();
+  startupReadiness.requireReady({}, blocked, () => {
+    nextCalls += 1;
+  });
+  assert.equal(blocked.statusCode, 503);
+  assert.deepEqual(blocked.body, {
+    error: "Service is starting.",
+    code: "service_starting",
+  });
+  assert.equal(nextCalls, 0);
+
+  startupReadiness.markReady();
+  const allowed = responseRecorder();
+  startupReadiness.requireReady({}, allowed, () => {
+    nextCalls += 1;
+  });
+  assert.equal(nextCalls, 1);
+});
+
+test("failed startup remains unready without exposing the startup error", () => {
+  startupReadiness.markFailed(new Date("2026-09-28T11:31:00.000Z"));
+
+  const ready = responseRecorder();
+  startupReadiness.readinessHandler({}, ready);
+  assert.equal(ready.statusCode, 503);
+  assert.deepEqual(ready.body, { status: "failed", ready: false });
+
+  const traffic = responseRecorder();
+  startupReadiness.requireReady({}, traffic, () => {
+    throw new Error("must not run");
+  });
+  assert.equal(traffic.statusCode, 503);
+  assert.deepEqual(traffic.body, {
+    error: "Service startup failed.",
+    code: "service_startup_failed",
+  });
+});
+
+test("HTTP listener binds on 0.0.0.0 and can accept a local request", async () => {
+  const app = express();
+  app.get("/", (_req, res) => res.send("ok"));
+
+  const server = await listenHttpServer(app, {
+    port: 0,
+    host: "0.0.0.0",
+    log() {},
+  });
+
+  try {
+    const address = server.address();
+    assert.equal(address.address, "0.0.0.0");
+    assert.ok(address.port > 0);
+
+    const body = await new Promise((resolve, reject) => {
+      http.get(
+        { host: "127.0.0.1", port: address.port, path: "/" },
+        (res) => {
+          let data = "";
+          res.setEncoding("utf8");
+          res.on("data", (chunk) => { data += chunk; });
+          res.on("end", () => resolve(data));
+        }
+      ).on("error", reject);
+    });
+    assert.equal(body, "ok");
+  } finally {
+    await closeHttpServer(server);
+  }
+});
+
+test("server opens the Render port before database initialization and marks ready last", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/server.js"),
+    "utf8"
+  );
+
+  const listenAt = source.indexOf("await listenHttpServer(app, { port: PORT })");
+  const initAt = source.indexOf("await initSchema()");
+  const workersAt = source.indexOf('console.log("[Startup] Maintenance and recovery workers started.")');
+  const readyAt = source.indexOf("startupReadiness.markReady()");
+
+  assert.ok(listenAt >= 0, "server should open through listenHttpServer");
+  assert.ok(initAt > listenAt, "database initialization must happen after the port is bound");
+  assert.ok(workersAt > initAt, "workers should start after database initialization");
+  assert.ok(readyAt > workersAt, "readiness must only turn green after worker startup");
+  assert.match(source, /app\.get\("\/health\/live", startupReadiness\.livenessHandler\)/);
+  assert.match(source, /app\.get\("\/health\/ready", startupReadiness\.readinessHandler\)/);
+  assert.match(source, /app\.use\(startupReadiness\.requireReady\)/);
+});
