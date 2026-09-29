@@ -210,7 +210,6 @@ function templateSignature(template) {
 async function fetchWithTimeout(fetchImpl, url, options = {}, timeoutMs = DEFAULT_META_REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  timer.unref?.();
   try {
     return await fetchImpl(url, { ...options, signal: controller.signal });
   } finally {
@@ -499,6 +498,7 @@ async function sendApprovedTemplate(
     template.components = components;
   }
 
+  let providerAccepted = false;
   try {
     const res = await fetchWithTimeout(
       fetchImpl,
@@ -530,6 +530,7 @@ async function sendApprovedTemplate(
       };
     }
 
+    providerAccepted = true;
     const data = await res.json();
     const wamid = extractWamid(data);
     if (!wamid) {
@@ -554,12 +555,14 @@ async function sendApprovedTemplate(
     console.error("WhatsApp template send threw an error:", err);
     return {
       success: false,
-      unknown: timedOut,
+      unknown: timedOut || providerAccepted,
       wamid: null,
       policyBlocked: false,
       error: timedOut
         ? "WhatsApp template send timed out, so delivery could not be confirmed. Check WhatsApp before retrying."
-        : "WhatsApp template delivery could not be started.",
+        : providerAccepted
+          ? "WhatsApp accepted the template request, but its response could not be verified. Check WhatsApp before retrying."
+          : "WhatsApp template delivery could not be started.",
     };
   }
 }
