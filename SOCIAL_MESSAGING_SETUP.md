@@ -303,9 +303,11 @@ Safety boundaries:
 - template sends are staff-triggered only;
 - AI replies, scheduled messages and automated follow-ups do not use the template path;
 - the contact must have a recorded explicit WhatsApp opt-in and must not currently be opted out;
+- recording a new opt-in requires staff to enter the real consent source and explicitly confirm that consent was given;
 - if a customer opted out, staff may record a new opt-in only when there is a real new consent source;
+- MARKETING templates require a separate staff confirmation that the recorded consent covers promotional WhatsApp messages;
 - failed template messages keep their template metadata, so Retry sends the same template rather than free-form text;
-- Inbox currently supports text header/body variables and static buttons. Media-header templates, authentication templates, named variables and dynamic URL variables are shown as unsupported rather than guessed.
+- Inbox currently supports text header/body variables plus static quick-reply, URL and phone-number buttons. Media-header templates, authentication templates, named variables, dynamic URL variables and other special button types are shown as unsupported rather than guessed.
 
 Template creation/approval remains in Meta. Inbox only lists templates whose current Meta status is `APPROVED`.
 
