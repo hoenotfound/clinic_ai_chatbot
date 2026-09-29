@@ -17,6 +17,10 @@ const migration021Source = fs.readFileSync(
   path.join(__dirname, "../src/db/migrations/021_reliability_review_followups.sql"),
   "utf8"
 );
+const migration022Source = fs.readFileSync(
+  path.join(__dirname, "../src/db/migrations/022_cancelled_outbound_attempt_durability.sql"),
+  "utf8"
+);
 
 test("database bootstrap uses the versioned runner instead of replaying schema files directly", () => {
   assert.match(dbSource, /runMigrations\(pool(?:\s*,|\s*\))/);
@@ -59,4 +63,9 @@ test("scheduled-message schema is versioned instead of created by the runtime re
   assert.doesNotMatch(scheduledRepoSource, /ensureSchema/);
   assert.match(migration021Source, /CREATE TABLE IF NOT EXISTS scheduled_messages/i);
   assert.match(migration021Source, /CREATE TABLE IF NOT EXISTS inbound_outbound_attempts/i);
+  assert.match(
+    migration022Source,
+    /assistant_message_id[\s\S]*ON DELETE SET NULL/i,
+    "cancelled outbound attempts must survive deletion of their unsent assistant row"
+  );
 });
