@@ -191,7 +191,7 @@ async function reserveOutboundAttempt({
          m.delivery_status,
          m.delivery_error
        FROM inbound_outbound_attempts a
-       JOIN messages m ON m.id = a.assistant_message_id
+       LEFT JOIN messages m ON m.id = a.assistant_message_id
        WHERE a.processing_job_id = $1`,
       [safeJobId]
     );
@@ -241,6 +241,92 @@ async function reserveOutboundAttempt({
   }
 }
 
+async function cancelOutboundAttempt(processingJobId, database = pool) {
+  const safeJobId = Number(processingJobId);
+  if (!Number.isSafeInteger(safeJobId) || safeJobId < 1) {
+    throw new TypeError("processingJobId must be a positive integer.");
+  }
+
+  const ownsClient = database === pool;
+  const client = ownsClient ? await pool.connect() : database;
+  try {
+    await client.query("BEGIN");
+
+    const stateResult = await client.query(
+      `SELECT
+         a.processing_job_id,
+         a.assistant_message_id,
+         a.outcome,
+         a.provider_message_id,
+         m.whatsapp_message_id,
+         m.delivery_status
+       FROM inbound_outbound_attempts a
+       LEFT JOIN messages m ON m.id = a.assistant_message_id
+       WHERE a.processing_job_id = $1
+       FOR UPDATE OF a`,
+      [safeJobId]
+    );
+    const state = stateResult.rows[0];
+    if (!state) {
+      await client.query("COMMIT");
+      return null;
+    }
+
+    const deliveryStatus = String(state.delivery_status || "").toLowerCase();
+    const providerEvidenceExists =
+      Boolean(state.provider_message_id) ||
+      Boolean(state.whatsapp_message_id) ||
+      ["pending", "sent", "delivered", "read", "failed"].includes(deliveryStatus);
+
+    if (
+      providerEvidenceExists ||
+      ["accepted", "rejected", "ambiguous"].includes(String(state.outcome || "").toLowerCase())
+    ) {
+      await client.query("COMMIT");
+      return { cancelled: false, state };
+    }
+
+    await client.query(
+      `UPDATE inbound_outbound_attempts
+       SET outcome = 'cancelled',
+           provider_message_id = NULL,
+           error_text = NULL,
+           finalized_at = COALESCE(finalized_at, NOW()),
+           updated_at = NOW()
+       WHERE processing_job_id = $1`,
+      [safeJobId]
+    );
+
+    if (state.assistant_message_id) {
+      await client.query(
+        `DELETE FROM messages
+         WHERE id = $1
+           AND role = 'assistant'
+           AND whatsapp_message_id IS NULL
+           AND delivery_status IS NULL`,
+        [state.assistant_message_id]
+      );
+    }
+
+    const result = await client.query(
+      `SELECT processing_job_id, inbound_message_id, assistant_message_id,
+              contact_id, origin, outcome, provider_message_id, error_text,
+              started_at, finalized_at
+       FROM inbound_outbound_attempts
+       WHERE processing_job_id = $1`,
+      [safeJobId]
+    );
+
+    await client.query("COMMIT");
+    return { cancelled: true, attempt: result.rows[0] || null };
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    if (ownsClient) client.release();
+  }
+}
+
 async function getOutboundAttempt(processingJobId, database = pool) {
   const safeJobId = Number(processingJobId);
   if (!Number.isSafeInteger(safeJobId) || safeJobId < 1) return null;
@@ -261,7 +347,7 @@ async function getOutboundAttempt(processingJobId, database = pool) {
        m.delivery_status,
        m.delivery_error
      FROM inbound_outbound_attempts a
-     JOIN messages m ON m.id = a.assistant_message_id
+     LEFT JOIN messages m ON m.id = a.assistant_message_id
      WHERE a.processing_job_id = $1`,
     [safeJobId]
   );
@@ -894,6 +980,7 @@ module.exports = {
   serializeIncoming,
   storeInboundClaim,
   reserveOutboundAttempt,
+  cancelOutboundAttempt,
   getOutboundAttempt,
   finalizeOutboundAttempt,
   markOutboundAttemptAmbiguous,
