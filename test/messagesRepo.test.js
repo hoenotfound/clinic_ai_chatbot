@@ -51,7 +51,7 @@ test("outbound message writes take the conversation scoring lock", async (t) => 
   pool.query = async (sql, params) => {
     assert.match(sql, new RegExp(`pg_advisory_xact_lock\\(${CONVERSATION_LOCK_NAMESPACE}`));
     assert.match(sql, /FROM conversation_lock/);
-    assert.deepEqual(params, [7, "assistant", "Hello", null, null, null, null, null, null]);
+    assert.deepEqual(params, [7, "assistant", "Hello", null, null, null, null, null]);
     return { rows: [{ id: 42, contact_id: 7, content: "Hello" }] };
   };
 
@@ -86,7 +86,6 @@ test("uploads Buffer attachments to R2 without a base64 round-trip", async (t) =
       null,
       "messages/7/direct-buffer.jpg",
       "image/jpeg",
-      null,
     ]);
     return { rows: [{ id: 43, contact_id: 7, content: "Photo" }] };
   };
