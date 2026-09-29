@@ -21,7 +21,7 @@ const SSE_HEARTBEAT_MS = 25 * 1000;
 const SEND_REJECTED_ERROR =
   "WhatsApp did not accept this message. Check the reply window or connection and try again.";
 const MAX_DELIVERY_STATUS_IDS = 500;
-const PARTIAL_CAPTION_ERROR_PREFIX = "partial_caption_sent:";
+const PARTIAL_CAPTION_ERROR_PREFIX = "partial_caption_sent|";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -111,15 +111,19 @@ function hasPartialCaptionMarker(errorText) {
 function deliveryErrorForSend(sendResult, fallbackError, previousError = null) {
   if (sendResult?.success) return fallbackError;
   const base = String(fallbackError || "Message delivery failed.");
-  if (sendResult?.partialCaptionSent) {
-    const providerId = String(sendResult.captionProviderMessageId || "unknown");
-    return `${PARTIAL_CAPTION_ERROR_PREFIX}${providerId}|${base}`;
-  }
-  if (hasPartialCaptionMarker(previousError)) {
-    const marker = String(previousError).split("|", 1)[0];
-    return `${marker}|${base}`;
+  if (sendResult?.partialCaptionSent || hasPartialCaptionMarker(previousError)) {
+    return `${PARTIAL_CAPTION_ERROR_PREFIX}${base}`;
   }
   return base;
+}
+
+function publicDeliveryError(errorText) {
+  const raw = String(errorText || "").trim();
+  if (!hasPartialCaptionMarker(raw)) return raw;
+  const detail = raw.slice(PARTIAL_CAPTION_ERROR_PREFIX.length).trim();
+  return detail
+    ? `The caption was sent, but the image failed to send. ${detail}`
+    : "The caption was sent, but the image failed to send.";
 }
 
 async function requireFreeformPolicy(contact, res, purpose = "service") {
@@ -568,13 +572,16 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(contact.id);
       await markLeadContacted(contact.id, req.session.username, sendResult);
     } else {
-      await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${errorText}`);
+      await contactsRepo.setDeliveryAttention(
+        contact.id,
+        `Delivery failed: ${publicDeliveryError(errorText)}`
+      );
     }
 
     res.json({
       ...updated,
       accepted: !!sendResult.success,
-      retry_error: sendResult.success ? null : errorText,
+      retry_error: sendResult.success ? null : publicDeliveryError(errorText),
     });
   } catch (err) {
     console.error("Failed to retry message:", err);
@@ -632,12 +639,19 @@ router.post("/:contactId/messages", async (req, res) => {
       contact.channel || "whatsapp"
     );
     if (!sendResult.success) {
-      await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${errorText}`);
+      await contactsRepo.setDeliveryAttention(
+        contact.id,
+        `Delivery failed: ${publicDeliveryError(errorText)}`
+      );
     } else {
       await markLeadContacted(contact.id, req.session.username, sendResult);
     }
 
-    res.status(201).json({ ...finalMessage, delivered: sendResult.success });
+    res.status(201).json({
+      ...finalMessage,
+      delivery_error: publicDeliveryError(finalMessage.delivery_error),
+      delivered: sendResult.success,
+    });
   } catch (err) {
     console.error("Failed to send staff message:", err);
     res.status(500).json({ error: "Something went wrong sending this message." });
@@ -716,12 +730,19 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       contact.channel || "whatsapp"
     );
     if (!sendResult.success) {
-      await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${errorText}`);
+      await contactsRepo.setDeliveryAttention(
+        contact.id,
+        `Delivery failed: ${publicDeliveryError(errorText)}`
+      );
     } else {
       await markLeadContacted(contact.id, req.session.username, sendResult);
     }
 
-    res.status(201).json({ ...finalMessage, delivered: sendResult.success });
+    res.status(201).json({
+      ...finalMessage,
+      delivery_error: publicDeliveryError(finalMessage.delivery_error),
+      delivered: sendResult.success,
+    });
   } catch (err) {
     console.error("Failed to send staff image:", err);
     res.status(500).json({ error: "Something went wrong sending this image." });
