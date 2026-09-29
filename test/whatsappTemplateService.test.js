@@ -441,3 +441,42 @@ test("template catalog request times out instead of hanging the Inbox", async ()
   assert.match(result.error, /timed out/i);
 });
 
+test("template transport passes the template category into the final policy check", async (t) => {
+  const originalPolicy = whatsappPolicy.checkTemplateAllowed;
+  const oldPhoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const oldToken = process.env.WHATSAPP_TOKEN;
+  t.after(() => {
+    whatsappPolicy.checkTemplateAllowed = originalPolicy;
+    if (oldPhoneId === undefined) delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    else process.env.WHATSAPP_PHONE_NUMBER_ID = oldPhoneId;
+    if (oldToken === undefined) delete process.env.WHATSAPP_TOKEN;
+    else process.env.WHATSAPP_TOKEN = oldToken;
+  });
+
+  let receivedOptions = null;
+  whatsappPolicy.checkTemplateAllowed = async (_contact, options) => {
+    receivedOptions = options;
+    return {
+      allowed: false,
+      code: "marketing_opted_out",
+      message: "blocked",
+    };
+  };
+  process.env.WHATSAPP_PHONE_NUMBER_ID = "phone-1";
+  process.env.WHATSAPP_TOKEN = "token-1";
+
+  const result = await templateService.sendApprovedTemplate(
+    { id: 7, channel: "whatsapp", whatsapp_number: "60123456789" },
+    {
+      templateName: "promo_follow_up",
+      languageCode: "en_US",
+      templateCategory: "MARKETING",
+      fetchImpl: async () => assert.fail("provider must not be called"),
+    }
+  );
+
+  assert.deepEqual(receivedOptions, { category: "MARKETING" });
+  assert.equal(result.success, false);
+  assert.equal(result.policyCode, "marketing_opted_out");
+});
+
