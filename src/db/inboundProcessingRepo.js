@@ -254,16 +254,13 @@ async function cancelOutboundAttempt(processingJobId, database = pool) {
 
     const stateResult = await client.query(
       `SELECT
-         a.processing_job_id,
-         a.assistant_message_id,
-         a.outcome,
-         a.provider_message_id,
-         m.whatsapp_message_id,
-         m.delivery_status
-       FROM inbound_outbound_attempts a
-       LEFT JOIN messages m ON m.id = a.assistant_message_id
-       WHERE a.processing_job_id = $1
-       FOR UPDATE OF a`,
+         processing_job_id,
+         assistant_message_id,
+         outcome,
+         provider_message_id
+       FROM inbound_outbound_attempts
+       WHERE processing_job_id = $1
+       FOR UPDATE`,
       [safeJobId]
     );
     const state = stateResult.rows[0];
@@ -272,10 +269,22 @@ async function cancelOutboundAttempt(processingJobId, database = pool) {
       return null;
     }
 
-    const deliveryStatus = String(state.delivery_status || "").toLowerCase();
+    let messageState = null;
+    if (state.assistant_message_id) {
+      const messageResult = await client.query(
+        `SELECT whatsapp_message_id, delivery_status
+         FROM messages
+         WHERE id = $1
+         FOR UPDATE`,
+        [state.assistant_message_id]
+      );
+      messageState = messageResult.rows[0] || null;
+    }
+
+    const deliveryStatus = String(messageState?.delivery_status || "").toLowerCase();
     const providerEvidenceExists =
       Boolean(state.provider_message_id) ||
-      Boolean(state.whatsapp_message_id) ||
+      Boolean(messageState?.whatsapp_message_id) ||
       ["pending", "sent", "delivered", "read", "failed"].includes(deliveryStatus);
 
     if (
