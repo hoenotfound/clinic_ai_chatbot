@@ -20,6 +20,8 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(route, /whatsappPolicy\.checkTemplateAllowed\(contact\)/);
   assert.match(route, /whatsappTemplate\.resolveApprovedTemplate/);
   assert.match(route, /whatsappTemplate\.buildTemplateComponents/);
+  assert.match(route, /opt_in_confirmation_required/);
+  assert.match(route, /marketing_consent_confirmation_required/);
   assert.match(route, /whatsappTemplate: metadata/);
   assert.match(route, /if \(message\.whatsapp_template\)/);
   assert.match(route, /sendApprovedTemplate\(contact/);
@@ -36,6 +38,8 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(inbox, /whatsapp_template\.name/);
   assert.match(modal, /AI, scheduled messages and automated follow-ups do not use this template path/);
   assert.match(modal, /Do not use this to bypass an opt-out/);
+  assert.match(modal, /explicitly agreed to receive WhatsApp messages/);
+  assert.match(modal, /consent covers WhatsApp marketing/);
 });
 
 test("WhatsApp template message metadata uses a forward migration instead of editing baseline schema", () => {
