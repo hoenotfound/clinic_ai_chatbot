@@ -136,3 +136,41 @@ test("attachment upload failure is returned without attempting delivery", async 
   assert.equal(result.error, "Unsupported attachment");
   assert.equal(calls, 1);
 });
+
+test("Human Agent attachment sends add the Meta message tag to final delivery", async (t) => {
+  const originalFetch = global.fetch;
+  const originalToken = process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
+  const originalPageId = process.env.INSTAGRAM_PAGE_ID;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (originalToken === undefined) delete process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
+    else process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = originalToken;
+    if (originalPageId === undefined) delete process.env.INSTAGRAM_PAGE_ID;
+    else process.env.INSTAGRAM_PAGE_ID = originalPageId;
+  });
+
+  process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = "ig-human-agent-token";
+  process.env.INSTAGRAM_PAGE_ID = "ig-human-agent-page";
+
+  let sentBody = null;
+  global.fetch = async (_url, options) => {
+    sentBody = JSON.parse(options.body);
+    return new Response(JSON.stringify({ message_id: "ig-human-agent-image" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  const result = await metaAttachments.sendUrlAttachment(
+    "instagram",
+    "igsid-human-agent",
+    "image",
+    "https://cdn.example.test/image.jpg",
+    { humanAgent: true }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(sentBody.messaging_type, "MESSAGE_TAG");
+  assert.equal(sentBody.tag, "HUMAN_AGENT");
+  assert.equal(sentBody.message.attachment.type, "image");
+});
