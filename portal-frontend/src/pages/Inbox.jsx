@@ -136,6 +136,7 @@ export default function Inbox() {
   const { user, username, permissions } = useAuth();
   const ui = getBusinessTerminology(user?.businessProfile || {});
   const canViewAllLeads = permissions.view_all_leads === true;
+  const canReplyToLeads = permissions.reply_to_assigned_leads === true;
   const { toasts, showToast, dismissToast } = useToasts();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedContactId = /^\d+$/.test(searchParams.get("contact") || "")
@@ -736,6 +737,7 @@ export default function Inbox() {
         key={selectedId ?? "no-conversation"}
         contact={selectedContact}
         currentUsername={username}
+        canReplyToLeads={canReplyToLeads}
         messages={messages}
         loading={messagesLoading}
         olderMessagesLoading={olderMessagesLoading}
@@ -764,7 +766,9 @@ export default function Inbox() {
         contact={selectedContact}
         onClose={() => setContactDetailsOpen(false)}
       />
-      {whatsappTemplateOpen && selectedContact?.channel === "whatsapp" && (
+      {whatsappTemplateOpen &&
+        canReplyToLeads &&
+        selectedContact?.channel === "whatsapp" && (
         <WhatsAppTemplateModal
           contact={selectedContact}
           onClose={() => setWhatsAppTemplateOpen(false)}
@@ -777,7 +781,12 @@ export default function Inbox() {
               setMessages((current) => mergeMessages(current, [result]));
             }
             await refreshConversations();
-            if (result?.delivered === false) {
+            if (result?.delivery_status === "unknown") {
+              showToast(
+                "Template saved, but delivery could not be confirmed. Check WhatsApp before retrying.",
+                "warning"
+              );
+            } else if (result?.delivered === false) {
               showToast(
                 "Template saved, but WhatsApp did not accept the send. You can retry it from the message.",
                 "warning"
@@ -1264,6 +1273,7 @@ function DateSeparator({ value }) {
 function ThreadView({
   contact,
   currentUsername,
+  canReplyToLeads,
   messages,
   loading,
   olderMessagesLoading,
@@ -1328,7 +1338,9 @@ function ThreadView({
     messagingPolicy.freeformAllowed &&
     !messagingPolicy.optedOutAt;
   const whatsappTemplateAvailable =
-    messagingPolicy.channel === "whatsapp" && !messagingPolicy.freeformAllowed;
+    canReplyToLeads &&
+    messagingPolicy.channel === "whatsapp" &&
+    !messagingPolicy.freeformAllowed;
 
   useEffect(() => {
     setPolicyNow(Date.now());
