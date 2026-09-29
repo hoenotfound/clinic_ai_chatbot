@@ -142,7 +142,7 @@ test("allows a real Messenger staff reply from 24 hours through the 7-day Human 
       latest_inbound_at: new Date("2026-09-01T10:00:00.000Z"),
     },
     new Date("2026-09-02T12:00:00.000Z"),
-    { purpose: "human_agent" }
+    { purpose: "human_agent", humanAgentEnabled: true }
   );
 
   assert.equal(result.allowed, true);
@@ -174,7 +174,7 @@ test("blocks Instagram staff replies when the 7-day Human Agent window has ended
       latest_inbound_at: new Date("2026-09-01T10:00:00.000Z"),
     },
     new Date("2026-09-08T10:00:00.000Z"),
-    { purpose: "human_agent" }
+    { purpose: "human_agent", humanAgentEnabled: true }
   );
 
   assert.equal(result.allowed, false);
@@ -189,22 +189,30 @@ test("does not extend WhatsApp with the Meta Human Agent purpose", () => {
       latest_inbound_at: new Date("2026-09-01T10:00:00.000Z"),
     },
     new Date("2026-09-02T12:00:00.000Z"),
-    { purpose: "human_agent" }
+    { purpose: "human_agent", humanAgentEnabled: true }
   );
 
   assert.equal(result.allowed, false);
   assert.equal(result.code, "outside_customer_service_window");
 });
 
-test("manual staff purpose keeps WhatsApp on service policy and uses Human Agent only for Meta social channels", () => {
-  assert.equal(policy.manualStaffPurpose("whatsapp"), "service");
-  assert.equal(policy.manualStaffPurpose({ channel: "whatsapp" }), "service");
-  assert.equal(policy.manualStaffPurpose("facebook"), "human_agent");
-  assert.equal(policy.manualStaffPurpose({ channel: "instagram" }), "human_agent");
+test("manual staff purpose keeps Human Agent disabled unless the runtime flag is explicitly enabled", () => {
+  const disabled = { META_HUMAN_AGENT_ENABLED: "false" };
+  const enabled = { META_HUMAN_AGENT_ENABLED: "true" };
+
+  assert.equal(policy.manualStaffPurpose("whatsapp", enabled), "service");
+  assert.equal(policy.manualStaffPurpose({ channel: "whatsapp" }, enabled), "service");
+  assert.equal(policy.manualStaffPurpose("facebook", disabled), "service");
+  assert.equal(policy.manualStaffPurpose({ channel: "instagram" }, disabled), "service");
+  assert.equal(policy.manualStaffPurpose("facebook", enabled), "human_agent");
+  assert.equal(policy.manualStaffPurpose({ channel: "instagram" }, enabled), "human_agent");
 });
 
 test("WhatsApp manual staff policy still allows a service reply after the customer reinitiates following opt-out", () => {
-  const purpose = policy.manualStaffPurpose({ channel: "whatsapp" });
+  const purpose = policy.manualStaffPurpose(
+    { channel: "whatsapp" },
+    { META_HUMAN_AGENT_ENABLED: "true" }
+  );
   const result = policy.evaluateFreeformState(
     {
       channel: "whatsapp",
@@ -217,4 +225,19 @@ test("WhatsApp manual staff policy still allows a service reply after the custom
 
   assert.equal(purpose, "service");
   assert.equal(result.allowed, true);
+});
+
+test("Human Agent purpose stays blocked after 24 hours when the runtime feature is disabled", () => {
+  const result = policy.evaluateFreeformState(
+    {
+      channel: "facebook",
+      latest_inbound_at: new Date("2026-09-01T10:00:00.000Z"),
+    },
+    new Date("2026-09-02T12:00:00.000Z"),
+    { purpose: "human_agent", humanAgentEnabled: false }
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.code, "outside_customer_service_window");
+  assert.equal(result.humanAgentWindowEndsAt, null);
 });
