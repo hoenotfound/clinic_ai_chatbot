@@ -88,6 +88,34 @@ async function saveMessage(
   options = {}
 ) {
   const mediaKey = await persistMediaIfPresent(mediaBase64, mediaMimeType, contactId);
+  const whatsappTemplate = options?.whatsappTemplate || null;
+
+  if (!whatsappTemplate) {
+    const result = await pool.query(
+      `WITH conversation_lock AS MATERIALIZED (
+         SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+       )
+       INSERT INTO messages (
+         contact_id, role, content, whatsapp_message_id, sent_by_username,
+         media_url, media_key, media_mime_type
+       )
+       SELECT $1, $2, $3, $4, $5, $6, $7, $8
+       FROM conversation_lock
+       RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
+      [
+        contactId,
+        role,
+        content,
+        whatsappMessageId,
+        sentByUsername,
+        mediaUrl,
+        mediaKey,
+        mediaMimeType,
+      ]
+    );
+    return result.rows[0];
+  }
+
   const result = await pool.query(
     `WITH conversation_lock AS MATERIALIZED (
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
@@ -108,7 +136,7 @@ async function saveMessage(
       mediaUrl,
       mediaKey,
       mediaMimeType,
-      options?.whatsappTemplate ? JSON.stringify(options.whatsappTemplate) : null,
+      JSON.stringify(whatsappTemplate),
     ]
   );
   return result.rows[0];
