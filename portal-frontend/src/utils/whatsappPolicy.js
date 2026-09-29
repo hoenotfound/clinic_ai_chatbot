@@ -99,8 +99,11 @@ export function messagingPolicyStatus(contact, now = Date.now()) {
   const replyWindowExpiresMs = latestInboundMs == null
     ? null
     : latestInboundMs + WHATSAPP_REPLY_WINDOW_MS;
+  const humanAgentFeatureEnabled =
+    contact?.human_agent_enabled === true &&
+    HUMAN_AGENT_CHANNELS.has(channel);
   const humanAgentWindowExpiresMs =
-    latestInboundMs != null && HUMAN_AGENT_CHANNELS.has(channel)
+    latestInboundMs != null && humanAgentFeatureEnabled
       ? latestInboundMs + HUMAN_AGENT_REPLY_WINDOW_MS
       : null;
   const customerReinitiatedAfterOptOut =
@@ -119,7 +122,7 @@ export function messagingPolicyStatus(contact, now = Date.now()) {
   ) {
     code = "outside_human_agent_window";
   } else if (currentMs >= replyWindowExpiresMs) {
-    code = HUMAN_AGENT_CHANNELS.has(channel)
+    code = humanAgentFeatureEnabled
       ? "human_agent_only"
       : "outside_customer_service_window";
   }
@@ -154,6 +157,7 @@ export function messagingPolicyStatus(contact, now = Date.now()) {
     humanAgentWindowExpiresAt: humanAgentWindowExpiresMs == null
       ? null
       : new Date(humanAgentWindowExpiresMs).toISOString(),
+    humanAgentFeatureEnabled,
     optedOutAt: optOutValue || null,
     customerReinitiatedAfterOptOut,
   };
