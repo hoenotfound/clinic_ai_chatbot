@@ -424,3 +424,89 @@ test("recovery does not replay earlier burst messages when the final burst reply
   assert.deepEqual(resumed, []);
   assert.deepEqual(completed.sort((a, b) => a - b), [301, 302]);
 });
+
+
+test("rejected recovery stays retryable until delivery attention is persisted", async () => {
+  const job = {
+    id: 204,
+    contact_id: 45,
+    message_id: 904,
+    status: "processing",
+    attempts: 2,
+  };
+  let sweep = 0;
+  let attentionAttempts = 0;
+  let failedCalls = 0;
+  let completedCalls = 0;
+  let resumedCalls = 0;
+
+  const repository = {
+    async claimRecoverable() {
+      sweep += 1;
+      return [{ ...job, attempts: sweep + 1 }];
+    },
+    async getOutboundAttempt(jobId) {
+      assert.equal(jobId, job.id);
+      return {
+        outcome: "rejected",
+        error_text: "Meta rejected the send",
+        delivery_status: "failed",
+      };
+    },
+    async markFailed(jobId, err) {
+      assert.equal(jobId, job.id);
+      assert.equal(err.code, "DELIVERY_ATTENTION_RESTORE_FAILED");
+      failedCalls += 1;
+      return { ...job, status: "failed", attempts: 3 };
+    },
+    async markCompleted(jobId) {
+      assert.equal(jobId, job.id);
+      completedCalls += 1;
+      return { ...job, status: "completed" };
+    },
+    async listExhausted() {
+      return [];
+    },
+    async pruneCompleted() {
+      return 0;
+    },
+  };
+
+  const contacts = {
+    async setDeliveryAttention(contactId, reason) {
+      assert.equal(contactId, job.contact_id);
+      assert.match(reason, /Meta rejected the send/);
+      attentionAttempts += 1;
+      if (attentionAttempts === 1) {
+        throw new Error("temporary database failure");
+      }
+    },
+    async setAttention() {
+      throw new Error("this retry has not exhausted automatic attempts");
+    },
+  };
+
+  const recoveryOptions = {
+    repository,
+    contacts,
+    async resumeJob() {
+      resumedCalls += 1;
+      throw new Error("a rejected outbound attempt must never be resent");
+    },
+    async processBatch() {
+      throw new Error("a rejected outbound attempt must never reach AI again");
+    },
+  };
+
+  await runInboundProcessingRecovery(recoveryOptions);
+  assert.equal(attentionAttempts, 1);
+  assert.equal(failedCalls, 1);
+  assert.equal(completedCalls, 0);
+  assert.equal(resumedCalls, 0);
+
+  await runInboundProcessingRecovery(recoveryOptions);
+  assert.equal(attentionAttempts, 2);
+  assert.equal(failedCalls, 1);
+  assert.equal(completedCalls, 1);
+  assert.equal(resumedCalls, 0);
+});
