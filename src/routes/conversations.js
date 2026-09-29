@@ -811,6 +811,16 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
           code: currentTemplate.code,
         });
       }
+      if (
+        currentTemplate.template.category === "MARKETING" &&
+        message.whatsapp_template.marketingConsentConfirmed !== true
+      ) {
+        return res.status(409).json({
+          error:
+            "This saved marketing template does not contain the required marketing-consent confirmation. Send it again from the template picker instead.",
+          code: "marketing_consent_confirmation_required",
+        });
+      }
 
       sendResult = await whatsappTemplate.sendApprovedTemplate(contact, {
         templateName: message.whatsapp_template.name,
