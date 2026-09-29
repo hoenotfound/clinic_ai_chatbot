@@ -368,7 +368,43 @@ async function runInboundProcessingRecovery({
 
     for (const group of groupJobsByContact(jobs)) {
       const handledJobIds = new Set();
+      const outboundAttempts = new Map();
       let coveredThroughMessageId = null;
+      let outboundLookupError = null;
+
+      // Read all durable outbound fences before replaying any job for this
+      // contact. If even one lookup fails, the relationship between these
+      // recovered messages and prior provider sends is unknown. Fail closed for
+      // the whole contact group and retry on a later sweep instead of risking a
+      // duplicate AI reply from an older burst item.
+      if (typeof repository.getOutboundAttempt === "function") {
+        for (let index = group.length - 1; index >= 0; index -= 1) {
+          const job = group[index];
+          try {
+            outboundAttempts.set(
+              job.id,
+              await repository.getOutboundAttempt(job.id)
+            );
+          } catch (err) {
+            outboundLookupError = err;
+            console.error(
+              `Failed to read recovered outbound state for inbound job ${job.id}:`,
+              err
+            );
+            break;
+          }
+        }
+      }
+
+      if (outboundLookupError) {
+        for (const job of group) {
+          const failed = await repository
+            .markFailed(job.id, outboundLookupError)
+            .catch(() => null);
+          await flagTerminalFailure(failed || job, contacts, repository);
+        }
+        continue;
+      }
 
       // Reconcile from newest to oldest first. The durable outbound reservation
       // itself proves processIncomingBatch already walked every earlier item in
@@ -379,10 +415,7 @@ async function runInboundProcessingRecovery({
       for (let index = group.length - 1; index >= 0; index -= 1) {
         const job = group[index];
         try {
-          const outboundAttempt =
-            typeof repository.getOutboundAttempt === "function"
-              ? await repository.getOutboundAttempt(job.id)
-              : null;
+          const outboundAttempt = outboundAttempts.get(job.id) || null;
 
           if (outboundAttempt) {
             const messageId = Number(job.message_id);
