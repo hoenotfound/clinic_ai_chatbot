@@ -137,22 +137,32 @@ export default function WhatsAppTemplateModal({
 
   const contactId = contact?.contact_id ?? contact?.id;
 
-  async function loadCatalog() {
+  async function loadCatalog(force = false) {
     if (!contactId) return;
     setLoading(true);
     setLoadError("");
     try {
-      const data = await api.listWhatsAppTemplates(contactId);
+      const data = await api.listWhatsAppTemplates(contactId, { force });
       setCatalog(data);
-      const firstSendable = (data.templates || []).find((template) => template.sendable);
-      if (firstSendable) {
-        const key = `${firstSendable.name}::${firstSendable.language}`;
-        setSelectedKey((current) => current || key);
-        setValues((current) =>
-          current.header.length || current.body.length
-            ? current
-            : emptyValuesFor(firstSendable)
-        );
+      const templates = data.templates || [];
+      const firstSendable = templates.find((template) => template.sendable) || null;
+      const currentTemplate = templates.find(
+        (template) =>
+          `${template.name}::${template.language}` === selectedKey &&
+          template.sendable
+      ) || null;
+      const nextTemplate = currentTemplate || firstSendable;
+      if (nextTemplate) {
+        const key = `${nextTemplate.name}::${nextTemplate.language}`;
+        if (!currentTemplate) {
+          setSelectedKey(key);
+          setValues(emptyValuesFor(nextTemplate));
+          setMarketingConsentConfirmed(false);
+        }
+      } else {
+        setSelectedKey("");
+        setValues({ header: [], body: [] });
+        setMarketingConsentConfirmed(false);
       }
     } catch (err) {
       setLoadError(err.message || "Couldn't load WhatsApp templates.");
@@ -363,7 +373,7 @@ export default function WhatsAppTemplateModal({
                   </div>
                   <button
                     type="button"
-                    onClick={loadCatalog}
+                    onClick={() => loadCatalog(true)}
                     disabled={loading}
                     className="rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-[10px] font-semibold"
                   >
