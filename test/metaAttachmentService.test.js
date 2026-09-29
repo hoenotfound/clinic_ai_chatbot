@@ -165,11 +165,13 @@ test("Human Agent attachment sends add the Meta message tag to final delivery", 
     });
   };
 
-  const result = await metaAttachments.sendUrlAttachment(
-    "instagram",
-    "igsid-human-agent",
+  const result = await metaAttachments.sendBuffer(
+    "facebook",
+    "psid-human-agent",
     "image",
-    "https://cdn.example.test/image.jpg",
+    Buffer.from("blocked-image"),
+    "image/jpeg",
+    "blocked.jpg",
     { humanAgent: true }
   );
 
