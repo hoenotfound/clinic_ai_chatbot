@@ -150,6 +150,8 @@ async function persistSendOutcome(
       `${channel}:${sendResult.externalMessageId}`,
       null
     );
+  } else if (sendResult.unknown === true) {
+    updated = await messagesRepo.setDeliveryStatusById(savedMessage.id, "unknown", errorText);
   } else if (!sendResult.success) {
     updated = await messagesRepo.setDeliveryStatusById(savedMessage.id, "failed", errorText);
   } else {
@@ -531,7 +533,10 @@ router.get("/:contactId/whatsapp-templates", async (req, res) => {
       });
     }
 
-    const catalog = await whatsappTemplate.listApprovedTemplates();
+    const forceRefresh = String(req.query?.refresh || "").toLowerCase() === "true";
+    const catalog = await whatsappTemplate.listApprovedTemplates({
+      force: forceRefresh,
+    });
     if (!catalog.success) {
       const status = catalog.code === "template_catalog_not_configured" ? 503 : 502;
       return res.status(status).json({
@@ -636,7 +641,8 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
 
     const resolved = await whatsappTemplate.resolveApprovedTemplate(
       templateName,
-      languageCode
+      languageCode,
+      { force: true }
     );
     if (!resolved.success) {
       const status = resolved.code === "template_not_available" ? 400 : 502;
@@ -697,6 +703,8 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
       language: resolved.template.language,
       category: resolved.template.category,
       components: built.components,
+      values: built.values,
+      templateSignature: whatsappTemplate.templateSignature(resolved.template),
       marketingConsentConfirmed:
         resolved.template.category === "MARKETING"
           ? true
@@ -815,7 +823,8 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
 
       const currentTemplate = await whatsappTemplate.resolveApprovedTemplate(
         message.whatsapp_template.name,
-        message.whatsapp_template.language
+        message.whatsapp_template.language,
+        { force: true }
       );
       if (!currentTemplate.success) {
         return res.status(409).json({
@@ -826,6 +835,35 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
           code: currentTemplate.code,
         });
       }
+      const savedTemplateSignature = String(
+        message.whatsapp_template.templateSignature || ""
+      );
+      const currentTemplateSignature = whatsappTemplate.templateSignature(
+        currentTemplate.template
+      );
+      if (
+        !savedTemplateSignature ||
+        savedTemplateSignature !== currentTemplateSignature
+      ) {
+        return res.status(409).json({
+          error:
+            "This WhatsApp template changed since the failed send. Open the template picker, review the current approved version, and send it again.",
+          code: "template_definition_changed",
+        });
+      }
+
+      const rebuiltTemplate = whatsappTemplate.buildTemplateComponents(
+        currentTemplate.template,
+        message.whatsapp_template.values || {}
+      );
+      if (!rebuiltTemplate.valid) {
+        return res.status(409).json({
+          error:
+            "The saved template values no longer fit the current approved template. Send it again from the template picker.",
+          code: "template_values_changed",
+        });
+      }
+
       if (currentTemplate.template.category === "MARKETING") {
         const savedConsentOptInAt = whatsappTemplate.policyTimestamp(
           message.whatsapp_template.consentOptInAt
@@ -850,7 +888,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       sendResult = await whatsappTemplate.sendApprovedTemplate(contact, {
         templateName: message.whatsapp_template.name,
         languageCode: message.whatsapp_template.language,
-        components: message.whatsapp_template.components,
+        components: rebuiltTemplate.components,
         expectedOptInAt:
           currentTemplate.template.category === "MARKETING"
             ? message.whatsapp_template.consentOptInAt
