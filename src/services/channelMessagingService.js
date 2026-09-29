@@ -243,7 +243,7 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
       partialCaptionSent: true,
       captionProviderMessageId,
       error:
-        "The caption was sent, but the image was not sent because staff activity took over the conversation.",
+        "Staff activity took over the conversation before the image could be sent.",
     };
   }
 
