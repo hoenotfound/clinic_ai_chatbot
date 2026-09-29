@@ -183,6 +183,11 @@ function validateTemplateValues(template, values) {
   return { valid: true, values: normalized, error: null };
 }
 
+function quickReplyPayload(template, button) {
+  const templateKey = clean(template?.name).replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 80) || "template";
+  return `da_qr:${templateKey}:${button.index}`;
+}
+
 function buildTemplateComponents(template, values) {
   const validation = validateTemplateValues(template, values);
   if (!validation.valid) return validation;
@@ -196,6 +201,21 @@ function buildTemplateComponents(template, values) {
     if (parameters.length) {
       components.push({ type: component, parameters });
     }
+  }
+
+  for (const button of template?.buttons || []) {
+    if (button.type !== "QUICK_REPLY") continue;
+    components.push({
+      type: "button",
+      sub_type: "quick_reply",
+      index: String(button.index),
+      parameters: [
+        {
+          type: "payload",
+          payload: quickReplyPayload(template, button),
+        },
+      ],
+    });
   }
 
   return {
@@ -224,6 +244,12 @@ function renderTemplatePreview(template, values = {}) {
   }
   if (template?.footer?.text) parts.push(template.footer.text);
   return parts.filter(Boolean).join("\n\n").trim();
+}
+
+function policyTimestamp(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 function clearTemplateCache() {
@@ -370,6 +396,7 @@ async function sendApprovedTemplate(
     templateName,
     languageCode = "en_US",
     components = undefined,
+    expectedOptInAt = null,
   } = {}
 ) {
   const name = clean(templateName);
@@ -395,6 +422,18 @@ async function sendApprovedTemplate(
   }
   if (!policy.allowed) {
     return whatsappPolicy.blockedSendResult(policy);
+  }
+
+  if (expectedOptInAt) {
+    const expected = policyTimestamp(expectedOptInAt);
+    const current = policyTimestamp(policy.state?.whatsapp_opt_in_at);
+    if (!expected || !current || expected !== current) {
+      return whatsappPolicy.blockedSendResult({
+        code: "whatsapp_opt_in_changed",
+        message:
+          "WhatsApp template blocked because the customer's recorded opt-in changed. Reconfirm consent and send the template again from the template picker.",
+      });
+    }
   }
 
   const { phoneNumberId, token } = templateConfig(process.env);
@@ -468,6 +507,8 @@ module.exports = {
   clearTemplateCache,
   listApprovedTemplates,
   normalizeTemplate,
+  policyTimestamp,
+  quickReplyPayload,
   renderTemplatePreview,
   resolveApprovedTemplate,
   sendApprovedTemplate,
