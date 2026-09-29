@@ -49,6 +49,16 @@ const STATUS_FILTERS = [
   { key: "attention", label: "Needs attention" },
 ];
 
+function displayDeliveryError(value) {
+  const raw = String(value || "").trim();
+  const prefix = "partial_caption_sent|";
+  if (!raw.startsWith(prefix)) return raw;
+  const detail = raw.slice(prefix.length).trim();
+  return detail
+    ? `The caption was sent, but the image failed to send. ${detail}`
+    : "The caption was sent, but the image failed to send.";
+}
+
 const DELIVERY_STATUS_RANK = {
   pending: 0,
   sent: 1,
@@ -2021,8 +2031,11 @@ function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
               )}
             </div>
             {message.delivery_error && (
-              <p className="mt-1 text-[10px] leading-snug opacity-80" title={message.delivery_error}>
-                {message.delivery_error}
+              <p
+                className="mt-1 text-[10px] leading-snug opacity-80"
+                title={displayDeliveryError(message.delivery_error)}
+              >
+                {displayDeliveryError(message.delivery_error)}
               </p>
             )}
             {policyFailureExplanationText && (
