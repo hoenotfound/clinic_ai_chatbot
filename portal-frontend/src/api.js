@@ -43,10 +43,10 @@ export const api = {
     request(`/conversations/${contactId}/messages`, { method: "POST", body: JSON.stringify({ text }) }),
   listWhatsAppTemplates: (contactId) =>
     request(`/conversations/${contactId}/whatsapp-templates`),
-  recordWhatsAppOptIn: (contactId, source) =>
+  recordWhatsAppOptIn: (contactId, source, confirmed) =>
     request(`/conversations/${contactId}/whatsapp-opt-in`, {
       method: "POST",
-      body: JSON.stringify({ source }),
+      body: JSON.stringify({ source, confirmed }),
     }),
   sendWhatsAppTemplate: (contactId, payload) =>
     request(`/conversations/${contactId}/whatsapp-templates/send`, {
