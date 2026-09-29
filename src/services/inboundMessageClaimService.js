@@ -41,12 +41,17 @@ function createInboundMessageClaimService({
   reengagement = leadReengagementAlertService,
   config = clinicConfig,
 } = {}) {
-  function isWhatsappOptOut(incoming) {
-    return Boolean(
-      (incoming?.channel || "whatsapp") === "whatsapp" &&
-      incoming?.mediaType == null &&
-      policy.isOptOutText(incoming?.text)
-    );
+  function whatsappOptOutScope(incoming) {
+    if (
+      (incoming?.channel || "whatsapp") !== "whatsapp" ||
+      incoming?.mediaType != null
+    ) {
+      return null;
+    }
+    if (typeof policy.classifyOptOutText === "function") {
+      return policy.classifyOptOutText(incoming?.text);
+    }
+    return policy.isOptOutText(incoming?.text) ? "all" : null;
   }
 
   async function prepareStoredInbound({
@@ -62,9 +67,17 @@ function createInboundMessageClaimService({
     // A clear stop/unsubscribe request is terminal for this inbound turn. Keep
     // the customer's message durable and visible, mark it unread/attention,
     // then complete its processing job without generating any outbound reply.
-    if (isWhatsappOptOut(incoming)) {
+    const optOutScope = whatsappOptOutScope(incoming);
+    if (optOutScope) {
+      const source = incoming?.buttonPayload
+        ? "customer_quick_reply"
+        : "customer_message";
       try {
-        await policy.recordOptOut(contact.id, "customer_message");
+        if (optOutScope === "marketing") {
+          await policy.recordMarketingOptOut(contact.id, source);
+        } else {
+          await policy.recordOptOut(contact.id, source);
+        }
       } catch (err) {
         // Even when the consent-state write has a transient failure, fail
         // closed for this turn and never continue into an outbound AI reply.
@@ -75,7 +88,9 @@ function createInboundMessageClaimService({
         await contacts.setAttention(
           contact.id,
           true,
-          "Customer opted out of WhatsApp messages. Do not send proactive messages without a new explicit opt-in."
+          optOutScope === "marketing"
+            ? "Customer opted out of WhatsApp marketing. Service and utility messages remain available, but do not send promotions without a new explicit marketing opt-in."
+            : "Customer opted out of WhatsApp messages. Do not send proactive messages without a new explicit opt-in."
         );
       } catch (err) {
         console.error(`Failed to flag WhatsApp opt-out for contact ${contact.id}:`, err);
@@ -300,7 +315,7 @@ function createInboundMessageClaimService({
 
     // Opt-outs never enter the outbound-processing lease; they are completed
     // directly by prepareStoredInbound with no automated response.
-    if (isWhatsappOptOut(incoming)) {
+    if (whatsappOptOutScope(incoming)) {
       return prepareStoredInbound(durableClaim);
     }
 
