@@ -745,3 +745,106 @@ test("ambiguous final burst reply still covers earlier messages when terminal bo
   ]);
   assert.deepEqual(resumed, []);
 });
+
+
+test("outbound-attempt lookup failure defers the whole recovered contact before any AI replay", async () => {
+  const oldJob = {
+    id: 431,
+    contact_id: 64,
+    message_id: 1431,
+    status: "processing",
+    attempts: 2,
+  };
+  const finalJob = {
+    id: 432,
+    contact_id: 64,
+    message_id: 1432,
+    status: "processing",
+    attempts: 2,
+  };
+  let sweep = 0;
+  let finalLookupAttempts = 0;
+  const failed = [];
+  const completed = [];
+  const resumed = [];
+
+  const repository = {
+    async claimRecoverable() {
+      sweep += 1;
+      return [
+        { ...oldJob, attempts: sweep + 1 },
+        { ...finalJob, attempts: sweep + 1 },
+      ];
+    },
+    async getOutboundAttempt(jobId) {
+      if (jobId === finalJob.id) {
+        finalLookupAttempts += 1;
+        if (finalLookupAttempts === 1) {
+          throw new Error("temporary outbound-attempt lookup failure");
+        }
+        return {
+          outcome: "accepted",
+          provider_message_id: "wamid-final-after-retry",
+          delivery_status: "pending",
+        };
+      }
+      return null;
+    },
+    async markFailed(jobId, err) {
+      failed.push([sweep, jobId, err.message]);
+      return {
+        ...(jobId === finalJob.id ? finalJob : oldJob),
+        status: "failed",
+        attempts: sweep + 1,
+      };
+    },
+    async markCompleted(jobId) {
+      completed.push([sweep, jobId]);
+      return { id: jobId, status: "completed" };
+    },
+    async listExhausted() {
+      return [];
+    },
+    async pruneCompleted() {
+      return 0;
+    },
+  };
+
+  const recoveryOptions = {
+    repository,
+    contacts: {
+      async setAttention() {
+        throw new Error("lookup retry has not exhausted automatic attempts");
+      },
+    },
+    async resumeJob(job) {
+      resumed.push([sweep, job.id]);
+      throw new Error("outbound lookup uncertainty must block AI replay");
+    },
+    async processBatch() {
+      throw new Error("outbound lookup uncertainty must block AI processing");
+    },
+  };
+
+  await runInboundProcessingRecovery(recoveryOptions);
+
+  assert.equal(finalLookupAttempts, 1);
+  assert.deepEqual(
+    failed.map((entry) => entry.slice(1, 3)),
+    [
+      [oldJob.id, "temporary outbound-attempt lookup failure"],
+      [finalJob.id, "temporary outbound-attempt lookup failure"],
+    ]
+  );
+  assert.deepEqual(completed, []);
+  assert.deepEqual(resumed, []);
+
+  await runInboundProcessingRecovery(recoveryOptions);
+
+  assert.equal(finalLookupAttempts, 2);
+  assert.deepEqual(completed, [
+    [2, finalJob.id],
+    [2, oldJob.id],
+  ]);
+  assert.deepEqual(resumed, []);
+});
