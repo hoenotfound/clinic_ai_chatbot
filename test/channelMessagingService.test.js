@@ -586,3 +586,87 @@ test("WhatsApp image pre-send guard cancels automatic promo before provider call
   assert.equal(result.success, false);
   assert.equal(result.cancelled, true);
 });
+
+
+test("social image failure records that its caption was already delivered", async (t) => {
+  const originalMetaSend = meta.sendText;
+  const originalUploadTemporary = mediaStorage.uploadTemporaryMedia;
+  const originalScheduleDelete = mediaStorage.scheduleTemporaryMediaDelete;
+  const originalUrlSend = metaAttachments.sendUrlAttachment;
+  t.after(() => {
+    meta.sendText = originalMetaSend;
+    mediaStorage.uploadTemporaryMedia = originalUploadTemporary;
+    mediaStorage.scheduleTemporaryMediaDelete = originalScheduleDelete;
+    metaAttachments.sendUrlAttachment = originalUrlSend;
+  });
+
+  meta.sendText = async () => ({
+    success: true,
+    externalMessageId: "ig-caption-partial",
+  });
+  mediaStorage.uploadTemporaryMedia = async () => ({
+    key: "meta-outbound/401/image.jpg",
+    url: "https://r2.example/image.jpg?signed=1",
+  });
+  mediaStorage.scheduleTemporaryMediaDelete = () => {};
+  metaAttachments.sendUrlAttachment = async () => ({
+    success: false,
+    externalMessageId: null,
+    error: "image rejected",
+  });
+
+  const result = await messaging.sendImageBuffer(
+    { id: 401, channel: "instagram", channel_user_id: "igsid-partial" },
+    Buffer.from("image"),
+    "image/jpeg",
+    "Already delivered caption",
+    "photo.jpg"
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.partialCaptionSent, true);
+  assert.equal(result.captionProviderMessageId, "ig-caption-partial");
+  assert.equal(result.error, "image rejected");
+});
+
+test("social image retry can skip a caption that was already delivered", async (t) => {
+  const originalMetaSend = meta.sendText;
+  const originalUploadTemporary = mediaStorage.uploadTemporaryMedia;
+  const originalScheduleDelete = mediaStorage.scheduleTemporaryMediaDelete;
+  const originalUrlSend = metaAttachments.sendUrlAttachment;
+  t.after(() => {
+    meta.sendText = originalMetaSend;
+    mediaStorage.uploadTemporaryMedia = originalUploadTemporary;
+    mediaStorage.scheduleTemporaryMediaDelete = originalScheduleDelete;
+    metaAttachments.sendUrlAttachment = originalUrlSend;
+  });
+
+  let captionCalls = 0;
+  meta.sendText = async () => {
+    captionCalls += 1;
+    return { success: true, externalMessageId: "must-not-send-caption" };
+  };
+  mediaStorage.uploadTemporaryMedia = async () => ({
+    key: "meta-outbound/402/image.jpg",
+    url: "https://r2.example/image.jpg?signed=1",
+  });
+  mediaStorage.scheduleTemporaryMediaDelete = () => {};
+  let imageCalls = 0;
+  metaAttachments.sendUrlAttachment = async () => {
+    imageCalls += 1;
+    return { success: true, externalMessageId: "ig-image-retry" };
+  };
+
+  const result = await messaging.sendImageBuffer(
+    { id: 402, channel: "instagram", channel_user_id: "igsid-retry" },
+    Buffer.from("image"),
+    "image/jpeg",
+    "Do not resend me",
+    "photo.jpg",
+    { skipCaption: true }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(captionCalls, 0);
+  assert.equal(imageCalls, 1);
+});
