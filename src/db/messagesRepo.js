@@ -89,6 +89,8 @@ async function saveMessage(
 ) {
   const mediaKey = await persistMediaIfPresent(mediaBase64, mediaMimeType, contactId);
   const whatsappTemplate = options?.whatsappTemplate || null;
+  const initialDeliveryStatus = options?.initialDeliveryStatus || null;
+  const initialDeliveryError = options?.initialDeliveryError || null;
 
   if (!whatsappTemplate) {
     const result = await pool.query(
@@ -122,9 +124,10 @@ async function saveMessage(
      )
      INSERT INTO messages (
        contact_id, role, content, whatsapp_message_id, sent_by_username,
-       media_url, media_key, media_mime_type, whatsapp_template
+       media_url, media_key, media_mime_type, whatsapp_template,
+       delivery_status, delivery_error
      )
-     SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb
+     SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11
      FROM conversation_lock
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}, whatsapp_template`,
     [
@@ -137,6 +140,8 @@ async function saveMessage(
       mediaKey,
       mediaMimeType,
       JSON.stringify(whatsappTemplate),
+      initialDeliveryStatus,
+      initialDeliveryError,
     ]
   );
   return result.rows[0];
