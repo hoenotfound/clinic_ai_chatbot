@@ -9,6 +9,14 @@ const startupSource = fs.readFileSync(
   "utf8"
 );
 const appSource = fs.readFileSync(path.join(__dirname, "../src/createApp.js"), "utf8");
+const scheduledRepoSource = fs.readFileSync(
+  path.join(__dirname, "../src/db/scheduledMessageRepo.js"),
+  "utf8"
+);
+const migration021Source = fs.readFileSync(
+  path.join(__dirname, "../src/db/migrations/021_reliability_review_followups.sql"),
+  "utf8"
+);
 
 test("database bootstrap uses the versioned runner instead of replaying schema files directly", () => {
   assert.match(dbSource, /runMigrations\(pool(?:\s*,|\s*\))/);
@@ -21,14 +29,17 @@ test("port binds before migrations but readiness and workers wait for migrations
   const listenIndex = startupSource.indexOf("await listenHttpServer(app, { port })");
   const migrationIndex = startupSource.indexOf("await initSchema()");
   const recoveryIndex = startupSource.indexOf("startInboundProcessingRecovery({");
+  const scheduledIndex = startupSource.indexOf("startScheduledMessageWorker()");
   const followUpIndex = startupSource.indexOf("startAutomatedFollowUps()");
   const readyIndex = startupSource.indexOf("startupReadiness.markReady()");
 
   assert.ok(listenIndex >= 0, "server must bind the Render port through the startup listener");
   assert.ok(migrationIndex > listenIndex, "migrations should run after the socket opens");
   assert.ok(recoveryIndex > migrationIndex, "inbound recovery must not start before migrations finish");
+  assert.ok(scheduledIndex > migrationIndex, "scheduled-message worker must not start before migrations finish");
   assert.ok(followUpIndex > migrationIndex, "follow-up worker must not start before migrations finish");
   assert.ok(readyIndex > recoveryIndex, "service must not become ready before recovery workers start");
+  assert.ok(readyIndex > scheduledIndex, "service must not become ready before scheduled-message worker starts");
   assert.ok(readyIndex > followUpIndex, "service must not become ready before follow-up workers start");
   assert.match(
     appSource,
@@ -40,4 +51,12 @@ test("port binds before migrations but readiness and workers wait for migrations
     /app\.listen\(/,
     "server startup must use the explicit 0.0.0.0 listener helper"
   );
+});
+
+
+test("scheduled-message schema is versioned instead of created by the runtime repository", () => {
+  assert.doesNotMatch(scheduledRepoSource, /CREATE TABLE/i);
+  assert.doesNotMatch(scheduledRepoSource, /ensureSchema/);
+  assert.match(migration021Source, /CREATE TABLE IF NOT EXISTS scheduled_messages/i);
+  assert.match(migration021Source, /CREATE TABLE IF NOT EXISTS inbound_outbound_attempts/i);
 });
