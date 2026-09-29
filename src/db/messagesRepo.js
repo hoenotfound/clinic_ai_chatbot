@@ -68,8 +68,7 @@ const LIGHTWEIGHT_MESSAGE_COLUMNS = `
   created_at,
   delivery_status,
   delivery_error,
-  is_automated_follow_up,
-  whatsapp_template
+  is_automated_follow_up
 `;
 
 /**
@@ -99,7 +98,7 @@ async function saveMessage(
      )
      SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb
      FROM conversation_lock
-     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
+     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}, whatsapp_template`,
     [
       contactId,
       role,
@@ -414,8 +413,7 @@ async function getMessageByAnyProviderIdForContact(
        m.created_at,
        m.delivery_status,
        m.delivery_error,
-       m.is_automated_follow_up,
-       m.whatsapp_template
+       m.is_automated_follow_up
      FROM social_provider_message_ids s
      JOIN messages m ON m.id = s.message_id
      WHERE s.contact_id = $1
