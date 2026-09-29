@@ -209,7 +209,8 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
     };
   }
 
-  if (caption?.trim()) {
+  let captionProviderMessageId = null;
+  if (caption?.trim() && options.skipCaption !== true) {
     const cancelled = preSendCancelled(options);
     if (cancelled) return cancelled;
     // Messenger keeps caption text separate from the media attachment. This is
@@ -221,6 +222,7 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
       caption.trim()
     );
     if (!captionResult.success) return captionResult;
+    captionProviderMessageId = captionResult.externalMessageId || null;
     await notifyProviderMessageId(options, captionResult, "facebook");
   }
 
@@ -243,6 +245,13 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
     )
   );
   await notifyProviderMessageId(options, result, "facebook");
+  if (!result.success && captionProviderMessageId) {
+    return {
+      ...result,
+      partialCaptionSent: true,
+      captionProviderMessageId,
+    };
+  }
   return result;
 }
 
@@ -315,7 +324,8 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
     );
   }
 
-  if (caption?.trim()) {
+  let captionProviderMessageId = null;
+  if (caption?.trim() && options.skipCaption !== true) {
     // Do not mark the whole operation healthy from this partial caption send.
     // If the companion image fails, Setup Status should still show the failure
     // until a later complete social send succeeds.
@@ -325,6 +335,7 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
       caption.trim()
     );
     if (!captionResult.success) return captionResult;
+    captionProviderMessageId = captionResult.externalMessageId || null;
     await notifyProviderMessageId(options, captionResult, channel);
   }
 
@@ -343,6 +354,13 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
     );
     const tracked = recordAcceptedSocialOutbound(channel, result);
     await notifyProviderMessageId(options, tracked, channel);
+    if (!tracked.success && captionProviderMessageId) {
+      return {
+        ...tracked,
+        partialCaptionSent: true,
+        captionProviderMessageId,
+      };
+    }
     return tracked;
   }
 
@@ -358,6 +376,13 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
     )
   );
   await notifyProviderMessageId(options, result, channel);
+  if (!result.success && captionProviderMessageId) {
+    return {
+      ...result,
+      partialCaptionSent: true,
+      captionProviderMessageId,
+    };
+  }
   return result;
 }
 
