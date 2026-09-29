@@ -266,3 +266,29 @@ test("Human Agent purpose stays blocked after 24 hours when the runtime feature 
   assert.match(result.message, /must message again/i);
   assert.doesNotMatch(result.message, /Human Agent/);
 });
+
+test("classifies marketing-only and global WhatsApp opt-outs separately", () => {
+  for (const text of ["Stop promotions", "Stop promo", "Unsubscribe from promos", "Unsubcribe from Promos"]) {
+    assert.equal(policy.classifyOptOutText(text), "marketing", text);
+  }
+  for (const text of ["STOP", "unsubscribe", "Unsubscribe from All", "Stop all", "don't contact me"]) {
+    assert.equal(policy.classifyOptOutText(text), "all", text);
+  }
+});
+
+test("marketing-only opt-out blocks marketing but keeps service replies available", () => {
+  const state = {
+    channel: "whatsapp",
+    whatsapp_marketing_opt_out_at: new Date("2026-09-03T10:00:00.000Z"),
+    latest_inbound_at: new Date("2026-09-03T10:30:00.000Z"),
+  };
+  const now = new Date("2026-09-03T10:35:00.000Z");
+
+  const marketing = policy.evaluateFreeformState(state, now, { purpose: "marketing" });
+  const service = policy.evaluateFreeformState(state, now, { purpose: "service" });
+
+  assert.equal(marketing.allowed, false);
+  assert.equal(marketing.code, "marketing_opted_out");
+  assert.equal(service.allowed, true);
+});
+
