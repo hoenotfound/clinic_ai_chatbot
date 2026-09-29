@@ -108,11 +108,6 @@ function rejectedErrorFor(contact) {
   return channelMessaging.rejectedError(contact?.channel || "whatsapp");
 }
 
-function staffReplyPurpose(contact) {
-  return ["facebook", "instagram"].includes(contact?.channel)
-    ? "human_agent"
-    : "service";
-}
 
 async function requireFreeformPolicy(contact, res, purpose = "service") {
   try {
@@ -546,7 +541,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       message.sent_by_username &&
       message.is_automated_follow_up !== true &&
       message.is_scheduled_message !== true
-        ? staffReplyPurpose(contact)
+        ? whatsappPolicy.manualStaffPurpose(contact)
         : "service";
     if (!(await requireFreeformPolicy(contact, res, retryPurpose))) return;
 
@@ -603,7 +598,7 @@ router.post("/:contactId/messages", async (req, res) => {
     if (!text || !text.trim()) {
       return res.status(400).json({ error: "Message text is required." });
     }
-    if (!(await requireFreeformPolicy(contact, res, staffReplyPurpose(contact)))) return;
+    if (!(await requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)))) return;
 
     if (contact.mode !== "human") {
       await contactsRepo.takeOver(contact.id, req.session.username);
@@ -623,7 +618,7 @@ router.post("/:contactId/messages", async (req, res) => {
     const sendResult = await channelMessaging.sendText(
       contact,
       text.trim(),
-      socialProviderSendOptions(saved, contact, { purpose: staffReplyPurpose(contact) })
+      socialProviderSendOptions(saved, contact, { purpose: whatsappPolicy.manualStaffPurpose(contact) })
     );
     const errorText = deliveryErrorForSend(
       sendResult,
@@ -685,7 +680,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "An image file is required." });
     }
-    if (!(await requireFreeformPolicy(contact, res, staffReplyPurpose(contact)))) return;
+    if (!(await requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)))) return;
 
     const caption = (req.body?.caption || "").trim();
 
@@ -714,7 +709,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       req.file.mimetype,
       caption || undefined,
       req.file.originalname || "image",
-      socialProviderSendOptions(saved, contact, { purpose: staffReplyPurpose(contact) })
+      socialProviderSendOptions(saved, contact, { purpose: whatsappPolicy.manualStaffPurpose(contact) })
     );
     const errorText = deliveryErrorForSend(
       sendResult,
@@ -750,7 +745,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
-    if (!(await requireFreeformPolicy(contact, res, staffReplyPurpose(contact)))) return;
+    if (!(await requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)))) return;
 
     if (contact.mode !== "human") {
       return res.status(409).json({ error: "Take over this conversation before sending a voice message." });
@@ -805,7 +800,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       outboundAudio.mimeType,
       outboundAudio.filename,
       socialProviderSendOptions(saved, currentContact, {
-        purpose: staffReplyPurpose(currentContact),
+        purpose: whatsappPolicy.manualStaffPurpose(currentContact),
       })
     );
     const errorText = sendResult.error || rejectedErrorFor(currentContact);
