@@ -103,6 +103,9 @@ test("transactional Booking Ready inserts its alert on the caller's client", asy
       return context;
     },
     repository: {
+      async lockContactAlertQueue(contactId, query) {
+        steps.push(["lock", contactId, typeof query]);
+      },
       async cancelOlderPendingBookingReady(input, query) {
         steps.push(["cancel", input.eventKey, typeof query]);
       },
@@ -127,6 +130,7 @@ test("transactional Booking Ready inserts its alert on the caller's client", asy
   });
   assert.deepEqual(result, { status: "queued", alertId: 124 });
   assert.deepEqual(steps, [
+    ["lock", 42, "function"],
     ["cancel", "booking-ready:42:777", "function"],
     ["insert", "booking-ready:42:777", "function"],
   ]);
