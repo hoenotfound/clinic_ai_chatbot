@@ -502,7 +502,9 @@ test("closed WhatsApp conversation records opt-in and sends an approved template
   ).check();
   await dialog.getByRole("button", { name: "Record opt-in" }).click();
 
-  await expect(dialog.getByText("lead_follow_up")).toBeVisible();
+  await expect(
+    dialog.getByRole("heading", { name: "lead_follow_up", exact: true })
+  ).toBeVisible();
   await dialog.getByLabel("Body {{1}}").fill("Alex");
   await dialog.getByLabel(
     "I confirm this customer's consent covers WhatsApp marketing."
