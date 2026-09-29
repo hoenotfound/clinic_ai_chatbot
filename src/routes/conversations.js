@@ -566,6 +566,13 @@ router.post("/:contactId/whatsapp-opt-in", async (req, res) => {
       return res.status(400).json({ error: "WhatsApp opt-in can only be recorded for WhatsApp contacts." });
     }
 
+    if (req.body?.confirmed !== true) {
+      return res.status(400).json({
+        error: "Confirm that the customer explicitly agreed to receive WhatsApp messages before recording opt-in.",
+        code: "opt_in_confirmation_required",
+      });
+    }
+
     const source = String(req.body?.source || "").trim();
     if (source.length < 3 || source.length > 240) {
       return res.status(400).json({
@@ -657,11 +664,26 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
       });
     }
 
+    const marketingConsentConfirmed =
+      resolved.template.category !== "MARKETING" ||
+      req.body?.marketingConsentConfirmed === true;
+    if (!marketingConsentConfirmed) {
+      return res.status(400).json({
+        error:
+          "Confirm that the customer's WhatsApp opt-in covers marketing or promotional messages before sending this marketing template.",
+        code: "marketing_consent_confirmation_required",
+      });
+    }
+
     const metadata = {
       name: resolved.template.name,
       language: resolved.template.language,
       category: resolved.template.category,
       components: built.components,
+      marketingConsentConfirmed:
+        resolved.template.category === "MARKETING"
+          ? true
+          : null,
     };
     const saved = await conversationStore.appendMessageForContact(
       contact.id,
