@@ -3,6 +3,11 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
+const {
+  deliveryErrorForSend,
+  publicDeliveryError,
+} = require("../src/utils/socialDeliveryError");
+
 function read(relativePath) {
   return fs.readFileSync(path.join(__dirname, "..", relativePath), "utf8");
 }
@@ -37,4 +42,13 @@ test("failed social image retries preserve a delivered caption marker and skip r
   const inboxSource = read("portal-frontend/src/pages/Inbox.jsx");
   assert.match(inboxSource, /function displayDeliveryError/);
   assert.match(inboxSource, /The caption was sent, but the image failed to send/);
+});
+
+
+test("successful sends preserve the null delivery-error API contract", () => {
+  assert.equal(
+    deliveryErrorForSend({ success: true }, "This fallback must be ignored."),
+    null
+  );
+  assert.equal(publicDeliveryError(null), null);
 });
