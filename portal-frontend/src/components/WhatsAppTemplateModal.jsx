@@ -48,6 +48,12 @@ function emptyValuesFor(template) {
   return result;
 }
 
+function timestamp(value) {
+  if (!value) return null;
+  const valueMs = new Date(value).getTime();
+  return Number.isFinite(valueMs) ? valueMs : null;
+}
+
 function eligibilityCopy(eligibility) {
   if (eligibility?.code === "opted_out") {
     return "This customer previously opted out. Only record a new opt-in if they have explicitly agreed to receive WhatsApp messages again.";
@@ -198,6 +204,13 @@ export default function WhatsAppTemplateModal({
     [selected, values]
   );
 
+  const marketingOptOutMs = timestamp(catalog?.eligibility?.marketingOptOutAt);
+  const latestOptInMs = timestamp(catalog?.eligibility?.optInAt);
+  const marketingReconsentNeeded =
+    selected?.category === "MARKETING" &&
+    marketingOptOutMs != null &&
+    (latestOptInMs == null || latestOptInMs <= marketingOptOutMs);
+
   function chooseTemplate(template) {
     setSelectedKey(`${template.name}::${template.language}`);
     setValues(emptyValuesFor(template));
@@ -270,6 +283,7 @@ export default function WhatsAppTemplateModal({
   );
   const canSend =
     catalog?.eligibility?.allowed === true &&
+    !marketingReconsentNeeded &&
     selected?.sendable === true &&
     allValuesFilled &&
     (selected?.category !== "MARKETING" || marketingConsentConfirmed) &&
@@ -320,11 +334,19 @@ export default function WhatsAppTemplateModal({
             </div>
           )}
 
-          {!loading && catalog && !catalog.eligibility?.allowed && (
+          {!loading &&
+            catalog &&
+            (!catalog.eligibility?.allowed || marketingReconsentNeeded) && (
             <form onSubmit={recordOptIn} className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-              <p className="text-sm font-bold text-amber-900">WhatsApp opt-in required</p>
+              <p className="text-sm font-bold text-amber-900">
+                {marketingReconsentNeeded
+                  ? "WhatsApp marketing opt-in required"
+                  : "WhatsApp opt-in required"}
+              </p>
               <p className="mt-1 text-xs leading-5 text-amber-800">
-                {eligibilityCopy(catalog.eligibility)}
+                {marketingReconsentNeeded
+                  ? "This customer opted out of WhatsApp marketing. Record a real, newer explicit consent source that specifically covers promotional WhatsApp messages before sending a MARKETING template again."
+                  : eligibilityCopy(catalog.eligibility)}
               </p>
               <label className="mt-3 block text-[11px] font-semibold text-amber-900">
                 Where did the customer opt in?
@@ -346,7 +368,11 @@ export default function WhatsAppTemplateModal({
                   onChange={(event) => setOptInConfirmed(event.target.checked)}
                   className="mt-0.5 h-3.5 w-3.5 shrink-0"
                 />
-                <span>I confirm this customer explicitly agreed to receive WhatsApp messages.</span>
+                <span>
+                  {marketingReconsentNeeded
+                    ? "I confirm this customer explicitly agreed again to receive WhatsApp marketing/promotional messages."
+                    : "I confirm this customer explicitly agreed to receive WhatsApp messages."}
+                </span>
               </label>
               <button
                 type="submit"
