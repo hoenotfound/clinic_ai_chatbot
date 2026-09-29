@@ -100,6 +100,13 @@ function definitions(env = process.env) {
       aiCandidates,
     },
     { key: "whatsapp", group: "Messaging channels", label: "WhatsApp", optional: false, isConfigured: configured(env.WHATSAPP_PHONE_NUMBER_ID, env.WHATSAPP_TOKEN) },
+    {
+      key: "whatsapp_templates",
+      group: "Messaging channels",
+      label: "WhatsApp templates",
+      optional: true,
+      isConfigured: configured(env.WHATSAPP_WABA_ID, env.WHATSAPP_TOKEN),
+    },
     { key: "whatsapp_webhook", group: "Messaging channels", label: "WhatsApp webhook", optional: false, isConfigured: configured(env.WHATSAPP_APP_SECRET, env.WHATSAPP_VERIFY_TOKEN) },
     { key: "facebook", group: "Messaging channels", label: "Facebook Messenger", optional: true, isConfigured: facebookConfigured },
     { key: "instagram", group: "Messaging channels", label: "Instagram", optional: true, isConfigured: instagramConfigured },
@@ -534,6 +541,41 @@ function createSetupStatusService({
     }
   }
 
+  async function checkWhatsAppTemplates(checkedAt, definition) {
+    if (!definition.isConfigured) {
+      return result(
+        "whatsapp_templates",
+        "not_configured",
+        "Optional WhatsApp template catalog is not configured. Add WHATSAPP_WABA_ID to enable approved-template sending from Inbox.",
+        checkedAt
+      );
+    }
+
+    try {
+      const wabaId = text(env.WHATSAPP_WABA_ID);
+      const data = await requestJson(
+        `https://graph.facebook.com/${GRAPH_API_VERSION}/${encodeURIComponent(wabaId)}/message_templates?fields=id%2Cname%2Clanguage%2Cstatus&limit=1`,
+        { fetchImpl, token: text(env.WHATSAPP_TOKEN) }
+      );
+      const count = Array.isArray(data?.data) ? data.data.length : 0;
+      return result(
+        "whatsapp_templates",
+        "ready",
+        count
+          ? "The configured token can read the WhatsApp template catalog."
+          : "The configured token can read the WhatsApp template catalog. No templates were returned in the first page.",
+        checkedAt
+      );
+    } catch (err) {
+      return result(
+        "whatsapp_templates",
+        "warning",
+        `WhatsApp messaging can still work, but the template catalog check failed. Confirm WHATSAPP_WABA_ID and whatsapp_business_management access. ${privateError(err)}`,
+        checkedAt
+      );
+    }
+  }
+
   function checkSocialMessaging({ key, definition, stored, checkedAt }) {
     if (!definition.isConfigured) {
       return result(key, "not_configured", "Optional integration is not configured.", checkedAt);
@@ -723,6 +765,7 @@ function createSetupStatusService({
         readyLabel: "WhatsApp business number",
         checkedAt,
       }),
+      checkWhatsAppTemplates(checkedAt, byKey.get("whatsapp_templates")),
       Promise.resolve(checkSocialMessaging({
         key: "facebook",
         definition: byKey.get("facebook"),
