@@ -581,6 +581,10 @@ router.post("/:contactId/whatsapp-opt-in", async (req, res) => {
     }
 
     const updated = await whatsappPolicy.recordOptIn(contact.id, source);
+    realtimeEvents.publish("conversation_changed", {
+      contactId: updated.id,
+      reason: "whatsapp_opt_in",
+    });
     res.json({
       contactId: updated.id,
       whatsapp_opt_in_at: updated.whatsapp_opt_in_at,
@@ -791,6 +795,20 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
           error: templatePolicy.message,
           code: templatePolicy.code,
           policyBlocked: true,
+        });
+      }
+
+      const currentTemplate = await whatsappTemplate.resolveApprovedTemplate(
+        message.whatsapp_template.name,
+        message.whatsapp_template.language
+      );
+      if (!currentTemplate.success) {
+        return res.status(409).json({
+          error:
+            currentTemplate.code === "template_not_available"
+              ? "This WhatsApp template is no longer approved or available. Choose another approved template instead."
+              : currentTemplate.error,
+          code: currentTemplate.code,
         });
       }
 
