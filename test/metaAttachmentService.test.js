@@ -165,13 +165,11 @@ test("Human Agent attachment sends add the Meta message tag to final delivery", 
     });
   };
 
-  const result = await metaAttachments.sendBuffer(
-    "facebook",
-    "psid-human-agent",
+  const result = await metaAttachments.sendUrlAttachment(
+    "instagram",
+    "igsid-human-agent",
     "image",
-    Buffer.from("blocked-image"),
-    "image/jpeg",
-    "blocked.jpg",
+    "https://cdn.example.test/image.jpg",
     { humanAgent: true }
   );
 
@@ -197,11 +195,13 @@ test("Human Agent attachment transport fails closed when the runtime flag is dis
     throw new Error("must not call Meta");
   };
 
-  const result = await metaAttachments.sendUrlAttachment(
-    "instagram",
-    "igsid-human-agent",
+  const result = await metaAttachments.sendBuffer(
+    "facebook",
+    "psid-human-agent",
     "image",
-    "https://cdn.example.test/image.jpg",
+    Buffer.from("blocked-image"),
+    "image/jpeg",
+    "blocked.jpg",
     { humanAgent: true }
   );
 
