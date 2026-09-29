@@ -50,6 +50,16 @@ export default function WhatsAppMessagingDetails({ contact, className = "" }) {
   const optInSource = policyField(contact, "whatsapp_opt_in_source", "whatsappOptInSource");
   const optOutAt = policyField(contact, "whatsapp_opt_out_at", "whatsappOptOutAt");
   const optOutSource = policyField(contact, "whatsapp_opt_out_source", "whatsappOptOutSource");
+  const marketingOptOutAt = policyField(
+    contact,
+    "whatsapp_marketing_opt_out_at",
+    "whatsappMarketingOptOutAt"
+  );
+  const marketingOptOutSource = policyField(
+    contact,
+    "whatsapp_marketing_opt_out_source",
+    "whatsappMarketingOptOutSource"
+  );
   const statusTone = policy.freeformAllowed
     ? "border-emerald-200 bg-emerald-50 text-emerald-800"
     : "border-amber-200 bg-amber-50 text-amber-900";
@@ -80,6 +90,13 @@ export default function WhatsAppMessagingDetails({ contact, className = "" }) {
         )}
       </div>
 
+      {marketingOptOutAt && !optOutAt && (
+        <p className="mt-3 break-words rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-5 text-amber-900">
+          Customer opted out of WhatsApp marketing on {formatDateTime(marketingOptOutAt)}.
+          Service replies and utility templates remain available; promotional messages stay blocked until new explicit marketing consent is recorded.
+        </p>
+      )}
+
       {optOutAt && (
         <p className="mt-3 break-words rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-5 text-amber-900">
           Customer opted out of WhatsApp messages on {formatDateTime(optOutAt)}.
@@ -96,8 +113,10 @@ export default function WhatsAppMessagingDetails({ contact, className = "" }) {
           <>
             <PolicyDetail label="WhatsApp opt-in" value={optInAt ? "Recorded" : "Not recorded"} />
             <PolicyDetail label="WhatsApp opt-out" value={optOutAt ? "Recorded" : "Not recorded"} />
+            <PolicyDetail label="Marketing opt-out" value={marketingOptOutAt ? "Recorded" : "Not recorded"} />
             <PolicyDetail className="col-span-2" label="Opt-in date / source" value={optInAt ? `${formatDateTime(optInAt)} · ${sourceLabel(optInSource)}` : "Not recorded"} />
             <PolicyDetail className="col-span-2" label="Opt-out date / source" value={optOutAt ? `${formatDateTime(optOutAt)} · ${sourceLabel(optOutSource)}` : "Not recorded"} />
+            <PolicyDetail className="col-span-2" label="Marketing opt-out date / source" value={marketingOptOutAt ? `${formatDateTime(marketingOptOutAt)} · ${sourceLabel(marketingOptOutSource)}` : "Not recorded"} />
           </>
         )}
       </dl>
