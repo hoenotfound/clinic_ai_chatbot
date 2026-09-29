@@ -225,8 +225,8 @@ function humanAgentSetupResult(definition, checkedAt) {
 
   return result(
     definition.key,
-    "warning",
-    "Enabled in DA Chatbot. Confirm Human Agent approval in Meta App Review before relying on 24-hour to 7-day staff replies.",
+    "ready",
+    "Enabled in DA Chatbot for configured social messaging. Meta App Review approval cannot be verified automatically and must be confirmed manually before enabling this flag.",
     checkedAt,
     { reason: "meta_approval_not_verifiable" }
   );
