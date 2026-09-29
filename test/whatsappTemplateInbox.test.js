@@ -13,6 +13,7 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   const api = read("portal-frontend/src/api.js");
   const inbox = read("portal-frontend/src/pages/Inbox.jsx");
   const modal = read("portal-frontend/src/components/WhatsAppTemplateModal.jsx");
+  const requireAuth = read("src/middleware/requireAuth.js");
 
   assert.match(route, /router\.get\("\/:contactId\/whatsapp-templates"/);
   assert.match(route, /router\.post\("\/:contactId\/whatsapp-opt-in"/);
@@ -29,7 +30,17 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(route, /consentOptInAt/);
   assert.match(route, /marketing_consent_reconfirmation_required/);
   assert.match(route, /expectedOptInAt/);
+  assert.match(route, /forceRefresh/);
+  assert.match(route, /resolveApprovedTemplate[\s\S]*\{ force: true \}/);
+  assert.match(route, /templateSignature/);
+  assert.match(route, /template_definition_changed/);
+  assert.match(route, /rebuiltTemplate\.components/);
+  assert.match(route, /sendResult\.unknown === true/);
   assert.match(route, /sendApprovedTemplate\(contact/);
+
+  assert.match(requireAuth, /action === "whatsapp-opt-in"/);
+  assert.match(requireAuth, /action === "whatsapp-templates" && subAction === "send"/);
+  assert.match(requireAuth, /reply_to_assigned_leads/);
 
   assert.match(service, /\/message_templates/);
   assert.match(service, /status === "APPROVED"/);
@@ -37,6 +48,7 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(service, /Dynamic URL button variables/);
 
   assert.match(api, /listWhatsAppTemplates/);
+  assert.match(api, /refresh=true/);
   assert.match(api, /recordWhatsAppOptIn/);
   assert.match(api, /sendWhatsAppTemplate/);
   assert.match(inbox, /Send WhatsApp template/);
@@ -45,6 +57,7 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(modal, /Do not use this to bypass an opt-out/);
   assert.match(modal, /explicitly agreed to receive WhatsApp messages/);
   assert.match(modal, /consent covers WhatsApp marketing/);
+  assert.match(modal, /loadCatalog\(true\)/);
 });
 
 test("WhatsApp template message metadata uses a forward migration instead of editing baseline schema", () => {
