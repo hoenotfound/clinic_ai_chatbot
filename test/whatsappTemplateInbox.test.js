@@ -23,6 +23,9 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(route, /whatsappTemplate\.buildTemplateComponents/);
   assert.match(route, /opt_in_confirmation_required/);
   assert.match(route, /marketing_consent_confirmation_required/);
+  assert.match(route, /marketing_opted_out/);
+  assert.match(route, /recordMarketingOptIn/);
+  assert.match(route, /templateCategory/);
   assert.match(route, /whatsappTemplate: metadata/);
   assert.match(route, /if \(message\.whatsapp_template\)/);
   assert.match(route, /currentTemplate\.template\.category === "MARKETING"/);
@@ -62,14 +65,19 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(modal, /Do not use this to bypass an opt-out/);
   assert.match(modal, /explicitly agreed to receive WhatsApp messages/);
   assert.match(modal, /consent covers WhatsApp marketing/);
+  assert.match(modal, /marketingReconsentNeeded/);
+  assert.match(modal, /opted out of WhatsApp marketing/);
   assert.match(modal, /loadCatalog\(true\)/);
 });
 
-test("WhatsApp template message metadata uses a forward migration instead of editing baseline schema", () => {
-  const migration = read("src/db/migrations/023_whatsapp_template_messages.sql");
+test("WhatsApp template and marketing consent state use forward migrations instead of editing baseline schema", () => {
+  const templateMigration = read("src/db/migrations/023_whatsapp_template_messages.sql");
+  const marketingOptOutMigration = read("src/db/migrations/024_whatsapp_marketing_opt_out.sql");
   const messagesRepo = read("src/db/messagesRepo.js");
 
-  assert.match(migration, /ADD COLUMN IF NOT EXISTS whatsapp_template JSONB/);
+  assert.match(templateMigration, /ADD COLUMN IF NOT EXISTS whatsapp_template JSONB/);
+  assert.match(marketingOptOutMigration, /whatsapp_marketing_opt_out_at/);
+  assert.match(marketingOptOutMigration, /whatsapp_marketing_opt_out_source/);
   assert.match(messagesRepo, /whatsapp_template/);
   assert.match(messagesRepo, /options\?\.whatsappTemplate/);
 });
