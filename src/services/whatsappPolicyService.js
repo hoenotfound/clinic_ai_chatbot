@@ -6,7 +6,7 @@ const HUMAN_AGENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const STANDARD_WINDOW_CHANNELS = new Set(["whatsapp", "facebook", "instagram"]);
 const HUMAN_AGENT_CHANNELS = new Set(["facebook", "instagram"]);
 
-const OPT_OUT_PATTERNS = [
+const GLOBAL_OPT_OUT_PATTERNS = [
   /^stop$/i,
   /^unsubscribe$/i,
   /^remove me$/i,
@@ -20,9 +20,14 @@ const OPT_OUT_PATTERNS = [
   /^jangan (?:mesej|whatsapp|hubungi) saya$/i,
   /^tak nak (?:mesej|whatsapp)$/i,
   /^stop mesej$/i,
-  /^stop (?:promos?|promotions?)$/i,
-  /^unsub(?:scribe|cribe) from (?:promos?|promotions?|all)$/i,
+  /^unsubscribe from all$/i,
+  /^unsubcribe from all$/i,
   /^stop all$/i,
+];
+
+const MARKETING_OPT_OUT_PATTERNS = [
+  /^stop (?:promos?|promotions?)$/i,
+  /^unsub(?:scribe|cribe) from (?:promos?|promotions?)$/i,
 ];
 
 function normalizeText(value) {
@@ -32,10 +37,20 @@ function normalizeText(value) {
     .replace(/\s+/g, " ");
 }
 
-function isOptOutText(value) {
+function classifyOptOutText(value) {
   const text = normalizeText(value);
-  if (!text) return false;
-  return OPT_OUT_PATTERNS.some((pattern) => pattern.test(text));
+  if (!text) return null;
+  if (MARKETING_OPT_OUT_PATTERNS.some((pattern) => pattern.test(text))) {
+    return "marketing";
+  }
+  if (GLOBAL_OPT_OUT_PATTERNS.some((pattern) => pattern.test(text))) {
+    return "all";
+  }
+  return null;
+}
+
+function isOptOutText(value) {
+  return classifyOptOutText(value) !== null;
 }
 
 async function getPolicyState(contactId) {
@@ -48,6 +63,8 @@ async function getPolicyState(contactId) {
        c.whatsapp_opt_in_source,
        c.whatsapp_opt_out_at,
        c.whatsapp_opt_out_source,
+       c.whatsapp_marketing_opt_out_at,
+       c.whatsapp_marketing_opt_out_source,
        (
          SELECT m.created_at
          FROM messages m
@@ -139,6 +156,17 @@ function evaluateFreeformState(
   const optOutAt = state.whatsapp_opt_out_at
     ? new Date(state.whatsapp_opt_out_at)
     : null;
+  const marketingOptOutAt = state.whatsapp_marketing_opt_out_at
+    ? new Date(state.whatsapp_marketing_opt_out_at)
+    : null;
+
+  if (channel === "whatsapp" && purpose === "marketing" && marketingOptOutAt) {
+    return policyError(
+      "marketing_opted_out",
+      "WhatsApp marketing send blocked because this customer opted out of promotional messages. Record a new explicit opt-in that covers marketing before sending promotional messages again.",
+      { marketingOptOutAt }
+    );
+  }
 
   if (channel === "whatsapp" && optOutAt) {
     // Opt-out is a hard stop for proactive/marketing sends. A customer is still
@@ -264,6 +292,8 @@ async function recordOptOut(contactId, source = "customer_message") {
     `UPDATE contacts
      SET whatsapp_opt_out_at = now(),
          whatsapp_opt_out_source = $2,
+         whatsapp_marketing_opt_out_at = now(),
+         whatsapp_marketing_opt_out_source = $2,
          whatsapp_opt_in_at = NULL,
          whatsapp_opt_in_source = NULL,
          updated_at = now()
@@ -271,6 +301,34 @@ async function recordOptOut(contactId, source = "customer_message") {
        AND channel = 'whatsapp'
      RETURNING *`,
     [contactId, source]
+  );
+  return result.rows[0] || null;
+}
+
+async function recordMarketingOptOut(contactId, source = "customer_message") {
+  const result = await pool.query(
+    `UPDATE contacts
+     SET whatsapp_marketing_opt_out_at = now(),
+         whatsapp_marketing_opt_out_source = $2,
+         updated_at = now()
+     WHERE id = $1
+       AND channel = 'whatsapp'
+     RETURNING *`,
+    [contactId, source]
+  );
+  return result.rows[0] || null;
+}
+
+async function recordMarketingOptIn(contactId) {
+  const result = await pool.query(
+    `UPDATE contacts
+     SET whatsapp_marketing_opt_out_at = NULL,
+         whatsapp_marketing_opt_out_source = NULL,
+         updated_at = now()
+     WHERE id = $1
+       AND channel = 'whatsapp'
+     RETURNING *`,
+    [contactId]
   );
   return result.rows[0] || null;
 }
@@ -296,7 +354,7 @@ async function recordOptIn(contactId, source) {
   return result.rows[0] || null;
 }
 
-async function checkTemplateAllowed(contact) {
+async function checkTemplateAllowed(contact, { category = null } = {}) {
   if ((contact?.channel || "whatsapp") !== "whatsapp") {
     return policyError(
       "wrong_channel",
@@ -319,13 +377,25 @@ async function checkTemplateAllowed(contact) {
   if (state.whatsapp_opt_out_at) {
     return policyError(
       "opted_out",
-      "WhatsApp template blocked because this customer opted out."
+      "WhatsApp template blocked because this customer opted out.",
+      { state }
     );
   }
   if (!state.whatsapp_opt_in_at || !state.whatsapp_opt_in_source) {
     return policyError(
       "missing_opt_in",
-      "WhatsApp template blocked because no explicit WhatsApp opt-in is recorded for this customer."
+      "WhatsApp template blocked because no explicit WhatsApp opt-in is recorded for this customer.",
+      { state }
+    );
+  }
+  if (
+    String(category || "").trim().toUpperCase() === "MARKETING" &&
+    state.whatsapp_marketing_opt_out_at
+  ) {
+    return policyError(
+      "marketing_opted_out",
+      "WhatsApp marketing template blocked because this customer opted out of promotional messages. Record a new explicit opt-in that covers marketing before sending promotional messages again.",
+      { state }
     );
   }
 
@@ -350,10 +420,13 @@ module.exports = {
   blockedSendResult,
   checkFreeformAllowed,
   checkTemplateAllowed,
+  classifyOptOutText,
   evaluateFreeformState,
   getPolicyState,
   isOptOutText,
   manualStaffPurpose,
+  recordMarketingOptIn,
+  recordMarketingOptOut,
   recordOptIn,
   recordOptOut,
 };
