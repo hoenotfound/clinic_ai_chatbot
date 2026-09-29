@@ -240,4 +240,6 @@ test("Human Agent purpose stays blocked after 24 hours when the runtime feature 
   assert.equal(result.allowed, false);
   assert.equal(result.code, "outside_customer_service_window");
   assert.equal(result.humanAgentWindowEndsAt, null);
+  assert.match(result.message, /must message again/i);
+  assert.doesNotMatch(result.message, /Human Agent/);
 });
