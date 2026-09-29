@@ -18,10 +18,16 @@ test(
       path.join(__dirname, "../src/db/inboundProcessingSchema.sql"),
       "utf8"
     );
-    const migrationSql = fs.readFileSync(
-      path.join(__dirname, "../src/db/migrations/021_reliability_review_followups.sql"),
-      "utf8"
-    );
+    const migrationSql = [
+      fs.readFileSync(
+        path.join(__dirname, "../src/db/migrations/021_reliability_review_followups.sql"),
+        "utf8"
+      ),
+      fs.readFileSync(
+        path.join(__dirname, "../src/db/migrations/022_cancelled_outbound_attempt_durability.sql"),
+        "utf8"
+      ),
+    ].join("\n");
 
     await client.connect();
     try {
@@ -208,6 +214,57 @@ test(
       );
       assert.equal(lateMessage.rows[0].delivery_status, "pending");
       assert.equal(lateMessage.rows[0].delivery_error, null);
+
+      // A guarded send cancelled before the provider call removes its unsent
+      // assistant row but must retain the durable outbound fence across restart.
+      await inboundProcessingRepo.markCompleted(lateJob.id, client);
+      const cancelledIncoming = {
+        id: "wamid-outbound-fence-4",
+        from: "60128880000",
+        channel: "whatsapp",
+        text: "staff took over",
+      };
+      const cancelledDurable = await inboundProcessingRepo.storeInboundClaim({
+        contactId,
+        content: "staff took over",
+        storedMessageId: cancelledIncoming.id,
+        channel: "whatsapp",
+        incoming: cancelledIncoming,
+      }, client);
+      const cancelledJob = await inboundProcessingRepo.claimPendingByMessageId(
+        cancelledDurable.savedInbound.id,
+        client,
+        "test-owner"
+      );
+      const cancelledReservation = await inboundProcessingRepo.reserveOutboundAttempt({
+        processingJobId: cancelledJob.id,
+        contactId,
+        content: "This draft must never appear after staff takeover",
+        origin: "ai_reply",
+      }, client);
+
+      const cancelled = await inboundProcessingRepo.cancelOutboundAttempt(
+        cancelledJob.id,
+        client
+      );
+      assert.equal(cancelled.cancelled, true);
+      assert.equal(cancelled.attempt.outcome, "cancelled");
+      assert.equal(cancelled.attempt.assistant_message_id, null);
+
+      const deletedDraft = await client.query(
+        "SELECT id FROM messages WHERE id = $1",
+        [cancelledReservation.message.id]
+      );
+      assert.equal(deletedDraft.rowCount, 0);
+
+      const recoveredCancelled = await inboundProcessingRepo.getOutboundAttempt(
+        cancelledJob.id,
+        client
+      );
+      assert.equal(recoveredCancelled.outcome, "cancelled");
+      assert.equal(recoveredCancelled.assistant_message_id, null);
+      assert.equal(recoveredCancelled.whatsapp_message_id, null);
+      assert.equal(recoveredCancelled.delivery_status, null);
     } finally {
       await client.query("RESET search_path").catch(() => {});
       await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`).catch(() => {});
