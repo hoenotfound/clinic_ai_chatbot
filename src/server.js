@@ -175,16 +175,41 @@ async function sendTrackedText(
     saved.id,
     contact.channel
   );
-  const sendResult = await channelMessaging.sendText(
-    contact,
-    text,
-    {
-      ...(guarded ? { preSendCheck: canSend } : {}),
-      ...(socialProviderRecorder
-        ? { onProviderMessageId: socialProviderRecorder }
-        : {}),
+
+  let sendResult;
+  try {
+    sendResult = await channelMessaging.sendText(
+      contact,
+      text,
+      {
+        ...(guarded ? { preSendCheck: canSend } : {}),
+        ...(socialProviderRecorder
+          ? { onProviderMessageId: socialProviderRecorder }
+          : {}),
+      }
+    );
+  } catch (err) {
+    if (durableOutboundReserved) {
+      const ambiguousReason =
+        "Delivery could not be confirmed because the messaging request was interrupted. Check the customer chat before replying to avoid sending it twice.";
+      try {
+        const ambiguous = await inboundProcessingRepo.markOutboundAttemptAmbiguous(
+          processingJobId,
+          ambiguousReason
+        );
+        if (ambiguous?.message) {
+          publishDeliveryStatus(ambiguous.message);
+        }
+      } catch (markErr) {
+        console.error(
+          `Failed to mark interrupted outbound attempt for inbound job ${processingJobId}:`,
+          markErr
+        );
+      }
+      err.outboundDeliveryAmbiguous = true;
     }
-  );
+    throw err;
+  }
 
   if (sendResult.cancelled) {
     await messagesRepo.deleteUnsentAssistantMessage(saved.id);
