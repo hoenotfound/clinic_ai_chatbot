@@ -1,7 +1,9 @@
 const { pool } = require("../db/db");
 
 const CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const HUMAN_AGENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const STANDARD_WINDOW_CHANNELS = new Set(["whatsapp", "facebook", "instagram"]);
+const HUMAN_AGENT_CHANNELS = new Set(["facebook", "instagram"]);
 
 const OPT_OUT_PATTERNS = [
   /^stop$/i,
@@ -83,7 +85,11 @@ function outsideWindowError(channel) {
   if (channel === "whatsapp") {
     return "WhatsApp send blocked because the 24-hour customer-service window has closed. Use an approved template only after valid WhatsApp opt-in has been recorded.";
   }
-  return `${channelLabel(channel)} send blocked because the 24-hour standard messaging window has closed. The customer must message again before a normal reply can be sent.`;
+  return `${channelLabel(channel)} send blocked because the 24-hour standard messaging window has closed. Only a real staff member may reply with Meta's Human Agent path for up to 7 days after the customer's latest message.`;
+}
+
+function outsideHumanAgentWindowError(channel) {
+  return `${channelLabel(channel)} send blocked because Meta's 7-day Human Agent window has closed. The customer must message again before staff can reply.`;
 }
 
 function evaluateFreeformState(state, now = new Date(), { purpose = "service" } = {}) {
@@ -130,11 +136,46 @@ function evaluateFreeformState(state, now = new Date(), { purpose = "service" } 
 
   const current = now instanceof Date ? now : new Date(now);
   const windowEndsAt = new Date(lastInboundAt.getTime() + CUSTOMER_SERVICE_WINDOW_MS);
+  const humanAgentWindowEndsAt = HUMAN_AGENT_CHANNELS.has(channel)
+    ? new Date(lastInboundAt.getTime() + HUMAN_AGENT_WINDOW_MS)
+    : null;
+
   if (current.getTime() >= windowEndsAt.getTime()) {
+    const humanAgentRequested =
+      purpose === "human_agent" && HUMAN_AGENT_CHANNELS.has(channel);
+
+    if (
+      humanAgentRequested &&
+      humanAgentWindowEndsAt &&
+      current.getTime() < humanAgentWindowEndsAt.getTime()
+    ) {
+      return {
+        allowed: true,
+        code: null,
+        message: null,
+        lastInboundAt,
+        windowEndsAt,
+        humanAgentWindowEndsAt,
+        humanAgentRequired: true,
+      };
+    }
+
+    if (
+      humanAgentRequested &&
+      humanAgentWindowEndsAt &&
+      current.getTime() >= humanAgentWindowEndsAt.getTime()
+    ) {
+      return policyError(
+        "outside_human_agent_window",
+        outsideHumanAgentWindowError(channel),
+        { lastInboundAt, windowEndsAt, humanAgentWindowEndsAt }
+      );
+    }
+
     return policyError(
       "outside_customer_service_window",
       outsideWindowError(channel),
-      { lastInboundAt, windowEndsAt }
+      { lastInboundAt, windowEndsAt, humanAgentWindowEndsAt }
     );
   }
 
@@ -144,6 +185,8 @@ function evaluateFreeformState(state, now = new Date(), { purpose = "service" } 
     message: null,
     lastInboundAt,
     windowEndsAt,
+    humanAgentWindowEndsAt,
+    humanAgentRequired: false,
   };
 }
 
@@ -261,6 +304,7 @@ function blockedSendResult(policy) {
 
 module.exports = {
   CUSTOMER_SERVICE_WINDOW_MS,
+  HUMAN_AGENT_WINDOW_MS,
   STANDARD_WINDOW_CHANNELS,
   blockedSendResult,
   checkFreeformAllowed,
