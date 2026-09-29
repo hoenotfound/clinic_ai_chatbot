@@ -160,14 +160,6 @@ function evaluateFreeformState(
     ? new Date(state.whatsapp_marketing_opt_out_at)
     : null;
 
-  if (channel === "whatsapp" && purpose === "marketing" && marketingOptOutAt) {
-    return policyError(
-      "marketing_opted_out",
-      "WhatsApp marketing send blocked because this customer opted out of promotional messages. Record a new explicit opt-in that covers marketing before sending promotional messages again.",
-      { marketingOptOutAt }
-    );
-  }
-
   if (channel === "whatsapp" && optOutAt) {
     // Opt-out is a hard stop for proactive/marketing sends. A customer is still
     // allowed to start a later support conversation themselves; in that case a
@@ -181,6 +173,14 @@ function evaluateFreeformState(
         "WhatsApp send blocked because this customer opted out of WhatsApp messages. Record a new explicit opt-in before sending proactive or marketing messages again."
       );
     }
+  }
+
+  if (channel === "whatsapp" && purpose === "marketing" && marketingOptOutAt) {
+    return policyError(
+      "marketing_opted_out",
+      "WhatsApp marketing send blocked because this customer opted out of promotional messages. Record a new explicit opt-in that covers marketing before sending promotional messages again.",
+      { marketingOptOutAt }
+    );
   }
 
   if (!lastInboundAt) {
