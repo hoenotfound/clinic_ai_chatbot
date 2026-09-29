@@ -497,10 +497,16 @@ test("closed WhatsApp conversation records opt-in and sends an approved template
   await dialog.getByPlaceholder(/Customer requested WhatsApp follow-up/).fill(
     "Customer requested WhatsApp follow-up by phone"
   );
+  await dialog.getByLabel(
+    "I confirm this customer explicitly agreed to receive WhatsApp messages."
+  ).check();
   await dialog.getByRole("button", { name: "Record opt-in" }).click();
 
   await expect(dialog.getByText("lead_follow_up")).toBeVisible();
   await dialog.getByLabel("Body {{1}}").fill("Alex");
+  await dialog.getByLabel(
+    "I confirm this customer's consent covers WhatsApp marketing."
+  ).check();
   await dialog.getByRole("button", { name: "Send template" }).click();
 
   await expect(page.getByText(/Hi Alex, just following up on your enquiry/)).toBeVisible();
@@ -508,11 +514,13 @@ test("closed WhatsApp conversation records opt-in and sends an approved template
 
   expect(findCall(apiState, "POST", "/api/conversations/101/whatsapp-opt-in")?.body).toEqual({
     source: "Customer requested WhatsApp follow-up by phone",
+    confirmed: true,
   });
   expect(findCall(apiState, "POST", "/api/conversations/101/whatsapp-templates/send")?.body).toEqual({
     templateName: "lead_follow_up",
     languageCode: "en_US",
     values: { header: [], body: ["Alex"] },
+    marketingConsentConfirmed: true,
   });
   expectNoUnexpectedApi(apiState);
 });
