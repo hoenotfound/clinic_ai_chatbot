@@ -719,7 +719,13 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
       req.session.username,
       null,
       null,
-      { whatsappTemplate: metadata }
+      {
+        whatsappTemplate: metadata,
+        initialDeliveryStatus: "unknown",
+        initialDeliveryError:
+          "Template send started, but delivery has not been confirmed. Check WhatsApp before retrying.",
+        publish: false,
+      }
     );
 
     const sendResult = await whatsappTemplate.sendApprovedTemplate(contact, {
