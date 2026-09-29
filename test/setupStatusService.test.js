@@ -25,6 +25,7 @@ function completeEnv() {
     SESSION_SECRET: "a-strong-random-session-secret-with-more-than-32-characters",
     PUBLIC_BASE_URL: "https://clinic.example.test",
     WHATSAPP_PHONE_NUMBER_ID: "10001",
+    WHATSAPP_WABA_ID: "waba-10001",
     WHATSAPP_TOKEN: "whatsapp-secret-token",
     WHATSAPP_APP_SECRET: "whatsapp-app-secret",
     WHATSAPP_VERIFY_TOKEN: "whatsapp-verify-secret",
@@ -132,6 +133,18 @@ test("runs safe checks without exposing credentials or messaging customers", asy
       if (url.includes("/10001?")) {
         return response({ id: "10001", verified_name: "Clinic Test" });
       }
+      if (url.includes("/waba-10001/message_templates?")) {
+        return response({
+          data: [
+            {
+              id: "template-1",
+              name: "appointment_reminder",
+              language: "en_US",
+              status: "APPROVED",
+            },
+          ],
+        });
+      }
       if (url.includes("/20002?")) return response({ id: "20002", name: "Clinic Page" });
       if (url.includes("/30003?")) return response({ id: "30003", name: "Clinic IG Page" });
       if (url.includes("/me?")) return response({ id: "system-user" });
@@ -148,6 +161,7 @@ test("runs safe checks without exposing credentials or messaging customers", asy
   assert.equal(status.summary.requiredReady, status.summary.requiredTotal);
   assert.equal(status.lastRunAt, "2026-09-03T12:00:00.000Z");
   assert.equal(byKey.get("whatsapp").status, "ready");
+  assert.equal(byKey.get("whatsapp_templates").status, "ready");
   assert.equal(byKey.get("facebook").status, "ready");
   assert.equal(byKey.get("instagram").status, "ready");
   assert.equal(byKey.get("facebook").lastActivityAt, "2026-09-03T09:00:00.000Z");
@@ -565,5 +579,103 @@ test("Human Agent setup check is locally ready when explicitly enabled while kee
   assert.equal(humanAgent.reason, "meta_approval_not_verifiable");
   assert.match(humanAgent.summary, /cannot be verified automatically/i);
   assert.match(humanAgent.summary, /confirmed manually/i);
+});
+
+test("WhatsApp template setup check is optional and does not block normal WhatsApp readiness", async () => {
+  const env = completeEnv();
+  delete env.WHATSAPP_WABA_ID;
+
+  let fetchCalls = 0;
+  const service = createSetupStatusService({
+    env,
+    repository: memoryRepository(),
+    database: {
+      async query(sql) {
+        return /COUNT/.test(sql) ? { rows: [{ count: 1 }] } : { rows: [{ ok: 1 }] };
+      },
+    },
+    ai: { async getReply() { return "ok"; } },
+    storage: {
+      async uploadMedia() { return "test-key"; },
+      async deleteMedia() {},
+    },
+    fetchImpl: async (url) => {
+      fetchCalls += 1;
+      if (url.includes("/10001?")) {
+        return response({ id: "10001", verified_name: "Clinic Test" });
+      }
+      if (url.includes("api.telegram.org") && url.endsWith("/getMe")) {
+        return response({ ok: true, result: { username: "clinic_alert_bot" } });
+      }
+      if (url.includes("api.telegram.org") && url.includes("/getChat")) {
+        return response({ ok: true, result: { id: -100123456 } });
+      }
+      if (url.includes("/me?")) return response({ id: "system-user" });
+      if (url.includes("/120210000001234?")) {
+        return response({ id: "120210000001234", name: "Clinic Ad", account_id: "123456789" });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+
+  const status = await service.runAll();
+  const byKey = new Map(status.checks.map((item) => [item.key, item]));
+
+  assert.equal(byKey.get("whatsapp").status, "ready");
+  assert.equal(byKey.get("whatsapp_templates").status, "not_configured");
+  assert.equal(byKey.get("whatsapp_templates").optional, true);
+  assert.equal(status.summary.requiredReady, status.summary.requiredTotal);
+  assert.equal(
+    fetchCalls > 0,
+    true
+  );
+});
+
+test("WhatsApp template setup check warns when WABA catalog permission fails without failing normal WhatsApp", async () => {
+  const env = completeEnv();
+  const service = createSetupStatusService({
+    env,
+    repository: memoryRepository(),
+    database: {
+      async query(sql) {
+        return /COUNT/.test(sql) ? { rows: [{ count: 1 }] } : { rows: [{ ok: 1 }] };
+      },
+    },
+    ai: { async getReply() { return "ok"; } },
+    storage: {
+      async uploadMedia() { return "test-key"; },
+      async deleteMedia() {},
+    },
+    fetchImpl: async (url) => {
+      if (url.includes("/10001?")) {
+        return response({ id: "10001", verified_name: "Clinic Test" });
+      }
+      if (url.includes("/waba-10001/message_templates?")) {
+        return response(
+          { error: { message: "Missing whatsapp_business_management" } },
+          { ok: false, status: 403 }
+        );
+      }
+      if (url.includes("api.telegram.org") && url.endsWith("/getMe")) {
+        return response({ ok: true, result: { username: "clinic_alert_bot" } });
+      }
+      if (url.includes("api.telegram.org") && url.includes("/getChat")) {
+        return response({ ok: true, result: { id: -100123456 } });
+      }
+      if (url.includes("/me?")) return response({ id: "system-user" });
+      if (url.includes("/120210000001234?")) {
+        return response({ id: "120210000001234", name: "Clinic Ad", account_id: "123456789" });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+
+  const status = await service.runAll();
+  const byKey = new Map(status.checks.map((item) => [item.key, item]));
+
+  assert.equal(byKey.get("whatsapp").status, "ready");
+  assert.equal(byKey.get("whatsapp_templates").status, "warning");
+  assert.match(byKey.get("whatsapp_templates").summary, /whatsapp_business_management/i);
+  assert.equal(status.summary.requiredReady, status.summary.requiredTotal);
 });
 
