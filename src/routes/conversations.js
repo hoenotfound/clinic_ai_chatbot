@@ -679,6 +679,19 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
       });
     }
 
+    const consentOptInAt =
+      resolved.template.category === "MARKETING"
+        ? whatsappTemplate.policyTimestamp(policy.state?.whatsapp_opt_in_at)
+        : null;
+    if (resolved.template.category === "MARKETING" && !consentOptInAt) {
+      return res.status(409).json({
+        error:
+          "The customer's WhatsApp marketing consent could not be tied to the current opt-in record. Record or reconfirm opt-in and try again.",
+        code: "marketing_consent_snapshot_unavailable",
+        policyBlocked: true,
+      });
+    }
+
     const metadata = {
       name: resolved.template.name,
       language: resolved.template.language,
@@ -688,6 +701,7 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
         resolved.template.category === "MARKETING"
           ? true
           : null,
+      consentOptInAt,
     };
     const saved = await conversationStore.appendMessageForContact(
       contact.id,
@@ -704,6 +718,7 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
       templateName: metadata.name,
       languageCode: metadata.language,
       components: metadata.components,
+      expectedOptInAt: metadata.consentOptInAt,
     });
     const errorText =
       sendResult.error || "WhatsApp did not accept this approved template.";
@@ -811,21 +826,35 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
           code: currentTemplate.code,
         });
       }
-      if (
-        currentTemplate.template.category === "MARKETING" &&
-        message.whatsapp_template.marketingConsentConfirmed !== true
-      ) {
-        return res.status(409).json({
-          error:
-            "This saved marketing template does not contain the required marketing-consent confirmation. Send it again from the template picker instead.",
-          code: "marketing_consent_confirmation_required",
-        });
+      if (currentTemplate.template.category === "MARKETING") {
+        const savedConsentOptInAt = whatsappTemplate.policyTimestamp(
+          message.whatsapp_template.consentOptInAt
+        );
+        const currentConsentOptInAt = whatsappTemplate.policyTimestamp(
+          templatePolicy.state?.whatsapp_opt_in_at
+        );
+        if (
+          message.whatsapp_template.marketingConsentConfirmed !== true ||
+          !savedConsentOptInAt ||
+          !currentConsentOptInAt ||
+          savedConsentOptInAt !== currentConsentOptInAt
+        ) {
+          return res.status(409).json({
+            error:
+              "The customer's WhatsApp marketing consent has changed since this template was first attempted. Send it again from the template picker and reconfirm marketing consent.",
+            code: "marketing_consent_reconfirmation_required",
+          });
+        }
       }
 
       sendResult = await whatsappTemplate.sendApprovedTemplate(contact, {
         templateName: message.whatsapp_template.name,
         languageCode: message.whatsapp_template.language,
         components: message.whatsapp_template.components,
+        expectedOptInAt:
+          currentTemplate.template.category === "MARKETING"
+            ? message.whatsapp_template.consentOptInAt
+            : null,
       });
     } else {
       const retryPurpose =
