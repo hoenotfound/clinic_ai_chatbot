@@ -9,6 +9,7 @@ const {
   markExhaustedStale,
   markFailed,
   queueAlert,
+  withContactAlertLock,
 } = require("../src/db/telegramImmediateAlertRepo");
 
 function fakeDatabase(handler) {
@@ -118,14 +119,13 @@ test("new human immediate alert is committed as pending queue work", async () =>
   assert.equal(fake.calls.at(-2).sql, "COMMIT");
 });
 
-test("staff-waiting alerts enqueue without opening an explicit transaction", async () => {
-  const calls = [];
-  const database = {
-    async query(sql, params = []) {
-      calls.push({ sql, params });
-      return { rows: [{ id: 55, status: "pending" }] };
-    },
-  };
+test("staff-waiting alerts serialize on the shared per-contact alert lock", async () => {
+  const fake = fakeDatabase(async (sql, params) => {
+    if (/INSERT INTO telegram_immediate_alerts/.test(sql)) {
+      return { rows: [{ id: 55, status: "pending", event_key: params[0] }] };
+    }
+    return { rows: [] };
+  });
 
   const result = await queueAlert({
     eventKey: "staff_waiting:12:44",
@@ -133,18 +133,58 @@ test("staff-waiting alerts enqueue without opening an explicit transaction", asy
     contactId: 12,
     leadId: 7,
     messageText: "Customer waiting",
-  }, database);
+  }, fake.database);
 
   assert.equal(result.id, 55);
-  assert.equal(calls.length, 1);
-  assert.match(calls[0].sql, /INSERT INTO telegram_immediate_alerts/);
-  assert.deepEqual(calls[0].params, [
+  assert.equal(fake.calls[0].sql, "BEGIN");
+  assert.match(fake.calls[1].sql, /pg_advisory_xact_lock/);
+  assert.deepEqual(fake.calls[1].params, [HUMAN_ALERT_LOCK_NAMESPACE, 12]);
+  assert.match(fake.calls[2].sql, /INSERT INTO telegram_immediate_alerts/);
+  assert.deepEqual(fake.calls[2].params, [
     "staff_waiting:12:44",
     "staff_waiting",
     12,
     7,
     "Customer waiting",
   ]);
+  assert.equal(fake.calls.at(-2).sql, "COMMIT");
+  assert.equal(fake.calls.at(-1).sql, "RELEASE");
+});
+
+test("send-boundary contact lock is held across the final callback and always released", async () => {
+  const calls = [];
+  const client = {
+    async query(sql, params = []) {
+      calls.push({ sql, params });
+      return { rows: [] };
+    },
+    release(error) {
+      calls.push({ sql: "RELEASE", params: [], error: error || null });
+    },
+  };
+  const database = {
+    async connect() {
+      return client;
+    },
+  };
+
+  const result = await withContactAlertLock(
+    12,
+    async (query) => {
+      await query("SELECT 'inside-lock'");
+      return "done";
+    },
+    database
+  );
+
+  assert.equal(result, "done");
+  assert.match(calls[0].sql, /pg_advisory_lock/);
+  assert.deepEqual(calls[0].params, [HUMAN_ALERT_LOCK_NAMESPACE, 12]);
+  assert.equal(calls[1].sql, "SELECT 'inside-lock'");
+  assert.match(calls[2].sql, /pg_advisory_unlock/);
+  assert.deepEqual(calls[2].params, [HUMAN_ALERT_LOCK_NAMESPACE, 12]);
+  assert.equal(calls[3].sql, "RELEASE");
+  assert.equal(calls[3].error, null);
 });
 
 test("Booking Ready serializes per contact and cancels older pending versions for the same lead", async () => {
