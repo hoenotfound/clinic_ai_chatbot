@@ -135,6 +135,7 @@ test("staff send routes check channel policy before automatic takeover", () => {
   assert.match(textRoute, /requireFreeformPolicy\(contact, res, "human_agent"\)/);
   assert.match(imageRoute, /requireFreeformPolicy\(contact, res, "human_agent"\)/);
   assert.match(source, /message\.is_automated_follow_up !== true/);
+  assert.match(source, /message\.is_scheduled_message !== true/);
   assert.match(source, /channelMessaging\.sendText/);
   assert.match(source, /channelMessaging\.sendImageBuffer/);
 });
