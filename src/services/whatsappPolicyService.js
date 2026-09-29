@@ -20,6 +20,9 @@ const OPT_OUT_PATTERNS = [
   /^jangan (?:mesej|whatsapp|hubungi) saya$/i,
   /^tak nak (?:mesej|whatsapp)$/i,
   /^stop mesej$/i,
+  /^stop (?:promos?|promotions?)$/i,
+  /^unsubscribe from (?:promos?|promotions?|all)$/i,
+  /^stop all$/i,
 ];
 
 function normalizeText(value) {
