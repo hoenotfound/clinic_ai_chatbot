@@ -105,7 +105,11 @@ async function appendMessageForContact(
     mediaUrl,
     mediaAttachment?.buffer || mediaAttachment?.data || null,
     mediaAttachment?.mimeType || null,
-    { whatsappTemplate: options.whatsappTemplate || null }
+    {
+      whatsappTemplate: options.whatsappTemplate || null,
+      initialDeliveryStatus: options.initialDeliveryStatus || null,
+      initialDeliveryError: options.initialDeliveryError || null,
+    }
   );
 
   // AI-triggered handoff puts the thread in Staff mode immediately. The first
