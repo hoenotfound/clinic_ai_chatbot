@@ -5,7 +5,7 @@ function hasPartialCaptionMarker(errorText) {
 }
 
 function deliveryErrorForSend(sendResult, fallbackError, previousError = null) {
-  if (sendResult?.success) return String(fallbackError || "");
+  if (sendResult?.success) return null;
   const base = String(fallbackError || "Message delivery failed.");
   if (sendResult?.partialCaptionSent || hasPartialCaptionMarker(previousError)) {
     return `${PARTIAL_CAPTION_ERROR_PREFIX}${base}`;
@@ -14,7 +14,8 @@ function deliveryErrorForSend(sendResult, fallbackError, previousError = null) {
 }
 
 function publicDeliveryError(errorText) {
-  const raw = String(errorText || "").trim();
+  if (errorText == null) return null;
+  const raw = String(errorText).trim();
   if (!hasPartialCaptionMarker(raw)) return raw;
   const detail = raw.slice(PARTIAL_CAPTION_ERROR_PREFIX.length).trim();
   return detail
