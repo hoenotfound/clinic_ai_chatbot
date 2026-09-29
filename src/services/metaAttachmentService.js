@@ -1,3 +1,5 @@
+const { humanAgentFeatureEnabled } = require("../utils/metaHumanAgent");
+
 const GRAPH_API_VERSION = "v26.0";
 
 function channelLabel(channel) {
@@ -81,6 +83,15 @@ async function uploadAttachment(channel, type, buffer, mimeType, filename) {
 }
 
 async function postAttachment(channel, recipientId, type, payload, logLabel, options = {}) {
+  if (options.humanAgent === true && !humanAgentFeatureEnabled()) {
+    return {
+      success: false,
+      externalMessageId: null,
+      error:
+        "Human Agent send blocked because META_HUMAN_AGENT_ENABLED is not enabled for this deployment.",
+    };
+  }
+
   const config = getChannelConfig(channel);
   const label = channelLabel(channel);
   if (!config.token || !config.senderId) {
