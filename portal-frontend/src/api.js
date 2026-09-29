@@ -41,6 +41,18 @@ export const api = {
     `${BASE}/conversations/${contactId}/messages/${messageId}/media`,
   sendMessage: (contactId, text) =>
     request(`/conversations/${contactId}/messages`, { method: "POST", body: JSON.stringify({ text }) }),
+  listWhatsAppTemplates: (contactId) =>
+    request(`/conversations/${contactId}/whatsapp-templates`),
+  recordWhatsAppOptIn: (contactId, source) =>
+    request(`/conversations/${contactId}/whatsapp-opt-in`, {
+      method: "POST",
+      body: JSON.stringify({ source }),
+    }),
+  sendWhatsAppTemplate: (contactId, payload) =>
+    request(`/conversations/${contactId}/whatsapp-templates/send`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   retryMessage: (contactId, messageId) =>
     request(`/conversations/${contactId}/messages/${messageId}/retry`, { method: "POST" }),
   getMessageDeliveryStatuses: (contactId, messageIds) =>
