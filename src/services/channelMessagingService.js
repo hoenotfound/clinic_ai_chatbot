@@ -233,7 +233,19 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
   // The exact JPG/PNG bytes are already in Postgres, so upload them directly to
   // Messenger's message_attachments endpoint and send the returned attachment.
   const cancelled = preSendCancelled(options);
-  if (cancelled) return cancelled;
+  if (cancelled) {
+    if (!captionSent) return cancelled;
+    return {
+      success: false,
+      wamid: null,
+      externalMessageId: null,
+      cancelled: false,
+      partialCaptionSent: true,
+      captionProviderMessageId,
+      error:
+        "The caption was sent, but the image was not sent because staff activity took over the conversation.",
+    };
+  }
 
   const result = await trackSocialOutbound(
     "facebook",
