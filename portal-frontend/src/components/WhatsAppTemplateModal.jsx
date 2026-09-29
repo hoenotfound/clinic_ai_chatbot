@@ -129,6 +129,8 @@ export default function WhatsAppTemplateModal({
   const [selectedKey, setSelectedKey] = useState("");
   const [values, setValues] = useState({ header: [], body: [] });
   const [optInSource, setOptInSource] = useState("");
+  const [optInConfirmed, setOptInConfirmed] = useState(false);
+  const [marketingConsentConfirmed, setMarketingConsentConfirmed] = useState(false);
   const [recordingOptIn, setRecordingOptIn] = useState(false);
   const [sending, setSending] = useState(false);
   const [actionError, setActionError] = useState("");
@@ -164,6 +166,8 @@ export default function WhatsAppTemplateModal({
     setSelectedKey("");
     setValues({ header: [], body: [] });
     setOptInSource("");
+    setOptInConfirmed(false);
+    setMarketingConsentConfirmed(false);
     setActionError("");
     loadCatalog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -185,6 +189,7 @@ export default function WhatsAppTemplateModal({
   function chooseTemplate(template) {
     setSelectedKey(`${template.name}::${template.language}`);
     setValues(emptyValuesFor(template));
+    setMarketingConsentConfirmed(false);
     setActionError("");
   }
 
@@ -208,8 +213,13 @@ export default function WhatsAppTemplateModal({
     setRecordingOptIn(true);
     setActionError("");
     try {
-      const updated = await api.recordWhatsAppOptIn(contactId, source);
+      const updated = await api.recordWhatsAppOptIn(
+        contactId,
+        source,
+        optInConfirmed
+      );
       setOptInSource("");
+      setOptInConfirmed(false);
       onOptInRecorded?.(updated);
       await loadCatalog();
     } catch (err) {
@@ -228,6 +238,10 @@ export default function WhatsAppTemplateModal({
         templateName: selected.name,
         languageCode: selected.language,
         values,
+        marketingConsentConfirmed:
+          selected.category === "MARKETING"
+            ? marketingConsentConfirmed
+            : false,
       });
       onSent?.(result);
       onClose();
@@ -246,6 +260,7 @@ export default function WhatsAppTemplateModal({
     catalog?.eligibility?.allowed === true &&
     selected?.sendable === true &&
     allValuesFilled &&
+    (selected?.category !== "MARKETING" || marketingConsentConfirmed) &&
     !sending;
 
   return (
@@ -312,9 +327,22 @@ export default function WhatsAppTemplateModal({
               <p className="mt-2 text-[10px] leading-4 text-amber-700">
                 Do not use this to bypass an opt-out. Record it only when you have a real, new explicit consent source.
               </p>
+              <label className="mt-3 flex items-start gap-2 text-[10px] font-medium leading-4 text-amber-900">
+                <input
+                  type="checkbox"
+                  checked={optInConfirmed}
+                  onChange={(event) => setOptInConfirmed(event.target.checked)}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                />
+                <span>I confirm this customer explicitly agreed to receive WhatsApp messages.</span>
+              </label>
               <button
                 type="submit"
-                disabled={recordingOptIn || optInSource.trim().length < 3}
+                disabled={
+                  recordingOptIn ||
+                  optInSource.trim().length < 3 ||
+                  !optInConfirmed
+                }
                 className="mt-3 inline-flex items-center gap-2 rounded-xl bg-amber-900 px-3.5 py-2 text-xs font-semibold text-white disabled:opacity-50"
               >
                 {recordingOptIn && <Spinner />}
@@ -384,9 +412,22 @@ export default function WhatsAppTemplateModal({
                   </div>
 
                   {selected.category === "MARKETING" && (
-                    <p className="rounded-xl bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-800">
-                      Marketing template: make sure the customer's opt-in covers this type of message.
-                    </p>
+                    <div className="rounded-xl bg-amber-50 px-3 py-2.5 text-amber-800">
+                      <p className="text-[10px] leading-4">
+                        Marketing template: the customer's opt-in must cover promotional WhatsApp messages.
+                      </p>
+                      <label className="mt-2 flex items-start gap-2 text-[10px] font-semibold leading-4">
+                        <input
+                          type="checkbox"
+                          checked={marketingConsentConfirmed}
+                          onChange={(event) =>
+                            setMarketingConsentConfirmed(event.target.checked)
+                          }
+                          className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                        />
+                        <span>I confirm this customer's consent covers WhatsApp marketing.</span>
+                      </label>
+                    </div>
                   )}
                 </section>
               )}
