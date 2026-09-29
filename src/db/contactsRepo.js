@@ -152,12 +152,7 @@ async function hydrateSocialContactRows(rows) {
 
 function presentPortalContact(row) {
   const isSocial = SOCIAL_CHANNELS.has(row?.channel);
-  if (!isSocial) {
-    return {
-      ...row,
-      human_agent_enabled: false,
-    };
-  }
+  if (!isSocial) return row;
 
   return {
     ...row,
