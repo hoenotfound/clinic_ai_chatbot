@@ -632,7 +632,7 @@ function MetaReviewNote() {
         <ChevronIcon className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-180" />
       </summary>
       <p className="border-t border-[var(--color-border)] px-3.5 py-3 text-[11px] leading-5 text-[var(--color-text-muted)] sm:text-xs">
-        Facebook and Instagram checks confirm configured credentials and real customer messaging activity. They cannot confirm that Meta has approved public messaging access.
+        Facebook and Instagram checks confirm configured credentials and real customer messaging activity. They cannot confirm that Meta has approved public messaging access or the Human Agent feature. Keep META_HUMAN_AGENT_ENABLED=false until that approval is confirmed in Meta App Review.
       </p>
     </details>
   );
