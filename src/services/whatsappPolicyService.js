@@ -1,8 +1,5 @@
 const { pool } = require("../db/db");
-const {
-  humanAgentChannelEnabled,
-  humanAgentFeatureEnabled,
-} = require("../utils/metaHumanAgent");
+const { humanAgentChannelEnabled } = require("../utils/metaHumanAgent");
 
 const CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HUMAN_AGENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -99,7 +96,7 @@ function outsideWindowError(channel, humanAgentEnabled = false) {
   if (channel === "whatsapp") {
     return "WhatsApp send blocked because the 24-hour customer-service window has closed. Use an approved template only after valid WhatsApp opt-in has been recorded.";
   }
-  if (humanAgentEnabled && HUMAN_AGENT_CHANNELS.has(channel)) {
+  if (effectiveHumanAgentEnabled && HUMAN_AGENT_CHANNELS.has(channel)) {
     return `${channelLabel(channel)} send blocked because the 24-hour standard messaging window has closed. Only a real staff member may reply with Meta's Human Agent path for up to 7 days after the customer's latest message.`;
   }
   return `${channelLabel(channel)} send blocked because the 24-hour standard messaging window has closed. The customer must message again before a normal reply can be sent.`;
@@ -114,7 +111,7 @@ function evaluateFreeformState(
   now = new Date(),
   {
     purpose = "service",
-    humanAgentEnabled = humanAgentFeatureEnabled(),
+    humanAgentEnabled = null,
   } = {}
 ) {
   if (!state) {
@@ -125,6 +122,10 @@ function evaluateFreeformState(
   }
 
   const channel = state.channel || "whatsapp";
+  const effectiveHumanAgentEnabled =
+    humanAgentEnabled === null
+      ? humanAgentChannelEnabled(channel)
+      : humanAgentEnabled;
   if (!STANDARD_WINDOW_CHANNELS.has(channel)) {
     return { allowed: true, code: null, message: null };
   }
@@ -161,13 +162,13 @@ function evaluateFreeformState(
   const current = now instanceof Date ? now : new Date(now);
   const windowEndsAt = new Date(lastInboundAt.getTime() + CUSTOMER_SERVICE_WINDOW_MS);
   const humanAgentWindowEndsAt =
-    humanAgentEnabled && HUMAN_AGENT_CHANNELS.has(channel)
+    effectiveHumanAgentEnabled && HUMAN_AGENT_CHANNELS.has(channel)
       ? new Date(lastInboundAt.getTime() + HUMAN_AGENT_WINDOW_MS)
       : null;
 
   if (current.getTime() >= windowEndsAt.getTime()) {
     const humanAgentRequested =
-      humanAgentEnabled &&
+      effectiveHumanAgentEnabled &&
       purpose === "human_agent" &&
       HUMAN_AGENT_CHANNELS.has(channel);
 
@@ -201,7 +202,7 @@ function evaluateFreeformState(
 
     return policyError(
       "outside_customer_service_window",
-      outsideWindowError(channel, humanAgentEnabled),
+      outsideWindowError(channel, effectiveHumanAgentEnabled),
       { lastInboundAt, windowEndsAt, humanAgentWindowEndsAt }
     );
   }
