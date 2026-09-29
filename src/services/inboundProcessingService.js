@@ -222,6 +222,73 @@ async function recoverMetaResolutionJobs({
   return jobs.length + exhausted.length;
 }
 
+async function reconcileRecoveredOutbound(
+  job,
+  {
+    repository = inboundProcessingRepo,
+    contacts = contactsRepo,
+  } = {}
+) {
+  if (!job || typeof repository.getOutboundAttempt !== "function") return false;
+
+  const attempt = await repository.getOutboundAttempt(job.id);
+  if (!attempt) return false;
+
+  const deliveryStatus = String(attempt.delivery_status || "").toLowerCase();
+  const providerMessageId =
+    attempt.provider_message_id || attempt.whatsapp_message_id || null;
+  const finalizedOutcome = String(attempt.outcome || "").toLowerCase();
+
+  const accepted =
+    finalizedOutcome === "accepted" ||
+    Boolean(providerMessageId) ||
+    ["pending", "sent", "delivered", "read"].includes(deliveryStatus);
+  const rejected =
+    finalizedOutcome === "rejected" ||
+    deliveryStatus === "failed";
+  const cancelled = finalizedOutcome === "cancelled";
+
+  if (rejected) {
+    try {
+      await contacts.setDeliveryAttention?.(
+        job.contact_id,
+        `Delivery failed: ${attempt.error_text || attempt.delivery_error || "The automated reply was rejected by the messaging provider."}`
+      );
+    } catch (err) {
+      console.error(
+        `Failed to restore delivery attention for recovered inbound job ${job.id}:`,
+        err
+      );
+    }
+  }
+
+  if (accepted || rejected || cancelled) {
+    await repository.markCompleted(job.id);
+    return true;
+  }
+
+  // The assistant row was reserved before the provider call, but no durable
+  // provider outcome exists. The process may have died either just before or
+  // just after Meta accepted the request. Automatic resend would risk a
+  // duplicate customer reply, so hand this one to staff instead.
+  try {
+    await contacts.setAttention(
+      job.contact_id,
+      true,
+      "An automated reply was interrupted during delivery and may already have reached the customer. Review the conversation before replying."
+    );
+  } catch (err) {
+    console.error(
+      `Failed to flag ambiguous outbound attempt for inbound job ${job.id}:`,
+      err
+    );
+    return true;
+  }
+
+  await repository.markTerminal(job.id);
+  return true;
+}
+
 async function runInboundProcessingRecovery({
   repository = inboundProcessingRepo,
   resumeJob = resumeIncomingProcessingJob,
@@ -259,6 +326,10 @@ async function runInboundProcessingRecovery({
       const items = [];
       for (const job of group) {
         try {
+          if (await reconcileRecoveredOutbound(job, { repository, contacts })) {
+            continue;
+          }
+
           const item = await resumeJob(job);
           // Opt-outs deliberately complete their durable job during prepare and
           // return null because there must be no automated outbound response.
@@ -381,6 +452,7 @@ module.exports = {
   markBatchFailed,
   processClaimedBatch,
   recoverMetaResolutionJobs,
+  reconcileRecoveredOutbound,
   replyQueueKeyForRecoveredItems,
   runInboundProcessingRecovery,
   startInboundProcessingRecovery,
