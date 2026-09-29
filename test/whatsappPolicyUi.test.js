@@ -116,7 +116,7 @@ test("Inbox and contact details expose policy guidance for standard-window chann
   assert.doesNotMatch(inbox, /Sending unavailable\./);
   assert.match(inbox, /quietReplyAvailable/);
   assert.match(inbox, /manualReplyAllowed/);
-  assert.match(contactsRepo, /human_agent_enabled: humanAgentFeatureEnabled\(\)/);
+  assert.match(contactsRepo, /human_agent_enabled: humanAgentChannelEnabled\(row\.channel\)/);
   assert.match(inbox, /Cannot retry/);
   assert.match(inbox, /must message the business before staff can send a normal reply/);
   assert.match(details, /policy\.channelLabel} reply window/);
