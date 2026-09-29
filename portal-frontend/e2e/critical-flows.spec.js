@@ -269,6 +269,100 @@ async function installApi(page, {
       return fulfill(route, message);
     }
 
+    const templateListMatch = path.match(/^\/api\/conversations\/(\d+)\/whatsapp-templates$/);
+    if (templateListMatch && method === "GET") {
+      const contactId = Number(templateListMatch[1]);
+      const contact = conversations.find((item) => Number(item.contact_id) === contactId);
+      const optedIn = Boolean(contact?.whatsapp_opt_in_at && contact?.whatsapp_opt_in_source);
+      const optedOut = Boolean(contact?.whatsapp_opt_out_at);
+      return fulfill(route, {
+        templates: [
+          {
+            id: "tpl-1",
+            name: "lead_follow_up",
+            language: "en_US",
+            status: "APPROVED",
+            category: "MARKETING",
+            header: null,
+            body: { text: "Hi {{1}}, just following up on your enquiry." },
+            footer: { text: "Reply STOP if you no longer want updates." },
+            buttons: [],
+            variableFields: [
+              { component: "body", index: 1, label: "Body {{1}}", example: "Alex" },
+            ],
+            sendable: true,
+            unsupportedReason: null,
+          },
+        ],
+        eligibility: optedOut
+          ? { allowed: false, code: "opted_out", message: "Customer opted out." }
+          : optedIn
+            ? { allowed: true, code: null, message: null }
+            : { allowed: false, code: "missing_opt_in", message: "Explicit opt-in required." },
+        cached: false,
+      });
+    }
+
+    const optInMatch = path.match(/^\/api\/conversations\/(\d+)\/whatsapp-opt-in$/);
+    if (optInMatch && method === "POST") {
+      const contactId = Number(optInMatch[1]);
+      const body = request.postDataJSON();
+      record(request, body);
+      const optInAt = new Date().toISOString();
+      conversations = conversations.map((item) => (
+        Number(item.contact_id) === contactId
+          ? {
+              ...item,
+              whatsapp_opt_in_at: optInAt,
+              whatsapp_opt_in_source: body.source,
+              whatsapp_opt_out_at: null,
+              whatsapp_opt_out_source: null,
+            }
+          : item
+      ));
+      return fulfill(route, {
+        contactId,
+        whatsapp_opt_in_at: optInAt,
+        whatsapp_opt_in_source: body.source,
+        whatsapp_opt_out_at: null,
+        whatsapp_opt_out_source: null,
+      });
+    }
+
+    const templateSendMatch = path.match(/^\/api\/conversations\/(\d+)\/whatsapp-templates\/send$/);
+    if (templateSendMatch && method === "POST") {
+      const contactId = Number(templateSendMatch[1]);
+      const body = request.postDataJSON();
+      record(request, body);
+      const customerName = body.values?.body?.[0] || "{{1}}";
+      const message = {
+        id: nextMessageId++,
+        contact_id: contactId,
+        role: "assistant",
+        content: `Hi ${customerName}, just following up on your enquiry.\n\nReply STOP if you no longer want updates.`,
+        sent_by_username: STAFF_USER.username,
+        created_at: new Date().toISOString(),
+        whatsapp_message_id: "wamid.template-test",
+        delivery_status: "pending",
+        delivery_error: null,
+        is_automated_follow_up: false,
+        whatsapp_template: {
+          name: body.templateName,
+          language: body.languageCode,
+          category: "MARKETING",
+          components: [
+            {
+              type: "body",
+              parameters: [{ type: "text", text: customerName }],
+            },
+          ],
+        },
+        delivered: true,
+      };
+      messagesByContact.set(contactId, [...(messagesByContact.get(contactId) || []), message]);
+      return fulfill(route, message, 201);
+    }
+
     const deliveryMatch = path.match(/^\/api\/conversations\/(\d+)\/messages\/delivery-statuses$/);
     if (deliveryMatch && method === "POST") {
       return fulfill(route, []);
@@ -373,6 +467,52 @@ test("manual Inbox reply sends the exact text and takes ownership", async ({ pag
 
   expect(findCall(apiState, "POST", "/api/conversations/101/messages")?.body).toEqual({
     text: "Test reply from staff",
+  });
+  expectNoUnexpectedApi(apiState);
+});
+
+test("closed WhatsApp conversation records opt-in and sends an approved template", async ({ page }) => {
+  const oldInbound = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+  const apiState = await installApi(page, {
+    initialConversations: [
+      conversation({
+        latest_inbound_at: oldInbound,
+        latest_customer_message_at: oldInbound,
+        last_message_at: oldInbound,
+        whatsapp_opt_in_at: null,
+        whatsapp_opt_in_source: null,
+      }),
+    ],
+  });
+
+  await page.goto("/inbox");
+
+  await expect(page.getByText("Reply window closed", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Send WhatsApp template" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Send WhatsApp template" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("WhatsApp opt-in required")).toBeVisible();
+
+  await dialog.getByPlaceholder(/Customer requested WhatsApp follow-up/).fill(
+    "Customer requested WhatsApp follow-up by phone"
+  );
+  await dialog.getByRole("button", { name: "Record opt-in" }).click();
+
+  await expect(dialog.getByText("lead_follow_up")).toBeVisible();
+  await dialog.getByLabel("Body {{1}}").fill("Alex");
+  await dialog.getByRole("button", { name: "Send template" }).click();
+
+  await expect(page.getByText(/Hi Alex, just following up on your enquiry/)).toBeVisible();
+  await expect(page.getByText("Template · lead_follow_up")).toBeVisible();
+
+  expect(findCall(apiState, "POST", "/api/conversations/101/whatsapp-opt-in")?.body).toEqual({
+    source: "Customer requested WhatsApp follow-up by phone",
+  });
+  expect(findCall(apiState, "POST", "/api/conversations/101/whatsapp-templates/send")?.body).toEqual({
+    templateName: "lead_follow_up",
+    languageCode: "en_US",
+    values: { header: [], body: ["Alex"] },
   });
   expectNoUnexpectedApi(apiState);
 });
