@@ -216,12 +216,19 @@ async function sendTrackedText(
   }
 
   if (sendResult.cancelled) {
-    await messagesRepo.deleteUnsentAssistantMessage(saved.id);
     if (durableOutboundReserved) {
-      await inboundProcessingRepo.finalizeOutboundAttempt(
-        processingJobId,
-        { outcome: "cancelled" }
-      ).catch(() => {});
+      const cancelledAttempt = await inboundProcessingRepo.cancelOutboundAttempt(
+        processingJobId
+      );
+      if (!cancelledAttempt?.cancelled) {
+        const err = new Error(
+          `Inbound processing job ${processingJobId} could not be durably cancelled.`
+        );
+        err.code = "INBOUND_OUTBOUND_CANCEL_NOT_SAFE";
+        throw err;
+      }
+    } else {
+      await messagesRepo.deleteUnsentAssistantMessage(saved.id);
     }
     return { finalMessage: null, sendResult };
   }
