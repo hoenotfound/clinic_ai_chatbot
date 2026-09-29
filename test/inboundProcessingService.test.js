@@ -6,6 +6,7 @@ const {
   flagTerminalFailure,
   groupJobsByContact,
   processClaimedBatch,
+  reconcileRecoveredOutbound,
   replyQueueKeyForRecoveredItems,
   runInboundProcessingRecovery,
 } = require("../src/services/inboundProcessingService");
