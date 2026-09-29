@@ -87,3 +87,71 @@ test("parses delivery statuses from every webhook entry and change", () => {
   ]);
   assert.equal(parsed[2].errorMessage, "Rejected");
 });
+
+test("parses template quick-reply button taps as ordinary inbound customer text", () => {
+  const parsed = parseIncomingMessages({
+    entry: [
+      {
+        changes: [
+          {
+            value: {
+              contacts: [{ wa_id: "6014", profile: { name: "Button Customer" } }],
+              messages: [
+                {
+                  id: "message-button-1",
+                  from: "6014",
+                  type: "button",
+                  button: {
+                    text: "Yes",
+                    payload: "da_qr:lead_follow_up:0",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(parsed.length, 1);
+  assert.deepEqual(parsed[0], {
+    id: "message-button-1",
+    from: "6014",
+    profileName: "Button Customer",
+    text: "Yes",
+    mediaId: null,
+    mediaType: null,
+    unsupportedType: null,
+    buttonPayload: "da_qr:lead_follow_up:0",
+  });
+});
+
+test("quick-reply button parser falls back to payload when Meta omits button text", () => {
+  const parsed = parseIncomingMessages({
+    entry: [
+      {
+        changes: [
+          {
+            value: {
+              messages: [
+                {
+                  id: "message-button-2",
+                  from: "6015",
+                  type: "button",
+                  button: {
+                    payload: "Stop promotions",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(parsed[0].text, "Stop promotions");
+  assert.equal(parsed[0].unsupportedType, null);
+});
+
