@@ -132,10 +132,21 @@ test("staff send routes check channel policy before automatic takeover", () => {
 
   assert.ok(textRoute.indexOf("requireFreeformPolicy") < textRoute.indexOf("contactsRepo.takeOver"));
   assert.ok(imageRoute.indexOf("requireFreeformPolicy") < imageRoute.indexOf("contactsRepo.takeOver"));
-  assert.match(textRoute, /requireFreeformPolicy\(contact, res, "human_agent"\)/);
-  assert.match(imageRoute, /requireFreeformPolicy\(contact, res, "human_agent"\)/);
+  assert.match(
+    textRoute,
+    /requireFreeformPolicy\(contact, res, whatsappPolicy\.manualStaffPurpose\(contact\)\)/
+  );
+  assert.match(
+    imageRoute,
+    /requireFreeformPolicy\(contact, res, whatsappPolicy\.manualStaffPurpose\(contact\)\)/
+  );
   assert.match(source, /message\.is_automated_follow_up !== true/);
   assert.match(source, /message\.is_scheduled_message !== true/);
+  assert.match(source, /\? whatsappPolicy\.manualStaffPurpose\(contact\)/);
+  assert.match(
+    source,
+    /socialProviderSendOptions\(message, contact, \{ \.\.\.options, skipCaption \}\)/
+  );
   assert.match(source, /channelMessaging\.sendText/);
   assert.match(source, /channelMessaging\.sendImageBuffer/);
 });
