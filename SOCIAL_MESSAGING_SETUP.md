@@ -283,3 +283,29 @@ Keep the tool paused while permissions are being configured. After the Page/Inst
 6. confirm the private message appears in Inbox and the contact appears in Pipeline;
 7. reply to the private message and confirm the existing AI DM flow continues;
 8. repeat the test for the second channel before enabling it for the client.
+
+## WhatsApp approved templates in Inbox
+
+Inbox can use Meta-approved WhatsApp templates when normal free-form WhatsApp sending is unavailable.
+
+Runtime requirements:
+
+```text
+WHATSAPP_TOKEN=...
+WHATSAPP_PHONE_NUMBER_ID=...
+WHATSAPP_WABA_ID=...
+```
+
+The template picker reads approved templates from `/{WHATSAPP_WABA_ID}/message_templates` using the configured WhatsApp token, then sends the selected template through the existing phone-number `/messages` endpoint. The runtime token therefore needs access to read that WABA's message templates as well as send messages.
+
+Safety boundaries:
+
+- template sends are staff-triggered only;
+- AI replies, scheduled messages and automated follow-ups do not use the template path;
+- the contact must have a recorded explicit WhatsApp opt-in and must not currently be opted out;
+- if a customer opted out, staff may record a new opt-in only when there is a real new consent source;
+- failed template messages keep their template metadata, so Retry sends the same template rather than free-form text;
+- Inbox currently supports text header/body variables and static buttons. Media-header templates, authentication templates, named variables and dynamic URL variables are shown as unsupported rather than guessed.
+
+Template creation/approval remains in Meta. Inbox only lists templates whose current Meta status is `APPROVED`.
+
