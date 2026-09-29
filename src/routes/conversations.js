@@ -551,6 +551,11 @@ router.get("/:contactId/whatsapp-templates", async (req, res) => {
         allowed: eligibility.allowed === true,
         code: eligibility.code || null,
         message: eligibility.message || null,
+        optInAt: eligibility.state?.whatsapp_opt_in_at || null,
+        marketingOptOutAt:
+          eligibility.state?.whatsapp_marketing_opt_out_at || null,
+        marketingOptOutSource:
+          eligibility.state?.whatsapp_marketing_opt_out_source || null,
       },
       cached: catalog.cached === true,
     });
@@ -596,6 +601,8 @@ router.post("/:contactId/whatsapp-opt-in", async (req, res) => {
       whatsapp_opt_in_source: updated.whatsapp_opt_in_source,
       whatsapp_opt_out_at: updated.whatsapp_opt_out_at,
       whatsapp_opt_out_source: updated.whatsapp_opt_out_source,
+      whatsapp_marketing_opt_out_at: updated.whatsapp_marketing_opt_out_at,
+      whatsapp_marketing_opt_out_source: updated.whatsapp_marketing_opt_out_source,
     });
   } catch (err) {
     console.error("Failed to record WhatsApp opt-in:", err);
@@ -685,6 +692,54 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
       });
     }
 
+    let templatePolicy;
+    try {
+      templatePolicy = await whatsappPolicy.checkTemplateAllowed(contact, {
+        category: resolved.template.category,
+      });
+
+      if (
+        templatePolicy.code === "marketing_opted_out" &&
+        resolved.template.category === "MARKETING" &&
+        marketingConsentConfirmed
+      ) {
+        const latestOptInAt = whatsappTemplate.policyTimestamp(
+          templatePolicy.state?.whatsapp_opt_in_at
+        );
+        const marketingOptOutAt = whatsappTemplate.policyTimestamp(
+          templatePolicy.state?.whatsapp_marketing_opt_out_at
+        );
+        const hasNewerExplicitOptIn =
+          latestOptInAt &&
+          marketingOptOutAt &&
+          new Date(latestOptInAt).getTime() > new Date(marketingOptOutAt).getTime();
+
+        if (hasNewerExplicitOptIn) {
+          await whatsappPolicy.recordMarketingOptIn(contact.id);
+          templatePolicy = await whatsappPolicy.checkTemplateAllowed(contact, {
+            category: resolved.template.category,
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Failed to verify category-specific WhatsApp template policy:", err);
+      return res.status(503).json({
+        error: "WhatsApp template policy could not be verified. Please try again shortly.",
+        code: "policy_state_unavailable",
+        policyBlocked: true,
+      });
+    }
+
+    if (!templatePolicy.allowed) {
+      return res.status(403).json({
+        error: templatePolicy.message,
+        code: templatePolicy.code,
+        policyBlocked: true,
+      });
+    }
+
+    policy = templatePolicy;
+
     const consentOptInAt =
       resolved.template.category === "MARKETING"
         ? whatsappTemplate.policyTimestamp(policy.state?.whatsapp_opt_in_at)
@@ -733,6 +788,7 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
       languageCode: metadata.language,
       components: metadata.components,
       expectedOptInAt: metadata.consentOptInAt,
+      templateCategory: metadata.category,
     });
     const errorText =
       sendResult.error || "WhatsApp did not accept this approved template.";
@@ -841,6 +897,30 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
           code: currentTemplate.code,
         });
       }
+
+      try {
+        templatePolicy = await whatsappPolicy.checkTemplateAllowed(contact, {
+          category: currentTemplate.template.category,
+        });
+      } catch (err) {
+        console.error("Failed to verify category-specific WhatsApp template retry policy:", err);
+        return res.status(503).json({
+          error: "WhatsApp template policy could not be verified. Please try again shortly.",
+          code: "policy_state_unavailable",
+          policyBlocked: true,
+        });
+      }
+      if (!templatePolicy.allowed) {
+        return res.status(403).json({
+          error:
+            templatePolicy.code === "marketing_opted_out"
+              ? "This customer opted out of WhatsApp marketing. Record a new explicit opt-in that covers marketing and send the template again from the picker."
+              : templatePolicy.message,
+          code: templatePolicy.code,
+          policyBlocked: true,
+        });
+      }
+
       const savedTemplateSignature = String(
         message.whatsapp_template.templateSignature || ""
       );
@@ -899,6 +979,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
           currentTemplate.template.category === "MARKETING"
             ? message.whatsapp_template.consentOptInAt
             : null,
+        templateCategory: currentTemplate.template.category,
       });
     } else {
       const retryPurpose =
