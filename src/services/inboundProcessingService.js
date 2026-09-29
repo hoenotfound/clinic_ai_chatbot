@@ -273,8 +273,31 @@ async function reconcileRecoveredOutbound(
   // so it is excluded from future AI context and never looks successfully sent.
   const ambiguousReason =
     "Delivery could not be confirmed because the server restarted during this automated reply. Check the customer chat before replying to avoid sending it twice.";
-  if (typeof repository.markOutboundAttemptAmbiguous === "function") {
-    await repository.markOutboundAttemptAmbiguous(job.id, ambiguousReason);
+  if (
+    finalizedOutcome !== "ambiguous" &&
+    typeof repository.markOutboundAttemptAmbiguous === "function"
+  ) {
+    const ambiguousResult = await repository.markOutboundAttemptAmbiguous(
+      job.id,
+      ambiguousReason
+    );
+
+    // A provider outcome may have become durable after the first read but
+    // before this recovery transaction acquired its locks. Re-read that state
+    // rather than overwriting it as ambiguous.
+    if (ambiguousResult?.marked === false) {
+      if (String(ambiguousResult.state?.outcome || "").toLowerCase() !== "ambiguous") {
+        return reconcileRecoveredOutbound(job, { repository, contacts });
+      }
+    } else if (ambiguousResult?.message) {
+      realtimeEvents.publish("conversation_changed", {
+        contactId: ambiguousResult.message.contact_id,
+        messageId: ambiguousResult.message.id,
+        deliveryStatus: ambiguousResult.message.delivery_status,
+        deliveryError: ambiguousResult.message.delivery_error,
+        reason: "delivery_status",
+      });
+    }
   }
 
   // Automatic resend would risk a duplicate customer reply, so hand this one
