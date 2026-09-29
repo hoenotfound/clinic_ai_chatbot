@@ -125,6 +125,12 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_key TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivery_status TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivery_error TEXT;
 
+-- Metadata for outbound WhatsApp template sends. Keeping the exact approved
+-- template identity + resolved send components on the message means a failed
+-- send can be retried as the same template rather than accidentally becoming
+-- a free-form message outside the customer-service window.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS whatsapp_template JSONB;
+
 -- Automated follow-ups are normal outbound messages, but they need two
 -- extra pieces of bookkeeping: a marker so an automated follow-up never
 -- schedules another follow-up, and the exact outbound message that started
