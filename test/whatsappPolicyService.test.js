@@ -195,3 +195,26 @@ test("does not extend WhatsApp with the Meta Human Agent purpose", () => {
   assert.equal(result.allowed, false);
   assert.equal(result.code, "outside_customer_service_window");
 });
+
+test("manual staff purpose keeps WhatsApp on service policy and uses Human Agent only for Meta social channels", () => {
+  assert.equal(policy.manualStaffPurpose("whatsapp"), "service");
+  assert.equal(policy.manualStaffPurpose({ channel: "whatsapp" }), "service");
+  assert.equal(policy.manualStaffPurpose("facebook"), "human_agent");
+  assert.equal(policy.manualStaffPurpose({ channel: "instagram" }), "human_agent");
+});
+
+test("WhatsApp manual staff policy still allows a service reply after the customer reinitiates following opt-out", () => {
+  const purpose = policy.manualStaffPurpose({ channel: "whatsapp" });
+  const result = policy.evaluateFreeformState(
+    {
+      channel: "whatsapp",
+      whatsapp_opt_out_at: new Date("2026-09-03T10:00:00.000Z"),
+      latest_inbound_at: new Date("2026-09-03T11:00:00.000Z"),
+    },
+    new Date("2026-09-03T11:05:00.000Z"),
+    { purpose }
+  );
+
+  assert.equal(purpose, "service");
+  assert.equal(result.allowed, true);
+});
