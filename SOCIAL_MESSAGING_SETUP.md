@@ -301,6 +301,9 @@ The template picker reads approved templates from `/{WHATSAPP_WABA_ID}/message_t
 Safety boundaries:
 
 - template sends are staff-triggered only;
+- **Stop promotions / Unsubscribe from Promos** records a marketing-only opt-out: promotional templates and automated marketing remain blocked, while service replies and UTILITY templates remain available when otherwise permitted;
+- **STOP / Unsubscribe / Unsubscribe from All** records a global WhatsApp opt-out;
+- after a marketing-only opt-out, MARKETING can resume only after a newer explicit opt-in is recorded and staff confirms that the new consent covers WhatsApp marketing;
 - AI replies, scheduled messages and automated follow-ups do not use the template path;
 - the contact must have a recorded explicit WhatsApp opt-in and must not currently be opted out;
 - recording a new opt-in requires staff to enter the real consent source and explicitly confirm that consent was given;
@@ -310,4 +313,6 @@ Safety boundaries:
 - Inbox currently supports text header/body variables plus static quick-reply, URL and phone-number buttons. Media-header templates, authentication templates, named variables, dynamic URL variables and other special button types are shown as unsupported rather than guessed.
 
 Template creation/approval remains in Meta. Inbox only lists templates whose current Meta status is `APPROVED`.
+
+**Setup Checker:** **WhatsApp** remains the required messaging check using the phone-number ID and token. **WhatsApp templates** is a separate optional check that verifies `WHATSAPP_WABA_ID` and whether the configured token can read the WABA template catalog. A template-catalog warning does not block normal WhatsApp Go Live.
 
