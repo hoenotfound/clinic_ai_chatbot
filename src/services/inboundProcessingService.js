@@ -227,11 +227,15 @@ async function reconcileRecoveredOutbound(
   {
     repository = inboundProcessingRepo,
     contacts = contactsRepo,
+    attempt: suppliedAttempt,
   } = {}
 ) {
   if (!job || typeof repository.getOutboundAttempt !== "function") return false;
 
-  const attempt = await repository.getOutboundAttempt(job.id);
+  const attempt =
+    suppliedAttempt === undefined
+      ? await repository.getOutboundAttempt(job.id)
+      : suppliedAttempt;
   if (!attempt) return false;
 
   const deliveryStatus = String(attempt.delivery_status || "").toLowerCase();
@@ -366,22 +370,37 @@ async function runInboundProcessingRecovery({
       const handledJobIds = new Set();
       let coveredThroughMessageId = null;
 
-      // Reconcile from newest to oldest first. Reaching an outbound reservation
-      // for message N proves processIncomingBatch already walked every earlier
-      // item in that same ordered burst. If the process died after the final
-      // send, those suppressed predecessors must be completed rather than
-      // replayed as a new one-message batch.
+      // Reconcile from newest to oldest first. The durable outbound reservation
+      // itself proves processIncomingBatch already walked every earlier item in
+      // that ordered burst. Mark that coverage before secondary reconciliation
+      // bookkeeping, so a temporary failure while completing/handing off the
+      // final job can never cause an earlier suppressed message to be replayed
+      // through AI as a new turn.
       for (let index = group.length - 1; index >= 0; index -= 1) {
         const job = group[index];
         try {
-          if (await reconcileRecoveredOutbound(job, { repository, contacts })) {
-            handledJobIds.add(job.id);
+          const outboundAttempt =
+            typeof repository.getOutboundAttempt === "function"
+              ? await repository.getOutboundAttempt(job.id)
+              : null;
+
+          if (outboundAttempt) {
             const messageId = Number(job.message_id);
             if (Number.isSafeInteger(messageId)) {
               coveredThroughMessageId = coveredThroughMessageId == null
                 ? messageId
                 : Math.max(coveredThroughMessageId, messageId);
             }
+          }
+
+          if (
+            await reconcileRecoveredOutbound(job, {
+              repository,
+              contacts,
+              attempt: outboundAttempt,
+            })
+          ) {
+            handledJobIds.add(job.id);
           }
         } catch (err) {
           console.error(`Failed to reconcile recovered outbound job ${job.id}:`, err);
