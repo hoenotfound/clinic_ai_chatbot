@@ -108,6 +108,12 @@ function rejectedErrorFor(contact) {
   return channelMessaging.rejectedError(contact?.channel || "whatsapp");
 }
 
+function staffReplyPurpose(contact) {
+  return ["facebook", "instagram"].includes(contact?.channel)
+    ? "human_agent"
+    : "service";
+}
+
 async function requireFreeformPolicy(contact, res, purpose = "service") {
   try {
     const policy = await whatsappPolicy.checkFreeformAllowed(contact, new Date(), {
@@ -225,7 +231,7 @@ async function sendStoredMessage(contact, message, options = {}) {
       contact,
       message.media_url,
       skipCaption ? undefined : (message.content || undefined),
-      socialProviderSendOptions(message, contact, { skipCaption })
+      socialProviderSendOptions(message, contact, { ...options, skipCaption })
     );
   }
 
@@ -540,7 +546,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       message.sent_by_username &&
       message.is_automated_follow_up !== true &&
       message.is_scheduled_message !== true
-        ? "human_agent"
+        ? staffReplyPurpose(contact)
         : "service";
     if (!(await requireFreeformPolicy(contact, res, retryPurpose))) return;
 
@@ -597,7 +603,7 @@ router.post("/:contactId/messages", async (req, res) => {
     if (!text || !text.trim()) {
       return res.status(400).json({ error: "Message text is required." });
     }
-    if (!(await requireFreeformPolicy(contact, res, "human_agent"))) return;
+    if (!(await requireFreeformPolicy(contact, res, staffReplyPurpose(contact)))) return;
 
     if (contact.mode !== "human") {
       await contactsRepo.takeOver(contact.id, req.session.username);
@@ -617,7 +623,7 @@ router.post("/:contactId/messages", async (req, res) => {
     const sendResult = await channelMessaging.sendText(
       contact,
       text.trim(),
-      socialProviderSendOptions(saved, contact, { purpose: "human_agent" })
+      socialProviderSendOptions(saved, contact, { purpose: staffReplyPurpose(contact) })
     );
     const errorText = deliveryErrorForSend(
       sendResult,
@@ -679,7 +685,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "An image file is required." });
     }
-    if (!(await requireFreeformPolicy(contact, res, "human_agent"))) return;
+    if (!(await requireFreeformPolicy(contact, res, staffReplyPurpose(contact)))) return;
 
     const caption = (req.body?.caption || "").trim();
 
@@ -708,7 +714,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       req.file.mimetype,
       caption || undefined,
       req.file.originalname || "image",
-      socialProviderSendOptions(saved, contact, { purpose: "human_agent" })
+      socialProviderSendOptions(saved, contact, { purpose: staffReplyPurpose(contact) })
     );
     const errorText = deliveryErrorForSend(
       sendResult,
@@ -744,7 +750,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
-    if (!(await requireFreeformPolicy(contact, res, "human_agent"))) return;
+    if (!(await requireFreeformPolicy(contact, res, staffReplyPurpose(contact)))) return;
 
     if (contact.mode !== "human") {
       return res.status(409).json({ error: "Take over this conversation before sending a voice message." });
@@ -798,7 +804,9 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       outboundAudio.buffer,
       outboundAudio.mimeType,
       outboundAudio.filename,
-      socialProviderSendOptions(saved, currentContact, { purpose: "human_agent" })
+      socialProviderSendOptions(saved, currentContact, {
+        purpose: staffReplyPurpose(currentContact),
+      })
     );
     const errorText = sendResult.error || rejectedErrorFor(currentContact);
     const finalMessage = await persistSendOutcome(
