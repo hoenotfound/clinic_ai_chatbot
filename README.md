@@ -76,6 +76,8 @@ cd portal-frontend && npm run dev      # terminal 2 — frontend on :5173, proxi
 ```
 Use `:5173` while iterating on the UI; the `:3000` build is what you'd actually deploy.
 
+**Telegram queue rollback note:** migration 020 is compatible with older application code, but older releases do not process already-`pending` or `sending` durable Telegram alerts. See [docs/TELEGRAM_ALERT_OPERATIONS.md](docs/TELEGRAM_ALERT_OPERATIONS.md) before rolling back a production deployment.
+
 ## 6. Expose your server and connect the WhatsApp webhook
 
 ```bash
