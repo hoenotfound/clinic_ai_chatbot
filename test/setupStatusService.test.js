@@ -521,3 +521,48 @@ test("error sanitization removes bearer and Telegram tokens", () => {
   assert.equal(sanitized.includes("abc123"), false);
   assert.equal(sanitized.includes("telegram-token"), false);
 });
+
+test("Human Agent setup check is disabled by default and never implies Meta approval", async () => {
+  const env = completeEnv();
+  delete env.META_HUMAN_AGENT_ENABLED;
+
+  const service = createSetupStatusService({
+    env,
+    now: () => new Date("2026-09-03T12:00:00.000Z"),
+    repository: memoryRepository(),
+  });
+
+  const status = await service.getOverview();
+  const humanAgent = status.checks.find((check) => check.key === "meta_human_agent");
+
+  assert.equal(humanAgent.status, "not_configured");
+  assert.equal(humanAgent.configured, false);
+  assert.equal(humanAgent.featureEnabled, false);
+  assert.equal(humanAgent.reason, "feature_disabled");
+  assert.match(humanAgent.summary, /META_HUMAN_AGENT_ENABLED=true/);
+  assert.match(humanAgent.summary, /Meta has approved/i);
+});
+
+test("Human Agent setup check warns when explicitly enabled because App Review approval is not machine-verifiable", async () => {
+  const env = {
+    ...completeEnv(),
+    META_HUMAN_AGENT_ENABLED: "true",
+  };
+
+  const service = createSetupStatusService({
+    env,
+    now: () => new Date("2026-09-03T12:00:00.000Z"),
+    repository: memoryRepository(),
+  });
+
+  const status = await service.getOverview();
+  const humanAgent = status.checks.find((check) => check.key === "meta_human_agent");
+
+  assert.equal(humanAgent.status, "warning");
+  assert.equal(humanAgent.configured, true);
+  assert.equal(humanAgent.featureEnabled, true);
+  assert.equal(humanAgent.socialConfigured, true);
+  assert.equal(humanAgent.reason, "meta_approval_not_verifiable");
+  assert.match(humanAgent.summary, /Confirm Human Agent approval/i);
+});
+
