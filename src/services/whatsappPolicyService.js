@@ -96,7 +96,7 @@ function outsideWindowError(channel, humanAgentEnabled = false) {
   if (channel === "whatsapp") {
     return "WhatsApp send blocked because the 24-hour customer-service window has closed. Use an approved template only after valid WhatsApp opt-in has been recorded.";
   }
-  if (effectiveHumanAgentEnabled && HUMAN_AGENT_CHANNELS.has(channel)) {
+  if (humanAgentEnabled && HUMAN_AGENT_CHANNELS.has(channel)) {
     return `${channelLabel(channel)} send blocked because the 24-hour standard messaging window has closed. Only a real staff member may reply with Meta's Human Agent path for up to 7 days after the customer's latest message.`;
   }
   return `${channelLabel(channel)} send blocked because the 24-hour standard messaging window has closed. The customer must message again before a normal reply can be sent.`;
