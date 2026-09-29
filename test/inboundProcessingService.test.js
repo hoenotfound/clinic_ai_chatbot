@@ -510,3 +510,238 @@ test("rejected recovery stays retryable until delivery attention is persisted", 
   assert.equal(completedCalls, 1);
   assert.equal(resumedCalls, 0);
 });
+
+
+test("accepted final burst reply still covers earlier messages when completion bookkeeping fails", async () => {
+  const oldJob = {
+    id: 401,
+    contact_id: 61,
+    message_id: 1401,
+    status: "processing",
+    attempts: 2,
+  };
+  const finalJob = {
+    id: 402,
+    contact_id: 61,
+    message_id: 1402,
+    status: "processing",
+    attempts: 2,
+  };
+  const completed = [];
+  const failed = [];
+  const resumed = [];
+
+  const repository = {
+    async claimRecoverable() {
+      return [oldJob, finalJob];
+    },
+    async getOutboundAttempt(jobId) {
+      if (jobId !== finalJob.id) return null;
+      return {
+        outcome: "accepted",
+        provider_message_id: "wamid-final-accepted",
+        delivery_status: "pending",
+      };
+    },
+    async markCompleted(jobId) {
+      if (jobId === finalJob.id) {
+        throw new Error("temporary completion bookkeeping failure");
+      }
+      completed.push(jobId);
+      return { id: jobId, status: "completed" };
+    },
+    async markFailed(jobId, err) {
+      failed.push([jobId, err.message]);
+      return { ...finalJob, id: jobId, status: "failed", attempts: 3 };
+    },
+    async listExhausted() {
+      return [];
+    },
+    async pruneCompleted() {
+      return 0;
+    },
+  };
+
+  await runInboundProcessingRecovery({
+    repository,
+    contacts: {
+      async setAttention() {
+        throw new Error("accepted attempt should not require staff attention");
+      },
+    },
+    async resumeJob(job) {
+      resumed.push(job.id);
+      throw new Error("burst-covered message must not be resumed");
+    },
+    async processBatch() {
+      throw new Error("burst-covered message must not reach AI");
+    },
+  });
+
+  assert.deepEqual(completed, [oldJob.id]);
+  assert.deepEqual(failed, [
+    [finalJob.id, "temporary completion bookkeeping failure"],
+  ]);
+  assert.deepEqual(resumed, []);
+});
+
+test("rejected final burst reply still covers earlier messages when attention persistence fails", async () => {
+  const oldJob = {
+    id: 411,
+    contact_id: 62,
+    message_id: 1411,
+    status: "processing",
+    attempts: 2,
+  };
+  const finalJob = {
+    id: 412,
+    contact_id: 62,
+    message_id: 1412,
+    status: "processing",
+    attempts: 2,
+  };
+  const completed = [];
+  const failed = [];
+  const resumed = [];
+  let attentionAttempts = 0;
+
+  const repository = {
+    async claimRecoverable() {
+      return [oldJob, finalJob];
+    },
+    async getOutboundAttempt(jobId) {
+      if (jobId !== finalJob.id) return null;
+      return {
+        outcome: "rejected",
+        error_text: "Meta rejected the send",
+        delivery_status: "failed",
+      };
+    },
+    async markCompleted(jobId) {
+      completed.push(jobId);
+      return { id: jobId, status: "completed" };
+    },
+    async markFailed(jobId, err) {
+      failed.push([jobId, err.code]);
+      return { ...finalJob, id: jobId, status: "failed", attempts: 3 };
+    },
+    async listExhausted() {
+      return [];
+    },
+    async pruneCompleted() {
+      return 0;
+    },
+  };
+
+  await runInboundProcessingRecovery({
+    repository,
+    contacts: {
+      async setDeliveryAttention(contactId, reason) {
+        assert.equal(contactId, finalJob.contact_id);
+        assert.match(reason, /Meta rejected the send/);
+        attentionAttempts += 1;
+        throw new Error("temporary attention write failure");
+      },
+      async setAttention() {
+        throw new Error("job has not exhausted automatic recovery attempts");
+      },
+    },
+    async resumeJob(job) {
+      resumed.push(job.id);
+      throw new Error("burst-covered message must not be resumed");
+    },
+    async processBatch() {
+      throw new Error("burst-covered message must not reach AI");
+    },
+  });
+
+  assert.equal(attentionAttempts, 1);
+  assert.deepEqual(completed, [oldJob.id]);
+  assert.deepEqual(failed, [
+    [finalJob.id, "DELIVERY_ATTENTION_RESTORE_FAILED"],
+  ]);
+  assert.deepEqual(resumed, []);
+});
+
+test("ambiguous final burst reply still covers earlier messages when terminal bookkeeping fails", async () => {
+  const oldJob = {
+    id: 421,
+    contact_id: 63,
+    message_id: 1421,
+    status: "processing",
+    attempts: 2,
+  };
+  const finalJob = {
+    id: 422,
+    contact_id: 63,
+    message_id: 1422,
+    status: "processing",
+    attempts: 2,
+  };
+  const completed = [];
+  const failed = [];
+  const resumed = [];
+  const attention = [];
+  let terminalAttempts = 0;
+
+  const repository = {
+    async claimRecoverable() {
+      return [oldJob, finalJob];
+    },
+    async getOutboundAttempt(jobId) {
+      if (jobId !== finalJob.id) return null;
+      return {
+        outcome: "ambiguous",
+        provider_message_id: null,
+        whatsapp_message_id: null,
+        delivery_status: "unknown",
+        delivery_error: "Delivery could not be confirmed.",
+      };
+    },
+    async markCompleted(jobId) {
+      completed.push(jobId);
+      return { id: jobId, status: "completed" };
+    },
+    async markTerminal(jobId) {
+      assert.equal(jobId, finalJob.id);
+      terminalAttempts += 1;
+      throw new Error("temporary terminal bookkeeping failure");
+    },
+    async markFailed(jobId, err) {
+      failed.push([jobId, err.message]);
+      return { ...finalJob, id: jobId, status: "failed", attempts: 3 };
+    },
+    async listExhausted() {
+      return [];
+    },
+    async pruneCompleted() {
+      return 0;
+    },
+  };
+
+  await runInboundProcessingRecovery({
+    repository,
+    contacts: {
+      async setAttention(contactId, enabled, reason) {
+        attention.push([contactId, enabled, reason]);
+      },
+    },
+    async resumeJob(job) {
+      resumed.push(job.id);
+      throw new Error("burst-covered message must not be resumed");
+    },
+    async processBatch() {
+      throw new Error("burst-covered message must not reach AI");
+    },
+  });
+
+  assert.equal(terminalAttempts, 1);
+  assert.equal(attention.length, 1);
+  assert.deepEqual(attention[0].slice(0, 2), [finalJob.contact_id, true]);
+  assert.match(attention[0][2], /may already have reached the customer/i);
+  assert.deepEqual(completed, [oldJob.id]);
+  assert.deepEqual(failed, [
+    [finalJob.id, "temporary terminal bookkeeping failure"],
+  ]);
+  assert.deepEqual(resumed, []);
+});
