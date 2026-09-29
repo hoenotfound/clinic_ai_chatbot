@@ -39,7 +39,7 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
 });
 
 test("WhatsApp template message metadata uses a forward migration instead of editing baseline schema", () => {
-  const migration = read("src/db/migrations/022_whatsapp_template_messages.sql");
+  const migration = read("src/db/migrations/023_whatsapp_template_messages.sql");
   const messagesRepo = read("src/db/messagesRepo.js");
 
   assert.match(migration, /ADD COLUMN IF NOT EXISTS whatsapp_template JSONB/);
