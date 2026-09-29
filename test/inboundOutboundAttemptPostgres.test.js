@@ -265,6 +265,17 @@ test(
       assert.equal(recoveredCancelled.assistant_message_id, null);
       assert.equal(recoveredCancelled.whatsapp_message_id, null);
       assert.equal(recoveredCancelled.delivery_status, null);
+
+      const duplicateAfterCancel = await inboundProcessingRepo.reserveOutboundAttempt({
+        processingJobId: cancelledJob.id,
+        contactId,
+        content: "This second draft must be fenced",
+        origin: "ai_reply",
+      }, client);
+      assert.equal(duplicateAfterCancel.alreadyStarted, true);
+      assert.equal(duplicateAfterCancel.message, null);
+      assert.equal(duplicateAfterCancel.attempt.outcome, "cancelled");
+      assert.equal(duplicateAfterCancel.attempt.assistant_message_id, null);
     } finally {
       await client.query("RESET search_path").catch(() => {});
       await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`).catch(() => {});
