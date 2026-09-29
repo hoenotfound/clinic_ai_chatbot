@@ -358,3 +358,69 @@ test("recovery restores delivery attention for a rejected outbound attempt witho
   assert.deepEqual(calls[0], ["delivery", 44, "Delivery failed: Meta rejected the send"]);
   assert.deepEqual(calls[1], ["completed", 203]);
 });
+
+
+test("recovery does not replay earlier burst messages when the final burst reply was already accepted", async () => {
+  const completed = [];
+  const resumed = [];
+  const jobs = [
+    {
+      id: 301,
+      contact_id: 55,
+      message_id: 1001,
+      status: "processing",
+      attempts: 2,
+    },
+    {
+      id: 302,
+      contact_id: 55,
+      message_id: 1002,
+      status: "processing",
+      attempts: 2,
+    },
+  ];
+
+  const repository = {
+    async claimRecoverable() {
+      return jobs;
+    },
+    async getOutboundAttempt(jobId) {
+      if (jobId === 302) {
+        return {
+          outcome: "accepted",
+          provider_message_id: "wamid-final-burst",
+          delivery_status: "pending",
+        };
+      }
+      return null;
+    },
+    async markCompleted(jobId) {
+      completed.push(jobId);
+      return { id: jobId, status: "completed" };
+    },
+    async markFailed() {
+      throw new Error("burst-covered jobs should not fail");
+    },
+    async listExhausted() {
+      return [];
+    },
+    async pruneCompleted() {
+      return 0;
+    },
+  };
+
+  await runInboundProcessingRecovery({
+    repository,
+    contacts: { async setAttention() {} },
+    async resumeJob(job) {
+      resumed.push(job.id);
+      throw new Error("burst-covered jobs must not be resumed");
+    },
+    async processBatch() {
+      throw new Error("burst-covered jobs must not create a new AI reply");
+    },
+  });
+
+  assert.deepEqual(resumed, []);
+  assert.deepEqual(completed.sort((a, b) => a - b), [301, 302]);
+});
