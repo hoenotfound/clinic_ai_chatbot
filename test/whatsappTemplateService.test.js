@@ -235,3 +235,88 @@ test("sends the approved template payload through the WhatsApp Cloud API", async
   assert.equal(sentBody.template.language.code, "en_US");
   assert.equal(sentBody.template.components[0].parameters[0].text, "Alex");
 });
+
+test("builds Meta quick-reply button components for approved template buttons", () => {
+  const template = templateService.normalizeTemplate({
+    name: "lead_follow_up",
+    language: "en_US",
+    status: "APPROVED",
+    category: "MARKETING",
+    components: [
+      { type: "BODY", text: "Are you still interested?" },
+      {
+        type: "BUTTONS",
+        buttons: [
+          { type: "QUICK_REPLY", text: "Yes" },
+          { type: "QUICK_REPLY", text: "Stop promotions" },
+        ],
+      },
+    ],
+  });
+
+  const built = templateService.buildTemplateComponents(template, {});
+
+  assert.equal(built.valid, true);
+  assert.deepEqual(built.components, [
+    {
+      type: "button",
+      sub_type: "quick_reply",
+      index: "0",
+      parameters: [
+        {
+          type: "payload",
+          payload: "da_qr:lead_follow_up:0",
+        },
+      ],
+    },
+    {
+      type: "button",
+      sub_type: "quick_reply",
+      index: "1",
+      parameters: [
+        {
+          type: "payload",
+          payload: "da_qr:lead_follow_up:1",
+        },
+      ],
+    },
+  ]);
+});
+
+test("template transport blocks if the opt-in snapshot changed before send", async (t) => {
+  const originalPolicy = whatsappPolicy.checkTemplateAllowed;
+  const originalFetch = global.fetch;
+  t.after(() => {
+    whatsappPolicy.checkTemplateAllowed = originalPolicy;
+    global.fetch = originalFetch;
+  });
+
+  whatsappPolicy.checkTemplateAllowed = async () => ({
+    allowed: true,
+    state: {
+      whatsapp_opt_in_at: new Date("2026-09-29T10:30:00.000Z"),
+    },
+  });
+
+  let fetchCalls = 0;
+  global.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error("must not reach Meta");
+  };
+
+  const result = await templateService.sendApprovedTemplate(
+    { id: 7, channel: "whatsapp", whatsapp_number: "60123456789" },
+    {
+      templateName: "lead_follow_up",
+      languageCode: "en_US",
+      expectedOptInAt: "2026-09-29T09:00:00.000Z",
+    }
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.policyBlocked, true);
+  assert.equal(result.policyCode, "whatsapp_opt_in_changed");
+  assert.match(result.error, /opt-in changed/i);
+  assert.equal(fetchCalls, 0);
+});
+
