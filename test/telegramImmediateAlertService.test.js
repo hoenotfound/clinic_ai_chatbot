@@ -423,6 +423,74 @@ test("immediate queue runner sends claimed rows and marks them sent", async () =
   ]);
 });
 
+test("actionable sends hold the shared contact lock through final revalidation and sent state", async () => {
+  const steps = [];
+  const lockQuery = async () => ({ rows: [] });
+  const repository = {
+    async markExhaustedStale() {
+      return [];
+    },
+    async claimReady() {
+      return [{
+        id: 9,
+        contact_id: 12,
+        lead_id: 7,
+        alert_type: "booking_ready",
+        message_text: "latest booking",
+        attempts: 1,
+        lease_token: "lease-9",
+      }];
+    },
+    async withContactAlertLock(contactId, work) {
+      steps.push(["lock:start", contactId]);
+      const result = await work(lockQuery);
+      steps.push(["lock:end", contactId]);
+      return result;
+    },
+    async markSent(id, leaseToken) {
+      steps.push(["markSent", id, leaseToken]);
+      return {
+        id,
+        contact_id: 12,
+        lead_id: 7,
+        alert_type: "booking_ready",
+        status: "sent",
+      };
+    },
+    async markFailed() {
+      throw new Error("successful send should not fail");
+    },
+    async findNextDueAt() {
+      return null;
+    },
+  };
+
+  const run = createImmediateAlertQueueRunner({
+    env: enabledEnv,
+    repository,
+    async shouldSendAlert(alert, query) {
+      assert.equal(query, lockQuery);
+      steps.push(["revalidate", alert.id]);
+      return true;
+    },
+    async sendMessage() {
+      steps.push(["send"]);
+      return { message_id: 101 };
+    },
+  });
+
+  const result = await run();
+
+  assert.equal(result.sentCount, 1);
+  assert.deepEqual(steps, [
+    ["lock:start", 12],
+    ["revalidate", 9],
+    ["send"],
+    ["markSent", 9, "lease-9"],
+    ["lock:end", 12],
+  ]);
+});
+
 test("Telegram timeout stays queued with backoff instead of being lost", async (t) => {
   const originalError = console.error;
   t.after(() => {

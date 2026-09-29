@@ -38,6 +38,10 @@ function staffWaitingEventKey(contactId, waitingSinceMessageId) {
   return `staff_waiting:${contactId}:${waitingSinceMessageId}`;
 }
 
+// A customer can send several messages before staff replies. Those messages are
+// still one unanswered episode, so any live/sent Staff Waiting alert created
+// after the last valid staff reply suppresses another reminder for that episode.
+// Once staff replies, later customer messages form a new episode.
 function staffWaitingCandidateJoins() {
   return `
      FROM contacts c
@@ -72,8 +76,13 @@ function staffWaitingCandidateJoins() {
        AND NOT EXISTS (
          SELECT 1
          FROM telegram_immediate_alerts a
-         WHERE a.event_key =
-           'staff_waiting:' || c.id::text || ':' || latest_waiting.id::text
+         WHERE a.contact_id = c.id
+           AND a.alert_type = 'staff_waiting'
+           AND a.status IN ('pending', 'sending', 'sent')
+           AND (
+             last_valid_staff_outbound.id IS NULL
+             OR a.created_at > last_valid_staff_outbound.created_at
+           )
        )`;
 }
 

@@ -251,6 +251,51 @@ test("flush rechecks inactivity at claim time and formats from the claimed snaps
   assert.deepEqual(result, { status: "completed", sent: 1 });
 });
 
+test("normal summary send is fenced by the shared contact lock through final coverage check", async () => {
+  const steps = [];
+  const service = createTelegramAlertService({
+    env: {
+      TELEGRAM_ALERTS_ENABLED: "true",
+      TELEGRAM_BOT_TOKEN: "bot-token",
+      TELEGRAM_CHAT_ID: "-100123",
+    },
+    repository: {
+      findReadySummaries: async () => [{ alert_id: 31, lead_id: 7 }],
+      claimSummary: async () => ({ ...lead, score_data: score }),
+      findActionableCoverage: async () => {
+        steps.push("coverage");
+        return null;
+      },
+      markSent: async () => {
+        steps.push("markSent");
+      },
+      markFailed: async () => assert.fail("successful send should not fail"),
+    },
+    async withContactAlertLock(contactId, work) {
+      assert.equal(contactId, 12);
+      steps.push("lock:start");
+      const result = await work();
+      steps.push("lock:end");
+      return result;
+    },
+    sendMessage: async () => {
+      steps.push("send");
+      return { message_id: 99 };
+    },
+  });
+
+  const result = await service.flushConversationSummaries({ inactivityMinutes: 10 });
+
+  assert.deepEqual(result, { status: "completed", sent: 1 });
+  assert.deepEqual(steps, [
+    "lock:start",
+    "coverage",
+    "send",
+    "markSent",
+    "lock:end",
+  ]);
+});
+
 test("pending actionable alert holds the normal conversation summary without burning an attempt", async () => {
   let sends = 0;
   let released = null;

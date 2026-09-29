@@ -313,29 +313,43 @@ function createImmediateAlertQueueRunner({
 
       for (const alert of alerts) {
         try {
-          const stillApplies = await shouldSendAlert(alert);
-          if (!stillApplies) {
-            const cancelled = await repository.markCancelled(
-              alert.id,
-              alert.lease_token,
-              alert.alert_type === "staff_waiting"
-                ? "Staff-waiting reminder resolved before Telegram delivery."
-                : alert.alert_type === "booking_ready"
-                  ? "Superseded by newer Booking Ready details before Telegram delivery."
-                  : "Alert no longer applies."
-            );
-            publishImmediateTerminalState(cancelled);
-            continue;
-          }
+          const processClaimedAlert = async (query) => {
+            const stillApplies = await shouldSendAlert(alert, query);
+            if (!stillApplies) {
+              const cancelled = await repository.markCancelled(
+                alert.id,
+                alert.lease_token,
+                alert.alert_type === "staff_waiting"
+                  ? "Staff-waiting reminder resolved before Telegram delivery."
+                  : alert.alert_type === "booking_ready"
+                    ? "Superseded by newer Booking Ready details before Telegram delivery."
+                    : "Alert no longer applies."
+              );
+              publishImmediateTerminalState(cancelled);
+              return;
+            }
 
-          await sendMessage({
-            token: env.TELEGRAM_BOT_TOKEN,
-            chatId: env.TELEGRAM_CHAT_ID,
-            text: alert.message_text,
-          });
-          const sent = await repository.markSent(alert.id, alert.lease_token);
-          publishImmediateTerminalState(sent);
-          sentCount += 1;
+            await sendMessage({
+              token: env.TELEGRAM_BOT_TOKEN,
+              chatId: env.TELEGRAM_CHAT_ID,
+              text: alert.message_text,
+            });
+            const sent = await repository.markSent(alert.id, alert.lease_token);
+            publishImmediateTerminalState(sent);
+            sentCount += 1;
+          };
+
+          if (
+            shouldWakeConversationSummary(alert) &&
+            typeof repository.withContactAlertLock === "function"
+          ) {
+            await repository.withContactAlertLock(
+              alert.contact_id,
+              processClaimedAlert
+            );
+          } else {
+            await processClaimedAlert();
+          }
         } catch (err) {
           failedCount += 1;
           const retryDelaySeconds = Math.ceil(
@@ -477,6 +491,9 @@ function createTelegramImmediateAlertService({
     // without leaving recoverable Telegram work behind.
     if (type === "booking_ready" && transactionClient) {
       const queryInTransaction = transactionClient.query.bind(transactionClient);
+      if (typeof repository.lockContactAlertQueue === "function") {
+        await repository.lockContactAlertQueue(contactId, queryInTransaction);
+      }
       await repository.cancelOlderPendingBookingReady(alertInput, queryInTransaction);
       const queued = await repository.insertAlert(alertInput, queryInTransaction);
       return queued

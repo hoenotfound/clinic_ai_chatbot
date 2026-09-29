@@ -20,6 +20,58 @@ function safeLeadId(value) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+async function lockContactAlertQueue(
+  contactId,
+  query
+) {
+  const numericContactId = Number(contactId);
+  if (!Number.isSafeInteger(numericContactId) || numericContactId < 1) {
+    throw new Error("Immediate Telegram alert locks require a valid contactId.");
+  }
+  await query(
+    "SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
+    [HUMAN_ALERT_LOCK_NAMESPACE, numericContactId]
+  );
+}
+
+async function withContactAlertLock(
+  contactId,
+  work,
+  database = pool
+) {
+  const numericContactId = Number(contactId);
+  if (!Number.isSafeInteger(numericContactId) || numericContactId < 1) {
+    throw new Error("Immediate Telegram alert locks require a valid contactId.");
+  }
+  if (typeof work !== "function") {
+    throw new TypeError("withContactAlertLock requires a callback.");
+  }
+
+  const client = await database.connect();
+  let locked = false;
+  let releaseError = null;
+  try {
+    await client.query(
+      "SELECT pg_advisory_lock($1::integer, $2::integer)",
+      [HUMAN_ALERT_LOCK_NAMESPACE, numericContactId]
+    );
+    locked = true;
+    return await work(client.query.bind(client));
+  } finally {
+    if (locked) {
+      try {
+        await client.query(
+          "SELECT pg_advisory_unlock($1::integer, $2::integer)",
+          [HUMAN_ALERT_LOCK_NAMESPACE, numericContactId]
+        );
+      } catch (err) {
+        releaseError = err;
+      }
+    }
+    client.release(releaseError || undefined);
+  }
+}
+
 async function insertAlert(
   {
     eventKey,
@@ -104,7 +156,10 @@ async function queueAlert(
   database = pool
 ) {
   const safeCooldown = Math.max(0, Number(cooldownMinutes) || 0);
-  const needsSerializedQueue = safeCooldown > 0 || type === "booking_ready";
+  const needsSerializedQueue =
+    safeCooldown > 0 ||
+    type === "booking_ready" ||
+    type === "staff_waiting";
 
   if (!needsSerializedQueue) {
     return insertAlert(
@@ -116,9 +171,9 @@ async function queueAlert(
   const client = await database.connect();
   try {
     await client.query("BEGIN");
-    await client.query(
-      "SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
-      [HUMAN_ALERT_LOCK_NAMESPACE, Number(contactId)]
+    await lockContactAlertQueue(
+      contactId,
+      client.query.bind(client)
     );
 
     if (type === "booking_ready") {
@@ -380,10 +435,12 @@ module.exports = {
   claimReady,
   findNextDueAt,
   insertAlert,
+  lockContactAlertQueue,
   markCancelled,
   markExhaustedStale,
   markFailed,
   markSent,
   queueAlert,
   safeLeadId,
+  withContactAlertLock,
 };

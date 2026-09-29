@@ -1,5 +1,6 @@
 const https = require("https");
 const telegramAlertRepo = require("../db/telegramAlertRepo");
+const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
 const clinicConfig = require("../config/clinicConfig");
 const { getOperationalLabels } = require("../utils/businessTerminology");
 
@@ -225,6 +226,9 @@ function createTelegramAlertService({
   repository = telegramAlertRepo,
   sendMessage = postTelegramMessage,
   config = clinicConfig,
+  withContactAlertLock = repository === telegramAlertRepo
+    ? telegramImmediateAlertRepo.withContactAlertLock
+    : async (_contactId, work) => work(),
 } = {}) {
   return {
     async queueConversationSummary({ leadId, throughMessageId, score }) {
@@ -270,34 +274,40 @@ function createTelegramAlertService({
         if (!claim) continue;
 
         try {
-          if (typeof repository.findActionableCoverage === "function") {
-            const coverage = await repository.findActionableCoverage(
-              claim.alert_id,
-              suppressionMinutes
-            );
-            if (coverage === "sent") {
-              await repository.markSuperseded(claim.alert_id);
-              continue;
-            }
-            if (coverage === "pending" || coverage === "sending") {
-              await repository.releaseClaim(claim.alert_id);
-              continue;
-            }
-          }
+          const outcome = await withContactAlertLock(
+            claim.contact_id,
+            async () => {
+              if (typeof repository.findActionableCoverage === "function") {
+                const coverage = await repository.findActionableCoverage(
+                  claim.alert_id,
+                  suppressionMinutes
+                );
+                if (coverage === "sent") {
+                  await repository.markSuperseded(claim.alert_id);
+                  return "superseded";
+                }
+                if (coverage === "pending" || coverage === "sending") {
+                  await repository.releaseClaim(claim.alert_id);
+                  return "held";
+                }
+              }
 
-          const text = buildConversationSummaryMessage({
-            lead: claim,
-            score: claim.score_data,
-            env,
-            config,
-          });
-          await sendMessage({
-            token: env.TELEGRAM_BOT_TOKEN,
-            chatId: env.TELEGRAM_CHAT_ID,
-            text,
-          });
-          await repository.markSent(claim.alert_id);
-          sent += 1;
+              const text = buildConversationSummaryMessage({
+                lead: claim,
+                score: claim.score_data,
+                env,
+                config,
+              });
+              await sendMessage({
+                token: env.TELEGRAM_BOT_TOKEN,
+                chatId: env.TELEGRAM_CHAT_ID,
+                text,
+              });
+              await repository.markSent(claim.alert_id);
+              return "sent";
+            }
+          );
+          if (outcome === "sent") sent += 1;
         } catch (err) {
           await repository.markFailed(claim.alert_id, err);
           console.error(
