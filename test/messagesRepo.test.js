@@ -155,7 +155,8 @@ test("outbound WhatsApp template metadata is stored atomically with the message"
 
   pool.query = async (sql, params) => {
     assert.match(sql, /whatsapp_template/);
-    assert.match(sql, /\$9::jsonb/);
+    assert.match(sql, /delivery_status, delivery_error/);
+    assert.match(sql, /\$9::jsonb, \$10, \$11/);
     assert.deepEqual(JSON.parse(params[8]), {
       name: "lead_follow_up",
       language: "en_US",
@@ -167,6 +168,8 @@ test("outbound WhatsApp template metadata is stored atomically with the message"
         },
       ],
     });
+    assert.equal(params[9], "unknown");
+    assert.equal(params[10], "Template send started");
     return {
       rows: [{
         id: 44,
@@ -198,6 +201,8 @@ test("outbound WhatsApp template metadata is stored atomically with the message"
           },
         ],
       },
+      initialDeliveryStatus: "unknown",
+      initialDeliveryError: "Template send started",
     }
   );
 
