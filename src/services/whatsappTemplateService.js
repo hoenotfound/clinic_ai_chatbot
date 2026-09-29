@@ -1,8 +1,10 @@
+const crypto = require("crypto");
 const whatsappPolicy = require("./whatsappPolicyService");
 
 const GRAPH_API_VERSION = "v26.0";
 const TEMPLATE_CACHE_TTL_MS = 60 * 1000;
 const MAX_TEMPLATE_PAGES = 10;
+const DEFAULT_META_REQUEST_TIMEOUT_MS = 10 * 1000;
 let templateCache = null;
 
 function clean(value) {
@@ -184,8 +186,36 @@ function validateTemplateValues(template, values) {
 }
 
 function quickReplyPayload(template, button) {
+  const label = clean(button?.text);
+  if (label) return label.slice(0, 200);
   const templateKey = clean(template?.name).replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 80) || "template";
   return `da_qr:${templateKey}:${button.index}`;
+}
+
+function templateSignature(template) {
+  const stable = {
+    id: template?.id || null,
+    name: template?.name || "",
+    language: template?.language || "",
+    category: template?.category || "",
+    header: template?.header || null,
+    body: template?.body || null,
+    footer: template?.footer || null,
+    buttons: template?.buttons || [],
+    variableFields: template?.variableFields || [],
+  };
+  return crypto.createHash("sha256").update(JSON.stringify(stable)).digest("hex");
+}
+
+async function fetchWithTimeout(fetchImpl, url, options = {}, timeoutMs = DEFAULT_META_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  timer.unref?.();
+  try {
+    return await fetchImpl(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function buildTemplateComponents(template, values) {
@@ -256,7 +286,12 @@ function clearTemplateCache() {
   templateCache = null;
 }
 
-async function listApprovedTemplates({ env = process.env, fetchImpl = global.fetch, force = false } = {}) {
+async function listApprovedTemplates({
+  env = process.env,
+  fetchImpl = global.fetch,
+  force = false,
+  timeoutMs = DEFAULT_META_REQUEST_TIMEOUT_MS,
+} = {}) {
   const { wabaId, token } = templateConfig(env);
   if (!wabaId || !token) {
     return {
@@ -303,12 +338,17 @@ async function listApprovedTemplates({ env = process.env, fetchImpl = global.fet
       url.searchParams.set("limit", "100");
       if (after) url.searchParams.set("after", after);
 
-      const response = await fetchImpl(url.toString(), {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
+      const response = await fetchWithTimeout(
+        fetchImpl,
+        url.toString(),
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
         },
-      });
+        timeoutMs
+      );
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         console.error(
@@ -330,12 +370,15 @@ async function listApprovedTemplates({ env = process.env, fetchImpl = global.fet
       if (!after || !data?.paging?.next) break;
     }
   } catch (err) {
+    const timedOut = err?.name === "AbortError";
     console.error("WhatsApp template catalog request failed:", err);
     return {
       success: false,
       templates: [],
-      error: "Could not reach Meta to load approved WhatsApp templates.",
-      code: "template_catalog_unavailable",
+      error: timedOut
+        ? "Loading approved WhatsApp templates from Meta timed out. Please try again."
+        : "Could not reach Meta to load approved WhatsApp templates.",
+      code: timedOut ? "template_catalog_timeout" : "template_catalog_unavailable",
     };
   }
 
@@ -397,6 +440,8 @@ async function sendApprovedTemplate(
     languageCode = "en_US",
     components = undefined,
     expectedOptInAt = null,
+    fetchImpl = global.fetch,
+    timeoutMs = DEFAULT_META_REQUEST_TIMEOUT_MS,
   } = {}
 ) {
   const name = clean(templateName);
@@ -455,7 +500,8 @@ async function sendApprovedTemplate(
   }
 
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
+      fetchImpl,
       `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`,
       {
         method: "POST",
@@ -469,7 +515,8 @@ async function sendApprovedTemplate(
           type: "template",
           template,
         }),
-      }
+      },
+      timeoutMs
     );
 
     if (!res.ok) {
@@ -484,24 +531,41 @@ async function sendApprovedTemplate(
     }
 
     const data = await res.json();
+    const wamid = extractWamid(data);
+    if (!wamid) {
+      return {
+        success: false,
+        unknown: true,
+        wamid: null,
+        policyBlocked: false,
+        error:
+          "WhatsApp accepted the template request but did not return a message ID, so delivery could not be confirmed. Check WhatsApp before retrying.",
+      };
+    }
     return {
       success: true,
-      wamid: extractWamid(data),
+      unknown: false,
+      wamid,
       policyBlocked: false,
       error: null,
     };
   } catch (err) {
+    const timedOut = err?.name === "AbortError";
     console.error("WhatsApp template send threw an error:", err);
     return {
       success: false,
+      unknown: timedOut,
       wamid: null,
       policyBlocked: false,
-      error: "WhatsApp template delivery could not be started.",
+      error: timedOut
+        ? "WhatsApp template send timed out, so delivery could not be confirmed. Check WhatsApp before retrying."
+        : "WhatsApp template delivery could not be started.",
     };
   }
 }
 
 module.exports = {
+  DEFAULT_META_REQUEST_TIMEOUT_MS,
   GRAPH_API_VERSION,
   buildTemplateComponents,
   clearTemplateCache,
@@ -510,6 +574,7 @@ module.exports = {
   policyTimestamp,
   quickReplyPayload,
   renderTemplatePreview,
+  templateSignature,
   resolveApprovedTemplate,
   sendApprovedTemplate,
   templateConfig,
