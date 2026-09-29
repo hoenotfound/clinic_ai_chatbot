@@ -537,7 +537,9 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     }
 
     const retryPurpose =
-      message.sent_by_username && message.is_automated_follow_up !== true
+      message.sent_by_username &&
+      message.is_automated_follow_up !== true &&
+      message.is_scheduled_message !== true
         ? "human_agent"
         : "service";
     if (!(await requireFreeformPolicy(contact, res, retryPurpose))) return;
