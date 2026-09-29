@@ -155,7 +155,7 @@ async function fetchUserProfile(channel, userId) {
   }
 }
 
-async function postMessage(channel, recipientId, message) {
+async function postMessage(channel, recipientId, message, options = {}) {
   const config = getChannelConfig(channel);
   const label = channelLabel(channel);
   if (!config.token || !config.senderId) {
@@ -172,6 +172,10 @@ async function postMessage(channel, recipientId, message) {
     recipient: { id: String(recipientId) },
     message,
   };
+  if (options.humanAgent === true) {
+    body.messaging_type = "MESSAGE_TAG";
+    body.tag = "HUMAN_AGENT";
+  }
 
   try {
     const res = await fetch(url, {
@@ -214,8 +218,8 @@ async function postMessage(channel, recipientId, message) {
   }
 }
 
-async function sendText(channel, recipientId, text) {
-  return postMessage(channel, recipientId, { text });
+async function sendText(channel, recipientId, text, options = {}) {
+  return postMessage(channel, recipientId, { text }, options);
 }
 
 async function notifyProviderMessageId(options, externalMessageId, channel) {
@@ -235,17 +239,22 @@ async function sendImage(channel, recipientId, imageUrl, caption, options = {}) 
   // messages. Record the caption MID before starting the slower media send so
   // an echo cannot race ahead and be mistaken for a manual staff reply.
   if (caption?.trim()) {
-    const captionResult = await sendText(channel, recipientId, caption.trim());
+    const captionResult = await sendText(channel, recipientId, caption.trim(), options);
     if (!captionResult.success) return captionResult;
     await notifyProviderMessageId(options, captionResult.externalMessageId, channel);
   }
 
-  const imageResult = await postMessage(channel, recipientId, {
-    attachment: {
-      type: "image",
-      payload: { url: imageUrl },
+  const imageResult = await postMessage(
+    channel,
+    recipientId,
+    {
+      attachment: {
+        type: "image",
+        payload: { url: imageUrl },
+      },
     },
-  });
+    options
+  );
   if (imageResult.success) {
     await notifyProviderMessageId(options, imageResult.externalMessageId, channel);
   }
