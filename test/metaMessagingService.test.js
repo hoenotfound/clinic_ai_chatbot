@@ -671,3 +671,41 @@ test("Facebook private comment reply uses the Page messages endpoint", async (t)
   assert.equal(result.recipientId, "psid-9");
   assert.equal(result.messageId, "fb-private-1");
 });
+
+test("Human Agent text sends add Meta's MESSAGE_TAG payload", async (t) => {
+  const originalFetch = global.fetch;
+  const oldPageId = process.env.FACEBOOK_PAGE_ID;
+  const oldToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (oldPageId === undefined) delete process.env.FACEBOOK_PAGE_ID;
+    else process.env.FACEBOOK_PAGE_ID = oldPageId;
+    if (oldToken === undefined) delete process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    else process.env.FACEBOOK_PAGE_ACCESS_TOKEN = oldToken;
+  });
+
+  process.env.FACEBOOK_PAGE_ID = "page-human-agent";
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN = "page-token";
+
+  let sentBody = null;
+  global.fetch = async (_url, options) => {
+    sentBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ message_id: "fb-human-agent-1" }),
+    };
+  };
+
+  const result = await meta.sendText(
+    "facebook",
+    "psid-human-agent",
+    "Staff follow-up",
+    { humanAgent: true }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(sentBody.messaging_type, "MESSAGE_TAG");
+  assert.equal(sentBody.tag, "HUMAN_AGENT");
+  assert.deepEqual(sentBody.message, { text: "Staff follow-up" });
+});
