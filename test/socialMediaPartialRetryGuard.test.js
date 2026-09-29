@@ -24,7 +24,10 @@ test("failed social image retries preserve a delivered caption marker and skip r
 
   assert.match(routeSource, /require\("\.\.\/utils\/socialDeliveryError"\)/);
   assert.match(routeSource, /hasPartialCaptionMarker\(message\.delivery_error\)/);
-  assert.match(routeSource, /socialProviderSendOptions\(message, contact, \{ skipCaption \}\)/);
+  assert.match(
+    routeSource,
+    /socialProviderSendOptions\(message, contact, \{ \.\.\.options, skipCaption \}\)/
+  );
   assert.match(routeSource, /deliveryErrorForSend\([\s\S]*message\.delivery_error/);
 
   assert.match(messagingSource, /options\.skipCaption !== true/);
