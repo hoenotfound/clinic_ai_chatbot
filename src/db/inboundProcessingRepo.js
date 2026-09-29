@@ -321,21 +321,46 @@ async function markOutboundAttemptAmbiguous(
   const client = ownsClient ? await pool.connect() : database;
   try {
     await client.query("BEGIN");
-    const attemptResult = await client.query(
+    const stateResult = await client.query(
+      `SELECT
+         a.outcome,
+         a.provider_message_id,
+         a.assistant_message_id,
+         m.whatsapp_message_id,
+         m.delivery_status
+       FROM inbound_outbound_attempts a
+       JOIN messages m ON m.id = a.assistant_message_id
+       WHERE a.processing_job_id = $1
+       FOR UPDATE OF a, m`,
+      [safeJobId]
+    );
+    const state = stateResult.rows[0];
+    if (!state) {
+      await client.query("COMMIT");
+      return null;
+    }
+
+    const deliveryStatus = String(state.delivery_status || "").toLowerCase();
+    const durableOutcomeExists =
+      Boolean(state.outcome) ||
+      Boolean(state.provider_message_id) ||
+      Boolean(state.whatsapp_message_id) ||
+      ["pending", "sent", "delivered", "read", "failed"].includes(deliveryStatus);
+
+    if (durableOutcomeExists) {
+      await client.query("COMMIT");
+      return { marked: false, state };
+    }
+
+    await client.query(
       `UPDATE inbound_outbound_attempts
        SET outcome = 'ambiguous',
            error_text = $2,
            finalized_at = COALESCE(finalized_at, NOW()),
            updated_at = NOW()
-       WHERE processing_job_id = $1
-       RETURNING assistant_message_id`,
+       WHERE processing_job_id = $1`,
       [safeJobId, safeError]
     );
-    const assistantMessageId = attemptResult.rows[0]?.assistant_message_id;
-    if (!assistantMessageId) {
-      await client.query("COMMIT");
-      return null;
-    }
 
     const messageResult = await client.query(
       `UPDATE messages
@@ -343,10 +368,13 @@ async function markOutboundAttemptAmbiguous(
            delivery_error = $2
        WHERE id = $1
        RETURNING ${MESSAGE_COLUMNS}`,
-      [assistantMessageId, safeError]
+      [state.assistant_message_id, safeError]
     );
     await client.query("COMMIT");
-    return messageResult.rows[0] || null;
+    return {
+      marked: true,
+      message: messageResult.rows[0] || null,
+    };
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     throw err;
