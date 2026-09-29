@@ -265,7 +265,7 @@ test("builds Meta quick-reply button components for approved template buttons", 
       parameters: [
         {
           type: "payload",
-          payload: "da_qr:lead_follow_up:0",
+          payload: "Yes",
         },
       ],
     },
@@ -276,7 +276,7 @@ test("builds Meta quick-reply button components for approved template buttons", 
       parameters: [
         {
           type: "payload",
-          payload: "da_qr:lead_follow_up:1",
+          payload: "Stop promotions",
         },
       ],
     },
@@ -318,5 +318,126 @@ test("template transport blocks if the opt-in snapshot changed before send", asy
   assert.equal(result.policyCode, "whatsapp_opt_in_changed");
   assert.match(result.error, /opt-in changed/i);
   assert.equal(fetchCalls, 0);
+});
+
+test("template signatures change when the approved template definition changes", () => {
+  const original = templateService.normalizeTemplate({
+    id: "tpl-1",
+    name: "lead_follow_up",
+    language: "en_US",
+    status: "APPROVED",
+    category: "UTILITY",
+    components: [{ type: "BODY", text: "Hi {{1}}" }],
+  });
+  const changed = templateService.normalizeTemplate({
+    id: "tpl-1",
+    name: "lead_follow_up",
+    language: "en_US",
+    status: "APPROVED",
+    category: "UTILITY",
+    components: [{ type: "BODY", text: "Hello {{1}}, your appointment is ready." }],
+  });
+
+  assert.notEqual(
+    templateService.templateSignature(original),
+    templateService.templateSignature(changed)
+  );
+});
+
+test("2xx template response without a WAMID is treated as unknown delivery", async (t) => {
+  const originalPolicy = whatsappPolicy.checkTemplateAllowed;
+  const oldPhoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const oldToken = process.env.WHATSAPP_TOKEN;
+  t.after(() => {
+    whatsappPolicy.checkTemplateAllowed = originalPolicy;
+    if (oldPhoneId === undefined) delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    else process.env.WHATSAPP_PHONE_NUMBER_ID = oldPhoneId;
+    if (oldToken === undefined) delete process.env.WHATSAPP_TOKEN;
+    else process.env.WHATSAPP_TOKEN = oldToken;
+  });
+
+  whatsappPolicy.checkTemplateAllowed = async () => ({ allowed: true, state: {} });
+  process.env.WHATSAPP_PHONE_NUMBER_ID = "phone-1";
+  process.env.WHATSAPP_TOKEN = "token-1";
+
+  const result = await templateService.sendApprovedTemplate(
+    { id: 7, channel: "whatsapp", whatsapp_number: "60123456789" },
+    {
+      templateName: "lead_follow_up",
+      languageCode: "en_US",
+      fetchImpl: async () => jsonResponse({ messages: [{}] }),
+    }
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.unknown, true);
+  assert.equal(result.wamid, null);
+  assert.match(result.error, /did not return a message ID/i);
+});
+
+test("template send timeout is treated as unknown because provider acceptance is ambiguous", async (t) => {
+  const originalPolicy = whatsappPolicy.checkTemplateAllowed;
+  const oldPhoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const oldToken = process.env.WHATSAPP_TOKEN;
+  t.after(() => {
+    whatsappPolicy.checkTemplateAllowed = originalPolicy;
+    if (oldPhoneId === undefined) delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    else process.env.WHATSAPP_PHONE_NUMBER_ID = oldPhoneId;
+    if (oldToken === undefined) delete process.env.WHATSAPP_TOKEN;
+    else process.env.WHATSAPP_TOKEN = oldToken;
+  });
+
+  whatsappPolicy.checkTemplateAllowed = async () => ({ allowed: true, state: {} });
+  process.env.WHATSAPP_PHONE_NUMBER_ID = "phone-1";
+  process.env.WHATSAPP_TOKEN = "token-1";
+
+  const fetchImpl = async (_url, { signal }) =>
+    new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => {
+        const err = new Error("aborted");
+        err.name = "AbortError";
+        reject(err);
+      }, { once: true });
+    });
+
+  const result = await templateService.sendApprovedTemplate(
+    { id: 7, channel: "whatsapp", whatsapp_number: "60123456789" },
+    {
+      templateName: "lead_follow_up",
+      languageCode: "en_US",
+      fetchImpl,
+      timeoutMs: 5,
+    }
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.unknown, true);
+  assert.match(result.error, /timed out/i);
+});
+
+test("template catalog request times out instead of hanging the Inbox", async () => {
+  templateService.clearTemplateCache();
+  const fetchImpl = async (_url, { signal }) =>
+    new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => {
+        const err = new Error("aborted");
+        err.name = "AbortError";
+        reject(err);
+      }, { once: true });
+    });
+
+  const result = await templateService.listApprovedTemplates({
+    env: {
+      WHATSAPP_WABA_ID: "waba-timeout",
+      WHATSAPP_TOKEN: "token-timeout",
+    },
+    fetchImpl,
+    timeoutMs: 5,
+    force: true,
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.code, "template_catalog_timeout");
+  assert.match(result.error, /timed out/i);
 });
 
