@@ -196,9 +196,26 @@ test("does not extend WhatsApp with the Meta Human Agent purpose", () => {
   assert.equal(result.code, "outside_customer_service_window");
 });
 
-test("manual staff purpose keeps Human Agent disabled unless the runtime flag is explicitly enabled", () => {
-  const disabled = { META_HUMAN_AGENT_ENABLED: "false" };
-  const enabled = { META_HUMAN_AGENT_ENABLED: "true" };
+test("manual staff purpose requires both the runtime flag and channel configuration", () => {
+  const configured = {
+    FACEBOOK_PAGE_ID: "fb-page",
+    FACEBOOK_PAGE_ACCESS_TOKEN: "fb-token",
+    INSTAGRAM_PAGE_ID: "ig-page",
+    INSTAGRAM_PAGE_ACCESS_TOKEN: "ig-token",
+  };
+  const disabled = {
+    ...configured,
+    META_HUMAN_AGENT_ENABLED: "false",
+  };
+  const enabled = {
+    ...configured,
+    META_HUMAN_AGENT_ENABLED: "true",
+  };
+  const facebookOnly = {
+    META_HUMAN_AGENT_ENABLED: "true",
+    FACEBOOK_PAGE_ID: "fb-page",
+    FACEBOOK_PAGE_ACCESS_TOKEN: "fb-token",
+  };
 
   assert.equal(policy.manualStaffPurpose("whatsapp", enabled), "service");
   assert.equal(policy.manualStaffPurpose({ channel: "whatsapp" }, enabled), "service");
@@ -206,6 +223,7 @@ test("manual staff purpose keeps Human Agent disabled unless the runtime flag is
   assert.equal(policy.manualStaffPurpose({ channel: "instagram" }, disabled), "service");
   assert.equal(policy.manualStaffPurpose("facebook", enabled), "human_agent");
   assert.equal(policy.manualStaffPurpose({ channel: "instagram" }, enabled), "human_agent");
+  assert.equal(policy.manualStaffPurpose("instagram", facebookOnly), "service");
 });
 
 test("WhatsApp manual staff policy still allows a service reply after the customer reinitiates following opt-out", () => {
