@@ -88,6 +88,19 @@ function normalizeTemplate(raw) {
   if (buttons.some((button) => /\{\{[^}]+\}\}/.test(button.url || ""))) {
     unsupportedReasons.push("Dynamic URL button variables are not supported from Inbox yet.");
   }
+  const supportedStaticButtonTypes = new Set([
+    "QUICK_REPLY",
+    "URL",
+    "PHONE_NUMBER",
+  ]);
+  const unsupportedButton = buttons.find(
+    (button) => button.type && !supportedStaticButtonTypes.has(button.type)
+  );
+  if (unsupportedButton) {
+    unsupportedReasons.push(
+      `${unsupportedButton.type} template buttons are not supported from Inbox yet.`
+    );
+  }
 
   const variableFields = [
     ...headerVariables.map((index) => ({
