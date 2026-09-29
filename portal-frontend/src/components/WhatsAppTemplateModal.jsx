@@ -409,6 +409,18 @@ export default function WhatsAppTemplateModal({
                     <div className="mt-1.5 whitespace-pre-wrap rounded-xl bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6">
                       {preview || "No text preview available."}
                     </div>
+                    {(selected.buttons || []).length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {selected.buttons.map((button) => (
+                          <span
+                            key={`${button.index}-${button.type}-${button.text}`}
+                            className="inline-flex rounded-lg border border-[var(--color-border)] bg-white px-2.5 py-1.5 text-[10px] font-semibold text-[var(--color-text-muted)]"
+                          >
+                            {button.text || button.type}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {selected.category === "MARKETING" && (
