@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS inbound_outbound_attempts (
   origin TEXT NOT NULL
     CHECK (origin IN ('ai_reply', 'system_fallback')),
   outcome TEXT
-    CHECK (outcome IS NULL OR outcome IN ('accepted', 'rejected', 'cancelled')),
+    CHECK (outcome IS NULL OR outcome IN ('accepted', 'rejected', 'cancelled', 'ambiguous')),
   provider_message_id TEXT,
   error_text TEXT,
   started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
