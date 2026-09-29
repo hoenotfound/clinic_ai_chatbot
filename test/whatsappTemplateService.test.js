@@ -104,6 +104,22 @@ test("marks media headers, authentication templates and dynamic URL buttons unsu
   });
   assert.equal(dynamicUrl.sendable, false);
   assert.match(dynamicUrl.unsupportedReason, /Dynamic URL/);
+
+  const copyCode = templateService.normalizeTemplate({
+    name: "copy_code",
+    language: "en_US",
+    status: "APPROVED",
+    category: "MARKETING",
+    components: [
+      { type: "BODY", text: "Use this offer code." },
+      {
+        type: "BUTTONS",
+        buttons: [{ type: "COPY_CODE", text: "Copy offer code" }],
+      },
+    ],
+  });
+  assert.equal(copyCode.sendable, false);
+  assert.match(copyCode.unsupportedReason, /COPY_CODE/);
 });
 
 test("builds template send components and a staff preview from the same values", () => {
