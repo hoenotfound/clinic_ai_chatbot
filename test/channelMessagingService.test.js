@@ -6,6 +6,7 @@ const whatsapp = require("../src/services/whatsappService");
 const meta = require("../src/services/metaMessagingService");
 const metaAttachments = require("../src/services/metaAttachmentService");
 const mediaStorage = require("../src/services/mediaStorageService");
+const promoImagesRepo = require("../src/db/promoImagesRepo");
 const audioConvert = require("../src/services/audioConvertService");
 const whatsappPolicy = require("../src/services/whatsappPolicyService");
 const messaging = require("../src/services/channelMessagingService");
@@ -668,5 +669,104 @@ test("social image retry can skip a caption that was already delivered", async (
 
   assert.equal(result.success, true);
   assert.equal(captionCalls, 0);
+  assert.equal(imageCalls, 1);
+});
+
+
+test("Facebook stored promo preserves a delivered caption when late cancellation blocks the image", async (t) => {
+  const originalGetImage = promoImagesRepo.getImage;
+  const originalMetaSend = meta.sendText;
+  const originalBufferSend = metaAttachments.sendBuffer;
+  t.after(() => {
+    promoImagesRepo.getImage = originalGetImage;
+    meta.sendText = originalMetaSend;
+    metaAttachments.sendBuffer = originalBufferSend;
+  });
+
+  promoImagesRepo.getImage = async (id) => {
+    assert.equal(id, 77);
+    return {
+      id,
+      mime_type: "image/jpeg",
+      data: Buffer.from("promo-bytes").toString("base64"),
+    };
+  };
+
+  let captionCalls = 0;
+  meta.sendText = async (channel, to, text) => {
+    captionCalls += 1;
+    assert.equal(channel, "facebook");
+    assert.equal(to, "psid-late-cancel");
+    assert.equal(text, "Promo caption");
+    return {
+      success: true,
+      externalMessageId: "fb-caption-accepted",
+      error: null,
+    };
+  };
+
+  let imageCalls = 0;
+  metaAttachments.sendBuffer = async () => {
+    imageCalls += 1;
+    return {
+      success: true,
+      externalMessageId: "must-not-send-image",
+      error: null,
+    };
+  };
+
+  let guardCalls = 0;
+  const recordedProviderIds = [];
+  const result = await messaging.sendImageByUrl(
+    {
+      id: 403,
+      channel: "facebook",
+      channel_user_id: "psid-late-cancel",
+    },
+    "https://app.example/promo-images/77",
+    "Promo caption",
+    {
+      preSendCheck: () => {
+        guardCalls += 1;
+        return guardCalls === 1;
+      },
+      onProviderMessageId: async (id) => {
+        recordedProviderIds.push(id);
+      },
+    }
+  );
+
+  assert.equal(guardCalls, 2);
+  assert.equal(captionCalls, 1);
+  assert.equal(imageCalls, 0);
+  assert.equal(result.success, false);
+  assert.equal(result.cancelled, false);
+  assert.equal(result.partialCaptionSent, true);
+  assert.equal(result.captionProviderMessageId, "fb-caption-accepted");
+  assert.match(result.error, /caption was sent/i);
+  assert.deepEqual(recordedProviderIds, ["fb-caption-accepted"]);
+
+  metaAttachments.sendBuffer = async () => {
+    imageCalls += 1;
+    return {
+      success: true,
+      externalMessageId: "fb-image-retry",
+      error: null,
+    };
+  };
+
+  const retry = await messaging.sendImageByUrl(
+    {
+      id: 403,
+      channel: "facebook",
+      channel_user_id: "psid-late-cancel",
+    },
+    "https://app.example/promo-images/77",
+    undefined,
+    { skipCaption: true }
+  );
+
+  assert.equal(retry.success, true);
+  assert.equal(captionCalls, 1);
   assert.equal(imageCalls, 1);
 });
