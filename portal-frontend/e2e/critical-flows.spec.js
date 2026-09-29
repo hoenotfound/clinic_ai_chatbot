@@ -377,6 +377,35 @@ test("manual Inbox reply sends the exact text and takes ownership", async ({ pag
   expectNoUnexpectedApi(apiState);
 });
 
+test("Messenger conversation stays manually replyable in the Human Agent window", async ({ page }) => {
+  const oldInbound = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+  const apiState = await installApi(page, {
+    initialConversations: [
+      conversation({
+        channel: "facebook",
+        latest_inbound_at: oldInbound,
+        latest_customer_message_at: oldInbound,
+        last_message_at: oldInbound,
+      }),
+    ],
+  });
+
+  await page.goto("/inbox");
+
+  await expect(page.getByText(/Staff reply only/)).toBeVisible();
+  const composer = page.getByPlaceholder("Message to take over from AI…");
+  await expect(composer).toBeEnabled();
+
+  await composer.fill("Manual Human Agent reply");
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  await expect(page.getByText("Manual Human Agent reply", { exact: true }).last()).toBeVisible();
+  expect(findCall(apiState, "POST", "/api/conversations/101/messages")?.body).toEqual({
+    text: "Manual Human Agent reply",
+  });
+  expectNoUnexpectedApi(apiState);
+});
+
 test("Inbox takeover and Return to AI change ownership through the correct endpoints", async ({ page }) => {
   const apiState = await installApi(page);
 
