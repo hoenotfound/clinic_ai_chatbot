@@ -269,8 +269,16 @@ async function reconcileRecoveredOutbound(
 
   // The assistant row was reserved before the provider call, but no durable
   // provider outcome exists. The process may have died either just before or
-  // just after Meta accepted the request. Automatic resend would risk a
-  // duplicate customer reply, so hand this one to staff instead.
+  // just after Meta accepted the request. Mark the visible message unconfirmed
+  // so it is excluded from future AI context and never looks successfully sent.
+  const ambiguousReason =
+    "Delivery could not be confirmed because the server restarted during this automated reply. Check the customer chat before replying to avoid sending it twice.";
+  if (typeof repository.markOutboundAttemptAmbiguous === "function") {
+    await repository.markOutboundAttemptAmbiguous(job.id, ambiguousReason);
+  }
+
+  // Automatic resend would risk a duplicate customer reply, so hand this one
+  // to staff instead.
   try {
     await contacts.setAttention(
       job.contact_id,
