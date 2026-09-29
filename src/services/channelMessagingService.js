@@ -226,7 +226,7 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
   let captionSent = false;
   let captionProviderMessageId = null;
   if (caption?.trim() && options.skipCaption !== true) {
-    const cancelled = preSendCancelled(sendOptions);
+    const cancelled = preSendCancelled(options);
     if (cancelled) return cancelled;
     // Messenger keeps caption text separate from the media attachment. This is
     // the same ordering as the URL path: preserve customer context even if the
@@ -321,7 +321,7 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
     if (storedResult) return storedResult;
   }
 
-  const cancelled = preSendCancelled(options);
+  const cancelled = preSendCancelled(sendOptions);
   if (cancelled) return cancelled;
   return trackSocialOutbound(
     channel,
