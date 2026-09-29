@@ -701,6 +701,7 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
 
     res.status(201).json({
       ...finalMessage,
+      whatsapp_template: saved.whatsapp_template || metadata,
       delivery_error: publicDeliveryError(finalMessage.delivery_error),
       delivered: sendResult.success,
       template: {
