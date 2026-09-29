@@ -259,6 +259,12 @@ async function reconcileRecoveredOutbound(
         `Failed to restore delivery attention for recovered inbound job ${job.id}:`,
         err
       );
+      const attentionErr = new Error(
+        "Recovered rejected reply could not restore staff delivery attention."
+      );
+      attentionErr.code = "DELIVERY_ATTENTION_RESTORE_FAILED";
+      attentionErr.cause = err;
+      throw attentionErr;
     }
   }
 
