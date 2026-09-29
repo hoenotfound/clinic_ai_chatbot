@@ -134,3 +134,64 @@ test("WhatsApp opt-out fields do not create a social-channel opt-out state", () 
 
   assert.equal(result.allowed, true);
 });
+
+test("allows a real Messenger staff reply from 24 hours through the 7-day Human Agent window", () => {
+  const result = policy.evaluateFreeformState(
+    {
+      channel: "facebook",
+      latest_inbound_at: new Date("2026-09-01T10:00:00.000Z"),
+    },
+    new Date("2026-09-02T12:00:00.000Z"),
+    { purpose: "human_agent" }
+  );
+
+  assert.equal(result.allowed, true);
+  assert.equal(result.humanAgentRequired, true);
+  assert.equal(
+    result.humanAgentWindowEndsAt.toISOString(),
+    "2026-09-08T10:00:00.000Z"
+  );
+});
+
+test("keeps automated Messenger replies blocked after the standard 24-hour window", () => {
+  const result = policy.evaluateFreeformState(
+    {
+      channel: "facebook",
+      latest_inbound_at: new Date("2026-09-01T10:00:00.000Z"),
+    },
+    new Date("2026-09-02T12:00:00.000Z"),
+    { purpose: "service" }
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.code, "outside_customer_service_window");
+});
+
+test("blocks Instagram staff replies when the 7-day Human Agent window has ended", () => {
+  const result = policy.evaluateFreeformState(
+    {
+      channel: "instagram",
+      latest_inbound_at: new Date("2026-09-01T10:00:00.000Z"),
+    },
+    new Date("2026-09-08T10:00:00.000Z"),
+    { purpose: "human_agent" }
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.code, "outside_human_agent_window");
+  assert.match(result.message, /7-day Human Agent window/);
+});
+
+test("does not extend WhatsApp with the Meta Human Agent purpose", () => {
+  const result = policy.evaluateFreeformState(
+    {
+      channel: "whatsapp",
+      latest_inbound_at: new Date("2026-09-01T10:00:00.000Z"),
+    },
+    new Date("2026-09-02T12:00:00.000Z"),
+    { purpose: "human_agent" }
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.code, "outside_customer_service_window");
+});
