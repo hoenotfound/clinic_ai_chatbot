@@ -354,13 +354,58 @@ async function runInboundProcessingRecovery({
     workCount += jobs.length;
 
     for (const group of groupJobsByContact(jobs)) {
-      const items = [];
-      for (const job of group) {
+      const handledJobIds = new Set();
+      let coveredThroughMessageId = null;
+
+      // Reconcile from newest to oldest first. Reaching an outbound reservation
+      // for message N proves processIncomingBatch already walked every earlier
+      // item in that same ordered burst. If the process died after the final
+      // send, those suppressed predecessors must be completed rather than
+      // replayed as a new one-message batch.
+      for (let index = group.length - 1; index >= 0; index -= 1) {
+        const job = group[index];
         try {
           if (await reconcileRecoveredOutbound(job, { repository, contacts })) {
-            continue;
+            handledJobIds.add(job.id);
+            const messageId = Number(job.message_id);
+            if (Number.isSafeInteger(messageId)) {
+              coveredThroughMessageId = coveredThroughMessageId == null
+                ? messageId
+                : Math.max(coveredThroughMessageId, messageId);
+            }
           }
+        } catch (err) {
+          console.error(`Failed to reconcile recovered outbound job ${job.id}:`, err);
+          const failed = await repository.markFailed(job.id, err).catch(() => null);
+          await flagTerminalFailure(failed || job, contacts, repository);
+          handledJobIds.add(job.id);
+        }
+      }
 
+      const items = [];
+      for (const job of group) {
+        if (handledJobIds.has(job.id)) continue;
+
+        const messageId = Number(job.message_id);
+        if (
+          coveredThroughMessageId != null &&
+          Number.isSafeInteger(messageId) &&
+          messageId < coveredThroughMessageId
+        ) {
+          try {
+            await repository.markCompleted(job.id);
+          } catch (err) {
+            console.error(
+              `Failed to complete burst-covered inbound job ${job.id}:`,
+              err
+            );
+            const failed = await repository.markFailed(job.id, err).catch(() => null);
+            await flagTerminalFailure(failed || job, contacts, repository);
+          }
+          continue;
+        }
+
+        try {
           const item = await resumeJob(job);
           // Opt-outs deliberately complete their durable job during prepare and
           // return null because there must be no automated outbound response.
