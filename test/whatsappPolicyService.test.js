@@ -13,6 +13,10 @@ test("detects common WhatsApp opt-out requests in supported chat languages", () 
     "不要联系我",
     "jangan mesej saya",
     "tak nak whatsapp",
+    "Stop promotions",
+    "Stop promo",
+    "Unsubscribe from promos",
+    "Unsubscribe from All",
   ];
 
   for (const text of optOuts) {
