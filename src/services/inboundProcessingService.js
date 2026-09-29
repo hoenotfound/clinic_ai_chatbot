@@ -250,7 +250,10 @@ async function reconcileRecoveredOutbound(
 
   if (rejected) {
     try {
-      await contacts.setDeliveryAttention?.(
+      if (typeof contacts.setDeliveryAttention !== "function") {
+        throw new Error("Delivery-attention persistence is unavailable.");
+      }
+      await contacts.setDeliveryAttention(
         job.contact_id,
         `Delivery failed: ${attempt.error_text || attempt.delivery_error || "The automated reply was rejected by the messaging provider."}`
       );
