@@ -146,11 +146,13 @@ export default function WhatsAppTemplateModal({
       setCatalog(data);
       const templates = data.templates || [];
       const firstSendable = templates.find((template) => template.sendable) || null;
-      const currentTemplate = templates.find(
-        (template) =>
-          `${template.name}::${template.language}` === selectedKey &&
-          template.sendable
-      ) || null;
+      const currentTemplate = force
+        ? null
+        : templates.find(
+            (template) =>
+              `${template.name}::${template.language}` === selectedKey &&
+              template.sendable
+          ) || null;
       const nextTemplate = currentTemplate || firstSendable;
       if (nextTemplate) {
         const key = `${nextTemplate.name}::${nextTemplate.language}`;
