@@ -848,3 +848,44 @@ test("outbound-attempt lookup failure defers the whole recovered contact before 
   ]);
   assert.deepEqual(resumed, []);
 });
+
+
+test("recovery completes a durable cancelled outbound attempt without replaying or alerting staff", async () => {
+  const calls = [];
+  const job = {
+    id: 433,
+    contact_id: 65,
+    message_id: 1433,
+    status: "processing",
+    attempts: 2,
+  };
+  const repository = {
+    async getOutboundAttempt(jobId) {
+      assert.equal(jobId, job.id);
+      return {
+        outcome: "cancelled",
+        assistant_message_id: null,
+        provider_message_id: null,
+        whatsapp_message_id: null,
+        delivery_status: null,
+      };
+    },
+    async markCompleted(jobId) {
+      calls.push(["completed", jobId]);
+      return { ...job, status: "completed" };
+    },
+  };
+  const contacts = {
+    async setAttention() {
+      throw new Error("cancelled recovery must not alert staff");
+    },
+    async setDeliveryAttention() {
+      throw new Error("cancelled recovery must not create delivery attention");
+    },
+  };
+
+  const handled = await reconcileRecoveredOutbound(job, { repository, contacts });
+
+  assert.equal(handled, true);
+  assert.deepEqual(calls, [["completed", job.id]]);
+});
