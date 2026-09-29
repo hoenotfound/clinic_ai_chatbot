@@ -221,23 +221,13 @@ conversationsRouter.delete("/:contactId/scheduled-messages/:scheduledId", async 
 
 let schedulerStarted = false;
 
-async function startSchedulerWhenSchemaIsReady() {
-  if (schedulerStarted) return;
-  try {
-    // The preload runs before server.js calls initSchema(). Wait until the base
-    // contacts/messages tables exist, then create this feature's table once and
-    // start the worker. If the database is still booting, retry without
-    // crashing or delaying the main chatbot server.
-    await scheduledRepo.ensureSchema();
-    if (schedulerStarted) return;
-    schedulerStarted = true;
-    startScheduledMessages();
-  } catch (err) {
-    console.warn("Scheduled-message worker is waiting for database schema:", err?.message || err);
-    const retryTimer = setTimeout(startSchedulerWhenSchemaIsReady, 5000);
-    retryTimer.unref?.();
-  }
+function startScheduledMessageWorker() {
+  if (schedulerStarted) return false;
+  schedulerStarted = true;
+  startScheduledMessages();
+  return true;
 }
 
-const startTimer = setTimeout(startSchedulerWhenSchemaIsReady, 1000);
-startTimer.unref?.();
+module.exports = {
+  startScheduledMessageWorker,
+};
