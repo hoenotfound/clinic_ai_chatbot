@@ -383,6 +383,7 @@ test("Messenger conversation stays manually replyable in the Human Agent window"
     initialConversations: [
       conversation({
         channel: "facebook",
+        human_agent_enabled: true,
         latest_inbound_at: oldInbound,
         latest_customer_message_at: oldInbound,
         last_message_at: oldInbound,
@@ -403,6 +404,29 @@ test("Messenger conversation stays manually replyable in the Human Agent window"
   expect(findCall(apiState, "POST", "/api/conversations/101/messages")?.body).toEqual({
     text: "Manual Human Agent reply",
   });
+  expectNoUnexpectedApi(apiState);
+});
+
+test("Messenger stays closed after 24 hours when Human Agent is not enabled", async ({ page }) => {
+  const oldInbound = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+  const apiState = await installApi(page, {
+    initialConversations: [
+      conversation({
+        channel: "facebook",
+        human_agent_enabled: false,
+        latest_inbound_at: oldInbound,
+        latest_customer_message_at: oldInbound,
+        last_message_at: oldInbound,
+      }),
+    ],
+  });
+
+  await page.goto("/inbox");
+
+  await expect(page.getByText("Reply window closed", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Staff reply only/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+  expect(findCall(apiState, "POST", "/api/conversations/101/messages")).toBeFalsy();
   expectNoUnexpectedApi(apiState);
 });
 
