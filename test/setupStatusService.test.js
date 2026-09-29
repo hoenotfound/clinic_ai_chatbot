@@ -588,7 +588,9 @@ test("WhatsApp template setup check is optional and does not block normal WhatsA
   let fetchCalls = 0;
   const service = createSetupStatusService({
     env,
-    repository: memoryRepository(),
+    repository: memoryRepository(
+      [{ check_key: "whatsapp_webhook", last_webhook_at: "2026-09-03T10:00:00.000Z" }]
+    ),
     database: {
       async query(sql) {
         return /COUNT/.test(sql) ? { rows: [{ count: 1 }] } : { rows: [{ ok: 1 }] };
@@ -635,7 +637,9 @@ test("WhatsApp template setup check warns when WABA catalog permission fails wit
   const env = completeEnv();
   const service = createSetupStatusService({
     env,
-    repository: memoryRepository(),
+    repository: memoryRepository(
+      [{ check_key: "whatsapp_webhook", last_webhook_at: "2026-09-03T10:00:00.000Z" }]
+    ),
     database: {
       async query(sql) {
         return /COUNT/.test(sql) ? { rows: [{ count: 1 }] } : { rows: [{ ok: 1 }] };
