@@ -1,5 +1,8 @@
 const { pool } = require("../db/db");
-const { humanAgentFeatureEnabled } = require("../utils/metaHumanAgent");
+const {
+  humanAgentChannelEnabled,
+  humanAgentFeatureEnabled,
+} = require("../utils/metaHumanAgent");
 
 const CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HUMAN_AGENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -80,7 +83,7 @@ function manualStaffPurpose(contactOrChannel, env = process.env) {
     typeof contactOrChannel === "string"
       ? contactOrChannel
       : contactOrChannel?.channel || "whatsapp";
-  return humanAgentFeatureEnabled(env) && HUMAN_AGENT_CHANNELS.has(channel)
+  return humanAgentChannelEnabled(channel, env) && HUMAN_AGENT_CHANNELS.has(channel)
     ? "human_agent"
     : "service";
 }
@@ -219,10 +222,14 @@ async function checkFreeformAllowed(
   now = new Date(),
   {
     purpose = "service",
-    humanAgentEnabled = humanAgentFeatureEnabled(),
+    humanAgentEnabled = null,
   } = {}
 ) {
   const channel = contact?.channel || "whatsapp";
+  const effectiveHumanAgentEnabled =
+    humanAgentEnabled === null
+      ? humanAgentChannelEnabled(channel)
+      : humanAgentEnabled;
   if (!STANDARD_WINDOW_CHANNELS.has(channel)) {
     return { allowed: true, code: null, message: null };
   }
@@ -242,7 +249,10 @@ async function checkFreeformAllowed(
       `${channelLabel(channel)} send blocked because the contact no longer exists.`
     );
   }
-  return evaluateFreeformState(state, now, { purpose, humanAgentEnabled });
+  return evaluateFreeformState(state, now, {
+    purpose,
+    humanAgentEnabled: effectiveHumanAgentEnabled,
+  });
 }
 
 async function recordOptOut(contactId, source = "customer_message") {
