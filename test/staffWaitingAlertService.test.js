@@ -40,7 +40,7 @@ const enabledEnv = {
   TELEGRAM_CHAT_ID: "-100123",
 };
 
-test("waiting candidate query uses the latest unanswered customer message after 10 minutes", async () => {
+test("waiting candidate uses the latest unanswered message but suppresses an already-alerted episode", async () => {
   let captured = null;
   const rows = [{
     contact_id: 12,
@@ -64,7 +64,9 @@ test("waiting candidate query uses the latest unanswered customer message after 
   assert.match(captured.sql, /latest_waiting\.id AS waiting_since_message_id/);
   assert.match(captured.sql, /ORDER BY m\.created_at DESC, m\.id DESC/);
   assert.match(captured.sql, /delivery_status NOT IN \('failed', 'unknown'\)/);
-  assert.match(captured.sql, /staff_waiting:/);
+  assert.match(captured.sql, /a\.alert_type = 'staff_waiting'/);
+  assert.match(captured.sql, /a\.status IN \('pending', 'sending', 'sent'\)/);
+  assert.match(captured.sql, /a\.created_at > last_valid_staff_outbound\.created_at/);
 });
 
 test("revalidation keeps Staff mode or outstanding attention eligible until a valid reply exists", async () => {
