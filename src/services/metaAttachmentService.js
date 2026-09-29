@@ -181,6 +181,15 @@ async function sendUrlAttachment(channel, recipientId, type, mediaUrl, options =
 }
 
 async function sendBuffer(channel, recipientId, type, buffer, mimeType, filename, options = {}) {
+  if (options.humanAgent === true && !humanAgentFeatureEnabled()) {
+    return {
+      success: false,
+      externalMessageId: null,
+      error:
+        "Human Agent send blocked because META_HUMAN_AGENT_ENABLED is not enabled for this deployment.",
+    };
+  }
+
   const uploaded = await uploadAttachment(channel, type, buffer, mimeType, filename);
   if (!uploaded.success) {
     return {
