@@ -16,6 +16,7 @@ test("detects common WhatsApp opt-out requests in supported chat languages", () 
     "Stop promotions",
     "Stop promo",
     "Unsubscribe from promos",
+    "Unsubcribe from Promos",
     "Unsubscribe from All",
   ];
 
