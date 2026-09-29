@@ -17,8 +17,7 @@ test("failed social image retries preserve a delivered caption marker and skip r
     "utf8"
   );
 
-  assert.match(routeSource, /PARTIAL_CAPTION_ERROR_PREFIX/);
-  assert.match(routeSource, /function publicDeliveryError/);
+  assert.match(routeSource, /require\("\.\.\/utils\/socialDeliveryError"\)/);
   assert.match(routeSource, /hasPartialCaptionMarker\(message\.delivery_error\)/);
   assert.match(routeSource, /socialProviderSendOptions\(message, contact, \{ skipCaption \}\)/);
   assert.match(routeSource, /deliveryErrorForSend\([\s\S]*message\.delivery_error/);
@@ -26,6 +25,14 @@ test("failed social image retries preserve a delivered caption marker and skip r
   assert.match(messagingSource, /options\.skipCaption !== true/);
   assert.match(messagingSource, /partialCaptionSent: true/);
   assert.match(messagingSource, /captionProviderMessageId/);
+
+  const helperSource = read("src/utils/socialDeliveryError.js");
+  assert.match(helperSource, /PARTIAL_CAPTION_ERROR_PREFIX/);
+  assert.match(helperSource, /function publicDeliveryError/);
+
+  const serverSource = read("src/server.js");
+  assert.match(serverSource, /deliveryErrorForSend\([\s\S]*promoResult/);
+  assert.match(serverSource, /publicDeliveryError\(promoError\)/);
 
   const inboxSource = read("portal-frontend/src/pages/Inbox.jsx");
   assert.match(inboxSource, /function displayDeliveryError/);
