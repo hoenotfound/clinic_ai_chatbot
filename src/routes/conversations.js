@@ -744,7 +744,7 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
     } else {
       await contactsRepo.setDeliveryAttention(
         contact.id,
-        `Delivery failed: ${publicDeliveryError(errorText)}`
+        `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
       );
     }
 
@@ -925,7 +925,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     } else {
       await contactsRepo.setDeliveryAttention(
         contact.id,
-        `Delivery failed: ${publicDeliveryError(errorText)}`
+        `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
       );
     }
 
