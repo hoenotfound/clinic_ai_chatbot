@@ -19,7 +19,11 @@ test("ready Telegram summaries wait for inactivity and are invalidated only by a
     assert.doesNotMatch(sql, /a\.through_message_id = latest\.id/);
     assert.match(sql, /l\.temperature AS current_temperature/);
     assert.match(sql, /ORDER BY latest\.created_at ASC/);
-    assert.deepEqual(params, [10, 5]);
+    assert.match(sql, /telegram_immediate_alerts immediate/);
+    assert.match(sql, /immediate\.alert_type IN \('human_intervention', 'booking_ready', 'staff_waiting'\)/);
+    assert.match(sql, /immediate\.status IN \('pending', 'sending', 'sent'\)/);
+    assert.match(sql, /COALESCE\(a\.score_data->>'alertType', ''\) = 'ai_scoring_failed'/);
+    assert.deepEqual(params, [10, 5, telegramAlertRepo.ACTIONABLE_SUMMARY_SUPPRESSION_MINUTES]);
     return { rows: [{ alert_id: 31, lead_id: 7 }] };
   };
 
@@ -43,7 +47,8 @@ test("claim rechecks inactivity and newer customer messages atomically", async (
     assert.match(sql, /latest\.created_at/);
     assert.match(sql, /\$2::integer \* interval '1 minute'/);
     assert.match(sql, /l\.temperature AS current_temperature/);
-    assert.deepEqual(params, [31, 10]);
+    assert.match(sql, /telegram_immediate_alerts immediate/);
+    assert.deepEqual(params, [31, 10, telegramAlertRepo.ACTIONABLE_SUMMARY_SUPPRESSION_MINUTES]);
     return {
       rows: [{
         alert_id: 31,
@@ -57,6 +62,54 @@ test("claim rechecks inactivity and newer customer messages atomically", async (
   const claim = await telegramAlertRepo.claimSummary(31, 10);
   assert.equal(claim.alert_id, 31);
   assert.equal(claim.current_temperature, "warm");
+});
+
+test("actionable alert coverage is state-aware and manual-review summaries are exempt", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  const calls = [];
+  pool.query = async (sql, params) => {
+    calls.push({ sql, params });
+    if (/SELECT immediate\.status/.test(sql)) {
+      assert.match(sql, /status IN \('pending', 'sending', 'sent'\)/);
+      assert.match(sql, /alert_type IN \('human_intervention', 'booking_ready', 'staff_waiting'\)/);
+      assert.match(sql, /alertType', ''\) <> 'ai_scoring_failed'/);
+      return { rows: [{ status: "sent" }] };
+    }
+    if (/UPDATE telegram_summary_alerts a/.test(sql) && /FROM leads l/.test(sql)) {
+      assert.match(sql, /immediate\.status = 'sent'/);
+      assert.match(sql, /alertType', ''\) <> 'ai_scoring_failed'/);
+      return { rows: [{ id: 33 }] };
+    }
+    if (/SET status = 'superseded'/.test(sql)) {
+      return { rows: [{ id: 31, status: "superseded" }] };
+    }
+    if (/SET status = 'pending'/.test(sql) && /attempts = GREATEST/.test(sql)) {
+      return { rows: [{ id: 32, status: "pending", attempts: 0 }] };
+    }
+    throw new Error("Unexpected SQL in anti-spam repo test");
+  };
+
+  assert.equal(
+    await telegramAlertRepo.findActionableCoverage(31),
+    "sent"
+  );
+  assert.deepEqual(
+    await telegramAlertRepo.markSuperseded(31),
+    { id: 31, status: "superseded" }
+  );
+  assert.deepEqual(
+    await telegramAlertRepo.releaseClaim(32),
+    { id: 32, status: "pending", attempts: 0 }
+  );
+  assert.deepEqual(
+    await telegramAlertRepo.supersedeCoveredSummaries(),
+    [{ id: 33 }]
+  );
+  assert.equal(calls.length, 4);
 });
 
 test("queueing a newer scored snapshot supersedes only older unsent snapshots under a per-lead lock", async (t) => {

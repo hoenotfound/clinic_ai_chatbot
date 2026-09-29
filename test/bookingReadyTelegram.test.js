@@ -32,19 +32,24 @@ test("booking-ready Telegram message is distinct from human escalation", () => {
     type: "booking_ready",
     context,
     reason: "Booking ready: customer provided scheduling preferences; staff should confirm availability.",
+    details: {
+      staffSummary: "Customer wants HIFU at Puchong and prefers Saturday afternoon. Staff should confirm an available slot.",
+    },
     env: { PUBLIC_BASE_URL: "https://clinic.example" },
   });
 
   assert.match(text, /^🔥 Booking Ready/);
   assert.match(text, /Temperature: 🔥 Hot/i);
   assert.match(text, /Branch: Puchong/);
+  assert.match(text, /AI Summary:/);
+  assert.match(text, /Customer wants HIFU at Puchong and prefers Saturday afternoon/);
   assert.match(text, /confirm the appointment availability/i);
   assert.doesNotMatch(text, /Human Intervention Required/);
 });
 
-test("booking-ready notification is claimed once using its own alert type", async () => {
-  const claims = [];
-  const sent = [];
+test("booking-ready notification is durably queued once using its own alert type", async () => {
+  const queued = [];
+  let wakes = 0;
   const service = createTelegramImmediateAlertService({
     env: {
       TELEGRAM_ALERTS_ENABLED: "true",
@@ -55,14 +60,14 @@ test("booking-ready notification is claimed once using its own alert type", asyn
     async getContext() {
       return context;
     },
-    async claimAlert(input) {
-      claims.push(input);
-      return true;
+    repository: {
+      async queueAlert(input) {
+        queued.push(input);
+        return { id: 123 };
+      },
     },
-    async releaseAlert() {},
-    async sendMessage(input) {
-      sent.push(input);
-      return { ok: true };
+    wakeQueue() {
+      wakes += 1;
     },
   });
 
@@ -72,14 +77,57 @@ test("booking-ready notification is claimed once using its own alert type", asyn
     reason: "Ready for staff confirmation.",
   });
 
-  assert.equal(result.status, "sent");
-  assert.deepEqual(claims, [
-    {
-      eventKey: "booking-ready:42:777",
-      type: "booking_ready",
-      contactId: 42,
+  assert.deepEqual(result, { status: "queued", alertId: 123 });
+  assert.equal(wakes, 1);
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].eventKey, "booking-ready:42:777");
+  assert.equal(queued[0].type, "booking_ready");
+  assert.equal(queued[0].contactId, 42);
+  assert.match(queued[0].messageText, /^🔥 Booking Ready/);
+});
+
+test("transactional Booking Ready inserts its alert on the caller's client", async () => {
+  const steps = [];
+  const transactionClient = {
+    async query() { return { rows: [] }; },
+  };
+  const service = createTelegramImmediateAlertService({
+    env: {
+      TELEGRAM_ALERTS_ENABLED: "true",
+      TELEGRAM_BOT_TOKEN: "test-token",
+      TELEGRAM_CHAT_ID: "test-chat",
     },
+    async getContext(id, query) {
+      assert.equal(id, 42);
+      assert.equal(typeof query, "function");
+      return context;
+    },
+    repository: {
+      async cancelOlderPendingBookingReady(input, query) {
+        steps.push(["cancel", input.eventKey, typeof query]);
+      },
+      async insertAlert(input, query) {
+        steps.push(["insert", input.eventKey, typeof query]);
+        return { id: 124 };
+      },
+      async queueAlert() {
+        throw new Error("must not open a separate queue transaction");
+      },
+    },
+    wakeQueue() {
+      throw new Error("worker must only wake after the caller commits");
+    },
+  });
+
+  const result = await service.sendBookingReadyAlert({
+    contactId: 42,
+    messageId: 777,
+    reason: "Ready for staff confirmation.",
+    transactionClient,
+  });
+  assert.deepEqual(result, { status: "queued", alertId: 124 });
+  assert.deepEqual(steps, [
+    ["cancel", "booking-ready:42:777", "function"],
+    ["insert", "booking-ready:42:777", "function"],
   ]);
-  assert.equal(sent.length, 1);
-  assert.match(sent[0].text, /^🔥 Booking Ready/);
 });

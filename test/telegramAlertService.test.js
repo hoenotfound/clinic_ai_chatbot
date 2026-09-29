@@ -242,13 +242,79 @@ test("flush rechecks inactivity at claim time and formats from the claimed snaps
   });
 
   const result = await service.flushConversationSummaries({ inactivityMinutes: 10 });
-  assert.deepEqual(findArgs, { inactivityMinutes: 10, limit: 5 });
-  assert.deepEqual(claimArgs, [31, 10]);
+  assert.deepEqual(findArgs, { inactivityMinutes: 10, limit: 5, suppressionMinutes: 60 });
+  assert.deepEqual(claimArgs, [31, 10, 60]);
   assert.equal(markedSentId, 31);
   assert.equal(sent.token, "bot-token");
   assert.equal(sent.chatId, "-100123");
   assert.match(sent.text, /Current Temperature: 🟠 Warm/);
   assert.deepEqual(result, { status: "completed", sent: 1 });
+});
+
+test("pending actionable alert holds the normal conversation summary without burning an attempt", async () => {
+  let sends = 0;
+  let released = null;
+  const service = createTelegramAlertService({
+    env: {
+      TELEGRAM_ALERTS_ENABLED: "true",
+      TELEGRAM_BOT_TOKEN: "bot-token",
+      TELEGRAM_CHAT_ID: "-100123",
+    },
+    repository: {
+      supersedeCoveredSummaries: async () => [],
+      findReadySummaries: async () => [{ alert_id: 31, lead_id: 7 }],
+      claimSummary: async () => ({ ...lead, score_data: score }),
+      findActionableCoverage: async () => "pending",
+      releaseClaim: async (id) => {
+        released = id;
+        return { id, status: "pending" };
+      },
+      markSuperseded: async () => assert.fail("pending primary alert should not permanently suppress yet"),
+      markSent: async () => assert.fail("held summary should not be sent"),
+      markFailed: async () => assert.fail("held summary should not be failed"),
+    },
+    sendMessage: async () => {
+      sends += 1;
+    },
+  });
+
+  const result = await service.flushConversationSummaries({ inactivityMinutes: 10 });
+  assert.equal(sends, 0);
+  assert.equal(released, 31);
+  assert.deepEqual(result, { status: "completed", sent: 0 });
+});
+
+test("sent actionable alert permanently supersedes the redundant normal summary", async () => {
+  let sends = 0;
+  let superseded = null;
+  const service = createTelegramAlertService({
+    env: {
+      TELEGRAM_ALERTS_ENABLED: "true",
+      TELEGRAM_BOT_TOKEN: "bot-token",
+      TELEGRAM_CHAT_ID: "-100123",
+    },
+    repository: {
+      supersedeCoveredSummaries: async () => [],
+      findReadySummaries: async () => [{ alert_id: 31, lead_id: 7 }],
+      claimSummary: async () => ({ ...lead, score_data: score }),
+      findActionableCoverage: async () => "sent",
+      markSuperseded: async (id) => {
+        superseded = id;
+        return { id, status: "superseded" };
+      },
+      releaseClaim: async () => assert.fail("sent primary alert should supersede, not hold"),
+      markSent: async () => assert.fail("redundant summary should not be sent"),
+      markFailed: async () => assert.fail("redundant summary should not fail"),
+    },
+    sendMessage: async () => {
+      sends += 1;
+    },
+  });
+
+  const result = await service.flushConversationSummaries({ inactivityMinutes: 10 });
+  assert.equal(sends, 0);
+  assert.equal(superseded, 31);
+  assert.deepEqual(result, { status: "completed", sent: 0 });
 });
 
 test("a candidate invalidated before claim is not sent", async () => {

@@ -150,12 +150,14 @@ test("application startup opens the Render port before initialization and marks 
 
   const listenAt = startupSource.indexOf("await listenHttpServer(app, { port })");
   const initAt = startupSource.indexOf("await initSchema()");
+  const telegramWorkerAt = startupSource.indexOf("startTelegramImmediateAlertRecovery()");
   const workersAt = startupSource.indexOf('console.log("[Startup] Maintenance and recovery workers started.")');
   const readyAt = startupSource.indexOf("startupReadiness.markReady()");
 
   assert.ok(listenAt >= 0, "startup module should open through listenHttpServer");
   assert.ok(initAt > listenAt, "database initialization must happen after the port is bound");
-  assert.ok(workersAt > initAt, "workers should start after database initialization");
+  assert.ok(telegramWorkerAt > initAt, "Telegram recovery must start only after database migrations");
+  assert.ok(workersAt > telegramWorkerAt, "worker startup log should follow Telegram recovery startup");
   assert.ok(readyAt > workersAt, "readiness must only turn green after worker startup");
   assert.match(appSource, /app\.get\("\/health\/live", startupReadiness\.livenessHandler\)/);
   assert.match(appSource, /app\.get\("\/health\/ready", startupReadiness\.readinessHandler\)/);

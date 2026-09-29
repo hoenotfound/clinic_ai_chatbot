@@ -1,14 +1,16 @@
 const { pool } = require("../db/db");
+const clinicConfig = require("../config/clinicConfig");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
+const { getOperationalLabels } = require("../utils/businessTerminology");
 const {
-  formatWhatsappNumber,
+  formatContactIdentifier,
   isTelegramEnabled,
-  postTelegramMessage,
   temperatureLabel,
 } = require("./telegramAlertService");
 const {
   getImmediateAlertContext,
+  queuePreparedAlert,
 } = require("./telegramImmediateAlertService");
 
 const STAFF_WAITING_MINUTES = 10;
@@ -18,7 +20,6 @@ const STAFF_WAITING_CHECK_INTERVAL_MS = 60 * 1000;
 const STAFF_WAITING_BATCH_SIZE = 10;
 const STAFF_WAITING_MESSAGE_LIMIT = 4000;
 const LATEST_MESSAGE_LIMIT = 600;
-const STAFF_WAITING_LOCK_NAMESPACE = 24683;
 
 let staffWaitingWorker = null;
 
@@ -157,32 +158,38 @@ async function isStillWaitingForStaff(
   return Boolean(result.rows[0]?.waiting);
 }
 
-function buildStaffWaitingAlertMessage({ context, waitingMinutes, env = process.env }) {
+function buildStaffWaitingAlertMessage({
+  context,
+  waitingMinutes,
+  env = process.env,
+  config = clinicConfig,
+}) {
+  const labels = getOperationalLabels(config);
   const name = clean(context.name || context.whatsapp_profile_name, "Unknown contact");
   const lines = [
-    "⏰ Customer Waiting for Staff",
+    `⏰ ${labels.customerLabel} Waiting for Staff`,
     "",
-    `${name} (${formatWhatsappNumber(context.whatsapp_number)})`,
+    `${name} (${formatContactIdentifier(context)})`,
     "",
-    "Customer still has an unanswered message that needs staff attention.",
+    `${labels.customerLabel} still has an unanswered message that needs staff attention.`,
     `Waiting: ${Math.max(1, Number(waitingMinutes) || 1)} minutes`,
     `Temperature: ${temperatureLabel(context.temperature)}`,
     `Stage: ${clean(context.stage_name)}`,
-    `Treatment: ${clean(context.treatment_interest)}`,
-    `Branch: ${clean(context.branch_name)}`,
+    `${labels.serviceInterestLabel}: ${clean(context.treatment_interest)}`,
+    `${labels.locationLabel}: ${clean(context.branch_name)}`,
   ];
 
   if (context.latest_customer_message) {
     lines.push(
       "",
-      "Latest Customer Message:",
+      `Latest ${labels.customerLabel} Message:`,
       clean(context.latest_customer_message).slice(0, LATEST_MESSAGE_LIMIT)
     );
   }
 
   lines.push(
     "",
-    "Action: Reply to the customer. If you want AI to handle future messages, Return to AI after replying."
+    `Action: Reply to the ${labels.customerSingular}. If you want AI to handle future messages, Return to AI after replying.`
   );
 
   const inboxUrl = buildInboxUrl(context.contact_id, env);
@@ -196,10 +203,10 @@ function buildStaffWaitingAlertMessage({ context, waitingMinutes, env = process.
 
 function createStaffWaitingAlertService({
   env = process.env,
-  database = pool,
   getContext = getImmediateAlertContext,
   stillWaiting = isStillWaitingForStaff,
-  sendMessage = postTelegramMessage,
+  queueAlert = queuePreparedAlert,
+  config = clinicConfig,
 } = {}) {
   return async function sendStaffWaitingAlert({
     contactId,
@@ -208,67 +215,30 @@ function createStaffWaitingAlertService({
   }) {
     if (!isTelegramEnabled(env)) return { status: "disabled" };
 
-    const eventKey = staffWaitingEventKey(contactId, waitingSinceMessageId);
-    const client = await database.connect();
-    let transactionStarted = false;
-
-    try {
-      await client.query("BEGIN");
-      transactionStarted = true;
-
-      await client.query(
-        "SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
-        [STAFF_WAITING_LOCK_NAMESPACE, waitingSinceMessageId]
-      );
-
-      const existing = await client.query(
-        "SELECT id FROM telegram_immediate_alerts WHERE event_key = $1 LIMIT 1",
-        [eventKey]
-      );
-      if (existing.rows[0]) {
-        await client.query("COMMIT");
-        transactionStarted = false;
-        return { status: "suppressed" };
-      }
-
-      const query = client.query.bind(client);
-      const context = await getContext(contactId, query);
-      if (!context) {
-        await client.query("COMMIT");
-        transactionStarted = false;
-        return { status: "skipped", reason: "contact-not-found" };
-      }
-
-      if (!await stillWaiting(contactId, waitingSinceMessageId, query)) {
-        await client.query("COMMIT");
-        transactionStarted = false;
-        return { status: "resolved" };
-      }
-
-      const text = buildStaffWaitingAlertMessage({ context, waitingMinutes, env });
-      const result = await sendMessage({
-        token: env.TELEGRAM_BOT_TOKEN,
-        chatId: env.TELEGRAM_CHAT_ID,
-        text,
-      });
-
-      await client.query(
-        `INSERT INTO telegram_immediate_alerts (event_key, alert_type, contact_id)
-         VALUES ($1, 'staff_waiting', $2)
-         ON CONFLICT (event_key) DO NOTHING`,
-        [eventKey, contactId]
-      );
-      await client.query("COMMIT");
-      transactionStarted = false;
-      return { status: "sent", result };
-    } catch (err) {
-      if (transactionStarted) {
-        await client.query("ROLLBACK").catch(() => {});
-      }
-      throw err;
-    } finally {
-      client.release();
+    const context = await getContext(contactId);
+    if (!context) {
+      return { status: "skipped", reason: "contact-not-found" };
     }
+
+    if (!await stillWaiting(contactId, waitingSinceMessageId)) {
+      return { status: "resolved" };
+    }
+
+    const eventKey = staffWaitingEventKey(contactId, waitingSinceMessageId);
+    const messageText = buildStaffWaitingAlertMessage({
+      context,
+      waitingMinutes,
+      env,
+      config,
+    });
+
+    return queueAlert({
+      eventKey,
+      type: "staff_waiting",
+      contactId,
+      leadId: context.lead_id,
+      messageText,
+    });
   };
 }
 
@@ -378,7 +348,6 @@ realtimeEvents.subscribe("conversation_changed", (payload) => {
 module.exports = {
   STAFF_WAITING_BATCH_SIZE,
   STAFF_WAITING_CHECK_INTERVAL_MS,
-  STAFF_WAITING_LOCK_NAMESPACE,
   STAFF_WAITING_MINUTES,
   buildStaffWaitingAlertMessage,
   createStaffWaitingAlertRunner,

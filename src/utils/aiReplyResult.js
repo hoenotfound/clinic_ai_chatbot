@@ -8,6 +8,7 @@ const {
 const VALID_OUTCOMES = new Set(["normal", "needs_human", "booking_ready"]);
 const VALID_PROJECT_NEXT_STEPS = new Set(["site_visit", "quotation_discussion"]);
 const MAX_METADATA_LENGTH = 240;
+const MAX_STAFF_SUMMARY_LENGTH = 600;
 
 function conversionProfile() {
   return getConversionProfile(clinicConfig);
@@ -17,6 +18,12 @@ function cleanOptionalText(value) {
   if (typeof value !== "string") return null;
   const cleaned = stripInternalOutcomeMarkers(value).trim();
   return cleaned ? cleaned.slice(0, MAX_METADATA_LENGTH) : null;
+}
+
+function cleanStaffSummary(value) {
+  if (typeof value !== "string") return null;
+  const cleaned = stripInternalOutcomeMarkers(value).trim();
+  return cleaned ? cleaned.slice(0, MAX_STAFF_SUMMARY_LENGTH) : null;
 }
 
 function cleanNextStep(value) {
@@ -199,6 +206,9 @@ function parseStructuredReply(raw) {
       ? canonicalConfiguredService(parsed.treatment)
       : canonicalConfiguredName(parsed.treatment, clinicConfig.services);
   const appointmentPreference = cleanOptionalText(parsed.appointmentPreference);
+  const staffSummary = outcome === "booking_ready"
+    ? cleanStaffSummary(parsed.staffSummary)
+    : null;
 
   // Project-only fields must never escape into appointment-mode metadata even
   // when a model accidentally fills optional JSON fields that do not belong to
@@ -261,6 +271,7 @@ function parseStructuredReply(raw) {
   if (isProjectMode && projectLocation) details.projectLocation = projectLocation;
   if (isProjectMode && projectSummary) details.projectSummary = projectSummary;
   if (isProjectMode && nextStep) details.nextStep = nextStep;
+  if (staffSummary) details.staffSummary = staffSummary;
 
   return {
     text: reply,
@@ -305,6 +316,7 @@ function parseAiReplyResult(raw) {
 module.exports = {
   VALID_OUTCOMES,
   VALID_PROJECT_NEXT_STEPS,
+  MAX_STAFF_SUMMARY_LENGTH,
   canonicalConfiguredBranch,
   canonicalConfiguredName,
   canonicalConfiguredService,

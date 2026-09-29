@@ -7,6 +7,7 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const whatsappPolicy = require("./whatsappPolicyService");
 const clinicConfig = require("../config/clinicConfig");
 const { getOperationalLabels } = require("../utils/businessTerminology");
+const leadReengagementAlertService = require("./leadReengagementAlertService");
 
 function initialInboundText(incoming, config = clinicConfig) {
   const { customerLabel } = getOperationalLabels(config);
@@ -37,6 +38,7 @@ function createInboundMessageClaimService({
   processing = inboundProcessingRepo,
   events = realtimeEvents,
   policy = whatsappPolicy,
+  reengagement = leadReengagementAlertService,
   config = clinicConfig,
 } = {}) {
   function isWhatsappOptOut(incoming) {
@@ -109,6 +111,22 @@ function createInboundMessageClaimService({
       lead = leadOutcome?.lead || null;
     } catch (err) {
       console.error(`Failed to create or locate lead for contact ${contact.id}:`, err);
+    }
+
+    // Telegram re-engagement is operationally useful but never part of the
+    // customer-reply critical path. The stable current-message event key makes
+    // this safe to repeat during inbound recovery after a Render restart.
+    try {
+      await reengagement.notifyIfReengaged({
+        contactId: contact.id,
+        currentMessageId: savedInbound.id,
+        leadId: lead?.id || null,
+      });
+    } catch (err) {
+      console.error(
+        `Failed to evaluate Telegram lead re-engagement for contact ${contact.id}:`,
+        err
+      );
     }
 
     // First-touch attribution belongs to the start of a lead journey. Do not

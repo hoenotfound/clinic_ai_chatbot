@@ -42,6 +42,8 @@ function normalizeBookingDetails(details = {}) {
     treatment: canonicalConfiguredValue(details.treatment, clinicConfig.services),
     appointmentPreference: safeText(details.appointmentPreference),
   };
+  const staffSummary = safeText(details.staffSummary, 600);
+  if (staffSummary) normalized.staffSummary = staffSummary;
 
   // Project metadata belongs only to project-mode conversion contracts. Keep a
   // second defensive boundary here so clinic outcomes stay clean even if a
@@ -98,6 +100,7 @@ function createBookingReadyOutcomeService({
     let contactUpdated = false;
     let leadId = null;
     let leadChanged = false;
+    let bookingAlertQueued = false;
 
     try {
       await client.query("BEGIN");
@@ -219,6 +222,7 @@ function createBookingReadyOutcomeService({
             ...(details.projectLocation ? { projectLocation: details.projectLocation } : {}),
             ...(details.projectSummary ? { projectSummary: details.projectSummary } : {}),
             ...(details.nextStep ? { nextStep: details.nextStep } : {}),
+            ...(details.staffSummary ? { staffSummary: details.staffSummary } : {}),
           };
           const activityResult = await client.query(
             `INSERT INTO lead_activities (
@@ -248,6 +252,17 @@ function createBookingReadyOutcomeService({
         }
       }
 
+      if (contactUpdated) {
+        const alert = await sendBookingReadyAlert({
+          contactId,
+          messageId: capturedMessageId,
+          reason,
+          details,
+          transactionClient: client,
+        });
+        bookingAlertQueued = alert?.status === "queued";
+      }
+
       await client.query("COMMIT");
     } catch (err) {
       await client.query("ROLLBACK").catch(() => {});
@@ -266,18 +281,7 @@ function createBookingReadyOutcomeService({
       publish("pipeline_changed", { leadId });
     }
 
-    if (contactUpdated) {
-      Promise.resolve(
-        sendBookingReadyAlert({
-          contactId,
-          messageId: capturedMessageId,
-          reason,
-          details,
-        })
-      ).catch((err) => {
-        console.error(`Telegram conversion-ready alert failed for contact ${contactId}:`, err);
-      });
-    }
+    if (bookingAlertQueued) telegramImmediateAlerts.wakeImmediateAlertQueue(0);
 
     return {
       contactUpdated,

@@ -462,6 +462,12 @@ realtimeEvents.subscribe("conversation_changed", (payload) => {
   }
 });
 
+realtimeEvents.subscribe("telegram_alert_terminal", () => {
+  // An actionable Telegram alert leaving pending/sending can change whether a
+  // queued conversation summary should be superseded or released as fallback.
+  wakeLeadScoring(0);
+});
+
 realtimeEvents.subscribe("config_changed", (payload) => {
   if (!payload?.keys?.includes("leadScoring")) return;
   wakeLeadScoring(0);

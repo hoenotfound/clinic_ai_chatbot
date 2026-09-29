@@ -6,6 +6,9 @@ const { startAutomatedFollowUps } = require("./followUpService");
 const { startLeadScoring } = require("./leadScoringService");
 const { startStaffWaitingAlerts } = require("./staffWaitingAlertService");
 const {
+  startTelegramImmediateAlertRecovery,
+} = require("./telegramImmediateAlertService");
+const {
   startInboundProcessingRecovery,
 } = require("./inboundProcessingService");
 const {
@@ -69,6 +72,7 @@ async function startApplication({
 
     startInboundProcessingRecovery({ processBatch: processIncomingBatch });
     startWhatsAppDeliveryStatusRecovery();
+    startTelegramImmediateAlertRecovery();
     startAutomatedFollowUps();
     startStaffWaitingAlerts();
     startLeadScoring();

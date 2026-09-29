@@ -11,6 +11,7 @@ test("parses a structured booking-ready response and keeps booking metadata inte
     treatment: "HIFU Non-Surgical Facelift",
     branch: "Petaling Jaya",
     appointmentPreference: "Saturday afternoon",
+    staffSummary: "Customer is interested in HIFU for jawline sagging and wants PJ on Saturday afternoon. Staff should confirm availability.",
   }));
 
   assert.equal(result.bookingReady, true);
@@ -20,7 +21,22 @@ test("parses a structured booking-ready response and keeps booking metadata inte
     treatment: "HIFU Non-Surgical Facelift",
     branch: "Petaling Jaya",
     appointmentPreference: "Saturday afternoon",
+    staffSummary: "Customer is interested in HIFU for jawline sagging and wants PJ on Saturday afternoon. Staff should confirm availability.",
   });
+});
+
+test("staffSummary is ignored for non-booking outcomes", () => {
+  const result = parseAiReplyResult(JSON.stringify({
+    reply: "sure, what area are you looking to improve?",
+    outcome: "normal",
+    treatment: null,
+    branch: null,
+    appointmentPreference: null,
+    staffSummary: "This must not become internal booking metadata.",
+  }));
+
+  assert.equal(result.bookingReady, false);
+  assert.equal(Object.hasOwn(result.details, "staffSummary"), false);
 });
 
 test("clinic booking_ready ignores stray renovation-only fields from structured model output", () => {

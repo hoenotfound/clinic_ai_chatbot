@@ -95,18 +95,20 @@ test("booking-ready flags Inbox, makes an unlocked lead Hot, records activity, a
       params[2]?.messageId === 777
     )
   );
-  assert.deepEqual(alerts, [
-    {
-      contactId: 42,
-      messageId: 777,
-      reason: BOOKING_READY_REASON,
-      details: {
-        branch: null,
-        treatment: null,
-        appointmentPreference: null,
-      },
-    },
-  ]);
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].contactId, 42);
+  assert.equal(alerts[0].messageId, 777);
+  assert.equal(alerts[0].reason, BOOKING_READY_REASON);
+  assert.deepEqual(alerts[0].details, {
+    branch: null,
+    treatment: null,
+    appointmentPreference: null,
+  });
+  assert.equal(typeof alerts[0].transactionClient.query, "function");
+  assert.ok(
+    calls.findIndex(({ sql }) => sql === "COMMIT") >
+      calls.findIndex(({ sql }) => sql.startsWith("INSERT INTO lead_activities"))
+  );
   assert.ok(
     published.some(
       ({ type, payload }) =>
@@ -127,6 +129,46 @@ test("booking-ready flags Inbox, makes an unlocked lead Hot, records activity, a
   assert.doesNotMatch(allSql, /stage_id\s*=/i);
 });
 
+test("Booking Ready waits for the durable alert insert before committing", async () => {
+  const { database, calls } = fakeDatabase();
+  let finishInsert;
+  let insertStarted;
+  const started = new Promise((resolve) => { insertStarted = resolve; });
+  const inserted = new Promise((resolve) => { finishInsert = resolve; });
+  const markBookingReady = createBookingReadyOutcomeService({
+    database,
+    publish() {},
+    async sendBookingReadyAlert({ transactionClient }) {
+      assert.equal(typeof transactionClient.query, "function");
+      insertStarted();
+      await inserted;
+      return { status: "queued", alertId: 10 };
+    },
+  });
+
+  const outcome = markBookingReady(42, 781);
+  await started;
+  assert.equal(calls.some(({ sql }) => sql === "COMMIT"), false);
+  finishInsert();
+  await outcome;
+  assert.equal(calls.some(({ sql }) => sql === "COMMIT"), true);
+});
+
+test("a Booking Ready queue failure rolls back its lead and attention changes", async () => {
+  const { database, calls } = fakeDatabase();
+  const published = [];
+  const markBookingReady = createBookingReadyOutcomeService({
+    database,
+    publish(type) { published.push(type); },
+    async sendBookingReadyAlert() { throw new Error("queue unavailable"); },
+  });
+
+  await assert.rejects(markBookingReady(42, 782), /queue unavailable/);
+  assert.equal(calls.some(({ sql }) => sql === "COMMIT"), false);
+  assert.equal(calls.some(({ sql }) => sql === "ROLLBACK"), true);
+  assert.deepEqual(published, []);
+});
+
 test("structured Booking Ready persists canonical clinic metadata and discards project-only fields", async () => {
   const { database, calls } = fakeDatabase();
   const markBookingReady = createBookingReadyOutcomeService({
@@ -140,6 +182,7 @@ test("structured Booking Ready persists canonical clinic metadata and discards p
       branch: "Petaling Jaya",
       treatment: "HIFU Non-Surgical Facelift",
       appointmentPreference: "Saturday afternoon",
+      staffSummary: "Customer wants HIFU in PJ on Saturday afternoon and is ready for staff confirmation.",
       projectLocation: "Cheras",
       projectSummary: "This stray project data must not enter a clinic outcome.",
       nextStep: "site_visit",
@@ -150,6 +193,7 @@ test("structured Booking Ready persists canonical clinic metadata and discards p
     branch: "Petaling Jaya",
     treatment: "HIFU Non-Surgical Facelift",
     appointmentPreference: "Saturday afternoon",
+    staffSummary: "Customer wants HIFU in PJ on Saturday afternoon and is ready for staff confirmation.",
   });
   const contactUpdate = calls.find(({ sql }) => sql.startsWith("UPDATE contacts"));
   assert.match(contactUpdate.sql, /latest_booking\.metadata->>'branch' IS DISTINCT FROM \$3/);
@@ -172,6 +216,10 @@ test("structured Booking Ready persists canonical clinic metadata and discards p
   assert.equal(leadUpdate.params[2], "HIFU Non-Surgical Facelift");
   const activity = calls.find(({ sql }) => sql.startsWith("INSERT INTO lead_activities"));
   assert.equal(activity.params[2].appointmentPreference, "Saturday afternoon");
+  assert.equal(
+    activity.params[2].staffSummary,
+    "Customer wants HIFU in PJ on Saturday afternoon and is ready for staff confirmation."
+  );
   assert.equal(Object.hasOwn(activity.params[2], "projectLocation"), false);
   assert.equal(Object.hasOwn(activity.params[2], "projectSummary"), false);
   assert.equal(Object.hasOwn(activity.params[2], "nextStep"), false);
