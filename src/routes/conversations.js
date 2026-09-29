@@ -12,6 +12,11 @@ const mediaStorage = require("../services/mediaStorageService");
 const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const { transcribeStaffAudio } = require("../services/transcriptionService");
 const whatsappPolicy = require("../services/whatsappPolicyService");
+const {
+  hasPartialCaptionMarker,
+  deliveryErrorForSend,
+  publicDeliveryError,
+} = require("../utils/socialDeliveryError");
 
 const router = express.Router();
 const STAFF_TRANSCRIPTION_TIMEOUT_MS = 15 * 1000;
@@ -21,7 +26,6 @@ const SSE_HEARTBEAT_MS = 25 * 1000;
 const SEND_REJECTED_ERROR =
   "WhatsApp did not accept this message. Check the reply window or connection and try again.";
 const MAX_DELIVERY_STATUS_IDS = 500;
-const PARTIAL_CAPTION_ERROR_PREFIX = "partial_caption_sent|";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -102,28 +106,6 @@ function publishDeliveryStatus(message) {
 
 function rejectedErrorFor(contact) {
   return channelMessaging.rejectedError(contact?.channel || "whatsapp");
-}
-
-function hasPartialCaptionMarker(errorText) {
-  return String(errorText || "").startsWith(PARTIAL_CAPTION_ERROR_PREFIX);
-}
-
-function deliveryErrorForSend(sendResult, fallbackError, previousError = null) {
-  if (sendResult?.success) return fallbackError;
-  const base = String(fallbackError || "Message delivery failed.");
-  if (sendResult?.partialCaptionSent || hasPartialCaptionMarker(previousError)) {
-    return `${PARTIAL_CAPTION_ERROR_PREFIX}${base}`;
-  }
-  return base;
-}
-
-function publicDeliveryError(errorText) {
-  const raw = String(errorText || "").trim();
-  if (!hasPartialCaptionMarker(raw)) return raw;
-  const detail = raw.slice(PARTIAL_CAPTION_ERROR_PREFIX.length).trim();
-  return detail
-    ? `The caption was sent, but the image failed to send. ${detail}`
-    : "The caption was sent, but the image failed to send.";
 }
 
 async function requireFreeformPolicy(contact, res, purpose = "service") {
