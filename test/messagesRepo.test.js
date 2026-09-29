@@ -146,3 +146,66 @@ test("returns an R2 media reference without downloading the attachment", async (
     media_mime_type: "audio/ogg",
   });
 });
+
+test("outbound WhatsApp template metadata is stored atomically with the message", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /whatsapp_template/);
+    assert.match(sql, /delivery_status, delivery_error/);
+    assert.match(sql, /\$9::jsonb, \$10, \$11/);
+    assert.deepEqual(JSON.parse(params[8]), {
+      name: "lead_follow_up",
+      language: "en_US",
+      category: "MARKETING",
+      components: [
+        {
+          type: "body",
+          parameters: [{ type: "text", text: "Alex" }],
+        },
+      ],
+    });
+    assert.equal(params[9], "unknown");
+    assert.equal(params[10], "Template send started");
+    return {
+      rows: [{
+        id: 44,
+        contact_id: 7,
+        content: "Hi Alex",
+        whatsapp_template: JSON.parse(params[8]),
+      }],
+    };
+  };
+
+  const saved = await messagesRepo.saveMessage(
+    7,
+    "assistant",
+    "Hi Alex",
+    null,
+    "staff",
+    null,
+    null,
+    null,
+    {
+      whatsappTemplate: {
+        name: "lead_follow_up",
+        language: "en_US",
+        category: "MARKETING",
+        components: [
+          {
+            type: "body",
+            parameters: [{ type: "text", text: "Alex" }],
+          },
+        ],
+      },
+      initialDeliveryStatus: "unknown",
+      initialDeliveryError: "Template send started",
+    }
+  );
+
+  assert.equal(saved.whatsapp_template.name, "lead_follow_up");
+});
+

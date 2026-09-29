@@ -6,6 +6,7 @@ import { useToasts, ToastContainer } from "../components/Toast";
 import Lightbox from "../components/Lightbox";
 import ContactAvatar from "../components/ContactAvatar";
 import ContactDetailsDrawer from "../components/ContactDetailsDrawer";
+import WhatsAppTemplateModal from "../components/WhatsAppTemplateModal";
 import LeadAssignmentBadge, {
   buildLeadAssignmentFilterOptions,
   matchesLeadAssignment,
@@ -135,6 +136,7 @@ export default function Inbox() {
   const { user, username, permissions } = useAuth();
   const ui = getBusinessTerminology(user?.businessProfile || {});
   const canViewAllLeads = permissions.view_all_leads === true;
+  const canReplyToLeads = permissions.reply_to_assigned_leads === true;
   const { toasts, showToast, dismissToast } = useToasts();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedContactId = /^\d+$/.test(searchParams.get("contact") || "")
@@ -151,6 +153,7 @@ export default function Inbox() {
   const [conversationStatePending, setConversationStatePending] = useState(false);
   const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
   const [contactDetailsOpen, setContactDetailsOpen] = useState(false);
+  const [whatsappTemplateOpen, setWhatsAppTemplateOpen] = useState(false);
   const selectedIdRef = useRef(selectedId);
   const messagesRef = useRef(messages);
   const latestMessageIdRef = useRef(null);
@@ -291,6 +294,7 @@ export default function Inbox() {
     setMessages([]);
     setHasMoreOlderMessages(false);
     setContactDetailsOpen(false);
+    setWhatsAppTemplateOpen(false);
     setMobileThreadOpen(false);
     if (nextConversation) {
       setSearchParams({ contact: String(nextConversation.contact_id) }, { replace: true });
@@ -733,6 +737,7 @@ export default function Inbox() {
         key={selectedId ?? "no-conversation"}
         contact={selectedContact}
         currentUsername={username}
+        canReplyToLeads={canReplyToLeads}
         messages={messages}
         loading={messagesLoading}
         olderMessagesLoading={olderMessagesLoading}
@@ -750,6 +755,7 @@ export default function Inbox() {
         onSendImage={handleSendImage}
         onSendVoice={handleSendVoice}
         onOpenContactDetails={() => setContactDetailsOpen(true)}
+        onOpenWhatsAppTemplates={() => setWhatsAppTemplateOpen(true)}
         onToast={showToast}
         mobileThreadOpen={mobileThreadOpen}
         onBack={() => setMobileThreadOpen(false)}
@@ -760,6 +766,37 @@ export default function Inbox() {
         contact={selectedContact}
         onClose={() => setContactDetailsOpen(false)}
       />
+      {whatsappTemplateOpen &&
+        canReplyToLeads &&
+        selectedContact?.channel === "whatsapp" && (
+        <WhatsAppTemplateModal
+          contact={selectedContact}
+          onClose={() => setWhatsAppTemplateOpen(false)}
+          onOptInRecorded={async () => {
+            await refreshConversations();
+            showToast("WhatsApp opt-in recorded.", "info");
+          }}
+          onSent={async (result) => {
+            if (selectedIdRef.current === selectedContact.contact_id) {
+              setMessages((current) => mergeMessages(current, [result]));
+            }
+            await refreshConversations();
+            if (result?.delivery_status === "unknown") {
+              showToast(
+                "Template saved, but delivery could not be confirmed. Check WhatsApp before retrying.",
+                "warning"
+              );
+            } else if (result?.delivered === false) {
+              showToast(
+                "Template saved, but WhatsApp did not accept the send. You can retry it from the message.",
+                "warning"
+              );
+            } else {
+              showToast("WhatsApp template sent.", "info");
+            }
+          }}
+        />
+      )}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
@@ -1236,6 +1273,7 @@ function DateSeparator({ value }) {
 function ThreadView({
   contact,
   currentUsername,
+  canReplyToLeads,
   messages,
   loading,
   olderMessagesLoading,
@@ -1253,6 +1291,7 @@ function ThreadView({
   onSendImage,
   onSendVoice,
   onOpenContactDetails,
+  onOpenWhatsAppTemplates,
   onToast,
   mobileThreadOpen,
   onBack,
@@ -1298,6 +1337,10 @@ function ThreadView({
     messagingPolicy.applies &&
     messagingPolicy.freeformAllowed &&
     !messagingPolicy.optedOutAt;
+  const whatsappTemplateAvailable =
+    canReplyToLeads &&
+    messagingPolicy.channel === "whatsapp" &&
+    !messagingPolicy.freeformAllowed;
 
   useEffect(() => {
     setPolicyNow(Date.now());
@@ -1763,7 +1806,7 @@ function ThreadView({
           <div className={`border-t px-3 sm:px-5 ${quietReplyAvailable ? "border-[var(--color-border)] bg-[var(--color-surface)] py-1.5 text-[var(--color-text-muted)]" : "border-amber-200 bg-amber-50 py-2.5 text-amber-900"}`}>
             <div className={`flex gap-2 ${quietReplyAvailable ? "items-center" : "items-start"}`}>
               <span className={`${quietReplyAvailable ? "h-1.5 w-1.5 bg-emerald-500" : "mt-1 h-2 w-2 bg-amber-500"} shrink-0 rounded-full`} />
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className={`break-words ${quietReplyAvailable ? "text-[10px] font-medium" : "text-[11px] font-semibold"}`}>{messagingPolicy.label}</p>
                 {!messagingPolicy.freeformAllowed && messagingPolicy.explanation && (
                   <p className="mt-0.5 break-words text-[10px] leading-4 opacity-80">{messagingPolicy.explanation}</p>
@@ -1775,6 +1818,15 @@ function ThreadView({
                       ? " Service replies are allowed for this new request, but automated follow-ups remain blocked."
                       : " Automated follow-ups remain blocked."}
                   </p>
+                )}
+                {whatsappTemplateAvailable && (
+                  <button
+                    type="button"
+                    onClick={onOpenWhatsAppTemplates}
+                    className="mt-2 inline-flex touch-manipulation items-center rounded-lg bg-amber-900 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-amber-950"
+                  >
+                    Send WhatsApp template
+                  </button>
                 )}
               </div>
             </div>
@@ -1972,6 +2024,7 @@ function Spinner({ className = "" }) {
 function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
+  const isWhatsAppTemplate = !!message.whatsapp_template;
   const senderLabel = message.is_automated_follow_up
     ? "Automated follow-up"
     : sentByStaff
@@ -1994,6 +2047,11 @@ function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
     <div className={`flex ${isPatient ? "justify-start" : "justify-end"}`}>
       <div className={`relative max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryNeedsAction ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}>
         {!isPatient && <p className="mb-1 text-[10px] font-semibold text-white/65">{senderLabel}</p>}
+        {isWhatsAppTemplate && (
+          <p className="mb-1.5 inline-flex rounded-full bg-white/15 px-2 py-0.5 text-[9px] font-semibold text-white/80">
+            Template · {message.whatsapp_template.name}
+          </p>
+        )}
         {isAudio && storedMediaSrc ? (
           <audio controls preload="none" src={storedMediaSrc} className="mb-1.5 max-w-full" style={{ height: "36px" }} />
         ) : (

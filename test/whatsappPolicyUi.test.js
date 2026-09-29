@@ -34,6 +34,18 @@ test("portal policy state distinguishes open, closed, never-contacted and opted-
   assert.equal(optedOut.code, "opted_out");
   assert.equal(optedOut.automatedAllowed, false);
 
+  const marketingOptedOut = messagingPolicyStatus({
+    channel: "whatsapp",
+    latest_inbound_at: "2026-09-03T11:00:00.000Z",
+    whatsapp_marketing_opt_out_at: "2026-09-03T10:30:00.000Z",
+  }, now);
+  assert.equal(marketingOptedOut.freeformAllowed, true);
+  assert.equal(marketingOptedOut.marketingOptedOut, true);
+  assert.equal(
+    marketingOptedOut.marketingOptedOutAt,
+    "2026-09-03T10:30:00.000Z"
+  );
+
   const instagram = messagingPolicyStatus({
     channel: "instagram",
     human_agent_enabled: true,
@@ -87,6 +99,10 @@ test("portal hides retry for policy failures but keeps ordinary delivery failure
   assert.match(
     policyFailureExplanation({ delivery_error: "WhatsApp send blocked because this customer opted out." }),
     /opted out/i
+  );
+  assert.match(
+    policyFailureExplanation({ policy_code: "marketing_opted_out" }),
+    /utility templates/i
   );
   assert.match(
     policyFailureExplanation({ delivery_error: "The 24-hour customer-service window has closed." }),

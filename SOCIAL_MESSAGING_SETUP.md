@@ -283,3 +283,36 @@ Keep the tool paused while permissions are being configured. After the Page/Inst
 6. confirm the private message appears in Inbox and the contact appears in Pipeline;
 7. reply to the private message and confirm the existing AI DM flow continues;
 8. repeat the test for the second channel before enabling it for the client.
+
+## WhatsApp approved templates in Inbox
+
+Inbox can use Meta-approved WhatsApp templates when normal free-form WhatsApp sending is unavailable.
+
+Runtime requirements:
+
+```text
+WHATSAPP_TOKEN=...
+WHATSAPP_PHONE_NUMBER_ID=...
+WHATSAPP_WABA_ID=...
+```
+
+The template picker reads approved templates from `/{WHATSAPP_WABA_ID}/message_templates` using the configured WhatsApp token, then sends the selected template through the existing phone-number `/messages` endpoint. The runtime token therefore needs access to read that WABA's message templates as well as send messages.
+
+Safety boundaries:
+
+- template sends are staff-triggered only;
+- **Stop promotions / Unsubscribe from Promos** records a marketing-only opt-out: promotional templates and automated marketing remain blocked, while service replies and UTILITY templates remain available when otherwise permitted;
+- **STOP / Unsubscribe / Unsubscribe from All** records a global WhatsApp opt-out;
+- after a marketing-only opt-out, MARKETING can resume only after a newer explicit opt-in is recorded and staff confirms that the new consent covers WhatsApp marketing;
+- AI replies, scheduled messages and automated follow-ups do not use the template path;
+- the contact must have a recorded explicit WhatsApp opt-in and must not currently be opted out;
+- recording a new opt-in requires staff to enter the real consent source and explicitly confirm that consent was given;
+- if a customer opted out, staff may record a new opt-in only when there is a real new consent source;
+- MARKETING templates require a separate staff confirmation that the recorded consent covers promotional WhatsApp messages;
+- failed template messages keep their template metadata, so Retry sends the same template rather than free-form text;
+- Inbox currently supports text header/body variables plus static quick-reply, URL and phone-number buttons. Media-header templates, authentication templates, named variables, dynamic URL variables and other special button types are shown as unsupported rather than guessed.
+
+Template creation/approval remains in Meta. Inbox only lists templates whose current Meta status is `APPROVED`.
+
+**Setup Checker:** **WhatsApp** remains the required messaging check using the phone-number ID and token. **WhatsApp templates** is a separate optional check that verifies `WHATSAPP_WABA_ID` and whether the configured token can read the WABA template catalog. A template-catalog warning does not block normal WhatsApp Go Live.
+

@@ -307,3 +307,37 @@ test("an unprepared recovered job keeps durable first-message state", async () =
   const preparedCall = calls.find((call) => call[0] === "prepared");
   assert.equal(preparedCall[2], true);
 });
+
+test("WhatsApp marketing opt-out completes the durable job without creating a global opt-out", async () => {
+  const calls = [];
+  const policy = {
+    classifyOptOutText(text) {
+      return /^stop promotions$/i.test(String(text || "").trim()) ? "marketing" : null;
+    },
+    isOptOutText() {
+      return false;
+    },
+    async recordMarketingOptOut(contactId, source) {
+      calls.push(["marketing-opt-out", contactId, source]);
+      return { id: contactId };
+    },
+    async recordOptOut() {
+      assert.fail("marketing-only opt-out must not record a global opt-out");
+    },
+  };
+  const { claim, wasCompleted } = makeService({ policy });
+
+  const durable = await claim.storeIncomingMessage({
+    id: "wamid-stop-promotions",
+    from: "60123456789",
+    text: "Stop promotions",
+    buttonPayload: "Stop promotions",
+    channel: "whatsapp",
+  });
+  const result = await claim.prepareIncomingClaim(durable);
+
+  assert.equal(result, null);
+  assert.equal(wasCompleted(), true);
+  assert.deepEqual(calls, [["marketing-opt-out", 42, "customer_quick_reply"]]);
+});
+

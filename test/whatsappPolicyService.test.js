@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const policy = require("../src/services/whatsappPolicyService");
+const { pool } = require("../src/db/db");
 
 test("detects common WhatsApp opt-out requests in supported chat languages", () => {
   const optOuts = [
@@ -13,6 +14,11 @@ test("detects common WhatsApp opt-out requests in supported chat languages", () 
     "不要联系我",
     "jangan mesej saya",
     "tak nak whatsapp",
+    "Stop promotions",
+    "Stop promo",
+    "Unsubscribe from promos",
+    "Unsubcribe from Promos",
+    "Unsubscribe from All",
   ];
 
   for (const text of optOuts) {
@@ -261,3 +267,63 @@ test("Human Agent purpose stays blocked after 24 hours when the runtime feature 
   assert.match(result.message, /must message again/i);
   assert.doesNotMatch(result.message, /Human Agent/);
 });
+
+test("classifies marketing-only and global WhatsApp opt-outs separately", () => {
+  for (const text of ["Stop promotions", "Stop promo", "Unsubscribe from promos", "Unsubcribe from Promos"]) {
+    assert.equal(policy.classifyOptOutText(text), "marketing", text);
+  }
+  for (const text of ["STOP", "unsubscribe", "Unsubscribe from All", "Stop all", "don't contact me"]) {
+    assert.equal(policy.classifyOptOutText(text), "all", text);
+  }
+});
+
+test("marketing-only opt-out blocks marketing but keeps service replies available", () => {
+  const state = {
+    channel: "whatsapp",
+    whatsapp_marketing_opt_out_at: new Date("2026-09-03T10:00:00.000Z"),
+    latest_inbound_at: new Date("2026-09-03T10:30:00.000Z"),
+  };
+  const now = new Date("2026-09-03T10:35:00.000Z");
+
+  const marketing = policy.evaluateFreeformState(state, now, { purpose: "marketing" });
+  const service = policy.evaluateFreeformState(state, now, { purpose: "service" });
+
+  assert.equal(marketing.allowed, false);
+  assert.equal(marketing.code, "marketing_opted_out");
+  assert.equal(service.allowed, true);
+});
+
+test("marketing-only opt-out blocks MARKETING templates but keeps UTILITY templates eligible", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async () => ({
+    rows: [{
+      id: 42,
+      channel: "whatsapp",
+      whatsapp_number: "60123456789",
+      whatsapp_opt_in_at: new Date("2026-09-29T10:00:00.000Z"),
+      whatsapp_opt_in_source: "clinic form",
+      whatsapp_opt_out_at: null,
+      whatsapp_opt_out_source: null,
+      whatsapp_marketing_opt_out_at: new Date("2026-09-29T11:00:00.000Z"),
+      whatsapp_marketing_opt_out_source: "customer_quick_reply",
+      latest_inbound_at: new Date("2026-09-29T11:00:00.000Z"),
+    }],
+  });
+
+  const contact = { id: 42, channel: "whatsapp" };
+  const utility = await policy.checkTemplateAllowed(contact, { category: "UTILITY" });
+  const marketing = await policy.checkTemplateAllowed(contact, { category: "MARKETING" });
+
+  assert.equal(utility.allowed, true);
+  assert.equal(marketing.allowed, false);
+  assert.equal(marketing.code, "marketing_opted_out");
+  assert.equal(
+    marketing.state.whatsapp_marketing_opt_out_source,
+    "customer_quick_reply"
+  );
+});
+

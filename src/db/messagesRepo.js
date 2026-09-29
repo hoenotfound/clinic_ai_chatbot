@@ -84,18 +84,65 @@ async function saveMessage(
   sentByUsername = null,
   mediaUrl = null,
   mediaBase64 = null,
-  mediaMimeType = null
+  mediaMimeType = null,
+  options = {}
 ) {
   const mediaKey = await persistMediaIfPresent(mediaBase64, mediaMimeType, contactId);
+  const whatsappTemplate = options?.whatsappTemplate || null;
+  const initialDeliveryStatus = options?.initialDeliveryStatus || null;
+  const initialDeliveryError = options?.initialDeliveryError || null;
+
+  if (!whatsappTemplate) {
+    const result = await pool.query(
+      `WITH conversation_lock AS MATERIALIZED (
+         SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+       )
+       INSERT INTO messages (
+         contact_id, role, content, whatsapp_message_id, sent_by_username,
+         media_url, media_key, media_mime_type
+       )
+       SELECT $1, $2, $3, $4, $5, $6, $7, $8
+       FROM conversation_lock
+       RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
+      [
+        contactId,
+        role,
+        content,
+        whatsappMessageId,
+        sentByUsername,
+        mediaUrl,
+        mediaKey,
+        mediaMimeType,
+      ]
+    );
+    return result.rows[0];
+  }
+
   const result = await pool.query(
     `WITH conversation_lock AS MATERIALIZED (
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
      )
-     INSERT INTO messages (contact_id, role, content, whatsapp_message_id, sent_by_username, media_url, media_key, media_mime_type)
-     SELECT $1, $2, $3, $4, $5, $6, $7, $8
+     INSERT INTO messages (
+       contact_id, role, content, whatsapp_message_id, sent_by_username,
+       media_url, media_key, media_mime_type, whatsapp_template,
+       delivery_status, delivery_error
+     )
+     SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11
      FROM conversation_lock
-     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
-    [contactId, role, content, whatsappMessageId, sentByUsername, mediaUrl, mediaKey, mediaMimeType]
+     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}, whatsapp_template`,
+    [
+      contactId,
+      role,
+      content,
+      whatsappMessageId,
+      sentByUsername,
+      mediaUrl,
+      mediaKey,
+      mediaMimeType,
+      JSON.stringify(whatsappTemplate),
+      initialDeliveryStatus,
+      initialDeliveryError,
+    ]
   );
   return result.rows[0];
 }
@@ -200,7 +247,7 @@ async function getMessagePageForContact(
   if (afterId != null) {
     const result = await pool.query(
       `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
-              delivery_status, delivery_error, is_automated_follow_up
+              delivery_status, delivery_error, is_automated_follow_up, whatsapp_template
        FROM messages
        WHERE contact_id = $1 AND id > $2
        ORDER BY id ASC`,
@@ -219,7 +266,7 @@ async function getMessagePageForContact(
 
   const result = await pool.query(
     `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
-            delivery_status, delivery_error, is_automated_follow_up
+            delivery_status, delivery_error, is_automated_follow_up, whatsapp_template
      FROM messages
      WHERE contact_id = $1${cursorClause}
      ORDER BY id DESC
@@ -262,7 +309,7 @@ async function getMessageForRetry(contactId, messageId) {
     `SELECT m.id, m.contact_id, m.role, m.content, m.whatsapp_message_id,
             m.sent_by_username, m.media_url, m.media_key, m.media_mime_type,
             m.created_at, m.delivery_status, m.delivery_error,
-            m.is_automated_follow_up,
+            m.is_automated_follow_up, m.whatsapp_template,
             EXISTS (
               SELECT 1
               FROM scheduled_messages sm

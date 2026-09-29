@@ -11,6 +11,11 @@ const POLICY_COPY = {
     explanation:
       "This customer has opted out. Normal replies and automated follow-ups cannot be sent unless they start a new support conversation.",
   },
+  marketing_opted_out: {
+    label: "Customer opted out of WhatsApp marketing",
+    explanation:
+      "Promotional WhatsApp messages are blocked. Service replies and utility templates can still be used when otherwise allowed.",
+  },
   no_customer_message: {
     label: "Customer has not messaged the business yet",
     explanation:
@@ -96,6 +101,10 @@ export function messagingPolicyStatus(contact, now = Date.now()) {
     ? contact?.whatsapp_opt_out_at || contact?.whatsappOptOutAt
     : null;
   const optOutMs = timestamp(optOutValue);
+  const marketingOptOutValue = channel === "whatsapp"
+    ? contact?.whatsapp_marketing_opt_out_at || contact?.whatsappMarketingOptOutAt
+    : null;
+  const marketingOptOutMs = timestamp(marketingOptOutValue);
   const replyWindowExpiresMs = latestInboundMs == null
     ? null
     : latestInboundMs + WHATSAPP_REPLY_WINDOW_MS;
@@ -159,6 +168,8 @@ export function messagingPolicyStatus(contact, now = Date.now()) {
       : new Date(humanAgentWindowExpiresMs).toISOString(),
     humanAgentFeatureEnabled,
     optedOutAt: optOutValue || null,
+    marketingOptedOutAt: marketingOptOutValue || null,
+    marketingOptedOut: marketingOptOutMs != null,
     customerReinitiatedAfterOptOut,
   };
 }

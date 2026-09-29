@@ -323,6 +323,18 @@ function parseIncomingMessages(body) {
               mediaType: "image",
               unsupportedType: null,
             });
+          } else if (message.type === "button") {
+            const buttonText = String(
+              message.button?.text || message.button?.payload || ""
+            ).trim();
+            parsed.push({
+              ...base,
+              text: buttonText,
+              mediaId: null,
+              mediaType: null,
+              unsupportedType: null,
+              buttonPayload: message.button?.payload || null,
+            });
           } else {
             parsed.push({
               ...base,

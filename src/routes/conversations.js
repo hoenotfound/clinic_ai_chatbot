@@ -12,6 +12,7 @@ const mediaStorage = require("../services/mediaStorageService");
 const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const { transcribeStaffAudio } = require("../services/transcriptionService");
 const whatsappPolicy = require("../services/whatsappPolicyService");
+const whatsappTemplate = require("../services/whatsappTemplateService");
 const {
   hasPartialCaptionMarker,
   deliveryErrorForSend,
@@ -149,6 +150,8 @@ async function persistSendOutcome(
       `${channel}:${sendResult.externalMessageId}`,
       null
     );
+  } else if (sendResult.unknown === true) {
+    updated = await messagesRepo.setDeliveryStatusById(savedMessage.id, "unknown", errorText);
   } else if (!sendResult.success) {
     updated = await messagesRepo.setDeliveryStatusById(savedMessage.id, "failed", errorText);
   } else {
@@ -508,6 +511,322 @@ router.post("/:contactId/messages/delivery-statuses", async (req, res) => {
   }
 });
 
+router.get("/:contactId/whatsapp-templates", async (req, res) => {
+  try {
+    const contactId = parsePositiveInt(req.params.contactId);
+    if (!contactId) return res.status(400).json({ error: "Invalid contact id." });
+
+    const contact = await contactsRepo.getContactById(contactId);
+    if (!contact) return res.status(404).json({ error: "Contact not found." });
+    if ((contact.channel || "whatsapp") !== "whatsapp") {
+      return res.status(400).json({ error: "WhatsApp templates are only available for WhatsApp contacts." });
+    }
+
+    let eligibility;
+    try {
+      eligibility = await whatsappPolicy.checkTemplateAllowed(contact);
+    } catch (err) {
+      console.error("Failed to verify WhatsApp template eligibility:", err);
+      return res.status(503).json({
+        error: "WhatsApp template eligibility could not be verified. Please try again shortly.",
+        code: "policy_state_unavailable",
+      });
+    }
+
+    const forceRefresh = String(req.query?.refresh || "").toLowerCase() === "true";
+    const catalog = await whatsappTemplate.listApprovedTemplates({
+      force: forceRefresh,
+    });
+    if (!catalog.success) {
+      const status = catalog.code === "template_catalog_not_configured" ? 503 : 502;
+      return res.status(status).json({
+        error: catalog.error,
+        code: catalog.code,
+      });
+    }
+
+    res.json({
+      templates: catalog.templates,
+      eligibility: {
+        allowed: eligibility.allowed === true,
+        code: eligibility.code || null,
+        message: eligibility.message || null,
+        optInAt: eligibility.state?.whatsapp_opt_in_at || null,
+        marketingOptOutAt:
+          eligibility.state?.whatsapp_marketing_opt_out_at || null,
+        marketingOptOutSource:
+          eligibility.state?.whatsapp_marketing_opt_out_source || null,
+      },
+      cached: catalog.cached === true,
+    });
+  } catch (err) {
+    console.error("Failed to load WhatsApp templates:", err);
+    res.status(500).json({ error: "Something went wrong loading WhatsApp templates." });
+  }
+});
+
+router.post("/:contactId/whatsapp-opt-in", async (req, res) => {
+  try {
+    const contactId = parsePositiveInt(req.params.contactId);
+    if (!contactId) return res.status(400).json({ error: "Invalid contact id." });
+
+    const contact = await contactsRepo.getContactById(contactId);
+    if (!contact) return res.status(404).json({ error: "Contact not found." });
+    if ((contact.channel || "whatsapp") !== "whatsapp") {
+      return res.status(400).json({ error: "WhatsApp opt-in can only be recorded for WhatsApp contacts." });
+    }
+
+    if (req.body?.confirmed !== true) {
+      return res.status(400).json({
+        error: "Confirm that the customer explicitly agreed to receive WhatsApp messages before recording opt-in.",
+        code: "opt_in_confirmation_required",
+      });
+    }
+
+    const source = String(req.body?.source || "").trim();
+    if (source.length < 3 || source.length > 240) {
+      return res.status(400).json({
+        error: "Enter a clear opt-in source between 3 and 240 characters.",
+      });
+    }
+
+    const updated = await whatsappPolicy.recordOptIn(contact.id, source);
+    realtimeEvents.publish("conversation_changed", {
+      contactId: updated.id,
+      reason: "whatsapp_opt_in",
+    });
+    res.json({
+      contactId: updated.id,
+      whatsapp_opt_in_at: updated.whatsapp_opt_in_at,
+      whatsapp_opt_in_source: updated.whatsapp_opt_in_source,
+      whatsapp_opt_out_at: updated.whatsapp_opt_out_at,
+      whatsapp_opt_out_source: updated.whatsapp_opt_out_source,
+      whatsapp_marketing_opt_out_at: updated.whatsapp_marketing_opt_out_at,
+      whatsapp_marketing_opt_out_source: updated.whatsapp_marketing_opt_out_source,
+    });
+  } catch (err) {
+    console.error("Failed to record WhatsApp opt-in:", err);
+    res.status(500).json({ error: "Something went wrong recording WhatsApp opt-in." });
+  }
+});
+
+router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
+  try {
+    const contactId = parsePositiveInt(req.params.contactId);
+    if (!contactId) return res.status(400).json({ error: "Invalid contact id." });
+
+    const contact = await contactsRepo.getContactById(contactId);
+    if (!contact) return res.status(404).json({ error: "Contact not found." });
+    if ((contact.channel || "whatsapp") !== "whatsapp") {
+      return res.status(400).json({ error: "WhatsApp templates are only available for WhatsApp contacts." });
+    }
+
+    let policy;
+    try {
+      policy = await whatsappPolicy.checkTemplateAllowed(contact);
+    } catch (err) {
+      console.error("Failed to verify WhatsApp template policy:", err);
+      return res.status(503).json({
+        error: "WhatsApp template policy could not be verified. Please try again shortly.",
+        code: "policy_state_unavailable",
+        policyBlocked: true,
+      });
+    }
+    if (!policy.allowed) {
+      return res.status(403).json({
+        error: policy.message,
+        code: policy.code,
+        policyBlocked: true,
+      });
+    }
+
+    const templateName = String(req.body?.templateName || "").trim();
+    const languageCode = String(req.body?.languageCode || "").trim();
+    if (!templateName || !languageCode) {
+      return res.status(400).json({ error: "Template name and language are required." });
+    }
+
+    const resolved = await whatsappTemplate.resolveApprovedTemplate(
+      templateName,
+      languageCode,
+      { force: true }
+    );
+    if (!resolved.success) {
+      const status = resolved.code === "template_not_available" ? 400 : 502;
+      return res.status(status).json({
+        error: resolved.error,
+        code: resolved.code,
+      });
+    }
+
+    const built = whatsappTemplate.buildTemplateComponents(
+      resolved.template,
+      req.body?.values || {}
+    );
+    if (!built.valid) {
+      return res.status(400).json({
+        error: built.error,
+        code: "invalid_template_values",
+      });
+    }
+
+    const preview = whatsappTemplate.renderTemplatePreview(
+      resolved.template,
+      built.values
+    );
+    if (!preview) {
+      return res.status(400).json({
+        error: "This template does not contain a text preview that Inbox can send safely.",
+        code: "template_preview_unavailable",
+      });
+    }
+
+    const marketingConsentConfirmed =
+      resolved.template.category !== "MARKETING" ||
+      req.body?.marketingConsentConfirmed === true;
+    if (!marketingConsentConfirmed) {
+      return res.status(400).json({
+        error:
+          "Confirm that the customer's WhatsApp opt-in covers marketing or promotional messages before sending this marketing template.",
+        code: "marketing_consent_confirmation_required",
+      });
+    }
+
+    let templatePolicy;
+    try {
+      templatePolicy = await whatsappPolicy.checkTemplateAllowed(contact, {
+        category: resolved.template.category,
+      });
+
+      if (
+        templatePolicy.code === "marketing_opted_out" &&
+        resolved.template.category === "MARKETING" &&
+        marketingConsentConfirmed
+      ) {
+        const latestOptInAt = whatsappTemplate.policyTimestamp(
+          templatePolicy.state?.whatsapp_opt_in_at
+        );
+        const marketingOptOutAt = whatsappTemplate.policyTimestamp(
+          templatePolicy.state?.whatsapp_marketing_opt_out_at
+        );
+        const hasNewerExplicitOptIn =
+          latestOptInAt &&
+          marketingOptOutAt &&
+          new Date(latestOptInAt).getTime() > new Date(marketingOptOutAt).getTime();
+
+        if (hasNewerExplicitOptIn) {
+          await whatsappPolicy.recordMarketingOptIn(contact.id);
+          templatePolicy = await whatsappPolicy.checkTemplateAllowed(contact, {
+            category: resolved.template.category,
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Failed to verify category-specific WhatsApp template policy:", err);
+      return res.status(503).json({
+        error: "WhatsApp template policy could not be verified. Please try again shortly.",
+        code: "policy_state_unavailable",
+        policyBlocked: true,
+      });
+    }
+
+    if (!templatePolicy.allowed) {
+      return res.status(403).json({
+        error: templatePolicy.message,
+        code: templatePolicy.code,
+        policyBlocked: true,
+      });
+    }
+
+    policy = templatePolicy;
+
+    const consentOptInAt =
+      resolved.template.category === "MARKETING"
+        ? whatsappTemplate.policyTimestamp(policy.state?.whatsapp_opt_in_at)
+        : null;
+    if (resolved.template.category === "MARKETING" && !consentOptInAt) {
+      return res.status(409).json({
+        error:
+          "The customer's WhatsApp marketing consent could not be tied to the current opt-in record. Record or reconfirm opt-in and try again.",
+        code: "marketing_consent_snapshot_unavailable",
+        policyBlocked: true,
+      });
+    }
+
+    const metadata = {
+      name: resolved.template.name,
+      language: resolved.template.language,
+      category: resolved.template.category,
+      components: built.components,
+      values: built.values,
+      templateSignature: whatsappTemplate.templateSignature(resolved.template),
+      marketingConsentConfirmed:
+        resolved.template.category === "MARKETING"
+          ? true
+          : null,
+      consentOptInAt,
+    };
+    const saved = await conversationStore.appendMessageForContact(
+      contact.id,
+      "assistant",
+      preview,
+      null,
+      req.session.username,
+      null,
+      null,
+      {
+        whatsappTemplate: metadata,
+        initialDeliveryStatus: "unknown",
+        initialDeliveryError:
+          "Template send started, but delivery has not been confirmed. Check WhatsApp before retrying.",
+        publish: false,
+      }
+    );
+
+    const sendResult = await whatsappTemplate.sendApprovedTemplate(contact, {
+      templateName: metadata.name,
+      languageCode: metadata.language,
+      components: metadata.components,
+      expectedOptInAt: metadata.consentOptInAt,
+      templateCategory: metadata.category,
+    });
+    const errorText =
+      sendResult.error || "WhatsApp did not accept this approved template.";
+    const finalMessage = await persistSendOutcome(
+      saved,
+      sendResult,
+      errorText,
+      "whatsapp"
+    );
+
+    if (sendResult.success) {
+      await contactsRepo.setUnread(contact.id, false).catch(() => {});
+      await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(contact.id).catch(() => {});
+      await markLeadContacted(contact.id, req.session.username, sendResult);
+    } else {
+      await contactsRepo.setDeliveryAttention(
+        contact.id,
+        `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
+      );
+    }
+
+    res.status(201).json({
+      ...finalMessage,
+      whatsapp_template: saved.whatsapp_template || metadata,
+      delivery_error: publicDeliveryError(finalMessage.delivery_error),
+      delivered: sendResult.success,
+      template: {
+        name: metadata.name,
+        language: metadata.language,
+        category: metadata.category,
+      },
+    });
+  } catch (err) {
+    console.error("Failed to send WhatsApp template:", err);
+    res.status(500).json({ error: "Something went wrong sending this WhatsApp template." });
+  }
+});
+
 router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
   const contactId = parsePositiveInt(req.params.contactId);
   const messageId = parsePositiveInt(req.params.messageId);
@@ -537,17 +856,144 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       });
     }
 
-    const retryPurpose =
-      message.sent_by_username &&
-      message.is_automated_follow_up !== true &&
-      message.is_scheduled_message !== true
-        ? whatsappPolicy.manualStaffPurpose(contact)
-        : "service";
-    if (!(await requireFreeformPolicy(contact, res, retryPurpose))) return;
+    let sendResult;
+    if (message.whatsapp_template) {
+      if ((contact.channel || "whatsapp") !== "whatsapp") {
+        return res.status(409).json({
+          error: "Saved WhatsApp templates can only be retried on WhatsApp contacts.",
+        });
+      }
 
-    const sendResult = await sendStoredMessage(contact, message, {
-      purpose: retryPurpose,
-    });
+      let templatePolicy;
+      try {
+        templatePolicy = await whatsappPolicy.checkTemplateAllowed(contact);
+      } catch (err) {
+        console.error("Failed to verify WhatsApp template retry policy:", err);
+        return res.status(503).json({
+          error: "WhatsApp template policy could not be verified. Please try again shortly.",
+          code: "policy_state_unavailable",
+          policyBlocked: true,
+        });
+      }
+      if (!templatePolicy.allowed) {
+        return res.status(403).json({
+          error: templatePolicy.message,
+          code: templatePolicy.code,
+          policyBlocked: true,
+        });
+      }
+
+      const currentTemplate = await whatsappTemplate.resolveApprovedTemplate(
+        message.whatsapp_template.name,
+        message.whatsapp_template.language,
+        { force: true }
+      );
+      if (!currentTemplate.success) {
+        return res.status(409).json({
+          error:
+            currentTemplate.code === "template_not_available"
+              ? "This WhatsApp template is no longer approved or available. Choose another approved template instead."
+              : currentTemplate.error,
+          code: currentTemplate.code,
+        });
+      }
+
+      try {
+        templatePolicy = await whatsappPolicy.checkTemplateAllowed(contact, {
+          category: currentTemplate.template.category,
+        });
+      } catch (err) {
+        console.error("Failed to verify category-specific WhatsApp template retry policy:", err);
+        return res.status(503).json({
+          error: "WhatsApp template policy could not be verified. Please try again shortly.",
+          code: "policy_state_unavailable",
+          policyBlocked: true,
+        });
+      }
+      if (!templatePolicy.allowed) {
+        return res.status(403).json({
+          error:
+            templatePolicy.code === "marketing_opted_out"
+              ? "This customer opted out of WhatsApp marketing. Record a new explicit opt-in that covers marketing and send the template again from the picker."
+              : templatePolicy.message,
+          code: templatePolicy.code,
+          policyBlocked: true,
+        });
+      }
+
+      const savedTemplateSignature = String(
+        message.whatsapp_template.templateSignature || ""
+      );
+      const currentTemplateSignature = whatsappTemplate.templateSignature(
+        currentTemplate.template
+      );
+      if (
+        !savedTemplateSignature ||
+        savedTemplateSignature !== currentTemplateSignature
+      ) {
+        return res.status(409).json({
+          error:
+            "This WhatsApp template changed since the failed send. Open the template picker, review the current approved version, and send it again.",
+          code: "template_definition_changed",
+        });
+      }
+
+      const rebuiltTemplate = whatsappTemplate.buildTemplateComponents(
+        currentTemplate.template,
+        message.whatsapp_template.values || {}
+      );
+      if (!rebuiltTemplate.valid) {
+        return res.status(409).json({
+          error:
+            "The saved template values no longer fit the current approved template. Send it again from the template picker.",
+          code: "template_values_changed",
+        });
+      }
+
+      if (currentTemplate.template.category === "MARKETING") {
+        const savedConsentOptInAt = whatsappTemplate.policyTimestamp(
+          message.whatsapp_template.consentOptInAt
+        );
+        const currentConsentOptInAt = whatsappTemplate.policyTimestamp(
+          templatePolicy.state?.whatsapp_opt_in_at
+        );
+        if (
+          message.whatsapp_template.marketingConsentConfirmed !== true ||
+          !savedConsentOptInAt ||
+          !currentConsentOptInAt ||
+          savedConsentOptInAt !== currentConsentOptInAt
+        ) {
+          return res.status(409).json({
+            error:
+              "The customer's WhatsApp marketing consent has changed since this template was first attempted. Send it again from the template picker and reconfirm marketing consent.",
+            code: "marketing_consent_reconfirmation_required",
+          });
+        }
+      }
+
+      sendResult = await whatsappTemplate.sendApprovedTemplate(contact, {
+        templateName: message.whatsapp_template.name,
+        languageCode: message.whatsapp_template.language,
+        components: rebuiltTemplate.components,
+        expectedOptInAt:
+          currentTemplate.template.category === "MARKETING"
+            ? message.whatsapp_template.consentOptInAt
+            : null,
+        templateCategory: currentTemplate.template.category,
+      });
+    } else {
+      const retryPurpose =
+        message.sent_by_username &&
+        message.is_automated_follow_up !== true &&
+        message.is_scheduled_message !== true
+          ? whatsappPolicy.manualStaffPurpose(contact)
+          : "service";
+      if (!(await requireFreeformPolicy(contact, res, retryPurpose))) return;
+
+      sendResult = await sendStoredMessage(contact, message, {
+        purpose: retryPurpose,
+      });
+    }
     const errorText = deliveryErrorForSend(
       sendResult,
       sendResult.error || rejectedErrorFor(contact),
@@ -566,7 +1012,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     } else {
       await contactsRepo.setDeliveryAttention(
         contact.id,
-        `Delivery failed: ${publicDeliveryError(errorText)}`
+        `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
       );
     }
 
