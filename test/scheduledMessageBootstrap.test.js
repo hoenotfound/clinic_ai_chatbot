@@ -43,3 +43,14 @@ test("scheduled-message window returns the latest inbound timestamp without a Re
   assert.equal(result.windowEndsAt, windowEndsAt);
   assert.equal(result.policy.allowed, true);
 });
+
+
+test("scheduled-message preload registers routes without starting schema work before migrations", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/services/scheduledMessageBootstrap.js"),
+    "utf8"
+  );
+  assert.match(source, /function startScheduledMessageWorker\(\)/);
+  assert.doesNotMatch(source, /ensureSchema\(/);
+  assert.doesNotMatch(source, /setTimeout\(startSchedulerWhenSchemaIsReady/);
+});
