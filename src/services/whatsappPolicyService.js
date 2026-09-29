@@ -74,6 +74,14 @@ function channelLabel(channel) {
   return "WhatsApp";
 }
 
+function manualStaffPurpose(contactOrChannel) {
+  const channel =
+    typeof contactOrChannel === "string"
+      ? contactOrChannel
+      : contactOrChannel?.channel || "whatsapp";
+  return HUMAN_AGENT_CHANNELS.has(channel) ? "human_agent" : "service";
+}
+
 function noCustomerMessageError(channel) {
   if (channel === "whatsapp") {
     return "WhatsApp send blocked because this customer has never messaged the business. Use an approved template only after valid WhatsApp opt-in has been recorded.";
@@ -312,6 +320,7 @@ module.exports = {
   evaluateFreeformState,
   getPolicyState,
   isOptOutText,
+  manualStaffPurpose,
   recordOptIn,
   recordOptOut,
 };
