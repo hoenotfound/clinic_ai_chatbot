@@ -602,7 +602,7 @@ test("social image failure records that its caption was already delivered", asyn
 
   meta.sendText = async () => ({
     success: true,
-    externalMessageId: "ig-caption-partial",
+    externalMessageId: null,
   });
   mediaStorage.uploadTemporaryMedia = async () => ({
     key: "meta-outbound/401/image.jpg",
@@ -625,7 +625,7 @@ test("social image failure records that its caption was already delivered", asyn
 
   assert.equal(result.success, false);
   assert.equal(result.partialCaptionSent, true);
-  assert.equal(result.captionProviderMessageId, "ig-caption-partial");
+  assert.equal(result.captionProviderMessageId, null);
   assert.equal(result.error, "image rejected");
 });
 
