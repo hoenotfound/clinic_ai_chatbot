@@ -51,7 +51,7 @@ test("outbound message writes take the conversation scoring lock", async (t) => 
   pool.query = async (sql, params) => {
     assert.match(sql, new RegExp(`pg_advisory_xact_lock\\(${CONVERSATION_LOCK_NAMESPACE}`));
     assert.match(sql, /FROM conversation_lock/);
-    assert.deepEqual(params, [7, "assistant", "Hello", null, null, null, null, null]);
+    assert.deepEqual(params, [7, "assistant", "Hello", null, null, null, null, null, null]);
     return { rows: [{ id: 42, contact_id: 7, content: "Hello" }] };
   };
 
@@ -86,6 +86,7 @@ test("uploads Buffer attachments to R2 without a base64 round-trip", async (t) =
       null,
       "messages/7/direct-buffer.jpg",
       "image/jpeg",
+      null,
     ]);
     return { rows: [{ id: 43, contact_id: 7, content: "Photo" }] };
   };
@@ -146,3 +147,61 @@ test("returns an R2 media reference without downloading the attachment", async (
     media_mime_type: "audio/ogg",
   });
 });
+
+test("outbound WhatsApp template metadata is stored atomically with the message", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /whatsapp_template/);
+    assert.match(sql, /\$9::jsonb/);
+    assert.deepEqual(JSON.parse(params[8]), {
+      name: "lead_follow_up",
+      language: "en_US",
+      category: "MARKETING",
+      components: [
+        {
+          type: "body",
+          parameters: [{ type: "text", text: "Alex" }],
+        },
+      ],
+    });
+    return {
+      rows: [{
+        id: 44,
+        contact_id: 7,
+        content: "Hi Alex",
+        whatsapp_template: JSON.parse(params[8]),
+      }],
+    };
+  };
+
+  const saved = await messagesRepo.saveMessage(
+    7,
+    "assistant",
+    "Hi Alex",
+    null,
+    "staff",
+    null,
+    null,
+    null,
+    {
+      whatsappTemplate: {
+        name: "lead_follow_up",
+        language: "en_US",
+        category: "MARKETING",
+        components: [
+          {
+            type: "body",
+            parameters: [{ type: "text", text: "Alex" }],
+          },
+        ],
+      },
+    }
+  );
+
+  assert.equal(saved.whatsapp_template.name, "lead_follow_up");
+});
+
