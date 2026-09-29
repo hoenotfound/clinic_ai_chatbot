@@ -278,8 +278,8 @@ async function finalizeOutboundAttempt(
   if (!Number.isSafeInteger(safeJobId) || safeJobId < 1) {
     throw new TypeError("processingJobId must be a positive integer.");
   }
-  if (!["accepted", "rejected", "cancelled"].includes(safeOutcome)) {
-    throw new TypeError("outcome must be accepted, rejected or cancelled.");
+  if (!["accepted", "rejected", "cancelled", "ambiguous"].includes(safeOutcome)) {
+    throw new TypeError("outcome must be accepted, rejected, cancelled or ambiguous.");
   }
 
   const result = await database.query(
@@ -301,6 +301,58 @@ async function finalizeOutboundAttempt(
     ]
   );
   return result.rows[0] || null;
+}
+
+async function markOutboundAttemptAmbiguous(
+  processingJobId,
+  errorText,
+  database = pool
+) {
+  const safeJobId = Number(processingJobId);
+  if (!Number.isSafeInteger(safeJobId) || safeJobId < 1) {
+    throw new TypeError("processingJobId must be a positive integer.");
+  }
+  const safeError = String(
+    errorText ||
+      "Delivery could not be confirmed because the server restarted during this automated reply."
+  ).slice(0, 1000);
+
+  const ownsClient = database === pool;
+  const client = ownsClient ? await pool.connect() : database;
+  try {
+    await client.query("BEGIN");
+    const attemptResult = await client.query(
+      `UPDATE inbound_outbound_attempts
+       SET outcome = 'ambiguous',
+           error_text = $2,
+           finalized_at = COALESCE(finalized_at, NOW()),
+           updated_at = NOW()
+       WHERE processing_job_id = $1
+       RETURNING assistant_message_id`,
+      [safeJobId, safeError]
+    );
+    const assistantMessageId = attemptResult.rows[0]?.assistant_message_id;
+    if (!assistantMessageId) {
+      await client.query("COMMIT");
+      return null;
+    }
+
+    const messageResult = await client.query(
+      `UPDATE messages
+       SET delivery_status = 'unknown',
+           delivery_error = $2
+       WHERE id = $1
+       RETURNING ${MESSAGE_COLUMNS}`,
+      [assistantMessageId, safeError]
+    );
+    await client.query("COMMIT");
+    return messageResult.rows[0] || null;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    if (ownsClient) client.release();
+  }
 }
 
 async function markPrepared(messageId, wasFirstMessage, database = pool) {
@@ -816,5 +868,6 @@ module.exports = {
   reserveOutboundAttempt,
   getOutboundAttempt,
   finalizeOutboundAttempt,
+  markOutboundAttemptAmbiguous,
   storeMetaResolutionClaim,
 };
