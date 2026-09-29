@@ -30,6 +30,10 @@ const {
 } = require("./utils/handoffReply");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
+const {
+  deliveryErrorForSend,
+  publicDeliveryError,
+} = require("./utils/socialDeliveryError");
 const messagesRepo = require("./db/messagesRepo");
 const inboundProcessingRepo = require("./db/inboundProcessingRepo");
 const outboundMessageEvidenceRepo = require("./db/outboundMessageEvidenceRepo");
@@ -810,7 +814,10 @@ async function processIncomingMessage(
           });
         }
 
-        const promoError = promoResult.error || channelMessaging.rejectedError(contact.channel);
+        const promoError = deliveryErrorForSend(
+          promoResult,
+          promoResult.error || channelMessaging.rejectedError(contact.channel)
+        );
         await persistSendOutcome(
           savedPromo,
           promoResult,
@@ -821,7 +828,7 @@ async function processIncomingMessage(
           console.warn(`Promo image failed to send to ${channel}:${from}, continuing without it.`);
           await contactsRepo.setDeliveryAttention(
             contact.id,
-            `Delivery failed: ${promoError}`
+            `Delivery failed: ${publicDeliveryError(promoError)}`
           );
         }
       }
