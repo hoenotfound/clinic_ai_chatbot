@@ -67,14 +67,19 @@ async function enforceConversationsPolicy(req, res, user) {
   const subAction = parts[2] || "";
   const fourth = parts[3] || "";
 
+  const isScheduledMessageWrite =
+    action === "scheduled-messages" &&
+    ["POST", "PATCH", "DELETE"].includes(req.method);
+
   const isSend =
-    req.method === "POST" &&
-    (
-      (action === "messages" && parts.length === 2) ||
-      action === "media" ||
-      action === "voice" ||
-      (action === "messages" && fourth === "retry")
-    );
+    (req.method === "POST" &&
+      (
+        (action === "messages" && parts.length === 2) ||
+        action === "media" ||
+        action === "voice" ||
+        (action === "messages" && fourth === "retry")
+      )) ||
+    isScheduledMessageWrite;
 
   if (isSend && !hasCapability(user, "reply_to_assigned_leads")) {
     return forbidden(res, "Replying to leads is disabled for this account.");
@@ -82,7 +87,11 @@ async function enforceConversationsPolicy(req, res, user) {
 
   const isConversationManagement =
     (req.method === "POST" && ["takeover", "return-to-ai"].includes(action)) ||
-    (req.method === "PATCH" && ["attention", "follow-up"].includes(action));
+    (req.method === "PATCH" && ["attention", "follow-up"].includes(action)) ||
+    (
+      action === "scheduled-messages" &&
+      ["PATCH", "DELETE"].includes(req.method)
+    );
 
   if (isConversationManagement && !hasCapability(user, "manage_assigned_leads")) {
     return forbidden(res, "Managing assigned leads is disabled for this account.");

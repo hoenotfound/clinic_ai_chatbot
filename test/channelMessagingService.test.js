@@ -6,6 +6,7 @@ const whatsapp = require("../src/services/whatsappService");
 const meta = require("../src/services/metaMessagingService");
 const metaAttachments = require("../src/services/metaAttachmentService");
 const mediaStorage = require("../src/services/mediaStorageService");
+const promoImagesRepo = require("../src/db/promoImagesRepo");
 const audioConvert = require("../src/services/audioConvertService");
 const whatsappPolicy = require("../src/services/whatsappPolicyService");
 const messaging = require("../src/services/channelMessagingService");
@@ -585,4 +586,187 @@ test("WhatsApp image pre-send guard cancels automatic promo before provider call
   assert.equal(providerCalls, 0);
   assert.equal(result.success, false);
   assert.equal(result.cancelled, true);
+});
+
+
+test("social image failure records that its caption was already delivered", async (t) => {
+  const originalMetaSend = meta.sendText;
+  const originalUploadTemporary = mediaStorage.uploadTemporaryMedia;
+  const originalScheduleDelete = mediaStorage.scheduleTemporaryMediaDelete;
+  const originalUrlSend = metaAttachments.sendUrlAttachment;
+  t.after(() => {
+    meta.sendText = originalMetaSend;
+    mediaStorage.uploadTemporaryMedia = originalUploadTemporary;
+    mediaStorage.scheduleTemporaryMediaDelete = originalScheduleDelete;
+    metaAttachments.sendUrlAttachment = originalUrlSend;
+  });
+
+  meta.sendText = async () => ({
+    success: true,
+    externalMessageId: null,
+  });
+  mediaStorage.uploadTemporaryMedia = async () => ({
+    key: "meta-outbound/401/image.jpg",
+    url: "https://r2.example/image.jpg?signed=1",
+  });
+  mediaStorage.scheduleTemporaryMediaDelete = () => {};
+  metaAttachments.sendUrlAttachment = async () => ({
+    success: false,
+    externalMessageId: null,
+    error: "image rejected",
+  });
+
+  const result = await messaging.sendImageBuffer(
+    { id: 401, channel: "instagram", channel_user_id: "igsid-partial" },
+    Buffer.from("image"),
+    "image/jpeg",
+    "Already delivered caption",
+    "photo.jpg"
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.partialCaptionSent, true);
+  assert.equal(result.captionProviderMessageId, null);
+  assert.equal(result.error, "image rejected");
+});
+
+test("social image retry can skip a caption that was already delivered", async (t) => {
+  const originalMetaSend = meta.sendText;
+  const originalUploadTemporary = mediaStorage.uploadTemporaryMedia;
+  const originalScheduleDelete = mediaStorage.scheduleTemporaryMediaDelete;
+  const originalUrlSend = metaAttachments.sendUrlAttachment;
+  t.after(() => {
+    meta.sendText = originalMetaSend;
+    mediaStorage.uploadTemporaryMedia = originalUploadTemporary;
+    mediaStorage.scheduleTemporaryMediaDelete = originalScheduleDelete;
+    metaAttachments.sendUrlAttachment = originalUrlSend;
+  });
+
+  let captionCalls = 0;
+  meta.sendText = async () => {
+    captionCalls += 1;
+    return { success: true, externalMessageId: "must-not-send-caption" };
+  };
+  mediaStorage.uploadTemporaryMedia = async () => ({
+    key: "meta-outbound/402/image.jpg",
+    url: "https://r2.example/image.jpg?signed=1",
+  });
+  mediaStorage.scheduleTemporaryMediaDelete = () => {};
+  let imageCalls = 0;
+  metaAttachments.sendUrlAttachment = async () => {
+    imageCalls += 1;
+    return { success: true, externalMessageId: "ig-image-retry" };
+  };
+
+  const result = await messaging.sendImageBuffer(
+    { id: 402, channel: "instagram", channel_user_id: "igsid-retry" },
+    Buffer.from("image"),
+    "image/jpeg",
+    "Do not resend me",
+    "photo.jpg",
+    { skipCaption: true }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(captionCalls, 0);
+  assert.equal(imageCalls, 1);
+});
+
+
+test("Facebook stored promo preserves a delivered caption when late cancellation blocks the image", async (t) => {
+  const originalGetImage = promoImagesRepo.getImage;
+  const originalMetaSend = meta.sendText;
+  const originalBufferSend = metaAttachments.sendBuffer;
+  t.after(() => {
+    promoImagesRepo.getImage = originalGetImage;
+    meta.sendText = originalMetaSend;
+    metaAttachments.sendBuffer = originalBufferSend;
+  });
+
+  promoImagesRepo.getImage = async (id) => {
+    assert.equal(id, 77);
+    return {
+      id,
+      mime_type: "image/jpeg",
+      data: Buffer.from("promo-bytes").toString("base64"),
+    };
+  };
+
+  let captionCalls = 0;
+  meta.sendText = async (channel, to, text) => {
+    captionCalls += 1;
+    assert.equal(channel, "facebook");
+    assert.equal(to, "psid-late-cancel");
+    assert.equal(text, "Promo caption");
+    return {
+      success: true,
+      externalMessageId: "fb-caption-accepted",
+      error: null,
+    };
+  };
+
+  let imageCalls = 0;
+  metaAttachments.sendBuffer = async () => {
+    imageCalls += 1;
+    return {
+      success: true,
+      externalMessageId: "must-not-send-image",
+      error: null,
+    };
+  };
+
+  let guardCalls = 0;
+  const recordedProviderIds = [];
+  const result = await messaging.sendImageByUrl(
+    {
+      id: 403,
+      channel: "facebook",
+      channel_user_id: "psid-late-cancel",
+    },
+    "https://app.example/promo-images/77",
+    "Promo caption",
+    {
+      preSendCheck: () => {
+        guardCalls += 1;
+        return guardCalls === 1;
+      },
+      onProviderMessageId: async (id) => {
+        recordedProviderIds.push(id);
+      },
+    }
+  );
+
+  assert.equal(guardCalls, 2);
+  assert.equal(captionCalls, 1);
+  assert.equal(imageCalls, 0);
+  assert.equal(result.success, false);
+  assert.equal(result.cancelled, false);
+  assert.equal(result.partialCaptionSent, true);
+  assert.equal(result.captionProviderMessageId, "fb-caption-accepted");
+  assert.match(result.error, /staff activity took over/i);
+  assert.deepEqual(recordedProviderIds, ["fb-caption-accepted"]);
+
+  metaAttachments.sendBuffer = async () => {
+    imageCalls += 1;
+    return {
+      success: true,
+      externalMessageId: "fb-image-retry",
+      error: null,
+    };
+  };
+
+  const retry = await messaging.sendImageByUrl(
+    {
+      id: 403,
+      channel: "facebook",
+      channel_user_id: "psid-late-cancel",
+    },
+    "https://app.example/promo-images/77",
+    undefined,
+    { skipCaption: true }
+  );
+
+  assert.equal(retry.success, true);
+  assert.equal(captionCalls, 1);
+  assert.equal(imageCalls, 1);
 });

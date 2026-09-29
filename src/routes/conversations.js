@@ -12,6 +12,11 @@ const mediaStorage = require("../services/mediaStorageService");
 const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const { transcribeStaffAudio } = require("../services/transcriptionService");
 const whatsappPolicy = require("../services/whatsappPolicyService");
+const {
+  hasPartialCaptionMarker,
+  deliveryErrorForSend,
+  publicDeliveryError,
+} = require("../utils/socialDeliveryError");
 
 const router = express.Router();
 const STAFF_TRANSCRIPTION_TIMEOUT_MS = 15 * 1000;
@@ -178,6 +183,7 @@ function socialProviderSendOptions(message, contact, options = {}) {
 async function sendStoredMessage(contact, message) {
   const mimeType = String(message.media_mime_type || "").toLowerCase();
   const channel = contact.channel || "whatsapp";
+  const skipCaption = hasPartialCaptionMarker(message.delivery_error);
 
   if (mimeType.startsWith("audio/") && message.media_base64) {
     const storedBuffer = Buffer.from(message.media_base64, "base64");
@@ -208,9 +214,9 @@ async function sendStoredMessage(contact, message) {
       contact,
       Buffer.from(message.media_base64, "base64"),
       mimeType,
-      message.content || undefined,
+      skipCaption ? undefined : (message.content || undefined),
       "image",
-      socialProviderSendOptions(message, contact)
+      socialProviderSendOptions(message, contact, { skipCaption })
     );
   }
 
@@ -218,8 +224,8 @@ async function sendStoredMessage(contact, message) {
     return channelMessaging.sendImageByUrl(
       contact,
       message.media_url,
-      message.content || undefined,
-      socialProviderSendOptions(message, contact)
+      skipCaption ? undefined : (message.content || undefined),
+      socialProviderSendOptions(message, contact, { skipCaption })
     );
   }
 
@@ -532,7 +538,11 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     }
 
     const sendResult = await sendStoredMessage(contact, message);
-    const errorText = sendResult.error || rejectedErrorFor(contact);
+    const errorText = deliveryErrorForSend(
+      sendResult,
+      sendResult.error || rejectedErrorFor(contact),
+      message.delivery_error
+    );
     const updated = await persistSendOutcome(
       message,
       sendResult,
@@ -544,13 +554,16 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(contact.id);
       await markLeadContacted(contact.id, req.session.username, sendResult);
     } else {
-      await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${errorText}`);
+      await contactsRepo.setDeliveryAttention(
+        contact.id,
+        `Delivery failed: ${publicDeliveryError(errorText)}`
+      );
     }
 
     res.json({
       ...updated,
       accepted: !!sendResult.success,
-      retry_error: sendResult.success ? null : errorText,
+      retry_error: sendResult.success ? null : publicDeliveryError(errorText),
     });
   } catch (err) {
     console.error("Failed to retry message:", err);
@@ -597,7 +610,10 @@ router.post("/:contactId/messages", async (req, res) => {
       text.trim(),
       socialProviderSendOptions(saved, contact)
     );
-    const errorText = sendResult.error || rejectedErrorFor(contact);
+    const errorText = deliveryErrorForSend(
+      sendResult,
+      sendResult.error || rejectedErrorFor(contact)
+    );
     const finalMessage = await persistSendOutcome(
       saved,
       sendResult,
@@ -605,12 +621,19 @@ router.post("/:contactId/messages", async (req, res) => {
       contact.channel || "whatsapp"
     );
     if (!sendResult.success) {
-      await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${errorText}`);
+      await contactsRepo.setDeliveryAttention(
+        contact.id,
+        `Delivery failed: ${publicDeliveryError(errorText)}`
+      );
     } else {
       await markLeadContacted(contact.id, req.session.username, sendResult);
     }
 
-    res.status(201).json({ ...finalMessage, delivered: sendResult.success });
+    res.status(201).json({
+      ...finalMessage,
+      delivery_error: publicDeliveryError(finalMessage.delivery_error),
+      delivered: sendResult.success,
+    });
   } catch (err) {
     console.error("Failed to send staff message:", err);
     res.status(500).json({ error: "Something went wrong sending this message." });
@@ -678,7 +701,10 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       req.file.originalname || "image",
       socialProviderSendOptions(saved, contact)
     );
-    const errorText = sendResult.error || rejectedErrorFor(contact);
+    const errorText = deliveryErrorForSend(
+      sendResult,
+      sendResult.error || rejectedErrorFor(contact)
+    );
     const finalMessage = await persistSendOutcome(
       saved,
       sendResult,
@@ -686,12 +712,19 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       contact.channel || "whatsapp"
     );
     if (!sendResult.success) {
-      await contactsRepo.setDeliveryAttention(contact.id, `Delivery failed: ${errorText}`);
+      await contactsRepo.setDeliveryAttention(
+        contact.id,
+        `Delivery failed: ${publicDeliveryError(errorText)}`
+      );
     } else {
       await markLeadContacted(contact.id, req.session.username, sendResult);
     }
 
-    res.status(201).json({ ...finalMessage, delivered: sendResult.success });
+    res.status(201).json({
+      ...finalMessage,
+      delivery_error: publicDeliveryError(finalMessage.delivery_error),
+      delivered: sendResult.success,
+    });
   } catch (err) {
     console.error("Failed to send staff image:", err);
     res.status(500).json({ error: "Something went wrong sending this image." });

@@ -15,6 +15,9 @@ const {
   startWhatsAppDeliveryStatusRecovery,
 } = require("./whatsappDeliveryStatusService");
 const metaCommentAutomation = require("./metaCommentAutomationService");
+const {
+  startScheduledMessageWorker,
+} = require("./scheduledMessageBootstrap");
 const startupReadiness = require("./startupReadinessService");
 const {
   closeHttpServer,
@@ -73,6 +76,7 @@ async function startApplication({
     startInboundProcessingRecovery({ processBatch: processIncomingBatch });
     startWhatsAppDeliveryStatusRecovery();
     startTelegramImmediateAlertRecovery();
+    startScheduledMessageWorker();
     startAutomatedFollowUps();
     startStaffWaitingAlerts();
     startLeadScoring();

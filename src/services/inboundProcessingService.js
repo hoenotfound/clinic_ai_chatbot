@@ -222,6 +222,117 @@ async function recoverMetaResolutionJobs({
   return jobs.length + exhausted.length;
 }
 
+async function reconcileRecoveredOutbound(
+  job,
+  {
+    repository = inboundProcessingRepo,
+    contacts = contactsRepo,
+    attempt: suppliedAttempt,
+  } = {}
+) {
+  if (!job || typeof repository.getOutboundAttempt !== "function") return false;
+
+  const attempt =
+    suppliedAttempt === undefined
+      ? await repository.getOutboundAttempt(job.id)
+      : suppliedAttempt;
+  if (!attempt) return false;
+
+  const deliveryStatus = String(attempt.delivery_status || "").toLowerCase();
+  const providerMessageId =
+    attempt.provider_message_id || attempt.whatsapp_message_id || null;
+  const finalizedOutcome = String(attempt.outcome || "").toLowerCase();
+
+  const accepted =
+    finalizedOutcome === "accepted" ||
+    Boolean(providerMessageId) ||
+    ["pending", "sent", "delivered", "read"].includes(deliveryStatus);
+  const rejected =
+    finalizedOutcome === "rejected" ||
+    deliveryStatus === "failed";
+  const cancelled = finalizedOutcome === "cancelled";
+
+  if (rejected) {
+    try {
+      if (typeof contacts.setDeliveryAttention !== "function") {
+        throw new Error("Delivery-attention persistence is unavailable.");
+      }
+      await contacts.setDeliveryAttention(
+        job.contact_id,
+        `Delivery failed: ${attempt.error_text || attempt.delivery_error || "The automated reply was rejected by the messaging provider."}`
+      );
+    } catch (err) {
+      console.error(
+        `Failed to restore delivery attention for recovered inbound job ${job.id}:`,
+        err
+      );
+      const attentionErr = new Error(
+        "Recovered rejected reply could not restore staff delivery attention."
+      );
+      attentionErr.code = "DELIVERY_ATTENTION_RESTORE_FAILED";
+      attentionErr.cause = err;
+      throw attentionErr;
+    }
+  }
+
+  if (accepted || rejected || cancelled) {
+    await repository.markCompleted(job.id);
+    return true;
+  }
+
+  // The assistant row was reserved before the provider call, but no durable
+  // provider outcome exists. The process may have died either just before or
+  // just after Meta accepted the request. Mark the visible message unconfirmed
+  // so it is excluded from future AI context and never looks successfully sent.
+  const ambiguousReason =
+    "Delivery could not be confirmed because the server restarted during this automated reply. Check the customer chat before replying to avoid sending it twice.";
+  if (
+    finalizedOutcome !== "ambiguous" &&
+    typeof repository.markOutboundAttemptAmbiguous === "function"
+  ) {
+    const ambiguousResult = await repository.markOutboundAttemptAmbiguous(
+      job.id,
+      ambiguousReason
+    );
+
+    // A provider outcome may have become durable after the first read but
+    // before this recovery transaction acquired its locks. Re-read that state
+    // rather than overwriting it as ambiguous.
+    if (ambiguousResult?.marked === false) {
+      if (String(ambiguousResult.state?.outcome || "").toLowerCase() !== "ambiguous") {
+        return reconcileRecoveredOutbound(job, { repository, contacts });
+      }
+    } else if (ambiguousResult?.message) {
+      realtimeEvents.publish("conversation_changed", {
+        contactId: ambiguousResult.message.contact_id,
+        messageId: ambiguousResult.message.id,
+        deliveryStatus: ambiguousResult.message.delivery_status,
+        deliveryError: ambiguousResult.message.delivery_error,
+        reason: "delivery_status",
+      });
+    }
+  }
+
+  // Automatic resend would risk a duplicate customer reply, so hand this one
+  // to staff instead.
+  try {
+    await contacts.setAttention(
+      job.contact_id,
+      true,
+      "An automated reply was interrupted during delivery and may already have reached the customer. Review the conversation before replying."
+    );
+  } catch (err) {
+    console.error(
+      `Failed to flag ambiguous outbound attempt for inbound job ${job.id}:`,
+      err
+    );
+    return true;
+  }
+
+  await repository.markTerminal(job.id);
+  return true;
+}
+
 async function runInboundProcessingRecovery({
   repository = inboundProcessingRepo,
   resumeJob = resumeIncomingProcessingJob,
@@ -256,8 +367,105 @@ async function runInboundProcessingRecovery({
     workCount += jobs.length;
 
     for (const group of groupJobsByContact(jobs)) {
+      const handledJobIds = new Set();
+      const outboundAttempts = new Map();
+      let coveredThroughMessageId = null;
+      let outboundLookupError = null;
+
+      // Read all durable outbound fences before replaying any job for this
+      // contact. If even one lookup fails, the relationship between these
+      // recovered messages and prior provider sends is unknown. Fail closed for
+      // the whole contact group and retry on a later sweep instead of risking a
+      // duplicate AI reply from an older burst item.
+      if (typeof repository.getOutboundAttempt === "function") {
+        for (let index = group.length - 1; index >= 0; index -= 1) {
+          const job = group[index];
+          try {
+            outboundAttempts.set(
+              job.id,
+              await repository.getOutboundAttempt(job.id)
+            );
+          } catch (err) {
+            outboundLookupError = err;
+            console.error(
+              `Failed to read recovered outbound state for inbound job ${job.id}:`,
+              err
+            );
+            break;
+          }
+        }
+      }
+
+      if (outboundLookupError) {
+        for (const job of group) {
+          const failed = await repository
+            .markFailed(job.id, outboundLookupError)
+            .catch(() => null);
+          await flagTerminalFailure(failed || job, contacts, repository);
+        }
+        continue;
+      }
+
+      // Reconcile from newest to oldest first. The durable outbound reservation
+      // itself proves processIncomingBatch already walked every earlier item in
+      // that ordered burst. Mark that coverage before secondary reconciliation
+      // bookkeeping, so a temporary failure while completing/handing off the
+      // final job can never cause an earlier suppressed message to be replayed
+      // through AI as a new turn.
+      for (let index = group.length - 1; index >= 0; index -= 1) {
+        const job = group[index];
+        try {
+          const outboundAttempt = outboundAttempts.get(job.id) || null;
+
+          if (outboundAttempt) {
+            const messageId = Number(job.message_id);
+            if (Number.isSafeInteger(messageId)) {
+              coveredThroughMessageId = coveredThroughMessageId == null
+                ? messageId
+                : Math.max(coveredThroughMessageId, messageId);
+            }
+          }
+
+          if (
+            await reconcileRecoveredOutbound(job, {
+              repository,
+              contacts,
+              attempt: outboundAttempt,
+            })
+          ) {
+            handledJobIds.add(job.id);
+          }
+        } catch (err) {
+          console.error(`Failed to reconcile recovered outbound job ${job.id}:`, err);
+          const failed = await repository.markFailed(job.id, err).catch(() => null);
+          await flagTerminalFailure(failed || job, contacts, repository);
+          handledJobIds.add(job.id);
+        }
+      }
+
       const items = [];
       for (const job of group) {
+        if (handledJobIds.has(job.id)) continue;
+
+        const messageId = Number(job.message_id);
+        if (
+          coveredThroughMessageId != null &&
+          Number.isSafeInteger(messageId) &&
+          messageId < coveredThroughMessageId
+        ) {
+          try {
+            await repository.markCompleted(job.id);
+          } catch (err) {
+            console.error(
+              `Failed to complete burst-covered inbound job ${job.id}:`,
+              err
+            );
+            const failed = await repository.markFailed(job.id, err).catch(() => null);
+            await flagTerminalFailure(failed || job, contacts, repository);
+          }
+          continue;
+        }
+
         try {
           const item = await resumeJob(job);
           // Opt-outs deliberately complete their durable job during prepare and
@@ -381,6 +589,7 @@ module.exports = {
   markBatchFailed,
   processClaimedBatch,
   recoverMetaResolutionJobs,
+  reconcileRecoveredOutbound,
   replyQueueKeyForRecoveredItems,
   runInboundProcessingRecovery,
   startInboundProcessingRecovery,

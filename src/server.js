@@ -30,7 +30,12 @@ const {
 } = require("./utils/handoffReply");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
+const {
+  deliveryErrorForSend,
+  publicDeliveryError,
+} = require("./utils/socialDeliveryError");
 const messagesRepo = require("./db/messagesRepo");
+const inboundProcessingRepo = require("./db/inboundProcessingRepo");
 const outboundMessageEvidenceRepo = require("./db/outboundMessageEvidenceRepo");
 const contactsRepo = require("./db/contactsRepo");
 const { checkKeywordTriggers } = require("./utils/attentionTriggers");
@@ -115,7 +120,7 @@ async function sendTrackedText(
   contact,
   text,
   origin = "ai_reply",
-  { canSend = null } = {}
+  { canSend = null, processingJobId = null } = {}
 ) {
   const guarded = typeof canSend === "function";
 
@@ -126,37 +131,105 @@ async function sendTrackedText(
     };
   }
 
-  // A coexistence-guarded AI reply stays unpublished until the provider send
-  // is actually allowed to begin. This avoids briefly showing a draft in the
-  // Inbox if a phone-app staff reply arrives during the DB insert.
-  const saved = await conversationStore.appendMessageForContact(
-    contact.id,
-    "assistant",
-    text,
-    null,
-    null,
-    null,
-    null,
-    guarded ? { publish: false } : undefined
-  );
+  // For durable inbound work, reserve the assistant row and the outbound-attempt
+  // marker in one database transaction before calling Meta. A restart after
+  // this point is therefore reconciled as accepted/rejected/ambiguous instead
+  // of blindly generating and sending the same turn again.
+  let saved;
+  let durableOutboundReserved = false;
+  if (processingJobId) {
+    const reservation = await inboundProcessingRepo.reserveOutboundAttempt({
+      processingJobId,
+      contactId: contact.id,
+      content: text,
+      origin,
+    });
+    if (reservation.alreadyStarted) {
+      const err = new Error(
+        `Inbound processing job ${processingJobId} already has an outbound attempt.`
+      );
+      err.code = "INBOUND_OUTBOUND_ALREADY_STARTED";
+      throw err;
+    }
+    saved = reservation.message;
+    durableOutboundReserved = true;
+    if (!guarded) {
+      realtimeEvents.publish("conversation_changed", {
+        contactId: saved.contact_id,
+        messageId: saved.id,
+        reason: "message",
+      });
+    }
+  } else {
+    // Compatibility path for callers that are not backed by a durable inbound
+    // processing job.
+    saved = await conversationStore.appendMessageForContact(
+      contact.id,
+      "assistant",
+      text,
+      null,
+      null,
+      null,
+      null,
+      guarded ? { publish: false } : undefined
+    );
+  }
 
   const socialProviderRecorder = messagesRepo.socialProviderAliasRecorder(
     saved.id,
     contact.channel
   );
-  const sendResult = await channelMessaging.sendText(
-    contact,
-    text,
-    {
-      ...(guarded ? { preSendCheck: canSend } : {}),
-      ...(socialProviderRecorder
-        ? { onProviderMessageId: socialProviderRecorder }
-        : {}),
+
+  let sendResult;
+  try {
+    sendResult = await channelMessaging.sendText(
+      contact,
+      text,
+      {
+        ...(guarded ? { preSendCheck: canSend } : {}),
+        ...(socialProviderRecorder
+          ? { onProviderMessageId: socialProviderRecorder }
+          : {}),
+      }
+    );
+  } catch (err) {
+    if (durableOutboundReserved) {
+      const ambiguousReason =
+        "Delivery could not be confirmed because the messaging request was interrupted. Check the customer chat before replying to avoid sending it twice.";
+      try {
+        const ambiguous = await inboundProcessingRepo.markOutboundAttemptAmbiguous(
+          processingJobId,
+          ambiguousReason
+        );
+        if (ambiguous?.message) {
+          publishDeliveryStatus(ambiguous.message);
+        }
+      } catch (markErr) {
+        console.error(
+          `Failed to mark interrupted outbound attempt for inbound job ${processingJobId}:`,
+          markErr
+        );
+      }
+      err.outboundDeliveryAmbiguous = true;
     }
-  );
+    throw err;
+  }
 
   if (sendResult.cancelled) {
-    await messagesRepo.deleteUnsentAssistantMessage(saved.id);
+    if (durableOutboundReserved) {
+      const cancelledAttempt = await inboundProcessingRepo.cancelOutboundAttempt(
+        processingJobId
+      );
+      if (!cancelledAttempt?.cancelled) {
+        const err = new Error(
+          `Inbound processing job ${processingJobId} could not be durably cancelled.`
+        );
+        err.code = "INBOUND_OUTBOUND_CANCEL_NOT_SAFE";
+        throw err;
+      }
+    } else {
+      await messagesRepo.deleteUnsentAssistantMessage(saved.id);
+    }
     return { finalMessage: null, sendResult };
   }
 
@@ -175,6 +248,23 @@ async function sendTrackedText(
     errorText,
     contact.channel || "whatsapp"
   );
+  if (durableOutboundReserved) {
+    await inboundProcessingRepo.finalizeOutboundAttempt(
+      processingJobId,
+      {
+        outcome: sendResult.success ? "accepted" : "rejected",
+        providerMessageId: providerMessageId(sendResult),
+        errorText: sendResult.success ? null : errorText,
+      }
+    ).catch((err) => {
+      // The provider outcome is already reflected on the message row. Recovery
+      // can reconcile from that row if this bookkeeping write is interrupted.
+      console.error(
+        `Failed to finalize outbound attempt for inbound job ${processingJobId}:`,
+        err
+      );
+    });
+  }
   // Do not extend the durable inbound critical path after the provider has
   // already accepted/rejected the customer reply. Missing telemetry fails the
   // later go-live check closed; it must never delay or duplicate customer work.
@@ -324,6 +414,7 @@ async function processIncomingMessage(
   const { customerLabel, customerSingular } = getOperationalLabels(clinicConfig);
   let contact = preclaimed?.contact || null;
   let savedInbound = preclaimed?.savedInbound || null;
+  let processingJobId = preclaimed?.processingJobId || null;
   let responseAttempted = false;
   let wasFirstMessage = Boolean(preclaimed?.wasFirstMessage);
   let keywordReason = inheritedKeywordReason;
@@ -339,6 +430,7 @@ async function processIncomingMessage(
       }
       contact = claimed.contact;
       savedInbound = claimed.savedInbound;
+      processingJobId = claimed.processingJobId || null;
       wasFirstMessage = Boolean(claimed.wasFirstMessage);
     }
 
@@ -363,7 +455,7 @@ async function processIncomingMessage(
             contact,
             "Sorry, I can only read text, voice, or photo messages for now — could you type that out for me? 🙂",
             "system_fallback",
-            { canSend: canSendAutomatedReply }
+            { canSend: canSendAutomatedReply, processingJobId }
           );
         }
       }
@@ -417,7 +509,7 @@ async function processIncomingMessage(
               contact,
               "Sorry, I couldn't quite catch that voice message — mind typing it out, or sending the voice note again? 🙂",
               "system_fallback",
-              { canSend: canSendAutomatedReply }
+              { canSend: canSendAutomatedReply, processingJobId }
             );
           }
         }
@@ -455,7 +547,7 @@ async function processIncomingMessage(
               contact,
               "Sorry, I couldn't load that photo — mind sending it again? 🙂",
               "system_fallback",
-              { canSend: canSendAutomatedReply }
+              { canSend: canSendAutomatedReply, processingJobId }
             );
           }
         }
@@ -633,7 +725,7 @@ async function processIncomingMessage(
       contact,
       reply,
       "ai_reply",
-      { canSend: canSendAutomatedReply }
+      { canSend: canSendAutomatedReply, processingJobId }
     );
     if (sendOutcome.sendResult.cancelled) {
       console.log(
@@ -729,7 +821,10 @@ async function processIncomingMessage(
           });
         }
 
-        const promoError = promoResult.error || channelMessaging.rejectedError(contact.channel);
+        const promoError = deliveryErrorForSend(
+          promoResult,
+          promoResult.error || channelMessaging.rejectedError(contact.channel)
+        );
         await persistSendOutcome(
           savedPromo,
           promoResult,
@@ -740,7 +835,7 @@ async function processIncomingMessage(
           console.warn(`Promo image failed to send to ${channel}:${from}, continuing without it.`);
           await contactsRepo.setDeliveryAttention(
             contact.id,
-            `Delivery failed: ${promoError}`
+            `Delivery failed: ${publicDeliveryError(promoError)}`
           );
         }
       }
@@ -805,7 +900,7 @@ async function processIncomingMessage(
             pendingHandoff,
             "Sorry, something went wrong on our end — a team member will follow up with you shortly!",
             "system_fallback",
-            { canSend: canSendAutomatedReply }
+            { canSend: canSendAutomatedReply, processingJobId }
           );
         }
       } catch (fallbackErr) {

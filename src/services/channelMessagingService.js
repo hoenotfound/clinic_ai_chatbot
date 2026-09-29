@@ -209,7 +209,9 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
     };
   }
 
-  if (caption?.trim()) {
+  let captionSent = false;
+  let captionProviderMessageId = null;
+  if (caption?.trim() && options.skipCaption !== true) {
     const cancelled = preSendCancelled(options);
     if (cancelled) return cancelled;
     // Messenger keeps caption text separate from the media attachment. This is
@@ -221,6 +223,8 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
       caption.trim()
     );
     if (!captionResult.success) return captionResult;
+    captionSent = true;
+    captionProviderMessageId = captionResult.externalMessageId || null;
     await notifyProviderMessageId(options, captionResult, "facebook");
   }
 
@@ -229,7 +233,19 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
   // The exact JPG/PNG bytes are already in Postgres, so upload them directly to
   // Messenger's message_attachments endpoint and send the returned attachment.
   const cancelled = preSendCancelled(options);
-  if (cancelled) return cancelled;
+  if (cancelled) {
+    if (!captionSent) return cancelled;
+    return {
+      success: false,
+      wamid: null,
+      externalMessageId: null,
+      cancelled: false,
+      partialCaptionSent: true,
+      captionProviderMessageId,
+      error:
+        "Staff activity took over the conversation before the image could be sent.",
+    };
+  }
 
   const result = await trackSocialOutbound(
     "facebook",
@@ -243,6 +259,13 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
     )
   );
   await notifyProviderMessageId(options, result, "facebook");
+  if (!result.success && captionSent) {
+    return {
+      ...result,
+      partialCaptionSent: true,
+      captionProviderMessageId,
+    };
+  }
   return result;
 }
 
@@ -315,7 +338,9 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
     );
   }
 
-  if (caption?.trim()) {
+  let captionSent = false;
+  let captionProviderMessageId = null;
+  if (caption?.trim() && options.skipCaption !== true) {
     // Do not mark the whole operation healthy from this partial caption send.
     // If the companion image fails, Setup Status should still show the failure
     // until a later complete social send succeeds.
@@ -325,6 +350,8 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
       caption.trim()
     );
     if (!captionResult.success) return captionResult;
+    captionSent = true;
+    captionProviderMessageId = captionResult.externalMessageId || null;
     await notifyProviderMessageId(options, captionResult, channel);
   }
 
@@ -343,6 +370,13 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
     );
     const tracked = recordAcceptedSocialOutbound(channel, result);
     await notifyProviderMessageId(options, tracked, channel);
+    if (!tracked.success && captionSent) {
+      return {
+        ...tracked,
+        partialCaptionSent: true,
+        captionProviderMessageId,
+      };
+    }
     return tracked;
   }
 
@@ -358,6 +392,13 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
     )
   );
   await notifyProviderMessageId(options, result, channel);
+  if (!result.success && captionSent) {
+    return {
+      ...result,
+      partialCaptionSent: true,
+      captionProviderMessageId,
+    };
+  }
   return result;
 }
 

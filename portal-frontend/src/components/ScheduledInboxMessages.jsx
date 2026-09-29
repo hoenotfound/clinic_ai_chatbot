@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 
 async function request(path, options = {}) {
   const res = await fetch(`/api${path}`, {
@@ -73,10 +74,14 @@ function nativeSetTextareaValue(textarea, value) {
 }
 
 export default function ScheduledInboxMessages() {
+  const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const contactId = /^\d+$/.test(searchParams.get("contact") || "")
     ? Number(searchParams.get("contact"))
     : null;
+
+  const canReply = user?.permissions?.reply_to_assigned_leads === true;
+  const canManage = user?.permissions?.manage_assigned_leads === true;
 
   const composerFormRef = useRef(null);
   const draftSnapshotRef = useRef("");
@@ -351,7 +356,7 @@ export default function ScheduledInboxMessages() {
     : null;
   const scheduleButtonDisabled = !!mediaDisabledReason || checkingMode || (!!policyDisabledReason && activeItems.length === 0);
 
-  const scheduleButton = composerMount
+  const scheduleButton = composerMount && canReply
     ? createPortal(
         <button
           type="button"
@@ -470,7 +475,7 @@ export default function ScheduledInboxMessages() {
                   {editingId && (
                     <button type="button" onClick={() => resetForm()} disabled={saving} className="touch-manipulation rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-xs font-semibold transition hover:bg-[var(--color-bg)] disabled:opacity-40">Cancel edit</button>
                   )}
-                  <button type="submit" disabled={saving || !staffMode || !content.trim() || !scheduledFor || !canSchedule || loadFailed} className="inline-flex touch-manipulation items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40">
+                  <button type="submit" disabled={saving || !canReply || !staffMode || !content.trim() || !scheduledFor || !canSchedule || loadFailed} className="inline-flex touch-manipulation items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40">
                     {saving ? "Saving…" : editingId ? "Save changes" : "Schedule message"}
                   </button>
                 </div>
@@ -507,7 +512,7 @@ export default function ScheduledInboxMessages() {
                           {item.scheduled_by_username && <><span>•</span><span>{item.scheduled_by_username}</span></>}
                         </div>
                         {needsReview && item.failure_reason && <p className="mt-2 rounded-lg bg-[var(--color-danger-light)] px-2.5 py-2 text-[10px] leading-relaxed text-[var(--color-danger)]">{item.failure_reason}</p>}
-                        {canChange && (
+                        {canChange && canReply && canManage && (
                           <div className="mt-3 flex justify-end gap-2">
                             <button type="button" onClick={() => startEdit(item)} disabled={!staffMode || policyBlocked} className="rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-xs font-semibold transition hover:bg-[var(--color-bg)] disabled:opacity-40">Edit</button>
                             <button type="button" onClick={() => cancel(item)} className="rounded-lg border border-[var(--color-danger)]/25 px-2.5 py-1.5 text-xs font-semibold text-[var(--color-danger)] transition hover:bg-[var(--color-danger-light)]">Cancel send</button>
