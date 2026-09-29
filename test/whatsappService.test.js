@@ -5,6 +5,7 @@ const {
   parseIncomingMessages,
   parseStatusUpdates,
 } = require("../src/services/whatsappService");
+const whatsappPolicy = require("../src/services/whatsappPolicyService");
 
 test("parses messages from every webhook entry and change", () => {
   const parsed = parseIncomingMessages({
@@ -153,5 +154,34 @@ test("quick-reply button parser falls back to payload when Meta omits button tex
 
   assert.equal(parsed[0].text, "Stop promotions");
   assert.equal(parsed[0].unsupportedType, null);
+});
+
+test("template opt-out quick reply reaches the existing WhatsApp opt-out classifier", () => {
+  const [incoming] = parseIncomingMessages({
+    entry: [
+      {
+        changes: [
+          {
+            value: {
+              messages: [
+                {
+                  id: "message-button-stop",
+                  from: "6016",
+                  type: "button",
+                  button: {
+                    text: "Stop promotions",
+                    payload: "da_qr:promo_follow_up:1",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(incoming.unsupportedType, null);
+  assert.equal(whatsappPolicy.isOptOutText(incoming.text), true);
 });
 
