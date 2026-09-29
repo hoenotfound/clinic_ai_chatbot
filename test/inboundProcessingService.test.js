@@ -268,3 +268,92 @@ test("terminal bookkeeping waits until staff attention is safely persisted", asy
   assert.equal(result, false);
   assert.equal(terminalMarked, false);
 });
+
+
+test("recovery completes a provider-accepted outbound attempt instead of sending again", async () => {
+  const calls = [];
+  const job = { id: 201, contact_id: 42, attempts: 2 };
+  const repository = {
+    async getOutboundAttempt(jobId) {
+      assert.equal(jobId, 201);
+      return {
+        outcome: "accepted",
+        provider_message_id: "wamid.accepted",
+        delivery_status: "pending",
+      };
+    },
+    async markCompleted(jobId) {
+      calls.push(["completed", jobId]);
+      return { ...job, status: "completed" };
+    },
+  };
+  const contacts = {
+    async setAttention() {
+      throw new Error("accepted recovery must not raise ambiguous attention");
+    },
+  };
+
+  const handled = await reconcileRecoveredOutbound(job, { repository, contacts });
+
+  assert.equal(handled, true);
+  assert.deepEqual(calls, [["completed", 201]]);
+});
+
+test("recovery hands an ambiguous reserved outbound attempt to staff instead of resending", async () => {
+  const calls = [];
+  const job = { id: 202, contact_id: 43, attempts: 2 };
+  const repository = {
+    async getOutboundAttempt() {
+      return {
+        outcome: null,
+        provider_message_id: null,
+        whatsapp_message_id: null,
+        delivery_status: null,
+      };
+    },
+    async markTerminal(jobId) {
+      calls.push(["terminal", jobId]);
+      return { ...job, status: "failed", terminal_at: new Date() };
+    },
+  };
+  const contacts = {
+    async setAttention(contactId, enabled, reason) {
+      calls.push(["attention", contactId, enabled, reason]);
+    },
+  };
+
+  const handled = await reconcileRecoveredOutbound(job, { repository, contacts });
+
+  assert.equal(handled, true);
+  assert.deepEqual(calls[0].slice(0, 3), ["attention", 43, true]);
+  assert.match(calls[0][3], /may already have reached the customer/i);
+  assert.deepEqual(calls[1], ["terminal", 202]);
+});
+
+test("recovery restores delivery attention for a rejected outbound attempt without retrying it", async () => {
+  const calls = [];
+  const job = { id: 203, contact_id: 44, attempts: 2 };
+  const repository = {
+    async getOutboundAttempt() {
+      return {
+        outcome: "rejected",
+        error_text: "Meta rejected the send",
+        delivery_status: "failed",
+      };
+    },
+    async markCompleted(jobId) {
+      calls.push(["completed", jobId]);
+    },
+  };
+  const contacts = {
+    async setDeliveryAttention(contactId, reason) {
+      calls.push(["delivery", contactId, reason]);
+    },
+  };
+
+  const handled = await reconcileRecoveredOutbound(job, { repository, contacts });
+
+  assert.equal(handled, true);
+  assert.deepEqual(calls[0], ["delivery", 44, "Delivery failed: Meta rejected the send"]);
+  assert.deepEqual(calls[1], ["completed", 203]);
+});
