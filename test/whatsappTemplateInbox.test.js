@@ -24,6 +24,8 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(route, /marketing_consent_confirmation_required/);
   assert.match(route, /whatsappTemplate: metadata/);
   assert.match(route, /if \(message\.whatsapp_template\)/);
+  assert.match(route, /currentTemplate\.template\.category === "MARKETING"/);
+  assert.match(route, /message\.whatsapp_template\.marketingConsentConfirmed !== true/);
   assert.match(route, /sendApprovedTemplate\(contact/);
 
   assert.match(service, /\/message_templates/);
