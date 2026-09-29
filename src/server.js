@@ -473,7 +473,7 @@ async function processIncomingMessage(
               contact,
               "Sorry, I couldn't quite catch that voice message — mind typing it out, or sending the voice note again? 🙂",
               "system_fallback",
-              { canSend: canSendAutomatedReply }
+              { canSend: canSendAutomatedReply, processingJobId }
             );
           }
         }
@@ -511,7 +511,7 @@ async function processIncomingMessage(
               contact,
               "Sorry, I couldn't load that photo — mind sending it again? 🙂",
               "system_fallback",
-              { canSend: canSendAutomatedReply }
+              { canSend: canSendAutomatedReply, processingJobId }
             );
           }
         }
