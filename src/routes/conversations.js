@@ -21,6 +21,7 @@ const SSE_HEARTBEAT_MS = 25 * 1000;
 const SEND_REJECTED_ERROR =
   "WhatsApp did not accept this message. Check the reply window or connection and try again.";
 const MAX_DELIVERY_STATUS_IDS = 500;
+const PARTIAL_CAPTION_ERROR_PREFIX = "partial_caption_sent:";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -103,6 +104,24 @@ function rejectedErrorFor(contact) {
   return channelMessaging.rejectedError(contact?.channel || "whatsapp");
 }
 
+function hasPartialCaptionMarker(errorText) {
+  return String(errorText || "").startsWith(PARTIAL_CAPTION_ERROR_PREFIX);
+}
+
+function deliveryErrorForSend(sendResult, fallbackError, previousError = null) {
+  if (sendResult?.success) return fallbackError;
+  const base = String(fallbackError || "Message delivery failed.");
+  if (sendResult?.partialCaptionSent) {
+    const providerId = String(sendResult.captionProviderMessageId || "unknown");
+    return `${PARTIAL_CAPTION_ERROR_PREFIX}${providerId}|${base}`;
+  }
+  if (hasPartialCaptionMarker(previousError)) {
+    const marker = String(previousError).split("|", 1)[0];
+    return `${marker}|${base}`;
+  }
+  return base;
+}
+
 async function requireFreeformPolicy(contact, res, purpose = "service") {
   try {
     const policy = await whatsappPolicy.checkFreeformAllowed(contact, new Date(), {
@@ -178,6 +197,7 @@ function socialProviderSendOptions(message, contact, options = {}) {
 async function sendStoredMessage(contact, message) {
   const mimeType = String(message.media_mime_type || "").toLowerCase();
   const channel = contact.channel || "whatsapp";
+  const skipCaption = hasPartialCaptionMarker(message.delivery_error);
 
   if (mimeType.startsWith("audio/") && message.media_base64) {
     const storedBuffer = Buffer.from(message.media_base64, "base64");
@@ -208,9 +228,9 @@ async function sendStoredMessage(contact, message) {
       contact,
       Buffer.from(message.media_base64, "base64"),
       mimeType,
-      message.content || undefined,
+      skipCaption ? undefined : (message.content || undefined),
       "image",
-      socialProviderSendOptions(message, contact)
+      socialProviderSendOptions(message, contact, { skipCaption })
     );
   }
 
@@ -218,8 +238,8 @@ async function sendStoredMessage(contact, message) {
     return channelMessaging.sendImageByUrl(
       contact,
       message.media_url,
-      message.content || undefined,
-      socialProviderSendOptions(message, contact)
+      skipCaption ? undefined : (message.content || undefined),
+      socialProviderSendOptions(message, contact, { skipCaption })
     );
   }
 
@@ -532,7 +552,11 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     }
 
     const sendResult = await sendStoredMessage(contact, message);
-    const errorText = sendResult.error || rejectedErrorFor(contact);
+    const errorText = deliveryErrorForSend(
+      sendResult,
+      sendResult.error || rejectedErrorFor(contact),
+      message.delivery_error
+    );
     const updated = await persistSendOutcome(
       message,
       sendResult,
@@ -597,7 +621,10 @@ router.post("/:contactId/messages", async (req, res) => {
       text.trim(),
       socialProviderSendOptions(saved, contact)
     );
-    const errorText = sendResult.error || rejectedErrorFor(contact);
+    const errorText = deliveryErrorForSend(
+      sendResult,
+      sendResult.error || rejectedErrorFor(contact)
+    );
     const finalMessage = await persistSendOutcome(
       saved,
       sendResult,
@@ -678,7 +705,10 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       req.file.originalname || "image",
       socialProviderSendOptions(saved, contact)
     );
-    const errorText = sendResult.error || rejectedErrorFor(contact);
+    const errorText = deliveryErrorForSend(
+      sendResult,
+      sendResult.error || rejectedErrorFor(contact)
+    );
     const finalMessage = await persistSendOutcome(
       saved,
       sendResult,
