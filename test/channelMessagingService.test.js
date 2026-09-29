@@ -743,7 +743,7 @@ test("Facebook stored promo preserves a delivered caption when late cancellation
   assert.equal(result.cancelled, false);
   assert.equal(result.partialCaptionSent, true);
   assert.equal(result.captionProviderMessageId, "fb-caption-accepted");
-  assert.match(result.error, /caption was sent/i);
+  assert.match(result.error, /staff activity took over/i);
   assert.deepEqual(recordedProviderIds, ["fb-caption-accepted"]);
 
   metaAttachments.sendBuffer = async () => {
