@@ -543,7 +543,7 @@ test("Human Agent setup check is disabled by default and never implies Meta appr
   assert.match(humanAgent.summary, /Meta has approved/i);
 });
 
-test("Human Agent setup check warns when explicitly enabled because App Review approval is not machine-verifiable", async () => {
+test("Human Agent setup check is locally ready when explicitly enabled while keeping App Review verification manual", async () => {
   const env = {
     ...completeEnv(),
     META_HUMAN_AGENT_ENABLED: "true",
@@ -558,11 +558,12 @@ test("Human Agent setup check warns when explicitly enabled because App Review a
   const status = await service.getOverview();
   const humanAgent = status.checks.find((check) => check.key === "meta_human_agent");
 
-  assert.equal(humanAgent.status, "warning");
+  assert.equal(humanAgent.status, "ready");
   assert.equal(humanAgent.configured, true);
   assert.equal(humanAgent.featureEnabled, true);
   assert.equal(humanAgent.socialConfigured, true);
   assert.equal(humanAgent.reason, "meta_approval_not_verifiable");
-  assert.match(humanAgent.summary, /Confirm Human Agent approval/i);
+  assert.match(humanAgent.summary, /cannot be verified automatically/i);
+  assert.match(humanAgent.summary, /confirmed manually/i);
 });
 
