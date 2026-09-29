@@ -1,7 +1,9 @@
 export const WHATSAPP_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const STANDARD_MESSAGING_WINDOW_MS = WHATSAPP_REPLY_WINDOW_MS;
+export const HUMAN_AGENT_REPLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 const STANDARD_WINDOW_CHANNELS = new Set(["whatsapp", "facebook", "instagram"]);
+const HUMAN_AGENT_CHANNELS = new Set(["facebook", "instagram"]);
 
 const POLICY_COPY = {
   opted_out: {
@@ -18,6 +20,16 @@ const POLICY_COPY = {
     label: "Reply window closed",
     explanation:
       "The customer must message again before a normal WhatsApp reply can be sent.",
+  },
+  human_agent_only: {
+    label: "Staff reply only",
+    explanation:
+      "Only a staff-written reply to the customer's inquiry can be sent now. AI replies, scheduled messages, and automated follow-ups remain blocked.",
+  },
+  outside_human_agent_window: {
+    label: "Reply window closed",
+    explanation:
+      "The 7-day Human Agent window has closed. The customer must message again before staff can reply.",
   },
 };
 
@@ -39,7 +51,7 @@ function policyExplanation(channel, code) {
   if (code === "outside_customer_service_window" && channel !== "whatsapp") {
     return `The customer must message again before a normal ${messagingChannelLabel(channel)} reply can be sent.`;
   }
-  return POLICY_COPY[code].explanation;
+  return POLICY_COPY[code]?.explanation || null;
 }
 
 function timestamp(value) {
@@ -61,12 +73,15 @@ export function messagingPolicyStatus(contact, now = Date.now()) {
     return {
       applies: false,
       freeformAllowed: true,
+      humanAgentAllowed: false,
+      manualReplyAllowed: true,
       automatedAllowed: true,
       code: null,
       label: null,
       explanation: null,
       latestCustomerMessageAt: null,
       replyWindowExpiresAt: null,
+      humanAgentWindowExpiresAt: null,
       optedOutAt: null,
       channel,
       channelLabel: messagingChannelLabel(channel),
@@ -84,6 +99,13 @@ export function messagingPolicyStatus(contact, now = Date.now()) {
   const replyWindowExpiresMs = latestInboundMs == null
     ? null
     : latestInboundMs + WHATSAPP_REPLY_WINDOW_MS;
+  const humanAgentFeatureEnabled =
+    contact?.human_agent_enabled === true &&
+    HUMAN_AGENT_CHANNELS.has(channel);
+  const humanAgentWindowExpiresMs =
+    latestInboundMs != null && humanAgentFeatureEnabled
+      ? latestInboundMs + HUMAN_AGENT_REPLY_WINDOW_MS
+      : null;
   const customerReinitiatedAfterOptOut =
     optOutMs != null && latestInboundMs != null && latestInboundMs > optOutMs;
 
@@ -92,20 +114,39 @@ export function messagingPolicyStatus(contact, now = Date.now()) {
     code = "opted_out";
   } else if (latestInboundMs == null) {
     code = "no_customer_message";
-  } else if (!Number.isFinite(currentMs) || currentMs >= replyWindowExpiresMs) {
+  } else if (!Number.isFinite(currentMs)) {
     code = "outside_customer_service_window";
+  } else if (
+    humanAgentWindowExpiresMs != null &&
+    currentMs >= humanAgentWindowExpiresMs
+  ) {
+    code = "outside_human_agent_window";
+  } else if (currentMs >= replyWindowExpiresMs) {
+    code = humanAgentFeatureEnabled
+      ? "human_agent_only"
+      : "outside_customer_service_window";
   }
 
   const freeformAllowed = code == null;
+  const humanAgentAllowed = code === "human_agent_only";
+  const manualReplyAllowed = freeformAllowed || humanAgentAllowed;
   const remainingMs = freeformAllowed ? replyWindowExpiresMs - currentMs : 0;
+  const humanAgentRemainingMs = humanAgentAllowed
+    ? humanAgentWindowExpiresMs - currentMs
+    : 0;
+
   return {
     applies: true,
     freeformAllowed,
+    humanAgentAllowed,
+    manualReplyAllowed,
     automatedAllowed: freeformAllowed && optOutMs == null,
     code,
     label: freeformAllowed
       ? `Reply available · ${formatReplyTimeRemaining(remainingMs)} remaining`
-      : POLICY_COPY[code].label,
+      : humanAgentAllowed
+        ? `Staff reply only · ${formatReplyTimeRemaining(humanAgentRemainingMs)} remaining`
+        : POLICY_COPY[code].label,
     explanation: freeformAllowed ? null : policyExplanation(channel, code),
     channel,
     channelLabel: messagingChannelLabel(channel),
@@ -113,6 +154,10 @@ export function messagingPolicyStatus(contact, now = Date.now()) {
     replyWindowExpiresAt: replyWindowExpiresMs == null
       ? null
       : new Date(replyWindowExpiresMs).toISOString(),
+    humanAgentWindowExpiresAt: humanAgentWindowExpiresMs == null
+      ? null
+      : new Date(humanAgentWindowExpiresMs).toISOString(),
+    humanAgentFeatureEnabled,
     optedOutAt: optOutValue || null,
     customerReinitiatedAfterOptOut,
   };
@@ -130,6 +175,9 @@ export function policyFailureCodeFromMessage(message) {
   if (/opted out|opt-out/.test(error)) return "opted_out";
   if (/never messaged|has not sent a message|hasn't sent a message/.test(error)) {
     return "no_customer_message";
+  }
+  if (/7-day.*human agent.*closed|human agent window.*closed/.test(error)) {
+    return "outside_human_agent_window";
   }
   if (/24-hour.*window.*closed|customer-service.*window.*closed|outside.*reply window/.test(error)) {
     return "outside_customer_service_window";

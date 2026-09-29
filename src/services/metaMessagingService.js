@@ -6,6 +6,7 @@ const PROFILE_FAILURE_CACHE_TTL_MS = 5 * 60 * 1000;
 const COMMENT_CONTEXT_CACHE_TTL_MS = 10 * 60 * 1000;
 const { normalizeSocialReferral } = require("../utils/leadAttribution");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
+const { humanAgentFeatureEnabled } = require("../utils/metaHumanAgent");
 
 const profileCache = new Map();
 const profileRequests = new Map();
@@ -155,7 +156,16 @@ async function fetchUserProfile(channel, userId) {
   }
 }
 
-async function postMessage(channel, recipientId, message) {
+async function postMessage(channel, recipientId, message, options = {}) {
+  if (options.humanAgent === true && !humanAgentFeatureEnabled()) {
+    return {
+      success: false,
+      externalMessageId: null,
+      error:
+        "Human Agent send blocked because META_HUMAN_AGENT_ENABLED is not enabled for this deployment.",
+    };
+  }
+
   const config = getChannelConfig(channel);
   const label = channelLabel(channel);
   if (!config.token || !config.senderId) {
@@ -172,6 +182,10 @@ async function postMessage(channel, recipientId, message) {
     recipient: { id: String(recipientId) },
     message,
   };
+  if (options.humanAgent === true) {
+    body.messaging_type = "MESSAGE_TAG";
+    body.tag = "HUMAN_AGENT";
+  }
 
   try {
     const res = await fetch(url, {
@@ -214,8 +228,8 @@ async function postMessage(channel, recipientId, message) {
   }
 }
 
-async function sendText(channel, recipientId, text) {
-  return postMessage(channel, recipientId, { text });
+async function sendText(channel, recipientId, text, options = {}) {
+  return postMessage(channel, recipientId, { text }, options);
 }
 
 async function notifyProviderMessageId(options, externalMessageId, channel) {
@@ -235,17 +249,22 @@ async function sendImage(channel, recipientId, imageUrl, caption, options = {}) 
   // messages. Record the caption MID before starting the slower media send so
   // an echo cannot race ahead and be mistaken for a manual staff reply.
   if (caption?.trim()) {
-    const captionResult = await sendText(channel, recipientId, caption.trim());
+    const captionResult = await sendText(channel, recipientId, caption.trim(), options);
     if (!captionResult.success) return captionResult;
     await notifyProviderMessageId(options, captionResult.externalMessageId, channel);
   }
 
-  const imageResult = await postMessage(channel, recipientId, {
-    attachment: {
-      type: "image",
-      payload: { url: imageUrl },
+  const imageResult = await postMessage(
+    channel,
+    recipientId,
+    {
+      attachment: {
+        type: "image",
+        payload: { url: imageUrl },
+      },
     },
-  });
+    options
+  );
   if (imageResult.success) {
     await notifyProviderMessageId(options, imageResult.externalMessageId, channel);
   }

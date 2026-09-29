@@ -136,3 +136,77 @@ test("attachment upload failure is returned without attempting delivery", async 
   assert.equal(result.error, "Unsupported attachment");
   assert.equal(calls, 1);
 });
+
+test("Human Agent attachment sends add the Meta message tag to final delivery", async (t) => {
+  const originalFetch = global.fetch;
+  const originalToken = process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
+  const originalPageId = process.env.INSTAGRAM_PAGE_ID;
+  const originalHumanAgent = process.env.META_HUMAN_AGENT_ENABLED;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (originalToken === undefined) delete process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
+    else process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = originalToken;
+    if (originalPageId === undefined) delete process.env.INSTAGRAM_PAGE_ID;
+    else process.env.INSTAGRAM_PAGE_ID = originalPageId;
+    if (originalHumanAgent === undefined) delete process.env.META_HUMAN_AGENT_ENABLED;
+    else process.env.META_HUMAN_AGENT_ENABLED = originalHumanAgent;
+  });
+
+  process.env.INSTAGRAM_PAGE_ACCESS_TOKEN = "ig-human-agent-token";
+  process.env.INSTAGRAM_PAGE_ID = "ig-human-agent-page";
+  process.env.META_HUMAN_AGENT_ENABLED = "true";
+
+  let sentBody = null;
+  global.fetch = async (_url, options) => {
+    sentBody = JSON.parse(options.body);
+    return new Response(JSON.stringify({ message_id: "ig-human-agent-image" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  const result = await metaAttachments.sendUrlAttachment(
+    "instagram",
+    "igsid-human-agent",
+    "image",
+    "https://cdn.example.test/image.jpg",
+    { humanAgent: true }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(sentBody.messaging_type, "MESSAGE_TAG");
+  assert.equal(sentBody.tag, "HUMAN_AGENT");
+  assert.equal(sentBody.message.attachment.type, "image");
+});
+
+test("Human Agent attachment transport fails closed when the runtime flag is disabled", async (t) => {
+  const originalFetch = global.fetch;
+  const previous = process.env.META_HUMAN_AGENT_ENABLED;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (previous === undefined) delete process.env.META_HUMAN_AGENT_ENABLED;
+    else process.env.META_HUMAN_AGENT_ENABLED = previous;
+  });
+
+  delete process.env.META_HUMAN_AGENT_ENABLED;
+  let fetchCalls = 0;
+  global.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error("must not call Meta");
+  };
+
+  const result = await metaAttachments.sendBuffer(
+    "facebook",
+    "psid-human-agent",
+    "image",
+    Buffer.from("blocked-image"),
+    "image/jpeg",
+    "blocked.jpg",
+    { humanAgent: true }
+  );
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /META_HUMAN_AGENT_ENABLED/);
+  assert.equal(fetchCalls, 0);
+});
+

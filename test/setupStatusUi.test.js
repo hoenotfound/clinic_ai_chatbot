@@ -29,6 +29,8 @@ test("setup status UI includes private-credential copy and responsive controls",
   assert.match(page, /safe-area-inset-bottom/);
   assert.match(page, /About Meta app review/);
   assert.match(page, /cannot confirm that Meta has approved public messaging access/);
+  assert.match(page, /cannot confirm that Meta has approved.*Human Agent feature/);
+  assert.match(page, /META_HUMAN_AGENT_ENABLED=false/);
   assert.match(page, /<details/);
   assert.match(page, /View AI provider checks/);
   assert.match(page, /Run all checks refreshes every configured Gemini key/);

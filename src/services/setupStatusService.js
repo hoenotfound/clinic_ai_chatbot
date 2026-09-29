@@ -2,6 +2,7 @@ const { pool } = require("../db/db");
 const setupStatusRepo = require("../db/setupStatusRepo");
 const aiService = require("./aiService");
 const mediaStorage = require("./mediaStorageService");
+const { humanAgentFeatureEnabled } = require("../utils/metaHumanAgent");
 
 const GRAPH_API_VERSION = "v26.0";
 const DEFAULT_TIMEOUT_MS = 8000;
@@ -102,6 +103,19 @@ function definitions(env = process.env) {
     { key: "whatsapp_webhook", group: "Messaging channels", label: "WhatsApp webhook", optional: false, isConfigured: configured(env.WHATSAPP_APP_SECRET, env.WHATSAPP_VERIFY_TOKEN) },
     { key: "facebook", group: "Messaging channels", label: "Facebook Messenger", optional: true, isConfigured: facebookConfigured },
     { key: "instagram", group: "Messaging channels", label: "Instagram", optional: true, isConfigured: instagramConfigured },
+    {
+      key: "meta_human_agent",
+      group: "Messaging channels",
+      label: "Human Agent extended replies",
+      optional: true,
+      isConfigured:
+        humanAgentFeatureEnabled(env) &&
+        (facebookConfigured || instagramConfigured),
+      meta: {
+        featureEnabled: humanAgentFeatureEnabled(env),
+        socialConfigured: facebookConfigured || instagramConfigured,
+      },
+    },
     { key: "meta_webhook", group: "Messaging channels", label: "Facebook & Instagram webhook", optional: true, isConfigured: (facebookConfigured || instagramConfigured) && configured(env.META_APP_SECRET, env.META_VERIFY_TOKEN) },
     {
       key: "r2",
@@ -188,6 +202,36 @@ function publicUrlResult(env, requestBaseUrl, checkedAt) {
   );
 }
 
+function humanAgentSetupResult(definition, checkedAt) {
+  if (!definition.meta?.featureEnabled) {
+    return result(
+      definition.key,
+      "not_configured",
+      "Disabled by default. Set META_HUMAN_AGENT_ENABLED=true only after Meta has approved the Human Agent feature for this app.",
+      checkedAt,
+      { reason: "feature_disabled" }
+    );
+  }
+
+  if (!definition.meta?.socialConfigured) {
+    return result(
+      definition.key,
+      "warning",
+      "Human Agent is enabled, but no Facebook Messenger or Instagram channel is configured.",
+      checkedAt,
+      { reason: "social_channel_missing" }
+    );
+  }
+
+  return result(
+    definition.key,
+    "ready",
+    "Enabled in DA Chatbot for configured social messaging. Meta App Review approval cannot be verified automatically and must be confirmed manually before enabling this flag.",
+    checkedAt,
+    { reason: "meta_approval_not_verifiable" }
+  );
+}
+
 function webhookResult(definition, stored, checkedAt) {
   if (!definition.isConfigured) {
     return result(
@@ -235,6 +279,9 @@ function mergeOverview(
 
     if (definition.key === "security") item ||= sessionSecurityResult(env, checkedAt);
     if (definition.key === "public_url") item ||= publicUrlResult(env, requestBaseUrl, checkedAt);
+    if (definition.key === "meta_human_agent") {
+      item ||= humanAgentSetupResult(definition, checkedAt);
+    }
     if (["whatsapp_webhook", "meta_webhook"].includes(definition.key)) {
       item ||= webhookResult(definition, saved, checkedAt);
     }

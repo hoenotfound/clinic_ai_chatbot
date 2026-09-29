@@ -770,3 +770,37 @@ test("Facebook stored promo preserves a delivered caption when late cancellation
   assert.equal(captionCalls, 1);
   assert.equal(imageCalls, 1);
 });
+
+test("manual social sends propagate Human Agent only when policy requires it", async (t) => {
+  const originalPolicy = whatsappPolicy.checkFreeformAllowed;
+  const originalMetaSend = meta.sendText;
+  t.after(() => {
+    whatsappPolicy.checkFreeformAllowed = originalPolicy;
+    meta.sendText = originalMetaSend;
+  });
+
+  let requestedPurpose = null;
+  whatsappPolicy.checkFreeformAllowed = async (_contact, _now, options) => {
+    requestedPurpose = options.purpose;
+    return {
+      allowed: true,
+      humanAgentRequired: options.purpose === "human_agent",
+    };
+  };
+
+  let providerOptions = null;
+  meta.sendText = async (_channel, _to, _text, options) => {
+    providerOptions = options;
+    return { success: true, externalMessageId: "fb-human-agent-route" };
+  };
+
+  const result = await messaging.sendText(
+    { id: 501, channel: "facebook", channel_user_id: "psid-501" },
+    "Manual staff reply",
+    { purpose: "human_agent" }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(requestedPurpose, "human_agent");
+  assert.equal(providerOptions.humanAgent, true);
+});

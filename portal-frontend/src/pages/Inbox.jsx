@@ -1293,7 +1293,7 @@ function ThreadView({
   activeContactIdRef.current = contact?.contact_id;
   activeContactModeRef.current = contact?.mode;
   const messagingPolicy = messagingPolicyStatus(contact, policyNow);
-  const policyBlocksComposer = messagingPolicy.applies && !messagingPolicy.freeformAllowed;
+  const policyBlocksComposer = messagingPolicy.applies && !messagingPolicy.manualReplyAllowed;
   const quietReplyAvailable =
     messagingPolicy.applies &&
     messagingPolicy.freeformAllowed &&

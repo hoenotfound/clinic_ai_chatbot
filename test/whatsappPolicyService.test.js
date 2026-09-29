@@ -134,3 +134,130 @@ test("WhatsApp opt-out fields do not create a social-channel opt-out state", () 
 
   assert.equal(result.allowed, true);
 });
+
+test("allows a real Messenger staff reply from 24 hours through the 7-day Human Agent window", () => {
+  const result = policy.evaluateFreeformState(
+    {
+      channel: "facebook",
+      latest_inbound_at: new Date("2026-09-01T10:00:00.000Z"),
+    },
+    new Date("2026-09-02T12:00:00.000Z"),
+    { purpose: "human_agent", humanAgentEnabled: true }
+  );
+
+  assert.equal(result.allowed, true);
+  assert.equal(result.humanAgentRequired, true);
+  assert.equal(
+    result.humanAgentWindowEndsAt.toISOString(),
+    "2026-09-08T10:00:00.000Z"
+  );
+});
+
+test("keeps automated Messenger replies blocked after the standard 24-hour window", () => {
+  const result = policy.evaluateFreeformState(
+    {
+      channel: "facebook",
+      latest_inbound_at: new Date("2026-09-01T10:00:00.000Z"),
+    },
+    new Date("2026-09-02T12:00:00.000Z"),
+    { purpose: "service" }
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.code, "outside_customer_service_window");
+});
+
+test("blocks Instagram staff replies when the 7-day Human Agent window has ended", () => {
+  const result = policy.evaluateFreeformState(
+    {
+      channel: "instagram",
+      latest_inbound_at: new Date("2026-09-01T10:00:00.000Z"),
+    },
+    new Date("2026-09-08T10:00:00.000Z"),
+    { purpose: "human_agent", humanAgentEnabled: true }
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.code, "outside_human_agent_window");
+  assert.match(result.message, /7-day Human Agent window/);
+});
+
+test("does not extend WhatsApp with the Meta Human Agent purpose", () => {
+  const result = policy.evaluateFreeformState(
+    {
+      channel: "whatsapp",
+      latest_inbound_at: new Date("2026-09-01T10:00:00.000Z"),
+    },
+    new Date("2026-09-02T12:00:00.000Z"),
+    { purpose: "human_agent", humanAgentEnabled: true }
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.code, "outside_customer_service_window");
+});
+
+test("manual staff purpose requires both the runtime flag and channel configuration", () => {
+  const configured = {
+    FACEBOOK_PAGE_ID: "fb-page",
+    FACEBOOK_PAGE_ACCESS_TOKEN: "fb-token",
+    INSTAGRAM_PAGE_ID: "ig-page",
+    INSTAGRAM_PAGE_ACCESS_TOKEN: "ig-token",
+  };
+  const disabled = {
+    ...configured,
+    META_HUMAN_AGENT_ENABLED: "false",
+  };
+  const enabled = {
+    ...configured,
+    META_HUMAN_AGENT_ENABLED: "true",
+  };
+  const facebookOnly = {
+    META_HUMAN_AGENT_ENABLED: "true",
+    FACEBOOK_PAGE_ID: "fb-page",
+    FACEBOOK_PAGE_ACCESS_TOKEN: "fb-token",
+  };
+
+  assert.equal(policy.manualStaffPurpose("whatsapp", enabled), "service");
+  assert.equal(policy.manualStaffPurpose({ channel: "whatsapp" }, enabled), "service");
+  assert.equal(policy.manualStaffPurpose("facebook", disabled), "service");
+  assert.equal(policy.manualStaffPurpose({ channel: "instagram" }, disabled), "service");
+  assert.equal(policy.manualStaffPurpose("facebook", enabled), "human_agent");
+  assert.equal(policy.manualStaffPurpose({ channel: "instagram" }, enabled), "human_agent");
+  assert.equal(policy.manualStaffPurpose("instagram", facebookOnly), "service");
+});
+
+test("WhatsApp manual staff policy still allows a service reply after the customer reinitiates following opt-out", () => {
+  const purpose = policy.manualStaffPurpose(
+    { channel: "whatsapp" },
+    { META_HUMAN_AGENT_ENABLED: "true" }
+  );
+  const result = policy.evaluateFreeformState(
+    {
+      channel: "whatsapp",
+      whatsapp_opt_out_at: new Date("2026-09-03T10:00:00.000Z"),
+      latest_inbound_at: new Date("2026-09-03T11:00:00.000Z"),
+    },
+    new Date("2026-09-03T11:05:00.000Z"),
+    { purpose }
+  );
+
+  assert.equal(purpose, "service");
+  assert.equal(result.allowed, true);
+});
+
+test("Human Agent purpose stays blocked after 24 hours when the runtime feature is disabled", () => {
+  const result = policy.evaluateFreeformState(
+    {
+      channel: "facebook",
+      latest_inbound_at: new Date("2026-09-01T10:00:00.000Z"),
+    },
+    new Date("2026-09-02T12:00:00.000Z"),
+    { purpose: "human_agent", humanAgentEnabled: false }
+  );
+
+  assert.equal(result.allowed, false);
+  assert.equal(result.code, "outside_customer_service_window");
+  assert.equal(result.humanAgentWindowEndsAt, null);
+  assert.match(result.message, /must message again/i);
+  assert.doesNotMatch(result.message, /Human Agent/);
+});

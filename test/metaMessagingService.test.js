@@ -671,3 +671,74 @@ test("Facebook private comment reply uses the Page messages endpoint", async (t)
   assert.equal(result.recipientId, "psid-9");
   assert.equal(result.messageId, "fb-private-1");
 });
+
+test("Human Agent text sends add Meta's MESSAGE_TAG payload", async (t) => {
+  const originalFetch = global.fetch;
+  const oldPageId = process.env.FACEBOOK_PAGE_ID;
+  const oldToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  const oldHumanAgent = process.env.META_HUMAN_AGENT_ENABLED;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (oldPageId === undefined) delete process.env.FACEBOOK_PAGE_ID;
+    else process.env.FACEBOOK_PAGE_ID = oldPageId;
+    if (oldToken === undefined) delete process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    else process.env.FACEBOOK_PAGE_ACCESS_TOKEN = oldToken;
+    if (oldHumanAgent === undefined) delete process.env.META_HUMAN_AGENT_ENABLED;
+    else process.env.META_HUMAN_AGENT_ENABLED = oldHumanAgent;
+  });
+
+  process.env.FACEBOOK_PAGE_ID = "page-human-agent";
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN = "page-token";
+  process.env.META_HUMAN_AGENT_ENABLED = "true";
+
+  let sentBody = null;
+  global.fetch = async (_url, options) => {
+    sentBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ message_id: "fb-human-agent-1" }),
+    };
+  };
+
+  const result = await meta.sendText(
+    "facebook",
+    "psid-human-agent",
+    "Staff follow-up",
+    { humanAgent: true }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(sentBody.messaging_type, "MESSAGE_TAG");
+  assert.equal(sentBody.tag, "HUMAN_AGENT");
+  assert.deepEqual(sentBody.message, { text: "Staff follow-up" });
+});
+
+test("Human Agent text transport fails closed when the runtime flag is disabled", async (t) => {
+  const originalFetch = global.fetch;
+  const previous = process.env.META_HUMAN_AGENT_ENABLED;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (previous === undefined) delete process.env.META_HUMAN_AGENT_ENABLED;
+    else process.env.META_HUMAN_AGENT_ENABLED = previous;
+  });
+
+  delete process.env.META_HUMAN_AGENT_ENABLED;
+  let fetchCalls = 0;
+  global.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error("must not call Meta");
+  };
+
+  const result = await meta.sendText(
+    "facebook",
+    "psid-human-agent",
+    "Blocked staff follow-up",
+    { humanAgent: true }
+  );
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /META_HUMAN_AGENT_ENABLED/);
+  assert.equal(fetchCalls, 0);
+});
+

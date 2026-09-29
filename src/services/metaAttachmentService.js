@@ -1,3 +1,5 @@
+const { humanAgentFeatureEnabled } = require("../utils/metaHumanAgent");
+
 const GRAPH_API_VERSION = "v26.0";
 
 function channelLabel(channel) {
@@ -80,7 +82,16 @@ async function uploadAttachment(channel, type, buffer, mimeType, filename) {
   }
 }
 
-async function postAttachment(channel, recipientId, type, payload, logLabel) {
+async function postAttachment(channel, recipientId, type, payload, logLabel, options = {}) {
+  if (options.humanAgent === true && !humanAgentFeatureEnabled()) {
+    return {
+      success: false,
+      externalMessageId: null,
+      error:
+        "Human Agent send blocked because META_HUMAN_AGENT_ENABLED is not enabled for this deployment.",
+    };
+  }
+
   const config = getChannelConfig(channel);
   const label = channelLabel(channel);
   if (!config.token || !config.senderId) {
@@ -102,6 +113,10 @@ async function postAttachment(channel, recipientId, type, payload, logLabel) {
       },
     },
   };
+  if (options.humanAgent === true) {
+    body.messaging_type = "MESSAGE_TAG";
+    body.tag = "HUMAN_AGENT";
+  }
 
   try {
     const response = await fetch(url, {
@@ -143,27 +158,38 @@ async function postAttachment(channel, recipientId, type, payload, logLabel) {
   }
 }
 
-async function sendAttachmentId(channel, recipientId, type, attachmentId) {
+async function sendAttachmentId(channel, recipientId, type, attachmentId, options = {}) {
   return postAttachment(
     channel,
     recipientId,
     type,
     { attachment_id: attachmentId },
-    "attachment send"
+    "attachment send",
+    options
   );
 }
 
-async function sendUrlAttachment(channel, recipientId, type, mediaUrl) {
+async function sendUrlAttachment(channel, recipientId, type, mediaUrl, options = {}) {
   return postAttachment(
     channel,
     recipientId,
     type,
     { url: mediaUrl },
-    "URL attachment send"
+    "URL attachment send",
+    options
   );
 }
 
-async function sendBuffer(channel, recipientId, type, buffer, mimeType, filename) {
+async function sendBuffer(channel, recipientId, type, buffer, mimeType, filename, options = {}) {
+  if (options.humanAgent === true && !humanAgentFeatureEnabled()) {
+    return {
+      success: false,
+      externalMessageId: null,
+      error:
+        "Human Agent send blocked because META_HUMAN_AGENT_ENABLED is not enabled for this deployment.",
+    };
+  }
+
   const uploaded = await uploadAttachment(channel, type, buffer, mimeType, filename);
   if (!uploaded.success) {
     return {
@@ -173,7 +199,7 @@ async function sendBuffer(channel, recipientId, type, buffer, mimeType, filename
       error: uploaded.error,
     };
   }
-  return sendAttachmentId(channel, recipientId, type, uploaded.attachmentId);
+  return sendAttachmentId(channel, recipientId, type, uploaded.attachmentId, options);
 }
 
 module.exports = {

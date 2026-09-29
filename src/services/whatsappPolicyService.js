@@ -1,7 +1,10 @@
 const { pool } = require("../db/db");
+const { humanAgentChannelEnabled } = require("../utils/metaHumanAgent");
 
 const CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const HUMAN_AGENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const STANDARD_WINDOW_CHANNELS = new Set(["whatsapp", "facebook", "instagram"]);
+const HUMAN_AGENT_CHANNELS = new Set(["facebook", "instagram"]);
 
 const OPT_OUT_PATTERNS = [
   /^stop$/i,
@@ -72,6 +75,16 @@ function channelLabel(channel) {
   return "WhatsApp";
 }
 
+function manualStaffPurpose(contactOrChannel, env = process.env) {
+  const channel =
+    typeof contactOrChannel === "string"
+      ? contactOrChannel
+      : contactOrChannel?.channel || "whatsapp";
+  return humanAgentChannelEnabled(channel, env) && HUMAN_AGENT_CHANNELS.has(channel)
+    ? "human_agent"
+    : "service";
+}
+
 function noCustomerMessageError(channel) {
   if (channel === "whatsapp") {
     return "WhatsApp send blocked because this customer has never messaged the business. Use an approved template only after valid WhatsApp opt-in has been recorded.";
@@ -79,14 +92,28 @@ function noCustomerMessageError(channel) {
   return `${channelLabel(channel)} send blocked because this customer has never messaged the business.`;
 }
 
-function outsideWindowError(channel) {
+function outsideWindowError(channel, humanAgentEnabled = false) {
   if (channel === "whatsapp") {
     return "WhatsApp send blocked because the 24-hour customer-service window has closed. Use an approved template only after valid WhatsApp opt-in has been recorded.";
+  }
+  if (humanAgentEnabled && HUMAN_AGENT_CHANNELS.has(channel)) {
+    return `${channelLabel(channel)} send blocked because the 24-hour standard messaging window has closed. Only a real staff member may reply with Meta's Human Agent path for up to 7 days after the customer's latest message.`;
   }
   return `${channelLabel(channel)} send blocked because the 24-hour standard messaging window has closed. The customer must message again before a normal reply can be sent.`;
 }
 
-function evaluateFreeformState(state, now = new Date(), { purpose = "service" } = {}) {
+function outsideHumanAgentWindowError(channel) {
+  return `${channelLabel(channel)} send blocked because Meta's 7-day Human Agent window has closed. The customer must message again before staff can reply.`;
+}
+
+function evaluateFreeformState(
+  state,
+  now = new Date(),
+  {
+    purpose = "service",
+    humanAgentEnabled = null,
+  } = {}
+) {
   if (!state) {
     return policyError(
       "contact_not_found",
@@ -95,6 +122,10 @@ function evaluateFreeformState(state, now = new Date(), { purpose = "service" } 
   }
 
   const channel = state.channel || "whatsapp";
+  const effectiveHumanAgentEnabled =
+    humanAgentEnabled === null
+      ? humanAgentChannelEnabled(channel)
+      : humanAgentEnabled;
   if (!STANDARD_WINDOW_CHANNELS.has(channel)) {
     return { allowed: true, code: null, message: null };
   }
@@ -130,11 +161,49 @@ function evaluateFreeformState(state, now = new Date(), { purpose = "service" } 
 
   const current = now instanceof Date ? now : new Date(now);
   const windowEndsAt = new Date(lastInboundAt.getTime() + CUSTOMER_SERVICE_WINDOW_MS);
+  const humanAgentWindowEndsAt =
+    effectiveHumanAgentEnabled && HUMAN_AGENT_CHANNELS.has(channel)
+      ? new Date(lastInboundAt.getTime() + HUMAN_AGENT_WINDOW_MS)
+      : null;
+
   if (current.getTime() >= windowEndsAt.getTime()) {
+    const humanAgentRequested =
+      effectiveHumanAgentEnabled &&
+      purpose === "human_agent" &&
+      HUMAN_AGENT_CHANNELS.has(channel);
+
+    if (
+      humanAgentRequested &&
+      humanAgentWindowEndsAt &&
+      current.getTime() < humanAgentWindowEndsAt.getTime()
+    ) {
+      return {
+        allowed: true,
+        code: null,
+        message: null,
+        lastInboundAt,
+        windowEndsAt,
+        humanAgentWindowEndsAt,
+        humanAgentRequired: true,
+      };
+    }
+
+    if (
+      humanAgentRequested &&
+      humanAgentWindowEndsAt &&
+      current.getTime() >= humanAgentWindowEndsAt.getTime()
+    ) {
+      return policyError(
+        "outside_human_agent_window",
+        outsideHumanAgentWindowError(channel),
+        { lastInboundAt, windowEndsAt, humanAgentWindowEndsAt }
+      );
+    }
+
     return policyError(
       "outside_customer_service_window",
-      outsideWindowError(channel),
-      { lastInboundAt, windowEndsAt }
+      outsideWindowError(channel, effectiveHumanAgentEnabled),
+      { lastInboundAt, windowEndsAt, humanAgentWindowEndsAt }
     );
   }
 
@@ -144,15 +213,24 @@ function evaluateFreeformState(state, now = new Date(), { purpose = "service" } 
     message: null,
     lastInboundAt,
     windowEndsAt,
+    humanAgentWindowEndsAt,
+    humanAgentRequired: false,
   };
 }
 
 async function checkFreeformAllowed(
   contact,
   now = new Date(),
-  { purpose = "service" } = {}
+  {
+    purpose = "service",
+    humanAgentEnabled = null,
+  } = {}
 ) {
   const channel = contact?.channel || "whatsapp";
+  const effectiveHumanAgentEnabled =
+    humanAgentEnabled === null
+      ? humanAgentChannelEnabled(channel)
+      : humanAgentEnabled;
   if (!STANDARD_WINDOW_CHANNELS.has(channel)) {
     return { allowed: true, code: null, message: null };
   }
@@ -172,7 +250,10 @@ async function checkFreeformAllowed(
       `${channelLabel(channel)} send blocked because the contact no longer exists.`
     );
   }
-  return evaluateFreeformState(state, now, { purpose });
+  return evaluateFreeformState(state, now, {
+    purpose,
+    humanAgentEnabled: effectiveHumanAgentEnabled,
+  });
 }
 
 async function recordOptOut(contactId, source = "customer_message") {
@@ -261,6 +342,7 @@ function blockedSendResult(policy) {
 
 module.exports = {
   CUSTOMER_SERVICE_WINDOW_MS,
+  HUMAN_AGENT_WINDOW_MS,
   STANDARD_WINDOW_CHANNELS,
   blockedSendResult,
   checkFreeformAllowed,
@@ -268,6 +350,7 @@ module.exports = {
   evaluateFreeformState,
   getPolicyState,
   isOptOutText,
+  manualStaffPurpose,
   recordOptIn,
   recordOptOut,
 };

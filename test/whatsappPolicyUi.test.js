@@ -36,11 +36,34 @@ test("portal policy state distinguishes open, closed, never-contacted and opted-
 
   const instagram = messagingPolicyStatus({
     channel: "instagram",
+    human_agent_enabled: true,
     latest_inbound_at: "2026-09-02T10:30:00.000Z",
   }, now);
   assert.equal(instagram.applies, true);
   assert.equal(instagram.freeformAllowed, false);
+  assert.equal(instagram.humanAgentAllowed, true);
+  assert.equal(instagram.manualReplyAllowed, true);
+  assert.equal(instagram.automatedAllowed, false);
+  assert.equal(instagram.code, "human_agent_only");
+  assert.match(instagram.label, /Staff reply only/);
   assert.equal(instagram.channelLabel, "Instagram");
+
+  const instagramExpired = messagingPolicyStatus({
+    channel: "instagram",
+    human_agent_enabled: true,
+    latest_inbound_at: "2026-08-20T10:30:00.000Z",
+  }, now);
+  assert.equal(instagramExpired.code, "outside_human_agent_window");
+  assert.equal(instagramExpired.manualReplyAllowed, false);
+
+  const facebookWithoutHumanAgent = messagingPolicyStatus({
+    channel: "facebook",
+    human_agent_enabled: false,
+    latest_inbound_at: "2026-09-02T10:30:00.000Z",
+  }, now);
+  assert.equal(facebookWithoutHumanAgent.code, "outside_customer_service_window");
+  assert.equal(facebookWithoutHumanAgent.humanAgentAllowed, false);
+  assert.equal(facebookWithoutHumanAgent.manualReplyAllowed, false);
 
   const facebook = messagingPolicyStatus({
     channel: "facebook",
@@ -53,6 +76,7 @@ test("portal policy state distinguishes open, closed, never-contacted and opted-
   const unsupported = messagingPolicyStatus({ channel: "telegram" }, now);
   assert.equal(unsupported.applies, false);
   assert.equal(unsupported.freeformAllowed, true);
+  assert.equal(unsupported.manualReplyAllowed, true);
 });
 
 test("portal hides retry for policy failures but keeps ordinary delivery failures retryable", async () => {
@@ -85,11 +109,14 @@ test("Inbox and contact details expose policy guidance for standard-window chann
   const root = path.join(__dirname, "..");
   const inbox = fs.readFileSync(path.join(root, "portal-frontend/src/pages/Inbox.jsx"), "utf8");
   const details = fs.readFileSync(path.join(root, "portal-frontend/src/components/WhatsAppMessagingDetails.jsx"), "utf8");
+  const contactsRepo = fs.readFileSync(path.join(root, "src/db/contactsRepo.js"), "utf8");
   const tools = fs.readFileSync(path.join(root, "portal-frontend/src/pages/Tools.jsx"), "utf8");
   const leadDrawer = fs.readFileSync(path.join(root, "portal-frontend/src/components/pipeline/LeadDrawer.jsx"), "utf8");
 
   assert.doesNotMatch(inbox, /Sending unavailable\./);
   assert.match(inbox, /quietReplyAvailable/);
+  assert.match(inbox, /manualReplyAllowed/);
+  assert.match(contactsRepo, /human_agent_enabled: humanAgentChannelEnabled\(row\.channel\)/);
   assert.match(inbox, /Cannot retry/);
   assert.match(inbox, /must message the business before staff can send a normal reply/);
   assert.match(details, /policy\.channelLabel} reply window/);
@@ -118,6 +145,21 @@ test("staff send routes check channel policy before automatic takeover", () => {
 
   assert.ok(textRoute.indexOf("requireFreeformPolicy") < textRoute.indexOf("contactsRepo.takeOver"));
   assert.ok(imageRoute.indexOf("requireFreeformPolicy") < imageRoute.indexOf("contactsRepo.takeOver"));
+  assert.match(
+    textRoute,
+    /requireFreeformPolicy\(contact, res, whatsappPolicy\.manualStaffPurpose\(contact\)\)/
+  );
+  assert.match(
+    imageRoute,
+    /requireFreeformPolicy\(contact, res, whatsappPolicy\.manualStaffPurpose\(contact\)\)/
+  );
+  assert.match(source, /message\.is_automated_follow_up !== true/);
+  assert.match(source, /message\.is_scheduled_message !== true/);
+  assert.match(source, /\? whatsappPolicy\.manualStaffPurpose\(contact\)/);
+  assert.match(
+    source,
+    /socialProviderSendOptions\(message, contact, \{ \.\.\.options, skipCaption \}\)/
+  );
   assert.match(source, /channelMessaging\.sendText/);
   assert.match(source, /channelMessaging\.sendImageBuffer/);
 });

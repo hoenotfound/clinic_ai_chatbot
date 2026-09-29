@@ -2,6 +2,7 @@ const { pool } = require("./db");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("../services/telegramImmediateAlertService");
 const metaMessaging = require("../services/metaMessagingService");
+const { humanAgentChannelEnabled } = require("../utils/metaHumanAgent");
 
 const SOCIAL_CHANNELS = new Set(["facebook", "instagram"]);
 const PROFILE_ENRICHMENT_WAIT_MS = 1200;
@@ -150,10 +151,12 @@ async function hydrateSocialContactRows(rows) {
 }
 
 function presentPortalContact(row) {
-  if (!SOCIAL_CHANNELS.has(row?.channel)) return row;
+  const isSocial = SOCIAL_CHANNELS.has(row?.channel);
+  if (!isSocial) return row;
 
   return {
     ...row,
+    human_agent_enabled: humanAgentChannelEnabled(row.channel),
     // whatsapp_number is an internal NOT NULL compatibility key for social
     // contacts (for example "facebook:<PSID>"). Never expose that storage key
     // to the staff portal as though it were a phone number.

@@ -259,11 +259,17 @@ async function getMessageMediaForContact(contactId, messageId) {
 // normal Inbox payloads remain lightweight and never include base64 media.
 async function getMessageForRetry(contactId, messageId) {
   const result = await pool.query(
-    `SELECT id, contact_id, role, content, whatsapp_message_id, sent_by_username,
-            media_url, media_key, media_mime_type, created_at,
-            delivery_status, delivery_error, is_automated_follow_up
-     FROM messages
-     WHERE id = $1 AND contact_id = $2`,
+    `SELECT m.id, m.contact_id, m.role, m.content, m.whatsapp_message_id,
+            m.sent_by_username, m.media_url, m.media_key, m.media_mime_type,
+            m.created_at, m.delivery_status, m.delivery_error,
+            m.is_automated_follow_up,
+            EXISTS (
+              SELECT 1
+              FROM scheduled_messages sm
+              WHERE sm.message_id = m.id
+            ) AS is_scheduled_message
+     FROM messages m
+     WHERE m.id = $1 AND m.contact_id = $2`,
     [messageId, contactId]
   );
   const row = result.rows[0];

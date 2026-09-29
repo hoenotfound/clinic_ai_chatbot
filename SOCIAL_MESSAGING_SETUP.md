@@ -80,7 +80,18 @@ FACEBOOK_PAGE_ACCESS_TOKEN=your_page_access_token
 INSTAGRAM_PAGE_ID=the_facebook_page_id_linked_to_instagram
 INSTAGRAM_PAGE_ACCESS_TOKEN=the_page_access_token_generated_in_instagram_settings
 INSTAGRAM_ACCOUNT_ID=the_instagram_professional_account_id
+
+# Keep false until Meta App Review confirms Human Agent access for the shared app.
+META_HUMAN_AGENT_ENABLED=false
 ```
+
+### Human Agent extended staff replies
+
+DA CHATBOT keeps Human Agent disabled by default. After Meta approves the Human Agent feature for the shared app, set `META_HUMAN_AGENT_ENABLED=true` on the client deployment(s) that should use it.
+
+With the flag enabled, only real staff replies sent manually from Inbox can use the extended 24-hour to 7-day Messenger/Instagram path. AI replies, scheduled messages, automated follow-ups, and other automated sends remain limited to the standard 24-hour window. Without the flag, Messenger and Instagram keep the standard 24-hour restriction.
+
+Setup Checker reports whether this runtime capability is enabled, but it cannot verify Meta App Review approval itself.
 
 `META_APP_SECRET` is the app secret from **App Settings > Basic**. The client `/meta-webhook` verifies `X-Hub-Signature-256` for both Facebook and Instagram webhook POSTs. In multi-client mode the central router verifies Meta's original signature first, isolates the entries for that client, and signs the exact isolated bytes with the same app secret before forwarding.
 

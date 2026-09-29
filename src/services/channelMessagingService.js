@@ -103,7 +103,10 @@ async function freeformGuard(contact, purpose = "service") {
     const policy = await messagingPolicy.checkFreeformAllowed(contact, new Date(), {
       purpose,
     });
-    return policy.allowed ? null : messagingPolicy.blockedSendResult(policy);
+    return {
+      blocked: policy.allowed ? null : messagingPolicy.blockedSendResult(policy),
+      policy,
+    };
   } catch (err) {
     // The policy gate is deliberately fail-closed, but a temporary database
     // problem should still look like a normal failed delivery to callers. This
@@ -111,12 +114,23 @@ async function freeformGuard(contact, purpose = "service") {
     // throwing after an outbound row has already been saved.
     const label = labelForChannel(channelOf(contact));
     console.error(`Failed to verify ${label} messaging-policy state:`, err);
-    return messagingPolicy.blockedSendResult({
+    const policy = {
+      allowed: false,
       code: "policy_state_unavailable",
       message:
         `${label} send blocked because messaging-policy state could not be verified. Please retry after the connection recovers.`,
-    });
+    };
+    return {
+      blocked: messagingPolicy.blockedSendResult(policy),
+      policy,
+    };
   }
+}
+
+function optionsForPolicy(options, policy) {
+  return policy?.humanAgentRequired === true
+    ? { ...options, humanAgent: true }
+    : options;
 }
 
 async function stillInStaffMode(contact) {
@@ -220,7 +234,8 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
     const captionResult = await meta.sendText(
       "facebook",
       recipientFor(contact),
-      caption.trim()
+      caption.trim(),
+      options
     );
     if (!captionResult.success) return captionResult;
     captionSent = true;
@@ -255,7 +270,8 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
       "image",
       Buffer.from(image.data, "base64"),
       image.mime_type,
-      storedImageFilename(imageId, image.mime_type)
+      storedImageFilename(imageId, image.mime_type),
+      options
     )
   );
   await notifyProviderMessageId(options, result, "facebook");
@@ -271,10 +287,11 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
 
 async function sendText(contact, text, options = {}) {
   const channel = channelOf(contact);
-  const blocked = await freeformGuard(contact, options.purpose);
-  if (blocked) return blocked;
+  const guard = await freeformGuard(contact, options.purpose);
+  if (guard.blocked) return guard.blocked;
+  const sendOptions = optionsForPolicy(options, guard.policy);
 
-  const cancelled = preSendCancelled(options);
+  const cancelled = preSendCancelled(sendOptions);
   if (cancelled) return cancelled;
 
   if (channel === "whatsapp") {
@@ -282,28 +299,29 @@ async function sendText(contact, text, options = {}) {
   }
   const result = await trackSocialOutbound(
     channel,
-    meta.sendText(channel, recipientFor(contact), text)
+    meta.sendText(channel, recipientFor(contact), text, sendOptions)
   );
-  await notifyProviderMessageId(options, result, channel);
+  await notifyProviderMessageId(sendOptions, result, channel);
   return result;
 }
 
 async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
   const channel = channelOf(contact);
-  const blocked = await freeformGuard(contact, options.purpose);
-  if (blocked) return blocked;
+  const guard = await freeformGuard(contact, options.purpose);
+  if (guard.blocked) return guard.blocked;
+  const sendOptions = optionsForPolicy(options, guard.policy);
   if (channel === "whatsapp") {
-    const cancelled = preSendCancelled(options);
+    const cancelled = preSendCancelled(sendOptions);
     if (cancelled) return cancelled;
     return whatsapp.sendImage(contact.whatsapp_number, imageUrl, caption);
   }
 
   if (channel === "facebook") {
-    const storedResult = await sendStoredFacebookImage(contact, imageUrl, caption, options);
+    const storedResult = await sendStoredFacebookImage(contact, imageUrl, caption, sendOptions);
     if (storedResult) return storedResult;
   }
 
-  const cancelled = preSendCancelled(options);
+  const cancelled = preSendCancelled(sendOptions);
   if (cancelled) return cancelled;
   return trackSocialOutbound(
     channel,
@@ -312,7 +330,7 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
       recipientFor(contact),
       imageUrl,
       caption,
-      { onProviderMessageId: options.onProviderMessageId }
+      sendOptions
     )
   );
 }
@@ -320,8 +338,9 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
 async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "image", options = {}) {
   const channel = channelOf(contact);
   // Check policy before uploading bytes or sending a separate social caption.
-  const blocked = await freeformGuard(contact, options.purpose);
-  if (blocked) return blocked;
+  const guard = await freeformGuard(contact, options.purpose);
+  if (guard.blocked) return guard.blocked;
+  const sendOptions = optionsForPolicy(options, guard.policy);
   if (channel === "whatsapp") {
     const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename);
     if (!mediaId) {
@@ -347,12 +366,13 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
     const captionResult = await meta.sendText(
       channel,
       recipientFor(contact),
-      caption.trim()
+      caption.trim(),
+      sendOptions
     );
     if (!captionResult.success) return captionResult;
     captionSent = true;
     captionProviderMessageId = captionResult.externalMessageId || null;
-    await notifyProviderMessageId(options, captionResult, channel);
+    await notifyProviderMessageId(sendOptions, captionResult, channel);
   }
 
   // Live Instagram testing showed that this Page-linked Instagram setup can
@@ -365,11 +385,12 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
         channel,
         recipientFor(contact),
         "image",
-        mediaUrl
+        mediaUrl,
+        sendOptions
       )
     );
     const tracked = recordAcceptedSocialOutbound(channel, result);
-    await notifyProviderMessageId(options, tracked, channel);
+    await notifyProviderMessageId(sendOptions, tracked, channel);
     if (!tracked.success && captionSent) {
       return {
         ...tracked,
@@ -388,10 +409,11 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
       "image",
       buffer,
       mimeType,
-      filename
+      filename,
+      sendOptions
     )
   );
-  await notifyProviderMessageId(options, result, channel);
+  await notifyProviderMessageId(sendOptions, result, channel);
   if (!result.success && captionSent) {
     return {
       ...result,
@@ -405,8 +427,9 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
 async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3", options = {}) {
   const channel = channelOf(contact);
   // Check policy before conversion or upload work on every supported channel.
-  const blocked = await freeformGuard(contact, options.purpose);
-  if (blocked) return blocked;
+  const guard = await freeformGuard(contact, options.purpose);
+  if (guard.blocked) return guard.blocked;
+  const sendOptions = optionsForPolicy(options, guard.policy);
   if (channel === "whatsapp") {
     const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename);
     if (!mediaId) {
@@ -449,12 +472,13 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
           channel,
           recipientFor(contact),
           "audio",
-          mediaUrl
+          mediaUrl,
+          sendOptions
         );
       }
     );
     const tracked = recordAcceptedSocialOutbound(channel, result);
-    await notifyProviderMessageId(options, tracked, channel);
+    await notifyProviderMessageId(sendOptions, tracked, channel);
     return tracked;
   }
 
@@ -471,10 +495,11 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
         "audio",
         buffer,
         mimeType,
-        filename
+        filename,
+        sendOptions
       )
     );
-    await notifyProviderMessageId(options, result, channel);
+    await notifyProviderMessageId(sendOptions, result, channel);
     return result;
   }
 
@@ -504,10 +529,11 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
       channel,
       recipientFor(contact),
       "audio",
-      uploaded.attachmentId
+      uploaded.attachmentId,
+      sendOptions
     )
   );
-  await notifyProviderMessageId(options, result, channel);
+  await notifyProviderMessageId(sendOptions, result, channel);
   return result;
 }
 
