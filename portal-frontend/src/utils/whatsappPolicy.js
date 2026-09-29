@@ -11,6 +11,11 @@ const POLICY_COPY = {
     explanation:
       "This customer has opted out. Normal replies and automated follow-ups cannot be sent unless they start a new support conversation.",
   },
+  marketing_opted_out: {
+    label: "Customer opted out of WhatsApp marketing",
+    explanation:
+      "Promotional WhatsApp messages are blocked. Service replies and utility templates can still be used when otherwise allowed.",
+  },
   no_customer_message: {
     label: "Customer has not messaged the business yet",
     explanation:
