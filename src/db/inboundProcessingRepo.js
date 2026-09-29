@@ -148,8 +148,11 @@ async function reserveOutboundAttempt({
     throw new TypeError("origin must be ai_reply or system_fallback.");
   }
 
-  const ownsClient = typeof database.connect === "function";
-  const client = ownsClient ? await database.connect() : database;
+  // The production default is the shared Pool. Tests and transactional
+  // callers may pass an already-connected queryable client, which must never
+  // be connected a second time.
+  const ownsClient = database === pool;
+  const client = ownsClient ? await pool.connect() : database;
   try {
     await client.query("BEGIN");
 
