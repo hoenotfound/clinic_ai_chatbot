@@ -81,7 +81,7 @@ test("Lead Distribution is selected from inside Tools rather than the main sideb
   assert.match(tools, /useSearchParams/);
   assert.match(tools, /value === "lead-distribution"/);
   assert.match(tools, /onSelect\("leadDistribution"\)/);
-  assert.match(tools, /Automatic Lead Distribution/);
+  assert.match(tools, /title="Lead distribution"/);
   assert.match(tools, /<LeadDistribution/);
   assert.match(tools, /distributionActive/);
 });
