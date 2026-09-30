@@ -164,3 +164,18 @@ test("production migrations load ownership, routing, and social follow-up safegu
   assert.match(safetySchema, /choose_lead_distribution_owner/);
   assert.match(safetySchema, /leadDistribution,assignByBranch/);
 });
+
+test("Tools navigation focuses on available automations without future-tool clutter", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+
+  assert.match(tools, /Manage the automations your team uses every day/);
+  assert.match(tools, /title="Lead temperature"/);
+  assert.match(tools, /title="Lead distribution"/);
+  assert.match(tools, /function ToolStatus\(/);
+  assert.doesNotMatch(tools, /More coming/);
+  assert.doesNotMatch(tools, /ComingSoonTool/);
+  assert.doesNotMatch(tools, /Appointment reminders/);
+  assert.doesNotMatch(tools, /Promotional campaigns/);
+  assert.doesNotMatch(tools, /Review requests/);
+  assert.doesNotMatch(tools, /function StatusBadge\(/);
+});
