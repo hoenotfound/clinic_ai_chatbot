@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   buildCustomerCsv,
+  identifierCsvCell,
   malaysiaDateTime,
   safeSpreadsheetValue,
 } = require("../src/utils/csvExport");
@@ -29,7 +30,7 @@ test("customer CSV protects spreadsheet formulas and preserves CSV quoting", () 
   assert.match(csv, /"Line 1\nLine 2"/);
 });
 
-test("full export includes social identifier while customer preset does not expose it", () => {
+test("customer export preserves long platform identifiers as spreadsheet text", () => {
   const row = {
     customer_name: "Instagram user",
     channel: "instagram",
@@ -39,11 +40,45 @@ test("full export includes social identifier while customer preset does not expo
   };
 
   const customerCsv = buildCustomerCsv([row], "customer");
-  const fullCsv = buildCustomerCsv([row], "full");
 
-  assert.doesNotMatch(customerCsv, /17841400000000000/);
-  assert.match(fullCsv, /17841400000000000/);
+  assert.match(customerCsv, /"Platform Customer ID"/);
+  assert.match(customerCsv, /"=""17841400000000000"""/);
   assert.match(customerCsv, /"Instagram"/);
+});
+
+test("identifier CSV formatting only uses a text formula for numeric identifiers", () => {
+  assert.equal(identifierCsvCell("17841400000000000"), '"=""17841400000000000"""');
+  assert.equal(identifierCsvCell("abc-123"), '"abc-123"');
+  assert.equal(identifierCsvCell("=SUM(A1:A2)"), '"\'=SUM(A1:A2)"');
+});
+
+test("full CRM export keeps captured attribution separate from staff overrides", () => {
+  const csv = buildCustomerCsv([{
+    customer_name: "Alex",
+    channel: "whatsapp",
+    whatsapp_number: "60123456789",
+    attribution_source: "meta_ads",
+    attribution_platform: "facebook",
+    attribution_campaign_name: "Acne September",
+    lead_source: "referral",
+    lead_campaign_name: "Retargeting October",
+    campaign_id: "12345678901234567",
+    adset_id: "22345678901234567",
+    meta_ad_id: "32345678901234567",
+    message_count: 3,
+  }], "full");
+
+  assert.match(csv, /"Captured Acquisition Source"/);
+  assert.match(csv, /"Source Override"/);
+  assert.match(csv, /"Captured Campaign"/);
+  assert.match(csv, /"Campaign Override"/);
+  assert.match(csv, /"meta_ads"/);
+  assert.match(csv, /"referral"/);
+  assert.match(csv, /"Acne September"/);
+  assert.match(csv, /"Retargeting October"/);
+  assert.match(csv, /"=""12345678901234567"""/);
+  assert.match(csv, /"=""22345678901234567"""/);
+  assert.match(csv, /"=""32345678901234567"""/);
 });
 
 test("spreadsheet sanitizer catches dangerous prefixes after whitespace", () => {
