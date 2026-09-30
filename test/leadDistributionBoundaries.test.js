@@ -240,3 +240,19 @@ test("Tools save bars only occupy space while changes are pending", () => {
   assert.doesNotMatch(distribution, /Currently paused/);
   assert.doesNotMatch(distribution, /Currently active/);
 });
+
+
+test("Tools headers distinguish draft enable state from the saved live state", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+  const distribution = read("portal-frontend/src/pages/LeadDistribution.jsx");
+
+  assert.match(tools, /enabledStateChanged = enabled !== savedEnabled/);
+  assert.match(tools, /"On after save"/);
+  assert.match(tools, /"Off after save"/);
+  assert.match(tools, /\{enabledLabel\}<\/span>/);
+
+  assert.match(distribution, /enabledStateChanged = settings\.enabled !== savedEnabled/);
+  assert.match(distribution, /"On after save"/);
+  assert.match(distribution, /"Off after save"/);
+  assert.match(distribution, /\{enabledLabel\}<\/span>/);
+});
