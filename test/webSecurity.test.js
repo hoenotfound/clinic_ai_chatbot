@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  renderClientIp,
   resolveTrustProxy,
   rightmostForwardedAddress,
 } = require("../src/utils/proxyTrust");
@@ -28,6 +29,14 @@ test("Render trusts exactly one proxy hop by default", () => {
     () => resolveTrustProxy({ TRUST_PROXY_HOPS: "all" }),
     /TRUST_PROXY_HOPS/
   );
+});
+
+test("Render client IP accepts one overwritten CF-Connecting-IP value only", () => {
+  assert.equal(renderClientIp({ "cf-connecting-ip": "203.0.113.8" }), "203.0.113.8");
+  assert.equal(renderClientIp({ "cf-connecting-ip": " 2001:db8::5 " }), "2001:db8::5");
+  assert.equal(renderClientIp({ "cf-connecting-ip": "1.2.3.4, 5.6.7.8" }), null);
+  assert.equal(renderClientIp({ "cf-connecting-ip": ["1.2.3.4", "5.6.7.8"] }), null);
+  assert.equal(renderClientIp({}), null);
 });
 
 test("forwarded-address fallback selects the proxy-appended rightmost value", () => {
