@@ -514,9 +514,14 @@ function findCall(apiState, method, path) {
 async function openInboxConversation(page, name = "Alex Customer") {
   if ((page.viewportSize()?.width ?? 0) >= 1024) return;
 
-  const conversation = page.getByRole("button").filter({ hasText: name }).first();
+  const inbox = page.getByRole("complementary", { name: "Conversation inbox" });
+  const conversation = inbox.getByRole("button").filter({ hasText: name }).first();
   await expect(conversation).toBeVisible();
+  await expect(conversation).toHaveAttribute("aria-current", "true");
   await conversation.click();
+  await expect(
+    page.locator(`section[aria-label="Conversation with ${name}"]`)
+  ).toBeVisible();
 }
 
 test("login submits credentials and reaches Inbox", async ({ page }) => {
