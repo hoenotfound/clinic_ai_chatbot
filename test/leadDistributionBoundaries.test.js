@@ -185,8 +185,8 @@ test("Tools cleanup keeps mobile navigation contained and Lead Distribution visu
   const tools = read("portal-frontend/src/pages/Tools.jsx");
   const distribution = read("portal-frontend/src/pages/LeadDistribution.jsx");
 
-  assert.match(tools, /w-full min-w-0 max-w-full shrink-0 overflow-hidden/);
-  assert.match(tools, /flex min-w-0 max-w-full gap-1\.5 ui-scroll-x overflow-x-auto/);
+  assert.match(tools, /w-full min-w-0 max-w-full shrink-0 overflow-hidden/);\n  assert.doesNotMatch(tools, /min-w-\[11\.75rem\]/);
+  assert.match(tools, /grid min-w-0 max-w-full grid-cols-2 gap-1\.5 sm:grid-cols-4/);
   assert.match(distribution, />Lead distribution<\/h1>/);
   assert.doesNotMatch(distribution, /function ToolStatus\(/);
   assert.doesNotMatch(distribution, /function StatusBadge\(/);
