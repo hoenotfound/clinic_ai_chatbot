@@ -1,5 +1,9 @@
 const crypto = require("crypto");
 const loginRateLimitRepo = require("../db/loginRateLimitRepo");
+const {
+  isRenderEnvironment,
+  rightmostForwardedAddress,
+} = require("../utils/proxyTrust");
 
 const WINDOW_MS = 15 * 60 * 1000;
 const WINDOW_SECONDS = Math.floor(WINDOW_MS / 1000);
@@ -27,25 +31,28 @@ function normalizeIp(value) {
 }
 
 /**
- * Render documents that it places the real client address first in
- * X-Forwarded-For. Use that only when Render's own RENDER=true environment flag
- * is present. Everywhere else, prefer the direct socket peer instead of
- * trusting an arbitrary forwarded header supplied by an internet client.
+ * Prefer Express' resolved client IP. createApp configures a bounded proxy hop
+ * count on Render, so req.ip is derived from the trusted edge hop instead of
+ * the leftmost user-supplied X-Forwarded-For value.
+ *
+ * The rightmost forwarded value is only a compatibility fallback for isolated
+ * tests/callers that do not provide Express' req.ip.
  */
 function extractClientIp(req, env = process.env) {
+  const expressIp = String(req?.ip || "").trim();
+  if (expressIp) return normalizeIp(expressIp);
+
+  if (isRenderEnvironment(env)) {
+    const forwardedIp = rightmostForwardedAddress(
+      req?.headers?.["x-forwarded-for"]
+    );
+    if (forwardedIp) return normalizeIp(forwardedIp);
+  }
+
   const socketIp =
     req?.socket?.remoteAddress ||
     req?.connection?.remoteAddress ||
     "unknown";
-
-  if (String(env?.RENDER || "").toLowerCase() === "true") {
-    const forwarded = req?.headers?.["x-forwarded-for"];
-    const first = Array.isArray(forwarded)
-      ? String(forwarded[0] || "").split(",")[0]
-      : String(forwarded || "").split(",")[0];
-    if (first.trim()) return normalizeIp(first);
-  }
-
   return normalizeIp(socketIp);
 }
 
