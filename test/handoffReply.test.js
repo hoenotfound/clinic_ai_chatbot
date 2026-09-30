@@ -13,6 +13,20 @@ test("urgent breathing/pain symptoms get immediate-care guidance in English", ()
   assert.match(reply, /emergency medical care immediately/i);
 });
 
+test("new urgent safety phrases use the same immediate-care path", () => {
+  for (const message of [
+    "I'm having vision changes",
+    "my skin is blanching",
+    "I have chest pain",
+    "the bleeding won't stop",
+    "there is pus and I have a fever",
+    "the swelling is spreading",
+  ]) {
+    assert.equal(isUrgentSafetyMessage(message), true, message);
+    assert.match(fallbackHandoffReply(message), /urgent medical attention/i, message);
+  }
+});
+
 test("urgent symptoms get immediate-care guidance in Bahasa Malaysia and Chinese", () => {
   const ms = fallbackHandoffReply("saya susah bernafas dan makin sakit");
   const zh = fallbackHandoffReply("我呼吸困难而且越来越严重");
