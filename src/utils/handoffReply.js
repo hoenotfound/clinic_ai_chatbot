@@ -4,10 +4,10 @@ const {
   isUrgentSafetyMessage,
 } = require("./attentionTriggers");
 
-function fallbackHandoffReply(messageText, configuredEnglish) {
+function fallbackHandoffReply(messageText, configuredEnglish, { urgent = false } = {}) {
   const language = detectMessageLanguage(messageText);
 
-  if (isUrgentSafetyMessage(messageText)) {
+  if (urgent || isUrgentSafetyMessage(messageText)) {
     if (language === "zh") {
       return "这个情况可能需要尽快处理。请现在直接联系诊所；如果症状严重、越来越严重，或有呼吸困难，请立即寻求紧急医疗帮助。我也已经通知我们的团队跟进你。";
     }
