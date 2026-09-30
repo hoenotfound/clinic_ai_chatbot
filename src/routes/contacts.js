@@ -53,7 +53,9 @@ router.get("/export", async (req, res) => {
       preset,
       scope,
       rowCount: rows.length,
-      filters: scope === "current" ? { search, assignment } : {},
+      filters: scope === "current"
+        ? { searchApplied: Boolean(search.trim()), assignment }
+        : {},
     });
 
     const csv = buildCustomerCsv(rows, preset);
