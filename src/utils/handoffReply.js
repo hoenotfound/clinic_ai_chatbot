@@ -1,26 +1,8 @@
 const { detectMessageLanguage } = require("./chatLanguage");
-
-const URGENT_SAFETY_PATTERNS = [
-  // English
-  /\b(emergency|severe pain|getting worse|vision changes?|spreading rash)\b/i,
-  /\b(can'?t|cannot|hard to|difficulty) breathe\b/i,
-  /\b(shortness of breath|trouble breathing)\b/i,
-  /\b(blanching|skin (?:is )?(?:turning|becoming) (?:white|blue|black|purple))\b/i,
-
-  // Bahasa Malaysia
-  /\b(kecemasan|darurat|sakit teruk|makin sakit|semakin sakit|sakit tak tahan)\b/i,
-  /\b(sesak nafas|susah bernafas|tak boleh bernafas)\b/i,
-  /\b(penglihatan (?:kabur|berubah)|ruam (?:merebak|semakin teruk))\b/i,
-
-  // Chinese, simplified + common traditional forms
-  /(呼吸困难|呼吸困難|不能呼吸|喘不过气|喘不過氣|剧痛|劇痛|越来越痛|越來越痛)/u,
-  /(越来越严重|越來越嚴重|视力变化|視力變化|看不清|皮疹扩散|皮疹擴散)/u,
-];
-
-function isUrgentSafetyMessage(messageText) {
-  const text = String(messageText || "");
-  return URGENT_SAFETY_PATTERNS.some((pattern) => pattern.test(text));
-}
+const {
+  URGENT_SAFETY_PATTERNS,
+  isUrgentSafetyMessage,
+} = require("./attentionTriggers");
 
 function fallbackHandoffReply(messageText, configuredEnglish) {
   const language = detectMessageLanguage(messageText);
