@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   buildCommentAttribution,
   createMetaCommentAutomationService,
+  deterministicCommentSafetyCopy,
   parseIncomingCommentEvents,
   skipReason,
   DEFAULT_COMMENT_AUTOMATION,
@@ -746,3 +747,140 @@ test("clears pending comment DM reservation through normal failure path when Met
   assert.equal(result.privateReplyPendingText, null);
 });
 
+
+
+test("urgent comment safety bypasses AI, overrides fixed promo copy, and flags staff before Meta sends", async () => {
+  const calls = [];
+  const stored = {
+    id: 90,
+    channel: "instagram",
+    commentId: "c-90",
+    entryId: "ig-business",
+    authorId: "igsid-90",
+    authorName: "Alicia",
+    text: "I can't breathe and it's getting worse",
+    postId: null,
+    mediaId: "m-90",
+    parentCommentId: null,
+    sourceCreatedAt: new Date().toISOString(),
+    rawEvent: {},
+    attemptCount: 1,
+    publicReplyId: null,
+    privateReplyMessageId: null,
+  };
+
+  const repo = {
+    claimJob: async () => stored,
+    markPublicReplySent: async (_id, replyId) => ({
+      ...stored,
+      publicReplyId: replyId,
+    }),
+    markPrivateReplyPending: async (_id, data) => ({
+      ...stored,
+      publicReplyId: "pub-90",
+      privateReplyPendingText: data.text,
+    }),
+    markPrivateReplySent: async (_id, data) => ({
+      ...stored,
+      publicReplyId: "pub-90",
+      privateReplyMessageId: data.messageId,
+      privateReplyRecipientId: data.recipientId,
+    }),
+    markCompleted: async () => ({ ...stored, status: "completed" }),
+    markFailed: async (_id, err) => assert.fail(`urgent comment should not fail: ${err?.message}`),
+    markSkipped: async () => assert.fail("urgent comment should not skip"),
+    listRecoverable: async () => [],
+  };
+
+  const meta = {
+    fetchCommentSourceContext: async () => null,
+    replyToComment: async (_channel, _id, text) => {
+      calls.push(["public", text]);
+      return { success: true, replyId: "pub-90" };
+    },
+    sendPrivateReplyToComment: async (_channel, _id, text) => {
+      calls.push(["private", text]);
+      return {
+        success: true,
+        messageId: "dm-90",
+        recipientId: "igsid-90",
+      };
+    },
+  };
+
+  const aiClient = {
+    getReply: async () => assert.fail("urgent deterministic comment must not call AI"),
+  };
+
+  const contacts = {
+    getOrCreateChannelContact: async (...args) => {
+      calls.push(["contact", ...args]);
+      return { id: 190 };
+    },
+    setAttention: async (contactId, needsAttention, reason) => {
+      calls.push(["attention", contactId, needsAttention, reason]);
+    },
+  };
+
+  const messages = {
+    getMessageByProviderIdForContact: async () => null,
+  };
+  const store = {
+    appendMessageForContact: async () => ({ id: 290 }),
+  };
+  const pipeline = {
+    ensureLeadForContact: async () => ({ created: false, lead: null }),
+  };
+
+  const config = {
+    escalation: {
+      handoffMessage: "A team member will follow up.",
+    },
+    commentAutomation: {
+      ...DEFAULT_COMMENT_AUTOMATION,
+      enabled: true,
+      publicReplyStyle: "fixed",
+      fixedPublicReply: "SALE SALE SALE",
+      activatedAt: new Date(Date.now() - 1000).toISOString(),
+    },
+  };
+
+  const safetyCopy = deterministicCommentSafetyCopy(
+    {
+      channel: stored.channel,
+      text: stored.text,
+    },
+    config.commentAutomation,
+    config
+  );
+  assert.equal(safetyCopy.urgentSafety, true);
+  assert.match(safetyCopy.privateReply, /urgent medical attention/i);
+
+  const service = createMetaCommentAutomationService({
+    repo,
+    meta,
+    aiClient,
+    contacts,
+    messages,
+    pipeline,
+    store,
+    config,
+    repliesEnabled: () => true,
+  });
+
+  await service.processJob(stored.id);
+
+  const firstAttention = calls.findIndex((call) => call[0] === "attention");
+  const firstPublic = calls.findIndex((call) => call[0] === "public");
+  const firstPrivate = calls.findIndex((call) => call[0] === "private");
+  assert.ok(firstAttention >= 0);
+  assert.ok(firstPublic > firstAttention, "staff attention should be persisted before public reply");
+  assert.ok(firstPrivate > firstPublic, "private urgent guidance should follow the safe public reply");
+
+  const publicReply = calls[firstPublic][1];
+  const privateReply = calls[firstPrivate][1];
+  assert.doesNotMatch(publicReply, /SALE SALE SALE/);
+  assert.match(publicReply, /contact the clinic directly now/i);
+  assert.match(privateReply, /urgent medical attention/i);
+  assert.match(privateReply, /emergency medical care immediately/i);
+});
