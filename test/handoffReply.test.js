@@ -27,6 +27,12 @@ test("new urgent safety phrases use the same immediate-care path", () => {
   }
 });
 
+test("inherited urgent state can force urgent wording on a later typing-burst message", () => {
+  const reply = fallbackHandoffReply("help", "", { urgent: true });
+  assert.match(reply, /urgent medical attention/i);
+  assert.match(reply, /emergency medical care immediately/i);
+});
+
 test("urgent symptoms get immediate-care guidance in Bahasa Malaysia and Chinese", () => {
   const ms = fallbackHandoffReply("saya susah bernafas dan makin sakit");
   const zh = fallbackHandoffReply("我呼吸困难而且越来越严重");
