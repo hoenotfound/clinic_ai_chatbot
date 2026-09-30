@@ -9,6 +9,12 @@ const ai = require("./aiService");
 const leadAttributionService = require("./leadAttributionService");
 const { parseAiReplyResult } = require("../utils/aiReplyResult");
 const { normalizeAttribution } = require("../utils/leadAttribution");
+const {
+  checkKeywordTriggers,
+  isUrgentSafetyMessage,
+} = require("../utils/attentionTriggers");
+const { fallbackHandoffReply } = require("../utils/handoffReply");
+const { detectMessageLanguage } = require("../utils/chatLanguage");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 
 const DEFAULT_COMMENT_AUTOMATION = Object.freeze({
@@ -197,6 +203,70 @@ function fallbackCopy(event, settings) {
   };
 }
 
+function deterministicCommentPublicHandoff(messageText, urgent) {
+  const language = detectMessageLanguage(messageText);
+
+  if (urgent) {
+    if (language === "zh") {
+      return "请现在直接联系诊所，我们也已经通知团队跟进你。";
+    }
+    if (language === "ms") {
+      return "Tolong hubungi klinik terus sekarang ya. Saya dah flag pada team kami untuk follow up.";
+    }
+    return "Please contact the clinic directly now. We've also flagged this for our team.";
+  }
+
+  if (language === "zh") {
+    return "这个情况我们已经通知团队跟进你，也会私信联系你。";
+  }
+  if (language === "ms") {
+    return "Untuk yang ni, saya dah flag pada team kami untuk follow up. Kami akan hubungi awak melalui DM.";
+  }
+  return "We've flagged this for our team to follow up and we'll contact you by DM.";
+}
+
+function deterministicCommentSafetyCopy(event, settings, config = clinicConfig) {
+  const attentionReason = checkKeywordTriggers(event?.text);
+  if (!attentionReason) return null;
+
+  const urgent = isUrgentSafetyMessage(event.text);
+  return {
+    shouldRespond: true,
+    publicReply: deterministicCommentPublicHandoff(event.text, urgent),
+    privateReply: fallbackHandoffReply(
+      event.text,
+      config?.escalation?.handoffMessage,
+      { urgent }
+    ),
+    flagged: true,
+    attentionReason,
+    deterministicSafety: true,
+    forcePublicReply: true,
+    urgentSafety: urgent,
+  };
+}
+
+async function flagDeterministicCommentForStaff({
+  event,
+  copy,
+  contacts = contactsRepo,
+}) {
+  if (!copy?.deterministicSafety || !event?.authorId) return null;
+
+  const contact = await contacts.getOrCreateChannelContact(
+    event.channel,
+    event.authorId,
+    event.authorName || null
+  );
+  await contacts.setAttention(
+    contact.id,
+    true,
+    copy.attentionReason ||
+      `Needs staff review after ${event.channel} comment: ${event.text.slice(0, 180)}`
+  );
+  return contact;
+}
+
 function commentAdContext(event) {
   const value = event?.rawEvent?.value || {};
   const media = value?.media || {};
@@ -377,7 +447,8 @@ async function ensureCommentLead({
     await contacts.setAttention(
       contact.id,
       true,
-      `Needs staff review after ${event.channel} comment: ${event.text.slice(0, 180)}`
+      copy.attentionReason ||
+        `Needs staff review after ${event.channel} comment: ${event.text.slice(0, 180)}`
     );
   }
   return contact;
@@ -439,7 +510,20 @@ function createMetaCommentAutomationService({
         );
       }
 
-      const copy = await generateReplyCopy(event, settings, aiClient, sourceContext);
+      const copy =
+        deterministicCommentSafetyCopy(event, settings, config) ||
+        await generateReplyCopy(event, settings, aiClient, sourceContext);
+
+      // Safety handoffs are recorded before any Meta send. That way a failed
+      // public/private API call cannot erase the staff-attention signal.
+      if (copy.deterministicSafety) {
+        await flagDeterministicCommentForStaff({
+          event,
+          copy,
+          contacts,
+        });
+      }
+
       if (!copy.shouldRespond) {
         return repo.markSkipped(job.id, "AI classified the comment as not requiring a reply.");
       }
@@ -448,9 +532,11 @@ function createMetaCommentAutomationService({
 
       if (settings.publicReplyEnabled && !liveJob.publicReplyId) {
         const publicText =
-          settings.publicReplyStyle === "fixed"
-            ? settings.fixedPublicReply
-            : copy.publicReply || settings.fixedPublicReply;
+          copy.forcePublicReply
+            ? copy.publicReply
+            : settings.publicReplyStyle === "fixed"
+              ? settings.fixedPublicReply
+              : copy.publicReply || settings.fixedPublicReply;
         const publicResult = await meta.replyToComment(event.channel, event.commentId, publicText);
         if (!publicResult.success) {
           throw new Error(publicResult.error || "Meta rejected the public comment reply.");
@@ -587,6 +673,9 @@ module.exports = {
   DEFAULT_COMMENT_AUTOMATION,
   createMetaCommentAutomationService,
   buildCommentAttribution,
+  deterministicCommentPublicHandoff,
+  deterministicCommentSafetyCopy,
+  flagDeterministicCommentForStaff,
   commentAdContext,
   fallbackCopy,
   generateReplyCopy,
