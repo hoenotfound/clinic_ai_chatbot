@@ -1454,7 +1454,7 @@ function ToolNavButton({ active, onClick, icon, title, shortTitle, description, 
       <span className="min-w-0 xl:flex-1">
         <span className={`block text-[11px] font-semibold leading-3.5 sm:hidden ${active ? "text-[var(--color-primary)]" : "text-[var(--color-text)]"}`}>{shortTitle}</span>
         <span className={`hidden text-xs font-semibold leading-4 sm:block sm:text-[13px] xl:text-sm xl:font-bold xl:leading-5 ${active ? "text-[var(--color-primary)]" : "text-[var(--color-text)]"}`}>{title}</span>
-        <span className="mt-0.5 hidden text-[11px] leading-4 text-[var(--color-text-muted)] xl:block">{description}</span>
+        <span className="mt-0.5 hidden text-xs leading-4 text-[var(--color-text-muted)] xl:block">{description}</span>
       </span>
       <span className={`hidden shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] xl:inline ${enabled ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
         {enabled ? "On" : "Off"}
