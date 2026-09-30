@@ -56,6 +56,23 @@ test("webhook parsers still verify raw signatures and portal routes stay protect
   assert.match(appSource, /app\.post\("\/webhook", webhookJsonParser/);
   assert.match(appSource, /app\.post\("\/meta-webhook", metaWebhookJsonParser/);
 
+  assert.match(
+    appSource,
+    /app\.set\("trust proxy", resolveTrustProxy\(process\.env\)\)/
+  );
+  assert.match(
+    appSource,
+    /verifyTokenMatches\(token, process\.env\.WHATSAPP_VERIFY_TOKEN\)/
+  );
+  assert.match(
+    appSource,
+    /verifyTokenMatches\(token, process\.env\.META_VERIFY_TOKEN\)/
+  );
+  assert.doesNotMatch(
+    appSource,
+    /token === process\.env\.(WHATSAPP_VERIFY_TOKEN|META_VERIFY_TOKEN)/
+  );
+
   for (const route of [
     "conversations",
     "config",
