@@ -119,6 +119,14 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
   }, [accounts, configuredBranches]);
 
   const savedEnabled = savedSettings.enabled === true;
+  const enabledStateChanged = settings.enabled !== savedEnabled;
+  const enabledLabel = enabledStateChanged
+    ? settings.enabled
+      ? "On after save"
+      : "Off after save"
+    : settings.enabled
+      ? "On"
+      : "Off";
   const savedBranchRouting = savedSettings.assignByBranch !== false;
   const locationTitle = capitalized(ui.locationSingular);
 
@@ -284,7 +292,7 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
             </div>
 
             <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
-              <span className="text-sm font-semibold text-[var(--color-text)]">{settings.enabled ? "On" : "Off"}</span>
+              <span className="text-sm font-semibold text-[var(--color-text)]">{enabledLabel}</span>
               <Switch checked={settings.enabled} disabled={!canManageDistribution} onChange={() => setSettings((current) => ({ ...current, enabled: !current.enabled }))} />
             </div>
           </header>
