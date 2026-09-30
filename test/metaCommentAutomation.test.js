@@ -944,12 +944,14 @@ test("global automation pause still stores and hands off urgent comments without
     privateReplyMessageId: null,
   };
 
+  let storedJob = null;
   const repo = {
     storeIncomingComment: async (event) => {
       calls.push(["store", event.text]);
-      return { ...urgentJob, ...event, id: urgentJob.id };
+      storedJob = { ...urgentJob, ...event, id: urgentJob.id };
+      return storedJob;
     },
-    claimJob: async () => urgentJob,
+    claimJob: async () => storedJob || urgentJob,
     markSkipped: async (_id, reason) => {
       calls.push(["skipped", reason]);
       return { ...urgentJob, status: "skipped", lastError: reason };
@@ -984,13 +986,14 @@ test("global automation pause still stores and hands off urgent comments without
       activatedAt: new Date(Date.now() - 1000).toISOString(),
     },
   };
+  let automationEnabled = false;
   const service = createMetaCommentAutomationService({
     repo,
     meta,
     aiClient,
     contacts,
     config,
-    repliesEnabled: () => false,
+    repliesEnabled: () => automationEnabled,
     handoff,
   });
 
@@ -1033,6 +1036,9 @@ test("global automation pause still stores and hands off urgent comments without
     urgentJob.text,
   ]);
 
+  // Even if automation is enabled before recovery processes the durable job,
+  // the event accepted during the pause must remain staff-only.
+  automationEnabled = true;
   const result = await service.processJob(urgentJob.id);
   assert.equal(result.status, "skipped");
   assert.ok(calls.some((call) => call[0] === "handoff" && call[1] === 191));
