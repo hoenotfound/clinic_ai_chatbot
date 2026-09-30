@@ -64,6 +64,7 @@ router.get("/export", async (req, res) => {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="${filename}"`,
       "Cache-Control": "no-store",
+      "X-Export-Row-Count": String(rows.length),
     });
     res.status(200).send(csv);
   } catch (err) {
