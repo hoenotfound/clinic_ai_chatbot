@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { rightmostForwardedAddress } = require("../utils/proxyTrust");
 
 const DEFAULT_AUTH_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_AUTH_MAX_FAILURES = 20;
@@ -36,9 +37,7 @@ function boundedPositiveInteger(value, fallback, { min = 1, max = Number.MAX_SAF
 
 function requestAddress(req, trustProxy) {
   if (trustProxy) {
-    const forwarded = String(req.get("x-forwarded-for") || "")
-      .split(",")[0]
-      .trim();
+    const forwarded = rightmostForwardedAddress(req.get("x-forwarded-for"));
     if (forwarded) return forwarded;
   }
   return req.socket?.remoteAddress || "unknown";
