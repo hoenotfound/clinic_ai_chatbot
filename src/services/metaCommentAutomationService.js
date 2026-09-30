@@ -203,7 +203,11 @@ function fallbackCopy(event, settings) {
   };
 }
 
-function deterministicCommentPublicHandoff(messageText, urgent) {
+function deterministicCommentPublicHandoff(
+  messageText,
+  urgent,
+  privateReplyEnabled = true
+) {
   const language = detectMessageLanguage(messageText);
 
   if (urgent) {
@@ -217,12 +221,18 @@ function deterministicCommentPublicHandoff(messageText, urgent) {
   }
 
   if (language === "zh") {
-    return "这个情况我们已经通知团队跟进你，也会私信联系你。";
+    return privateReplyEnabled
+      ? "这个情况我们已经通知团队跟进你，也会私信联系你。"
+      : "这个情况我们已经通知团队跟进你。";
   }
   if (language === "ms") {
-    return "Untuk yang ni, saya dah flag pada team kami untuk follow up. Kami akan hubungi awak melalui DM.";
+    return privateReplyEnabled
+      ? "Untuk yang ni, saya dah flag pada team kami untuk follow up. Kami akan hubungi awak melalui DM."
+      : "Untuk yang ni, saya dah flag pada team kami untuk follow up.";
   }
-  return "We've flagged this for our team to follow up and we'll contact you by DM.";
+  return privateReplyEnabled
+    ? "We've flagged this for our team to follow up and we'll contact you by DM."
+    : "We've flagged this for our team to follow up.";
 }
 
 function deterministicCommentSafetyCopy(event, settings, config = clinicConfig) {
@@ -232,7 +242,11 @@ function deterministicCommentSafetyCopy(event, settings, config = clinicConfig) 
   const urgent = isUrgentSafetyMessage(event.text);
   return {
     shouldRespond: true,
-    publicReply: deterministicCommentPublicHandoff(event.text, urgent),
+    publicReply: deterministicCommentPublicHandoff(
+      event.text,
+      urgent,
+      settings?.privateReplyEnabled !== false
+    ),
     privateReply: fallbackHandoffReply(
       event.text,
       config?.escalation?.handoffMessage,
