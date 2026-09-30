@@ -1002,7 +1002,7 @@ function CommentAutomationTool({
                 </p>
               </div>
             ) : (
-              <p className="mt-4 text-[11px] leading-5 text-[var(--color-text-muted)]">
+              <p className="mt-4 text-xs leading-5 text-[var(--color-text-muted)]">
                 Check the connection before going live. A real test comment is the final check that comment replies are working.
               </p>
             )}
@@ -1067,7 +1067,7 @@ function CommentAutomationTool({
                       <span className="text-xs font-semibold">Let AI write it</span>
                       <span className="rounded-full bg-[var(--color-primary-light)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">Recommended</span>
                     </span>
-                    <span className="mt-1.5 block text-[11px] leading-5 text-[var(--color-text-muted)]">
+                    <span className="mt-1.5 block text-xs leading-5 text-[var(--color-text-muted)]">
                       Match the customer's language and the post context while keeping the reply short.
                     </span>
                   </button>
@@ -1082,7 +1082,7 @@ function CommentAutomationTool({
                     }`}
                   >
                     <span className="block text-xs font-semibold">Always use the same reply</span>
-                    <span className="mt-1.5 block text-[11px] leading-5 text-[var(--color-text-muted)]">
+                    <span className="mt-1.5 block text-xs leading-5 text-[var(--color-text-muted)]">
                       Best when you want every eligible comment to receive identical wording.
                     </span>
                   </button>
@@ -1109,7 +1109,7 @@ function CommentAutomationTool({
                       className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-base leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)] sm:text-sm"
                     />
                     {fixedReplyInvalid && (
-                      <p className="mt-2 text-[11px] font-medium text-[var(--color-danger)]">
+                      <p className="mt-2 text-xs font-medium text-[var(--color-danger)]">
                         Add the public reply text before saving.
                       </p>
                     )}
@@ -1119,11 +1119,11 @@ function CommentAutomationTool({
             )}
           </Card>
 
-          <details className="group rounded-2xl border border-[var(--color-border)] bg-white shadow-[0_8px_30px_rgba(24,39,33,0.035)]">
-            <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 rounded-2xl px-5 py-4 font-display text-sm font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)]/30 sm:px-6 [&::-webkit-details-marker]:hidden">
+          <details className="group rounded-xl border border-[var(--color-border)] bg-white">
+            <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 rounded-xl px-5 py-4 font-display text-sm font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)]/30 sm:px-6 [&::-webkit-details-marker]:hidden">
               <span>
                 Advanced settings
-                <span className="mt-1 block font-sans text-[11px] font-normal leading-5 text-[var(--color-text-muted)]">
+                <span className="mt-1 block font-sans text-xs font-normal leading-5 text-[var(--color-text-muted)]">
                   The recommended defaults work well for most businesses.
                 </span>
               </span>
@@ -1193,7 +1193,7 @@ function CommentChannelCard({
       aria-checked={checked}
       aria-label={`Use ${label} for comment automation`}
       onClick={onChange}
-      className={`flex w-full items-start justify-between gap-4 rounded-2xl border p-4 text-left transition-colors ${
+      className={`flex w-full items-start justify-between gap-4 rounded-xl border p-4 text-left transition-colors ${
         checked
           ? "border-[var(--color-primary)]/35 bg-[var(--color-primary-light)]/35"
           : "border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-white"
@@ -1209,7 +1209,7 @@ function CommentChannelCard({
             </span>
           )}
         </span>
-        <span className="mt-1.5 block text-[11px] leading-5 text-[var(--color-text-muted)]">{description}</span>
+        <span className="mt-1.5 block text-xs leading-5 text-[var(--color-text-muted)]">{description}</span>
         <span className={`mt-2 block text-[10px] font-semibold ${checked ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
           {checked ? "Included in automation" : "Not included"}
         </span>
@@ -1227,7 +1227,7 @@ function CommentChannelCard({
 function CommentActionChoice({ checked, recommended = false, title, description, onClick }) {
   return (
     <label
-      className={`flex w-full cursor-pointer items-start gap-3 rounded-2xl border p-4 text-left transition-colors focus-within:ring-2 focus-within:ring-[var(--color-primary)]/25 ${
+      className={`flex w-full cursor-pointer items-start gap-3 rounded-xl border p-4 text-left transition-colors focus-within:ring-2 focus-within:ring-[var(--color-primary)]/25 ${
         checked
           ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/45"
           : "border-[var(--color-border)] bg-white hover:bg-[var(--color-bg)]"
@@ -1250,7 +1250,7 @@ function CommentActionChoice({ checked, recommended = false, title, description,
             <span className="rounded-full bg-[var(--color-primary-light)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">Recommended</span>
           )}
         </span>
-        <span className="mt-1 block text-[11px] leading-5 text-[var(--color-text-muted)]">{description}</span>
+        <span className="mt-1 block text-xs leading-5 text-[var(--color-text-muted)]">{description}</span>
       </span>
     </label>
   );
@@ -1347,12 +1347,12 @@ function LeadScoringTool({ form, setForm, savedEnabled, hasUnsavedChanges, savin
             <OutcomeCard icon={<ColdIcon className="h-4 w-4" />} iconClass="bg-blue-50 text-blue-600" title="Clear rejection → Cold" text="A clear no, rejection or loss of interest can move a lead to Cold." />
             <OutcomeCard icon={<StaffIcon className="h-4 w-4" />} iconClass="bg-[var(--color-primary-light)] text-[var(--color-primary)]" title="Staff changes always win" text="A temperature set manually by staff is never overwritten automatically." />
           </div>
-          <p className="mt-4 text-[11px] leading-5 text-[var(--color-text-muted)]">AI conversation summaries can still run independently when automatic temperature is paused.</p>
+          <p className="mt-4 text-xs leading-5 text-[var(--color-text-muted)]">AI conversation summaries can still run independently when automatic temperature is paused.</p>
         </Card>
 
         <details className="rounded-xl border border-[var(--color-border)] bg-white p-5 sm:p-6">
           <summary className="cursor-pointer select-none font-display text-sm font-bold">Advanced timing settings</summary>
-          <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">Most clinics can keep the defaults. Change these only if you want the AI to review conversations sooner or later.</p>
+          <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">Most clinics can keep the defaults. Change these only if you want the AI to review conversations sooner or later.</p>
           <div className="mt-5 grid gap-4 md:grid-cols-3">
             <ScoringField id="scoring-inactivity" label="Conversation quiet for" hint="5 to 30 minutes" value={form.inactivityMinutes} min="5" max="30" suffix="minutes" onChange={(value) => setForm((current) => ({ ...current, inactivityMinutes: value }))} />
             <ScoringField id="scoring-duration" label="Maximum active time" hint="30 to 120 minutes" value={form.maxConversationMinutes} min="30" max="120" suffix="minutes" onChange={(value) => setForm((current) => ({ ...current, maxConversationMinutes: value }))} />
@@ -1442,17 +1442,19 @@ function ToolNavButton({ active, onClick, icon, title, description, enabled }) {
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full min-w-0 items-center gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition-colors sm:px-3 ${active ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"}`}
+      className={`flex min-h-[5.25rem] w-full min-w-0 flex-col items-center justify-center gap-2 rounded-xl px-2.5 py-2.5 text-center transition-colors xl:min-h-0 xl:flex-row xl:justify-start xl:gap-2.5 xl:px-3 xl:text-left ${active ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"}`}
       aria-current={active ? "page" : undefined}
     >
       <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${active ? "bg-white text-[var(--color-primary)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
         {icon}
       </span>
-      <span className="min-w-0 flex-1">
-        <span className={`block truncate text-[13px] font-semibold ${active ? "text-[var(--color-primary)]" : "text-[var(--color-text)]"}`}>{title}</span>
+      <span className="min-w-0 xl:flex-1">
+        <span className={`block text-xs font-semibold leading-4 sm:text-[13px] ${active ? "text-[var(--color-primary)]" : "text-[var(--color-text)]"}`}>{title}</span>
         <span className="mt-0.5 hidden text-xs leading-4 text-[var(--color-text-muted)] xl:block">{description}</span>
       </span>
-      <span className={`h-2 w-2 shrink-0 rounded-full ${enabled ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`} aria-hidden="true" />
+      <span className={`hidden shrink-0 text-[11px] font-semibold xl:inline ${enabled ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
+        {enabled ? "On" : "Off"}
+      </span>
       <span className="sr-only">{enabled ? "Active" : "Paused"}</span>
     </button>
   );
@@ -1494,7 +1496,7 @@ function ToggleSetting({ label, description, status = null, statusLoading = fals
     >
       <span className="min-w-0">
         <span className="flex flex-wrap items-center gap-2">
-          <span className="block text-xs font-semibold">{label}</span>
+          <span className="block text-sm font-semibold">{label}</span>
           {(status || statusLoading) && (
             <ChannelReadinessBadge status={status} loading={statusLoading} />
           )}
@@ -1554,7 +1556,7 @@ function InlineWarning({ children }) {
   return (
     <div role="alert" className="mt-4 flex items-start gap-2.5 rounded-xl border border-[var(--color-accent)]/30 bg-[var(--color-accent-light)] px-3.5 py-3">
       <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white text-[11px] font-bold text-[var(--color-accent-text)]">!</span>
-      <p className="text-[11px] leading-5 text-[var(--color-text)]">{children}</p>
+      <p className="text-xs leading-5 text-[var(--color-text)]">{children}</p>
     </div>
   );
 }
@@ -1565,7 +1567,7 @@ function Choice({ checked, label, description, onChange }) {
       <input type="radio" name="follow-up-trigger" checked={checked} onChange={onChange} className="sr-only" />
       <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${checked ? "border-[var(--color-primary)]" : "border-[var(--color-border)]"}`}>{checked && <span className="h-2 w-2 rounded-full bg-[var(--color-primary)]" />}</span>
       <span>
-        <span className="block text-xs font-semibold">{label}</span>
+        <span className="block text-sm font-semibold">{label}</span>
         <span className="mt-1 block text-xs leading-5 text-[var(--color-text-muted)]">{description}</span>
       </span>
     </label>
@@ -1574,7 +1576,7 @@ function Choice({ checked, label, description, onChange }) {
 
 function OutcomeCard({ icon, iconClass, title, text }) {
   return (
-    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
       <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${iconClass}`} aria-hidden="true">{icon}</span>
       <p className="mt-2 text-xs font-semibold">{title}</p>
       <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{text}</p>
@@ -1585,7 +1587,7 @@ function OutcomeCard({ icon, iconClass, title, text }) {
 function ScoringField({ id, label, hint, value, min, max, suffix, onChange }) {
   return (
     <div>
-      <label htmlFor={id} className="text-xs font-semibold">{label}</label>
+      <label htmlFor={id} className="text-sm font-semibold">{label}</label>
       <div className="mt-2 flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)]">
         <input id={id} type="number" min={min} max={max} step="1" value={value} onChange={(event) => onChange(event.target.value)} className="min-w-0 flex-1 bg-transparent px-3.5 py-2.5 text-sm outline-none" />
         <span className="border-l border-[var(--color-border)] px-3 py-2.5 text-xs text-[var(--color-text-muted)]">{suffix}</span>
