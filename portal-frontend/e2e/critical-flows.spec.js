@@ -510,6 +510,15 @@ function findCall(apiState, method, path) {
   return apiState.calls.find((call) => call.method === method && call.path === path);
 }
 
+
+async function openInboxConversation(page, name = "Alex Customer") {
+  if ((page.viewportSize()?.width ?? 0) >= 1024) return;
+
+  const conversation = page.getByRole("button").filter({ hasText: name }).first();
+  await expect(conversation).toBeVisible();
+  await conversation.click();
+}
+
 test("login submits credentials and reaches Inbox", async ({ page }) => {
   const apiState = await installApi(page, { loggedIn: false });
 
@@ -591,6 +600,7 @@ test("manual Inbox reply sends the exact text and takes ownership", async ({ pag
   const apiState = await installApi(page);
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
   const composer = page.getByPlaceholder("Message to take over from AI…");
   await expect(composer).toBeVisible();
 
@@ -621,6 +631,7 @@ test("closed WhatsApp conversation records opt-in and sends an approved template
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   await expect(page.getByText("Reply window closed", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Send WhatsApp template" }).click();
@@ -677,6 +688,7 @@ test("Messenger conversation stays manually replyable in the Human Agent window"
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   await expect(page.getByText(/Staff reply only/)).toBeVisible();
   const composer = page.getByPlaceholder("Message to take over from AI…");
@@ -707,6 +719,7 @@ test("Messenger stays closed after 24 hours when Human Agent is not enabled", as
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   await expect(page.getByText("Reply window closed", { exact: true })).toBeVisible();
   await expect(page.getByText(/Staff reply only/)).toHaveCount(0);
@@ -719,6 +732,7 @@ test("Inbox takeover and Return to AI change ownership through the correct endpo
   const apiState = await installApi(page);
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
   await page.getByRole("button", { name: "Take over conversation" }).click();
 
   await expect(page.getByRole("button", { name: "Return control to AI" })).toBeVisible();
