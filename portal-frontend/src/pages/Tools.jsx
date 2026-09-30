@@ -503,7 +503,7 @@ export default function Tools() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-[var(--color-bg)] xl:flex-row">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--color-bg)] xl:flex-row">
       <ToolsSidebar
         activeTool={activeTool}
         onSelect={selectTool}
@@ -1420,7 +1420,7 @@ function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChange
 
 function ToolsSidebar({ activeTool, onSelect, followUpActive, commentActive, scoringActive, distributionActive }) {
   return (
-    <aside className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3 xl:h-full xl:w-64 xl:border-b-0 xl:border-r xl:px-4 xl:py-5">
+    <aside className="w-full min-w-0 max-w-full shrink-0 overflow-hidden border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3 xl:h-full xl:w-64 xl:border-b-0 xl:border-r xl:px-4 xl:py-5">
       <div className="px-1">
         <p className="font-display text-lg font-bold xl:text-xl">Tools</p>
         <p className="mt-1 hidden text-[13px] leading-5 text-[var(--color-text-muted)] xl:block">
@@ -1428,7 +1428,7 @@ function ToolsSidebar({ activeTool, onSelect, followUpActive, commentActive, sco
         </p>
       </div>
 
-      <nav className="mt-3 flex gap-1.5 ui-scroll-x overflow-x-auto pb-1 xl:mt-4 xl:block xl:space-y-1 xl:overflow-visible xl:pb-0" aria-label="Available tools">
+      <nav className="mt-3 flex min-w-0 max-w-full gap-1.5 ui-scroll-x overflow-x-auto pb-1 xl:mt-4 xl:block xl:space-y-1 xl:overflow-visible xl:pb-0" aria-label="Available tools">
         <ToolNavButton active={activeTool === "followUp"} onClick={() => onSelect("followUp")} icon={<ClockIcon className="h-[18px] w-[18px]" />} title="Automated follow-up" description="Follow up when a customer goes quiet" enabled={followUpActive} />
         <ToolNavButton active={activeTool === "commentAutomation"} onClick={() => onSelect("commentAutomation")} icon={<CommentIcon className="h-[18px] w-[18px]" />} title="Comment automation" description="Reply to comments and continue in DM" enabled={commentActive} />
         <ToolNavButton active={activeTool === "leadScoring"} onClick={() => onSelect("leadScoring")} icon={<ScoreIcon className="h-[18px] w-[18px]" />} title="Lead temperature" description="Keep Hot, Warm and Cold updated" enabled={scoringActive} />
