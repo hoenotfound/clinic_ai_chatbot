@@ -630,7 +630,7 @@ function FollowUpTool({
             <SectionHeading number="1" title="Choose when it sends" description="Set the wait time and which outgoing messages should start the timer." />
             <div className="mt-6 grid gap-6 xl:grid-cols-2">
               <div>
-                <label htmlFor="follow-up-delay" className="text-xs font-semibold">Wait before following up</label>
+                <label htmlFor="follow-up-delay" className="text-sm font-semibold">Wait before following up</label>
                 <div className="mt-2 flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)]">
                   <input
                     id="follow-up-delay"
@@ -644,14 +644,14 @@ function FollowUpTool({
                   />
                   <span className="border-l border-[var(--color-border)] px-3 py-2.5 text-xs text-[var(--color-text-muted)]">minutes</span>
                 </div>
-                <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">Current wait: {delayDescription}.</p>
+                <p className="mt-1.5 text-xs text-[var(--color-text-muted)]">Current wait: {delayDescription}.</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {DELAY_PRESETS.map((preset) => (
                     <button
                       key={preset.minutes}
                       type="button"
                       onClick={() => setForm((current) => ({ ...current, delayMinutes: preset.minutes }))}
-                      className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${Number(form.delayMinutes) === preset.minutes ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
+                      className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${Number(form.delayMinutes) === preset.minutes ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
                     >
                       {preset.label}
                     </button>
@@ -660,7 +660,7 @@ function FollowUpTool({
               </div>
 
               <fieldset>
-                <legend className="text-xs font-semibold">Start the timer after</legend>
+                <legend className="text-sm font-semibold">Start the timer after</legend>
                 <div className="mt-2 space-y-2">
                   <Choice
                     checked={form.triggerMode === "all"}
@@ -682,8 +682,8 @@ function FollowUpTool({
           <Card>
             <SectionHeading number="2" title="Write the message" description="Write the main message. Language versions are generated automatically when you save." />
             <div className="mt-6 flex items-center justify-between gap-3">
-              <label htmlFor="follow-up-message" className="text-xs font-semibold">Follow-up message</label>
-              <span className="text-[10px] text-[var(--color-text-muted)]">{form.message.length}/1000</span>
+              <label htmlFor="follow-up-message" className="text-sm font-semibold">Follow-up message</label>
+              <span className="text-xs text-[var(--color-text-muted)]">{form.message.length}/1000</span>
             </div>
             <textarea
               id="follow-up-message"
@@ -698,10 +698,10 @@ function FollowUpTool({
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-xs font-semibold">Customer languages</p>
+                    <p className="text-sm font-semibold">Customer languages</p>
                     <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">English · BM · 中文</span>
                   </div>
-                  <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
                     {translationsNeedRefresh
                       ? "Language versions will refresh automatically when you save. Manual edits made after the latest message change will be kept."
                       : `${translationReadyCount} language versions are ready and matched to the customer automatically.`}
@@ -963,7 +963,7 @@ function CommentAutomationTool({
             {statusError ? (
               <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3">
                 <p className="text-xs font-semibold">We couldn't check the connections right now.</p>
-                <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
                   You can keep editing. Try Check connection again before turning the automation on.
                 </p>
               </div>
@@ -971,7 +971,7 @@ function CommentAutomationTool({
               <div className="mt-4 flex flex-col gap-2 rounded-xl border border-[var(--color-accent)]/30 bg-[var(--color-accent-light)] px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-xs font-semibold text-[var(--color-text)]">One or more selected channels still need setup.</p>
-                  <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
                     {isAdmin
                       ? "Finish the connection first, then come back and run one live comment test."
                       : "Ask an admin to finish the connection first, then come back and run one live comment test."}
@@ -997,7 +997,7 @@ function CommentAutomationTool({
             ) : selectedChannelsLookReady ? (
               <div className="mt-4 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/55 px-3.5 py-3">
                 <p className="text-xs font-semibold text-[var(--color-primary)]">Connections look ready.</p>
-                <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
                   After you turn this on, leave one new test comment to confirm the public reply and private message work as expected.
                 </p>
               </div>
@@ -1159,7 +1159,7 @@ function CommentAutomationTool({
             <h2 className="font-display text-sm font-bold">{form.enabled || savedEnabled ? "Test your automation" : "Before you turn it on"}</h2>
             <div className="mt-4 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/45 p-3.5">
               <p className="text-xs font-semibold text-[var(--color-primary)]">Run one real comment test</p>
-              <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
+              <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
                 Leave a new comment on a recent Facebook or Instagram post. Confirm the reply appears and, if enabled, the private message arrives.
               </p>
             </div>
@@ -1350,7 +1350,7 @@ function LeadScoringTool({ form, setForm, savedEnabled, hasUnsavedChanges, savin
           <p className="mt-4 text-[11px] leading-5 text-[var(--color-text-muted)]">AI conversation summaries can still run independently when automatic temperature is paused.</p>
         </Card>
 
-        <details className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:p-6">
+        <details className="rounded-xl border border-[var(--color-border)] bg-white p-5 sm:p-6">
           <summary className="cursor-pointer select-none font-display text-sm font-bold">Advanced timing settings</summary>
           <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">Most clinics can keep the defaults. Change these only if you want the AI to review conversations sooner or later.</p>
           <div className="mt-5 grid gap-4 md:grid-cols-3">
@@ -1376,34 +1376,35 @@ function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChange
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--color-bg)]">
-      <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 xl:px-10 xl:py-8">
+      <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6 xl:px-10 xl:py-7">
         <div className="mx-auto max-w-6xl pb-10">
-          <header className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+          <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="max-w-3xl">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-primary)]">Tools</p>
-              <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
-                <h1 className="font-display text-2xl font-bold sm:text-3xl">{title}</h1>
-                <StatusBadge active={savedEnabled} unsaved={hasUnsavedChanges} />
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">{title}</h1>
+                <ToolStatus active={savedEnabled} unsaved={hasUnsavedChanges} />
               </div>
-              <p className="mt-2 text-sm leading-6 text-[var(--color-text-muted)]">{description}</p>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)] sm:text-[15px]">{description}</p>
             </div>
-            <div className="flex shrink-0 items-center justify-between gap-4 rounded-2xl border border-[var(--color-border)] bg-white px-4 py-3 shadow-[0_8px_24px_rgba(24,39,33,0.04)] sm:min-w-56">
-              <div>
-                <p className="text-xs font-semibold">Automation</p>
-                <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">{automationStatus}</p>
+
+            <div className="flex shrink-0 items-center justify-between gap-3 sm:justify-end">
+              <div className="text-left sm:text-right">
+                <p className="text-sm font-semibold">{enabled ? "On" : "Off"}</p>
+                <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">{automationStatus}</p>
               </div>
               <Switch checked={enabled} onChange={onToggle} ariaLabel={`Enable ${title}`} />
             </div>
           </header>
-          <div className="mt-7">{children}</div>
+
+          <div className="mt-6 sm:mt-7">{children}</div>
         </div>
       </main>
 
-      <footer className="shrink-0 border-t border-[var(--color-border)] bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(24,39,33,0.04)] backdrop-blur sm:px-6 xl:px-10">
+      <footer className="shrink-0 border-t border-[var(--color-border)] bg-white px-4 py-3 sm:px-6 xl:px-10">
         <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-2.5">
             <span className={`h-2 w-2 shrink-0 rounded-full ${hasUnsavedChanges ? "bg-[var(--color-accent)]" : "bg-[var(--color-primary)]"}`} />
-            <p className="truncate text-xs font-medium text-[var(--color-text-muted)]">{hasUnsavedChanges ? "You have unsaved changes" : "All changes saved"}</p>
+            <p className="truncate text-[13px] font-medium text-[var(--color-text-muted)]">{hasUnsavedChanges ? "You have unsaved changes" : "All changes saved"}</p>
           </div>
           <button type="button" onClick={onSave} disabled={saveDisabled} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50">
             {saving && <Spinner />}
@@ -1411,6 +1412,7 @@ function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChange
           </button>
         </div>
       </footer>
+
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
@@ -1418,25 +1420,19 @@ function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChange
 
 function ToolsSidebar({ activeTool, onSelect, followUpActive, commentActive, scoringActive, distributionActive }) {
   return (
-    <aside className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] p-4 xl:h-full xl:w-72 xl:border-b-0 xl:border-r xl:p-5">
-      <div className="flex items-start justify-between gap-3 xl:block">
-        <div>
-          <p className="font-display text-xl font-bold">Tools</p>
-          <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">Automations that help your team follow up and convert more customers.</p>
-        </div>
-        <span className="mt-0.5 shrink-0 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-[10px] font-semibold text-[var(--color-primary)] xl:hidden">More coming</span>
+    <aside className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3 xl:h-full xl:w-64 xl:border-b-0 xl:border-r xl:px-4 xl:py-5">
+      <div className="px-1">
+        <p className="font-display text-lg font-bold xl:text-xl">Tools</p>
+        <p className="mt-1 hidden text-[13px] leading-5 text-[var(--color-text-muted)] xl:block">
+          Manage the automations your team uses every day.
+        </p>
       </div>
 
-      <nav className="mt-4 flex gap-2 ui-scroll-x overflow-x-auto pb-1 xl:mt-5 xl:block xl:space-y-2 xl:overflow-visible xl:pb-0" aria-label="Available tools">
-        <ToolNavButton active={activeTool === "followUp"} onClick={() => onSelect("followUp")} icon={<ClockIcon className="h-5 w-5" />} title="Automated follow-up" description="Follow up when a customer goes quiet" enabled={followUpActive} />
-        <ToolNavButton active={activeTool === "commentAutomation"} onClick={() => onSelect("commentAutomation")} icon={<CommentIcon className="h-5 w-5" />} title="Comment automation" description="Reply to FB / IG comments and move to DM" enabled={commentActive} />
-        <ToolNavButton active={activeTool === "leadScoring"} onClick={() => onSelect("leadScoring")} icon={<ScoreIcon className="h-5 w-5" />} title="Automatic Lead Temperature" description="Keep Hot / Warm / Cold updated" enabled={scoringActive} />
-        <ToolNavButton active={activeTool === "leadDistribution"} onClick={() => onSelect("leadDistribution")} icon={<DistributionIcon className="h-5 w-5" />} title="Automatic Lead Distribution" description="Share new leads across Sales staff" enabled={distributionActive} />
-
-        <p className="hidden px-1 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)] xl:block">Coming soon</p>
-        <ComingSoonTool icon={<CalendarIcon className="h-5 w-5" />} title="Appointment reminders" description="Reduce missed bookings automatically" />
-        <ComingSoonTool icon={<MegaphoneIcon className="h-5 w-5" />} title="Promotional campaigns" description="Send offers to selected customers" />
-        <ComingSoonTool icon={<StarIcon className="h-5 w-5" />} title="Review requests" description="Ask happy customers for a review" />
+      <nav className="mt-3 flex gap-1.5 ui-scroll-x overflow-x-auto pb-1 xl:mt-4 xl:block xl:space-y-1 xl:overflow-visible xl:pb-0" aria-label="Available tools">
+        <ToolNavButton active={activeTool === "followUp"} onClick={() => onSelect("followUp")} icon={<ClockIcon className="h-[18px] w-[18px]" />} title="Automated follow-up" description="Follow up when a customer goes quiet" enabled={followUpActive} />
+        <ToolNavButton active={activeTool === "commentAutomation"} onClick={() => onSelect("commentAutomation")} icon={<CommentIcon className="h-[18px] w-[18px]" />} title="Comment automation" description="Reply to comments and continue in DM" enabled={commentActive} />
+        <ToolNavButton active={activeTool === "leadScoring"} onClick={() => onSelect("leadScoring")} icon={<ScoreIcon className="h-[18px] w-[18px]" />} title="Lead temperature" description="Keep Hot, Warm and Cold updated" enabled={scoringActive} />
+        <ToolNavButton active={activeTool === "leadDistribution"} onClick={() => onSelect("leadDistribution")} icon={<DistributionIcon className="h-[18px] w-[18px]" />} title="Lead distribution" description="Share new leads across Sales staff" enabled={distributionActive} />
       </nav>
     </aside>
   );
@@ -1444,55 +1440,55 @@ function ToolsSidebar({ activeTool, onSelect, followUpActive, commentActive, sco
 
 function ToolNavButton({ active, onClick, icon, title, description, enabled }) {
   return (
-    <button type="button" onClick={onClick} className={`flex w-full min-w-[13.5rem] items-start gap-3 rounded-2xl border p-3.5 text-left transition-colors xl:min-w-0 ${active ? "border-[var(--color-primary)]/15 bg-[var(--color-primary-light)]" : "border-[var(--color-border)] bg-white hover:bg-[var(--color-bg)]"}`} aria-current={active ? "page" : undefined}>
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-[var(--color-primary)] shadow-sm">{icon}</span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-semibold text-[var(--color-text)]">{title}</span>
-        <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">{description}</span>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex min-w-[11.75rem] items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition-colors xl:w-full xl:min-w-0 ${active ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"}`}
+      aria-current={active ? "page" : undefined}
+    >
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${active ? "bg-white text-[var(--color-primary)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
+        {icon}
       </span>
-      <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${enabled ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`} title={enabled ? "Active" : "Paused"} />
+      <span className="min-w-0 flex-1">
+        <span className={`block truncate text-[13px] font-semibold ${active ? "text-[var(--color-primary)]" : "text-[var(--color-text)]"}`}>{title}</span>
+        <span className="mt-0.5 hidden text-xs leading-4 text-[var(--color-text-muted)] xl:block">{description}</span>
+      </span>
+      <span className={`h-2 w-2 shrink-0 rounded-full ${enabled ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`} aria-hidden="true" />
+      <span className="sr-only">{enabled ? "Active" : "Paused"}</span>
     </button>
   );
 }
 
-function ComingSoonTool({ icon, title, description }) {
-  return (
-    <div className="hidden w-full min-w-[13.5rem] items-start gap-3 rounded-2xl border border-[var(--color-border)] bg-white p-3.5 xl:flex xl:min-w-0" aria-disabled="true">
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--color-bg)] text-[var(--color-text-muted)]">{icon}</span>
-      <span className="min-w-0 flex-1">
-        <span className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs font-semibold text-[var(--color-text)]">{title}</span>
-          <span className="rounded bg-[var(--color-bg)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Soon</span>
-        </span>
-        <span className="mt-1 block text-[10px] leading-4 text-[var(--color-text-muted)]">{description}</span>
-      </span>
-    </div>
-  );
-}
-
 function Card({ children }) {
-  return <section className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:p-6">{children}</section>;
+  return <section className="rounded-xl border border-[var(--color-border)] bg-white p-5 sm:p-6">{children}</section>;
 }
 
 function SectionHeading({ number, title, description }) {
   return (
     <div className="flex items-start gap-3">
-      {number && <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-[11px] font-bold text-[var(--color-primary)]">{number}</span>}
+      {number && <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[var(--color-primary-light)] text-xs font-bold text-[var(--color-primary)]">{number}</span>}
       <div>
         <h2 className="font-display text-base font-bold">{title}</h2>
-        {description && <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">{description}</p>}
+        {description && <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)] sm:text-[13px]">{description}</p>}
       </div>
     </div>
   );
 }
 
-function StatusBadge({ active, unsaved }) {
-  const className = unsaved
-    ? "bg-[var(--color-accent-light)] text-[var(--color-text)]"
+function ToolStatus({ active, unsaved }) {
+  const label = unsaved ? "Unsaved changes" : active ? "Active" : "Paused";
+  const dotClass = unsaved
+    ? "bg-[var(--color-accent)]"
     : active
-      ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-      : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)]";
-  return <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${className}`}>{unsaved ? "Unsaved" : active ? "Active" : "Paused"}</span>;
+      ? "bg-[var(--color-primary)]"
+      : "bg-[var(--color-text-muted)]/45";
+
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--color-text-muted)]">
+      <span className={`h-2 w-2 rounded-full ${dotClass}`} aria-hidden="true" />
+      {label}
+    </span>
+  );
 }
 
 function Switch({ checked, onChange, ariaLabel, disabled = false }) {
@@ -1520,7 +1516,7 @@ function ToggleSetting({ label, description, status = null, statusLoading = fals
             <ChannelReadinessBadge status={status} loading={statusLoading} />
           )}
         </span>
-        <span className="mt-1 block text-[11px] leading-4 text-[var(--color-text-muted)]">{description}</span>
+        <span className="mt-1 block text-xs leading-5 text-[var(--color-text-muted)]">{description}</span>
         {status?.detail && (
           <span className="mt-1.5 block text-[10px] leading-4 text-[var(--color-text-muted)]">
             {status.detail}
@@ -1587,7 +1583,7 @@ function Choice({ checked, label, description, onChange }) {
       <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${checked ? "border-[var(--color-primary)]" : "border-[var(--color-border)]"}`}>{checked && <span className="h-2 w-2 rounded-full bg-[var(--color-primary)]" />}</span>
       <span>
         <span className="block text-xs font-semibold">{label}</span>
-        <span className="mt-1 block text-[10px] leading-4 text-[var(--color-text-muted)]">{description}</span>
+        <span className="mt-1 block text-xs leading-5 text-[var(--color-text-muted)]">{description}</span>
       </span>
     </label>
   );
@@ -1598,7 +1594,7 @@ function OutcomeCard({ icon, iconClass, title, text }) {
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
       <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${iconClass}`} aria-hidden="true">{icon}</span>
       <p className="mt-2 text-xs font-semibold">{title}</p>
-      <p className="mt-1 text-[10px] leading-4 text-[var(--color-text-muted)]">{text}</p>
+      <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{text}</p>
     </div>
   );
 }
@@ -1609,9 +1605,9 @@ function ScoringField({ id, label, hint, value, min, max, suffix, onChange }) {
       <label htmlFor={id} className="text-xs font-semibold">{label}</label>
       <div className="mt-2 flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)]">
         <input id={id} type="number" min={min} max={max} step="1" value={value} onChange={(event) => onChange(event.target.value)} className="min-w-0 flex-1 bg-transparent px-3.5 py-2.5 text-sm outline-none" />
-        <span className="border-l border-[var(--color-border)] px-3 py-2.5 text-[11px] text-[var(--color-text-muted)]">{suffix}</span>
+        <span className="border-l border-[var(--color-border)] px-3 py-2.5 text-xs text-[var(--color-text-muted)]">{suffix}</span>
       </div>
-      <p className="mt-1.5 text-[10px] text-[var(--color-text-muted)]">{hint}</p>
+      <p className="mt-1.5 text-xs text-[var(--color-text-muted)]">{hint}</p>
     </div>
   );
 }
@@ -1620,7 +1616,7 @@ function Rule({ text }) {
   return (
     <li className="flex items-start gap-2.5">
       <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-[var(--color-primary)]">✓</span>
-      <p className="text-[11px] leading-5 text-[var(--color-text-muted)]">{text}</p>
+      <p className="text-xs leading-5 text-[var(--color-text-muted)]">{text}</p>
     </li>
   );
 }
@@ -1642,9 +1638,6 @@ function ChevronDownIcon(props) { return <IconBase {...props}><path d="m6 9 6 6 
 function ScoreIcon(props) { return <IconBase {...props}><path d="M4 19V9M10 19V5M16 19v-7M22 19V8" strokeLinecap="round" /><path d="m3 7 6-4 6 7 6-4" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
 function DistributionIcon(props) { return <IconBase {...props}><circle cx="6" cy="6" r="2" /><circle cx="18" cy="6" r="2" /><circle cx="12" cy="18" r="2" /><path d="M7.7 7.1 10.8 16M16.3 7.1 13.2 16M8 6h8" strokeLinecap="round" /></IconBase>; }
 function ImageIcon(props) { return <IconBase {...props}><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m21 15-5-5L5 20" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
-function CalendarIcon(props) { return <IconBase {...props}><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M8 3v4M16 3v4M3 10h18" /></IconBase>; }
-function MegaphoneIcon(props) { return <IconBase {...props}><path d="m3 11 14-6v14L3 13z" strokeLinejoin="round" /><path d="M7 14v5" /></IconBase>; }
-function StarIcon(props) { return <IconBase {...props}><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z" strokeLinejoin="round" /></IconBase>; }
 function HotIcon(props) { return <IconBase {...props}><path d="M13 3c1 4-2 5-2 8 0 1.7 1.3 3 3 3 2.2 0 4-1.8 4-4 2 2.1 3 4.2 3 6.1A9 9 0 1 1 6.3 9.2C7 12 8.7 13 10 13c-1.5-4 1-6.8 3-10Z" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
 function ColdIcon(props) { return <IconBase {...props}><path d="M12 2v20M4.2 6.5l15.6 11M19.8 6.5l-15.6 11M8.5 4.5 12 7l3.5-2.5M8.5 19.5 12 17l3.5 2.5M3.5 10 7 12l-3.5 2M20.5 10 17 12l3.5 2" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
 function StaffIcon(props) { return <IconBase {...props}><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
