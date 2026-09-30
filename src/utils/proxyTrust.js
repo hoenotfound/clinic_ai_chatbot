@@ -12,9 +12,22 @@ function resolveTrustProxy(env = process.env) {
     return hops === 0 ? false : hops;
   }
 
-  // Render places the app behind its edge proxy. Trust exactly that one hop
-  // instead of trusting every address supplied through X-Forwarded-For.
+  // This setting is used so Express can reconstruct the original HTTPS
+  // protocol behind Render. Security-sensitive rate limiting does not use
+  // req.ip; it uses Render's overwritten CF-Connecting-IP header instead.
   return isRenderEnvironment(env) ? 1 : false;
+}
+
+function renderClientIp(headers = {}) {
+  const raw = headers?.["cf-connecting-ip"];
+  if (Array.isArray(raw)) {
+    if (raw.length !== 1) return null;
+    return renderClientIp({ "cf-connecting-ip": raw[0] });
+  }
+
+  const value = typeof raw === "string" ? raw.trim() : "";
+  if (!value || value.includes(",")) return null;
+  return value;
 }
 
 function rightmostForwardedAddress(value) {
@@ -28,6 +41,7 @@ function rightmostForwardedAddress(value) {
 
 module.exports = {
   isRenderEnvironment,
+  renderClientIp,
   resolveTrustProxy,
   rightmostForwardedAddress,
 };
