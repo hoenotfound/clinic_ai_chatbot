@@ -16,6 +16,7 @@ const STAFF_USER = {
     create_leads: true,
     manage_pipeline_stages: true,
     manage_lead_assignment: true,
+    export_customer_data: true,
   },
   businessProfile: null,
 };
@@ -45,6 +46,28 @@ function conversation(overrides = {}) {
     needs_follow_up: false,
     lead_owner_username: null,
     lead_owner_display_name: null,
+    ...overrides,
+  };
+}
+
+function contactFixture(overrides = {}) {
+  return {
+    id: 101,
+    name: "Alex Customer",
+    whatsapp_profile_name: "Alex Customer",
+    whatsapp_number: "60123456789",
+    channel: "whatsapp",
+    channel_user_id: "60123456789",
+    mode: "ai",
+    needs_attention: false,
+    is_unread: false,
+    needs_follow_up: false,
+    created_at: recentIso(),
+    updated_at: recentIso(),
+    lead_owner_username: "sales-test",
+    lead_owner_display_name: "Sales Test",
+    message_count: 1,
+    last_message_at: recentIso(),
     ...overrides,
   };
 }
@@ -141,11 +164,13 @@ async function installApi(page, {
   initialConversations = [conversation()],
   initialMessages = inboundMessages(),
   initialPipeline = pipelineFixture(),
+  initialContacts = [contactFixture()],
 } = {}) {
   await stubRealtime(page);
 
   let authenticated = loggedIn;
   let conversations = initialConversations.map((item) => ({ ...item }));
+  let contacts = initialContacts.map((item) => ({ ...item }));
   const messagesByContact = new Map([[101, initialMessages.map((item) => ({ ...item }))]]);
   let pipeline = {
     ...initialPipeline,
@@ -384,6 +409,57 @@ async function installApi(page, {
       return fulfill(route, { ok: true });
     }
 
+    if (path === "/api/contacts" && method === "GET") {
+      const search = String(url.searchParams.get("search") || "").trim().toLowerCase();
+      const rows = search
+        ? contacts.filter((item) =>
+            [item.name, item.whatsapp_profile_name, item.whatsapp_number, item.channel_user_id]
+              .some((value) => String(value || "").toLowerCase().includes(search))
+          )
+        : contacts;
+      return fulfill(route, rows);
+    }
+
+    if (path === "/api/contacts/export" && method === "GET") {
+      record(request);
+      const search = String(url.searchParams.get("search") || "").trim().toLowerCase();
+      const assignment = String(url.searchParams.get("assignment") || "all");
+      const scope = String(url.searchParams.get("scope") || "current");
+      let rows = [...contacts];
+
+      if (scope === "current" && search) {
+        rows = rows.filter((item) =>
+          [item.name, item.whatsapp_profile_name, item.whatsapp_number, item.channel_user_id]
+            .some((value) => String(value || "").toLowerCase().includes(search))
+        );
+      }
+      if (scope === "current" && assignment === "mine") {
+        rows = rows.filter((item) => item.lead_owner_username === STAFF_USER.username);
+      } else if (scope === "current" && assignment === "unassigned") {
+        rows = rows.filter((item) => !item.lead_owner_username);
+      } else if (scope === "current" && assignment.startsWith("owner:")) {
+        rows = rows.filter((item) => item.lead_owner_username === assignment.slice("owner:".length));
+      }
+
+      const csv = [
+        '"Customer Name","Channel","Platform Customer ID","WhatsApp Number"',
+        ...rows.map((item) =>
+          `"${item.name || item.whatsapp_profile_name || ""}","WhatsApp","=""${item.whatsapp_number}""","=""${item.whatsapp_number}"""`
+        ),
+      ].join("\r\n");
+
+      return route.fulfill({
+        status: 200,
+        contentType: "text/csv; charset=utf-8",
+        headers: {
+          "Content-Disposition": 'attachment; filename="customers-list-2026-09-30.csv"',
+          "X-Export-Row-Count": String(rows.length),
+          "Cache-Control": "no-store",
+        },
+        body: `\uFEFF${csv}`,
+      });
+    }
+
     if (path === "/api/pipeline" && method === "GET") {
       return fulfill(route, pipeline);
     }
@@ -449,6 +525,55 @@ test("login submits credentials and reaches Inbox", async ({ page }) => {
     username: "sales-test",
     password: "secret-password",
   });
+  expectNoUnexpectedApi(apiState);
+});
+
+test("Contacts export waits for the current search and downloads the filtered CSV", async ({ page }) => {
+  const apiState = await installApi(page, {
+    initialContacts: [
+      contactFixture(),
+      contactFixture({
+        id: 102,
+        name: "Bella Customer",
+        whatsapp_profile_name: "Bella Customer",
+        whatsapp_number: "60129876543",
+        channel_user_id: "60129876543",
+        lead_owner_username: null,
+        lead_owner_display_name: null,
+      }),
+    ],
+  });
+
+  await page.goto("/contacts");
+
+  const exportButton = page.getByRole("button", { name: "Export" });
+  const search = page.getByPlaceholder("Search by name, number or social ID…");
+  await expect(exportButton).toBeEnabled();
+
+  await search.fill("Alex");
+  await expect(exportButton).toBeDisabled();
+  await expect(page.getByText("1 contact", { exact: true })).toBeVisible();
+  await expect(exportButton).toBeEnabled();
+
+  await exportButton.click();
+  const dialog = page.getByRole("dialog", { name: "Export customer data" });
+  await expect(dialog.getByText("Current view · 1", { exact: true })).toBeVisible();
+
+  const requestPromise = page.waitForRequest((request) =>
+    new URL(request.url()).pathname === "/api/contacts/export"
+  );
+  const downloadPromise = page.waitForEvent("download");
+  await dialog.getByRole("button", { name: "Export CSV" }).click();
+
+  const [request, download] = await Promise.all([requestPromise, downloadPromise]);
+  const exportUrl = new URL(request.url());
+  expect(exportUrl.searchParams.get("scope")).toBe("current");
+  expect(exportUrl.searchParams.get("preset")).toBe("customer");
+  expect(exportUrl.searchParams.get("search")).toBe("Alex");
+  expect(download.suggestedFilename()).toBe("customers-list-2026-09-30.csv");
+  await expect(page.getByText("Exported 1 customer record.", { exact: true })).toBeVisible();
+
+  expect(findCall(apiState, "GET", "/api/contacts/export")).toBeTruthy();
   expectNoUnexpectedApi(apiState);
 });
 
