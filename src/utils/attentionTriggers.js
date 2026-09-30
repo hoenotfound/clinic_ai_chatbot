@@ -31,7 +31,7 @@ const URGENT_SAFETY_PATTERNS = [
   /\b(?:face|facial|throat|tongue) (?:is )?(?:swelling|swollen)\b/i,
 
   // Bahasa Malaysia / common Malaysian chat phrasing
-  /\b(kecemasan|darurat|sakit teruk|makin sakit|semakin sakit|sakit tak tahan|bengkak teruk)\b/i,
+  /\b(kecemasan|darurat|terlalu sakit|sakit teruk|makin sakit|semakin sakit|sakit tak tahan|bengkak teruk)\b/i,
   /\b(sesak nafas|susah bernafas|tak boleh bernafas)\b/i,
   /\b(penglihatan (?:kabur|berubah)|ruam (?:merebak|semakin teruk))\b/i,
   /\b(sakit dada|dada sakit)\b/i,
@@ -41,7 +41,7 @@ const URGENT_SAFETY_PATTERNS = [
   /\b(muka|tekak|lidah) (?:makin |semakin )?bengkak\b/i,
 
   // Chinese, simplified + common traditional forms
-  /(呼吸困难|呼吸困難|不能呼吸|喘不过气|喘不過氣|剧痛|劇痛|越来越痛|越來越痛)/u,
+  /(呼吸困难|呼吸困難|不能呼吸|喘不过气|喘不過氣|剧痛|劇痛|痛得受不了|痛到受不了|越来越痛|越來越痛)/u,
   /(越来越严重|越來越嚴重|视力变化|視力變化|看不清|皮疹扩散|皮疹擴散)/u,
   /(胸痛|胸口痛|大量出血|出血不止|流血不止|肿胀扩散|腫脹擴散|越来越肿|越來越腫)/u,
   /(脸肿|臉腫|脸部肿胀|臉部腫脹|喉咙肿|喉嚨腫|舌头肿|舌頭腫)/u,
