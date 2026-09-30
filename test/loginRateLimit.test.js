@@ -9,12 +9,19 @@ const {
   keysForRequest,
 } = require("../src/middleware/loginRateLimit");
 
-function request({ username = "Admin.User", socketIp = "10.0.0.9", forwardedFor } = {}) {
-  return {
+function request({
+  username = "Admin.User",
+  socketIp = "10.0.0.9",
+  forwardedFor,
+  ip,
+} = {}) {
+  const req = {
     body: { username },
     headers: forwardedFor ? { "x-forwarded-for": forwardedFor } : {},
     socket: { remoteAddress: socketIp },
   };
+  if (ip) req.ip = ip;
+  return req;
 }
 
 function response() {
@@ -37,10 +44,19 @@ function response() {
   };
 }
 
-test("Render rate limiting uses Render's real first forwarded client IP", () => {
+test("Render rate limiting prefers Express' trusted client IP over a spoofed leftmost hop", () => {
   const req = request({
     socketIp: "10.20.30.40",
-    forwardedFor: "203.0.113.8, 10.20.30.40",
+    forwardedFor: "198.51.100.99, 203.0.113.8",
+    ip: "203.0.113.8",
+  });
+  assert.equal(extractClientIp(req, { RENDER: "true" }), "203.0.113.8");
+});
+
+test("Render compatibility fallback uses the rightmost forwarded hop", () => {
+  const req = request({
+    socketIp: "10.20.30.40",
+    forwardedFor: "198.51.100.99, 203.0.113.8",
   });
   assert.equal(extractClientIp(req, { RENDER: "true" }), "203.0.113.8");
 });
