@@ -216,7 +216,7 @@ test("Tools desktop sidebar keeps clear title-description hierarchy", () => {
 
   assert.match(tools, /xl:w-72/);
   assert.match(tools, /xl:text-sm xl:font-bold xl:leading-5/);
-  assert.match(tools, /text-\[11px\] leading-4 text-\[var\(--color-text-muted\)\] xl:block/);
+  assert.match(tools, /text-xs leading-4 text-\[var\(--color-text-muted\)\] xl:block/);
   assert.match(tools, /Remind leads who stop replying/);
   assert.match(tools, /Reply to comments and open DMs/);
   assert.match(tools, /Assign new leads to Sales staff/);
