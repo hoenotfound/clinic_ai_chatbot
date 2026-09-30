@@ -179,3 +179,17 @@ test("Tools navigation focuses on available automations without future-tool clut
   assert.doesNotMatch(tools, /Review requests/);
   assert.doesNotMatch(tools, /function StatusBadge\(/);
 });
+
+
+test("Tools cleanup keeps mobile navigation contained and Lead Distribution visually aligned", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+  const distribution = read("portal-frontend/src/pages/LeadDistribution.jsx");
+
+  assert.match(tools, /w-full min-w-0 max-w-full shrink-0 overflow-hidden/);
+  assert.match(tools, /flex min-w-0 max-w-full gap-1\.5 ui-scroll-x overflow-x-auto/);
+  assert.match(distribution, />Lead distribution<\/h1>/);
+  assert.match(distribution, /function ToolStatus\(/);
+  assert.doesNotMatch(distribution, /function StatusBadge\(/);
+  assert.doesNotMatch(distribution, /shadow-\[0_8px_30px/);
+  assert.doesNotMatch(distribution, /shadow-\[0_-8px_24px/);
+});
