@@ -815,11 +815,15 @@ test("urgent comment safety bypasses AI, overrides fixed promo copy, and flags s
   const contacts = {
     getOrCreateChannelContact: async (...args) => {
       calls.push(["contact", ...args]);
-      return { id: 190 };
+      return { id: 190, mode: "ai" };
     },
     setAttention: async (contactId, needsAttention, reason) => {
       calls.push(["attention", contactId, needsAttention, reason]);
     },
+  };
+  const handoff = async (contactId, reason) => {
+    calls.push(["handoff", contactId, reason]);
+    return { id: contactId, mode: "human", needs_attention: true };
   };
 
   const messages = {
@@ -866,16 +870,18 @@ test("urgent comment safety bypasses AI, overrides fixed promo copy, and flags s
     store,
     config,
     repliesEnabled: () => true,
+    handoff,
   });
 
   await service.processJob(stored.id);
 
-  const firstAttention = calls.findIndex((call) => call[0] === "attention");
+  const firstHandoff = calls.findIndex((call) => call[0] === "handoff");
   const firstPublic = calls.findIndex((call) => call[0] === "public");
   const firstPrivate = calls.findIndex((call) => call[0] === "private");
-  assert.ok(firstAttention >= 0);
-  assert.ok(firstPublic > firstAttention, "staff attention should be persisted before public reply");
+  assert.ok(firstHandoff >= 0);
+  assert.ok(firstPublic > firstHandoff, "Staff-mode handoff should be persisted before public reply");
   assert.ok(firstPrivate > firstPublic, "private urgent guidance should follow the safe public reply");
+  assert.equal(calls[firstHandoff][1], 190);
 
   const publicReply = calls[firstPublic][1];
   const privateReply = calls[firstPrivate][1];
@@ -883,4 +889,155 @@ test("urgent comment safety bypasses AI, overrides fixed promo copy, and flags s
   assert.match(publicReply, /contact the clinic directly now/i);
   assert.match(privateReply, /urgent medical attention/i);
   assert.match(privateReply, /emergency medical care immediately/i);
+});
+
+
+test("urgent public-only comment copy includes emergency guidance when private replies are disabled", () => {
+  const config = {
+    escalation: { handoffMessage: "A team member will follow up." },
+    commentAutomation: {
+      ...DEFAULT_COMMENT_AUTOMATION,
+      privateReplyEnabled: false,
+    },
+  };
+
+  const english = deterministicCommentSafetyCopy(
+    { channel: "facebook", text: "I can't breathe and it's getting worse" },
+    config.commentAutomation,
+    config
+  );
+  assert.equal(english.urgentSafety, true);
+  assert.match(english.publicReply, /emergency medical care immediately/i);
+
+  const malay = deterministicCommentSafetyCopy(
+    { channel: "facebook", text: "saya susah bernafas" },
+    config.commentAutomation,
+    config
+  );
+  assert.match(malay.publicReply, /rawatan kecemasan segera/i);
+
+  const chinese = deterministicCommentSafetyCopy(
+    { channel: "instagram", text: "我呼吸困难而且越来越严重" },
+    config.commentAutomation,
+    config
+  );
+  assert.match(chinese.publicReply, /紧急医疗帮助/u);
+});
+
+test("global automation pause still stores and hands off urgent comments without sending customer replies", async () => {
+  const calls = [];
+  const urgentJob = {
+    id: 91,
+    channel: "facebook",
+    commentId: "c-91",
+    entryId: "page-91",
+    authorId: "psid-91",
+    authorName: "Jane",
+    text: "I have chest pain and can't breathe",
+    postId: "page-91_post-91",
+    mediaId: null,
+    parentCommentId: null,
+    sourceCreatedAt: new Date().toISOString(),
+    rawEvent: {},
+    attemptCount: 1,
+    publicReplyId: null,
+    privateReplyMessageId: null,
+  };
+
+  const repo = {
+    storeIncomingComment: async (event) => {
+      calls.push(["store", event.text]);
+      return { ...urgentJob, ...event, id: urgentJob.id };
+    },
+    claimJob: async () => urgentJob,
+    markSkipped: async (_id, reason) => {
+      calls.push(["skipped", reason]);
+      return { ...urgentJob, status: "skipped", lastError: reason };
+    },
+    markFailed: async () => assert.fail("paused urgent comment should not fail"),
+    listRecoverable: async () => [],
+  };
+  const meta = {
+    fetchCommentSourceContext: async () => assert.fail("paused safety path should not fetch context"),
+    replyToComment: async () => assert.fail("paused safety path must not send a public reply"),
+    sendPrivateReplyToComment: async () => assert.fail("paused safety path must not send a DM"),
+  };
+  const aiClient = {
+    getReply: async () => assert.fail("paused safety path must not call AI"),
+  };
+  const contacts = {
+    getOrCreateChannelContact: async (...args) => {
+      calls.push(["contact", ...args]);
+      return { id: 191, mode: "ai" };
+    },
+    setAttention: async () => assert.fail("AI-owned urgent contact should use synthetic handoff"),
+  };
+  const handoff = async (contactId, reason) => {
+    calls.push(["handoff", contactId, reason]);
+    return { id: contactId, mode: "human", needs_attention: true };
+  };
+  const config = {
+    escalation: { handoffMessage: "A team member will follow up." },
+    commentAutomation: {
+      ...DEFAULT_COMMENT_AUTOMATION,
+      enabled: true,
+      activatedAt: new Date(Date.now() - 1000).toISOString(),
+    },
+  };
+  const service = createMetaCommentAutomationService({
+    repo,
+    meta,
+    aiClient,
+    contacts,
+    config,
+    repliesEnabled: () => false,
+    handoff,
+  });
+
+  const body = {
+    object: "page",
+    entry: [{
+      id: "page-91",
+      changes: [
+        {
+          field: "feed",
+          value: {
+            item: "comment",
+            verb: "add",
+            comment_id: "c-91",
+            post_id: "page-91_post-91",
+            parent_id: "page-91_post-91",
+            message: urgentJob.text,
+            from: { id: "psid-91", name: "Jane" },
+          },
+        },
+        {
+          field: "feed",
+          value: {
+            item: "comment",
+            verb: "add",
+            comment_id: "c-normal",
+            post_id: "page-91_post-91",
+            parent_id: "page-91_post-91",
+            message: "How much is this?",
+            from: { id: "psid-normal", name: "Normal" },
+          },
+        },
+      ],
+    }],
+  };
+
+  const accepted = await service.acceptIncomingComments(body);
+  assert.equal(accepted.length, 1);
+  assert.deepEqual(calls.filter((call) => call[0] === "store").map((call) => call[1]), [
+    urgentJob.text,
+  ]);
+
+  const result = await service.processJob(urgentJob.id);
+  assert.equal(result.status, "skipped");
+  assert.ok(calls.some((call) => call[0] === "handoff" && call[1] === 191));
+  assert.match(
+    calls.find((call) => call[0] === "skipped")[1],
+    /safety comment was flagged for staff/i
+  );
 });
