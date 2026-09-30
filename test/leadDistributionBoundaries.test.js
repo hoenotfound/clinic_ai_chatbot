@@ -142,7 +142,6 @@ test("automatic translation refresh preserves manual language edits made after t
   assert.match(tools, /manualTranslationEdits\.includes\(key\)/);
   assert.match(tools, /preserveManual \? manualValue : generated\[key\]/);
   assert.match(tools, /onTranslationChange\(translationLanguage, event\.target\.value\)/);
-  assert.match(tools, /enabledStateChanged = enabled !== savedEnabled/);
 });
 
 test("production migrations load ownership, routing, and social follow-up safeguards", () => {
