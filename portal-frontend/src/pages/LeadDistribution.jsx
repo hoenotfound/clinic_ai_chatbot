@@ -257,7 +257,7 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
   if (error) {
     return (
       <div className="flex h-full items-center justify-center bg-[var(--color-bg)] px-4">
-        <div className="w-full max-w-md rounded-3xl border border-[var(--color-border)] bg-white p-6 text-center shadow-sm">
+        <div className="w-full max-w-md rounded-xl border border-[var(--color-border)] bg-white p-6 text-center">
           <h1 className="font-display text-lg font-bold">Couldn't load lead distribution</h1>
           <p className="mt-2 text-sm text-[var(--color-danger)]">{error}</p>
           <button type="button" onClick={() => window.location.reload()} className="mt-5 inline-flex h-10 items-center rounded-xl border border-[var(--color-border)] px-4 text-sm font-semibold hover:bg-[var(--color-bg)]">Retry</button>
@@ -268,27 +268,25 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--color-bg)]">
-      <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
+      <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6 xl:px-10 xl:py-7">
         <div className="mx-auto max-w-6xl pb-10">
-          <header className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+          <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="max-w-3xl">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-primary)]">Tools</p>
-              <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
-                <h1 className="font-display text-2xl font-bold sm:text-3xl">Automatic Lead Distribution</h1>
-                <StatusBadge active={savedEnabled} unsaved={hasUnsavedChanges} />
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">Lead distribution</h1>
                 {!canManageDistribution && (
-                  <span className="rounded-full border border-[var(--color-border)] bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">View only</span>
+                  <span className="text-xs font-semibold text-[var(--color-text-muted)]">View only</span>
                 )}
               </div>
-              <p className="mt-2 text-sm leading-6 text-[var(--color-text-muted)]">
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)] sm:text-[15px]">
                 Automatically share new leads across your Sales team while keeping ownership stable after assignment.
               </p>
             </div>
 
-            <div className="flex shrink-0 items-center justify-between gap-4 rounded-2xl border border-[var(--color-border)] bg-white px-4 py-3 shadow-[0_8px_24px_rgba(24,39,33,0.04)] sm:min-w-56">
-              <div>
-                <p className="text-xs font-semibold">Automation</p>
-                <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
+            <div className="flex shrink-0 items-center justify-between gap-3 sm:justify-end">
+              <div className="text-left sm:text-right">
+                <p className="text-sm font-semibold">{settings.enabled ? "On" : "Off"}</p>
+                <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
                   {hasUnsavedChanges
                     ? settings.enabled
                       ? "Will be active after saving"
@@ -303,15 +301,15 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
           </header>
 
           {!canManageDistribution && (
-            <div className="mt-5 rounded-2xl border border-[var(--color-accent)]/30 bg-[var(--color-accent-light)] px-4 py-3.5 text-xs leading-5 text-[var(--color-text-muted)]">
+            <div className="mt-5 rounded-xl border border-[var(--color-accent)]/30 bg-[var(--color-accent-light)] px-4 py-3.5 text-xs leading-5 text-[var(--color-text-muted)]">
               You can review this setup, but changing routing or assigning older leads also requires <strong className="text-[var(--color-text)]">Assign Leads</strong> permission.
             </div>
           )}
 
-          <section className="mt-7 rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-[0_8px_30px_rgba(24,39,33,0.035)] sm:p-6">
+          <section className="mt-7 rounded-xl border border-[var(--color-border)] bg-white p-5 sm:p-6">
             <div>
               <h2 className="font-display text-base font-bold">How should leads be shared?</h2>
-              <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">Choose the routing style that matches how your Sales team works.</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">Choose the routing style that matches how your Sales team works.</p>
             </div>
 
             <div className="mt-5 grid gap-3 md:grid-cols-2">
@@ -332,25 +330,25 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
                 onChange={() => setSettings((current) => ({ ...current, assignByBranch: false }))}
               />
             </div>
-            <p className="mt-4 text-[11px] leading-5 text-[var(--color-text-muted)]">
+            <p className="mt-4 text-xs leading-5 text-[var(--color-text-muted)]">
               The {ui.locationSingular} is still recorded for CRM, reporting and {ui.conversionCountPlural} even when global routing is selected.
               {!settings.enabled && " This choice will apply when automatic distribution is turned on."}
             </p>
           </section>
 
-          <section className="mt-5 rounded-2xl border border-[var(--color-border)] bg-white px-4 py-3.5 shadow-[0_8px_24px_rgba(24,39,33,0.03)] sm:px-5">
+          <section className="mt-5 rounded-xl border border-[var(--color-border)] bg-white px-4 py-3.5 sm:px-5">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
               <HealthItem value={accounts.length} label="eligible Sales" />
               <Separator />
               <HealthItem value={configuredBranches.length} label={configuredBranches.length === 1 ? ui.locationSingular : ui.locationPlural} />
               <Separator />
               <HealthItem value={unassigned.openUnassignedCount} label="open unassigned" attention={unassigned.openUnassignedCount > 0} />
-              <span className="ml-auto text-[11px] font-medium text-[var(--color-text-muted)]">{settings.assignByBranch ? `${locationTitle} routing` : "Global routing"}</span>
+              <span className="ml-auto text-xs font-medium text-[var(--color-text-muted)]">{settings.assignByBranch ? `${locationTitle} routing` : "Global routing"}</span>
             </div>
           </section>
 
           {attentionItems.length > 0 && (
-            <section className="mt-5 rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-[0_8px_24px_rgba(24,39,33,0.03)] sm:p-5">
+            <section className="mt-5 rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Needs attention</p>
@@ -365,13 +363,13 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
           )}
 
           {unassigned.openUnassignedCount > 0 && (
-            <section className="mt-5 flex flex-col gap-4 rounded-2xl border border-[var(--color-accent)]/30 bg-white p-5 sm:flex-row sm:items-center sm:justify-between">
+            <section className="mt-5 flex flex-col gap-4 rounded-xl border border-[var(--color-accent)]/30 bg-white p-5 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="font-display text-sm font-bold">Unassigned leads</h2>
                   <span className="rounded-full bg-[var(--color-accent-light)] px-2 py-0.5 text-[10px] font-bold">{unassigned.openUnassignedCount}</span>
                 </div>
-                <p className="mt-1.5 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">
                   {unassigned.recoverableUnassignedCount} never-owned {unassigned.recoverableUnassignedCount === 1 ? "lead can" : "leads can"} be assigned safely. Staff-cleared owners stay unassigned.
                 </p>
               </div>
@@ -387,17 +385,17 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
             </section>
           )}
 
-          <details className="mt-5 rounded-2xl border border-[var(--color-border)] bg-white shadow-[0_8px_24px_rgba(24,39,33,0.03)]">
+          <details className="mt-5 rounded-xl border border-[var(--color-border)] bg-white">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 sm:px-6">
               <div>
                 <h2 className="font-display text-sm font-bold">Sales routing team</h2>
-                <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">{accounts.length} eligible Sales across {configuredBranches.length} configured {configuredBranches.length === 1 ? ui.locationSingular : ui.locationPlural}</p>
+                <p className="mt-1 text-xs text-[var(--color-text-muted)]">{accounts.length} eligible Sales across {configuredBranches.length} configured {configuredBranches.length === 1 ? ui.locationSingular : ui.locationPlural}</p>
               </div>
               <span className="text-xs font-semibold text-[var(--color-primary)]">View team & {ui.locationSingular} pools</span>
             </summary>
             <div className="border-t border-[var(--color-border)] px-5 py-5 sm:px-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-[11px] leading-5 text-[var(--color-text-muted)]">
+                <p className="text-xs leading-5 text-[var(--color-text-muted)]">
                   {settings.assignByBranch
                     ? `Known ${ui.locationPlural} use their matching pool first. Global is the fallback.`
                     : `${locationTitle} pools are shown for reference, but global routing currently uses every eligible Sales account.`}
@@ -430,11 +428,11 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
                     <Avatar name={account.displayName} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold">{account.displayName}</p>
-                      <p className="mt-0.5 truncate text-[11px] text-[var(--color-text-muted)]">@{account.username}</p>
+                      <p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">@{account.username}</p>
                     </div>
                     <div className="text-right">
-                      <p className="max-w-44 truncate text-[11px] font-semibold" title={account.branchName || ui.noFixedLocationLabel}>{account.branchName || ui.noFixedLocationLabel}</p>
-                      <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{settings.assignByBranch && account.branchName ? `${locationTitle} + global pool` : "Global pool"}</p>
+                      <p className="max-w-44 truncate text-xs font-semibold" title={account.branchName || ui.noFixedLocationLabel}>{account.branchName || ui.noFixedLocationLabel}</p>
+                      <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">{settings.assignByBranch && account.branchName ? `${locationTitle} + global pool` : "Global pool"}</p>
                     </div>
                   </div>
                 )) : (
@@ -444,7 +442,7 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
             </div>
           </details>
 
-          <details className="mt-5 rounded-2xl border border-[var(--color-border)] bg-white px-5 py-4 text-xs text-[var(--color-text-muted)] sm:px-6">
+          <details className="mt-5 rounded-xl border border-[var(--color-border)] bg-white px-5 py-4 text-xs text-[var(--color-text-muted)] sm:px-6">
             <summary className="cursor-pointer select-none font-display text-sm font-bold text-[var(--color-text)]">How it works & advanced behavior</summary>
             <div className="mt-5 grid gap-5 lg:grid-cols-2">
               <section>
@@ -464,7 +462,7 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
                   </div>
                   <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${aiBranchRecording.enabled ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>{aiBranchRecording.enabled ? "Available" : "Off"}</span>
                 </div>
-                <p className="mt-2 text-[11px] leading-5">
+                <p className="mt-2 text-xs leading-5">
                   {aiBranchRecording.enabled
                     ? `AI can fill a blank ${ui.locationSingular} after the conversation is analyzed. This records CRM data only and never changes the owner.`
                     : `Staff can still edit the ${ui.locationSingular} manually. AI ${ui.locationSingular} recording becomes available through Lead Temperature or Telegram summaries.`}
@@ -493,11 +491,11 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
         </div>
       </main>
 
-      <footer className="shrink-0 border-t border-[var(--color-border)] bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(24,39,33,0.04)] backdrop-blur sm:px-6 lg:px-10">
+      <footer className="shrink-0 border-t border-[var(--color-border)] bg-white px-4 py-3 sm:px-6 xl:px-10">
         <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-2.5">
             <span className={`h-2 w-2 shrink-0 rounded-full ${hasUnsavedChanges ? "bg-[var(--color-accent)]" : "bg-[var(--color-primary)]"}`} />
-            <p className="truncate text-xs font-medium text-[var(--color-text-muted)]">{hasUnsavedChanges ? "You have unsaved routing changes" : "All routing changes saved"}</p>
+            <p className="truncate text-[13px] font-medium text-[var(--color-text-muted)]">{hasUnsavedChanges ? "You have unsaved routing changes" : "All routing changes saved"}</p>
           </div>
           <button type="button" onClick={save} disabled={saving || !hasUnsavedChanges || !canManageDistribution} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50">
             {saving && <Spinner />}
@@ -511,15 +509,6 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
   );
 }
 
-function StatusBadge({ active, unsaved }) {
-  const className = unsaved
-    ? "bg-[var(--color-accent-light)] text-[var(--color-text)]"
-    : active
-      ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-      : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)]";
-  return <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${className}`}>{unsaved ? "Unsaved" : active ? "Active" : "Paused"}</span>;
-}
-
 function Switch({ checked, disabled, onChange }) {
   return (
     <button type="button" role="switch" aria-label="Enable automatic lead distribution" aria-checked={checked} disabled={disabled} onClick={onChange} className={`relative h-7 w-12 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:cursor-not-allowed disabled:opacity-50 ${checked ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`}>
@@ -530,7 +519,7 @@ function Switch({ checked, disabled, onChange }) {
 
 function RoutingChoice({ checked, disabled, title, badge, description, onChange }) {
   return (
-    <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 transition-colors ${disabled ? "cursor-not-allowed opacity-60" : ""} ${checked ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/45" : "border-[var(--color-border)] hover:bg-[var(--color-bg)]"}`}>
+    <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition-colors ${disabled ? "cursor-not-allowed opacity-60" : ""} ${checked ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]/45" : "border-[var(--color-border)] hover:bg-[var(--color-bg)]"}`}>
       <input type="radio" name="lead-routing-mode" checked={checked} disabled={disabled} onChange={onChange} className="sr-only" />
       <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${checked ? "border-[var(--color-primary)]" : "border-[var(--color-border)]"}`}>{checked && <span className="h-2 w-2 rounded-full bg-[var(--color-primary)]" />}</span>
       <span className="min-w-0">
@@ -538,7 +527,7 @@ function RoutingChoice({ checked, disabled, title, badge, description, onChange 
           <span className="text-sm font-semibold">{title}</span>
           <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">{badge}</span>
         </span>
-        <span className="mt-1.5 block text-[11px] leading-5 text-[var(--color-text-muted)]">{description}</span>
+        <span className="mt-1.5 block text-xs leading-5 text-[var(--color-text-muted)]">{description}</span>
       </span>
     </label>
   );
@@ -566,7 +555,7 @@ function AttentionItem({ tone, title, text }) {
   return (
     <div className={`rounded-xl border px-3.5 py-3 ${styles}`}>
       <p className={`text-xs font-semibold ${tone === "danger" ? "text-[var(--color-danger)]" : "text-[var(--color-text)]"}`}>{title}</p>
-      <p className="mt-1 text-[10px] leading-4 text-[var(--color-text-muted)]">{text}</p>
+      <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{text}</p>
     </div>
   );
 }
@@ -578,7 +567,7 @@ function PoolSummary({ name, count, note, active }) {
         <p className="truncate text-xs font-semibold">{name}</p>
         <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-[var(--color-primary)]">{count}</span>
       </div>
-      <p className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">{note}</p>
+      <p className="mt-1.5 text-xs leading-5 text-[var(--color-text-muted)]">{note}</p>
     </div>
   );
 }
@@ -594,7 +583,7 @@ function FlowStep({ number, title, text }) {
       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-[var(--color-primary-light)] text-[10px] font-bold text-[var(--color-primary)]">{number}</span>
       <div>
         <p className="text-xs font-semibold text-[var(--color-text)]">{title}</p>
-        <p className="mt-0.5 text-[10px] leading-4 text-[var(--color-text-muted)]">{text}</p>
+        <p className="mt-0.5 text-xs leading-5 text-[var(--color-text-muted)]">{text}</p>
       </div>
     </div>
   );
@@ -613,7 +602,7 @@ function Rule({ text }) {
   return (
     <div className="flex items-start gap-2.5">
       <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-[10px] text-[var(--color-primary)]">✓</span>
-      <p className="text-[11px] leading-5">{text}</p>
+      <p className="text-xs leading-5">{text}</p>
     </div>
   );
 }

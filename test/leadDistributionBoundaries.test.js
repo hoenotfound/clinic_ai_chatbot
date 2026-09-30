@@ -81,7 +81,7 @@ test("Lead Distribution is selected from inside Tools rather than the main sideb
   assert.match(tools, /useSearchParams/);
   assert.match(tools, /value === "lead-distribution"/);
   assert.match(tools, /onSelect\("leadDistribution"\)/);
-  assert.match(tools, /Automatic Lead Distribution/);
+  assert.match(tools, /title="Lead distribution"/);
   assert.match(tools, /<LeadDistribution/);
   assert.match(tools, /distributionActive/);
 });
@@ -163,4 +163,46 @@ test("production migrations load ownership, routing, and social follow-up safegu
   assert.match(safetySchema, /Automatically assigned to %s when the lead was created/);
   assert.match(safetySchema, /choose_lead_distribution_owner/);
   assert.match(safetySchema, /leadDistribution,assignByBranch/);
+});
+
+test("Tools navigation focuses on available automations without future-tool clutter", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+
+  assert.match(tools, /Manage the automations your team uses every day/);
+  assert.match(tools, /title="Lead temperature"/);
+  assert.match(tools, /title="Lead distribution"/);
+  assert.doesNotMatch(tools, /function ToolStatus\(/);
+  assert.doesNotMatch(tools, /More coming/);
+  assert.doesNotMatch(tools, /ComingSoonTool/);
+  assert.doesNotMatch(tools, /Appointment reminders/);
+  assert.doesNotMatch(tools, /Promotional campaigns/);
+  assert.doesNotMatch(tools, /Review requests/);
+  assert.doesNotMatch(tools, /function StatusBadge\(/);
+});
+
+
+test("Tools cleanup keeps mobile navigation contained and Lead Distribution visually aligned", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+  const distribution = read("portal-frontend/src/pages/LeadDistribution.jsx");
+
+  assert.match(tools, /w-full min-w-0 max-w-full shrink-0 overflow-hidden/);
+  assert.doesNotMatch(tools, /min-w-\[11\.75rem\]/);
+  assert.doesNotMatch(tools, /block truncate text-\[13px\] font-semibold/);
+  assert.match(tools, /min-h-\[5\.25rem\].*flex-col.*xl:flex-row/);
+  assert.match(tools, /\{enabled \? "On" : "Off"\}/);
+  assert.match(tools, /grid min-w-0 max-w-full grid-cols-2 gap-1\.5 sm:grid-cols-4/);
+  assert.match(distribution, />Lead distribution<\/h1>/);
+  assert.doesNotMatch(distribution, /function ToolStatus\(/);
+  assert.doesNotMatch(distribution, /function StatusBadge\(/);
+  assert.doesNotMatch(distribution, /shadow-\[0_8px_30px/);
+  assert.doesNotMatch(distribution, /shadow-\[0_-8px_24px/);
+});
+
+
+test("Comment Automation uses the same flattened visual system as the rest of Tools", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+
+  assert.doesNotMatch(tools, /group rounded-2xl border border-\[var\(--color-border\)\] bg-white shadow/);
+  assert.doesNotMatch(tools, /shadow-\[0_8px_30px_rgba\(24,39,33,0\.035\)\]/);
+  assert.match(tools, /group rounded-xl border border-\[var\(--color-border\)\] bg-white/);
 });
