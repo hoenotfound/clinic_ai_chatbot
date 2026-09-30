@@ -531,26 +531,26 @@ function createMetaCommentAutomationService({
     if (reason) return repo.markSkipped(job.id, reason);
 
     const automationEnabled = repliesEnabled();
-    if (!automationEnabled) {
-      const safetyCopy = deterministicCommentSafetyCopy(event, settings, config);
-      if (safetyCopy) {
-        await flagDeterministicCommentForStaff({
-          event,
-          copy: safetyCopy,
-          contacts,
-          handoff,
-        });
-        return repo.markSkipped(
-          job.id,
-          "Automated customer replies are globally paused; safety comment was flagged for staff."
-        );
-      }
-      return repo.markSkipped(job.id, "Automated customer replies are globally paused.");
-    }
-
     let preservePrivateReplyPendingOnFailure = false;
 
     try {
+      if (!automationEnabled) {
+        const safetyCopy = deterministicCommentSafetyCopy(event, settings, config);
+        if (safetyCopy) {
+          await flagDeterministicCommentForStaff({
+            event,
+            copy: safetyCopy,
+            contacts,
+            handoff,
+          });
+          return repo.markSkipped(
+            job.id,
+            "Automated customer replies are globally paused; safety comment was flagged for staff."
+          );
+        }
+        return repo.markSkipped(job.id, "Automated customer replies are globally paused.");
+      }
+
       let sourceContext = null;
       try {
         sourceContext = await meta.fetchCommentSourceContext?.(event.channel, {
