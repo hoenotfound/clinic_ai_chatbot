@@ -269,7 +269,7 @@ export default function Analytics() {
           </div>
 
           <div className="grid grid-cols-2 gap-2 sm:flex sm:shrink-0 sm:items-center">
-            {activeFilterCount > 0 ? (
+            {activeFilterCount > 0 && (
               <button
                 type="button"
                 onClick={clearFilters}
@@ -278,13 +278,13 @@ export default function Analytics() {
               >
                 Clear filters
               </button>
-            ) : <span className="hidden sm:block" />}
+            )}
 
             <button
               type="button"
               onClick={applyFilters}
               disabled={loading || !hasPendingChanges}
-              className="h-11 rounded-xl bg-[var(--color-primary)] px-4 text-xs font-bold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-45"
+              className={`${activeFilterCount > 0 ? "" : "col-span-2"} h-11 rounded-xl bg-[var(--color-primary)] px-4 text-xs font-bold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-45 sm:col-span-1`}
             >
               {loading ? "Loading…" : "Apply filters"}
             </button>
