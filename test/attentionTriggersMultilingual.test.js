@@ -10,6 +10,7 @@ const {
 test("high-confidence Bahasa Malaysia safety/handoff phrases trigger staff attention", () => {
   assert.ok(checkKeywordTriggers("saya nak cakap dengan staff"));
   assert.ok(checkKeywordTriggers("sakit sangat dan makin sakit"));
+  assert.equal(checkKeywordTriggers("terlalu sakit sekarang"), URGENT_SAFETY_REASON);
   assert.ok(checkKeywordTriggers("saya susah bernafas"));
   assert.equal(checkKeywordTriggers("sakit dada sekarang"), URGENT_SAFETY_REASON);
   assert.equal(checkKeywordTriggers("bengkak makin teruk dan merebak"), URGENT_SAFETY_REASON);
@@ -18,6 +19,7 @@ test("high-confidence Bahasa Malaysia safety/handoff phrases trigger staff atten
 test("high-confidence Chinese safety/handoff phrases trigger staff attention", () => {
   assert.ok(checkKeywordTriggers("我要真人客服"));
   assert.ok(checkKeywordTriggers("越来越痛而且越来越严重"));
+  assert.equal(checkKeywordTriggers("痛得受不了"), URGENT_SAFETY_REASON);
   assert.ok(checkKeywordTriggers("呼吸困难"));
   assert.equal(checkKeywordTriggers("现在胸口痛"), URGENT_SAFETY_REASON);
   assert.equal(checkKeywordTriggers("伤口流脓而且发烧"), URGENT_SAFETY_REASON);
