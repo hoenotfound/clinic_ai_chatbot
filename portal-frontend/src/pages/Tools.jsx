@@ -1503,7 +1503,7 @@ function ToggleSetting({ label, description, status = null, statusLoading = fals
         </span>
         <span className="mt-1 block text-xs leading-5 text-[var(--color-text-muted)]">{description}</span>
         {status?.detail && (
-          <span className="mt-1.5 block text-[10px] leading-4 text-[var(--color-text-muted)]">
+          <span className="mt-1.5 block text-xs leading-5 text-[var(--color-text-muted)]">
             {status.detail}
           </span>
         )}
