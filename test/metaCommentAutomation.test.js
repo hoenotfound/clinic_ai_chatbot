@@ -1041,3 +1041,61 @@ test("global automation pause still stores and hands off urgent comments without
     /safety comment was flagged for staff/i
   );
 });
+
+
+test("paused urgent comment handoff failures enter the normal retry path", async () => {
+  const stored = {
+    id: 92,
+    channel: "instagram",
+    commentId: "c-92",
+    entryId: "ig-business",
+    authorId: "igsid-92",
+    authorName: "Alicia",
+    text: "I can't breathe",
+    postId: null,
+    mediaId: "m-92",
+    parentCommentId: null,
+    sourceCreatedAt: new Date().toISOString(),
+    rawEvent: {},
+    attemptCount: 1,
+    publicReplyId: null,
+    privateReplyMessageId: null,
+  };
+  let failed = false;
+  const repo = {
+    claimJob: async () => stored,
+    markSkipped: async () => assert.fail("failed handoff must not be marked skipped"),
+    markFailed: async (id, err, attemptCount) => {
+      assert.equal(id, stored.id);
+      assert.equal(attemptCount, 1);
+      assert.match(err.message, /handoff database unavailable/);
+      failed = true;
+      return { ...stored, status: "failed", lastError: err.message };
+    },
+    listRecoverable: async () => [],
+  };
+  const contacts = {
+    getOrCreateChannelContact: async () => ({ id: 192, mode: "ai" }),
+    setAttention: async () => assert.fail("throwing handoff should not fall through"),
+  };
+  const service = createMetaCommentAutomationService({
+    repo,
+    contacts,
+    config: {
+      escalation: { handoffMessage: "A team member will follow up." },
+      commentAutomation: {
+        ...DEFAULT_COMMENT_AUTOMATION,
+        enabled: true,
+        activatedAt: new Date(Date.now() - 1000).toISOString(),
+      },
+    },
+    repliesEnabled: () => false,
+    handoff: async () => {
+      throw new Error("handoff database unavailable");
+    },
+  });
+
+  const result = await service.processJob(stored.id);
+  assert.equal(failed, true);
+  assert.equal(result.status, "failed");
+});
