@@ -528,7 +528,7 @@ test("login submits credentials and reaches Inbox", async ({ page }) => {
   expectNoUnexpectedApi(apiState);
 });
 
-test("Contacts export waits for the current search and downloads the filtered CSV", async ({ page }) => {
+test("Contacts export waits for the current search and downloads the filtered CSV", async ({ page }, testInfo) => {
   const apiState = await installApi(page, {
     initialContacts: [
       contactFixture(),
@@ -558,6 +558,16 @@ test("Contacts export waits for the current search and downloads the filtered CS
   await exportButton.click();
   const dialog = page.getByRole("dialog", { name: "Export customer data" });
   await expect(dialog.getByText("Current view · 1", { exact: true })).toBeVisible();
+
+  if (testInfo.project.name === "iphone-portrait") {
+    const viewport = page.viewportSize();
+    const box = await dialog.boundingBox();
+    expect(viewport).not.toBeNull();
+    expect(box).not.toBeNull();
+    expect(Math.abs(box.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(box.width - viewport.width)).toBeLessThanOrEqual(1);
+    expect(Math.abs(box.y + box.height - viewport.height)).toBeLessThanOrEqual(1);
+  }
 
   const requestPromise = page.waitForRequest((request) =>
     new URL(request.url()).pathname === "/api/contacts/export"
