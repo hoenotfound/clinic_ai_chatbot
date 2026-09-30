@@ -482,10 +482,20 @@ function expectNoUnexpectedApi(apiState) {
   expect(apiState.unexpected, "All browser API calls should be explicitly mocked").toEqual([]);
 }
 
+
+async function openInboxConversation(page, name = "Alex Customer") {
+  if ((page.viewportSize()?.width ?? 0) >= 1024) return;
+
+  const conversation = page.getByRole("button").filter({ hasText: name }).first();
+  await expect(conversation).toBeVisible();
+  await conversation.click();
+}
+
 test("selected conversation receives a new customer message through realtime refresh", async ({ page }) => {
   const apiState = await installApi(page);
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
   await expect(page.getByText("Hi, I would like to know more.", { exact: true }).last()).toBeVisible();
 
   const incoming = inboundMessage({
@@ -512,6 +522,7 @@ test("delivery status changes from Sent to Read immediately from realtime event"
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
   await expect(page.getByLabel("Sent")).toBeVisible();
 
   apiState.setDeliveryStatus(101, sent.id, {
@@ -549,6 +560,7 @@ test("realtime event for another conversation updates its list item without repl
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
   const selectedThread = page.getByRole("region", {
     name: "Conversation with Alex Customer",
   });
@@ -575,6 +587,7 @@ test("staff can preview an image and send it as multipart with its caption", asy
   const apiState = await installApi(page);
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   const input = page.locator('input[type="file"][accept="image/*"]');
   await input.setInputFiles(imagePayload("consultation-photo.png"));
@@ -604,6 +617,7 @@ test("failed image upload keeps the selected image and caption ready for retry",
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   const input = page.locator('input[type="file"][accept="image/*"]');
   await input.setInputFiles(imagePayload("retry-photo.png"));
@@ -624,6 +638,7 @@ test("staff can record, preview and send a voice message as multipart", async ({
   const apiState = await installApi(page);
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   await page.getByRole("button", { name: "Record a voice message" }).click();
   await expect(page.getByText("Recording voice message", { exact: true })).toBeVisible();
@@ -658,6 +673,7 @@ test("closed WhatsApp reply window blocks image selection and voice recording", 
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   await expect(page.getByText("Reply window closed", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Attach an image" })).toBeDisabled();
