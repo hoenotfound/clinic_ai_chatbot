@@ -671,7 +671,7 @@ async function processIncomingMessage(
       }
     }
 
-    const reply = isFirstMessage
+    const reply = isFirstMessage && !urgentSafety
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
       : aiReply;
 
