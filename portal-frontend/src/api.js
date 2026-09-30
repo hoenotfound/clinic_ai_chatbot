@@ -34,9 +34,12 @@ async function download(path) {
 
   const disposition = res.headers.get("content-disposition") || "";
   const filenameMatch = disposition.match(/filename="([^"]+)"/i);
+  const rowCountHeader = res.headers.get("x-export-row-count");
+  const rowCount = Number.parseInt(rowCountHeader || "", 10);
   return {
     blob: await res.blob(),
     filename: filenameMatch?.[1] || "customers.csv",
+    rowCount: Number.isSafeInteger(rowCount) && rowCount >= 0 ? rowCount : null,
   };
 }
 
