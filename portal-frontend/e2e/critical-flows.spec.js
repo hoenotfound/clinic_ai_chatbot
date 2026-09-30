@@ -490,6 +490,24 @@ async function installApi(page, {
       return fulfill(route, updated);
     }
 
+    const scheduledMatch = path.match(/^\/api\/conversations\/(\d+)\/scheduled-messages$/);
+    if (scheduledMatch && method === "GET") {
+      const contactId = Number(scheduledMatch[1]);
+      const contact = conversations.find(
+        (item) => Number(item.contact_id) === contactId
+      );
+      return fulfill(route, {
+        items: [],
+        lastInboundAt: contact?.latest_inbound_at || null,
+        windowEndsAt: null,
+        staffMode: contact?.mode === "human",
+        channel: contact?.channel || "whatsapp",
+        messagingAllowed: true,
+        policyCode: null,
+        policyMessage: "",
+      });
+    }
+
     unexpected.push({ method, path });
     return fulfill(route, { error: `Unexpected mocked API request: ${method} ${path}` }, 501);
   });
