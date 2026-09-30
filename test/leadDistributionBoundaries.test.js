@@ -167,7 +167,7 @@ test("production migrations load ownership, routing, and social follow-up safegu
 test("Tools navigation focuses on available automations without future-tool clutter", () => {
   const tools = read("portal-frontend/src/pages/Tools.jsx");
 
-  assert.match(tools, /Manage the automations your team uses every day/);
+  assert.match(tools, /Choose and manage the automations your team uses/);
   assert.match(tools, /title="Lead temperature"/);
   assert.match(tools, /title="Lead distribution"/);
   assert.doesNotMatch(tools, /function ToolStatus\(/);
