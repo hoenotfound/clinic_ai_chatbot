@@ -518,6 +518,7 @@ export default function Tools() {
           <FollowUpTool
             form={form}
             setForm={setForm}
+            savedEnabled={savedEnabled}
             hasUnsavedChanges={hasUnsavedChanges}
             translationsNeedRefresh={translationsNeedRefresh}
             translationReadyCount={translationReadyCount}
@@ -563,6 +564,7 @@ export default function Tools() {
           <LeadScoringTool
             form={scoringForm}
             setForm={setScoringForm}
+            savedEnabled={!!savedScoring.enabled}
             hasUnsavedChanges={hasUnsavedScoringChanges}
             saving={scoringSaving}
             onSave={handleSaveScoring}
@@ -585,6 +587,7 @@ export default function Tools() {
 function FollowUpTool({
   form,
   setForm,
+  savedEnabled,
   hasUnsavedChanges,
   translationsNeedRefresh,
   translationReadyCount,
@@ -611,6 +614,7 @@ function FollowUpTool({
       title="Automated follow-up"
       description="Send one helpful reminder when a customer has not replied to your last message."
       enabled={form.enabled}
+      savedEnabled={savedEnabled}
       hasUnsavedChanges={hasUnsavedChanges}
       onToggle={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
       saveLabel="Save changes"
@@ -903,6 +907,7 @@ function CommentAutomationTool({
       title="Comment automation"
       description="Automatically reply to Facebook and Instagram comments and turn interested commenters into leads."
       enabled={form.enabled}
+      savedEnabled={savedEnabled}
       hasUnsavedChanges={hasUnsavedChanges}
       onToggle={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
       saveLabel={saveLabel}
@@ -1318,12 +1323,13 @@ function FlowArrow() {
   );
 }
 
-function LeadScoringTool({ form, setForm, hasUnsavedChanges, saving, onSave, toasts, dismissToast }) {
+function LeadScoringTool({ form, setForm, savedEnabled, hasUnsavedChanges, saving, onSave, toasts, dismissToast }) {
   return (
     <ToolShell
       title="Lead temperature"
       description="Let AI update Hot / Warm / Cold when customer intent is clear. Staff-controlled temperatures always win."
       enabled={form.enabled}
+      savedEnabled={savedEnabled}
       hasUnsavedChanges={hasUnsavedChanges}
       onToggle={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
       saveLabel="Save changes"
@@ -1358,7 +1364,16 @@ function LeadScoringTool({ form, setForm, hasUnsavedChanges, saving, onSave, toa
   );
 }
 
-function ToolShell({ title, description, enabled, hasUnsavedChanges, onToggle, saveLabel, saving, saveDisabled, onSave, children, toasts, dismissToast }) {
+function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChanges, onToggle, saveLabel, saving, saveDisabled, onSave, children, toasts, dismissToast }) {
+  const enabledStateChanged = enabled !== savedEnabled;
+  const enabledLabel = enabledStateChanged
+    ? enabled
+      ? "On after save"
+      : "Off after save"
+    : enabled
+      ? "On"
+      : "Off";
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--color-bg)]">
       <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6 xl:px-10 xl:py-7">
@@ -1372,7 +1387,7 @@ function ToolShell({ title, description, enabled, hasUnsavedChanges, onToggle, s
             </div>
 
             <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
-              <span className="text-sm font-semibold text-[var(--color-text)]">{enabled ? "On" : "Off"}</span>
+              <span className="text-sm font-semibold text-[var(--color-text)]">{enabledLabel}</span>
               <Switch checked={enabled} onChange={onToggle} ariaLabel={`Enable ${title}`} />
             </div>
           </header>
