@@ -1366,13 +1366,13 @@ function LeadScoringTool({ form, setForm, savedEnabled, hasUnsavedChanges, savin
 
 function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChanges, onToggle, saveLabel, saving, saveDisabled, onSave, children, toasts, dismissToast }) {
   const enabledStateChanged = enabled !== savedEnabled;
-  const automationStatus = enabledStateChanged
+  const enabledLabel = enabledStateChanged
     ? enabled
-      ? "Will be active after saving"
-      : "Will be paused after saving"
-    : savedEnabled
-      ? "Currently active"
-      : "Currently paused";
+      ? "On after save"
+      : "Off after save"
+    : enabled
+      ? "On"
+      : "Off";
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--color-bg)]">
@@ -1386,31 +1386,30 @@ function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChange
               <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)] sm:text-[15px]">{description}</p>
             </div>
 
-            <div className="flex shrink-0 items-center justify-between gap-3 sm:justify-end">
-              <div className="text-left sm:text-right">
-                <p className="text-sm font-semibold">{enabled ? "On" : "Off"}</p>
-                <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">{automationStatus}</p>
-              </div>
+            <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
+              <span className="text-sm font-semibold text-[var(--color-text)]">{enabledLabel}</span>
               <Switch checked={enabled} onChange={onToggle} ariaLabel={`Enable ${title}`} />
             </div>
           </header>
 
-          <div className="mt-6 sm:mt-7">{children}</div>
+          <div className="mt-5 sm:mt-6">{children}</div>
         </div>
       </main>
 
-      <footer className="shrink-0 border-t border-[var(--color-border)] bg-white px-4 py-3 sm:px-6 xl:px-10">
-        <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <span className={`h-2 w-2 shrink-0 rounded-full ${hasUnsavedChanges ? "bg-[var(--color-accent)]" : "bg-[var(--color-primary)]"}`} />
-            <p className="truncate text-[13px] font-medium text-[var(--color-text-muted)]">{hasUnsavedChanges ? "You have unsaved changes" : "All changes saved"}</p>
+      {(hasUnsavedChanges || saving) && (
+        <footer className="shrink-0 border-t border-[var(--color-border)] bg-white px-4 py-3 sm:px-6 xl:px-10">
+          <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${saving ? "bg-[var(--color-primary)]" : "bg-[var(--color-accent)]"}`} />
+              <p className="truncate text-[13px] font-medium text-[var(--color-text-muted)]">{saving ? "Saving changes…" : "You have unsaved changes"}</p>
+            </div>
+            <button type="button" onClick={onSave} disabled={saveDisabled} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50">
+              {saving && <Spinner />}
+              {saving ? "Saving…" : saveLabel}
+            </button>
           </div>
-          <button type="button" onClick={onSave} disabled={saveDisabled} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50">
-            {saving && <Spinner />}
-            {saving ? "Saving…" : saveLabel}
-          </button>
-        </div>
-      </footer>
+        </footer>
+      )}
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
@@ -1444,20 +1443,20 @@ function ToolNavButton({ active, onClick, icon, title, shortTitle, description, 
       onClick={onClick}
       aria-label={title}
       title={title}
-      className={`relative flex min-h-16 w-full min-w-0 flex-col items-center justify-center gap-1.5 rounded-lg px-1 py-1.5 text-center transition-colors sm:min-h-[4.5rem] sm:gap-2 sm:rounded-xl sm:px-2 xl:min-h-0 xl:flex-row xl:justify-start xl:gap-3 xl:px-3 xl:py-3 xl:text-left ${active ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"}`}
+      className={`flex min-h-16 w-full min-w-0 flex-col items-center justify-center gap-1.5 rounded-lg px-1 py-1.5 text-center transition-colors sm:min-h-[4.5rem] sm:gap-2 sm:rounded-xl sm:px-2 xl:min-h-0 xl:flex-row xl:justify-start xl:gap-3 xl:px-3 xl:py-3 xl:text-left ${active ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"}`}
       aria-current={active ? "page" : undefined}
     >
-      <span aria-hidden="true" className={`absolute bottom-3 left-0 top-3 hidden w-0.5 rounded-full xl:block ${active ? "bg-[var(--color-primary)]" : "bg-transparent"}`} />
       <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg sm:h-8 sm:w-8 xl:h-9 xl:w-9 ${active ? "bg-white text-[var(--color-primary)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
         {icon}
       </span>
       <span className="min-w-0 xl:flex-1">
         <span className={`block text-[11px] font-semibold leading-3.5 sm:hidden ${active ? "text-[var(--color-primary)]" : "text-[var(--color-text)]"}`}>{shortTitle}</span>
-        <span className={`hidden text-xs font-semibold leading-4 sm:block sm:text-[13px] xl:text-sm xl:font-bold xl:leading-5 ${active ? "text-[var(--color-primary)]" : "text-[var(--color-text)]"}`}>{title}</span>
-        <span className="mt-0.5 hidden text-xs leading-4 text-[var(--color-text-muted)] xl:block">{description}</span>
-      </span>
-      <span className={`hidden shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] xl:inline ${enabled ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
-        {enabled ? "On" : "Off"}
+        <span className={`hidden text-xs font-semibold leading-4 sm:block sm:text-[13px] xl:whitespace-nowrap xl:text-sm xl:font-bold xl:leading-5 ${active ? "text-[var(--color-primary)]" : "text-[var(--color-text)]"}`}>{title}</span>
+        <span className="mt-0.5 hidden text-xs leading-4 text-[var(--color-text-muted)] xl:block">
+          <span className={enabled ? "font-semibold text-[var(--color-primary)]" : "font-semibold text-[var(--color-text-muted)]"}>{enabled ? "On" : "Off"}</span>
+          <span className="mx-1" aria-hidden="true">·</span>
+          {description}
+        </span>
       </span>
       <span className="sr-only">{enabled ? "Active" : "Paused"}</span>
     </button>
@@ -1465,7 +1464,7 @@ function ToolNavButton({ active, onClick, icon, title, shortTitle, description, 
 }
 
 function Card({ children }) {
-  return <section className="rounded-xl border border-[var(--color-border)] bg-white p-5 sm:p-6">{children}</section>;
+  return <section className="rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">{children}</section>;
 }
 
 function SectionHeading({ number, title, description }) {

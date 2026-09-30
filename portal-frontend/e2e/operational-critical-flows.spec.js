@@ -506,7 +506,8 @@ test("Comment Automation saves the exact customer-flow choice", async ({ page })
   await page.getByRole("button", { name: "Save & turn on" }).click();
 
   await expect(page.getByText("Comment automation is active.", { exact: true })).toBeVisible();
-  await expect(page.getByText("All changes saved", { exact: true })).toBeVisible();
+  await expect(page.getByText("You have unsaved changes", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
 
   const saveCall = findCall(apiState, "PATCH", "/api/config");
   expect(saveCall?.body).toEqual({

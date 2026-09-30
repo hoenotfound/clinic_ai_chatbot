@@ -142,7 +142,6 @@ test("automatic translation refresh preserves manual language edits made after t
   assert.match(tools, /manualTranslationEdits\.includes\(key\)/);
   assert.match(tools, /preserveManual \? manualValue : generated\[key\]/);
   assert.match(tools, /onTranslationChange\(translationLanguage, event\.target\.value\)/);
-  assert.match(tools, /enabledStateChanged = enabled !== savedEnabled/);
 });
 
 test("production migrations load ownership, routing, and social follow-up safeguards", () => {
@@ -215,10 +214,45 @@ test("Tools desktop sidebar keeps clear title-description hierarchy", () => {
   const tools = read("portal-frontend/src/pages/Tools.jsx");
 
   assert.match(tools, /xl:w-72/);
-  assert.match(tools, /xl:text-sm xl:font-bold xl:leading-5/);
+  assert.match(tools, /xl:whitespace-nowrap xl:text-sm xl:font-bold xl:leading-5/);
   assert.match(tools, /text-xs leading-4 text-\[var\(--color-text-muted\)\] xl:block/);
   assert.match(tools, /Remind leads who stop replying/);
   assert.match(tools, /Reply to comments and open DMs/);
   assert.match(tools, /Assign new leads to Sales staff/);
-  assert.match(tools, /bottom-3 left-0 top-3 hidden w-0\.5 rounded-full xl:block/);
+  assert.doesNotMatch(tools, /bottom-3 left-0 top-3 hidden w-0\.5 rounded-full xl:block/);
+  assert.match(tools, /\{enabled \? "On" : "Off"\}<\/span>/);
+});
+
+
+test("Tools save bars only occupy space while changes are pending", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+  const distribution = read("portal-frontend/src/pages/LeadDistribution.jsx");
+
+  assert.match(tools, /\{\(hasUnsavedChanges \|\| saving\) && \(/);
+  assert.match(tools, /Saving changes…/);
+  assert.doesNotMatch(tools, /All changes saved/);
+  assert.doesNotMatch(tools, /Currently paused/);
+  assert.doesNotMatch(tools, /Currently active/);
+
+  assert.match(distribution, /\{\(hasUnsavedChanges \|\| saving\) && \(/);
+  assert.match(distribution, /Saving routing…/);
+  assert.doesNotMatch(distribution, /All routing changes saved/);
+  assert.doesNotMatch(distribution, /Currently paused/);
+  assert.doesNotMatch(distribution, /Currently active/);
+});
+
+
+test("Tools headers distinguish draft enable state from the saved live state", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+  const distribution = read("portal-frontend/src/pages/LeadDistribution.jsx");
+
+  assert.match(tools, /enabledStateChanged = enabled !== savedEnabled/);
+  assert.match(tools, /"On after save"/);
+  assert.match(tools, /"Off after save"/);
+  assert.match(tools, /\{enabledLabel\}<\/span>/);
+
+  assert.match(distribution, /enabledStateChanged = settings\.enabled !== savedEnabled/);
+  assert.match(distribution, /"On after save"/);
+  assert.match(distribution, /"Off after save"/);
+  assert.match(distribution, /\{enabledLabel\}<\/span>/);
 });
