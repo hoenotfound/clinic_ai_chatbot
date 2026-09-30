@@ -7,17 +7,22 @@ const {
   createLoginRateLimiter,
   extractClientIp,
   keysForRequest,
+  retryAfterForState,
 } = require("../src/middleware/loginRateLimit");
 
 function request({
   username = "Admin.User",
   socketIp = "10.0.0.9",
   forwardedFor,
+  cfConnectingIp,
   ip,
 } = {}) {
+  const headers = {};
+  if (forwardedFor) headers["x-forwarded-for"] = forwardedFor;
+  if (cfConnectingIp) headers["cf-connecting-ip"] = cfConnectingIp;
   const req = {
     body: { username },
-    headers: forwardedFor ? { "x-forwarded-for": forwardedFor } : {},
+    headers,
     socket: { remoteAddress: socketIp },
   };
   if (ip) req.ip = ip;
@@ -44,21 +49,23 @@ function response() {
   };
 }
 
-test("Render rate limiting prefers Express' trusted client IP over a spoofed leftmost hop", () => {
+test("Render rate limiting uses CF-Connecting-IP even when forwarded/Express IP values disagree", () => {
+  const req = request({
+    socketIp: "10.20.30.40",
+    forwardedFor: "198.51.100.99, 192.0.2.44",
+    cfConnectingIp: "203.0.113.8",
+    ip: "192.0.2.44",
+  });
+  assert.equal(extractClientIp(req, { RENDER: "true" }), "203.0.113.8");
+});
+
+test("Render falls back to the direct socket peer when the trusted client-IP header is absent", () => {
   const req = request({
     socketIp: "10.20.30.40",
     forwardedFor: "198.51.100.99, 203.0.113.8",
     ip: "203.0.113.8",
   });
-  assert.equal(extractClientIp(req, { RENDER: "true" }), "203.0.113.8");
-});
-
-test("Render compatibility fallback uses the rightmost forwarded hop", () => {
-  const req = request({
-    socketIp: "10.20.30.40",
-    forwardedFor: "198.51.100.99, 203.0.113.8",
-  });
-  assert.equal(extractClientIp(req, { RENDER: "true" }), "203.0.113.8");
+  assert.equal(extractClientIp(req, { RENDER: "true" }), "10.20.30.40");
 });
 
 test("non-Render deployments do not trust a client-supplied forwarded IP by default", () => {
@@ -72,7 +79,8 @@ test("non-Render deployments do not trust a client-supplied forwarded IP by defa
 test("rate-limit keys cover IP, username and pair without storing raw identifiers", () => {
   const req = request({
     socketIp: "10.0.0.5",
-    forwardedFor: "203.0.113.11",
+    forwardedFor: "198.51.100.99",
+    cfConnectingIp: "203.0.113.11",
     username: "Clinic.Admin",
   });
   const keys = keysForRequest(req, {
@@ -86,6 +94,18 @@ test("rate-limit keys cover IP, username and pair without storing raw identifier
     assert.equal(key.keyHash.includes("203.0.113.11"), false);
     assert.equal(key.keyHash.includes("clinic.admin"), false);
   }
+});
+
+test("username-wide telemetry never hard-locks an account", () => {
+  const now = Date.UTC(2026, 8, 4, 9, 0, 0);
+  assert.equal(
+    retryAfterForState({
+      scope: "username",
+      failures: 10_000,
+      window_started_at: new Date(now),
+    }, now),
+    0
+  );
 });
 
 test("middleware atomically reserves the current attempt and blocks max + 1", async () => {
