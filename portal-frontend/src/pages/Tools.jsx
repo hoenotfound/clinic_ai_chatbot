@@ -1064,7 +1064,7 @@ function CommentAutomationTool({
                     }`}
                   >
                     <span className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs font-semibold">Let AI write it</span>
+                      <span className="text-sm font-semibold">Let AI write it</span>
                       <span className="rounded-full bg-[var(--color-primary-light)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">Recommended</span>
                     </span>
                     <span className="mt-1.5 block text-xs leading-5 text-[var(--color-text-muted)]">
@@ -1081,7 +1081,7 @@ function CommentAutomationTool({
                         : "border-[var(--color-border)] hover:bg-[var(--color-bg)]"
                     }`}
                   >
-                    <span className="block text-xs font-semibold">Always use the same reply</span>
+                    <span className="block text-sm font-semibold">Always use the same reply</span>
                     <span className="mt-1.5 block text-xs leading-5 text-[var(--color-text-muted)]">
                       Best when you want every eligible comment to receive identical wording.
                     </span>
@@ -1326,7 +1326,7 @@ function FlowArrow() {
 function LeadScoringTool({ form, setForm, savedEnabled, hasUnsavedChanges, saving, onSave, toasts, dismissToast }) {
   return (
     <ToolShell
-      title="Automatic Lead Temperature"
+      title="Lead temperature"
       description="Let AI update Hot / Warm / Cold when customer intent is clear. Staff-controlled temperatures always win."
       enabled={form.enabled}
       savedEnabled={savedEnabled}
