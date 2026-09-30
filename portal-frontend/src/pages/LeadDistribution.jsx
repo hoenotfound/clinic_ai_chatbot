@@ -283,19 +283,8 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
               </p>
             </div>
 
-            <div className="flex shrink-0 items-center justify-between gap-3 sm:justify-end">
-              <div className="text-left sm:text-right">
-                <p className="text-sm font-semibold">{settings.enabled ? "On" : "Off"}</p>
-                <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
-                  {hasUnsavedChanges
-                    ? settings.enabled
-                      ? "Will be active after saving"
-                      : "Will be paused after saving"
-                    : savedEnabled
-                      ? "Currently active"
-                      : "Currently paused"}
-                </p>
-              </div>
+            <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
+              <span className="text-sm font-semibold text-[var(--color-text)]">{settings.enabled ? "On" : "Off"}</span>
               <Switch checked={settings.enabled} disabled={!canManageDistribution} onChange={() => setSettings((current) => ({ ...current, enabled: !current.enabled }))} />
             </div>
           </header>
@@ -306,7 +295,7 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
             </div>
           )}
 
-          <section className="mt-7 rounded-xl border border-[var(--color-border)] bg-white p-5 sm:p-6">
+          <section className="mt-6 rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">
             <div>
               <h2 className="font-display text-base font-bold">How should leads be shared?</h2>
               <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">Choose the routing style that matches how your Sales team works.</p>
@@ -491,18 +480,20 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
         </div>
       </main>
 
-      <footer className="shrink-0 border-t border-[var(--color-border)] bg-white px-4 py-3 sm:px-6 xl:px-10">
-        <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <span className={`h-2 w-2 shrink-0 rounded-full ${hasUnsavedChanges ? "bg-[var(--color-accent)]" : "bg-[var(--color-primary)]"}`} />
-            <p className="truncate text-[13px] font-medium text-[var(--color-text-muted)]">{hasUnsavedChanges ? "You have unsaved routing changes" : "All routing changes saved"}</p>
+      {(hasUnsavedChanges || saving) && (
+        <footer className="shrink-0 border-t border-[var(--color-border)] bg-white px-4 py-3 sm:px-6 xl:px-10">
+          <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${saving ? "bg-[var(--color-primary)]" : "bg-[var(--color-accent)]"}`} />
+              <p className="truncate text-[13px] font-medium text-[var(--color-text-muted)]">{saving ? "Saving routing…" : "You have unsaved routing changes"}</p>
+            </div>
+            <button type="button" onClick={save} disabled={saving || !hasUnsavedChanges || !canManageDistribution} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50">
+              {saving && <Spinner />}
+              {saving ? "Saving…" : "Save routing"}
+            </button>
           </div>
-          <button type="button" onClick={save} disabled={saving || !hasUnsavedChanges || !canManageDistribution} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50">
-            {saving && <Spinner />}
-            {saving ? "Saving…" : "Save routing"}
-          </button>
-        </div>
-      </footer>
+        </footer>
+      )}
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
