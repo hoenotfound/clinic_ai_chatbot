@@ -209,7 +209,9 @@ export default function Analytics() {
   const filterOptions = data?.filterOptions || {};
   const activeFilterCount = ["branch", "channel", ...ADVANCED_FILTERS]
     .filter((key) => draftFilters[key] !== "all").length;
-  const hasAdvancedFilters = ADVANCED_FILTERS.some((key) => draftFilters[key] !== "all");
+  const activeAdvancedFilterCount = ADVANCED_FILTERS
+    .filter((key) => draftFilters[key] !== "all").length;
+  const hasAdvancedFilters = activeAdvancedFilterCount > 0;
   const hasPendingChanges = !filtersEqual(draftFilters, appliedFilters);
 
   return (
@@ -264,7 +266,7 @@ export default function Analytics() {
               aria-expanded={showMoreFilters}
               className={`h-11 rounded-xl border px-3.5 text-xs font-semibold transition ${showMoreFilters || hasAdvancedFilters ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
             >
-              {showMoreFilters ? "Hide filters" : "More filters"}{activeFilterCount ? ` (${activeFilterCount})` : ""}
+              {showMoreFilters ? "Hide filters" : "More filters"}{activeAdvancedFilterCount ? ` (${activeAdvancedFilterCount})` : ""}
             </button>
           </div>
 
@@ -420,9 +422,9 @@ function MetricCard({ label, value, delta, deltaType = "percent", detail, classN
 
 function ConversionSummary({ conversionRate, conversionDelta, cohort, labels }) {
   const rates = [
-    [labels[0]?.label || "Primary rate", cohort.appointmentRate],
-    [labels[1]?.label || "Show rate", cohort.showRate],
-    [labels[2]?.label || "Close rate", cohort.closeRate],
+    [labels[0]?.detail || labels[0]?.label || "Lead → next step", cohort.appointmentRate],
+    [labels[1]?.detail || labels[1]?.label || "Next step → outcome", cohort.showRate],
+    [labels[2]?.detail || labels[2]?.label || "Outcome → won", cohort.closeRate],
   ];
 
   return (
@@ -433,9 +435,9 @@ function ConversionSummary({ conversionRate, conversionDelta, cohort, labels }) 
         <span className={`text-xs font-semibold ${deltaTone(conversionDelta)}`}>{deltaLabel(conversionDelta, "points")} vs prior</span>
       </div>
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs sm:mt-0 sm:justify-end">
-        {rates.map(([label, value]) => (
-          <span key={label} className="text-[var(--color-text-muted)]">
-            {label} <strong className="font-semibold text-[var(--color-text)]">{value.toFixed(1)}%</strong>
+        {rates.map(([definition, value]) => (
+          <span key={definition} className="text-[var(--color-text-muted)]">
+            {definition} <strong className="font-semibold text-[var(--color-text)]">{value.toFixed(1)}%</strong>
           </span>
         ))}
       </div>
