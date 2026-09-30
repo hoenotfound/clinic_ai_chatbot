@@ -109,6 +109,18 @@ async function enforceConversationsPolicy(req, res, user) {
 
 async function enforceContactsPolicy(req, res, user) {
   const parts = segments(req);
+
+  if (parts[0] === "export") {
+    if (req.method !== "GET") return forbidden(res);
+    if (!hasCapability(user, "export_customer_data")) {
+      return forbidden(res, "Exporting customer data is disabled for this account.");
+    }
+    if (!hasAnyLeadView(user)) {
+      return forbidden(res, "Lead access is disabled for this account.");
+    }
+    return true;
+  }
+
   if (parts.length === 0) {
     if (req.method === "GET") {
       if (!hasAnyLeadView(user)) return forbidden(res);

@@ -3,6 +3,9 @@ const contactsRepo = require("../db/contactsRepo");
 const contactNotesRepo = require("../db/contactNotesRepo");
 const contactInsightsRepo = require("../db/contactInsightsRepo");
 const pipelineRepo = require("../db/pipelineRepo");
+const customerExportRepo = require("../db/customerExportRepo");
+const { getAccessibleContactIds } = require("../utils/accessControl");
+const { buildCustomerCsv, malaysiaDateStamp } = require("../utils/csvExport");
 
 const router = express.Router();
 const SOCIAL_CHANNELS = new Set(["facebook", "instagram"]);
@@ -24,6 +27,49 @@ router.get("/", async (req, res) => {
   } catch (err) {
     console.error("Failed to list contacts:", err);
     res.status(500).json({ error: "Something went wrong loading contacts." });
+  }
+});
+
+router.get("/export", async (req, res) => {
+  try {
+    const preset = req.query.preset === "full" ? "full" : "customer";
+    const scope = req.query.scope === "all" ? "all" : "current";
+    const search = scope === "current" ? String(req.query.search || "") : "";
+    const assignment = scope === "current"
+      ? customerExportRepo.normalizeAssignment(req.query.assignment)
+      : "all";
+    const allowedContactIds = await getAccessibleContactIds(req.user);
+
+    const rows = await customerExportRepo.listCustomerExportRows({
+      search,
+      assignment,
+      currentUsername: req.user.username,
+      allowedContactIds,
+      applyCurrentView: scope === "current",
+    });
+
+    await customerExportRepo.recordCustomerExport({
+      username: req.user.username,
+      preset,
+      scope,
+      rowCount: rows.length,
+      filters: scope === "current"
+        ? { searchApplied: Boolean(search.trim()), assignment }
+        : {},
+    });
+
+    const csv = buildCustomerCsv(rows, preset);
+    const filename = `customers-${preset === "full" ? "full-crm" : "list"}-${malaysiaDateStamp()}.csv`;
+    res.set({
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Cache-Control": "no-store",
+      "X-Export-Row-Count": String(rows.length),
+    });
+    res.status(200).send(csv);
+  } catch (err) {
+    console.error("Failed to export customer data:", err);
+    res.status(500).json({ error: "Something went wrong exporting customer data." });
   }
 });
 

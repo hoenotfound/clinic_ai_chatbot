@@ -20,6 +20,29 @@ async function request(path, options = {}) {
   return res.json();
 }
 
+async function download(path) {
+  const res = await fetch(`${BASE}${path}`, {
+    credentials: "include",
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const error = new Error(body.error || `Request failed (${res.status})`);
+    error.status = res.status;
+    throw error;
+  }
+
+  const disposition = res.headers.get("content-disposition") || "";
+  const filenameMatch = disposition.match(/filename="([^"]+)"/i);
+  const rowCountHeader = res.headers.get("x-export-row-count");
+  const rowCount = Number.parseInt(rowCountHeader || "", 10);
+  return {
+    blob: await res.blob(),
+    filename: filenameMatch?.[1] || "customers.csv",
+    rowCount: Number.isSafeInteger(rowCount) && rowCount >= 0 ? rowCount : null,
+  };
+}
+
 export const api = {
   login: (username, password) =>
     request("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
@@ -169,6 +192,14 @@ export const api = {
       body: JSON.stringify({ message }),
     }),
   listContacts: (search) => request(`/contacts${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+  downloadCustomerExport: ({ preset = "customer", scope = "current", search = "", assignment = "all" } = {}) => {
+    const params = new URLSearchParams({ preset, scope });
+    if (scope === "current") {
+      if (search) params.set("search", search);
+      if (assignment && assignment !== "all") params.set("assignment", assignment);
+    }
+    return download(`/contacts/export?${params.toString()}`);
+  },
   getContact: (id) => request(`/contacts/${id}`),
   getContactInsights: (id) => request(`/contacts/${id}/insights`),
   createContact: (data) => request("/contacts", { method: "POST", body: JSON.stringify(data) }),

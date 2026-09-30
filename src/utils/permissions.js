@@ -34,6 +34,12 @@ const CAPABILITY_DEFINITIONS = [
     defaults: { admin: true, sales: true },
   },
   {
+    key: "export_customer_data",
+    label: "Export customer data",
+    description: "Download customer and CRM records as CSV files.",
+    defaults: { admin: true, sales: false },
+  },
+  {
     key: "manage_lead_assignment",
     label: "Assign leads",
     description: "Assign or reassign leads between staff accounts.",

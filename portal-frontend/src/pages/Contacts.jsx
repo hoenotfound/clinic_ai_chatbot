@@ -26,20 +26,28 @@ export default function Contacts() {
   const { toasts, showToast, dismissToast } = useToasts();
   const canCreateContacts = permissions.create_leads === true;
   const canManageContacts = permissions.manage_assigned_leads === true;
+  const canExportCustomerData = permissions.export_customer_data === true;
 
   const [contacts, setContacts] = useState(null);
   const [searchInput, setSearchInput] = useState("");
+  const [loadedSearch, setLoadedSearch] = useState(null);
   const [assignmentFilter, setAssignmentFilter] = useState("all");
   const [selectedId, setSelectedId] = useState(null);
   const [panelMode, setPanelMode] = useState("view");
+  const [showExport, setShowExport] = useState(false);
   const searchInputRef = useRef(searchInput);
+  const contactsRequestIdRef = useRef(0);
   searchInputRef.current = searchInput;
 
   async function refreshContacts(search) {
+    const requestId = ++contactsRequestIdRef.current;
     try {
       const data = await api.listContacts(search);
+      if (requestId !== contactsRequestIdRef.current) return;
       setContacts(data);
+      setLoadedSearch(search);
     } catch (err) {
+      if (requestId !== contactsRequestIdRef.current) return;
       console.error("Failed to load contacts:", err);
       showToast("Couldn't load contacts. Please try again.", "error");
     }
@@ -88,7 +96,8 @@ export default function Contacts() {
   useEffect(() => {
     if (panelMode === "create" && !canCreateContacts) setPanelMode("view");
     if (panelMode === "edit" && !canManageContacts) setPanelMode("view");
-  }, [canCreateContacts, canManageContacts, panelMode]);
+    if (showExport && !canExportCustomerData) setShowExport(false);
+  }, [canCreateContacts, canExportCustomerData, canManageContacts, panelMode, showExport]);
 
   function handleSelect(id) {
     setSelectedId(id);
@@ -115,6 +124,13 @@ export default function Contacts() {
 
   const selectedContact = contacts?.find((c) => c.id === selectedId) || null;
   const mobilePanelOpen = panelMode !== "view" || Boolean(selectedContact);
+  const exportViewReady = contacts !== null && loadedSearch === searchInput;
+  const currentViewCount = useMemo(
+    () => (contacts || []).filter(
+      (contact) => matchesLeadAssignment(contact, assignmentFilter, username)
+    ).length,
+    [assignmentFilter, contacts, username]
+  );
 
   return (
     <div className="flex h-full min-w-0">
@@ -123,7 +139,10 @@ export default function Contacts() {
         selectedId={selectedId}
         onSelect={handleSelect}
         onAddNew={handleAddNew}
+        onExport={() => setShowExport(true)}
         canCreateContacts={canCreateContacts}
+        canExportCustomerData={canExportCustomerData}
+        exportViewReady={exportViewReady}
         searchInput={searchInput}
         onSearchChange={setSearchInput}
         assignmentFilter={assignmentFilter}
@@ -175,6 +194,16 @@ export default function Contacts() {
             </div>
           ))}
       </div>
+      {showExport && canExportCustomerData && (
+        <ExportCustomerModal
+          currentCount={currentViewCount}
+          search={searchInput}
+          currentViewReady={exportViewReady}
+          assignment={assignmentFilter}
+          onClose={() => setShowExport(false)}
+          onToast={showToast}
+        />
+      )}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
@@ -185,7 +214,10 @@ function ContactList({
   selectedId,
   onSelect,
   onAddNew,
+  onExport,
   canCreateContacts,
+  canExportCustomerData,
+  exportViewReady,
   searchInput,
   onSearchChange,
   assignmentFilter,
@@ -218,15 +250,28 @@ function ContactList({
                 : "Loading…"}
             </p>
           </div>
-          {canCreateContacts && (
-            <button
-              type="button"
-              onClick={onAddNew}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)]"
-            >
-              + Add
-            </button>
-          )}
+          <div className="flex shrink-0 items-center gap-1.5">
+            {canExportCustomerData && (
+              <button
+                type="button"
+                onClick={onExport}
+                disabled={!exportViewReady}
+                title={exportViewReady ? "Export customer data" : "Updating the current contact view…"}
+                className="inline-flex shrink-0 items-center rounded-lg border border-[var(--color-border)] bg-white px-2.5 py-2 text-xs font-medium transition-colors hover:bg-[var(--color-bg)] disabled:cursor-wait disabled:opacity-50"
+              >
+                Export
+              </button>
+            )}
+            {canCreateContacts && (
+              <button
+                type="button"
+                onClick={onAddNew}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--color-primary)] px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)]"
+              >
+                + Add
+              </button>
+            )}
+          </div>
         </div>
         <input
           className={`${inputClass} mt-3 text-xs`}
@@ -302,6 +347,206 @@ function ContactList({
           </div>
         </button>
       ))}
+    </div>
+  );
+}
+
+function ExportCustomerModal({ currentCount, search, assignment, currentViewReady, onClose, onToast }) {
+  const [scope, setScope] = useState("current");
+  const [preset, setPreset] = useState("customer");
+  const [exporting, setExporting] = useState(false);
+  const currentViewEmpty = currentCount === 0;
+  const currentViewUnavailable = !currentViewReady || currentViewEmpty;
+
+  async function handleExport() {
+    if (exporting || (scope === "current" && currentViewUnavailable)) return;
+    setExporting(true);
+    try {
+      const { blob, filename, rowCount } = await api.downloadCustomerExport({
+        preset,
+        scope,
+        search,
+        assignment,
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      const exportedCount = rowCount ?? (scope === "current" ? currentCount : null);
+      onToast(
+        exportedCount == null
+          ? "Customer export downloaded."
+          : `Exported ${exportedCount} customer record${exportedCount === 1 ? "" : "s"}.`,
+        "info"
+      );
+      onClose();
+    } catch (err) {
+      console.error("Failed to export customer data:", err);
+      onToast(err.message || "Couldn't export customer data.", "error");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-0 sm:items-center sm:p-4"
+      role="presentation"
+      onMouseDown={onClose}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="customer-export-title"
+        className="w-full max-w-md rounded-t-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-2xl sm:rounded-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 id="customer-export-title" className="font-display text-lg font-bold">
+              Export customer data
+            </h2>
+            <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
+              Download a CSV that can be opened in Excel or Google Sheets.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"
+            aria-label="Close export dialog"
+          >
+            ✕
+          </button>
+        </div>
+
+        <fieldset className="mt-5">
+          <legend className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+            Export
+          </legend>
+          <div className="mt-2 space-y-2">
+            <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors ${
+              scope === "current"
+                ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]"
+                : "border-[var(--color-border)]"
+            }`}>
+              <input
+                type="radio"
+                name="export-scope"
+                value="current"
+                checked={scope === "current"}
+                onChange={() => setScope("current")}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block text-sm font-semibold">Current view · {currentCount}</span>
+                <span className="mt-0.5 block text-xs text-[var(--color-text-muted)]">
+                  Uses the current search and assignment filter.
+                </span>
+              </span>
+            </label>
+            <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors ${
+              scope === "all"
+                ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]"
+                : "border-[var(--color-border)]"
+            }`}>
+              <input
+                type="radio"
+                name="export-scope"
+                value="all"
+                checked={scope === "all"}
+                onChange={() => setScope("all")}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block text-sm font-semibold">All accessible customers</span>
+                <span className="mt-0.5 block text-xs text-[var(--color-text-muted)]">
+                  Ignores the current Contacts filters. Account permissions still apply.
+                </span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset className="mt-5">
+          <legend className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+            Data
+          </legend>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <label className={`cursor-pointer rounded-xl border p-3 transition-colors ${
+              preset === "customer"
+                ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]"
+                : "border-[var(--color-border)]"
+            }`}>
+              <input
+                type="radio"
+                name="export-preset"
+                value="customer"
+                checked={preset === "customer"}
+                onChange={() => setPreset("customer")}
+                className="mr-2"
+              />
+              <span className="text-sm font-semibold">Customer list</span>
+              <span className="mt-1 block text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+                Contact, stage, service, owner, source and activity.
+              </span>
+            </label>
+            <label className={`cursor-pointer rounded-xl border p-3 transition-colors ${
+              preset === "full"
+                ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]"
+                : "border-[var(--color-border)]"
+            }`}>
+              <input
+                type="radio"
+                name="export-preset"
+                value="full"
+                checked={preset === "full"}
+                onChange={() => setPreset("full")}
+                className="mr-2"
+              />
+              <span className="text-sm font-semibold">Full CRM data</span>
+              <span className="mt-1 block text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+                Adds appointments, consent and ad attribution. Chats and media are excluded.
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        {scope === "current" && !currentViewReady && (
+          <p className="mt-4 rounded-lg bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
+            Updating the current contact view. Export will be available when the search results finish loading.
+          </p>
+        )}
+        {scope === "current" && currentViewReady && currentViewEmpty && (
+          <p className="mt-4 rounded-lg bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
+            The current view has no customers to export. Choose All accessible customers or change your filters.
+          </p>
+        )}
+
+        <div className="mt-6 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={exporting}
+            className="rounded-xl px-4 py-2.5 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting || (scope === "current" && currentViewUnavailable)}
+            className="inline-flex min-w-28 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
+          >
+            {exporting && <Spinner className="h-4 w-4" />}
+            {exporting ? "Exporting…" : "Export CSV"}
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
