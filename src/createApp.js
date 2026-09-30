@@ -21,6 +21,8 @@ const {
   payloadTooLargeErrorHandler,
 } = require("./middleware/requestBodyLimits");
 const { requireAuth } = require("./middleware/requireAuth");
+const { resolveTrustProxy } = require("./utils/proxyTrust");
+const { verifyTokenMatches } = require("./utils/webhookVerification");
 
 const authRoutes = require("./routes/auth");
 const conversationsRoutes = require("./routes/conversations");
@@ -54,10 +56,10 @@ function createApp({
 
   const app = express();
 
-  // Needed so req.protocol correctly reflects the original https scheme when
-  // running behind a reverse proxy (Render, most PaaS hosts) — used to build a
-  // correct public URL for uploaded promo images.
-  app.set("trust proxy", true);
+  // Trust only the known proxy hop count. On Render this defaults to one hop,
+  // which keeps req.protocol/req.ip correct without trusting arbitrary
+  // leftmost X-Forwarded-For values supplied by clients.
+  app.set("trust proxy", resolveTrustProxy(process.env));
 
   // Webhooks need the raw body in the verify hook so Meta signatures are
   // validated against the exact bytes received.
@@ -91,7 +93,7 @@ function createApp({
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
 
-    if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+    if (mode === "subscribe" && verifyTokenMatches(token, process.env.WHATSAPP_VERIFY_TOKEN)) {
       console.log("WhatsApp webhook verified successfully.");
       return res.status(200).send(challenge);
     }
@@ -167,7 +169,7 @@ function createApp({
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
 
-    if (mode === "subscribe" && token === process.env.META_VERIFY_TOKEN) {
+    if (mode === "subscribe" && verifyTokenMatches(token, process.env.META_VERIFY_TOKEN)) {
       console.log("Facebook/Instagram webhook verified successfully.");
       return res.status(200).send(challenge);
     }

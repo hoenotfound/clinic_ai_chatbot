@@ -21,8 +21,9 @@ test("login limiter is persistent and no longer uses an in-memory attempt map", 
   assert.match(limiter, /loginRateLimitRepo/);
   assert.doesNotMatch(limiter, /const attempts = new Map\(/);
   assert.match(limiter, /pair: 8/);
-  assert.match(limiter, /username: 15/);
   assert.match(limiter, /ip: 40/);
+  assert.match(limiter, /USERNAME_OBSERVATION_THRESHOLD = 15/);
+  assert.doesNotMatch(limiter, /MAX_ATTEMPTS_BY_SCOPE[\s\S]*username:\s*15/);
 });
 
 test("startup migrations include persistent login throttling table", () => {

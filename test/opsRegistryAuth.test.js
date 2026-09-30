@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   createRequireOpsAdmin,
   parseBasicAuth,
+  requestAddress,
 } = require("../src/ops/requireOpsAdmin");
 const { createOpsRegistryApp } = require("../src/ops/server");
 const { clientDetailHtml } = require("../src/ops/dashboard");
@@ -11,6 +12,20 @@ const { clientDetailHtml } = require("../src/ops/dashboard");
 test("basic auth parser preserves colons in the password", () => {
   const header = `Basic ${Buffer.from("admin:pass:word").toString("base64")}`;
   assert.deepEqual(parseBasicAuth(header), { username: "admin", password: "pass:word" });
+});
+
+test("Ops proxy address handling ignores a spoofed leftmost forwarded hop", () => {
+  const req = {
+    socket: { remoteAddress: "10.20.30.40" },
+    get(name) {
+      if (name.toLowerCase() === "x-forwarded-for") {
+        return "198.51.100.99, 203.0.113.8";
+      }
+      return "";
+    },
+  };
+  assert.equal(requestAddress(req, true), "203.0.113.8");
+  assert.equal(requestAddress(req, false), "10.20.30.40");
 });
 
 test("client detail page safely embeds an untrusted route slug", () => {

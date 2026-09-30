@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   buildCommentAttribution,
   createMetaCommentAutomationService,
+  deterministicCommentSafetyCopy,
   parseIncomingCommentEvents,
   skipReason,
   DEFAULT_COMMENT_AUTOMATION,
@@ -746,3 +747,361 @@ test("clears pending comment DM reservation through normal failure path when Met
   assert.equal(result.privateReplyPendingText, null);
 });
 
+
+
+test("urgent comment safety bypasses AI, overrides fixed promo copy, and flags staff before Meta sends", async () => {
+  const calls = [];
+  const stored = {
+    id: 90,
+    channel: "instagram",
+    commentId: "c-90",
+    entryId: "ig-business",
+    authorId: "igsid-90",
+    authorName: "Alicia",
+    text: "I can't breathe and it's getting worse",
+    postId: null,
+    mediaId: "m-90",
+    parentCommentId: null,
+    sourceCreatedAt: new Date().toISOString(),
+    rawEvent: {},
+    attemptCount: 1,
+    publicReplyId: null,
+    privateReplyMessageId: null,
+  };
+
+  const repo = {
+    claimJob: async () => stored,
+    markPublicReplySent: async (_id, replyId) => ({
+      ...stored,
+      publicReplyId: replyId,
+    }),
+    markPrivateReplyPending: async (_id, data) => ({
+      ...stored,
+      publicReplyId: "pub-90",
+      privateReplyPendingText: data.text,
+    }),
+    markPrivateReplySent: async (_id, data) => ({
+      ...stored,
+      publicReplyId: "pub-90",
+      privateReplyMessageId: data.messageId,
+      privateReplyRecipientId: data.recipientId,
+    }),
+    markCompleted: async () => ({ ...stored, status: "completed" }),
+    markFailed: async (_id, err) => assert.fail(`urgent comment should not fail: ${err?.message}`),
+    markSkipped: async () => assert.fail("urgent comment should not skip"),
+    listRecoverable: async () => [],
+  };
+
+  const meta = {
+    fetchCommentSourceContext: async () => null,
+    replyToComment: async (_channel, _id, text) => {
+      calls.push(["public", text]);
+      return { success: true, replyId: "pub-90" };
+    },
+    sendPrivateReplyToComment: async (_channel, _id, text) => {
+      calls.push(["private", text]);
+      return {
+        success: true,
+        messageId: "dm-90",
+        recipientId: "igsid-90",
+      };
+    },
+  };
+
+  const aiClient = {
+    getReply: async () => assert.fail("urgent deterministic comment must not call AI"),
+  };
+
+  const contacts = {
+    getOrCreateChannelContact: async (...args) => {
+      calls.push(["contact", ...args]);
+      return { id: 190, mode: "ai" };
+    },
+    setAttention: async (contactId, needsAttention, reason) => {
+      calls.push(["attention", contactId, needsAttention, reason]);
+    },
+  };
+  const handoff = async (contactId, reason) => {
+    calls.push(["handoff", contactId, reason]);
+    return { id: contactId, mode: "human", needs_attention: true };
+  };
+
+  const messages = {
+    getMessageByProviderIdForContact: async () => null,
+  };
+  const store = {
+    appendMessageForContact: async () => ({ id: 290 }),
+  };
+  const pipeline = {
+    ensureLeadForContact: async () => ({ created: false, lead: null }),
+  };
+
+  const config = {
+    escalation: {
+      handoffMessage: "A team member will follow up.",
+    },
+    commentAutomation: {
+      ...DEFAULT_COMMENT_AUTOMATION,
+      enabled: true,
+      publicReplyStyle: "fixed",
+      fixedPublicReply: "SALE SALE SALE",
+      activatedAt: new Date(Date.now() - 1000).toISOString(),
+    },
+  };
+
+  const safetyCopy = deterministicCommentSafetyCopy(
+    {
+      channel: stored.channel,
+      text: stored.text,
+    },
+    config.commentAutomation,
+    config
+  );
+  assert.equal(safetyCopy.urgentSafety, true);
+  assert.match(safetyCopy.privateReply, /urgent medical attention/i);
+
+  const service = createMetaCommentAutomationService({
+    repo,
+    meta,
+    aiClient,
+    contacts,
+    messages,
+    pipeline,
+    store,
+    config,
+    repliesEnabled: () => true,
+    handoff,
+  });
+
+  await service.processJob(stored.id);
+
+  const firstHandoff = calls.findIndex((call) => call[0] === "handoff");
+  const firstPublic = calls.findIndex((call) => call[0] === "public");
+  const firstPrivate = calls.findIndex((call) => call[0] === "private");
+  assert.ok(firstHandoff >= 0);
+  assert.ok(firstPublic > firstHandoff, "Staff-mode handoff should be persisted before public reply");
+  assert.ok(firstPrivate > firstPublic, "private urgent guidance should follow the safe public reply");
+  assert.equal(calls[firstHandoff][1], 190);
+
+  const publicReply = calls[firstPublic][1];
+  const privateReply = calls[firstPrivate][1];
+  assert.doesNotMatch(publicReply, /SALE SALE SALE/);
+  assert.match(publicReply, /contact the clinic directly now/i);
+  assert.match(privateReply, /urgent medical attention/i);
+  assert.match(privateReply, /emergency medical care immediately/i);
+});
+
+
+test("urgent public-only comment copy includes emergency guidance when private replies are disabled", () => {
+  const config = {
+    escalation: { handoffMessage: "A team member will follow up." },
+    commentAutomation: {
+      ...DEFAULT_COMMENT_AUTOMATION,
+      privateReplyEnabled: false,
+    },
+  };
+
+  const english = deterministicCommentSafetyCopy(
+    { channel: "facebook", text: "I can't breathe and it's getting worse" },
+    config.commentAutomation,
+    config
+  );
+  assert.equal(english.urgentSafety, true);
+  assert.match(english.publicReply, /emergency medical care immediately/i);
+
+  const malay = deterministicCommentSafetyCopy(
+    { channel: "facebook", text: "saya susah bernafas" },
+    config.commentAutomation,
+    config
+  );
+  assert.match(malay.publicReply, /rawatan kecemasan segera/i);
+
+  const chinese = deterministicCommentSafetyCopy(
+    { channel: "instagram", text: "我呼吸困难而且越来越严重" },
+    config.commentAutomation,
+    config
+  );
+  assert.match(chinese.publicReply, /紧急医疗帮助/u);
+});
+
+test("global automation pause still stores and hands off urgent comments without sending customer replies", async () => {
+  const calls = [];
+  const urgentJob = {
+    id: 91,
+    channel: "facebook",
+    commentId: "c-91",
+    entryId: "page-91",
+    authorId: "psid-91",
+    authorName: "Jane",
+    text: "I have chest pain and can't breathe",
+    postId: "page-91_post-91",
+    mediaId: null,
+    parentCommentId: null,
+    sourceCreatedAt: new Date().toISOString(),
+    rawEvent: {},
+    attemptCount: 1,
+    publicReplyId: null,
+    privateReplyMessageId: null,
+  };
+
+  let storedJob = null;
+  const repo = {
+    storeIncomingComment: async (event) => {
+      calls.push(["store", event.text]);
+      storedJob = { ...urgentJob, ...event, id: urgentJob.id };
+      return storedJob;
+    },
+    claimJob: async () => storedJob || urgentJob,
+    markSkipped: async (_id, reason) => {
+      calls.push(["skipped", reason]);
+      return { ...urgentJob, status: "skipped", lastError: reason };
+    },
+    markFailed: async () => assert.fail("paused urgent comment should not fail"),
+    listRecoverable: async () => [],
+  };
+  const meta = {
+    fetchCommentSourceContext: async () => assert.fail("paused safety path should not fetch context"),
+    replyToComment: async () => assert.fail("paused safety path must not send a public reply"),
+    sendPrivateReplyToComment: async () => assert.fail("paused safety path must not send a DM"),
+  };
+  const aiClient = {
+    getReply: async () => assert.fail("paused safety path must not call AI"),
+  };
+  const contacts = {
+    getOrCreateChannelContact: async (...args) => {
+      calls.push(["contact", ...args]);
+      return { id: 191, mode: "ai" };
+    },
+    setAttention: async () => assert.fail("AI-owned urgent contact should use synthetic handoff"),
+  };
+  const handoff = async (contactId, reason) => {
+    calls.push(["handoff", contactId, reason]);
+    return { id: contactId, mode: "human", needs_attention: true };
+  };
+  const config = {
+    escalation: { handoffMessage: "A team member will follow up." },
+    commentAutomation: {
+      ...DEFAULT_COMMENT_AUTOMATION,
+      enabled: true,
+      activatedAt: new Date(Date.now() - 1000).toISOString(),
+    },
+  };
+  let automationEnabled = false;
+  const service = createMetaCommentAutomationService({
+    repo,
+    meta,
+    aiClient,
+    contacts,
+    config,
+    repliesEnabled: () => automationEnabled,
+    handoff,
+  });
+
+  const body = {
+    object: "page",
+    entry: [{
+      id: "page-91",
+      changes: [
+        {
+          field: "feed",
+          value: {
+            item: "comment",
+            verb: "add",
+            comment_id: "c-91",
+            post_id: "page-91_post-91",
+            parent_id: "page-91_post-91",
+            message: urgentJob.text,
+            from: { id: "psid-91", name: "Jane" },
+          },
+        },
+        {
+          field: "feed",
+          value: {
+            item: "comment",
+            verb: "add",
+            comment_id: "c-normal",
+            post_id: "page-91_post-91",
+            parent_id: "page-91_post-91",
+            message: "How much is this?",
+            from: { id: "psid-normal", name: "Normal" },
+          },
+        },
+      ],
+    }],
+  };
+
+  const accepted = await service.acceptIncomingComments(body);
+  assert.equal(accepted.length, 1);
+  assert.deepEqual(calls.filter((call) => call[0] === "store").map((call) => call[1]), [
+    urgentJob.text,
+  ]);
+
+  // Even if automation is enabled before recovery processes the durable job,
+  // the event accepted during the pause must remain staff-only.
+  automationEnabled = true;
+  const result = await service.processJob(urgentJob.id);
+  assert.equal(result.status, "skipped");
+  assert.ok(calls.some((call) => call[0] === "handoff" && call[1] === 191));
+  assert.match(
+    calls.find((call) => call[0] === "skipped")[1],
+    /safety comment was flagged for staff/i
+  );
+});
+
+
+test("paused urgent comment handoff failures enter the normal retry path", async () => {
+  const stored = {
+    id: 92,
+    channel: "instagram",
+    commentId: "c-92",
+    entryId: "ig-business",
+    authorId: "igsid-92",
+    authorName: "Alicia",
+    text: "I can't breathe",
+    postId: null,
+    mediaId: "m-92",
+    parentCommentId: null,
+    sourceCreatedAt: new Date().toISOString(),
+    rawEvent: {},
+    attemptCount: 1,
+    publicReplyId: null,
+    privateReplyMessageId: null,
+  };
+  let failed = false;
+  const repo = {
+    claimJob: async () => stored,
+    markSkipped: async () => assert.fail("failed handoff must not be marked skipped"),
+    markFailed: async (id, err, attemptCount) => {
+      assert.equal(id, stored.id);
+      assert.equal(attemptCount, 1);
+      assert.match(err.message, /handoff database unavailable/);
+      failed = true;
+      return { ...stored, status: "failed", lastError: err.message };
+    },
+    listRecoverable: async () => [],
+  };
+  const contacts = {
+    getOrCreateChannelContact: async () => ({ id: 192, mode: "ai" }),
+    setAttention: async () => assert.fail("throwing handoff should not fall through"),
+  };
+  const service = createMetaCommentAutomationService({
+    repo,
+    contacts,
+    config: {
+      escalation: { handoffMessage: "A team member will follow up." },
+      commentAutomation: {
+        ...DEFAULT_COMMENT_AUTOMATION,
+        enabled: true,
+        activatedAt: new Date(Date.now() - 1000).toISOString(),
+      },
+    },
+    repliesEnabled: () => false,
+    handoff: async () => {
+      throw new Error("handoff database unavailable");
+    },
+  });
+
+  const result = await service.processJob(stored.id);
+  assert.equal(failed, true);
+  assert.equal(result.status, "failed");
+});

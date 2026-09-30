@@ -9,6 +9,13 @@ const ai = require("./aiService");
 const leadAttributionService = require("./leadAttributionService");
 const { parseAiReplyResult } = require("../utils/aiReplyResult");
 const { normalizeAttribution } = require("../utils/leadAttribution");
+const {
+  checkKeywordTriggers,
+  isUrgentSafetyMessage,
+} = require("../utils/attentionTriggers");
+const { fallbackHandoffReply } = require("../utils/handoffReply");
+const { detectMessageLanguage } = require("../utils/chatLanguage");
+const { pauseAiForHumanHandoff } = require("./aiHandoffService");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 
 const DEFAULT_COMMENT_AUTOMATION = Object.freeze({
@@ -26,6 +33,7 @@ const DEFAULT_COMMENT_AUTOMATION = Object.freeze({
 
 const RECOVERY_INTERVAL_MS = 60 * 1000;
 const RECOVERY_BATCH_SIZE = 20;
+const PAUSED_SAFETY_ONLY_MARKER = "_da_paused_safety_only";
 
 function settingsFromConfig(config = clinicConfig) {
   return {
@@ -195,6 +203,98 @@ function fallbackCopy(event, settings) {
     privateReply,
     flagged: false,
   };
+}
+
+function deterministicCommentPublicHandoff(
+  messageText,
+  urgent,
+  privateReplyEnabled = true
+) {
+  const language = detectMessageLanguage(messageText);
+
+  if (urgent) {
+    if (language === "zh") {
+      return privateReplyEnabled
+        ? "请现在直接联系诊所，我们也已经通知团队跟进你。"
+        : "请现在直接联系诊所；如果症状严重、越来越严重或有呼吸困难，请立即寻求紧急医疗帮助。我们也已经通知团队跟进你。";
+    }
+    if (language === "ms") {
+      return privateReplyEnabled
+        ? "Tolong hubungi klinik terus sekarang ya. Saya dah flag pada team kami untuk follow up."
+        : "Tolong hubungi klinik terus sekarang. Kalau simptom teruk, makin teruk atau susah bernafas, dapatkan rawatan kecemasan segera. Saya dah flag pada team kami.";
+    }
+    return privateReplyEnabled
+      ? "Please contact the clinic directly now. We've also flagged this for our team."
+      : "Please contact the clinic directly now. If symptoms are severe, getting worse, or you're having trouble breathing, seek emergency medical care immediately. We've also flagged this for our team.";
+  }
+
+  if (language === "zh") {
+    return privateReplyEnabled
+      ? "这个情况我们已经通知团队跟进你，也会私信联系你。"
+      : "这个情况我们已经通知团队跟进你。";
+  }
+  if (language === "ms") {
+    return privateReplyEnabled
+      ? "Untuk yang ni, saya dah flag pada team kami untuk follow up. Kami akan hubungi awak melalui DM."
+      : "Untuk yang ni, saya dah flag pada team kami untuk follow up.";
+  }
+  return privateReplyEnabled
+    ? "We've flagged this for our team to follow up and we'll contact you by DM."
+    : "We've flagged this for our team to follow up.";
+}
+
+function deterministicCommentSafetyCopy(event, settings, config = clinicConfig) {
+  const attentionReason = checkKeywordTriggers(event?.text);
+  if (!attentionReason) return null;
+
+  const urgent = isUrgentSafetyMessage(event.text);
+  return {
+    shouldRespond: true,
+    publicReply: deterministicCommentPublicHandoff(
+      event.text,
+      urgent,
+      settings?.privateReplyEnabled !== false
+    ),
+    privateReply: fallbackHandoffReply(
+      event.text,
+      config?.escalation?.handoffMessage,
+      { urgent }
+    ),
+    flagged: true,
+    attentionReason,
+    deterministicSafety: true,
+    forcePublicReply: true,
+    urgentSafety: urgent,
+  };
+}
+
+async function flagDeterministicCommentForStaff({
+  event,
+  copy,
+  contacts = contactsRepo,
+  handoff = pauseAiForHumanHandoff,
+}) {
+  if (!copy?.deterministicSafety || !event?.authorId) return null;
+
+  const contact = await contacts.getOrCreateChannelContact(
+    event.channel,
+    event.authorId,
+    event.authorName || null
+  );
+  const reason = [
+    copy.attentionReason || "Comment needs staff review.",
+    `${event.channel} comment: ${event.text.slice(0, 180)}`,
+  ].join(" ");
+
+  // Match the normal DM safety path: an AI-owned conversation becomes a
+  // synthetic Staff-mode handoff so a later ordinary DM cannot resume AI.
+  const handedOff = await handoff(contact.id, reason);
+  if (handedOff) return handedOff;
+
+  // If staff already owns the conversation, preserve that ownership and still
+  // refresh the Needs Attention signal/reason for the new safety comment.
+  await contacts.setAttention(contact.id, true, reason);
+  return contact;
 }
 
 function commentAdContext(event) {
@@ -377,7 +477,8 @@ async function ensureCommentLead({
     await contacts.setAttention(
       contact.id,
       true,
-      `Needs staff review after ${event.channel} comment: ${event.text.slice(0, 180)}`
+      copy.attentionReason ||
+        `Needs staff review after ${event.channel} comment: ${event.text.slice(0, 180)}`
     );
   }
   return contact;
@@ -394,16 +495,35 @@ function createMetaCommentAutomationService({
   attribution = leadAttributionService,
   config = clinicConfig,
   repliesEnabled = automatedRepliesEnabled,
+  handoff = pauseAiForHumanHandoff,
 } = {}) {
   async function acceptIncomingComments(body) {
     const settings = settingsFromConfig(config);
-    if (!settings.enabled || !repliesEnabled()) return [];
+    if (!settings.enabled) return [];
 
+    const automationEnabled = repliesEnabled();
     const accepted = [];
     for (const event of parseIncomingCommentEvents(body)) {
       const reason = skipReason(event, settings);
       if (reason) continue;
-      const job = await repo.storeIncomingComment(event);
+
+      // The global reply switch silences customer-facing automation, but it
+      // must not silence the safety monitor. While paused, persist only clear
+      // deterministic safety/handoff comments for staff review.
+      if (!automationEnabled && !deterministicCommentSafetyCopy(event, settings, config)) {
+        continue;
+      }
+
+      const eventToStore = automationEnabled
+        ? event
+        : {
+            ...event,
+            rawEvent: {
+              ...(event.rawEvent || {}),
+              [PAUSED_SAFETY_ONLY_MARKER]: true,
+            },
+          };
+      const job = await repo.storeIncomingComment(eventToStore);
       if (job) accepted.push(job);
     }
     return accepted;
@@ -418,14 +538,32 @@ function createMetaCommentAutomationService({
 
     const settings = settingsFromConfig(config);
     const event = eventFromJob(job);
-    const reason = !repliesEnabled()
-      ? "Automated customer replies are globally paused."
-      : skipReason(event, settings);
+    const reason = skipReason(event, settings);
     if (reason) return repo.markSkipped(job.id, reason);
 
+    const acceptedWhilePaused =
+      event.rawEvent?.[PAUSED_SAFETY_ONLY_MARKER] === true;
+    const automationEnabled = repliesEnabled() && !acceptedWhilePaused;
     let preservePrivateReplyPendingOnFailure = false;
 
     try {
+      if (!automationEnabled) {
+        const safetyCopy = deterministicCommentSafetyCopy(event, settings, config);
+        if (safetyCopy) {
+          await flagDeterministicCommentForStaff({
+            event,
+            copy: safetyCopy,
+            contacts,
+            handoff,
+          });
+          return repo.markSkipped(
+            job.id,
+            "Automated customer replies are globally paused; safety comment was flagged for staff."
+          );
+        }
+        return repo.markSkipped(job.id, "Automated customer replies are globally paused.");
+      }
+
       let sourceContext = null;
       try {
         sourceContext = await meta.fetchCommentSourceContext?.(event.channel, {
@@ -439,7 +577,21 @@ function createMetaCommentAutomationService({
         );
       }
 
-      const copy = await generateReplyCopy(event, settings, aiClient, sourceContext);
+      const copy =
+        deterministicCommentSafetyCopy(event, settings, config) ||
+        await generateReplyCopy(event, settings, aiClient, sourceContext);
+
+      // Safety handoffs are recorded before any Meta send. That way a failed
+      // public/private API call cannot erase the staff-attention signal.
+      if (copy.deterministicSafety) {
+        await flagDeterministicCommentForStaff({
+          event,
+          copy,
+          contacts,
+          handoff,
+        });
+      }
+
       if (!copy.shouldRespond) {
         return repo.markSkipped(job.id, "AI classified the comment as not requiring a reply.");
       }
@@ -448,9 +600,11 @@ function createMetaCommentAutomationService({
 
       if (settings.publicReplyEnabled && !liveJob.publicReplyId) {
         const publicText =
-          settings.publicReplyStyle === "fixed"
-            ? settings.fixedPublicReply
-            : copy.publicReply || settings.fixedPublicReply;
+          copy.forcePublicReply
+            ? copy.publicReply
+            : settings.publicReplyStyle === "fixed"
+              ? settings.fixedPublicReply
+              : copy.publicReply || settings.fixedPublicReply;
         const publicResult = await meta.replyToComment(event.channel, event.commentId, publicText);
         if (!publicResult.success) {
           throw new Error(publicResult.error || "Meta rejected the public comment reply.");
@@ -585,8 +739,12 @@ const service = createMetaCommentAutomationService();
 
 module.exports = {
   DEFAULT_COMMENT_AUTOMATION,
+  PAUSED_SAFETY_ONLY_MARKER,
   createMetaCommentAutomationService,
   buildCommentAttribution,
+  deterministicCommentPublicHandoff,
+  deterministicCommentSafetyCopy,
+  flagDeterministicCommentForStaff,
   commentAdContext,
   fallbackCopy,
   generateReplyCopy,

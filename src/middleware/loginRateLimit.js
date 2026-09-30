@@ -1,20 +1,24 @@
 const crypto = require("crypto");
 const loginRateLimitRepo = require("../db/loginRateLimitRepo");
+const {
+  isRenderEnvironment,
+  renderClientIp,
+} = require("../utils/proxyTrust");
 
 const WINDOW_MS = 15 * 60 * 1000;
 const WINDOW_SECONDS = Math.floor(WINDOW_MS / 1000);
 const CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
 const RETENTION_SECONDS = 24 * 60 * 60;
 
-// Pair is the tightest limit for repeated guesses from one device. Username
-// protects one account from a distributed spray, while the higher IP ceiling
-// slows one source trying many usernames without making a shared clinic/office
-// network easy to lock out because of a few staff typos.
+// Pair is the tightest blocking limit for repeated guesses from one source.
+// The username bucket is still recorded as account-wide abuse telemetry, but
+// it is deliberately non-blocking so knowing a staff username cannot be used
+// to lock that account out from unrelated IP addresses.
 const MAX_ATTEMPTS_BY_SCOPE = Object.freeze({
   pair: 8,
-  username: 15,
   ip: 40,
 });
+const USERNAME_OBSERVATION_THRESHOLD = 15;
 
 function normalizeUsername(value) {
   return String(value || "").trim().toLowerCase().slice(0, 200);
@@ -27,25 +31,24 @@ function normalizeIp(value) {
 }
 
 /**
- * Render documents that it places the real client address first in
- * X-Forwarded-For. Use that only when Render's own RENDER=true environment flag
- * is present. Everywhere else, prefer the direct socket peer instead of
- * trusting an arbitrary forwarded header supplied by an internet client.
+ * Render traffic passes through Cloudflare. Use the overwritten
+ * CF-Connecting-IP header as the security identity instead of deriving a
+ * client address from an attacker-influenced X-Forwarded-For chain.
+ *
+ * If that trusted header is unexpectedly absent, fail conservatively to the
+ * direct socket peer. This may group callers behind the edge proxy, but it
+ * cannot let a caller choose its own rate-limit identity.
  */
 function extractClientIp(req, env = process.env) {
+  if (isRenderEnvironment(env)) {
+    const renderIp = renderClientIp(req?.headers);
+    if (renderIp) return normalizeIp(renderIp);
+  }
+
   const socketIp =
     req?.socket?.remoteAddress ||
     req?.connection?.remoteAddress ||
     "unknown";
-
-  if (String(env?.RENDER || "").toLowerCase() === "true") {
-    const forwarded = req?.headers?.["x-forwarded-for"];
-    const first = Array.isArray(forwarded)
-      ? String(forwarded[0] || "").split(",")[0]
-      : String(forwarded || "").split(",")[0];
-    if (first.trim()) return normalizeIp(first);
-  }
-
   return normalizeIp(socketIp);
 }
 
@@ -204,6 +207,7 @@ const defaultLimiter = createLoginRateLimiter();
 module.exports = {
   CLEANUP_INTERVAL_MS,
   MAX_ATTEMPTS_BY_SCOPE,
+  USERNAME_OBSERVATION_THRESHOLD,
   RETENTION_SECONDS,
   WINDOW_MS,
   WINDOW_SECONDS,

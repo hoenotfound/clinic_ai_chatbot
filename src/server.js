@@ -24,10 +24,7 @@ const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeSe
 const conversationStore = require("./utils/conversationStore");
 const { getActivePromotion } = require("./utils/activePromotion");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
-const {
-  fallbackHandoffReply,
-  isUrgentSafetyMessage,
-} = require("./utils/handoffReply");
+const { fallbackHandoffReply } = require("./utils/handoffReply");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const {
@@ -38,7 +35,11 @@ const messagesRepo = require("./db/messagesRepo");
 const inboundProcessingRepo = require("./db/inboundProcessingRepo");
 const outboundMessageEvidenceRepo = require("./db/outboundMessageEvidenceRepo");
 const contactsRepo = require("./db/contactsRepo");
-const { checkKeywordTriggers } = require("./utils/attentionTriggers");
+const {
+  URGENT_SAFETY_REASON,
+  checkKeywordTriggers,
+  isUrgentSafetyMessage,
+} = require("./utils/attentionTriggers");
 const realtimeEvents = require("./utils/realtimeEvents");
 const {
   enqueueConversation,
@@ -585,7 +586,12 @@ async function processIncomingMessage(
       }
     }
 
-    keywordReason = keywordReason || checkKeywordTriggers(text);
+    const currentKeywordReason = checkKeywordTriggers(text);
+    const urgentSafety =
+      isUrgentSafetyMessage(text) || inheritedKeywordReason === URGENT_SAFETY_REASON;
+    keywordReason = urgentSafety
+      ? URGENT_SAFETY_REASON
+      : (keywordReason || currentKeywordReason);
 
     // Re-read ownership after media processing. Staff may have taken over
     // while a download or transcription was running.
@@ -627,26 +633,45 @@ async function processIncomingMessage(
       throughMessageId: savedInbound.id,
     });
     const isFirstMessage = forceFirstMessage || history.length === 1;
-    const rawAiReply = await ai.getReply(history, { isFirstMessage, channel });
-    const parsedReply = parseAiReplyResult(rawAiReply);
-    let {
-      text: aiReply,
-      flagged,
-      bookingReady,
-      details,
-    } = parsedReply;
 
-    // The deterministic keyword layer is a safety backstop, not just a badge.
-    // If the model misses the handoff entirely, force one. For high-confidence
-    // urgent symptom phrases, always use the deterministic immediate-care
-    // wording even if the model did choose needs_human but wrote a weak reply.
-    if (keywordReason && (!flagged || isUrgentSafetyMessage(text))) {
+    // High-confidence urgent safety phrases must not depend on an AI provider.
+    // Bypass model generation completely so outages/capacity failures cannot
+    // replace immediate-care guidance with the generic processing-error reply.
+    let aiReply;
+    let flagged = false;
+    let bookingReady = false;
+    let details = null;
+
+    if (urgentSafety) {
       flagged = true;
-      bookingReady = false;
-      aiReply = fallbackHandoffReply(text, clinicConfig.escalation.handoffMessage);
+      aiReply = fallbackHandoffReply(
+        text,
+        clinicConfig.escalation.handoffMessage,
+        { urgent: true }
+      );
+    } else {
+      const rawAiReply = await ai.getReply(history, { isFirstMessage, channel });
+      const parsedReply = parseAiReplyResult(rawAiReply);
+      ({
+        text: aiReply,
+        flagged,
+        bookingReady,
+        details,
+      } = parsedReply);
+
+      // Non-urgent deterministic handoff phrases remain a backstop if the model
+      // misses the staff-handoff outcome.
+      if (keywordReason && !flagged) {
+        flagged = true;
+        bookingReady = false;
+        aiReply = fallbackHandoffReply(
+          text,
+          clinicConfig.escalation.handoffMessage
+        );
+      }
     }
 
-    const reply = isFirstMessage
+    const reply = isFirstMessage && !urgentSafety
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
       : aiReply;
 
