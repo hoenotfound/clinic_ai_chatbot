@@ -649,7 +649,11 @@ async function processIncomingMessage(
     if (urgentSafety || (keywordReason && !flagged)) {
       flagged = true;
       bookingReady = false;
-      aiReply = fallbackHandoffReply(text, clinicConfig.escalation.handoffMessage);
+      aiReply = fallbackHandoffReply(
+        text,
+        clinicConfig.escalation.handoffMessage,
+        { urgent: urgentSafety }
+      );
     }
 
     const reply = isFirstMessage
