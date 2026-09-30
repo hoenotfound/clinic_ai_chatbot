@@ -1427,7 +1427,7 @@ function ToolsSidebar({ activeTool, onSelect, followUpActive, commentActive, sco
         </p>
       </div>
 
-      <nav className="mt-3 flex min-w-0 max-w-full gap-1.5 ui-scroll-x overflow-x-auto pb-1 xl:mt-4 xl:block xl:space-y-1 xl:overflow-visible xl:pb-0" aria-label="Available tools">
+      <nav className="mt-3 grid min-w-0 max-w-full grid-cols-2 gap-1.5 sm:grid-cols-4 xl:mt-4 xl:block xl:space-y-1" aria-label="Available tools">
         <ToolNavButton active={activeTool === "followUp"} onClick={() => onSelect("followUp")} icon={<ClockIcon className="h-[18px] w-[18px]" />} title="Automated follow-up" description="Follow up when a customer goes quiet" enabled={followUpActive} />
         <ToolNavButton active={activeTool === "commentAutomation"} onClick={() => onSelect("commentAutomation")} icon={<CommentIcon className="h-[18px] w-[18px]" />} title="Comment automation" description="Reply to comments and continue in DM" enabled={commentActive} />
         <ToolNavButton active={activeTool === "leadScoring"} onClick={() => onSelect("leadScoring")} icon={<ScoreIcon className="h-[18px] w-[18px]" />} title="Lead temperature" description="Keep Hot, Warm and Cold updated" enabled={scoringActive} />
@@ -1442,7 +1442,7 @@ function ToolNavButton({ active, onClick, icon, title, description, enabled }) {
     <button
       type="button"
       onClick={onClick}
-      className={`flex min-w-[11.75rem] items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition-colors xl:w-full xl:min-w-0 ${active ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"}`}
+      className={`flex w-full min-w-0 items-center gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition-colors sm:px-3 ${active ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"}`}
       aria-current={active ? "page" : undefined}
     >
       <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${active ? "bg-white text-[var(--color-primary)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
