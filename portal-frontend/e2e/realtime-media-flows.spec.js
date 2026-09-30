@@ -599,9 +599,13 @@ test("realtime event for another conversation updates its list item without repl
 
   await emitRealtime(page, { contactId: 202, messageId: 21, reason: "message" });
 
-  await expect(page.getByText("Bella realtime message", { exact: true }).first()).toBeVisible();
   await expect(selectedThread.getByText("Bella realtime message", { exact: true })).toHaveCount(0);
   await expect(selectedThread.getByText("Hi, I would like to know more.", { exact: true })).toBeVisible();
+
+  if ((page.viewportSize()?.width ?? 0) < 1024) {
+    await page.getByRole("button", { name: "Back to conversations" }).click();
+  }
+  await expect(page.getByText("Bella realtime message", { exact: true }).first()).toBeVisible();
   expect(apiState.getMessageFetchCount(101)).toBe(fetchCountBefore);
   expectNoUnexpectedApi(apiState);
 });
