@@ -274,7 +274,6 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
             <div className="max-w-3xl">
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">Lead distribution</h1>
-                <ToolStatus active={savedEnabled} unsaved={hasUnsavedChanges} />
                 {!canManageDistribution && (
                   <span className="text-xs font-semibold text-[var(--color-text-muted)]">View only</span>
                 )}
@@ -302,7 +301,7 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
           </header>
 
           {!canManageDistribution && (
-            <div className="mt-5 rounded-2xl border border-[var(--color-accent)]/30 bg-[var(--color-accent-light)] px-4 py-3.5 text-xs leading-5 text-[var(--color-text-muted)]">
+            <div className="mt-5 rounded-xl border border-[var(--color-accent)]/30 bg-[var(--color-accent-light)] px-4 py-3.5 text-xs leading-5 text-[var(--color-text-muted)]">
               You can review this setup, but changing routing or assigning older leads also requires <strong className="text-[var(--color-text)]">Assign Leads</strong> permission.
             </div>
           )}
@@ -344,7 +343,7 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
               <HealthItem value={configuredBranches.length} label={configuredBranches.length === 1 ? ui.locationSingular : ui.locationPlural} />
               <Separator />
               <HealthItem value={unassigned.openUnassignedCount} label="open unassigned" attention={unassigned.openUnassignedCount > 0} />
-              <span className="ml-auto text-[11px] font-medium text-[var(--color-text-muted)]">{settings.assignByBranch ? `${locationTitle} routing` : "Global routing"}</span>
+              <span className="ml-auto text-xs font-medium text-[var(--color-text-muted)]">{settings.assignByBranch ? `${locationTitle} routing` : "Global routing"}</span>
             </div>
           </section>
 
@@ -429,7 +428,7 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
                     <Avatar name={account.displayName} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold">{account.displayName}</p>
-                      <p className="mt-0.5 truncate text-[11px] text-[var(--color-text-muted)]">@{account.username}</p>
+                      <p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">@{account.username}</p>
                     </div>
                     <div className="text-right">
                       <p className="max-w-44 truncate text-xs font-semibold" title={account.branchName || ui.noFixedLocationLabel}>{account.branchName || ui.noFixedLocationLabel}</p>
@@ -510,22 +509,6 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
   );
 }
 
-function ToolStatus({ active, unsaved }) {
-  const label = unsaved ? "Unsaved changes" : active ? "Active" : "Paused";
-  const dotClass = unsaved
-    ? "bg-[var(--color-accent)]"
-    : active
-      ? "bg-[var(--color-primary)]"
-      : "bg-[var(--color-text-muted)]/45";
-
-  return (
-    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--color-text-muted)]">
-      <span className={`h-2 w-2 rounded-full ${dotClass}`} aria-hidden="true" />
-      {label}
-    </span>
-  );
-}
-
 function Switch({ checked, disabled, onChange }) {
   return (
     <button type="button" role="switch" aria-label="Enable automatic lead distribution" aria-checked={checked} disabled={disabled} onClick={onChange} className={`relative h-7 w-12 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:cursor-not-allowed disabled:opacity-50 ${checked ? "bg-[var(--color-primary)]" : "bg-[var(--color-border)]"}`}>
@@ -544,7 +527,7 @@ function RoutingChoice({ checked, disabled, title, badge, description, onChange 
           <span className="text-sm font-semibold">{title}</span>
           <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">{badge}</span>
         </span>
-        <span className="mt-1.5 block text-[11px] leading-5 text-[var(--color-text-muted)]">{description}</span>
+        <span className="mt-1.5 block text-xs leading-5 text-[var(--color-text-muted)]">{description}</span>
       </span>
     </label>
   );
