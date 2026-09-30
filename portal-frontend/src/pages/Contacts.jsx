@@ -30,18 +30,24 @@ export default function Contacts() {
 
   const [contacts, setContacts] = useState(null);
   const [searchInput, setSearchInput] = useState("");
+  const [loadedSearch, setLoadedSearch] = useState(null);
   const [assignmentFilter, setAssignmentFilter] = useState("all");
   const [selectedId, setSelectedId] = useState(null);
   const [panelMode, setPanelMode] = useState("view");
   const [showExport, setShowExport] = useState(false);
   const searchInputRef = useRef(searchInput);
+  const contactsRequestIdRef = useRef(0);
   searchInputRef.current = searchInput;
 
   async function refreshContacts(search) {
+    const requestId = ++contactsRequestIdRef.current;
     try {
       const data = await api.listContacts(search);
+      if (requestId !== contactsRequestIdRef.current) return;
       setContacts(data);
+      setLoadedSearch(search);
     } catch (err) {
+      if (requestId !== contactsRequestIdRef.current) return;
       console.error("Failed to load contacts:", err);
       showToast("Couldn't load contacts. Please try again.", "error");
     }
@@ -118,6 +124,7 @@ export default function Contacts() {
 
   const selectedContact = contacts?.find((c) => c.id === selectedId) || null;
   const mobilePanelOpen = panelMode !== "view" || Boolean(selectedContact);
+  const exportViewReady = contacts !== null && loadedSearch === searchInput;
   const currentViewCount = useMemo(
     () => (contacts || []).filter(
       (contact) => matchesLeadAssignment(contact, assignmentFilter, username)
@@ -135,6 +142,7 @@ export default function Contacts() {
         onExport={() => setShowExport(true)}
         canCreateContacts={canCreateContacts}
         canExportCustomerData={canExportCustomerData}
+        exportViewReady={exportViewReady}
         searchInput={searchInput}
         onSearchChange={setSearchInput}
         assignmentFilter={assignmentFilter}
@@ -190,6 +198,7 @@ export default function Contacts() {
         <ExportCustomerModal
           currentCount={currentViewCount}
           search={searchInput}
+          currentViewReady={exportViewReady}
           assignment={assignmentFilter}
           onClose={() => setShowExport(false)}
           onToast={showToast}
@@ -208,6 +217,7 @@ function ContactList({
   onExport,
   canCreateContacts,
   canExportCustomerData,
+  exportViewReady,
   searchInput,
   onSearchChange,
   assignmentFilter,
@@ -245,7 +255,9 @@ function ContactList({
               <button
                 type="button"
                 onClick={onExport}
-                className="inline-flex shrink-0 items-center rounded-lg border border-[var(--color-border)] bg-white px-2.5 py-2 text-xs font-medium transition-colors hover:bg-[var(--color-bg)]"
+                disabled={!exportViewReady}
+                title={exportViewReady ? "Export customer data" : "Updating the current contact view…"}
+                className="inline-flex shrink-0 items-center rounded-lg border border-[var(--color-border)] bg-white px-2.5 py-2 text-xs font-medium transition-colors hover:bg-[var(--color-bg)] disabled:cursor-wait disabled:opacity-50"
               >
                 Export
               </button>
@@ -339,17 +351,18 @@ function ContactList({
   );
 }
 
-function ExportCustomerModal({ currentCount, search, assignment, onClose, onToast }) {
+function ExportCustomerModal({ currentCount, search, assignment, currentViewReady, onClose, onToast }) {
   const [scope, setScope] = useState("current");
   const [preset, setPreset] = useState("customer");
   const [exporting, setExporting] = useState(false);
   const currentViewEmpty = currentCount === 0;
+  const currentViewUnavailable = !currentViewReady || currentViewEmpty;
 
   async function handleExport() {
-    if (exporting || (scope === "current" && currentViewEmpty)) return;
+    if (exporting || (scope === "current" && currentViewUnavailable)) return;
     setExporting(true);
     try {
-      const { blob, filename } = await api.downloadCustomerExport({
+      const { blob, filename, rowCount } = await api.downloadCustomerExport({
         preset,
         scope,
         search,
@@ -363,7 +376,13 @@ function ExportCustomerModal({ currentCount, search, assignment, onClose, onToas
       link.click();
       link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 0);
-      onToast(`Exported ${scope === "current" ? currentCount : "all accessible"} customer records.`, "info");
+      const exportedCount = rowCount ?? (scope === "current" ? currentCount : null);
+      onToast(
+        exportedCount == null
+          ? "Customer export downloaded."
+          : `Exported ${exportedCount} customer record${exportedCount === 1 ? "" : "s"}.`,
+        "info"
+      );
       onClose();
     } catch (err) {
       console.error("Failed to export customer data:", err);
@@ -497,7 +516,12 @@ function ExportCustomerModal({ currentCount, search, assignment, onClose, onToas
           </div>
         </fieldset>
 
-        {scope === "current" && currentViewEmpty && (
+        {scope === "current" && !currentViewReady && (
+          <p className="mt-4 rounded-lg bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
+            Updating the current contact view. Export will be available when the search results finish loading.
+          </p>
+        )}
+        {scope === "current" && currentViewReady && currentViewEmpty && (
           <p className="mt-4 rounded-lg bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
             The current view has no customers to export. Choose All accessible customers or change your filters.
           </p>
@@ -515,7 +539,7 @@ function ExportCustomerModal({ currentCount, search, assignment, onClose, onToas
           <button
             type="button"
             onClick={handleExport}
-            disabled={exporting || (scope === "current" && currentViewEmpty)}
+            disabled={exporting || (scope === "current" && currentViewUnavailable)}
             className="inline-flex min-w-28 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
           >
             {exporting && <Spinner className="h-4 w-4" />}
