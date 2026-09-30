@@ -1419,19 +1419,19 @@ function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChange
 
 function ToolsSidebar({ activeTool, onSelect, followUpActive, commentActive, scoringActive, distributionActive }) {
   return (
-    <aside className="w-full min-w-0 max-w-full shrink-0 overflow-hidden border-b border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2.5 sm:px-3.5 sm:py-3 xl:h-full xl:w-64 xl:border-b-0 xl:border-r xl:px-4 xl:py-5">
+    <aside className="w-full min-w-0 max-w-full shrink-0 overflow-hidden border-b border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2.5 sm:px-3.5 sm:py-3 xl:h-full xl:w-72 xl:border-b-0 xl:border-r xl:px-4 xl:py-5">
       <div className="px-1">
-        <p className="font-display text-base font-bold sm:text-lg xl:text-xl">Tools</p>
+        <p className="font-display text-base font-bold sm:text-lg xl:text-[22px] xl:leading-7">Tools</p>
         <p className="mt-1 hidden text-[13px] leading-5 text-[var(--color-text-muted)] xl:block">
-          Manage the automations your team uses every day.
+          Choose and manage the automations your team uses.
         </p>
       </div>
 
       <nav className="mt-2 grid min-w-0 max-w-full grid-cols-4 gap-1 sm:mt-3 sm:gap-1.5 xl:mt-4 xl:block xl:space-y-1" aria-label="Available tools">
-        <ToolNavButton active={activeTool === "followUp"} onClick={() => onSelect("followUp")} icon={<ClockIcon className="h-[18px] w-[18px]" />} title="Automated follow-up" shortTitle="Follow-up" description="Follow up when a customer goes quiet" enabled={followUpActive} />
-        <ToolNavButton active={activeTool === "commentAutomation"} onClick={() => onSelect("commentAutomation")} icon={<CommentIcon className="h-[18px] w-[18px]" />} title="Comment automation" shortTitle="Comments" description="Reply to comments and continue in DM" enabled={commentActive} />
+        <ToolNavButton active={activeTool === "followUp"} onClick={() => onSelect("followUp")} icon={<ClockIcon className="h-[18px] w-[18px]" />} title="Automated follow-up" shortTitle="Follow-up" description="Remind leads who stop replying" enabled={followUpActive} />
+        <ToolNavButton active={activeTool === "commentAutomation"} onClick={() => onSelect("commentAutomation")} icon={<CommentIcon className="h-[18px] w-[18px]" />} title="Comment automation" shortTitle="Comments" description="Reply to comments and open DMs" enabled={commentActive} />
         <ToolNavButton active={activeTool === "leadScoring"} onClick={() => onSelect("leadScoring")} icon={<ScoreIcon className="h-[18px] w-[18px]" />} title="Lead temperature" shortTitle="Temperature" description="Keep Hot, Warm and Cold updated" enabled={scoringActive} />
-        <ToolNavButton active={activeTool === "leadDistribution"} onClick={() => onSelect("leadDistribution")} icon={<DistributionIcon className="h-[18px] w-[18px]" />} title="Lead distribution" shortTitle="Routing" description="Share new leads across Sales staff" enabled={distributionActive} />
+        <ToolNavButton active={activeTool === "leadDistribution"} onClick={() => onSelect("leadDistribution")} icon={<DistributionIcon className="h-[18px] w-[18px]" />} title="Lead distribution" shortTitle="Routing" description="Assign new leads to Sales staff" enabled={distributionActive} />
       </nav>
     </aside>
   );
@@ -1444,18 +1444,19 @@ function ToolNavButton({ active, onClick, icon, title, shortTitle, description, 
       onClick={onClick}
       aria-label={title}
       title={title}
-      className={`flex min-h-16 w-full min-w-0 flex-col items-center justify-center gap-1.5 rounded-lg px-1 py-1.5 text-center transition-colors sm:min-h-[4.5rem] sm:gap-2 sm:rounded-xl sm:px-2 xl:min-h-0 xl:flex-row xl:justify-start xl:gap-2.5 xl:px-3 xl:py-2.5 xl:text-left ${active ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"}`}
+      className={`relative flex min-h-16 w-full min-w-0 flex-col items-center justify-center gap-1.5 rounded-lg px-1 py-1.5 text-center transition-colors sm:min-h-[4.5rem] sm:gap-2 sm:rounded-xl sm:px-2 xl:min-h-0 xl:flex-row xl:justify-start xl:gap-3 xl:px-3 xl:py-3 xl:text-left ${active ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"}`}
       aria-current={active ? "page" : undefined}
     >
-      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg sm:h-8 sm:w-8 ${active ? "bg-white text-[var(--color-primary)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
+      <span aria-hidden="true" className={`absolute bottom-3 left-0 top-3 hidden w-0.5 rounded-full xl:block ${active ? "bg-[var(--color-primary)]" : "bg-transparent"}`} />
+      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg sm:h-8 sm:w-8 xl:h-9 xl:w-9 ${active ? "bg-white text-[var(--color-primary)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
         {icon}
       </span>
       <span className="min-w-0 xl:flex-1">
         <span className={`block text-[11px] font-semibold leading-3.5 sm:hidden ${active ? "text-[var(--color-primary)]" : "text-[var(--color-text)]"}`}>{shortTitle}</span>
-        <span className={`hidden text-xs font-semibold leading-4 sm:block sm:text-[13px] ${active ? "text-[var(--color-primary)]" : "text-[var(--color-text)]"}`}>{title}</span>
+        <span className={`hidden text-xs font-semibold leading-4 sm:block sm:text-[13px] xl:text-sm xl:font-bold xl:leading-5 ${active ? "text-[var(--color-primary)]" : "text-[var(--color-text)]"}`}>{title}</span>
         <span className="mt-0.5 hidden text-xs leading-4 text-[var(--color-text-muted)] xl:block">{description}</span>
       </span>
-      <span className={`hidden shrink-0 text-[11px] font-semibold xl:inline ${enabled ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
+      <span className={`hidden shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] xl:inline ${enabled ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
         {enabled ? "On" : "Off"}
       </span>
       <span className="sr-only">{enabled ? "Active" : "Paused"}</span>

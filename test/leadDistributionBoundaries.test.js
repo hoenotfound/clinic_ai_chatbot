@@ -167,7 +167,7 @@ test("production migrations load ownership, routing, and social follow-up safegu
 test("Tools navigation focuses on available automations without future-tool clutter", () => {
   const tools = read("portal-frontend/src/pages/Tools.jsx");
 
-  assert.match(tools, /Manage the automations your team uses every day/);
+  assert.match(tools, /Choose and manage the automations your team uses/);
   assert.match(tools, /title="Lead temperature"/);
   assert.match(tools, /title="Lead distribution"/);
   assert.doesNotMatch(tools, /function ToolStatus\(/);
@@ -208,4 +208,17 @@ test("Comment Automation uses the same flattened visual system as the rest of To
   assert.doesNotMatch(tools, /group rounded-2xl border border-\[var\(--color-border\)\] bg-white shadow/);
   assert.doesNotMatch(tools, /shadow-\[0_8px_30px_rgba\(24,39,33,0\.035\)\]/);
   assert.match(tools, /group rounded-xl border border-\[var\(--color-border\)\] bg-white/);
+});
+
+
+test("Tools desktop sidebar keeps clear title-description hierarchy", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+
+  assert.match(tools, /xl:w-72/);
+  assert.match(tools, /xl:text-sm xl:font-bold xl:leading-5/);
+  assert.match(tools, /text-xs leading-4 text-\[var\(--color-text-muted\)\] xl:block/);
+  assert.match(tools, /Remind leads who stop replying/);
+  assert.match(tools, /Reply to comments and open DMs/);
+  assert.match(tools, /Assign new leads to Sales staff/);
+  assert.match(tools, /bottom-3 left-0 top-3 hidden w-0\.5 rounded-full xl:block/);
 });
