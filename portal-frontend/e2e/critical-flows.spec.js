@@ -490,6 +490,24 @@ async function installApi(page, {
       return fulfill(route, updated);
     }
 
+    const scheduledMatch = path.match(/^\/api\/conversations\/(\d+)\/scheduled-messages$/);
+    if (scheduledMatch && method === "GET") {
+      const contactId = Number(scheduledMatch[1]);
+      const contact = conversations.find(
+        (item) => Number(item.contact_id) === contactId
+      );
+      return fulfill(route, {
+        items: [],
+        lastInboundAt: contact?.latest_inbound_at || null,
+        windowEndsAt: null,
+        staffMode: contact?.mode === "human",
+        channel: contact?.channel || "whatsapp",
+        messagingAllowed: true,
+        policyCode: null,
+        policyMessage: "",
+      });
+    }
+
     unexpected.push({ method, path });
     return fulfill(route, { error: `Unexpected mocked API request: ${method} ${path}` }, 501);
   });
@@ -510,6 +528,20 @@ function findCall(apiState, method, path) {
   return apiState.calls.find((call) => call.method === method && call.path === path);
 }
 
+
+async function openInboxConversation(page, name = "Alex Customer") {
+  if ((page.viewportSize()?.width ?? 0) >= 1024) return;
+
+  const inbox = page.getByRole("complementary", { name: "Conversation inbox" });
+  const conversation = inbox.getByRole("button").filter({ hasText: name }).first();
+  await expect(conversation).toBeVisible();
+  await expect(conversation).toHaveAttribute("aria-current", "true");
+  await conversation.click();
+  await expect(
+    page.locator(`section[aria-label="Conversation with ${name}"]`)
+  ).toBeVisible();
+}
+
 test("login submits credentials and reaches Inbox", async ({ page }) => {
   const apiState = await installApi(page, { loggedIn: false });
 
@@ -528,7 +560,7 @@ test("login submits credentials and reaches Inbox", async ({ page }) => {
   expectNoUnexpectedApi(apiState);
 });
 
-test("Contacts export waits for the current search and downloads the filtered CSV", async ({ page }) => {
+test("Contacts export waits for the current search and downloads the filtered CSV", async ({ page }, testInfo) => {
   const apiState = await installApi(page, {
     initialContacts: [
       contactFixture(),
@@ -559,6 +591,16 @@ test("Contacts export waits for the current search and downloads the filtered CS
   const dialog = page.getByRole("dialog", { name: "Export customer data" });
   await expect(dialog.getByText("Current view · 1", { exact: true })).toBeVisible();
 
+  if (testInfo.project.name === "iphone-portrait") {
+    const viewport = page.viewportSize();
+    const box = await dialog.boundingBox();
+    expect(viewport).not.toBeNull();
+    expect(box).not.toBeNull();
+    expect(Math.abs(box.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(box.width - viewport.width)).toBeLessThanOrEqual(1);
+    expect(Math.abs(box.y + box.height - viewport.height)).toBeLessThanOrEqual(1);
+  }
+
   const requestPromise = page.waitForRequest((request) =>
     new URL(request.url()).pathname === "/api/contacts/export"
   );
@@ -581,6 +623,7 @@ test("manual Inbox reply sends the exact text and takes ownership", async ({ pag
   const apiState = await installApi(page);
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
   const composer = page.getByPlaceholder("Message to take over from AI…");
   await expect(composer).toBeVisible();
 
@@ -611,6 +654,7 @@ test("closed WhatsApp conversation records opt-in and sends an approved template
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   await expect(page.getByText("Reply window closed", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Send WhatsApp template" }).click();
@@ -667,6 +711,7 @@ test("Messenger conversation stays manually replyable in the Human Agent window"
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   await expect(page.getByText(/Staff reply only/)).toBeVisible();
   const composer = page.getByPlaceholder("Message to take over from AI…");
@@ -697,6 +742,7 @@ test("Messenger stays closed after 24 hours when Human Agent is not enabled", as
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   await expect(page.getByText("Reply window closed", { exact: true })).toBeVisible();
   await expect(page.getByText(/Staff reply only/)).toHaveCount(0);
@@ -709,6 +755,7 @@ test("Inbox takeover and Return to AI change ownership through the correct endpo
   const apiState = await installApi(page);
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
   await page.getByRole("button", { name: "Take over conversation" }).click();
 
   await expect(page.getByRole("button", { name: "Return control to AI" })).toBeVisible();

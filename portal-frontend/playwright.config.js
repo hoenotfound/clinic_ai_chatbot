@@ -34,5 +34,11 @@ export default defineConfig({
         viewport: { width: 1194, height: 834 },
       },
     },
+    {
+      name: "iphone-portrait",
+      use: {
+        ...devices["iPhone 15 Pro Max"],
+      },
+    },
   ],
 });

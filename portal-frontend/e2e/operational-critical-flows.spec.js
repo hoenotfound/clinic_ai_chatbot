@@ -345,6 +345,20 @@ function expectNoUnexpectedApi(apiState) {
   expect(apiState.unexpected, "All browser API calls should be explicitly mocked").toEqual([]);
 }
 
+
+async function openInboxConversation(page, name = "Alex Customer") {
+  if ((page.viewportSize()?.width ?? 0) >= 1024) return;
+
+  const inbox = page.getByRole("complementary", { name: "Conversation inbox" });
+  const conversation = inbox.getByRole("button").filter({ hasText: name }).first();
+  await expect(conversation).toBeVisible();
+  await expect(conversation).toHaveAttribute("aria-current", "true");
+  await conversation.click();
+  await expect(
+    page.locator(`section[aria-label="Conversation with ${name}"]`)
+  ).toBeVisible();
+}
+
 test("closed 24-hour reply window blocks normal staff sending", async ({ page }) => {
   const old = isoAgo(26);
   const apiState = await installOperationalApi(page, {
@@ -356,6 +370,7 @@ test("closed 24-hour reply window blocks normal staff sending", async ({ page })
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   await expect(page.getByText("Reply window closed", { exact: true })).toBeVisible();
   await expect(
@@ -394,6 +409,7 @@ test("ordinary delivery failure can be retried and returns to sent state", async
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   await expect(page.getByText("Not delivered", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Retry" }).click();
@@ -427,6 +443,7 @@ test("policy-blocked delivery failure explains the restriction and hides Retry",
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   await expect(page.getByText("Not delivered", { exact: true })).toBeVisible();
   await expect(

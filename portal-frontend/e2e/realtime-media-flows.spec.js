@@ -438,6 +438,24 @@ async function installApi(page, {
       return fulfill(route, message, 201);
     }
 
+    const scheduledMatch = path.match(/^\/api\/conversations\/(\d+)\/scheduled-messages$/);
+    if (scheduledMatch && method === "GET") {
+      const contactId = Number(scheduledMatch[1]);
+      const contact = conversations.find(
+        (item) => Number(item.contact_id) === contactId
+      );
+      return fulfill(route, {
+        items: [],
+        lastInboundAt: contact?.latest_inbound_at || null,
+        windowEndsAt: null,
+        staffMode: contact?.mode === "human",
+        channel: contact?.channel || "whatsapp",
+        messagingAllowed: true,
+        policyCode: null,
+        policyMessage: "",
+      });
+    }
+
     unexpected.push({ method, path });
     return fulfill(
       route,
@@ -482,10 +500,25 @@ function expectNoUnexpectedApi(apiState) {
   expect(apiState.unexpected, "All browser API calls should be explicitly mocked").toEqual([]);
 }
 
+
+async function openInboxConversation(page, name = "Alex Customer") {
+  if ((page.viewportSize()?.width ?? 0) >= 1024) return;
+
+  const inbox = page.getByRole("complementary", { name: "Conversation inbox" });
+  const conversation = inbox.getByRole("button").filter({ hasText: name }).first();
+  await expect(conversation).toBeVisible();
+  await expect(conversation).toHaveAttribute("aria-current", "true");
+  await conversation.click();
+  await expect(
+    page.locator(`section[aria-label="Conversation with ${name}"]`)
+  ).toBeVisible();
+}
+
 test("selected conversation receives a new customer message through realtime refresh", async ({ page }) => {
   const apiState = await installApi(page);
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
   await expect(page.getByText("Hi, I would like to know more.", { exact: true }).last()).toBeVisible();
 
   const incoming = inboundMessage({
@@ -512,6 +545,7 @@ test("delivery status changes from Sent to Read immediately from realtime event"
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
   await expect(page.getByLabel("Sent")).toBeVisible();
 
   apiState.setDeliveryStatus(101, sent.id, {
@@ -549,6 +583,7 @@ test("realtime event for another conversation updates its list item without repl
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
   const selectedThread = page.getByRole("region", {
     name: "Conversation with Alex Customer",
   });
@@ -564,9 +599,13 @@ test("realtime event for another conversation updates its list item without repl
 
   await emitRealtime(page, { contactId: 202, messageId: 21, reason: "message" });
 
-  await expect(page.getByText("Bella realtime message", { exact: true }).first()).toBeVisible();
   await expect(selectedThread.getByText("Bella realtime message", { exact: true })).toHaveCount(0);
   await expect(selectedThread.getByText("Hi, I would like to know more.", { exact: true })).toBeVisible();
+
+  if ((page.viewportSize()?.width ?? 0) < 1024) {
+    await page.getByRole("button", { name: "Back to conversations" }).click();
+  }
+  await expect(page.getByText("Bella realtime message", { exact: true }).first()).toBeVisible();
   expect(apiState.getMessageFetchCount(101)).toBe(fetchCountBefore);
   expectNoUnexpectedApi(apiState);
 });
@@ -575,6 +614,7 @@ test("staff can preview an image and send it as multipart with its caption", asy
   const apiState = await installApi(page);
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   const input = page.locator('input[type="file"][accept="image/*"]');
   await input.setInputFiles(imagePayload("consultation-photo.png"));
@@ -604,6 +644,7 @@ test("failed image upload keeps the selected image and caption ready for retry",
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   const input = page.locator('input[type="file"][accept="image/*"]');
   await input.setInputFiles(imagePayload("retry-photo.png"));
@@ -624,6 +665,7 @@ test("staff can record, preview and send a voice message as multipart", async ({
   const apiState = await installApi(page);
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   await page.getByRole("button", { name: "Record a voice message" }).click();
   await expect(page.getByText("Recording voice message", { exact: true })).toBeVisible();
@@ -658,6 +700,7 @@ test("closed WhatsApp reply window blocks image selection and voice recording", 
   });
 
   await page.goto("/inbox");
+  await openInboxConversation(page);
 
   await expect(page.getByText("Reply window closed", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Attach an image" })).toBeDisabled();
