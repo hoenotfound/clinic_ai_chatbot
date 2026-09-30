@@ -86,14 +86,13 @@ test("Lead Distribution is selected from inside Tools rather than the main sideb
   assert.match(tools, /distributionActive/);
 });
 
-test("Automated Follow-up clearly states its three-channel scope and 24-hour boundary", () => {
+test("Tools route stays focused and does not render the redundant channel banner", () => {
   const toolsRoute = read("portal-frontend/src/pages/ToolsRoute.jsx");
 
-  assert.match(toolsRoute, /WhatsApp · Messenger · Instagram/);
-  assert.match(toolsRoute, /same settings on all three channels/);
-  assert.match(toolsRoute, /24-hour messaging window/);
-  assert.match(toolsRoute, /selectedTool !== "lead-temperature"/);
-  assert.match(toolsRoute, /selectedTool !== "lead-distribution"/);
+  assert.match(toolsRoute, /<Tools \/>/);
+  assert.doesNotMatch(toolsRoute, /WhatsApp · Messenger · Instagram/);
+  assert.doesNotMatch(toolsRoute, /24-hour messaging window/);
+  assert.doesNotMatch(toolsRoute, /useSearchParams/);
 });
 
 test("Lead Distribution UI exposes a simple location/global choice and view-only state", () => {
@@ -188,9 +187,13 @@ test("Tools cleanup keeps mobile navigation contained and Lead Distribution visu
   assert.match(tools, /w-full min-w-0 max-w-full shrink-0 overflow-hidden/);
   assert.doesNotMatch(tools, /min-w-\[11\.75rem\]/);
   assert.doesNotMatch(tools, /block truncate text-\[13px\] font-semibold/);
-  assert.match(tools, /min-h-\[5\.25rem\].*flex-col.*xl:flex-row/);
+  assert.match(tools, /min-h-16.*flex-col.*xl:flex-row/);
   assert.match(tools, /\{enabled \? "On" : "Off"\}/);
-  assert.match(tools, /grid min-w-0 max-w-full grid-cols-2 gap-1\.5 sm:grid-cols-4/);
+  assert.match(tools, /shortTitle="Follow-up"/);
+  assert.match(tools, /shortTitle="Comments"/);
+  assert.match(tools, /shortTitle="Temperature"/);
+  assert.match(tools, /shortTitle="Routing"/);
+  assert.match(tools, /grid min-w-0 max-w-full grid-cols-4 gap-1/);
   assert.match(distribution, />Lead distribution<\/h1>/);
   assert.doesNotMatch(distribution, /function ToolStatus\(/);
   assert.doesNotMatch(distribution, /function StatusBadge\(/);
