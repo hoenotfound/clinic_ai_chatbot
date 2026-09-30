@@ -33,6 +33,7 @@ const DEFAULT_COMMENT_AUTOMATION = Object.freeze({
 
 const RECOVERY_INTERVAL_MS = 60 * 1000;
 const RECOVERY_BATCH_SIZE = 20;
+const PAUSED_SAFETY_ONLY_MARKER = "_da_paused_safety_only";
 
 function settingsFromConfig(config = clinicConfig) {
   return {
@@ -280,9 +281,10 @@ async function flagDeterministicCommentForStaff({
     event.authorId,
     event.authorName || null
   );
-  const reason =
-    copy.attentionReason ||
-    `Needs staff review after ${event.channel} comment: ${event.text.slice(0, 180)}`;
+  const reason = [
+    copy.attentionReason || "Comment needs staff review.",
+    `${event.channel} comment: ${event.text.slice(0, 180)}`,
+  ].join(" ");
 
   // Match the normal DM safety path: an AI-owned conversation becomes a
   // synthetic Staff-mode handoff so a later ordinary DM cannot resume AI.
@@ -512,7 +514,16 @@ function createMetaCommentAutomationService({
         continue;
       }
 
-      const job = await repo.storeIncomingComment(event);
+      const eventToStore = automationEnabled
+        ? event
+        : {
+            ...event,
+            rawEvent: {
+              ...(event.rawEvent || {}),
+              [PAUSED_SAFETY_ONLY_MARKER]: true,
+            },
+          };
+      const job = await repo.storeIncomingComment(eventToStore);
       if (job) accepted.push(job);
     }
     return accepted;
@@ -530,7 +541,9 @@ function createMetaCommentAutomationService({
     const reason = skipReason(event, settings);
     if (reason) return repo.markSkipped(job.id, reason);
 
-    const automationEnabled = repliesEnabled();
+    const acceptedWhilePaused =
+      event.rawEvent?.[PAUSED_SAFETY_ONLY_MARKER] === true;
+    const automationEnabled = repliesEnabled() && !acceptedWhilePaused;
     let preservePrivateReplyPendingOnFailure = false;
 
     try {
@@ -726,6 +739,7 @@ const service = createMetaCommentAutomationService();
 
 module.exports = {
   DEFAULT_COMMENT_AUTOMATION,
+  PAUSED_SAFETY_ONLY_MARKER,
   createMetaCommentAutomationService,
   buildCommentAttribution,
   deterministicCommentPublicHandoff,
