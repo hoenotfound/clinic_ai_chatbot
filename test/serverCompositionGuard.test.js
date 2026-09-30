@@ -87,3 +87,18 @@ test("webhook parsers still verify raw signatures and portal routes stay protect
     assert.match(appSource, pattern);
   }
 });
+
+
+test("urgent safety handling bypasses model generation and first-message intro copy", () => {
+  const urgentBranchAt = serverSource.indexOf("if (urgentSafety) {");
+  const aiCallAt = serverSource.indexOf("const rawAiReply = await ai.getReply");
+  const replyAt = serverSource.indexOf("const reply = isFirstMessage && !urgentSafety");
+
+  assert.ok(urgentBranchAt >= 0, "urgent deterministic branch should exist");
+  assert.ok(aiCallAt > urgentBranchAt, "AI generation must be nested after the urgent branch");
+  assert.ok(replyAt > aiCallAt, "reply composition should follow deterministic/model selection");
+  assert.match(
+    serverSource,
+    /fallbackHandoffReply\([\s\S]*?\{ urgent: true \}/
+  );
+});
