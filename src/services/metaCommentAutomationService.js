@@ -15,6 +15,7 @@ const {
 } = require("../utils/attentionTriggers");
 const { fallbackHandoffReply } = require("../utils/handoffReply");
 const { detectMessageLanguage } = require("../utils/chatLanguage");
+const { pauseAiForHumanHandoff } = require("./aiHandoffService");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 
 const DEFAULT_COMMENT_AUTOMATION = Object.freeze({
@@ -212,12 +213,18 @@ function deterministicCommentPublicHandoff(
 
   if (urgent) {
     if (language === "zh") {
-      return "请现在直接联系诊所，我们也已经通知团队跟进你。";
+      return privateReplyEnabled
+        ? "请现在直接联系诊所，我们也已经通知团队跟进你。"
+        : "请现在直接联系诊所；如果症状严重、越来越严重或有呼吸困难，请立即寻求紧急医疗帮助。我们也已经通知团队跟进你。";
     }
     if (language === "ms") {
-      return "Tolong hubungi klinik terus sekarang ya. Saya dah flag pada team kami untuk follow up.";
+      return privateReplyEnabled
+        ? "Tolong hubungi klinik terus sekarang ya. Saya dah flag pada team kami untuk follow up."
+        : "Tolong hubungi klinik terus sekarang. Kalau simptom teruk, makin teruk atau susah bernafas, dapatkan rawatan kecemasan segera. Saya dah flag pada team kami.";
     }
-    return "Please contact the clinic directly now. We've also flagged this for our team.";
+    return privateReplyEnabled
+      ? "Please contact the clinic directly now. We've also flagged this for our team."
+      : "Please contact the clinic directly now. If symptoms are severe, getting worse, or you're having trouble breathing, seek emergency medical care immediately. We've also flagged this for our team.";
   }
 
   if (language === "zh") {
@@ -264,6 +271,7 @@ async function flagDeterministicCommentForStaff({
   event,
   copy,
   contacts = contactsRepo,
+  handoff = pauseAiForHumanHandoff,
 }) {
   if (!copy?.deterministicSafety || !event?.authorId) return null;
 
@@ -272,12 +280,18 @@ async function flagDeterministicCommentForStaff({
     event.authorId,
     event.authorName || null
   );
-  await contacts.setAttention(
-    contact.id,
-    true,
+  const reason =
     copy.attentionReason ||
-      `Needs staff review after ${event.channel} comment: ${event.text.slice(0, 180)}`
-  );
+    `Needs staff review after ${event.channel} comment: ${event.text.slice(0, 180)}`;
+
+  // Match the normal DM safety path: an AI-owned conversation becomes a
+  // synthetic Staff-mode handoff so a later ordinary DM cannot resume AI.
+  const handedOff = await handoff(contact.id, reason);
+  if (handedOff) return handedOff;
+
+  // If staff already owns the conversation, preserve that ownership and still
+  // refresh the Needs Attention signal/reason for the new safety comment.
+  await contacts.setAttention(contact.id, true, reason);
   return contact;
 }
 
@@ -479,15 +493,25 @@ function createMetaCommentAutomationService({
   attribution = leadAttributionService,
   config = clinicConfig,
   repliesEnabled = automatedRepliesEnabled,
+  handoff = pauseAiForHumanHandoff,
 } = {}) {
   async function acceptIncomingComments(body) {
     const settings = settingsFromConfig(config);
-    if (!settings.enabled || !repliesEnabled()) return [];
+    if (!settings.enabled) return [];
 
+    const automationEnabled = repliesEnabled();
     const accepted = [];
     for (const event of parseIncomingCommentEvents(body)) {
       const reason = skipReason(event, settings);
       if (reason) continue;
+
+      // The global reply switch silences customer-facing automation, but it
+      // must not silence the safety monitor. While paused, persist only clear
+      // deterministic safety/handoff comments for staff review.
+      if (!automationEnabled && !deterministicCommentSafetyCopy(event, settings, config)) {
+        continue;
+      }
+
       const job = await repo.storeIncomingComment(event);
       if (job) accepted.push(job);
     }
@@ -503,10 +527,26 @@ function createMetaCommentAutomationService({
 
     const settings = settingsFromConfig(config);
     const event = eventFromJob(job);
-    const reason = !repliesEnabled()
-      ? "Automated customer replies are globally paused."
-      : skipReason(event, settings);
+    const reason = skipReason(event, settings);
     if (reason) return repo.markSkipped(job.id, reason);
+
+    const automationEnabled = repliesEnabled();
+    if (!automationEnabled) {
+      const safetyCopy = deterministicCommentSafetyCopy(event, settings, config);
+      if (safetyCopy) {
+        await flagDeterministicCommentForStaff({
+          event,
+          copy: safetyCopy,
+          contacts,
+          handoff,
+        });
+        return repo.markSkipped(
+          job.id,
+          "Automated customer replies are globally paused; safety comment was flagged for staff."
+        );
+      }
+      return repo.markSkipped(job.id, "Automated customer replies are globally paused.");
+    }
 
     let preservePrivateReplyPendingOnFailure = false;
 
@@ -535,6 +575,7 @@ function createMetaCommentAutomationService({
           event,
           copy,
           contacts,
+          handoff,
         });
       }
 
