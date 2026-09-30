@@ -719,7 +719,7 @@ function FollowUpTool({
               {reviewTranslations && (
                 <div className="mt-4 border-t border-[var(--color-border)] pt-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-[11px] text-[var(--color-text-muted)]">Review or fine-tune any language. Your manual edits are preserved when Save refreshes the other versions.</p>
+                    <p className="text-xs text-[var(--color-text-muted)]">Review or fine-tune any language. Your manual edits are preserved when Save refreshes the other versions.</p>
                     <button
                       type="button"
                       onClick={onGenerateTranslations}
@@ -739,14 +739,14 @@ function FollowUpTool({
                         role="tab"
                         aria-selected={translationLanguage === language.key}
                         onClick={() => setTranslationLanguage(language.key)}
-                        className={`shrink-0 border-b-2 px-3 py-2 text-[11px] font-semibold ${translationLanguage === language.key ? "border-[var(--color-primary)] text-[var(--color-primary)]" : "border-transparent text-[var(--color-text-muted)]"}`}
+                        className={`shrink-0 border-b-2 px-3 py-2 text-xs font-semibold ${translationLanguage === language.key ? "border-[var(--color-primary)] text-[var(--color-primary)]" : "border-transparent text-[var(--color-text-muted)]"}`}
                       >
                         {language.label}
                       </button>
                     ))}
                   </div>
                   <div className="mt-4 flex items-center justify-between gap-3">
-                    <label htmlFor={`follow-up-${translationLanguage}`} className="text-[11px] font-semibold">{activeLanguage?.label} message</label>
+                    <label htmlFor={`follow-up-${translationLanguage}`} className="text-xs font-semibold">{activeLanguage?.label} message</label>
                     <span className="text-[10px] text-[var(--color-text-muted)]">{form.translations[translationLanguage]?.length || 0}/1000</span>
                   </div>
                   <textarea
@@ -769,7 +769,7 @@ function FollowUpTool({
               <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]">
                 <img src={form.imageUrl} alt="Follow-up graphic preview" className="max-h-72 w-full object-contain" />
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] bg-white px-4 py-3">
-                  <span className="text-[11px] text-[var(--color-text-muted)]">Graphic attached</span>
+                  <span className="text-xs text-[var(--color-text-muted)]">Graphic attached</span>
                   <div className="flex gap-3">
                     <button type="button" onClick={() => imageInputRef.current?.click()} disabled={uploadingImage} className="text-xs font-semibold text-[var(--color-primary)] disabled:opacity-50">Replace</button>
                     <button type="button" onClick={() => setForm((current) => ({ ...current, imageUrl: "" }))} disabled={uploadingImage} className="text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)] disabled:opacity-50">Remove</button>
@@ -785,7 +785,7 @@ function FollowUpTool({
               >
                 {uploadingImage ? <Spinner className="h-5 w-5" /> : <ImageIcon className="h-5 w-5 text-[var(--color-primary)]" />}
                 <span className="mt-2 text-xs font-semibold">{uploadingImage ? "Uploading graphic…" : "Choose a graphic"}</span>
-                <span className="mt-1 text-[11px] text-[var(--color-text-muted)]">JPG or PNG, up to 5MB</span>
+                <span className="mt-1 text-xs text-[var(--color-text-muted)]">JPG or PNG, up to 5MB</span>
               </button>
             )}
           </Card>
@@ -1382,7 +1382,6 @@ function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChange
             <div className="max-w-3xl">
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">{title}</h1>
-                <ToolStatus active={savedEnabled} unsaved={hasUnsavedChanges} />
               </div>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-text-muted)] sm:text-[15px]">{description}</p>
             </div>
@@ -1472,22 +1471,6 @@ function SectionHeading({ number, title, description }) {
         {description && <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)] sm:text-[13px]">{description}</p>}
       </div>
     </div>
-  );
-}
-
-function ToolStatus({ active, unsaved }) {
-  const label = unsaved ? "Unsaved changes" : active ? "Active" : "Paused";
-  const dotClass = unsaved
-    ? "bg-[var(--color-accent)]"
-    : active
-      ? "bg-[var(--color-primary)]"
-      : "bg-[var(--color-text-muted)]/45";
-
-  return (
-    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--color-text-muted)]">
-      <span className={`h-2 w-2 rounded-full ${dotClass}`} aria-hidden="true" />
-      {label}
-    </span>
   );
 }
 
