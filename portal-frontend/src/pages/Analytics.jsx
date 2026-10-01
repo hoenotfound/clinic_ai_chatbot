@@ -271,7 +271,15 @@ export default function Analytics() {
           className="mt-3 flex w-full items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-left sm:hidden"
         >
           <span className="min-w-0">
-            <span className="block text-xs font-semibold text-[var(--color-text)]">Filters</span>
+            <span className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-[var(--color-text)]">Filters</span>
+              {hasPendingChanges && !filterActionPending && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-accent)]">
+                  <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)]" />
+                  Unsaved
+                </span>
+              )}
+            </span>
             <span className="mt-0.5 block truncate text-[11px] text-[var(--color-text-muted)]">
               {filterActionPending ? "Updating analytics…" : mobileFilterSummary}
             </span>
