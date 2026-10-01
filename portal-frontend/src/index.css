@@ -206,7 +206,7 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
 
 
 /* The sidebar uses a real compact/expanded state instead of waiting for a
-   very wide desktop breakpoint. Phones stay at 64px, tablet/laptop compact
+   very wide desktop breakpoint. Phones keep a 64px rail, tablet/laptop compact
    mode is 72px, and expanded navigation is 220px. */
 .app-sidebar {
   position: relative;
@@ -214,6 +214,13 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
   width: 4rem;
   overflow: visible;
   transition: width 200ms ease;
+}
+
+.app-sidebar-brand,
+.app-sidebar-nav,
+.app-sidebar-utility {
+  position: relative;
+  z-index: 1;
 }
 
 .app-sidebar-brand {
@@ -251,6 +258,8 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
   gap: 0;
   padding: 0.625rem;
   color: var(--color-sidebar-text);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
 }
 
 .app-sidebar-nav-item:hover,
@@ -284,12 +293,27 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
     color 150ms ease;
 }
 
+/* Keep a generous 44px hit target on touch devices while the visible control
+   remains the same restrained 24px circle. */
 .app-sidebar-toggle {
   position: absolute;
-  top: 1.1rem;
-  right: -0.75rem;
+  top: 0.5rem;
+  right: -1.375rem;
   z-index: 30;
-  display: none;
+  display: flex;
+  height: 2.75rem;
+  width: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--color-sidebar-text-muted);
+}
+
+.app-sidebar-toggle-visual {
+  position: relative;
+  z-index: 1;
+  display: flex;
   height: 1.5rem;
   width: 1.5rem;
   align-items: center;
@@ -297,7 +321,6 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 999px;
   background: var(--color-sidebar);
-  color: var(--color-sidebar-text-muted);
   box-shadow: 0 2px 8px rgba(8, 18, 14, 0.18);
   transition:
     background-color 150ms ease,
@@ -305,7 +328,7 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
     border-color 150ms ease;
 }
 
-.app-sidebar-toggle:hover {
+.app-sidebar-toggle:hover .app-sidebar-toggle-visual {
   border-color: rgba(255, 255, 255, 0.24);
   background: var(--color-sidebar-hover);
   color: #ffffff;
@@ -329,15 +352,15 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
   pointer-events: none;
 }
 
+.app-sidebar-mobile-backdrop {
+  display: none;
+}
+
 /* Tablet and laptop widths can toggle between the 72px icon rail and a
    220px navigation sidebar. React chooses the initial state and persists it. */
 @media (min-width: 640px) {
   .app-sidebar {
     width: 4.5rem;
-  }
-
-  .app-sidebar-toggle {
-    display: flex;
   }
 
   .app-sidebar-brand {
@@ -408,12 +431,89 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
   }
 }
 
-/* The phone rail intentionally stays icon-only, even if an expanded desktop
-   preference was saved earlier. That preference becomes active again when
-   the viewport returns to tablet/laptop size. */
+/* Phones keep a 64px layout rail, but the same toggle opens a temporary
+   220px panel over the content so icon meanings are always discoverable. */
 @media (max-width: 639px) {
-  .app-sidebar[data-expanded="true"] {
+  .app-sidebar {
     width: 4rem;
+  }
+
+  .app-sidebar-mobile-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 15;
+    display: block;
+    border: 0;
+    background: rgba(9, 16, 13, 0.28);
+  }
+
+  .app-sidebar[data-mobile-open="true"]::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 0;
+    width: 13.75rem;
+    background: var(--color-sidebar);
+    box-shadow: 10px 0 28px rgba(8, 18, 14, 0.18);
+  }
+
+  .app-sidebar[data-mobile-open="true"] .app-sidebar-brand,
+  .app-sidebar[data-mobile-open="true"] .app-sidebar-nav,
+  .app-sidebar[data-mobile-open="true"] .app-sidebar-utility {
+    width: 13.75rem;
+  }
+
+  .app-sidebar[data-mobile-open="true"] .app-sidebar-brand {
+    justify-content: flex-start;
+    padding: 0.875rem 1rem;
+  }
+
+  .app-sidebar[data-mobile-open="true"] .app-sidebar-brand-main {
+    gap: 0.625rem;
+  }
+
+  .app-sidebar[data-mobile-open="true"] .app-sidebar-brand-copy {
+    max-width: 9.5rem;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .app-sidebar[data-mobile-open="true"] .app-sidebar-nav {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .app-sidebar[data-mobile-open="true"] .app-sidebar-utility {
+    padding: 0.625rem 0.75rem 0.75rem;
+  }
+
+  .app-sidebar[data-mobile-open="true"] .app-sidebar-nav-item,
+  .app-sidebar[data-mobile-open="true"] .app-sidebar-logout {
+    justify-content: flex-start;
+    gap: 0.75rem;
+    padding: 0.625rem 0.75rem;
+  }
+
+  .app-sidebar[data-mobile-open="true"] .app-sidebar-label {
+    max-width: 9rem;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .app-sidebar[data-mobile-open="true"] .app-sidebar-user-row {
+    justify-content: flex-start;
+    gap: 0.625rem;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .app-sidebar[data-mobile-open="true"] .app-sidebar-user-copy {
+    max-width: 9rem;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .app-sidebar[data-mobile-open="true"] .app-sidebar-toggle {
+    right: auto;
+    left: calc(13.75rem - 1.375rem);
   }
 }
 
@@ -427,7 +527,7 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
   }
 
   .app-sidebar-toggle {
-    top: 0.875rem;
+    top: 0.25rem;
   }
 
   .app-sidebar-nav-item,
