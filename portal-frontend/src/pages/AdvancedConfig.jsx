@@ -334,6 +334,28 @@ export default function AdvancedConfig() {
                   <div className="min-w-0 text-xs leading-5">
                     <p className="break-words text-[var(--color-text-muted)]">Before: {change.before}</p>
                     <p className="break-words font-semibold text-[var(--color-text)]">After: {change.after}</p>
+                    {change.details && (
+                      <div className="mt-2 space-y-1.5 rounded-lg bg-[var(--color-bg)] px-3 py-2.5">
+                        {change.details.added?.length > 0 && (
+                          <p className="break-words">
+                            <span className="font-semibold text-[var(--color-primary)]">Added:</span>{" "}
+                            {change.details.added.join(" · ")}
+                          </p>
+                        )}
+                        {change.details.removed?.length > 0 && (
+                          <p className="break-words">
+                            <span className="font-semibold text-[var(--color-danger)]">Removed:</span>{" "}
+                            {change.details.removed.join(" · ")}
+                          </p>
+                        )}
+                        {change.details.updated?.length > 0 && (
+                          <p className="break-words">
+                            <span className="font-semibold text-[var(--color-text)]">Updated:</span>{" "}
+                            {change.details.updated.join(" · ")}
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
