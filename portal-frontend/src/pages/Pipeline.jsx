@@ -752,7 +752,7 @@ export default function Pipeline() {
       )}
 
       <div className="hidden shrink-0 border-b border-[var(--color-border)] px-3.5 py-2 sm:block sm:px-5 lg:px-6 2xl:px-7 2xl:py-3">
-        <div className="flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5 min-[1800px]:hidden">
+        <div data-testid="pipeline-branch-rail" className="flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5 min-[1800px]:hidden">
           {branchCards.map((branch) => (
             <button
               key={branch.key}
