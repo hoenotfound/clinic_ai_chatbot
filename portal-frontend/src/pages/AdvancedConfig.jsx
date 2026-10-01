@@ -228,7 +228,7 @@ export default function AdvancedConfig() {
         </header>
 
         <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-xs leading-5 text-[var(--color-text-muted)]">
-          Business profile internals and Automation Tools settings are intentionally excluded. Every JSON import creates a backup first, and applying through this page updates the running chatbot immediately without a Render restart.
+          Business profile internals and Automation Tools settings are intentionally excluded. Every JSON import creates a backup first, and applying through this page updates the running chatbot immediately without a Render restart. Backups preserve JSON values only, not uploaded image files that are later deleted or pruned.
         </div>
 
         {error && (
