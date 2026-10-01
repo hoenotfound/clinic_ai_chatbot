@@ -6,8 +6,10 @@ const express = require("express");
 const { verifyWebhookSignature } = require("../src/middleware/verifyWebhookSignature");
 const { verifyMetaWebhookSignature } = require("../src/middleware/verifyMetaWebhookSignature");
 const {
+  ADVANCED_CONFIG_JSON_LIMIT,
   PORTAL_JSON_LIMIT,
   WEBHOOK_JSON_LIMIT,
+  createAdvancedConfigJsonParser,
   createPortalJsonParser,
   createWebhookJsonParser,
   payloadTooLargeErrorHandler,
@@ -88,9 +90,10 @@ function oversizedJson(bytes) {
   return JSON.stringify({ payload: "z".repeat(bytes) });
 }
 
-test("request body limits are explicit and keep webhook capacity above portal JSON", () => {
+test("request body limits are explicit and keep Advanced Config isolated from normal portal JSON", () => {
   assert.equal(WEBHOOK_JSON_LIMIT, "2mb");
   assert.equal(PORTAL_JSON_LIMIT, "100kb");
+  assert.equal(ADVANCED_CONFIG_JSON_LIMIT, "512kb");
 });
 
 test("signed WhatsApp webhook batch above 100 KB is accepted below the 2 MB webhook limit", async (t) => {
@@ -222,6 +225,42 @@ test("portal API JSON remains capped at the existing 100 KB behavior", async () 
     const large = await postRaw(url, "/api/test", oversizedJson(101 * 1024));
     assert.equal(large.status, 413);
     assert.equal((await large.json()).code, "payload_too_large");
+  });
+});
+
+test("Advanced Config accepts larger JSON while normal portal routes keep the 100 KB cap", async () => {
+  const app = express();
+  const portalParser = createPortalJsonParser();
+  const advancedParser = createAdvancedConfigJsonParser();
+
+  app.use("/api", (req, res, next) => {
+    const parser = req.path === "/advanced-config" || req.path.startsWith("/advanced-config/")
+      ? advancedParser
+      : portalParser;
+    return parser(req, res, next);
+  });
+  app.post("/api/test", (req, res) => res.json({ ok: true, size: req.body.payload.length }));
+  app.post("/api/advanced-config/preview", (req, res) => res.json({ ok: true, size: req.body.payload.length }));
+  app.use(payloadTooLargeErrorHandler);
+
+  await withServer(app, async (url) => {
+    const mediumBody = oversizedJson(200 * 1024);
+
+    const normal = await postRaw(url, "/api/test", mediumBody);
+    assert.equal(normal.status, 413);
+    assert.equal((await normal.json()).code, "payload_too_large");
+
+    const advanced = await postRaw(url, "/api/advanced-config/preview", mediumBody);
+    assert.equal(advanced.status, 200);
+    assert.equal((await advanced.json()).ok, true);
+
+    const tooLarge = await postRaw(
+      url,
+      "/api/advanced-config/preview",
+      oversizedJson(513 * 1024)
+    );
+    assert.equal(tooLarge.status, 413);
+    assert.equal((await tooLarge.json()).code, "payload_too_large");
   });
 });
 

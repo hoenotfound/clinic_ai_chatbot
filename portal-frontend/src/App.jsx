@@ -18,6 +18,7 @@ import ConversationFlow from "./pages/ConversationFlow";
 import SetupStatus from "./pages/SetupStatus";
 import GoLive from "./pages/GoLive";
 import ClientSetupWizard from "./pages/ClientSetupWizard";
+import AdvancedConfig from "./pages/AdvancedConfig";
 import {
   readClientSetupProgress,
   shouldAutoStartClientSetup,
@@ -165,6 +166,14 @@ export default function App() {
               element={(
                 <ProtectedRoute adminOnly>
                   <SettingsSectionLayout><SetupStatus /></SettingsSectionLayout>
+                </ProtectedRoute>
+              )}
+            />
+            <Route
+              path="/settings/advanced-config"
+              element={(
+                <ProtectedRoute adminOnly>
+                  <SettingsSectionLayout><AdvancedConfig /></SettingsSectionLayout>
                 </ProtectedRoute>
               )}
             />

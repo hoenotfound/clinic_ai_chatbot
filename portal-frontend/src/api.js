@@ -146,6 +146,19 @@ export const api = {
     }),
   getConfig: () => request("/config"),
   updateConfig: (updates) => request("/config", { method: "PATCH", body: JSON.stringify(updates) }),
+  getAdvancedConfig: () => request("/advanced-config"),
+  previewAdvancedConfig: (config) =>
+    request("/advanced-config/preview", {
+      method: "POST",
+      body: JSON.stringify({ config }),
+    }),
+  applyAdvancedConfig: (config, baseFingerprint) =>
+    request("/advanced-config/apply", {
+      method: "POST",
+      body: JSON.stringify({ config, baseFingerprint }),
+    }),
+  restoreAdvancedConfig: (snapshotId) =>
+    request(`/advanced-config/restore/${snapshotId}`, { method: "POST" }),
   getCommentAutomationStatus: () => request("/config/comment-automation/status"),
   getLeadDistributionStatus: () => request("/config/lead-distribution/status"),
   recoverUnassignedLeads: () =>

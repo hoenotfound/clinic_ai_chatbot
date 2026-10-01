@@ -19,7 +19,9 @@ test("server entry point delegates Express composition without moving message pr
 });
 
 test("application composition preserves security and readiness middleware ordering", () => {
-  const portalParserAt = appSource.indexOf('app.use("/api", createPortalJsonParser())');
+  const portalParserAt = appSource.indexOf("const portalJsonParser = createPortalJsonParser()");
+  const advancedParserAt = appSource.indexOf("const advancedConfigJsonParser = createAdvancedConfigJsonParser()");
+  const parserMuxAt = appSource.indexOf('app.use("/api", (req, res, next) => {');
   const sessionAt = appSource.indexOf('cookieSession({');
   const rootHealthAt = appSource.indexOf('app.get("/", startupReadiness.rootReadinessHandler)');
   const readinessGateAt = appSource.indexOf("app.use(startupReadiness.requireReady)");
@@ -32,8 +34,14 @@ test("application composition preserves security and readiness middleware orderi
   const payloadHandlerAt = appSource.indexOf("app.use(payloadTooLargeErrorHandler)");
   const staticAt = appSource.indexOf("app.use(express.static(portalBuildPath))");
 
-  assert.ok(portalParserAt >= 0, "portal JSON parser should remain installed");
-  assert.ok(sessionAt > portalParserAt, "session middleware should stay after portal parsing");
+  assert.ok(portalParserAt >= 0, "normal portal JSON parser should remain installed");
+  assert.ok(advancedParserAt > portalParserAt, "Advanced Config should get its own parser");
+  assert.ok(parserMuxAt > advancedParserAt, "API parser selection should be installed");
+  assert.ok(
+    appSource.includes('req.path === "/advanced-config" || req.path.startsWith("/advanced-config/")'),
+    "only Advanced Config should select the larger JSON parser"
+  );
+  assert.ok(sessionAt > parserMuxAt, "session middleware should stay after portal parsing");
   assert.ok(rootHealthAt > sessionAt, "health routes should remain after API session setup");
   assert.ok(readinessGateAt > rootHealthAt, "readiness must gate non-health traffic");
   assert.ok(whatsappAt > readinessGateAt, "webhook traffic must stay readiness-gated");
@@ -76,6 +84,7 @@ test("webhook parsers still verify raw signatures and portal routes stay protect
   for (const route of [
     "conversations",
     "config",
+    "advanced-config",
     "contacts",
     "pipeline",
     "setup-status",

@@ -20,8 +20,28 @@ const STAFF_USER = {
   businessProfile: null,
 };
 
-async function mockPortalApi(page, { loggedIn = false } = {}) {
+const ADMIN_USER = {
+  ...STAFF_USER,
+  id: 1,
+  username: "admin-test",
+  displayName: "Admin Test",
+  role: "admin",
+  permissions: {
+    ...STAFF_USER.permissions,
+    manage_users: true,
+  },
+};
+
+async function mockPortalApi(page, { loggedIn = false, user = STAFF_USER } = {}) {
   let authenticated = loggedIn;
+  let advancedConfig = {
+    businessName: "Test Clinic",
+    clinicName: "Test Clinic",
+    businessDescription: "A test clinic",
+    aiAssistantName: "Ava",
+    introMessage: "Hi, how can I help?",
+    tone: "Warm and professional",
+  };
 
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -52,7 +72,7 @@ async function mockPortalApi(page, { loggedIn = false } = {}) {
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ username: STAFF_USER.username, user: STAFF_USER }),
+        body: JSON.stringify({ username: user.username, user }),
       });
     }
 
@@ -61,7 +81,7 @@ async function mockPortalApi(page, { loggedIn = false } = {}) {
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ username: STAFF_USER.username, user: STAFF_USER }),
+        body: JSON.stringify({ username: user.username, user }),
       });
     }
 
@@ -223,6 +243,56 @@ async function mockPortalApi(page, { loggedIn = false } = {}) {
       });
     }
 
+    if (path === "/api/advanced-config" && method === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          config: advancedConfig,
+          fingerprint: "fixture-fingerprint",
+          editableKeys: Object.keys(advancedConfig),
+          history: [],
+        }),
+      });
+    }
+
+    if (path === "/api/advanced-config/preview" && method === "POST") {
+      const payload = request.postDataJSON();
+      const updates = payload?.config || {};
+      const changes = Object.keys(updates)
+        .filter((key) => JSON.stringify(advancedConfig[key]) !== JSON.stringify(updates[key]))
+        .map((key) => ({
+          key,
+          before: String(advancedConfig[key] ?? "Empty"),
+          after: String(updates[key] ?? "Empty"),
+        }));
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          valid: true,
+          baseFingerprint: "fixture-fingerprint",
+          changes,
+          normalizedUpdates: updates,
+        }),
+      });
+    }
+
+    if (path === "/api/advanced-config/apply" && method === "POST") {
+      const payload = request.postDataJSON();
+      advancedConfig = { ...advancedConfig, ...(payload?.config || {}) };
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          config: advancedConfig,
+          fingerprint: "fixture-fingerprint-2",
+          changes: [{ key: "tone", before: "Warm and professional", after: "Short and friendly" }],
+          history: [],
+        }),
+      });
+    }
+
     if (path === "/api/config/comment-automation/status") {
       return route.fulfill({
         status: 200,
@@ -325,4 +395,24 @@ test("staff can reach the main portal routes without page-level overflow", async
       }
     }
   }
+});
+
+
+test("admin can validate and apply Advanced Config without horizontal overflow", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true, user: ADMIN_USER });
+  await page.goto("/settings/advanced-config");
+
+  await expect(page).toHaveURL(/\/settings\/advanced-config$/);
+  await expect(page.getByRole("heading", { name: "Advanced Config" })).toBeVisible();
+  await expect(page.getByLabel("JSON configuration")).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+
+  const editor = page.getByLabel("JSON configuration");
+  await editor.fill(JSON.stringify({ tone: "Short and friendly" }, null, 2));
+  await page.getByRole("button", { name: "Validate & review" }).click();
+  await expect(page.getByRole("heading", { name: "Review changes" })).toBeVisible();
+  await expect(page.getByText("tone", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Apply 1 change" }).click();
+  await expect(page.getByText("Applied 1 configuration change.")).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
 });
