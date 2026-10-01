@@ -16,6 +16,7 @@ const promoImagesRepo = require("./db/promoImagesRepo");
 const { verifyWebhookSignature } = require("./middleware/verifyWebhookSignature");
 const { verifyMetaWebhookSignature } = require("./middleware/verifyMetaWebhookSignature");
 const {
+  createAdvancedConfigJsonParser,
   createPortalJsonParser,
   createWebhookJsonParser,
   payloadTooLargeErrorHandler,
@@ -66,9 +67,18 @@ function createApp({
   // validated against the exact bytes received.
   const webhookJsonParser = createWebhookJsonParser(verifyWebhookSignature);
   const metaWebhookJsonParser = createWebhookJsonParser(verifyMetaWebhookSignature);
+  const portalJsonParser = createPortalJsonParser();
+  const advancedConfigJsonParser = createAdvancedConfigJsonParser();
 
   // Portal API: normal JSON parsing + signed session cookie for staff login.
-  app.use("/api", createPortalJsonParser());
+  // Advanced Config alone gets a larger body budget because detailed service,
+  // FAQ and AI instruction JSON can legitimately exceed the normal portal cap.
+  app.use("/api", (req, res, next) => {
+    const parser = req.path === "/advanced-config" || req.path.startsWith("/advanced-config/")
+      ? advancedConfigJsonParser
+      : portalJsonParser;
+    return parser(req, res, next);
+  });
   app.use(
     "/api",
     cookieSession({
