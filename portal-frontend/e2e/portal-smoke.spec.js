@@ -438,6 +438,6 @@ test("admin can review meaningful Advanced Config diff and apply without horizon
   await expect(page.getByText("Short and friendly", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Apply changes" }).click();
-  await expect(page.getByText("Applied 1 configuration change.")).toBeVisible();
+  await expect(page.getByText("Configuration changes applied.")).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
 });
