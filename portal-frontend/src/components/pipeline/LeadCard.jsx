@@ -49,9 +49,9 @@ export default function LeadCard({
       draggable={canMoveLead}
       onDragStart={canMoveLead ? (event) => onDragStart(event, lead) : undefined}
       onClick={() => onOpen(lead.id)}
-      className={`w-full rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--color-primary)]/40 hover:shadow-md active:translate-y-0 ${pointerDragging ? "opacity-60 ring-2 ring-[var(--color-primary)]/30" : ""}`}
+      className={`w-full rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--color-primary)]/40 hover:shadow-md active:translate-y-0 sm:p-3.5 ${pointerDragging ? "opacity-60 ring-2 ring-[var(--color-primary)]/30" : ""}`}
     >
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-2.5 sm:gap-3">
         <ContactAvatar src={lead.photo_url} channel={lead.channel} size={38} />
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
@@ -68,7 +68,7 @@ export default function LeadCard({
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-1.5">
+      <div className="mt-2.5 flex flex-wrap gap-1.5 sm:mt-3">
         <Badge className={temperatureStyle(lead.temperature)}>{capitalize(lead.temperature)}</Badge>
         <Badge className="bg-[var(--color-primary-light)] text-[var(--color-primary)]">
           {lead.branch_name || "Unassigned"}
@@ -87,13 +87,13 @@ export default function LeadCard({
       </div>
 
       {lead.attribution?.source === "meta_ads" && metaAdLabel && (
-        <p className="mt-2.5 truncate text-[10px] font-medium text-[var(--color-text-muted)]" title={metaAdLabel.value}>
+        <p className="mt-2 truncate text-[10px] font-medium text-[var(--color-text-muted)] sm:mt-2.5" title={metaAdLabel.value}>
           {metaAdLabel.prefix}: {metaAdLabel.value}
         </p>
       )}
 
       {(lead.appointment_at || lead.next_follow_up_at) && (
-        <div className="mt-3 space-y-1.5 border-t border-[var(--color-border)] pt-2.5 text-[11px]">
+        <div className="mt-2.5 space-y-1.5 border-t border-[var(--color-border)] pt-2 text-[11px] sm:mt-3 sm:pt-2.5">
           {lead.appointment_at && (
             <MetaRow icon="calendar" label={formatDateTime(lead.appointment_at)} />
           )}
@@ -107,7 +107,7 @@ export default function LeadCard({
         </div>
       )}
 
-      <div className="mt-3 flex items-center justify-between gap-2 text-[10px] text-[var(--color-text-muted)]">
+      <div className="mt-2.5 flex items-center justify-between gap-2 text-[10px] text-[var(--color-text-muted)] sm:mt-3">
         <span className="truncate">{lead.owner_username ? `Owner: ${lead.owner_username}` : "No owner"}</span>
         <span className="flex shrink-0 items-center gap-1.5">
           <span>{formatRelative(lead.last_message_at, now)}</span>
@@ -137,7 +137,7 @@ export default function LeadCard({
 }
 
 function Badge({ children, className }) {
-  return <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${className}`}>{children}</span>;
+  return <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide sm:px-2 sm:py-1 ${className}`}>{children}</span>;
 }
 
 function MetaRow({ icon, label, danger }) {
