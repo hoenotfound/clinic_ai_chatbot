@@ -200,6 +200,96 @@ test("Advanced Config enforces handoff rules and protected industry guardrails",
   assert.equal(valid.ok, true);
 });
 
+test("Advanced Config matches core Settings validation for business details, hours, contact, and clinic branches", () => {
+  const current = currentConfig();
+
+  const blankDescription = prepareAdvancedConfigPayload(
+    { businessDescription: "   " },
+    current
+  );
+  assert.equal(blankDescription.ok, false);
+  assert.deepEqual(blankDescription.invalidKeys, ["businessDescription"]);
+  assert.match(blankDescription.error, /description can't be empty/i);
+
+  const blankHours = prepareAdvancedConfigPayload(
+    { hours: { general: "   ", closed: "Sunday" } },
+    current
+  );
+  assert.equal(blankHours.ok, false);
+  assert.deepEqual(blankHours.invalidKeys, ["hours"]);
+  assert.match(blankHours.error, /opening hours can't be empty/i);
+
+  const badWhatsapp = prepareAdvancedConfigPayload(
+    {
+      contact: {
+        whatsapp: "not-a-whatsapp-contact",
+        instagram: "",
+        facebook: "",
+        tiktok: "",
+      },
+    },
+    current
+  );
+  assert.equal(badWhatsapp.ok, false);
+  assert.deepEqual(badWhatsapp.invalidKeys, ["contact"]);
+  assert.match(badWhatsapp.error, /valid WhatsApp number or WhatsApp link/i);
+
+  const validWhatsappNumber = prepareAdvancedConfigPayload(
+    {
+      contact: {
+        whatsapp: "+60 12-345 6789",
+        instagram: "",
+        facebook: "",
+        tiktok: "",
+      },
+    },
+    current
+  );
+  assert.equal(validWhatsappNumber.ok, true);
+
+  const validWhatsappLink = prepareAdvancedConfigPayload(
+    {
+      contact: {
+        whatsapp: "https://wa.me/60123456789",
+        instagram: "",
+        facebook: "",
+        tiktok: "",
+      },
+    },
+    current
+  );
+  assert.equal(validWhatsappLink.ok, true);
+
+  for (const businessType of ["aesthetic_clinic", "tcm_clinic"]) {
+    const clinic = { ...current, businessType };
+    const missingAddress = prepareAdvancedConfigPayload(
+      { branches: [{ name: "HQ", address: "   ", phone: "" }] },
+      clinic
+    );
+    assert.equal(missingAddress.ok, false);
+    assert.deepEqual(missingAddress.invalidKeys, ["branches"]);
+    assert.match(missingAddress.error, /clinic branch needs an address/i);
+  }
+
+  const renovation = { ...current, businessType: "home_renovation" };
+  const renovationWithoutAddress = prepareAdvancedConfigPayload(
+    { branches: [{ name: "Showroom", address: "", phone: "" }] },
+    renovation
+  );
+  assert.equal(renovationWithoutAddress.ok, true);
+
+  const legacyBlankDescription = { ...current, businessDescription: "" };
+  const unrelatedPartialUpdate = prepareAdvancedConfigPayload(
+    { tone: "Short and friendly" },
+    legacyBlankDescription
+  );
+  assert.equal(
+    unrelatedPartialUpdate.ok,
+    true,
+    "an unrelated partial import should not be blocked by pre-existing legacy data"
+  );
+});
+
 test("Advanced Config enforces alias, FAQ, and promotion integrity across partial imports", () => {
   const current = currentConfig();
 
