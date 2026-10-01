@@ -345,7 +345,7 @@ export default function AdvancedConfig() {
           <div>
             <h2 className="font-display text-lg font-bold">Import history</h2>
             <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-              The latest automatic backups are kept here. Up to 50 snapshots are retained, and restoring a backup also creates a new backup first.
+              The latest automatic backups are shown here. Up to 50 snapshots are retained, and restoring a backup also creates a new backup first.
             </p>
           </div>
 
