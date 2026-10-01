@@ -7,10 +7,16 @@ const {
   prepareConfigUpdatePayload,
 } = require("../src/routes/config");
 const {
+  EDITABLE_KEYS,
   buildConfigDiff,
   configFingerprint,
   editableConfigView,
+  prepareAdvancedConfigPayload,
 } = require("../src/routes/advancedConfig");
+const {
+  MAX_CONFIG_IMPORT_SNAPSHOTS,
+  pruneOldSnapshots,
+} = require("../src/db/configImportHistoryRepo");
 
 function read(relativePath) {
   return fs.readFileSync(path.join(__dirname, "..", relativePath), "utf8");
@@ -95,22 +101,42 @@ test("shared config preparation accepts partial editable JSON and rejects intern
   assert.deepEqual(internal.unknownKeys, ["businessType", "industrySetup"]);
 });
 
-test("Advanced Config exports editable settings only and previews business-name synchronization", () => {
+test("Advanced Config exposes business and AI content only", () => {
   const current = currentConfig();
   const editable = editableConfigView(current);
 
   assert.equal(editable.businessName, "Test Clinic");
-  assert.equal(Object.prototype.hasOwnProperty.call(editable, "businessType"), false);
-  assert.equal(Object.prototype.hasOwnProperty.call(editable, "industrySetup"), false);
-  assert.equal(Object.prototype.hasOwnProperty.call(editable, "clientSetup"), false);
+  for (const excludedKey of [
+    "clinicName",
+    "businessType",
+    "industrySetup",
+    "clientSetup",
+    "automatedFollowUp",
+    "commentAutomation",
+    "leadScoring",
+    "leadDistribution",
+  ]) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(editable, excludedKey),
+      false,
+      `${excludedKey} must stay out of Advanced Config`
+    );
+    assert.equal(EDITABLE_KEYS.includes(excludedKey), false);
+  }
 
   const changes = buildConfigDiff(current, { businessName: "New Clinic" });
-  assert.deepEqual(
-    changes.map((change) => change.key).filter((key) => ["businessName", "clinicName"].includes(key)),
-    ["clinicName", "businessName"].filter((key) => changes.some((change) => change.key === key))
+  assert.deepEqual(changes.map((change) => change.key), ["businessName"]);
+
+  const toolChange = prepareAdvancedConfigPayload(
+    { automatedFollowUp: current.automatedFollowUp },
+    current
   );
-  assert.ok(changes.some((change) => change.key === "businessName"));
-  assert.ok(changes.some((change) => change.key === "clinicName"));
+  assert.equal(toolChange.ok, false);
+  assert.deepEqual(toolChange.unknownKeys, ["automatedFollowUp"]);
+
+  const legacyAlias = prepareAdvancedConfigPayload({ clinicName: "Legacy Name" }, current);
+  assert.equal(legacyAlias.ok, false);
+  assert.deepEqual(legacyAlias.unknownKeys, ["clinicName"]);
 });
 
 test("Advanced Config fingerprint is stable for equivalent nested object key order", () => {
@@ -120,6 +146,29 @@ test("Advanced Config fingerprint is stable for equivalent nested object key ord
   right.hours = { closed: "Sun", general: "Mon-Fri" };
 
   assert.equal(configFingerprint(left), configFingerprint(right));
+});
+
+test("Advanced Config snapshot retention keeps at most 50 newest backups", async () => {
+  assert.equal(MAX_CONFIG_IMPORT_SNAPSHOTS, 50);
+  const calls = [];
+  const database = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rows: [] };
+    },
+  };
+
+  await pruneOldSnapshots(database);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /DELETE FROM config_import_snapshots/);
+  assert.match(calls[0].sql, /ORDER BY created_at DESC, id DESC/);
+  assert.match(calls[0].sql, /OFFSET \$1/);
+  assert.deepEqual(calls[0].params, [50]);
+
+  const repo = read("src/db/configImportHistoryRepo.js");
+  assert.match(repo, /await client\.query\("BEGIN"\)/);
+  assert.match(repo, /await pruneOldSnapshots\(client\)/);
+  assert.match(repo, /await client\.query\("COMMIT"\)/);
 });
 
 test("Advanced Config is admin-only, snapshots imports, and rejects stale previews", () => {
@@ -151,6 +200,8 @@ test("Advanced Config portal route stays admin-only and exposes validate, apply,
   assert.match(page, /Partial JSON is supported/);
   assert.match(page, /Validate & review/);
   assert.match(page, /Import history/);
+  assert.match(page, /Automation Tools settings are intentionally excluded/);
+  assert.match(page, /Up to 50 snapshots are retained/);
   assert.match(page, /refreshUser/);
   assert.match(api, /getAdvancedConfig/);
   assert.match(api, /previewAdvancedConfig/);
