@@ -402,7 +402,10 @@ function ChangeDetails({ change }) {
 
 function ChangeSection({ change }) {
   return (
-    <details className="group border-b border-[var(--color-border)] last:border-b-0">
+    <details
+      data-testid={`config-change-${change.key}`}
+      className="group border-b border-[var(--color-border)] last:border-b-0"
+    >
       <summary className="cursor-pointer list-none py-3.5">
         <span className="flex items-center justify-between gap-3">
           <span className="min-w-0">
