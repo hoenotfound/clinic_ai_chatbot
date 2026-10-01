@@ -288,6 +288,97 @@ function prepareLeadScoringConfig(requested, current) {
   return prepared;
 }
 
+function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig()) {
+  if (!isPlainObject(input)) {
+    return { ok: false, status: 400, error: "Configuration must be a JSON object." };
+  }
+
+  const updates = { ...input };
+  const keys = Object.keys(updates);
+  if (keys.length === 0) {
+    return { ok: false, status: 400, error: "No settings provided." };
+  }
+
+  const unknownKeys = keys.filter((key) => !VALIDATORS[key]);
+  if (unknownKeys.length > 0) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Unknown setting(s): ${unknownKeys.join(", ")}`,
+      unknownKeys,
+    };
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, "automatedFollowUp")) {
+    const prepared = prepareAutomatedFollowUpConfig(
+      updates.automatedFollowUp,
+      currentConfig.automatedFollowUp
+    );
+    if (!prepared) {
+      return {
+        ok: false,
+        status: 400,
+        error: "Invalid automated follow-up settings. Use a delay between 5 minutes and 23 hours.",
+      };
+    }
+    updates.automatedFollowUp = prepared;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, "commentAutomation")) {
+    const prepared = prepareCommentAutomationConfig(
+      updates.commentAutomation,
+      currentConfig.commentAutomation
+    );
+    if (!prepared) {
+      return {
+        ok: false,
+        status: 400,
+        error: "Invalid comment automation settings. Enable at least one channel and one reply action.",
+      };
+    }
+    updates.commentAutomation = prepared;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, "leadScoring")) {
+    const prepared = prepareLeadScoringConfig(
+      updates.leadScoring,
+      currentConfig.leadScoring
+    );
+    if (!prepared) {
+      return {
+        ok: false,
+        status: 400,
+        error: "Invalid lead scoring settings. Check the inactivity, duration, and message limits.",
+      };
+    }
+    updates.leadScoring = prepared;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, "leadDistribution")) {
+    const prepared = normalizeLeadDistributionConfig(updates.leadDistribution);
+    if (!prepared) {
+      return {
+        ok: false,
+        status: 400,
+        error: "Invalid lead distribution settings. Round robin is the supported distribution method.",
+      };
+    }
+    updates.leadDistribution = prepared;
+  }
+
+  const invalidKeys = keys.filter((key) => !VALIDATORS[key](updates[key]));
+  if (invalidKeys.length > 0) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Invalid value for: ${invalidKeys.join(", ")}`,
+      invalidKeys,
+    };
+  }
+
+  return { ok: true, updates, keys };
+}
+
 router.post("/automated-follow-up/translations", async (req, res) => {
   try {
     const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
@@ -425,73 +516,16 @@ router.get("/", async (req, res) => {
 
 router.patch("/", async (req, res) => {
   try {
-    const updates = req.body || {};
-    const keys = Object.keys(updates);
-
-    if (keys.length === 0) {
-      return res.status(400).json({ error: "No settings provided." });
+    const prepared = prepareConfigUpdatePayload(req.body || {}, configRepo.getConfig());
+    if (!prepared.ok) {
+      return res.status(prepared.status || 400).json({
+        error: prepared.error,
+        unknownKeys: prepared.unknownKeys || undefined,
+        invalidKeys: prepared.invalidKeys || undefined,
+      });
     }
 
-    const unknownKeys = keys.filter((k) => !VALIDATORS[k]);
-    if (unknownKeys.length > 0) {
-      return res.status(400).json({ error: `Unknown setting(s): ${unknownKeys.join(", ")}` });
-    }
-
-    if (Object.prototype.hasOwnProperty.call(updates, "automatedFollowUp")) {
-      const prepared = prepareAutomatedFollowUpConfig(
-        updates.automatedFollowUp,
-        configRepo.getConfig().automatedFollowUp
-      );
-      if (!prepared) {
-        return res.status(400).json({
-          error: "Invalid automated follow-up settings. Use a delay between 5 minutes and 23 hours.",
-        });
-      }
-      updates.automatedFollowUp = prepared;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(updates, "commentAutomation")) {
-      const prepared = prepareCommentAutomationConfig(
-        updates.commentAutomation,
-        configRepo.getConfig().commentAutomation
-      );
-      if (!prepared) {
-        return res.status(400).json({
-          error: "Invalid comment automation settings. Enable at least one channel and one reply action.",
-        });
-      }
-      updates.commentAutomation = prepared;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(updates, "leadScoring")) {
-      const prepared = prepareLeadScoringConfig(
-        updates.leadScoring,
-        configRepo.getConfig().leadScoring
-      );
-      if (!prepared) {
-        return res.status(400).json({
-          error: "Invalid lead scoring settings. Check the inactivity, duration, and message limits.",
-        });
-      }
-      updates.leadScoring = prepared;
-    }
-
-    if (Object.prototype.hasOwnProperty.call(updates, "leadDistribution")) {
-      const prepared = normalizeLeadDistributionConfig(updates.leadDistribution);
-      if (!prepared) {
-        return res.status(400).json({
-          error: "Invalid lead distribution settings. Round robin is the supported distribution method.",
-        });
-      }
-      updates.leadDistribution = prepared;
-    }
-
-    const invalidKeys = keys.filter((k) => !VALIDATORS[k](updates[k]));
-    if (invalidKeys.length > 0) {
-      return res.status(400).json({ error: `Invalid value for: ${invalidKeys.join(", ")}` });
-    }
-
-    const updated = await configRepo.updateConfig(updates);
+    const updated = await configRepo.updateConfig(prepared.updates);
     res.json(decorateConfig(updated));
   } catch (err) {
     const status = Number(err?.status) || 500;
@@ -509,3 +543,6 @@ module.exports = router;
 module.exports.decorateConfig = decorateConfig;
 module.exports.isCommentAutomationConfig = isCommentAutomationConfig;
 module.exports.prepareCommentAutomationConfig = prepareCommentAutomationConfig;
+module.exports.prepareConfigUpdatePayload = prepareConfigUpdatePayload;
+module.exports.prepareLeadScoringConfig = prepareLeadScoringConfig;
+module.exports.VALIDATORS = VALIDATORS;
