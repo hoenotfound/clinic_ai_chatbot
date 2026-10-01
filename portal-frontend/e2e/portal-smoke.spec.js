@@ -309,9 +309,18 @@ test("staff can reach the main portal routes without page-level overflow", async
         await expect(page.getByLabel("Date range")).toBeVisible();
         await page.getByLabel("Date range").selectOption("7");
         await expect(page.getByRole("button", { name: "Apply filters" })).toBeVisible();
+
+        await filterToggle.click();
+        await expect(filterToggle).toContainText("Unsaved");
+        await expect(filterToggle).toContainText("Last 30 days");
+        await expect(page.getByLabel("Date range")).not.toBeVisible();
+
+        await filterToggle.click();
+        await expect(page.getByLabel("Date range")).toBeVisible();
         await page.getByRole("button", { name: "Apply filters" }).click();
 
         await expect(filterToggle).toContainText("Last 7 days");
+        await expect(filterToggle).not.toContainText("Unsaved");
         await expect(page.getByLabel("Date range")).not.toBeVisible();
       }
     }
