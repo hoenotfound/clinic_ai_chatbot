@@ -319,8 +319,8 @@ function CollectionDiff({ details }) {
                 <summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-semibold">
                   <span className="flex items-center justify-between gap-3">
                     <span>{entry.identity}</span>
-                    <span className="shrink-0 text-[10px] font-bold text-[var(--color-text-muted)]">
-                      {countLabel(entry.changes?.length || 0, "field")} changed
+                    <span className="shrink-0 text-right text-[10px] font-bold text-[var(--color-text-muted)]">
+                      {(entry.changes || []).map((change) => fieldLabel(change.field)).join(" · ") || "Changed"}
                     </span>
                   </span>
                 </summary>
