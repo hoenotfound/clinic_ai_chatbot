@@ -21,7 +21,7 @@ test("conversation flow uses one compact expandable journey without a separate d
   assert.match(app, /import ConversationFlow from "\.\/pages\/ConversationFlow"/);
   assert.match(app, /path="\/conversation-flow"/);
   assert.match(app, /anyCapabilities=\{\["manage_settings"\]\}/);
-  assert.match(sidebar, /to: "\/conversation-flow", label: "Conversation Flow"/);
+  assert.doesNotMatch(sidebar, /to: "\/conversation-flow", label: "Conversation Flow"/);
   assert.match(page, /api\s*\.getConfig\(\)/);
   assert.match(page, /See how your AI answers customers and guides interested leads toward the next step/);
   assert.match(page, /How the AI guides a lead forward/);
