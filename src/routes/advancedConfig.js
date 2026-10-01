@@ -271,9 +271,13 @@ function lcsOperations(beforeItems, afterItems) {
   return operations;
 }
 
+function tokenizeDiffText(value) {
+  return String(value ?? "").match(/\s+|[\p{Script=Han}]|[\p{L}\p{N}_]+|[^\s]/gu) || [];
+}
+
 function buildWordDiff(before, after) {
-  const beforeTokens = String(before ?? "").split(/(\s+)/).filter((token) => token !== "");
-  const afterTokens = String(after ?? "").split(/(\s+)/).filter((token) => token !== "");
+  const beforeTokens = tokenizeDiffText(before);
+  const afterTokens = tokenizeDiffText(after);
   if (beforeTokens.length > 700 || afterTokens.length > 700) return null;
 
   const operations = lcsOperations(beforeTokens, afterTokens);
@@ -712,4 +716,5 @@ module.exports.validateAdvancedConfigState = validateAdvancedConfigState;
 module.exports.collectionChangeDetails = collectionChangeDetails;
 module.exports.meaningfulChangeDetails = meaningfulChangeDetails;
 module.exports.buildLineDiff = buildLineDiff;
+module.exports.tokenizeDiffText = tokenizeDiffText;
 module.exports.isValidWhatsapp = isValidWhatsapp;
