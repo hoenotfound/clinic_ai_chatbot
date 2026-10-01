@@ -1,31 +1,135 @@
+import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useClientBranding } from "../hooks/useClientBranding";
 
 const LEAD_VIEW = ["view_assigned_leads", "view_all_leads"];
-const NAV_ITEMS = [
+const SIDEBAR_STORAGE_KEY = "portal.sidebar.expanded";
+const PRIMARY_NAV_ITEMS = [
   { to: "/inbox", label: "Inbox", icon: ChatIcon, capabilities: LEAD_VIEW },
   { to: "/contacts", label: "Contacts", icon: ContactsIcon, capabilities: LEAD_VIEW },
   { to: "/pipeline", label: "Pipeline", icon: PipelineIcon, capabilities: LEAD_VIEW },
   { to: "/analytics", label: "Analytics", icon: AnalyticsIcon, capabilities: ["view_analytics"] },
   { to: "/tools", label: "Tools", icon: ToolsIcon, capabilities: ["manage_tools"] },
-  {
-    to: "/settings",
-    label: "Settings",
-    icon: SettingsIcon,
-    capabilities: ["manage_settings", "manage_users"],
-    adminAlso: true,
-  },
 ];
+const SETTINGS_ITEM = {
+  to: "/settings",
+  label: "Settings",
+  icon: SettingsIcon,
+  capabilities: ["manage_settings", "manage_users"],
+  adminAlso: true,
+};
+
+function getInitialSidebarPreference() {
+  if (typeof window === "undefined") {
+    return { expanded: false, explicit: false };
+  }
+
+  try {
+    const stored = window.localStorage.getItem(SIDEBAR_STORAGE_KEY);
+    if (stored === "true" || stored === "false") {
+      return { expanded: stored === "true", explicit: true };
+    }
+  } catch {
+    // Storage can be unavailable in hardened/private browser contexts.
+  }
+
+  return {
+    expanded: window.matchMedia("(min-width: 1280px)").matches,
+    explicit: false,
+  };
+}
+
+function initialsForUser(value) {
+  const words = String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const initials = words.slice(0, 2).map((word) => word[0]).join("").toUpperCase();
+  return initials || "U";
+}
+
+function canShowItem(item, user, permissions) {
+  if (item.adminAlso && user?.role === "admin") return true;
+  return item.capabilities.some((capability) => permissions[capability] === true);
+}
+
+function SidebarNavLink({ item, onShowTooltip, onHideTooltip }) {
+  return (
+    <NavLink
+      to={item.to}
+      aria-label={item.label}
+      onMouseEnter={(event) => onShowTooltip(event, item.label)}
+      onMouseLeave={onHideTooltip}
+      onFocus={(event) => onShowTooltip(event, item.label)}
+      onBlur={onHideTooltip}
+      onClick={onHideTooltip}
+      className={({ isActive }) =>
+        `app-sidebar-nav-item relative flex items-center rounded-xl font-medium transition-colors ${isActive ? "is-active" : ""}`
+      }
+    >
+      <item.icon className="h-[19px] w-[19px] shrink-0" />
+      <span className="app-sidebar-label truncate">{item.label}</span>
+    </NavLink>
+  );
+}
 
 export default function Sidebar() {
   const { user, username, permissions, logout } = useAuth();
   const branding = useClientBranding();
   const navigate = useNavigate();
-  const visibleItems = NAV_ITEMS.filter((item) => {
-    if (item.adminAlso && user?.role === "admin") return true;
-    return item.capabilities.some((capability) => permissions[capability] === true);
-  });
+  const [sidebarPreference, setSidebarPreference] = useState(getInitialSidebarPreference);
+  const [tooltip, setTooltip] = useState(null);
+  const sidebarExpanded = sidebarPreference.expanded;
+  const visiblePrimaryItems = PRIMARY_NAV_ITEMS.filter((item) => canShowItem(item, user, permissions));
+  const settingsVisible = canShowItem(SETTINGS_ITEM, user, permissions);
+  const userDisplayName = user?.displayName || username || "User";
+
+  useEffect(() => {
+    if (sidebarPreference.explicit) return undefined;
+
+    const desktopDefault = window.matchMedia("(min-width: 1280px)");
+    const syncWithViewport = (event) => {
+      setSidebarPreference((current) => (
+        current.explicit
+          ? current
+          : { expanded: event.matches, explicit: false }
+      ));
+    };
+
+    desktopDefault.addEventListener("change", syncWithViewport);
+    return () => desktopDefault.removeEventListener("change", syncWithViewport);
+  }, [sidebarPreference.explicit]);
+
+  useEffect(() => {
+    if (sidebarExpanded) setTooltip(null);
+  }, [sidebarExpanded]);
+
+  function toggleSidebar() {
+    setSidebarPreference((current) => {
+      const nextExpanded = !current.expanded;
+      try {
+        window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(nextExpanded));
+      } catch {
+        // Keep the in-memory preference even when storage is unavailable.
+      }
+      return { expanded: nextExpanded, explicit: true };
+    });
+  }
+
+  function showTooltip(event, label) {
+    if (sidebarExpanded) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    setTooltip({
+      label,
+      top: rect.top + (rect.height / 2),
+      left: rect.right + 10,
+    });
+  }
+
+  function hideTooltip() {
+    setTooltip(null);
+  }
 
   async function handleLogout() {
     await logout();
@@ -33,72 +137,122 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="app-sidebar flex h-dvh shrink-0 flex-col bg-[var(--color-sidebar)] text-[var(--color-sidebar-text)]">
-      <div className="app-sidebar-brand flex items-center gap-2.5">
-        {branding.clientLogoUrl ? (
-          <img
-            src={branding.clientLogoUrl}
-            alt={`${branding.clientName} logo`}
-            className="h-8 w-8 shrink-0 rounded-lg object-contain"
-          />
-        ) : (
-          <div
-            aria-label={`${branding.clientName} logo`}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 text-xs font-bold text-white"
-          >
-            {branding.initials}
+    <aside
+      data-testid="app-sidebar"
+      data-expanded={sidebarExpanded ? "true" : "false"}
+      className="app-sidebar flex h-dvh shrink-0 flex-col bg-[var(--color-sidebar)] text-[var(--color-sidebar-text)]"
+    >
+      <div className="app-sidebar-brand flex items-center">
+        <div className="app-sidebar-brand-main flex min-w-0 items-center gap-2.5">
+          {branding.clientLogoUrl ? (
+            <img
+              src={branding.clientLogoUrl}
+              alt={`${branding.clientName} logo`}
+              className="h-8 w-8 shrink-0 rounded-lg object-contain"
+            />
+          ) : (
+            <div
+              aria-label={`${branding.clientName} logo`}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 text-xs font-bold text-white"
+            >
+              {branding.initials}
+            </div>
+          )}
+          <div className="app-sidebar-brand-copy min-w-0">
+            <p className="truncate font-display text-[14px] font-bold leading-5 text-white">
+              {branding.clientName}
+            </p>
+            <p className="truncate text-[10px] font-semibold tracking-[0.08em] text-[var(--color-sidebar-text-muted)]">
+              DA CHATBOT
+            </p>
           </div>
-        )}
-        <span className="app-sidebar-full-label truncate font-display text-[15px] font-bold text-white">
-          {branding.clientName}
-        </span>
+        </div>
       </div>
 
-      <nav className="app-sidebar-nav flex-1 space-y-1 overflow-y-auto">
-        {visibleItems.map((item) => (
-          <NavLink
+      <button
+        type="button"
+        onClick={toggleSidebar}
+        aria-label={sidebarExpanded ? "Collapse sidebar" : "Expand sidebar"}
+        aria-expanded={sidebarExpanded}
+        className="app-sidebar-toggle"
+      >
+        <ChevronLeftIcon className={`h-3.5 w-3.5 transition-transform ${sidebarExpanded ? "" : "rotate-180"}`} />
+      </button>
+
+      <nav aria-label="Primary navigation" className="app-sidebar-nav flex-1 space-y-1 overflow-y-auto">
+        {visiblePrimaryItems.map((item) => (
+          <SidebarNavLink
             key={item.to}
-            to={item.to}
-            title={item.label}
-            aria-label={item.label}
-            className={({ isActive }) =>
-              `app-sidebar-nav-item flex items-center rounded-xl font-medium transition-colors ${
-                isActive
-                  ? "bg-[var(--color-primary)] text-white"
-                  : "text-[var(--color-sidebar-text)] hover:bg-[var(--color-sidebar-hover)]"
-              }`
-            }
-          >
-            <item.icon className="h-[18px] w-[18px] shrink-0" />
-            <span className="app-sidebar-compact-label">{item.shortLabel || item.label}</span>
-            <span className="app-sidebar-full-label">{item.label}</span>
-          </NavLink>
+            item={item}
+            onShowTooltip={showTooltip}
+            onHideTooltip={hideTooltip}
+          />
         ))}
       </nav>
 
-      <div className="app-sidebar-account border-t border-white/10">
-        <div className="app-sidebar-user mb-1 px-3 py-2">
-          <p className="truncate text-sm font-medium text-white">
-            {user?.displayName || username}
-          </p>
-          <p className="mt-0.5 truncate text-xs text-[var(--color-sidebar-text-muted)]">
-            @{username} · {user?.role || "staff"}
-          </p>
+      <div className="app-sidebar-utility border-t border-white/10">
+        {settingsVisible && (
+          <SidebarNavLink
+            item={SETTINGS_ITEM}
+            onShowTooltip={showTooltip}
+            onHideTooltip={hideTooltip}
+          />
+        )}
+
+        <div
+          className="app-sidebar-user-row flex items-center"
+          onMouseEnter={(event) => showTooltip(event, `${userDisplayName} · ${user?.role || "staff"}`)}
+          onMouseLeave={hideTooltip}
+        >
+          <div
+            aria-hidden="true"
+            className="app-sidebar-user-avatar flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-[10px] font-bold text-white"
+          >
+            {initialsForUser(userDisplayName)}
+          </div>
+          <div className="app-sidebar-user-copy min-w-0">
+            <p className="truncate text-sm font-medium text-white">
+              {userDisplayName}
+            </p>
+            <p className="mt-0.5 truncate text-[11px] text-[var(--color-sidebar-text-muted)]">
+              @{username} · {user?.role || "staff"}
+            </p>
+          </div>
         </div>
 
         <button
           type="button"
           onClick={handleLogout}
-          title="Log out"
+          onMouseEnter={(event) => showTooltip(event, "Log out")}
+          onMouseLeave={hideTooltip}
+          onFocus={(event) => showTooltip(event, "Log out")}
+          onBlur={hideTooltip}
           aria-label="Log out"
-          className="app-sidebar-logout flex w-full items-center rounded-xl text-[var(--color-sidebar-text-muted)] transition-colors hover:bg-[var(--color-sidebar-hover)] hover:text-white"
+          className="app-sidebar-logout flex w-full items-center rounded-xl"
         >
-          <LogoutIcon className="h-[18px] w-[18px] shrink-0" />
-          <span className="app-sidebar-compact-label">Logout</span>
-          <span className="app-sidebar-full-label">Log out</span>
+          <LogoutIcon className="h-[19px] w-[19px] shrink-0" />
+          <span className="app-sidebar-label truncate">Log out</span>
         </button>
       </div>
+
+      {tooltip && (
+        <div
+          role="tooltip"
+          className="app-sidebar-tooltip"
+          style={{ top: tooltip.top, left: tooltip.left }}
+        >
+          {tooltip.label}
+        </div>
+      )}
     </aside>
+  );
+}
+
+function ChevronLeftIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25">
+      <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
@@ -151,7 +305,7 @@ function SettingsIcon(props) {
   return (
     <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
