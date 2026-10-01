@@ -440,7 +440,7 @@ test("Advanced Config review reports field-level collection changes", () => {
 
 test("Advanced Config preserves full long FAQ identities in review payloads", () => {
   const current = currentConfig();
-  const longQuestion = "我明明不胖可是小腹一直很凸，而且站久了腰容易酸，裤子左右穿起来也不太一样，这种情况是不是跟骨盆或体态有关，应该先做什么评估比较适合我？";
+  const longQuestion = "我明明不胖可是小腹一直很凸，而且站久了腰容易酸，裤子左右穿起来也不太一样，这种情况是不是跟骨盆或体态有关，应该先做什么评估比较适合我？另外我平时坐办公室很久，生完孩子后身形也有变化，我想知道这种情况到底应该先看骨盆、体态还是其他问题，会不会需要先做一对一评估再决定适合的护理？";
   assert.ok(longQuestion.length > 88);
 
   current.faqs = [{ q: longQuestion, a: "旧答案" }];
