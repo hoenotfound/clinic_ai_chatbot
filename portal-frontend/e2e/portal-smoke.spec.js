@@ -503,24 +503,45 @@ test("mobile Pipeline keeps controls compact and prioritizes lead cards", async 
   await expect.poll(() => sidebar.evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(64);
 
   await expect(page.getByRole("heading", { name: "Lead Pipeline" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "+ Add" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Manage pipeline stages" })).toBeVisible();
+  const addLead = page.getByRole("button", { name: "+ Add" });
+  const manageStages = page.getByRole("button", { name: "Manage pipeline stages" });
+  await expect(addLead).toBeVisible();
+  await expect(manageStages).toBeVisible();
 
   const search = page.getByLabel("Search leads");
   const filters = page.getByRole("button", { name: /^Filters/ });
   await expect(search).toBeVisible();
   await expect(filters).toBeVisible();
-  const [searchBox, filtersBox] = await Promise.all([search.boundingBox(), filters.boundingBox()]);
+  const [searchBox, filtersBox, addLeadBox, manageStagesBox] = await Promise.all([
+    search.boundingBox(),
+    filters.boundingBox(),
+    addLead.boundingBox(),
+    manageStages.boundingBox(),
+  ]);
   expect(searchBox).not.toBeNull();
   expect(filtersBox).not.toBeNull();
+  expect(addLeadBox).not.toBeNull();
+  expect(manageStagesBox).not.toBeNull();
   expect(Math.abs(searchBox.y - filtersBox.y)).toBeLessThanOrEqual(1);
+  expect(Math.round(searchBox.height)).toBe(44);
+  expect(Math.round(filtersBox.height)).toBe(44);
+  expect(Math.round(addLeadBox.height)).toBe(44);
+  expect(Math.round(manageStagesBox.height)).toBe(44);
 
   await expect(page.getByLabel("Filter by lead source")).not.toBeVisible();
   await expect(page.getByRole("button", { name: /All branches/ })).not.toBeVisible();
-  await expect(page.getByRole("button", { name: /^All leads 1$/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Hot 0$/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Warm 1$/ })).toBeVisible();
+  const allLeads = page.getByRole("button", { name: /^All leads 1$/ });
+  const hot = page.getByRole("button", { name: /^Hot 0$/ });
+  const warm = page.getByRole("button", { name: /^Warm 1$/ });
+  await expect(allLeads).toBeVisible();
+  await expect(hot).toBeVisible();
+  await expect(warm).toBeVisible();
   await expect(page.getByText("Needs attention", { exact: true })).not.toBeVisible();
+  for (const quickFilter of [allLeads, hot, warm]) {
+    const box = await quickFilter.boundingBox();
+    expect(box).not.toBeNull();
+    expect(Math.round(box.height)).toBe(44);
+  }
 
   await expect(page.getByRole("button", { name: /New Lead 1/ })).toBeVisible();
   const leadCard = page.getByRole("button", { name: /Mobile Test Lead/ });
@@ -539,8 +560,57 @@ test("mobile Pipeline keeps controls compact and prioritizes lead cards", async 
   expect(dialogBox).not.toBeNull();
   expect(Math.round(dialogBox.x)).toBe(64);
 
-  await page.getByRole("button", { name: "Close filters" }).click();
+  const closeFilters = page.getByRole("button", { name: "Close filters" });
+  await expect(closeFilters).toBeFocused();
+  const closeBox = await closeFilters.boundingBox();
+  expect(closeBox).not.toBeNull();
+  expect(Math.round(closeBox.height)).toBe(44);
+  expect(Math.round(closeBox.width)).toBe(44);
+
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.getByRole("button", { name: /Show 1 leads/ })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(closeFilters).toBeFocused();
+
+  await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
+  await expect(filters).toBeFocused();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+
+test("tablet and normal desktop Pipeline keep Needs attention as a quick filter", async ({ page }) => {
+  const viewport = page.viewportSize();
+  test.skip(!viewport || viewport.width < 640 || viewport.width >= 1800, "tablet/normal-desktop layout only");
+
+  await mockPortalApi(page, {
+    loggedIn: true,
+    pipelineData: {
+      stages: [{ id: 1, name: "New Lead", stage_type: "new", color: "#3c8d7b" }],
+      leads: [{
+        id: 102,
+        stage_id: 1,
+        name: "Attention Test Lead",
+        temperature: "warm",
+        is_closed: false,
+        needs_attention: true,
+        branch_name: "Petaling Jaya (PJ)",
+        source: "facebook_organic",
+        last_message_at: "2026-10-01T12:00:00.000Z",
+      }],
+      branches: ["Petaling Jaya (PJ)"],
+      owners: [],
+      services: [],
+      noReplyHours: 24,
+    },
+  });
+  await page.goto("/pipeline");
+
+  const attention = page.getByRole("button", { name: /^Needs attention 1$/ });
+  await expect(attention).toBeVisible();
+  await attention.click();
+  await expect(attention).toHaveClass(/bg-\[var\(--color-primary\)\]/);
+  await expect(page.getByRole("button", { name: /Attention Test Lead/ })).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
 });
 
