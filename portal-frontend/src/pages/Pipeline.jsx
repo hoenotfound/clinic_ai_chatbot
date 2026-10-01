@@ -755,14 +755,14 @@ export default function Pipeline() {
             <button
               type="button"
               aria-label="Close pipeline filters"
-              className="fixed inset-0 z-[80] bg-black/30 sm:hidden"
+              className="fixed inset-y-0 left-16 right-0 z-[80] bg-black/30 sm:hidden"
               onClick={() => setShowCompactFilters(false)}
             />
             <section
               role="dialog"
               aria-modal="true"
               aria-label="Pipeline filters"
-              className="fixed inset-x-0 bottom-0 z-[90] max-h-[78dvh] overflow-y-auto rounded-t-3xl border-t border-[var(--color-border)] bg-white px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 shadow-2xl sm:hidden"
+              className="fixed bottom-0 left-16 right-0 z-[90] max-h-[78dvh] overflow-y-auto rounded-t-3xl border-t border-[var(--color-border)] bg-white px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 shadow-2xl sm:hidden"
             >
               <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-[var(--color-border)]" />
               <div className="flex items-center justify-between gap-3">
