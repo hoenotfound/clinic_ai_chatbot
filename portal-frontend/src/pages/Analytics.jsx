@@ -266,9 +266,10 @@ export default function Analytics() {
               type="button"
               onClick={() => setShowMoreFilters((current) => !current)}
               aria-expanded={showMoreFilters}
-              className={`col-span-2 h-10 rounded-xl border px-3.5 text-xs font-semibold transition sm:col-span-1 sm:h-11 ${showMoreFilters || hasAdvancedFilters ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
+              className={`col-span-2 flex h-10 w-full items-center justify-between rounded-xl border px-3.5 text-xs font-semibold transition sm:col-span-1 sm:h-11 sm:w-auto ${showMoreFilters || hasAdvancedFilters ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
             >
-              {showMoreFilters ? "Hide filters" : "More filters"}{activeAdvancedFilterCount ? ` (${activeAdvancedFilterCount})` : ""}
+              <span>{showMoreFilters ? "Hide filters" : "More filters"}{activeAdvancedFilterCount ? ` (${activeAdvancedFilterCount})` : ""}</span>
+              <ChevronIcon className={`h-4 w-4 shrink-0 transition-transform sm:ml-2 ${showMoreFilters ? "rotate-180" : ""}`} />
             </button>
           </div>
 
@@ -821,6 +822,14 @@ function StatusChip({ state, text }) {
 
 function EmptyState({ text }) {
   return <div className="rounded-2xl border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-xs text-[var(--color-text-muted)]">{text}</div>;
+}
+
+function ChevronIcon(props) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" {...props}>
+      <path d="m5.5 7.5 4.5 4.5 4.5-4.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
 function RefreshIcon(props) {
