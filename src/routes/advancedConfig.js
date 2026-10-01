@@ -5,7 +5,26 @@ const configImportHistoryRepo = require("../db/configImportHistoryRepo");
 const { prepareConfigUpdatePayload } = require("./config");
 
 const router = express.Router();
-const EDITABLE_KEYS = Object.freeze([...configRepo.CONFIG_KEYS]);
+const EDITABLE_KEYS = Object.freeze([
+  "businessName",
+  "businessDescription",
+  "aiAssistantName",
+  "branches",
+  "serviceAreas",
+  "hours",
+  "contact",
+  "introMessage",
+  "promotions",
+  "services",
+  "serviceAliases",
+  "faqs",
+  "closingPlaybook",
+  "tone",
+  "messagingStyle",
+  "sop",
+  "escalation",
+  "guardrails",
+]);
 
 function requireAdministrator(req, res, next) {
   if (req.user?.role !== "admin") {
@@ -48,9 +67,6 @@ function projectedConfig(currentConfig, updates) {
   if (Object.prototype.hasOwnProperty.call(updates, "businessName")) {
     next.businessName = updates.businessName;
     next.clinicName = updates.businessName;
-  } else if (Object.prototype.hasOwnProperty.call(updates, "clinicName")) {
-    next.clinicName = updates.clinicName;
-    next.businessName = updates.clinicName;
   }
   return next;
 }
@@ -92,11 +108,28 @@ function validationFailure(res, prepared) {
     invalidKeys: prepared.invalidKeys || undefined,
   });
 }
+function prepareAdvancedConfigPayload(input, currentConfig) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { ok: false, status: 400, error: "Configuration must be a JSON object." };
+  }
+
+  const disallowedKeys = Object.keys(input).filter((key) => !EDITABLE_KEYS.includes(key));
+  if (disallowedKeys.length > 0) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Advanced Config does not allow: ${disallowedKeys.join(", ")}`,
+      unknownKeys: disallowedKeys,
+    };
+  }
+
+  return prepareConfigUpdatePayload(input, currentConfig);
+}
 
 function historyPayload(rows) {
   return (rows || []).map((row) => ({
     id: Number(row.id),
-    editableConfig: row.editable_config || {},
+    editableConfig: editableConfigView(row.editable_config || {}),
     createdBy: row.created_by,
     reason: row.reason,
     restoredFromSnapshotId: row.restored_from_snapshot_id
@@ -127,7 +160,7 @@ router.get("/", async (req, res) => {
 router.post("/preview", async (req, res) => {
   try {
     const current = configRepo.getConfig();
-    const prepared = prepareConfigUpdatePayload(req.body?.config, current);
+    const prepared = prepareAdvancedConfigPayload(req.body?.config, current);
     if (!prepared.ok) return validationFailure(res, prepared);
 
     res.json({
@@ -154,7 +187,7 @@ router.post("/apply", async (req, res) => {
       });
     }
 
-    const prepared = prepareConfigUpdatePayload(req.body?.config, current);
+    const prepared = prepareAdvancedConfigPayload(req.body?.config, current);
     if (!prepared.ok) return validationFailure(res, prepared);
 
     const changes = buildConfigDiff(current, prepared.updates);
@@ -202,7 +235,10 @@ router.post("/restore/:id", async (req, res) => {
     }
 
     const current = configRepo.getConfig();
-    const prepared = prepareConfigUpdatePayload(snapshot.editable_config, current);
+    const prepared = prepareAdvancedConfigPayload(
+      editableConfigView(snapshot.editable_config || {}),
+      current
+    );
     if (!prepared.ok) return validationFailure(res, prepared);
 
     const changes = buildConfigDiff(current, prepared.updates);
@@ -245,3 +281,4 @@ module.exports.buildConfigDiff = buildConfigDiff;
 module.exports.configFingerprint = configFingerprint;
 module.exports.editableConfigView = editableConfigView;
 module.exports.projectedConfig = projectedConfig;
+module.exports.prepareAdvancedConfigPayload = prepareAdvancedConfigPayload;
