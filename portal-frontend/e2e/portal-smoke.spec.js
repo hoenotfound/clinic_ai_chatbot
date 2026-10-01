@@ -248,6 +248,16 @@ async function expectNoHorizontalPageOverflow(page) {
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.viewport + 1);
 }
 
+async function expectNoHorizontalElementOverflow(page, testId) {
+  const element = page.getByTestId(testId);
+  await expect(element).toBeVisible();
+  const dimensions = await element.evaluate((node) => ({
+    clientWidth: node.clientWidth,
+    scrollWidth: node.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth + 1);
+}
+
 test("login page is usable without horizontal overflow", async ({ page }) => {
   await mockPortalApi(page);
   await page.goto("/login");
@@ -277,5 +287,8 @@ test("staff can reach the main portal routes without page-level overflow", async
     await expect(page).toHaveURL(new RegExp(path.replace("/", "\\/") + "$"));
     await expect(page.getByRole("navigation").first()).toBeVisible();
     await expectNoHorizontalPageOverflow(page);
+    if (path === "/analytics") {
+      await expectNoHorizontalElementOverflow(page, "analytics-scroll");
+    }
   }
 });
