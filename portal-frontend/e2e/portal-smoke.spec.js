@@ -34,7 +34,7 @@ const ADMIN_USER = {
 
 const LONG_FAQ_QUESTION = "我明明不胖可是小腹一直很凸，而且站久了腰容易酸，裤子左右穿起来也不太一样，这种情况是不是跟骨盆或体态有关，应该先做什么评估比较适合我？这是一个特意很长的问题用来测试手机画面不会横向溢出。";
 
-async function mockPortalApi(page, { loggedIn = false, user = STAFF_USER } = {}) {
+async function mockPortalApi(page, { loggedIn = false, user = STAFF_USER, pipelineData = null } = {}) {
   let authenticated = loggedIn;
   let advancedConfig = {
     businessName: "Test Clinic",
@@ -190,7 +190,7 @@ async function mockPortalApi(page, { loggedIn = false, user = STAFF_USER } = {})
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ stages: [], leads: [], owners: [] }),
+        body: JSON.stringify(pipelineData || { stages: [], leads: [], owners: [] }),
       });
     }
 
@@ -462,6 +462,86 @@ test("staff can reach the main portal routes without page-level overflow", async
       }
     }
   }
+});
+
+
+test("mobile Pipeline keeps controls compact and prioritizes lead cards", async ({ page }) => {
+  const viewport = page.viewportSize();
+  test.skip(!viewport || viewport.width >= 640, "phone-only layout");
+
+  await mockPortalApi(page, {
+    loggedIn: true,
+    pipelineData: {
+      stages: [
+        { id: 1, name: "New Lead", stage_type: "new", color: "#3c8d7b" },
+        { id: 2, name: "Contacted", stage_type: "contacted", color: "#3d8dad" },
+      ],
+      leads: [
+        {
+          id: 101,
+          stage_id: 1,
+          name: "Mobile Test Lead",
+          temperature: "warm",
+          is_closed: false,
+          branch_name: "Petaling Jaya (PJ)",
+          source: "facebook_organic",
+          last_message_at: "2026-10-01T12:00:00.000Z",
+          appointment_status: null,
+          estimated_value: 0,
+        },
+      ],
+      branches: ["Petaling Jaya (PJ)"],
+      owners: [],
+      services: [],
+      noReplyHours: 24,
+    },
+  });
+  await page.goto("/pipeline");
+
+  const sidebar = page.getByTestId("app-sidebar");
+  await expect(sidebar).toBeVisible();
+  await expect.poll(() => sidebar.evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(64);
+
+  await expect(page.getByRole("heading", { name: "Lead Pipeline" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "+ Add" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Manage pipeline stages" })).toBeVisible();
+
+  const search = page.getByLabel("Search leads");
+  const filters = page.getByRole("button", { name: /^Filters/ });
+  await expect(search).toBeVisible();
+  await expect(filters).toBeVisible();
+  const [searchBox, filtersBox] = await Promise.all([search.boundingBox(), filters.boundingBox()]);
+  expect(searchBox).not.toBeNull();
+  expect(filtersBox).not.toBeNull();
+  expect(Math.abs(searchBox.y - filtersBox.y)).toBeLessThanOrEqual(1);
+
+  await expect(page.getByLabel("Filter by lead source")).not.toBeVisible();
+  await expect(page.getByRole("button", { name: /All branches/ })).not.toBeVisible();
+  await expect(page.getByRole("button", { name: /^All leads 1$/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Hot 0$/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Warm 1$/ })).toBeVisible();
+  await expect(page.getByText("Needs attention", { exact: true })).not.toBeVisible();
+
+  await expect(page.getByRole("button", { name: /New Lead 1/ })).toBeVisible();
+  const leadCard = page.getByRole("button", { name: /Mobile Test Lead/ });
+  await expect(leadCard).toBeVisible();
+  const leadBox = await leadCard.boundingBox();
+  expect(leadBox).not.toBeNull();
+  expect(leadBox.y).toBeLessThan(500);
+
+  await filters.click();
+  const dialog = page.getByRole("dialog", { name: "Pipeline filters" });
+  await expect(dialog).toBeVisible();
+  await expect(page.getByLabel("Filter by branch")).toBeVisible();
+  await expect(page.getByLabel("Filter by source")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /Needs attention/ })).toBeVisible();
+  const dialogBox = await dialog.boundingBox();
+  expect(dialogBox).not.toBeNull();
+  expect(Math.round(dialogBox.x)).toBe(64);
+
+  await page.getByRole("button", { name: "Close filters" }).click();
+  await expect(dialog).not.toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
 });
 
 
