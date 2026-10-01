@@ -465,6 +465,96 @@ test("staff can reach the main portal routes without page-level overflow", async
 });
 
 
+test("sidebar uses responsive compact and expanded states and remembers the choice", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true });
+  await page.goto("/inbox");
+
+  const viewport = page.viewportSize();
+  const sidebar = page.getByTestId("app-sidebar");
+  const firstLabel = sidebar.locator(".app-sidebar-label").first();
+  const toggle = sidebar.locator(".app-sidebar-toggle");
+
+  await expect(sidebar).toBeVisible();
+  await expect(toggle).toBeVisible();
+  await expect.poll(async () => {
+    const box = await toggle.boundingBox();
+    return box ? { width: Math.round(box.width), height: Math.round(box.height) } : null;
+  }).toEqual({ width: 44, height: 44 });
+  await expectNoHorizontalPageOverflow(page);
+
+  if (viewport.width < 640) {
+    await expect(sidebar).toHaveAttribute("data-mobile-open", "false");
+    await expect(toggle).toHaveAccessibleName("Open sidebar");
+    await expect.poll(() => sidebar.evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(64);
+    await expect.poll(() => firstLabel.evaluate((node) => getComputedStyle(node).opacity)).toBe("0");
+
+    await toggle.click();
+    await expect(sidebar).toHaveAttribute("data-mobile-open", "true");
+    await expect(toggle).toHaveAccessibleName("Close sidebar");
+    await expect.poll(() => firstLabel.evaluate((node) => getComputedStyle(node).opacity)).toBe("1");
+    await expect.poll(() => sidebar.locator(".app-sidebar-nav").evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(220);
+
+    const backdrop = page.getByRole("button", { name: "Dismiss navigation" });
+    await expect(backdrop).toBeVisible();
+    await expect.poll(async () => {
+      const box = await backdrop.boundingBox();
+      return box ? Math.round(box.x) : null;
+    }).toBe(220);
+    await expectNoHorizontalPageOverflow(page);
+
+    await backdrop.click();
+    await expect(sidebar).toHaveAttribute("data-mobile-open", "false");
+    await expect(toggle).toHaveAccessibleName("Open sidebar");
+    await expect.poll(() => firstLabel.evaluate((node) => getComputedStyle(node).opacity)).toBe("0");
+
+    await toggle.click();
+    await expect(sidebar).toHaveAttribute("data-mobile-open", "true");
+    await page.keyboard.press("Escape");
+    await expect(sidebar).toHaveAttribute("data-mobile-open", "false");
+    await expect(toggle).toHaveAccessibleName("Open sidebar");
+    return;
+  }
+
+  if (viewport.width >= 1280) {
+    await expect(sidebar).toHaveAttribute("data-expanded", "true");
+    await expect(toggle).toHaveAccessibleName("Collapse sidebar");
+    await expect.poll(() => sidebar.evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(220);
+    await expect.poll(() => firstLabel.evaluate((node) => getComputedStyle(node).opacity)).toBe("1");
+
+    await toggle.click();
+    await expect(sidebar).toHaveAttribute("data-expanded", "false");
+    await expect(toggle).toHaveAccessibleName("Expand sidebar");
+    await expect.poll(() => sidebar.evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(72);
+    await expect.poll(() => firstLabel.evaluate((node) => getComputedStyle(node).opacity)).toBe("0");
+
+    await page.getByRole("link", { name: "Inbox" }).hover();
+    await expect(page.getByRole("tooltip")).toHaveText("Inbox");
+
+    await page.reload();
+    await expect(page.getByTestId("app-sidebar")).toHaveAttribute("data-expanded", "false");
+    await expect.poll(() => page.getByTestId("app-sidebar").evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(72);
+  } else {
+    await expect(sidebar).toHaveAttribute("data-expanded", "false");
+    await expect(toggle).toHaveAccessibleName("Expand sidebar");
+    await expect.poll(() => sidebar.evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(72);
+    await expect.poll(() => firstLabel.evaluate((node) => getComputedStyle(node).opacity)).toBe("0");
+
+    await toggle.click();
+    await expect(sidebar).toHaveAttribute("data-expanded", "true");
+    await expect(toggle).toHaveAccessibleName("Collapse sidebar");
+    await expect.poll(() => sidebar.evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(220);
+    await expect.poll(() => firstLabel.evaluate((node) => getComputedStyle(node).opacity)).toBe("1");
+
+    await page.reload();
+    await expect(page.getByTestId("app-sidebar")).toHaveAttribute("data-expanded", "true");
+    await expect.poll(() => page.getByTestId("app-sidebar").evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(220);
+  }
+
+  await expect(page.getByRole("navigation", { name: "Utility navigation" })).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+
 test("Advanced Config keeps a full long FAQ identity readable without horizontal overflow", async ({ page }) => {
   await mockPortalApi(page, { loggedIn: true, user: ADMIN_USER });
   await page.goto("/settings/advanced-config");
