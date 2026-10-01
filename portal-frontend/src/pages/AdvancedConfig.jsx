@@ -106,6 +106,7 @@ function changeBadge(change) {
     const parts = [];
     if (details.added?.length) parts.push(`+${details.added.length}`);
     if (details.removed?.length) parts.push(`−${details.removed.length}`);
+    if (details.orderChanged) parts.push("Order changed");
     return parts.join(" · ") || "Changed";
   }
   if (details.kind === "object") {
@@ -233,7 +234,7 @@ function StringListDiff({ details }) {
           <p className="mb-1.5 text-xs font-bold text-[var(--color-primary)]">Added</p>
           <div className="space-y-1">
             {details.added.map((item, index) => (
-              <div key={`add-${index}`} className="rounded-lg bg-[var(--color-primary-light)] px-3 py-2 text-xs leading-5 text-[var(--color-text)]">
+              <div key={`add-${index}`} className="break-words rounded-lg bg-[var(--color-primary-light)] px-3 py-2 text-xs leading-5 text-[var(--color-text)]">
                 <span className="mr-2 font-bold text-[var(--color-primary)]">+</span>{item}
               </div>
             ))}
@@ -245,11 +246,40 @@ function StringListDiff({ details }) {
           <p className="mb-1.5 text-xs font-bold text-[var(--color-danger)]">Removed</p>
           <div className="space-y-1">
             {details.removed.map((item, index) => (
-              <div key={`remove-${index}`} className="rounded-lg bg-[var(--color-danger-light)] px-3 py-2 text-xs leading-5 text-[var(--color-text)]">
+              <div key={`remove-${index}`} className="break-words rounded-lg bg-[var(--color-danger-light)] px-3 py-2 text-xs leading-5 text-[var(--color-text)]">
                 <span className="mr-2 font-bold text-[var(--color-danger)]">−</span>
                 <span className="line-through">{item}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+      {details.orderChanged && (
+        <div>
+          <p className="mb-1.5 text-xs font-bold text-[var(--color-text)]">Order changed</p>
+          <div className="grid gap-2 lg:grid-cols-2">
+            <div className="min-w-0 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5">
+              <p className="mb-2 text-[11px] font-bold text-[var(--color-text-muted)]">Before</p>
+              <ol className="space-y-1.5 text-xs leading-5">
+                {(details.beforeOrder || []).map((item, index) => (
+                  <li key={`before-order-${index}`} className="grid min-w-0 grid-cols-[20px_minmax(0,1fr)] gap-1">
+                    <span className="text-[var(--color-text-muted)]">{index + 1}.</span>
+                    <span className="break-words">{item}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+            <div className="min-w-0 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5">
+              <p className="mb-2 text-[11px] font-bold text-[var(--color-text-muted)]">After</p>
+              <ol className="space-y-1.5 text-xs leading-5">
+                {(details.afterOrder || []).map((item, index) => (
+                  <li key={`after-order-${index}`} className="grid min-w-0 grid-cols-[20px_minmax(0,1fr)] gap-1">
+                    <span className="text-[var(--color-text-muted)]">{index + 1}.</span>
+                    <span className="break-words">{item}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
           </div>
         </div>
       )}
@@ -301,8 +331,8 @@ function CollectionDiff({ details }) {
           <p className="mb-2 text-xs font-bold text-[var(--color-primary)]">{countLabel(details.added.length, "item")} added</p>
           <div className="space-y-2">
             {details.added.map((entry, index) => (
-              <div key={`added-${entry.identity}-${index}`} className="rounded-xl border border-[var(--color-primary)]/15 bg-[var(--color-primary-light)] px-3 py-2.5">
-                <p className="text-sm font-semibold text-[var(--color-text)]"><span className="mr-2 text-[var(--color-primary)]">+</span>{entry.identity}</p>
+              <div key={`added-${entry.identity}-${index}`} className="min-w-0 rounded-xl border border-[var(--color-primary)]/15 bg-[var(--color-primary-light)] px-3 py-2.5">
+                <p className="break-words text-sm font-semibold text-[var(--color-text)]"><span className="mr-2 text-[var(--color-primary)]">+</span>{entry.identity}</p>
                 <ItemSnapshot item={entry.item} />
               </div>
             ))}
@@ -317,9 +347,9 @@ function CollectionDiff({ details }) {
             {details.updated.map((entry, index) => (
               <details key={`updated-${entry.identity}-${index}`} className="rounded-xl border border-[var(--color-border)] bg-white">
                 <summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-semibold">
-                  <span className="flex items-center justify-between gap-3">
-                    <span>{entry.identity}</span>
-                    <span className="shrink-0 text-right text-[10px] font-bold text-[var(--color-text-muted)]">
+                  <span className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                    <span className="min-w-0 break-words">{entry.identity}</span>
+                    <span className="max-w-full break-words text-left text-[10px] font-bold text-[var(--color-text-muted)] sm:shrink-0 sm:text-right">
                       {(entry.changes || []).map((change) => fieldLabel(change.field)).join(" · ") || "Changed"}
                     </span>
                   </span>
@@ -340,8 +370,8 @@ function CollectionDiff({ details }) {
           <p className="mb-2 text-xs font-bold text-[var(--color-danger)]">{countLabel(details.removed.length, "item")} removed</p>
           <div className="space-y-2">
             {details.removed.map((entry, index) => (
-              <div key={`removed-${entry.identity}-${index}`} className="rounded-xl border border-[var(--color-danger)]/15 bg-[var(--color-danger-light)] px-3 py-2.5">
-                <p className="text-sm font-semibold text-[var(--color-text)]"><span className="mr-2 text-[var(--color-danger)]">−</span><span className="line-through">{entry.identity}</span></p>
+              <div key={`removed-${entry.identity}-${index}`} className="min-w-0 rounded-xl border border-[var(--color-danger)]/15 bg-[var(--color-danger-light)] px-3 py-2.5">
+                <p className="break-words text-sm font-semibold text-[var(--color-text)]"><span className="mr-2 text-[var(--color-danger)]">−</span><span className="line-through">{entry.identity}</span></p>
                 <ItemSnapshot item={entry.item} />
               </div>
             ))}
