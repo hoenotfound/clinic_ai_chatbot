@@ -336,9 +336,11 @@ export default function Pipeline() {
     ([key]) => !DESKTOP_QUICK_CATEGORY_KEYS.has(key)
   );
   const hasSecondaryCategoryFilter = categoryFilter !== "all" && !QUICK_CATEGORY_KEYS.has(categoryFilter);
-  const activeFilterCount = Number(branchFilter !== "all")
-    + Number(sourceFilter !== "all")
-    + Number(hasSecondaryCategoryFilter);
+  const hasDesktopSecondaryCategoryFilter = categoryFilter !== "all"
+    && !DESKTOP_QUICK_CATEGORY_KEYS.has(categoryFilter);
+  const branchSourceFilterCount = Number(branchFilter !== "all") + Number(sourceFilter !== "all");
+  const activeFilterCount = branchSourceFilterCount + Number(hasSecondaryCategoryFilter);
+  const desktopActiveFilterCount = branchSourceFilterCount + Number(hasDesktopSecondaryCategoryFilter);
 
   const metricLeads = hasAnalyticsDrilldown
     ? drilldownLeads
@@ -756,7 +758,7 @@ export default function Pipeline() {
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search leads…"
               aria-label="Search leads"
-              className="h-10 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] pl-9 pr-9 text-base focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15 sm:h-11 sm:text-sm"
+              className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] pl-9 pr-9 text-base focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15 sm:text-sm"
             />
             {search && <button type="button" onClick={() => setSearch("")} aria-label="Clear search" className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-sm text-[var(--color-text-muted)] hover:bg-white">✕</button>}
           </div>
@@ -779,11 +781,12 @@ export default function Pipeline() {
             onClick={() => setShowCompactFilters((value) => !value)}
             aria-expanded={showCompactFilters}
             aria-controls="pipeline-secondary-filters"
-            className={`flex h-11 shrink-0 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-semibold transition sm:px-3 min-[1800px]:hidden ${showCompactFilters || activeFilterCount > 0 ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
+            className={`flex h-11 shrink-0 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-semibold transition sm:px-3 min-[1800px]:hidden ${showCompactFilters || activeFilterCount > 0 ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"} ${categoryFilter === "attention" && branchSourceFilterCount === 0 && !showCompactFilters ? "sm:border-[var(--color-border)] sm:bg-white sm:text-[var(--color-text-muted)]" : ""}`}
           >
             <FilterIcon />
             <span className="sm:inline">Filters</span>
-            {activeFilterCount > 0 && <span className="rounded-full bg-[var(--color-primary)] px-1.5 py-0.5 text-[10px] text-white">{activeFilterCount}</span>}
+            {activeFilterCount > 0 && <span className="rounded-full bg-[var(--color-primary)] px-1.5 py-0.5 text-[10px] text-white sm:hidden">{activeFilterCount}</span>}
+            {desktopActiveFilterCount > 0 && <span className="hidden rounded-full bg-[var(--color-primary)] px-1.5 py-0.5 text-[10px] text-white sm:inline">{desktopActiveFilterCount}</span>}
           </button>
 
           <span className="hidden shrink-0 text-[11px] font-medium text-[var(--color-text-muted)] min-[1800px]:block">{filteredLeads.length} shown</span>
@@ -817,7 +820,11 @@ export default function Pipeline() {
             </button>
           ))}
           {hasSecondaryCategoryFilter && (
-            <button type="button" onClick={() => setShowCompactFilters(true)} className="h-11 shrink-0 rounded-xl border border-[var(--color-primary)] bg-[var(--color-primary-light)] px-2.5 text-[11px] font-semibold text-[var(--color-primary)] sm:h-10 sm:px-3 sm:text-xs min-[1800px]:hidden">
+            <button
+              type="button"
+              onClick={() => setShowCompactFilters(true)}
+              className={`h-11 shrink-0 rounded-xl border border-[var(--color-primary)] bg-[var(--color-primary-light)] px-2.5 text-[11px] font-semibold text-[var(--color-primary)] sm:h-10 sm:px-3 sm:text-xs min-[1800px]:hidden ${hasDesktopSecondaryCategoryFilter ? "" : "sm:hidden"}`}
+            >
               {CATEGORY_OPTIONS.find(([key]) => key === categoryFilter)?.[1]} {categoryCounts[categoryFilter] || 0}
             </button>
           )}
