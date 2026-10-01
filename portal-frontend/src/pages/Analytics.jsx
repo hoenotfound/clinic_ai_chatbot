@@ -133,6 +133,7 @@ export default function Analytics() {
   const [refreshToken, setRefreshToken] = useState(0);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [filterActionPending, setFilterActionPending] = useState(false);
   const [error, setError] = useState("");
   const requestIdRef = useRef(0);
   const effectiveAnalyticsConfig = data?.analyticsBusinessType
@@ -156,7 +157,10 @@ export default function Analytics() {
         }
       })
       .finally(() => {
-        if (requestId === requestIdRef.current) setLoading(false);
+        if (requestId === requestIdRef.current) {
+          setLoading(false);
+          setFilterActionPending(false);
+        }
       });
   }, [appliedFilters, refreshToken]);
 
@@ -173,11 +177,13 @@ export default function Analytics() {
 
   function applyFilters() {
     if (loading) return;
+    setFilterActionPending(true);
     setAppliedFilters({ ...draftFilters });
   }
 
   function clearFilters() {
     if (loading) return;
+    setFilterActionPending(true);
     const next = {
       ...draftFilters,
       branch: "all",
@@ -289,9 +295,9 @@ export default function Analytics() {
               type="button"
               onClick={applyFilters}
               disabled={loading || !hasPendingChanges}
-              className={`${hasPendingChanges ? "inline-flex" : "hidden sm:inline-flex"} col-span-2 h-10 w-full items-center justify-center rounded-xl bg-[var(--color-primary)] px-4 text-xs font-bold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-45 sm:col-span-1 sm:h-11 sm:w-auto`}
+              className={`${hasPendingChanges || filterActionPending ? "inline-flex" : "hidden sm:inline-flex"} col-span-2 h-10 w-full items-center justify-center rounded-xl bg-[var(--color-primary)] px-4 text-xs font-bold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-45 sm:col-span-1 sm:h-11 sm:w-auto`}
             >
-              {loading ? "Loading…" : "Apply filters"}
+              {filterActionPending ? "Loading…" : "Apply filters"}
             </button>
           </div>
         </div>
