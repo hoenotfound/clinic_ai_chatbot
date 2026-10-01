@@ -9,6 +9,7 @@ const {
 const {
   EDITABLE_KEYS,
   buildConfigDiff,
+  buildLineDiff,
   configFingerprint,
   editableConfigView,
   prepareAdvancedConfigPayload,
@@ -358,9 +359,9 @@ test("Advanced Config enforces alias, FAQ, and promotion integrity across partia
   assert.match(reversedDates.error, /cannot be before/i);
 });
 
-test("Advanced Config review reports item-level collection changes", () => {
+test("Advanced Config review reports field-level collection changes", () => {
   const current = currentConfig();
-  current.branches = [{ name: "HQ", address: "Old address", phone: "" }];
+  current.branches = [{ name: "HQ", address: "Old address", phone: "", whatsapp: null }];
   current.services = [
     { name: "Consultation", description: "Old", priceRange: "RM50", duration: "30 min" },
   ];
@@ -376,16 +377,16 @@ test("Advanced Config review reports item-level collection changes", () => {
 
   const changes = buildConfigDiff(current, {
     branches: [
-      { name: "HQ", address: "New address", phone: "" },
-      { name: "PJ", address: "PJ", phone: "" },
+      { name: "HQ", address: "New address", phone: "", whatsapp: null },
+      { name: "PJ", address: "PJ", phone: "", whatsapp: null },
     ],
     services: [
-      { name: "Consultation", description: "Updated", priceRange: "RM50", duration: "30 min" },
+      { name: "Consultation", description: "Updated description", priceRange: "RM50", duration: "30 min" },
       { name: "Facial", description: "New", priceRange: "RM100", duration: "60 min" },
     ],
     serviceAliases: [{ alias: "consult", officialService: "Facial" }],
     faqs: [
-      { q: "Price?", a: "New answer" },
+      { q: "Price?", a: "New answer with more detail" },
       { q: "Hours?", a: "Daily" },
     ],
     promotions: [{
@@ -398,31 +399,121 @@ test("Advanced Config review reports item-level collection changes", () => {
   });
 
   const byKey = Object.fromEntries(changes.map((change) => [change.key, change]));
-  assert.deepEqual(byKey.branches.details, {
-    added: ["PJ"],
+
+  assert.equal(byKey.branches.details.kind, "collection");
+  assert.equal(byKey.branches.details.added[0].identity, "PJ");
+  assert.equal(byKey.branches.details.added[0].item.address, "PJ");
+  assert.equal(byKey.branches.details.updated[0].identity, "HQ");
+  assert.deepEqual(
+    byKey.branches.details.updated[0].changes.map((change) => change.field),
+    ["address"]
+  );
+
+  assert.equal(byKey.services.details.added[0].identity, "Facial");
+  assert.deepEqual(byKey.services.details.added[0].item, {
+    description: "New",
+    priceRange: "RM100",
+    duration: "60 min",
+  });
+  const serviceUpdate = byKey.services.details.updated[0];
+  assert.equal(serviceUpdate.identity, "Consultation");
+  assert.equal(serviceUpdate.changes[0].field, "description");
+  assert.equal(serviceUpdate.changes[0].textDiff.kind, "text");
+  assert.equal(serviceUpdate.changes[0].textDiff.mode, "words");
+
+  const aliasUpdate = byKey.serviceAliases.details.updated[0];
+  assert.equal(aliasUpdate.identity, "consult");
+  assert.equal(aliasUpdate.changes[0].field, "officialService");
+  assert.equal(aliasUpdate.changes[0].after, "Facial");
+
+  assert.equal(byKey.faqs.details.added[0].identity, "Hours?");
+  assert.equal(byKey.faqs.details.added[0].item.a, "Daily");
+  const faqUpdate = byKey.faqs.details.updated[0];
+  assert.equal(faqUpdate.identity, "Price?");
+  assert.equal(faqUpdate.changes[0].field, "a");
+  assert.equal(faqUpdate.changes[0].textDiff.mode, "words");
+
+  assert.equal(byKey.promotions.details.added[0].identity, "New Promo");
+  assert.equal(byKey.promotions.details.removed[0].identity, "Old Promo");
+});
+
+test("Advanced Config review produces readable text, guardrail, and handoff diffs", () => {
+  const current = currentConfig();
+  current.businessDescription = "A clinic focused on posture and wellness.";
+  current.sop = [
+    "BUSINESS FACTS",
+    "Use configured information only.",
+    "Ask one question at a time.",
+  ].join("\n");
+  current.guardrails = ["Do not invent facts.", "Do not guarantee results."];
+  current.escalation = {
+    outOfScopeTriggers: ["Complaint"],
+    handoffMessage: "A staff member will help.",
+    handoffNote: "Check the conversation.",
+  };
+
+  const changes = buildConfigDiff(current, {
+    businessDescription: "A clinic focused on posture, women's health and wellness.",
+    sop: [
+      "BUSINESS FACTS",
+      "Use configured information only.",
+      "Ask one focused question at a time.",
+    ].join("\n"),
+    guardrails: [
+      "Do not invent facts.",
+      "Do not guarantee results.",
+      "Do not diagnose medical conditions.",
+    ],
+    escalation: {
+      outOfScopeTriggers: ["Complaint", "Severe pain"],
+      handoffMessage: "A team member will help you shortly.",
+      handoffNote: "Check the conversation.",
+    },
+  });
+
+  const byKey = Object.fromEntries(changes.map((change) => [change.key, change]));
+
+  assert.equal(byKey.businessDescription.details.kind, "text");
+  assert.equal(byKey.businessDescription.details.mode, "words");
+  assert.ok(byKey.businessDescription.details.segments.some((segment) => segment.type === "added"));
+  assert.ok(byKey.businessDescription.details.segments.some((segment) => segment.type === "removed"));
+
+  assert.equal(byKey.sop.details.kind, "text");
+  assert.equal(byKey.sop.details.mode, "lines");
+  assert.ok(
+    byKey.sop.details.segments.some(
+      (segment) => segment.type === "added" && segment.lines.includes("Ask one focused question at a time.")
+    )
+  );
+
+  assert.deepEqual(byKey.guardrails.details, {
+    kind: "string_list",
+    added: ["Do not diagnose medical conditions."],
     removed: [],
-    updated: ["HQ"],
   });
-  assert.deepEqual(byKey.services.details, {
-    added: ["Facial"],
+
+  assert.equal(byKey.escalation.details.kind, "object");
+  const handoffFields = Object.fromEntries(
+    byKey.escalation.details.changes.map((change) => [change.field, change])
+  );
+  assert.deepEqual(handoffFields.outOfScopeTriggers.details, {
+    kind: "string_list",
+    added: ["Severe pain"],
     removed: [],
-    updated: ["Consultation"],
   });
-  assert.deepEqual(byKey.serviceAliases.details, {
-    added: [],
-    removed: [],
-    updated: ["consult"],
-  });
-  assert.deepEqual(byKey.faqs.details, {
-    added: ["Hours?"],
-    removed: [],
-    updated: ["Price?"],
-  });
-  assert.deepEqual(byKey.promotions.details, {
-    added: ["New Promo"],
-    removed: ["Old Promo"],
-    updated: [],
-  });
+  assert.equal(handoffFields.handoffMessage.textDiff.mode, "words");
+});
+
+test("line diff keeps unchanged context while marking additions and removals", () => {
+  const diff = buildLineDiff(
+    "Line one\nOld instruction\nLine three",
+    "Line one\nNew instruction\nLine three"
+  );
+  assert.equal(diff.kind, "text");
+  assert.equal(diff.mode, "lines");
+  assert.ok(diff.segments.some((segment) => segment.type === "removed"));
+  assert.ok(diff.segments.some((segment) => segment.type === "added"));
+  assert.ok(diff.segments.some((segment) => segment.type === "same"));
 });
 
 test("Advanced Config fingerprint is stable for equivalent nested object key order", () => {
@@ -489,9 +580,11 @@ test("Advanced Config portal route stays admin-only and exposes validate, apply,
   assert.match(page, /Partial JSON is supported/);
   assert.match(page, /Validate & review/);
   assert.match(page, /Import history/);
-  assert.match(page, /change\.details\.added/);
-  assert.match(page, /change\.details\.removed/);
-  assert.match(page, /change\.details\.updated/);
+  assert.match(page, /function CollectionDiff/);
+  assert.match(page, /function TextDiff/);
+  assert.match(page, /function ChangeSection/);
+  assert.match(page, /reviewSummary/);
+  assert.match(page, /Apply changes/);
   assert.match(page, /Automation Tools settings are intentionally excluded/);
   assert.match(page, /Up to 50 snapshots are retained/);
   assert.match(page, /refreshUser/);
