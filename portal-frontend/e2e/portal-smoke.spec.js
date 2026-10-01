@@ -665,7 +665,7 @@ test("Pipeline tablet portrait layout keeps compact navigation and visible worki
 
   await expect(page.getByLabel("Filter by lead source")).toBeVisible();
   await expect(page.getByRole("button", { name: /^Needs attention 1$/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /All branches/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Petaling Jaya \(PJ\)/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /New Lead 1/ })).toBeVisible();
   await expect(page.getByTestId("pipeline-mobile-leads")).toBeVisible();
   await expect(page.locator("main.ui-kanban-scroll")).not.toBeVisible();
