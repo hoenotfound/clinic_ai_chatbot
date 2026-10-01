@@ -438,6 +438,51 @@ test("Advanced Config review reports field-level collection changes", () => {
   assert.equal(byKey.promotions.details.removed[0].identity, "Old Promo");
 });
 
+test("Advanced Config preserves full long FAQ identities in review payloads", () => {
+  const current = currentConfig();
+  const longQuestion = "我明明不胖可是小腹一直很凸，而且站久了腰容易酸，裤子左右穿起来也不太一样，这种情况是不是跟骨盆或体态有关，应该先做什么评估比较适合我？";
+  assert.ok(longQuestion.length > 88);
+
+  current.faqs = [{ q: longQuestion, a: "旧答案" }];
+  const changes = buildConfigDiff(current, {
+    faqs: [{ q: longQuestion, a: "新的完整答案，会先了解你的情况再建议合适的评估。" }],
+  });
+
+  const faqChange = changes.find((change) => change.key === "faqs");
+  assert.equal(faqChange.details.kind, "collection");
+  assert.equal(faqChange.details.updated[0].identity, longQuestion);
+  assert.equal(faqChange.details.updated[0].identity.endsWith("…"), false);
+});
+
+test("Advanced Config reports pure guardrail and service-area reordering meaningfully", () => {
+  const current = currentConfig();
+  current.guardrails = ["Rule A", "Rule B", "Rule C"];
+  current.serviceAreas = ["Cheras", "Balakong", "Serdang"];
+
+  const changes = buildConfigDiff(current, {
+    guardrails: ["Rule C", "Rule A", "Rule B"],
+    serviceAreas: ["Serdang", "Cheras", "Balakong"],
+  });
+  const byKey = Object.fromEntries(changes.map((change) => [change.key, change]));
+
+  assert.deepEqual(byKey.guardrails.details, {
+    kind: "string_list",
+    added: [],
+    removed: [],
+    orderChanged: true,
+    beforeOrder: ["Rule A", "Rule B", "Rule C"],
+    afterOrder: ["Rule C", "Rule A", "Rule B"],
+  });
+  assert.deepEqual(byKey.serviceAreas.details, {
+    kind: "string_list",
+    added: [],
+    removed: [],
+    orderChanged: true,
+    beforeOrder: ["Cheras", "Balakong", "Serdang"],
+    afterOrder: ["Serdang", "Cheras", "Balakong"],
+  });
+});
+
 test("Advanced Config review produces readable text, guardrail, and handoff diffs", () => {
   const current = currentConfig();
   current.businessDescription = "A clinic focused on posture and wellness.";
