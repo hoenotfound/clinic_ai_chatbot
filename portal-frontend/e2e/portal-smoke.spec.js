@@ -32,6 +32,8 @@ const ADMIN_USER = {
   },
 };
 
+const LONG_FAQ_QUESTION = "我明明不胖可是小腹一直很凸，而且站久了腰容易酸，裤子左右穿起来也不太一样，这种情况是不是跟骨盆或体态有关，应该先做什么评估比较适合我？这是一个特意很长的问题用来测试手机画面不会横向溢出。";
+
 async function mockPortalApi(page, { loggedIn = false, user = STAFF_USER } = {}) {
   let authenticated = loggedIn;
   let advancedConfig = {
@@ -41,6 +43,8 @@ async function mockPortalApi(page, { loggedIn = false, user = STAFF_USER } = {})
     aiAssistantName: "Ava",
     introMessage: "Hi, how can I help?",
     tone: "Warm and professional",
+    faqs: [{ q: LONG_FAQ_QUESTION, a: "旧答案" }],
+    guardrails: ["Rule A", "Rule B", "Rule C"],
   };
 
   await page.route("**/api/**", async (route) => {
@@ -261,11 +265,74 @@ async function mockPortalApi(page, { loggedIn = false, user = STAFF_USER } = {})
       const updates = payload?.config || {};
       const changes = Object.keys(updates)
         .filter((key) => JSON.stringify(advancedConfig[key]) !== JSON.stringify(updates[key]))
-        .map((key) => ({
-          key,
-          before: String(advancedConfig[key] ?? "Empty"),
-          after: String(updates[key] ?? "Empty"),
-        }));
+        .map((key) => {
+          const before = advancedConfig[key];
+          const after = updates[key];
+          if (key === "faqs") {
+            const beforeFaq = Array.isArray(before) ? before[0] : null;
+            const afterFaq = Array.isArray(after) ? after[0] : null;
+            return {
+              key,
+              before: `${Array.isArray(before) ? before.length : 0} items`,
+              after: `${Array.isArray(after) ? after.length : 0} items`,
+              details: {
+                kind: "collection",
+                added: [],
+                removed: [],
+                updated: [{
+                  identity: afterFaq?.q || beforeFaq?.q || "",
+                  changes: [{
+                    field: "a",
+                    before: beforeFaq?.a || "Empty",
+                    after: afterFaq?.a || "Empty",
+                    textDiff: {
+                      kind: "text",
+                      mode: "words",
+                      segments: [
+                        { type: "removed", text: beforeFaq?.a || "" },
+                        { type: "added", text: afterFaq?.a || "" },
+                      ],
+                    },
+                  }],
+                }],
+              },
+            };
+          }
+
+          if (key === "guardrails") {
+            return {
+              key,
+              before: `${Array.isArray(before) ? before.length : 0} items`,
+              after: `${Array.isArray(after) ? after.length : 0} items`,
+              details: {
+                kind: "string_list",
+                added: [],
+                removed: [],
+                orderChanged: true,
+                beforeOrder: before || [],
+                afterOrder: after || [],
+              },
+            };
+          }
+
+          return {
+            key,
+            before: String(before ?? "Empty"),
+            after: String(after ?? "Empty"),
+            ...(key === "tone"
+              ? {
+                  details: {
+                    kind: "text",
+                    mode: "words",
+                    segments: [
+                      { type: "removed", text: String(before || "") },
+                      { type: "added", text: String(after || "") },
+                    ],
+                  },
+                }
+              : {}),
+          };
+        });
       return route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -398,7 +465,47 @@ test("staff can reach the main portal routes without page-level overflow", async
 });
 
 
-test("admin can validate and apply Advanced Config without horizontal overflow", async ({ page }) => {
+test("Advanced Config keeps a full long FAQ identity readable without horizontal overflow", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true, user: ADMIN_USER });
+  await page.goto("/settings/advanced-config");
+
+  const editor = page.getByLabel("JSON configuration");
+  await editor.fill(JSON.stringify({
+    faqs: [{ q: LONG_FAQ_QUESTION, a: "新的完整答案，会先了解你的情况再建议合适的评估。" }],
+  }, null, 2));
+  await page.getByRole("button", { name: "Validate & review" }).click();
+
+  const faqSection = page.getByTestId("config-change-faqs");
+  await expect(faqSection).toBeVisible();
+  await faqSection.locator("summary").first().click();
+  await expect(faqSection.getByText(LONG_FAQ_QUESTION, { exact: true })).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+
+  await faqSection.getByText(LONG_FAQ_QUESTION, { exact: true }).click();
+  await expect(faqSection.getByText("新的完整答案，会先了解你的情况再建议合适的评估。", { exact: true })).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Advanced Config shows pure guardrail reordering instead of counts only", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true, user: ADMIN_USER });
+  await page.goto("/settings/advanced-config");
+
+  const editor = page.getByLabel("JSON configuration");
+  await editor.fill(JSON.stringify({ guardrails: ["Rule C", "Rule A", "Rule B"] }, null, 2));
+  await page.getByRole("button", { name: "Validate & review" }).click();
+
+  const guardrailSection = page.getByTestId("config-change-guardrails");
+  await expect(guardrailSection).toBeVisible();
+  await expect(guardrailSection.getByText("Order changed", { exact: true }).first()).toBeVisible();
+  await guardrailSection.locator("summary").first().click();
+
+  await expect(guardrailSection.getByText("Before", { exact: true })).toBeVisible();
+  await expect(guardrailSection.getByText("After", { exact: true })).toBeVisible();
+  await expect(guardrailSection.getByText("Rule C", { exact: true }).first()).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("admin can review meaningful Advanced Config diff and apply without horizontal overflow", async ({ page }) => {
   await mockPortalApi(page, { loggedIn: true, user: ADMIN_USER });
   await page.goto("/settings/advanced-config");
 
@@ -410,9 +517,18 @@ test("admin can validate and apply Advanced Config without horizontal overflow",
   const editor = page.getByLabel("JSON configuration");
   await editor.fill(JSON.stringify({ tone: "Short and friendly" }, null, 2));
   await page.getByRole("button", { name: "Validate & review" }).click();
+
   await expect(page.getByRole("heading", { name: "Review changes" })).toBeVisible();
-  await expect(page.getByText("tone", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Apply 1 change" }).click();
-  await expect(page.getByText("Applied 1 configuration change.")).toBeVisible();
+  await expect(page.getByText("1 section changed", { exact: false })).toBeVisible();
+  await expect(page.getByText("Tone", { exact: true })).toBeVisible();
+  await expect(page.getByText("Text changed", { exact: true })).toBeVisible();
+  await expect(page.getByText("Short and friendly", { exact: true })).toBeHidden();
+
+  await page.getByText("Tone", { exact: true }).click();
+  await expect(page.getByText("Warm and professional", { exact: true })).toBeVisible();
+  await expect(page.getByText("Short and friendly", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Apply changes" }).click();
+  await expect(page.getByText("Configuration changes applied.")).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
 });
