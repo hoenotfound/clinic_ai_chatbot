@@ -454,7 +454,7 @@ test("Advanced Config review produces readable text, guardrail, and handoff diff
   };
 
   const changes = buildConfigDiff(current, {
-    businessDescription: "A clinic focused on posture, women's health and wellness.",
+    businessDescription: "A clinic focused on pelvic care and wellness.",
     sop: [
       "BUSINESS FACTS",
       "Use configured information only.",
