@@ -572,6 +572,20 @@ test("mobile Pipeline keeps controls compact and prioritizes lead cards", async 
   await page.keyboard.press("Tab");
   await expect(closeFilters).toBeFocused();
 
+  // Crossing the 640px breakpoint while the sheet is open must release the
+  // phone focus trap and restore focus to the still-visible Filters trigger.
+  await page.setViewportSize({ width: 834, height: 1194 });
+  await expect(dialog).not.toBeVisible();
+  await expect(filters).toBeFocused();
+  await expect(page.getByLabel("Filter by lead source")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Needs attention 0$/ })).toBeVisible();
+
+  // Returning to phone width while filters remain open should reactivate the
+  // modal trap and put focus back inside the sheet.
+  await page.setViewportSize({ width: 430, height: 932 });
+  await expect(dialog).toBeVisible();
+  await expect(closeFilters).toBeFocused();
+
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
   await expect(filters).toBeFocused();
@@ -611,6 +625,102 @@ test("tablet and normal desktop Pipeline keep Needs attention as a quick filter"
   await attention.click();
   await expect(attention).toHaveClass(/bg-\[var\(--color-primary\)\]/);
   await expect(page.getByRole("button", { name: /Attention Test Lead/ })).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+
+test("Pipeline tablet portrait layout keeps compact navigation and visible working filters", async ({ page }) => {
+  test.skip(test.info().project.name !== "desktop-chromium", "targeted responsive viewport check");
+  await page.setViewportSize({ width: 834, height: 1194 });
+
+  await mockPortalApi(page, {
+    loggedIn: true,
+    pipelineData: {
+      stages: [
+        { id: 1, name: "New Lead", stage_type: "new", color: "#3c8d7b" },
+        { id: 2, name: "Contacted", stage_type: "contacted", color: "#3d8dad" },
+      ],
+      leads: [{
+        id: 103,
+        stage_id: 1,
+        name: "Tablet Portrait Lead",
+        temperature: "hot",
+        is_closed: false,
+        needs_attention: true,
+        branch_name: "Petaling Jaya (PJ)",
+        source: "facebook_organic",
+        last_message_at: "2026-10-01T12:00:00.000Z",
+      }],
+      branches: ["Petaling Jaya (PJ)"],
+      owners: [],
+      services: [],
+      noReplyHours: 24,
+    },
+  });
+  await page.goto("/pipeline");
+
+  const sidebar = page.getByTestId("app-sidebar");
+  await expect(sidebar).toBeVisible();
+  await expect.poll(() => sidebar.evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(72);
+
+  await expect(page.getByLabel("Filter by lead source")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Needs attention 1$/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /All branches/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /New Lead 1/ })).toBeVisible();
+  await expect(page.getByTestId("pipeline-mobile-leads")).toBeVisible();
+  await expect(page.locator("main.ui-kanban-scroll")).not.toBeVisible();
+
+  const filters = page.getByRole("button", { name: /^Filters/ });
+  await filters.click();
+  await expect(page.getByRole("dialog", { name: "Pipeline filters" })).not.toBeVisible();
+  await expect(page.getByText("Cold", { exact: true })).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+
+test("Pipeline wide desktop restores full metrics, categories and Kanban", async ({ page }) => {
+  test.skip(test.info().project.name !== "desktop-chromium", "targeted responsive viewport check");
+  await page.setViewportSize({ width: 1920, height: 1080 });
+
+  await mockPortalApi(page, {
+    loggedIn: true,
+    pipelineData: {
+      stages: [
+        { id: 1, name: "New Lead", stage_type: "new", color: "#3c8d7b" },
+        { id: 2, name: "Contacted", stage_type: "contacted", color: "#3d8dad" },
+      ],
+      leads: [{
+        id: 104,
+        stage_id: 1,
+        name: "Wide Desktop Lead",
+        temperature: "hot",
+        is_closed: false,
+        needs_attention: true,
+        branch_name: "Petaling Jaya (PJ)",
+        source: "facebook_organic",
+        estimated_value: 2500,
+        last_message_at: "2026-10-01T12:00:00.000Z",
+      }],
+      branches: ["Petaling Jaya (PJ)"],
+      owners: [],
+      services: [],
+      noReplyHours: 24,
+    },
+  });
+  await page.goto("/pipeline");
+
+  const sidebar = page.getByTestId("app-sidebar");
+  await expect.poll(() => sidebar.evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(220);
+
+  await expect(page.getByText("Active leads", { exact: true })).toBeVisible();
+  await expect(page.getByText("Hot leads", { exact: true })).toBeVisible();
+  await expect(page.getByText("Pipeline value", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Filter by lead source")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Filters/ })).not.toBeVisible();
+  await expect(page.getByRole("button", { name: /^All leads 1$/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Needs attention 1$/ })).toBeVisible();
+  await expect(page.locator("main.ui-kanban-scroll")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Wide Desktop Lead/ })).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
 });
 
