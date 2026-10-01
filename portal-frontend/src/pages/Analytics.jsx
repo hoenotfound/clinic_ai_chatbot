@@ -215,14 +215,16 @@ export default function Analytics() {
   const hasPendingChanges = !filtersEqual(draftFilters, appliedFilters);
 
   return (
-    <div className="h-full overflow-y-auto overscroll-contain bg-[var(--color-bg)]">
-      <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-4 sm:px-5 sm:py-5 lg:px-7">
+    <div data-testid="analytics-scroll" className="h-full min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain bg-[var(--color-bg)]">
+      <header className="min-w-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3.5 sm:px-5 sm:py-5 lg:px-7">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="font-display text-xl font-bold sm:text-[22px]">Analytics</h1>
             <p className="mt-1 max-w-3xl text-xs leading-5 text-[var(--color-text-muted)] sm:text-sm">
-              Track lead quality, conversion, response speed and sales outcomes.
-              <span className="hidden sm:inline"> {analyticsUi.descriptionSuffix}</span>
+              <span className="sm:hidden">Track leads, conversion and sales outcomes.</span>
+              <span className="hidden sm:inline">
+                Track lead quality, conversion, response speed and sales outcomes. {analyticsUi.descriptionSuffix}
+              </span>
             </p>
           </div>
           <button
@@ -237,7 +239,7 @@ export default function Analytics() {
           </button>
         </div>
 
-        <div className="mt-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+        <div className="mt-3 flex min-w-0 flex-col gap-2.5 sm:mt-4 sm:gap-3 xl:flex-row xl:items-end xl:justify-between">
           <div className="grid grid-cols-2 gap-2.5 sm:flex sm:flex-1 sm:flex-wrap sm:items-end">
             <div className="col-span-2 sm:col-span-1">
               <FilterSelect
@@ -264,7 +266,7 @@ export default function Analytics() {
               type="button"
               onClick={() => setShowMoreFilters((current) => !current)}
               aria-expanded={showMoreFilters}
-              className={`h-11 rounded-xl border px-3.5 text-xs font-semibold transition ${showMoreFilters || hasAdvancedFilters ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
+              className={`col-span-2 h-10 rounded-xl border px-3.5 text-xs font-semibold transition sm:col-span-1 sm:h-11 ${showMoreFilters || hasAdvancedFilters ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
             >
               {showMoreFilters ? "Hide filters" : "More filters"}{activeAdvancedFilterCount ? ` (${activeAdvancedFilterCount})` : ""}
             </button>
@@ -276,7 +278,7 @@ export default function Analytics() {
                 type="button"
                 onClick={clearFilters}
                 disabled={loading}
-                className="h-11 rounded-xl px-3.5 text-xs font-semibold text-[var(--color-danger)] transition hover:bg-[var(--color-danger-light)] disabled:opacity-50"
+                className="col-span-2 h-10 rounded-xl px-3.5 text-xs font-semibold text-[var(--color-danger)] transition hover:bg-[var(--color-danger-light)] disabled:opacity-50 sm:col-span-1 sm:h-11"
               >
                 Clear filters
               </button>
@@ -286,7 +288,7 @@ export default function Analytics() {
               type="button"
               onClick={applyFilters}
               disabled={loading || !hasPendingChanges}
-              className={`${activeFilterCount > 0 ? "" : "col-span-2"} h-11 rounded-xl bg-[var(--color-primary)] px-4 text-xs font-bold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-45 sm:col-span-1`}
+              className={`${hasPendingChanges ? "inline-flex" : "hidden sm:inline-flex"} col-span-2 h-10 w-full items-center justify-center rounded-xl bg-[var(--color-primary)] px-4 text-xs font-bold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-45 sm:col-span-1 sm:h-11 sm:w-auto`}
             >
               {loading ? "Loading…" : "Apply filters"}
             </button>
@@ -314,10 +316,10 @@ export default function Analytics() {
           </div>
         </div>
       ) : data ? (
-        <main className="space-y-4 px-3.5 py-4 sm:space-y-5 sm:px-5 sm:py-5 lg:px-7 lg:py-6">
+        <main className="min-w-0 space-y-3.5 px-3.5 py-3.5 sm:space-y-5 sm:px-5 sm:py-5 lg:px-7 lg:py-6">
           {error && <div className="rounded-xl border border-[var(--color-danger)]/20 bg-[var(--color-danger-light)] px-4 py-3 text-sm text-[var(--color-danger)]">{error}</div>}
 
-          <section className="grid grid-cols-2 gap-2.5 sm:gap-3 xl:grid-cols-4">
+          <section className="grid min-w-0 grid-cols-2 gap-2.5 sm:gap-3 xl:grid-cols-4">
             <MetricCard label="New leads" value={data.summary.newLeads} delta={data.comparison.deltas.newLeads} detail="Lead journeys started in this period" />
             <MetricCard label={analyticsUi.primaryMetricLabel} value={data.summary.appointments} delta={data.comparison.deltas.appointments} detail={analyticsUi.primaryMetricDetail} />
             <MetricCard label={analyticsUi.secondaryMetricLabel} value={data.summary.visits} delta={data.comparison.deltas.visits} detail={analyticsUi.secondaryMetricDetail} />
@@ -388,7 +390,7 @@ function DateField({ label, value, onChange }) {
   return (
     <label className="min-w-0 sm:min-w-36">
       <span className="mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]">{label}</span>
-      <input type="date" value={value} onChange={(event) => onChange(event.target.value)} className="h-11 w-full min-w-0 rounded-xl border border-[var(--color-border)] bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15" />
+      <input type="date" value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full min-w-0 rounded-xl border border-[var(--color-border)] bg-white px-3 text-sm sm:h-11 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15" />
     </label>
   );
 }
@@ -398,7 +400,7 @@ function FilterSelect({ label, value, onChange, options = [], format = (item) =>
   return (
     <label className={`min-w-0 sm:min-w-36 ${wide ? "sm:min-w-44" : ""} sm:max-w-56 sm:flex-1`}>
       <span className="mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)} className="h-11 w-full min-w-0 rounded-xl border border-[var(--color-border)] bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15">
+      <select value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full min-w-0 rounded-xl border border-[var(--color-border)] bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15 sm:h-11">
         {includeAll && <option value="all">All</option>}
         {normalizedOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
@@ -408,7 +410,7 @@ function FilterSelect({ label, value, onChange, options = [], format = (item) =>
 
 function MetricCard({ label, value, delta, deltaType = "percent", detail, className = "" }) {
   return (
-    <div className={`rounded-xl border border-[var(--color-border)] bg-white p-3.5 sm:p-4 ${className}`}>
+    <div className={`min-w-0 rounded-xl border border-[var(--color-border)] bg-white p-3 sm:p-4 ${className}`}>
       <p className="text-xs font-semibold leading-tight text-[var(--color-text-muted)]">{label}</p>
       <p className="mt-1.5 font-display text-2xl font-bold tracking-tight sm:mt-2">{value}</p>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs sm:mt-2">
@@ -428,18 +430,36 @@ function ConversionSummary({ conversionRate, conversionDelta, cohort, labels }) 
   ];
 
   return (
-    <section className="border-y border-[var(--color-border)] py-3 sm:flex sm:items-center sm:justify-between sm:gap-5">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="text-xs font-semibold text-[var(--color-text-muted)]">Overall lead → won conversion</span>
-        <span className="font-display text-xl font-bold">{conversionRate.toFixed(1)}%</span>
-        <span className={`text-xs font-semibold ${deltaTone(conversionDelta)}`}>{deltaLabel(conversionDelta, "points")} vs prior</span>
+    <section className="min-w-0 border-y border-[var(--color-border)] py-3">
+      <div className="sm:hidden">
+        <p className="text-xs font-semibold text-[var(--color-text-muted)]">Overall conversion</p>
+        <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span className="font-display text-2xl font-bold">{conversionRate.toFixed(1)}%</span>
+          <span className={`text-xs font-semibold ${deltaTone(conversionDelta)}`}>{deltaLabel(conversionDelta, "points")} vs prior</span>
+        </div>
+        <div className="mt-3 grid min-w-0 grid-cols-3 gap-2">
+          {rates.map(([definition, value]) => (
+            <div key={definition} className="min-w-0 border-l border-[var(--color-border)] pl-2 first:border-l-0 first:pl-0">
+              <p className="text-[10px] leading-4 text-[var(--color-text-muted)]">{definition}</p>
+              <p className="mt-0.5 font-display text-sm font-bold">{value.toFixed(1)}%</p>
+            </div>
+          ))}
+        </div>
       </div>
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs sm:mt-0 sm:justify-end">
-        {rates.map(([definition, value]) => (
-          <span key={definition} className="text-[var(--color-text-muted)]">
-            {definition} <strong className="font-semibold text-[var(--color-text)]">{value.toFixed(1)}%</strong>
-          </span>
-        ))}
+
+      <div className="hidden sm:flex sm:items-center sm:justify-between sm:gap-5">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span className="text-xs font-semibold text-[var(--color-text-muted)]">Overall lead → won conversion</span>
+          <span className="font-display text-xl font-bold">{conversionRate.toFixed(1)}%</span>
+          <span className={`text-xs font-semibold ${deltaTone(conversionDelta)}`}>{deltaLabel(conversionDelta, "points")} vs prior</span>
+        </div>
+        <div className="flex flex-wrap justify-end gap-x-4 gap-y-1 text-xs">
+          {rates.map(([definition, value]) => (
+            <span key={definition} className="text-[var(--color-text-muted)]">
+              {definition} <strong className="font-semibold text-[var(--color-text)]">{value.toFixed(1)}%</strong>
+            </span>
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -447,7 +467,7 @@ function ConversionSummary({ conversionRate, conversionDelta, cohort, labels }) 
 
 function Panel({ title, subtitle, children }) {
   return (
-    <section className="rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">
+    <section className="min-w-0 rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">
       <div className="mb-3 sm:mb-4">
         <h2 className="font-display text-[15px] font-bold sm:text-base">{title}</h2>
         {subtitle && <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{subtitle}</p>}
