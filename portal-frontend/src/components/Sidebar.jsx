@@ -190,7 +190,7 @@ export default function Sidebar() {
       {isPhone && mobileOpen && (
         <button
           type="button"
-          aria-label="Close sidebar"
+          aria-label="Dismiss navigation"
           className="app-sidebar-mobile-backdrop"
           onClick={() => setMobileOpen(false)}
         />
