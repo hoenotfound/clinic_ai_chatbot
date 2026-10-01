@@ -56,7 +56,7 @@ test("Analytics mobile layout keeps filters compact and conversion rates structu
   assert.match(analytics, /data-testid="analytics-scroll"/);
   assert.match(analytics, /overflow-x-hidden overflow-y-auto/);
   assert.match(analytics, /Track leads, conversion and sales outcomes\./);
-  assert.match(analytics, /col-span-2 h-10 rounded-xl border[\s\S]*More filters/);
+  assert.match(analytics, /col-span-2 flex h-10 w-full items-center justify-between rounded-xl border[\s\S]*More filters/);
   assert.match(analytics, /hasPendingChanges \? "inline-flex" : "hidden sm:inline-flex"/);
   assert.match(analytics, /<div className="sm:hidden">[\s\S]*Overall conversion/);
   assert.match(analytics, /mt-3 grid min-w-0 grid-cols-3 gap-2/);
