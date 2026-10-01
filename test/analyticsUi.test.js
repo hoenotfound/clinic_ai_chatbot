@@ -109,3 +109,15 @@ test("Analytics mobile filter summary reports hidden advanced filters without ex
   assert.match(analytics, /\$\{appliedAdvancedFilterCount\} more/);
   assert.match(analytics, /filterActionPending \? "Updating analytics…" : mobileFilterSummary/);
 });
+
+
+test("Analytics collapsed mobile filters reveal unsaved draft changes", () => {
+  const analytics = read("portal-frontend/src/pages/Analytics.jsx");
+  const smoke = read("portal-frontend/e2e/portal-smoke.spec.js");
+
+  assert.match(analytics, /hasPendingChanges && !filterActionPending/);
+  assert.match(analytics, />\s*Unsaved\s*</);
+  assert.match(analytics, /text-\[10px\] font-bold text-\[var\(--color-accent\)\]/);
+  assert.match(smoke, /toContainText\("Unsaved"\)/);
+  assert.match(smoke, /not\.toContainText\("Unsaved"\)/);
+});
