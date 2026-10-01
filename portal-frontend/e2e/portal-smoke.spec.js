@@ -673,7 +673,7 @@ test("Pipeline tablet portrait layout keeps compact navigation and visible worki
   const filters = page.getByRole("button", { name: /^Filters/ });
   await filters.click();
   await expect(page.getByRole("dialog", { name: "Pipeline filters" })).not.toBeVisible();
-  await expect(page.getByText("Cold", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Cold 0$/ })).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
 });
 
