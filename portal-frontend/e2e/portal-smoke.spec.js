@@ -475,16 +475,33 @@ test("sidebar uses responsive compact and expanded states and remembers the choi
   const toggle = sidebar.locator(".app-sidebar-toggle");
 
   await expect(sidebar).toBeVisible();
+  await expect(toggle).toBeVisible();
+  await expect.poll(async () => {
+    const box = await toggle.boundingBox();
+    return box ? { width: Math.round(box.width), height: Math.round(box.height) } : null;
+  }).toEqual({ width: 44, height: 44 });
   await expectNoHorizontalPageOverflow(page);
 
   if (viewport.width < 640) {
-    await expect(toggle).toBeHidden();
+    await expect(sidebar).toHaveAttribute("data-mobile-open", "false");
+    await expect(toggle).toHaveAccessibleName("Open sidebar");
     await expect.poll(() => sidebar.evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(64);
+    await expect.poll(() => firstLabel.evaluate((node) => getComputedStyle(node).opacity)).toBe("0");
+
+    await toggle.click();
+    await expect(sidebar).toHaveAttribute("data-mobile-open", "true");
+    await expect(toggle).toHaveAccessibleName("Close sidebar");
+    await expect.poll(() => firstLabel.evaluate((node) => getComputedStyle(node).opacity)).toBe("1");
+    await expect.poll(() => sidebar.locator(".app-sidebar-nav").evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(220);
+    await expect(page.getByRole("button", { name: "Close sidebar" })).toHaveCount(2);
+    await expectNoHorizontalPageOverflow(page);
+
+    await page.getByRole("button", { name: "Close sidebar" }).first().click();
+    await expect(sidebar).toHaveAttribute("data-mobile-open", "false");
+    await expect(toggle).toHaveAccessibleName("Open sidebar");
     await expect.poll(() => firstLabel.evaluate((node) => getComputedStyle(node).opacity)).toBe("0");
     return;
   }
-
-  await expect(toggle).toBeVisible();
 
   if (viewport.width >= 1280) {
     await expect(sidebar).toHaveAttribute("data-expanded", "true");
@@ -521,6 +538,7 @@ test("sidebar uses responsive compact and expanded states and remembers the choi
     await expect.poll(() => page.getByTestId("app-sidebar").evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(220);
   }
 
+  await expect(page.getByRole("navigation", { name: "Utility navigation" })).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
 });
 
