@@ -187,6 +187,7 @@ test("pipeline keeps phone controls compact while preserving richer desktop cont
   assert.match(source, /left-16 right-0 z-\[90\]/);
   assert.match(source, /hidden shrink-0 border-b[\s\S]*sm:block/);
   assert.match(source, /data-testid="pipeline-mobile-leads"/);
+  assert.match(source, /mt-1\.5 flex gap-1\.5 ui-scroll-x overflow-x-auto pb-0\.5 sm:mt-2 min-\[1800px\]:hidden/);
   assert.match(source, /min-\[1800px\]:hidden/);
   assert.match(source, /min-\[1800px\]:grid/);
   assert.match(source, /min-\[1800px\]:flex/);
