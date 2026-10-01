@@ -829,7 +829,7 @@ export default function Pipeline() {
           <span className="hidden shrink-0 text-[11px] font-medium text-[var(--color-text-muted)] min-[1800px]:block">{filteredLeads.length} shown</span>
         </div>
 
-        <div className="mt-1.5 flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5 sm:mt-2">
+        <div className="mt-1.5 flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5 sm:mt-2 min-[1800px]:hidden">
           {quickCategoryOptions.map(([key, label]) => (
             <button
               key={key}
