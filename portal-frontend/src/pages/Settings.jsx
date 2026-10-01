@@ -70,7 +70,10 @@ export default function Settings() {
   const setupItem = user?.role === "admin"
     ? { id: "setup", label: "Setup Status", to: "/settings/setup" }
     : null;
-  const destinationItems = [teamItem, clientSetupItem, goLiveItem, setupItem].filter(Boolean);
+  const advancedConfigItem = user?.role === "admin"
+    ? { id: "advanced-config", label: "Advanced Config", to: "/settings/advanced-config" }
+    : null;
+  const destinationItems = [teamItem, clientSetupItem, goLiveItem, setupItem, advancedConfigItem].filter(Boolean);
 
   useEffect(() => {
     let cancelled = false;
@@ -155,7 +158,7 @@ export default function Settings() {
 
   const ui = getBusinessTerminology(config);
   const tabs = getSettingsTabs(config);
-  const systemItems = [clientSetupItem, goLiveItem, setupItem].filter(Boolean);
+  const systemItems = [clientSetupItem, goLiveItem, setupItem, advancedConfigItem].filter(Boolean);
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--color-bg)] xl:flex-row">
