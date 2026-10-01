@@ -31,7 +31,7 @@ const CATEGORY_OPTIONS = [
   ["attention", "Needs attention"],
 ];
 const CATEGORY_KEYS = new Set(CATEGORY_OPTIONS.map(([key]) => key));
-const QUICK_CATEGORY_KEYS = new Set(["all", "hot", "warm", "attention"]);
+const QUICK_CATEGORY_KEYS = new Set(["all", "hot", "warm"]);
 const ANALYTICS_PARAM_KEYS = ["from", "to", "channel", "source", "campaign", "treatment", "owner"];
 
 function parameterOrNull(searchParams, key) {
@@ -277,6 +277,9 @@ export default function Pipeline() {
   const quickCategoryOptions = CATEGORY_OPTIONS.filter(([key]) => QUICK_CATEGORY_KEYS.has(key));
   const secondaryCategoryOptions = CATEGORY_OPTIONS.filter(([key]) => !QUICK_CATEGORY_KEYS.has(key));
   const hasSecondaryCategoryFilter = categoryFilter !== "all" && !QUICK_CATEGORY_KEYS.has(categoryFilter);
+  const activeFilterCount = Number(branchFilter !== "all")
+    + Number(sourceFilter !== "all")
+    + Number(hasSecondaryCategoryFilter);
 
   const metricLeads = hasAnalyticsDrilldown
     ? drilldownLeads
@@ -307,7 +310,6 @@ export default function Pipeline() {
   const mobileStageLeads = mobileStage
     ? filteredLeads.filter((lead) => Number(lead.stage_id) === Number(mobileStage.id))
     : [];
-  const mobileStageValue = mobileStageLeads.reduce((sum, lead) => sum + (Number(lead.estimated_value) || 0), 0);
 
   function updateParam(key, value) {
     const next = new URLSearchParams(searchParams);
@@ -331,6 +333,18 @@ export default function Pipeline() {
   function selectSource(value) {
     setSourceFilter(value);
     updateParam("source_filter", value);
+  }
+
+  function clearPipelineFilters() {
+    const next = new URLSearchParams(searchParams);
+    for (const key of ["branch", "source_filter", "category"]) next.delete(key);
+    next.delete("lead");
+    setBranchFilter("all");
+    setSourceFilter("all");
+    setCategoryFilter("all");
+    setSelectedLeadId(null);
+    setSearchParams(next, { replace: true });
+    setShowCompactFilters(false);
   }
 
   function clearAnalyticsDrilldown() {
@@ -578,31 +592,40 @@ export default function Pipeline() {
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-[var(--color-bg)]">
-      <header className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3 sm:px-5 sm:py-3.5 lg:px-6 2xl:px-7 2xl:py-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <header className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 sm:px-5 sm:py-3.5 lg:px-6 2xl:px-7 2xl:py-4">
+        <div className="flex items-start justify-between gap-2.5">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate font-display text-xl font-bold">Lead Pipeline</h1>
-              <span className="shrink-0 rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--color-primary)]">Live</span>
-              {!canManageLeads && <span className="shrink-0 rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">View only</span>}
+            <div className="flex min-w-0 items-center gap-2">
+              <h1 className="truncate font-display text-lg font-bold sm:text-xl">Lead Pipeline</h1>
+              <span className="shrink-0 rounded-full bg-[var(--color-primary-light)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--color-primary)] sm:px-2.5 sm:py-1 sm:text-[10px]">Live</span>
+              {!canManageLeads && <span className="hidden shrink-0 rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] sm:inline-flex">View only</span>}
             </div>
             <p className="mt-1 hidden max-w-2xl text-sm leading-relaxed text-[var(--color-text-muted)] lg:block">Track every enquiry, next action and sales outcome in one place.</p>
           </div>
+
           {(canManageStages || canCreateLeads) && (
-            <div className="flex w-full shrink-0 gap-2 sm:w-auto">
-              {canManageStages && (
-                <button type="button" onClick={() => setShowStages(true)} className="h-11 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold transition hover:bg-[var(--color-bg)] sm:flex-none sm:px-3.5 sm:text-sm">
-                  <span className="sm:hidden">Stages</span><span className="hidden sm:inline">Manage stages</span>
-                </button>
-              )}
+            <div className="flex shrink-0 items-center gap-1.5">
               {canCreateLeads && (
-                <button type="button" onClick={() => setShowAddLead(true)} className="h-11 flex-1 rounded-xl bg-[var(--color-primary)] px-3.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[var(--color-primary-hover)] sm:flex-none sm:px-4 sm:text-sm">+ Add lead</button>
+                <button type="button" onClick={() => setShowAddLead(true)} className="h-9 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-[var(--color-primary-hover)] sm:hidden">+ Add</button>
               )}
+              {canManageStages && (
+                <button type="button" onClick={() => setShowStages(true)} aria-label="Manage pipeline stages" className="flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--color-border)] bg-white text-lg font-bold leading-none text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] sm:hidden">•••</button>
+              )}
+              <div className="hidden items-center gap-2 sm:flex">
+                {canManageStages && (
+                  <button type="button" onClick={() => setShowStages(true)} className="h-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 text-sm font-semibold transition hover:bg-[var(--color-bg)]">
+                    Manage stages
+                  </button>
+                )}
+                {canCreateLeads && (
+                  <button type="button" onClick={() => setShowAddLead(true)} className="h-11 rounded-xl bg-[var(--color-primary)] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[var(--color-primary-hover)]">+ Add lead</button>
+                )}
+              </div>
             </div>
           )}
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-[var(--color-text-muted)] min-[1800px]:hidden">
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)] sm:mt-3 sm:gap-x-4 sm:gap-y-1.5 sm:text-xs min-[1800px]:hidden">
           <CompactMetric label="Active" value={metricActiveLeads.length} />
           <CompactMetric label="Hot" value={categoryCounts.hot || 0} tone="danger" />
           <CompactMetric label="Pipeline" value={formatMoney(pipelineValue) || "RM 0"} />
@@ -630,7 +653,7 @@ export default function Pipeline() {
         </div>
       )}
 
-      <div className="shrink-0 border-b border-[var(--color-border)] px-3.5 py-2 sm:px-5 lg:px-6 2xl:px-7 2xl:py-3">
+      <div className="hidden shrink-0 border-b border-[var(--color-border)] px-3.5 py-2 sm:block sm:px-5 lg:px-6 2xl:px-7 2xl:py-3">
         <div className="flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5 min-[1800px]:hidden">
           {branchCards.map((branch) => (
             <button
@@ -665,39 +688,48 @@ export default function Pipeline() {
         </div>
       </div>
 
-      <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 sm:px-5 lg:px-6 2xl:px-7">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-0 basis-full flex-1 sm:min-w-[12rem] sm:basis-auto sm:max-w-sm">
+      <div data-testid="pipeline-filter-bar" className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2 sm:px-5 sm:py-2.5 lg:px-6 2xl:px-7">
+        <div className="flex items-center gap-2">
+          <div className="relative min-w-0 flex-1 sm:max-w-sm">
             <SearchIcon />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search leads…" className="h-10 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] pl-9 pr-9 text-base focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15 sm:h-11 sm:text-sm" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search leads…"
+              aria-label="Search leads"
+              className="h-10 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] pl-9 pr-9 text-base focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15 sm:h-11 sm:text-sm"
+            />
             {search && <button type="button" onClick={() => setSearch("")} aria-label="Clear search" className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-sm text-[var(--color-text-muted)] hover:bg-white">✕</button>}
           </div>
+
           <select
             value={sourceFilter}
             onChange={(event) => selectSource(event.target.value)}
             aria-label="Filter by lead source"
-            className="h-10 min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 text-base font-semibold text-[var(--color-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15 sm:h-11 sm:max-w-[13rem] sm:flex-none sm:px-3 sm:text-xs"
+            className="hidden h-11 min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-xs font-semibold text-[var(--color-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15 sm:block sm:max-w-[13rem]"
           >
             <option value="all">All sources</option>
             {availableSources.map((source) => (
               <option key={source} value={source}>{sourceLabel(source)}</option>
             ))}
           </select>
+
           <button
             type="button"
             onClick={() => setShowCompactFilters((value) => !value)}
             aria-expanded={showCompactFilters}
             aria-controls="pipeline-secondary-filters"
-            className={`flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-xs font-semibold transition sm:h-11 min-[1800px]:hidden ${showCompactFilters || hasSecondaryCategoryFilter ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
+            className={`flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-semibold transition sm:h-11 sm:px-3 min-[1800px]:hidden ${showCompactFilters || activeFilterCount > 0 ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
           >
             <FilterIcon />
-            Filters
-            {hasSecondaryCategoryFilter && <span className="rounded-full bg-[var(--color-primary)] px-1.5 py-0.5 text-[10px] text-white">1</span>}
+            <span className="sm:inline">Filters</span>
+            {activeFilterCount > 0 && <span className="rounded-full bg-[var(--color-primary)] px-1.5 py-0.5 text-[10px] text-white">{activeFilterCount}</span>}
           </button>
+
           <span className="hidden shrink-0 text-[11px] font-medium text-[var(--color-text-muted)] min-[1800px]:block">{filteredLeads.length} shown</span>
         </div>
 
-        <div className="mt-2 flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5 min-[1800px]:hidden">
+        <div className="mt-1.5 flex gap-1.5 ui-scroll-x overflow-x-auto pb-0.5 sm:mt-2">
           {quickCategoryOptions.map(([key, label]) => (
             <button
               key={key}
@@ -706,34 +738,106 @@ export default function Pipeline() {
                 selectCategory(key);
                 setShowCompactFilters(false);
               }}
-              className={`h-10 shrink-0 whitespace-nowrap rounded-xl px-3 text-xs font-semibold transition ${categoryFilter === key ? "bg-[var(--color-primary)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
+              className={`h-9 shrink-0 whitespace-nowrap rounded-xl px-2.5 text-[11px] font-semibold transition sm:h-10 sm:px-3 sm:text-xs min-[1800px]:hidden ${categoryFilter === key ? "bg-[var(--color-primary)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
             >
               {label} <span className="ml-1 opacity-70">{categoryCounts[key] || 0}</span>
             </button>
           ))}
           {hasSecondaryCategoryFilter && (
-            <button type="button" onClick={() => setShowCompactFilters(true)} className="h-10 shrink-0 rounded-xl border border-[var(--color-primary)] bg-[var(--color-primary-light)] px-3 text-xs font-semibold text-[var(--color-primary)]">
+            <button type="button" onClick={() => setShowCompactFilters(true)} className="h-9 shrink-0 rounded-xl border border-[var(--color-primary)] bg-[var(--color-primary-light)] px-2.5 text-[11px] font-semibold text-[var(--color-primary)] sm:h-10 sm:px-3 sm:text-xs min-[1800px]:hidden">
               {CATEGORY_OPTIONS.find(([key]) => key === categoryFilter)?.[1]} {categoryCounts[categoryFilter] || 0}
             </button>
           )}
         </div>
 
         {showCompactFilters && (
-          <div id="pipeline-secondary-filters" className="mt-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-2.5 min-[1800px]:hidden">
-            <div className="flex flex-wrap gap-1.5">
-              {secondaryCategoryOptions.map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => {
-                    selectCategory(key);
-                    setShowCompactFilters(false);
-                  }}
-                  className={`h-10 rounded-xl px-3 text-xs font-semibold transition ${categoryFilter === key ? "bg-[var(--color-primary)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-white"}`}
-                >
-                  {label} <span className="ml-1 opacity-70">{categoryCounts[key] || 0}</span>
-                </button>
-              ))}
+          <div id="pipeline-secondary-filters" className="contents">
+            <button
+              type="button"
+              aria-label="Close pipeline filters"
+              className="fixed inset-0 z-[80] bg-black/30 sm:hidden"
+              onClick={() => setShowCompactFilters(false)}
+            />
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-label="Pipeline filters"
+              className="fixed inset-x-0 bottom-0 z-[90] max-h-[78dvh] overflow-y-auto rounded-t-3xl border-t border-[var(--color-border)] bg-white px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 shadow-2xl sm:hidden"
+            >
+              <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-[var(--color-border)]" />
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-bold">Filters</h2>
+                  <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">Narrow the leads without taking over the pipeline.</p>
+                </div>
+                <button type="button" onClick={() => setShowCompactFilters(false)} aria-label="Close filters" className="flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--color-border)] text-sm text-[var(--color-text-muted)]">✕</button>
+              </div>
+
+              <div className="mt-4 space-y-4">
+                <label className="block">
+                  <span className="mb-1.5 block text-[11px] font-semibold text-[var(--color-text-muted)]">Branch</span>
+                  <select
+                    value={branchFilter}
+                    onChange={(event) => selectBranch(event.target.value)}
+                    aria-label="Filter by branch"
+                    className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15"
+                  >
+                    {branchCards.map((branch) => <option key={branch.key} value={branch.key}>{branch.label} ({branch.leads.length})</option>)}
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="mb-1.5 block text-[11px] font-semibold text-[var(--color-text-muted)]">Source</span>
+                  <select
+                    value={sourceFilter}
+                    onChange={(event) => selectSource(event.target.value)}
+                    aria-label="Filter by source"
+                    className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15"
+                  >
+                    <option value="all">All sources</option>
+                    {availableSources.map((source) => <option key={source} value={source}>{sourceLabel(source)}</option>)}
+                  </select>
+                </label>
+
+                <div>
+                  <p className="mb-1.5 text-[11px] font-semibold text-[var(--color-text-muted)]">More lead filters</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {secondaryCategoryOptions.map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => selectCategory(categoryFilter === key ? "all" : key)}
+                        className={`h-10 rounded-xl px-3 text-xs font-semibold transition ${categoryFilter === key ? "bg-[var(--color-primary)] text-white shadow-sm" : "border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}
+                      >
+                        {label} <span className="ml-1 opacity-70">{categoryCounts[key] || 0}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 flex gap-2">
+                <button type="button" onClick={clearPipelineFilters} className="h-11 flex-1 rounded-xl border border-[var(--color-border)] text-sm font-semibold text-[var(--color-text-muted)]">Clear filters</button>
+                <button type="button" onClick={() => setShowCompactFilters(false)} className="h-11 flex-1 rounded-xl bg-[var(--color-primary)] text-sm font-semibold text-white">Show {filteredLeads.length} leads</button>
+              </div>
+            </section>
+
+            <div className="mt-2.5 hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-2.5 sm:block min-[1800px]:hidden">
+              <div className="flex flex-wrap gap-1.5">
+                {secondaryCategoryOptions.map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => {
+                      selectCategory(key);
+                      setShowCompactFilters(false);
+                    }}
+                    className={`h-10 rounded-xl px-3 text-xs font-semibold transition ${categoryFilter === key ? "bg-[var(--color-primary)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-white"}`}
+                  >
+                    {label} <span className="ml-1 opacity-70">{categoryCounts[key] || 0}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -769,21 +873,10 @@ export default function Pipeline() {
           </div>
         </div>
 
-        <main className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3.5">
+        <main className="min-h-0 flex-1 overflow-y-auto px-3.5 py-2.5 sm:py-3.5">
           {mobileStage ? (
             <section>
-              <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-[var(--color-border)] bg-white px-3.5 py-3 shadow-sm">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: mobileStage.color }} />
-                    <h2 className="truncate text-sm font-bold">{mobileStage.name}</h2>
-                  </div>
-                  <p className="mt-1 pl-[18px] text-[10px] text-[var(--color-text-muted)]">{mobileStageLeads.length} lead{mobileStageLeads.length === 1 ? "" : "s"} · {formatMoney(mobileStageValue) || "RM 0"}</p>
-                </div>
-                <span className="shrink-0 rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-[10px] font-bold text-[var(--color-text-muted)]">{filteredLeads.length} shown</span>
-              </div>
-
-              <div className="space-y-2.5">
+              <div data-testid="pipeline-mobile-leads" className="space-y-2.5">
                 {mobileStageLeads.map((lead) => <LeadCard key={lead.id} lead={lead} now={now} noReplyHours={noReplyHours} onOpen={openLead} onDragStart={canManageLeads ? handleDragStart : undefined} onTouchDragStart={canManageLeads ? handleTouchDragStart : undefined} onPointerDragStart={canManageLeads ? handlePointerDragStart : undefined} onPointerDragMove={canManageLeads ? handlePointerDragMove : undefined} onPointerDragEnd={canManageLeads ? (event) => finishPointerDrag(event, false) : undefined} onPointerDragCancel={canManageLeads ? (event) => finishPointerDrag(event, true) : undefined} pointerDragging={Number(pointerDrag?.leadId) === Number(lead.id)} />)}
                 {mobileStageLeads.length === 0 && (
                   <div className="rounded-2xl border border-dashed border-[var(--color-border)] bg-white/60 px-4 py-10 text-center">
