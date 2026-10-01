@@ -36,6 +36,359 @@ function formatDate(value) {
   });
 }
 
+const SECTION_LABELS = {
+  businessName: "Business name",
+  businessDescription: "Business description",
+  aiAssistantName: "AI assistant name",
+  branches: "Branches",
+  serviceAreas: "Service areas",
+  hours: "Hours",
+  contact: "Contact",
+  introMessage: "Intro message",
+  promotions: "Promotions",
+  services: "Services",
+  serviceAliases: "Service terms",
+  faqs: "FAQs",
+  closingPlaybook: "Sales playbook",
+  tone: "Tone",
+  messagingStyle: "Messaging style",
+  sop: "SOP",
+  escalation: "Handoff & rules",
+  guardrails: "Guardrails",
+};
+
+const FIELD_LABELS = {
+  address: "Address",
+  phone: "Phone",
+  whatsapp: "WhatsApp",
+  instagram: "Instagram",
+  facebook: "Facebook",
+  tiktok: "TikTok",
+  description: "Description",
+  priceRange: "Price",
+  duration: "Duration",
+  officialService: "Maps to service",
+  a: "Answer",
+  caption: "Caption",
+  validFrom: "Valid from",
+  validUntil: "Valid until",
+  imageUrl: "Image",
+  general: "Opening hours",
+  closed: "Closed days / note",
+  outOfScopeTriggers: "Handoff triggers",
+  handoffMessage: "Handoff message",
+  handoffNote: "Internal note",
+};
+
+function sectionLabel(key) {
+  return SECTION_LABELS[key] || key;
+}
+
+function fieldLabel(key) {
+  return FIELD_LABELS[key] || key;
+}
+
+function countLabel(count, singular, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function changeBadge(change) {
+  const details = change?.details;
+  if (!details) return "Changed";
+  if (details.kind === "collection") {
+    const parts = [];
+    if (details.added?.length) parts.push(`+${details.added.length}`);
+    if (details.updated?.length) parts.push(`${details.updated.length} updated`);
+    if (details.removed?.length) parts.push(`−${details.removed.length}`);
+    return parts.join(" · ") || "Changed";
+  }
+  if (details.kind === "string_list") {
+    const parts = [];
+    if (details.added?.length) parts.push(`+${details.added.length}`);
+    if (details.removed?.length) parts.push(`−${details.removed.length}`);
+    return parts.join(" · ") || "Changed";
+  }
+  if (details.kind === "object") {
+    return countLabel(details.changes?.length || 0, "field") + " changed";
+  }
+  if (details.kind === "text") return "Text changed";
+  return "Changed";
+}
+
+function reviewSummary(changes = []) {
+  const parts = [countLabel(changes.length, "section") + " changed"];
+
+  const collectionLabels = {
+    faqs: "FAQ",
+    services: "service",
+    branches: "branch",
+    promotions: "promotion",
+    serviceAliases: "service term",
+  };
+
+  for (const change of changes) {
+    const details = change?.details;
+    if (details?.kind === "collection" && collectionLabels[change.key]) {
+      if (details.added?.length) {
+        parts.push(countLabel(details.added.length, collectionLabels[change.key]) + " added");
+      }
+      if (details.updated?.length) {
+        parts.push(countLabel(details.updated.length, collectionLabels[change.key]) + " updated");
+      }
+      if (details.removed?.length) {
+        parts.push(countLabel(details.removed.length, collectionLabels[change.key]) + " removed");
+      }
+    }
+    if (change.key === "guardrails" && details?.kind === "string_list") {
+      if (details.added?.length) parts.push(countLabel(details.added.length, "guardrail") + " added");
+      if (details.removed?.length) parts.push(countLabel(details.removed.length, "guardrail") + " removed");
+    }
+  }
+
+  return parts.slice(0, 5).join(" · ");
+}
+
+function visibleLineGroups(segments = []) {
+  const output = [];
+  for (const segment of segments) {
+    if (segment.type !== "same" || segment.lines.length <= 6) {
+      output.push(segment);
+      continue;
+    }
+    output.push({ type: "same", lines: segment.lines.slice(0, 2) });
+    output.push({ type: "skipped", lines: [`${segment.lines.length - 4} unchanged lines`] });
+    output.push({ type: "same", lines: segment.lines.slice(-2) });
+  }
+  return output;
+}
+
+function TextDiff({ diff }) {
+  if (!diff) return null;
+
+  if (diff.mode === "words") {
+    return (
+      <div className="rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-xs leading-6">
+        {(diff.segments || []).map((segment, index) => {
+          const className = segment.type === "added"
+            ? "rounded bg-[var(--color-primary-light)] px-0.5 font-semibold text-[var(--color-primary)]"
+            : segment.type === "removed"
+              ? "rounded bg-[var(--color-danger-light)] px-0.5 text-[var(--color-danger)] line-through"
+              : "text-[var(--color-text)]";
+          return <span key={`${segment.type}-${index}`} className={className}>{segment.text}</span>;
+        })}
+      </div>
+    );
+  }
+
+  if (diff.mode === "lines") {
+    return (
+      <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-white font-mono text-[11px] leading-5">
+        {visibleLineGroups(diff.segments || []).flatMap((segment, segmentIndex) =>
+          (segment.lines || []).map((line, lineIndex) => {
+            const added = segment.type === "added";
+            const removed = segment.type === "removed";
+            const skipped = segment.type === "skipped";
+            const prefix = added ? "+" : removed ? "−" : skipped ? "…" : " ";
+            const className = added
+              ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+              : removed
+                ? "bg-[var(--color-danger-light)] text-[var(--color-danger)]"
+                : skipped
+                  ? "text-[var(--color-text-muted)] italic"
+                  : "text-[var(--color-text-muted)]";
+            return (
+              <div
+                key={`${segmentIndex}-${lineIndex}`}
+                className={`grid grid-cols-[18px_minmax(0,1fr)] px-2.5 py-0.5 ${className}`}
+              >
+                <span aria-hidden="true">{prefix}</span>
+                <span className={`whitespace-pre-wrap break-words ${removed ? "line-through" : ""}`}>{line || " "}</span>
+              </div>
+            );
+          })
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-2">
+      <div className="rounded-xl border border-[var(--color-danger)]/15 bg-[var(--color-danger-light)] px-3 py-2.5 text-xs">
+        <p className="mb-1 font-semibold text-[var(--color-danger)]">Before</p>
+        <p className="whitespace-pre-wrap break-words">{diff.before}</p>
+      </div>
+      <div className="rounded-xl border border-[var(--color-primary)]/15 bg-[var(--color-primary-light)] px-3 py-2.5 text-xs">
+        <p className="mb-1 font-semibold text-[var(--color-primary)]">After</p>
+        <p className="whitespace-pre-wrap break-words">{diff.after}</p>
+      </div>
+    </div>
+  );
+}
+
+function StringListDiff({ details }) {
+  return (
+    <div className="space-y-3">
+      {details.added?.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-xs font-bold text-[var(--color-primary)]">Added</p>
+          <div className="space-y-1">
+            {details.added.map((item, index) => (
+              <div key={`add-${index}`} className="rounded-lg bg-[var(--color-primary-light)] px-3 py-2 text-xs leading-5 text-[var(--color-text)]">
+                <span className="mr-2 font-bold text-[var(--color-primary)]">+</span>{item}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {details.removed?.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-xs font-bold text-[var(--color-danger)]">Removed</p>
+          <div className="space-y-1">
+            {details.removed.map((item, index) => (
+              <div key={`remove-${index}`} className="rounded-lg bg-[var(--color-danger-light)] px-3 py-2 text-xs leading-5 text-[var(--color-text)]">
+                <span className="mr-2 font-bold text-[var(--color-danger)]">−</span>
+                <span className="line-through">{item}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SimpleBeforeAfter({ before, after }) {
+  return (
+    <div className="grid gap-1.5 text-xs leading-5">
+      <p className="break-words text-[var(--color-text-muted)]"><span className="font-semibold">Before:</span> {before}</p>
+      <p className="break-words text-[var(--color-text)]"><span className="font-semibold">After:</span> {after}</p>
+    </div>
+  );
+}
+
+function FieldDiff({ change }) {
+  return (
+    <div className="border-t border-[var(--color-border)] py-3 first:border-t-0 first:pt-0 last:pb-0">
+      <p className="mb-2 text-xs font-bold text-[var(--color-text)]">{fieldLabel(change.field)}</p>
+      {change.details?.kind === "string_list" ? (
+        <StringListDiff details={change.details} />
+      ) : change.textDiff ? (
+        <TextDiff diff={change.textDiff} />
+      ) : (
+        <SimpleBeforeAfter before={change.before} after={change.after} />
+      )}
+    </div>
+  );
+}
+
+function ItemSnapshot({ item }) {
+  const entries = Object.entries(item || {}).filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== "");
+  if (!entries.length) return null;
+  return (
+    <div className="mt-2 space-y-1 text-xs leading-5 text-[var(--color-text-muted)]">
+      {entries.map(([key, value]) => (
+        <p key={key} className="break-words"><span className="font-semibold text-[var(--color-text)]">{fieldLabel(key)}:</span> {String(value)}</p>
+      ))}
+    </div>
+  );
+}
+
+function CollectionDiff({ details }) {
+  return (
+    <div className="space-y-5">
+      {details.added?.length > 0 && (
+        <div>
+          <p className="mb-2 text-xs font-bold text-[var(--color-primary)]">{countLabel(details.added.length, "item")} added</p>
+          <div className="space-y-2">
+            {details.added.map((entry, index) => (
+              <div key={`added-${entry.identity}-${index}`} className="rounded-xl border border-[var(--color-primary)]/15 bg-[var(--color-primary-light)] px-3 py-2.5">
+                <p className="text-sm font-semibold text-[var(--color-text)]"><span className="mr-2 text-[var(--color-primary)]">+</span>{entry.identity}</p>
+                <ItemSnapshot item={entry.item} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {details.updated?.length > 0 && (
+        <div>
+          <p className="mb-2 text-xs font-bold text-[var(--color-text)]">{countLabel(details.updated.length, "item")} updated</p>
+          <div className="space-y-2">
+            {details.updated.map((entry, index) => (
+              <details key={`updated-${entry.identity}-${index}`} className="rounded-xl border border-[var(--color-border)] bg-white">
+                <summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-semibold">
+                  <span className="flex items-center justify-between gap-3">
+                    <span>{entry.identity}</span>
+                    <span className="shrink-0 text-[10px] font-bold text-[var(--color-text-muted)]">
+                      {countLabel(entry.changes?.length || 0, "field")} changed
+                    </span>
+                  </span>
+                </summary>
+                <div className="border-t border-[var(--color-border)] px-3 py-3">
+                  {(entry.changes || []).map((fieldChange) => (
+                    <FieldDiff key={fieldChange.field} change={fieldChange} />
+                  ))}
+                </div>
+              </details>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {details.removed?.length > 0 && (
+        <div>
+          <p className="mb-2 text-xs font-bold text-[var(--color-danger)]">{countLabel(details.removed.length, "item")} removed</p>
+          <div className="space-y-2">
+            {details.removed.map((entry, index) => (
+              <div key={`removed-${entry.identity}-${index}`} className="rounded-xl border border-[var(--color-danger)]/15 bg-[var(--color-danger-light)] px-3 py-2.5">
+                <p className="text-sm font-semibold text-[var(--color-text)]"><span className="mr-2 text-[var(--color-danger)]">−</span><span className="line-through">{entry.identity}</span></p>
+                <ItemSnapshot item={entry.item} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChangeDetails({ change }) {
+  const details = change.details;
+  if (!details) return <SimpleBeforeAfter before={change.before} after={change.after} />;
+  if (details.kind === "collection") return <CollectionDiff details={details} />;
+  if (details.kind === "string_list") return <StringListDiff details={details} />;
+  if (details.kind === "object") {
+    return (
+      <div>
+        {(details.changes || []).map((fieldChange) => (
+          <FieldDiff key={fieldChange.field} change={fieldChange} />
+        ))}
+      </div>
+    );
+  }
+  if (details.kind === "text") return <TextDiff diff={details} />;
+  return <SimpleBeforeAfter before={change.before} after={change.after} />;
+}
+
+function ChangeSection({ change }) {
+  return (
+    <details className="group border-b border-[var(--color-border)] last:border-b-0">
+      <summary className="cursor-pointer list-none py-3.5">
+        <span className="flex items-center justify-between gap-3">
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-[var(--color-text)]">{sectionLabel(change.key)}</span>
+            <span className="mt-0.5 block text-[11px] text-[var(--color-text-muted)]">{changeBadge(change)}</span>
+          </span>
+          <span aria-hidden="true" className="shrink-0 text-sm text-[var(--color-text-muted)] transition-transform group-open:rotate-180">⌄</span>
+        </span>
+      </summary>
+      <div className="pb-4">
+        <ChangeDetails change={change} />
+      </div>
+    </details>
+  );
+}
+
 export default function AdvancedConfig() {
   const { refreshUser } = useAuth();
   const [data, setData] = useState(null);
@@ -303,7 +656,7 @@ export default function AdvancedConfig() {
                 disabled={Boolean(action)}
                 className="inline-flex h-11 items-center justify-center rounded-xl bg-[var(--color-primary)] px-4 text-sm font-semibold text-white disabled:opacity-50"
               >
-                {action === "apply" ? "Applying…" : `Apply ${preview.changes.length} change${preview.changes.length === 1 ? "" : "s"}`}
+                {action === "apply" ? "Applying…" : "Apply changes"}
               </button>
             )}
           </div>
@@ -311,12 +664,12 @@ export default function AdvancedConfig() {
 
         {preview && (
           <section className="border-b border-[var(--color-border)] py-5">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="font-display text-lg font-bold">Review changes</h2>
-                <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                <p className="mt-1 max-w-3xl text-xs leading-5 text-[var(--color-text-muted)]">
                   {preview.changes?.length
-                    ? "Only these editable fields will change."
+                    ? reviewSummary(preview.changes)
                     : "No live values would change."}
                 </p>
               </div>
@@ -327,39 +680,13 @@ export default function AdvancedConfig() {
               )}
             </div>
 
-            <div className="mt-3 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
-              {(preview.changes || []).map((change) => (
-                <div key={change.key} className="grid gap-1 py-3 sm:grid-cols-[180px_minmax(0,1fr)] sm:gap-4">
-                  <p className="font-mono text-xs font-bold text-[var(--color-text)]">{change.key}</p>
-                  <div className="min-w-0 text-xs leading-5">
-                    <p className="break-words text-[var(--color-text-muted)]">Before: {change.before}</p>
-                    <p className="break-words font-semibold text-[var(--color-text)]">After: {change.after}</p>
-                    {change.details && (
-                      <div className="mt-2 space-y-1.5 rounded-lg bg-[var(--color-bg)] px-3 py-2.5">
-                        {change.details.added?.length > 0 && (
-                          <p className="break-words">
-                            <span className="font-semibold text-[var(--color-primary)]">Added:</span>{" "}
-                            {change.details.added.join(" · ")}
-                          </p>
-                        )}
-                        {change.details.removed?.length > 0 && (
-                          <p className="break-words">
-                            <span className="font-semibold text-[var(--color-danger)]">Removed:</span>{" "}
-                            {change.details.removed.join(" · ")}
-                          </p>
-                        )}
-                        {change.details.updated?.length > 0 && (
-                          <p className="break-words">
-                            <span className="font-semibold text-[var(--color-text)]">Updated:</span>{" "}
-                            {change.details.updated.join(" · ")}
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+            {preview.changes?.length > 0 && (
+              <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4">
+                {(preview.changes || []).map((change) => (
+                  <ChangeSection key={change.key} change={change} />
+                ))}
+              </div>
+            )}
           </section>
         )}
 
