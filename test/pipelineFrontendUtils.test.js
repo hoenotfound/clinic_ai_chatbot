@@ -173,6 +173,11 @@ test("pipeline keeps phone controls compact while preserving richer desktop cont
   assert.match(source, /aria-label="Pipeline filters"/);
   assert.match(source, /filterTriggerRef/);
   assert.match(source, /filterDialogRef/);
+  assert.match(source, /window\.matchMedia\("\(max-width: 639px\)"\)/);
+  assert.match(source, /addEventListener\("change", handlePhoneBreakpointChange\)/);
+  assert.match(source, /removeEventListener\("change", handlePhoneBreakpointChange\)/);
+  assert.match(source, /activatePhoneTrap/);
+  assert.match(source, /deactivatePhoneTrap/);
   assert.match(source, /event\.key === "Escape"/);
   assert.match(source, /event\.key !== "Tab"/);
   assert.match(source, /filterTriggerRef\.current\?\.focus\(\)/);
