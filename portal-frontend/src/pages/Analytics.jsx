@@ -228,9 +228,8 @@ export default function Analytics() {
   const appliedAdvancedFilterCount = ADVANCED_FILTERS
     .filter((key) => appliedFilters[key] !== "all").length;
   const appliedPresetLabel = PRESET_OPTIONS.find(([value]) => value === appliedPreset)?.[1] || "Custom range";
-  const appliedLocationLabel = appliedFilters.branch === "all"
-    ? analyticsUi.locationFilterLabel === "Branch" ? "All branches" : "All locations"
-    : appliedFilters.branch;
+  const allLocationsLabel = analyticsUi.locationFilterLabel === "Branch" ? "All branches" : "All locations";
+  const appliedLocationLabel = appliedFilters.branch === "all" ? allLocationsLabel : appliedFilters.branch;
   const appliedChannelLabel = appliedFilters.channel === "all" ? "All channels" : formatChannel(appliedFilters.channel);
   const mobileFilterSummary = [
     appliedPresetLabel,
