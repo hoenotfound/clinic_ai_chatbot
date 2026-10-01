@@ -209,19 +209,18 @@ export default function Analytics() {
   const filterOptions = data?.filterOptions || {};
   const activeFilterCount = ["branch", "channel", ...ADVANCED_FILTERS]
     .filter((key) => draftFilters[key] !== "all").length;
-  const hasAdvancedFilters = ADVANCED_FILTERS.some((key) => draftFilters[key] !== "all");
+  const activeAdvancedFilterCount = ADVANCED_FILTERS
+    .filter((key) => draftFilters[key] !== "all").length;
+  const hasAdvancedFilters = activeAdvancedFilterCount > 0;
   const hasPendingChanges = !filtersEqual(draftFilters, appliedFilters);
 
   return (
     <div className="h-full overflow-y-auto overscroll-contain bg-[var(--color-bg)]">
       <header className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-4 sm:px-5 sm:py-5 lg:px-7">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="flex items-center gap-2.5">
-              <h1 className="font-display text-xl font-bold">Analytics</h1>
-              <span className="rounded-full bg-[var(--color-primary-light)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--color-primary)]">Sales</span>
-            </div>
-            <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[var(--color-text-muted)] sm:text-sm">
+            <h1 className="font-display text-xl font-bold sm:text-[22px]">Analytics</h1>
+            <p className="mt-1 max-w-3xl text-xs leading-5 text-[var(--color-text-muted)] sm:text-sm">
               Track lead quality, conversion, response speed and sales outcomes.
               <span className="hidden sm:inline"> {analyticsUi.descriptionSuffix}</span>
             </p>
@@ -232,66 +231,70 @@ export default function Analytics() {
             disabled={loading}
             title="Refresh analytics"
             aria-label="Refresh analytics"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[var(--color-border)] bg-white text-lg font-semibold text-[var(--color-text-muted)] shadow-sm transition hover:bg-[var(--color-bg)] disabled:opacity-50"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--color-border)] bg-white text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] disabled:opacity-50"
           >
-            ↻
+            <RefreshIcon className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2.5 sm:flex sm:flex-wrap sm:items-end">
-          <div className="col-span-2 sm:col-span-1">
-            <FilterSelect
-              label="Date range"
-              value={preset}
-              onChange={applyPreset}
-              options={PRESET_OPTIONS.map(([value, label]) => ({ value, label }))}
-              includeAll={false}
-              wide
-            />
-          </div>
+        <div className="mt-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+          <div className="grid grid-cols-2 gap-2.5 sm:flex sm:flex-1 sm:flex-wrap sm:items-end">
+            <div className="col-span-2 sm:col-span-1">
+              <FilterSelect
+                label="Date range"
+                value={preset}
+                onChange={applyPreset}
+                options={PRESET_OPTIONS.map(([value, label]) => ({ value, label }))}
+                includeAll={false}
+                wide
+              />
+            </div>
 
-          {preset === "custom" && (
-            <>
-              <DateField label="From" value={draftFilters.from} onChange={(value) => updateDraft("from", value)} />
-              <DateField label="To" value={draftFilters.to} onChange={(value) => updateDraft("to", value)} />
-            </>
-          )}
+            {preset === "custom" && (
+              <>
+                <DateField label="From" value={draftFilters.from} onChange={(value) => updateDraft("from", value)} />
+                <DateField label="To" value={draftFilters.to} onChange={(value) => updateDraft("to", value)} />
+              </>
+            )}
 
-          <FilterSelect label={analyticsUi.locationFilterLabel} value={draftFilters.branch} onChange={(value) => updateDraft("branch", value)} options={filterOptions.branches} />
-          <FilterSelect label="Channel" value={draftFilters.channel} onChange={(value) => updateDraft("channel", value)} options={filterOptions.channels} format={formatChannel} />
+            <FilterSelect label={analyticsUi.locationFilterLabel} value={draftFilters.branch} onChange={(value) => updateDraft("branch", value)} options={filterOptions.branches} />
+            <FilterSelect label="Channel" value={draftFilters.channel} onChange={(value) => updateDraft("channel", value)} options={filterOptions.channels} format={formatChannel} />
 
-          <button
-            type="button"
-            onClick={() => setShowMoreFilters((current) => !current)}
-            aria-expanded={showMoreFilters}
-            className={`h-11 rounded-xl border px-3.5 text-xs font-semibold transition ${showMoreFilters || hasAdvancedFilters ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
-          >
-            Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}
-          </button>
-
-          <button
-            type="button"
-            onClick={applyFilters}
-            disabled={loading}
-            className="h-11 rounded-xl bg-[var(--color-primary)] px-4 text-xs font-bold text-white shadow-sm transition hover:bg-[var(--color-primary-hover)] disabled:opacity-60"
-          >
-            {loading ? "Loading…" : hasPendingChanges ? "Apply filters" : "Apply"}
-          </button>
-
-          {activeFilterCount > 0 && (
             <button
               type="button"
-              onClick={clearFilters}
-              disabled={loading}
-              className="col-span-2 h-10 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] transition hover:bg-[var(--color-danger-light)] sm:col-span-1"
+              onClick={() => setShowMoreFilters((current) => !current)}
+              aria-expanded={showMoreFilters}
+              className={`h-11 rounded-xl border px-3.5 text-xs font-semibold transition ${showMoreFilters || hasAdvancedFilters ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
             >
-              Clear filters
+              {showMoreFilters ? "Hide filters" : "More filters"}{activeAdvancedFilterCount ? ` (${activeAdvancedFilterCount})` : ""}
             </button>
-          )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:shrink-0 sm:items-center">
+            {activeFilterCount > 0 && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                disabled={loading}
+                className="h-11 rounded-xl px-3.5 text-xs font-semibold text-[var(--color-danger)] transition hover:bg-[var(--color-danger-light)] disabled:opacity-50"
+              >
+                Clear filters
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={applyFilters}
+              disabled={loading || !hasPendingChanges}
+              className={`${activeFilterCount > 0 ? "" : "col-span-2"} h-11 rounded-xl bg-[var(--color-primary)] px-4 text-xs font-bold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-45 sm:col-span-1`}
+            >
+              {loading ? "Loading…" : "Apply filters"}
+            </button>
+          </div>
         </div>
 
         {showMoreFilters && (
-          <div className="mt-3 grid grid-cols-2 gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:flex sm:flex-wrap sm:items-end">
+          <div className="mt-3 grid grid-cols-2 gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:flex sm:flex-wrap sm:items-end">
             <FilterSelect label="Source" value={draftFilters.source} onChange={(value) => updateDraft("source", value)} options={filterOptions.sources} format={formatSource} />
             <FilterSelect label="Campaign" value={draftFilters.campaign} onChange={(value) => updateDraft("campaign", value)} options={filterOptions.campaigns} />
             <FilterSelect label={analyticsUi.serviceFilterLabel} value={draftFilters.treatment} onChange={(value) => updateDraft("treatment", value)} options={filterOptions.treatments} />
@@ -304,7 +307,7 @@ export default function Analytics() {
         <div className="flex min-h-[28rem] items-center justify-center"><Spinner className="h-8 w-8 text-[var(--color-primary)]" /></div>
       ) : error && !data ? (
         <div className="mx-auto max-w-lg px-4 py-12 text-center sm:px-5 sm:py-16">
-          <div className="rounded-3xl border border-[var(--color-border)] bg-white p-6 shadow-sm sm:p-8">
+          <div className="rounded-xl border border-[var(--color-border)] bg-white p-6 sm:p-8">
             <h2 className="font-display text-lg font-bold">Couldn't load analytics</h2>
             <p className="mt-2 text-sm text-[var(--color-text-muted)]">{error}</p>
             <button type="button" onClick={() => setRefreshToken((value) => value + 1)} className="mt-5 h-11 rounded-xl bg-[var(--color-primary)] px-4 text-sm font-semibold text-white">Try again</button>
@@ -314,15 +317,19 @@ export default function Analytics() {
         <main className="space-y-4 px-3.5 py-4 sm:space-y-5 sm:px-5 sm:py-5 lg:px-7 lg:py-6">
           {error && <div className="rounded-xl border border-[var(--color-danger)]/20 bg-[var(--color-danger-light)] px-4 py-3 text-sm text-[var(--color-danger)]">{error}</div>}
 
-          <section className="grid grid-cols-2 gap-2.5 sm:gap-3 xl:grid-cols-5">
-            <MetricCard label="New Leads" value={data.summary.newLeads} delta={data.comparison.deltas.newLeads} detail="Lead journeys started in this period" />
+          <section className="grid grid-cols-2 gap-2.5 sm:gap-3 xl:grid-cols-4">
+            <MetricCard label="New leads" value={data.summary.newLeads} delta={data.comparison.deltas.newLeads} detail="Lead journeys started in this period" />
             <MetricCard label={analyticsUi.primaryMetricLabel} value={data.summary.appointments} delta={data.comparison.deltas.appointments} detail={analyticsUi.primaryMetricDetail} />
             <MetricCard label={analyticsUi.secondaryMetricLabel} value={data.summary.visits} delta={data.comparison.deltas.visits} detail={analyticsUi.secondaryMetricDetail} />
             <MetricCard label="Won" value={data.summary.won} delta={data.comparison.deltas.won} detail={`Estimated value ${money(data.summary.estimatedWonValue)}`} />
-            <MetricCard className="col-span-2 xl:col-span-1" label="Cohort Conversion" value={`${data.summary.conversionRate.toFixed(1)}%`} delta={data.comparison.deltas.conversionRate} deltaType="points" detail="Leads started in period → Won" />
           </section>
 
-          <RateStrip cohort={data.cohort} labels={analyticsUi.rates} />
+          <ConversionSummary
+            conversionRate={data.summary.conversionRate}
+            conversionDelta={data.comparison.deltas.conversionRate}
+            cohort={data.cohort}
+            labels={analyticsUi.rates}
+          />
 
           <section className="grid gap-4 sm:gap-5 xl:grid-cols-[0.85fr_1.15fr]">
             <Panel title="Conversion Funnel" subtitle="How the selected lead cohort progresses through the sales journey.">
@@ -330,15 +337,6 @@ export default function Analytics() {
             </Panel>
             <Panel title="Activity Over Time" subtitle="Daily activity based on when each event actually happened.">
               <ActivityTrendChart data={data.trend} labels={analyticsUi} />
-            </Panel>
-          </section>
-
-          <section className="grid gap-4 sm:gap-5 xl:grid-cols-2">
-            <Panel title="Lead Quality" subtitle="Current Hot / Warm / Cold status for leads that started in this period.">
-              <TemperatureBreakdown rows={data.temperature} onViewHot={() => navigate(pipelineUrl({ category: "hot" }))} />
-            </Panel>
-            <Panel title="Response Performance" subtitle="How quickly completed customer waiting episodes received a reply.">
-              <ResponsePerformance stats={data.responseTimes} />
             </Panel>
           </section>
 
@@ -355,6 +353,15 @@ export default function Analytics() {
           </Panel>
 
           <section className="grid gap-4 sm:gap-5 xl:grid-cols-2">
+            <Panel title="Lead Quality" subtitle="Current Hot / Warm / Cold status for leads that started in this period.">
+              <TemperatureBreakdown rows={data.temperature} onViewHot={() => navigate(pipelineUrl({ category: "hot" }))} />
+            </Panel>
+            <Panel title="Response Performance" subtitle="How quickly completed customer waiting episodes received a reply.">
+              <ResponsePerformance stats={data.responseTimes} />
+            </Panel>
+          </section>
+
+          <section className="grid gap-4 sm:gap-5 xl:grid-cols-2">
             <Panel title="Follow-up Performance" subtitle="Outcomes associated with scheduled automated follow-up messages.">
               <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3">
                 <SmallStat label="Leads Followed Up" value={data.followUps.leadsFollowedUp} />
@@ -363,7 +370,7 @@ export default function Analytics() {
                 <SmallStat label={`${analyticsUi.followUpPrimaryLabel} Within ${data.followUps.outcomeWindowDays}d`} value={data.followUps.leadsWithAppointmentAfter} />
                 <SmallStat label={`Wins Within ${data.followUps.outcomeWindowDays}d`} value={data.followUps.leadsWonAfter} />
               </div>
-              <p className="mt-3 text-[10px] leading-relaxed text-[var(--color-text-muted)] sm:text-[11px]">{analyticsUi.followUpOutcomeNoun} and win outcomes are counted only when they happen in the same journey within {data.followUps.outcomeWindowDays} days after a follow-up. This shows association, not guaranteed causation.</p>
+              <p className="mt-3 text-xs leading-5 text-[var(--color-text-muted)]">{analyticsUi.followUpOutcomeNoun} and win outcomes are counted only when they happen in the same journey within {data.followUps.outcomeWindowDays} days after a follow-up. This shows association, not guaranteed causation.</p>
             </Panel>
             <Panel title="Lost Reasons" subtitle="Why leads in this cohort were closed as lost.">
               <LostReasons rows={data.lostReasons} />
@@ -380,7 +387,7 @@ export default function Analytics() {
 function DateField({ label, value, onChange }) {
   return (
     <label className="min-w-0 sm:min-w-36">
-      <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">{label}</span>
+      <span className="mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]">{label}</span>
       <input type="date" value={value} onChange={(event) => onChange(event.target.value)} className="h-11 w-full min-w-0 rounded-xl border border-[var(--color-border)] bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15" />
     </label>
   );
@@ -390,7 +397,7 @@ function FilterSelect({ label, value, onChange, options = [], format = (item) =>
   const normalizedOptions = options.map((option) => typeof option === "string" ? { value: option, label: format(option) } : option);
   return (
     <label className={`min-w-0 sm:min-w-36 ${wide ? "sm:min-w-44" : ""} sm:max-w-56 sm:flex-1`}>
-      <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">{label}</span>
+      <span className="mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]">{label}</span>
       <select value={value} onChange={(event) => onChange(event.target.value)} className="h-11 w-full min-w-0 rounded-xl border border-[var(--color-border)] bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/15">
         {includeAll && <option value="all">All</option>}
         {normalizedOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -401,45 +408,49 @@ function FilterSelect({ label, value, onChange, options = [], format = (item) =>
 
 function MetricCard({ label, value, delta, deltaType = "percent", detail, className = "" }) {
   return (
-    <div className={`rounded-2xl border border-[var(--color-border)] bg-white p-3.5 shadow-sm sm:p-4 ${className}`}>
-      <p className="text-[11px] font-semibold leading-tight text-[var(--color-text-muted)] sm:text-xs">{label}</p>
+    <div className={`rounded-xl border border-[var(--color-border)] bg-white p-3.5 sm:p-4 ${className}`}>
+      <p className="text-xs font-semibold leading-tight text-[var(--color-text-muted)]">{label}</p>
       <p className="mt-1.5 font-display text-2xl font-bold tracking-tight sm:mt-2">{value}</p>
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[10px] sm:mt-2">
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs sm:mt-2">
         <span className={`font-bold ${deltaTone(delta)}`}>{deltaLabel(delta, deltaType)}</span>
         <span className="text-[var(--color-text-muted)]">vs prior</span>
       </div>
-      <p className="mt-2 hidden text-[10px] leading-relaxed text-[var(--color-text-muted)] sm:block">{detail}</p>
+      <p className="mt-2 hidden text-xs leading-5 text-[var(--color-text-muted)] sm:block">{detail}</p>
     </div>
   );
 }
 
-function RateStrip({ cohort, labels }) {
-  const values = [cohort.appointmentRate, cohort.showRate, cohort.closeRate];
-  const rates = labels.map((item, index) => [item.label, values[index], item.detail]);
+function ConversionSummary({ conversionRate, conversionDelta, cohort, labels }) {
+  const rates = [
+    [labels[0]?.detail || labels[0]?.label || "Lead → next step", cohort.appointmentRate],
+    [labels[1]?.detail || labels[1]?.label || "Next step → outcome", cohort.showRate],
+    [labels[2]?.detail || labels[2]?.label || "Outcome → won", cohort.closeRate],
+  ];
+
   return (
-    <section className="rounded-2xl border border-[var(--color-border)] bg-white p-2.5 shadow-sm sm:px-4 sm:py-3">
-      <div className="grid grid-cols-3 gap-2 sm:gap-3">
-        {rates.map(([label, value, detail]) => (
-          <div key={label} className="rounded-xl bg-[var(--color-bg)] px-2.5 py-3 text-center sm:flex sm:items-end sm:justify-between sm:gap-3 sm:px-4 sm:text-left">
-            <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] sm:text-[10px]">{label}</p>
-              <p className="mt-0.5 hidden text-[10px] text-[var(--color-text-muted)] sm:block">{detail}</p>
-            </div>
-            <p className="mt-1 font-display text-lg font-bold sm:mt-0 sm:text-xl">{value.toFixed(1)}%</p>
-          </div>
+    <section className="border-y border-[var(--color-border)] py-3 sm:flex sm:items-center sm:justify-between sm:gap-5">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="text-xs font-semibold text-[var(--color-text-muted)]">Overall lead → won conversion</span>
+        <span className="font-display text-xl font-bold">{conversionRate.toFixed(1)}%</span>
+        <span className={`text-xs font-semibold ${deltaTone(conversionDelta)}`}>{deltaLabel(conversionDelta, "points")} vs prior</span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs sm:mt-0 sm:justify-end">
+        {rates.map(([definition, value]) => (
+          <span key={definition} className="text-[var(--color-text-muted)]">
+            {definition} <strong className="font-semibold text-[var(--color-text)]">{value.toFixed(1)}%</strong>
+          </span>
         ))}
       </div>
-      <p className="mt-2 hidden text-[10px] text-[var(--color-text-muted)] sm:block">Rates use leads that started in the selected period, so they describe cohort conversion quality rather than raw event volume.</p>
     </section>
   );
 }
 
 function Panel({ title, subtitle, children }) {
   return (
-    <section className="rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-sm sm:rounded-3xl sm:p-5">
+    <section className="rounded-xl border border-[var(--color-border)] bg-white p-4 sm:p-5">
       <div className="mb-3 sm:mb-4">
         <h2 className="font-display text-[15px] font-bold sm:text-base">{title}</h2>
-        {subtitle && <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)] sm:text-xs">{subtitle}</p>}
+        {subtitle && <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{subtitle}</p>}
       </div>
       {children}
     </section>
@@ -458,14 +469,14 @@ function FunnelChart({ stages }) {
               <div className="min-w-0">
                 <p className="truncate text-xs font-bold">{stage.label}</p>
                 {index > 0 && (
-                  <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)] sm:text-[10px]">
+                  <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
                     {stage.fromPreviousRate.toFixed(1)}% reached · {stage.dropOff} drop-off
                   </p>
                 )}
               </div>
               <div className="shrink-0 text-right">
                 <p className="font-display text-lg font-bold">{stage.count}</p>
-                {index > 0 && <p className="text-[10px] text-[var(--color-primary)] sm:text-[10px]">{stage.fromLeadRate.toFixed(1)}% of leads</p>}
+                {index > 0 && <p className="text-xs text-[var(--color-primary)]">{stage.fromLeadRate.toFixed(1)}% of leads</p>}
               </div>
             </div>
             <div className="h-7 overflow-hidden rounded-xl bg-[var(--color-bg)] sm:h-8">
@@ -506,7 +517,7 @@ function ActivityTrendChart({ data, labels }) {
     <div>
       <div className="mb-3 flex gap-1.5 ui-scroll-x overflow-x-auto pb-1">
         {Object.entries(metrics).map(([key, item]) => (
-          <button key={key} type="button" onClick={() => setMetric(key)} className={`h-10 shrink-0 rounded-lg px-2.5 text-[10px] font-bold transition ${metric === key ? "bg-[var(--color-primary)] text-white" : "bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{item.label}</button>
+          <button key={key} type="button" onClick={() => setMetric(key)} className={`h-10 shrink-0 rounded-lg px-2.5 text-xs font-semibold transition ${metric === key ? "bg-[var(--color-primary)] text-white" : "bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{item.label}</button>
         ))}
       </div>
       <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" className="h-auto w-full" role="img" aria-label={`${metrics[metric].label} over time`}>
@@ -552,7 +563,7 @@ function TemperatureBreakdown({ rows, onViewHot }) {
               <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${tones[row.temperature]}`} />
               <div className="min-w-0">
                 <p className="text-xs font-bold capitalize">{row.temperature}</p>
-                <p className="truncate text-[10px] text-[var(--color-text-muted)]">{row.share.toFixed(1)}% of cohort · {row.openLeads} open</p>
+                <p className="truncate text-xs text-[var(--color-text-muted)]">{row.share.toFixed(1)}% of cohort · {row.openLeads} open</p>
               </div>
             </div>
             <div className="shrink-0 text-right">
@@ -627,7 +638,7 @@ function ResponsePerformance({ stats }) {
           </tbody>
         </table>
       </div>
-      <p className="mt-3 text-[10px] leading-relaxed text-[var(--color-text-muted)] sm:text-[11px]">“Typical” is the median wait. “90% within” means nine out of ten measured replies were at or below that time.</p>
+      <p className="mt-3 text-xs leading-5 text-[var(--color-text-muted)]">“Typical” is the median wait. “90% within” means nine out of ten measured replies were at or below that time.</p>
     </div>
   );
 }
@@ -730,7 +741,7 @@ function MiniValue({ label, value }) {
 function SmallStat({ label, value }) {
   return (
     <div className="rounded-2xl bg-[var(--color-bg)] px-3 py-3 sm:px-4">
-      <p className="text-[10px] font-semibold leading-snug text-[var(--color-text-muted)] sm:text-[10px]">{label}</p>
+      <p className="text-xs font-semibold leading-snug text-[var(--color-text-muted)]">{label}</p>
       <p className="mt-1 font-display text-lg font-bold sm:text-xl">{value}</p>
     </div>
   );
@@ -762,7 +773,7 @@ function SystemStatus({ health }) {
   const scoringState = scoring.attempts === 0 ? "neutral" : scoring.failed > 0 ? "issue" : "healthy";
   const deliveryState = delivery.tracked === 0 ? "neutral" : delivery.failed > 0 ? "issue" : "healthy";
   return (
-    <section className="rounded-2xl border border-[var(--color-border)] bg-white px-3.5 py-3 shadow-sm sm:flex sm:flex-wrap sm:items-center sm:gap-2 sm:px-4">
+    <section className="rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3 sm:flex sm:flex-wrap sm:items-center sm:gap-2 sm:px-4">
       <span className="mb-2 block font-display text-xs font-bold sm:mb-0 sm:mr-1">System status</span>
       <div className="flex flex-wrap gap-2">
         <StatusChip
@@ -784,12 +795,21 @@ function StatusChip({ state, text }) {
     : state === "healthy"
       ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
       : "bg-[var(--color-bg)] text-[var(--color-text-muted)]";
-  const icon = state === "issue" ? "⚠" : state === "healthy" ? "✓" : "•";
-  return <span className={`rounded-full px-2.5 py-1.5 text-[10px] font-semibold sm:text-xs ${tone}`}>{icon} {text}</span>;
+  const marker = state === "issue" ? "Issue" : state === "healthy" ? "Healthy" : "Status";
+  return <span className={`rounded-full px-2.5 py-1.5 text-xs font-semibold ${tone}`}><span className="sr-only">{marker}: </span>{text}</span>;
 }
 
 function EmptyState({ text }) {
   return <div className="rounded-2xl border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-xs text-[var(--color-text-muted)]">{text}</div>;
+}
+
+function RefreshIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" {...props}>
+      <path d="M20 6v5h-5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M19 11a7 7 0 1 0 1 5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
 function formatChannel(value) {

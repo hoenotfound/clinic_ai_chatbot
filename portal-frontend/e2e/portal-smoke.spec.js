@@ -82,6 +82,79 @@ async function mockPortalApi(page, { loggedIn = false } = {}) {
       });
     }
 
+
+    if (path === "/api/pipeline/analytics" && method === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          filterOptions: {
+            branches: [],
+            channels: [],
+            sources: [],
+            campaigns: [],
+            treatments: [],
+            owners: [],
+          },
+          summary: {
+            newLeads: 12,
+            appointments: 5,
+            visits: 4,
+            won: 2,
+            estimatedWonValue: 2800,
+            conversionRate: 16.7,
+          },
+          comparison: {
+            deltas: {
+              newLeads: 9.1,
+              appointments: 25,
+              visits: 0,
+              won: 100,
+              conversionRate: 7.6,
+            },
+          },
+          cohort: {
+            appointmentRate: 41.7,
+            showRate: 80,
+            closeRate: 50,
+          },
+          funnel: [
+            { label: "Leads", count: 12, fromPreviousRate: 100, dropOff: 0, fromLeadRate: 100 },
+            { label: "Appointments", count: 5, fromPreviousRate: 41.7, dropOff: 7, fromLeadRate: 41.7 },
+            { label: "Visits", count: 4, fromPreviousRate: 80, dropOff: 1, fromLeadRate: 33.3 },
+            { label: "Won", count: 2, fromPreviousRate: 50, dropOff: 2, fromLeadRate: 16.7 },
+          ],
+          trend: [],
+          temperature: [],
+          responseTimes: {
+            automated: { samples: 0, medianSeconds: 0, p90Seconds: 0 },
+            staff: { samples: 0, medianSeconds: 0, p90Seconds: 0 },
+          },
+          performance: {
+            source: [],
+            campaign: [],
+            treatment: [],
+            branch: [],
+            channel: [],
+            owner: [],
+          },
+          followUps: {
+            leadsFollowedUp: 0,
+            leadsReplied72h: 0,
+            replyRate72h: 0,
+            outcomeWindowDays: 7,
+            leadsWithAppointmentAfter: 0,
+            leadsWonAfter: 0,
+          },
+          lostReasons: [],
+          systemHealth: {
+            aiScoring: { attempts: 0, failed: 0 },
+            delivery: { tracked: 0, failed: 0, failureRate: 0 },
+          },
+        }),
+      });
+    }
+
     if (path === "/api/pipeline" && method === "GET") {
       return route.fulfill({
         status: 200,
@@ -189,7 +262,7 @@ test("login page is usable without horizontal overflow", async ({ page }) => {
 test("protected routes send logged-out staff back to login", async ({ page }) => {
   await mockPortalApi(page);
 
-  for (const path of ["/inbox", "/pipeline", "/tools"]) {
+  for (const path of ["/inbox", "/pipeline", "/analytics", "/tools"]) {
     await page.goto(path);
     await expect(page).toHaveURL(/\/login$/);
     await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
@@ -199,7 +272,7 @@ test("protected routes send logged-out staff back to login", async ({ page }) =>
 test("staff can reach the main portal routes without page-level overflow", async ({ page }) => {
   await mockPortalApi(page, { loggedIn: true });
 
-  for (const path of ["/inbox", "/pipeline", "/tools"]) {
+  for (const path of ["/inbox", "/pipeline", "/analytics", "/tools"]) {
     await page.goto(path);
     await expect(page).toHaveURL(new RegExp(path.replace("/", "\\/") + "$"));
     await expect(page.getByRole("navigation").first()).toBeVisible();
