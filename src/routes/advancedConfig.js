@@ -50,12 +50,58 @@ function isIsoDate(value) {
     && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 }
 
+function isValidWhatsapp(value) {
+  const input = text(value);
+  if (!input) return true;
+  if (/^https?:\/\/(?:api\.)?whatsapp\.com\//i.test(input)) return true;
+  if (/^https?:\/\/wa\.me\/\d{8,15}(?:\?.*)?$/i.test(input)) return true;
+  const compact = input.replace(/[\s()\-]/g, "");
+  return /^\+?\d{8,15}$/.test(compact);
+}
+
 function validationError(error, invalidKeys = []) {
   return { ok: false, status: 400, error, invalidKeys };
 }
 
 function validateAdvancedConfigState(currentConfig, updates) {
   const next = projectedConfig(currentConfig, updates);
+
+  if (
+    Object.prototype.hasOwnProperty.call(updates, "businessDescription")
+    && !text(next.businessDescription)
+  ) {
+    return validationError("Business description can't be empty.", ["businessDescription"]);
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(updates, "hours")
+    && !text(next.hours?.general)
+  ) {
+    return validationError("Opening hours can't be empty.", ["hours"]);
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(updates, "contact")
+    && !isValidWhatsapp(next.contact?.whatsapp)
+  ) {
+    return validationError(
+      "Enter a valid WhatsApp number or WhatsApp link.",
+      ["contact"]
+    );
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(updates, "branches")
+    && ["aesthetic_clinic", "tcm_clinic"].includes(currentConfig?.businessType)
+    && (Array.isArray(next.branches) ? next.branches : []).some(
+      (branch) => !text(branch?.address)
+    )
+  ) {
+    return validationError(
+      "Every clinic branch needs an address.",
+      ["branches"]
+    );
+  }
 
   const proposedGuardrails = cleanStrings(next.guardrails);
   if (proposedGuardrails.length === 0) {
@@ -441,3 +487,4 @@ module.exports.projectedConfig = projectedConfig;
 module.exports.prepareAdvancedConfigPayload = prepareAdvancedConfigPayload;
 module.exports.validateAdvancedConfigState = validateAdvancedConfigState;
 module.exports.collectionChangeDetails = collectionChangeDetails;
+module.exports.isValidWhatsapp = isValidWhatsapp;
