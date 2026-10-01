@@ -36,6 +36,7 @@ export default function SettingsSectionLayout({ children }) {
   const isClientSetup = location.pathname === "/settings/client-setup";
   const isGoLive = location.pathname === "/settings/go-live";
   const isSetup = location.pathname === "/settings/setup";
+  const isAdvancedConfig = location.pathname === "/settings/advanced-config";
   const mobileValue = isTeam
     ? "team"
     : isClientSetup
@@ -44,7 +45,9 @@ export default function SettingsSectionLayout({ children }) {
         ? "goLive"
         : isSetup
           ? "setup"
-          : "general";
+          : isAdvancedConfig
+            ? "advancedConfig"
+            : "general";
 
   const teamItem = permissions.manage_users
     ? { id: "team", to: "/settings/team", label: "Team & Access" }
@@ -58,7 +61,10 @@ export default function SettingsSectionLayout({ children }) {
   const setupItem = user?.role === "admin"
     ? { id: "setup", to: "/settings/setup", label: "Setup Status" }
     : null;
-  const destinationItems = [teamItem, clientSetupItem, goLiveItem, setupItem].filter(Boolean);
+  const advancedConfigItem = user?.role === "admin"
+    ? { id: "advancedConfig", to: "/settings/advanced-config", label: "Advanced Config" }
+    : null;
+  const destinationItems = [teamItem, clientSetupItem, goLiveItem, setupItem, advancedConfigItem].filter(Boolean);
 
   function handleMobileChange(value) {
     const configItem = configItems.find((item) => item.id === value);
@@ -104,7 +110,7 @@ export default function SettingsSectionLayout({ children }) {
             </div>
           )}
 
-          {(clientSetupItem || goLiveItem || setupItem) && (
+          {(clientSetupItem || goLiveItem || setupItem || advancedConfigItem) && (
             <div className={`${permissions.manage_settings || teamItem ? "mt-3 border-t border-[var(--color-border)] pt-3" : ""}`}>
               <p className="mb-1.5 px-3 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
                 System
@@ -113,6 +119,7 @@ export default function SettingsSectionLayout({ children }) {
                 {clientSetupItem && <SettingsNavLink item={clientSetupItem} />}
                 {goLiveItem && <SettingsNavLink item={goLiveItem} />}
                 {setupItem && <SettingsNavLink item={setupItem} />}
+                {advancedConfigItem && <SettingsNavLink item={advancedConfigItem} />}
               </div>
             </div>
           )}
@@ -138,6 +145,7 @@ export default function SettingsSectionLayout({ children }) {
               {clientSetupItem && <option value={clientSetupItem.id}>{clientSetupItem.label}</option>}
               {goLiveItem && <option value={goLiveItem.id}>{goLiveItem.label}</option>}
               {setupItem && <option value={setupItem.id}>{setupItem.label}</option>}
+              {advancedConfigItem && <option value={advancedConfigItem.id}>{advancedConfigItem.label}</option>}
               </select>
             </label>
           </div>
