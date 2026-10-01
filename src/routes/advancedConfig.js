@@ -205,12 +205,6 @@ function validateAdvancedConfigState(currentConfig, updates) {
   return { ok: true };
 }
 
-function compactLabel(value, maxLength = 88) {
-  const label = text(value);
-  if (!label) return "";
-  return label.length > maxLength ? `${label.slice(0, maxLength - 1)}…` : label;
-}
-
 function displayValue(value) {
   if (value === null || value === undefined || value === "") return "Empty";
   if (Array.isArray(value)) return value.map((item) => text(item)).filter(Boolean).join(" · ") || "Empty";
@@ -325,8 +319,24 @@ function stringListChangeDetails(before, after) {
   const afterSet = new Set(afterItems);
   const added = afterItems.filter((item) => !beforeSet.has(item));
   const removed = beforeItems.filter((item) => !afterSet.has(item));
-  if (added.length === 0 && removed.length === 0) return null;
-  return { kind: "string_list", added, removed };
+  const orderChanged =
+    added.length === 0
+    && removed.length === 0
+    && comparable(beforeItems) !== comparable(afterItems);
+
+  if (added.length === 0 && removed.length === 0 && !orderChanged) return null;
+  return {
+    kind: "string_list",
+    added,
+    removed,
+    ...(orderChanged
+      ? {
+          orderChanged: true,
+          beforeOrder: beforeItems,
+          afterOrder: afterItems,
+        }
+      : {}),
+  };
 }
 
 function collectionIndex(items, identityKey) {
@@ -379,7 +389,7 @@ function collectionChangeDetails(key, before, after) {
   for (const [identity, item] of afterIndex) {
     if (!beforeIndex.has(identity)) {
       added.push({
-        identity: compactLabel(identity),
+        identity,
         item: collectionItemView(item, spec),
       });
       continue;
@@ -388,7 +398,7 @@ function collectionChangeDetails(key, before, after) {
     const beforeItem = beforeIndex.get(identity);
     if (comparable(beforeItem) !== comparable(item)) {
       updated.push({
-        identity: compactLabel(identity),
+        identity,
         changes: collectionFieldChanges(beforeItem, item, spec.fields),
       });
     }
@@ -397,7 +407,7 @@ function collectionChangeDetails(key, before, after) {
   for (const [identity, item] of beforeIndex) {
     if (!afterIndex.has(identity)) {
       removed.push({
-        identity: compactLabel(identity),
+        identity,
         item: collectionItemView(item, spec),
       });
     }
