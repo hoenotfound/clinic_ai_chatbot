@@ -3,6 +3,7 @@ const express = require("express");
 const configRepo = require("../db/configRepo");
 const configImportHistoryRepo = require("../db/configImportHistoryRepo");
 const { prepareConfigUpdatePayload } = require("./config");
+const { protectedGuardrails } = require("../services/clientSetupService");
 
 const router = express.Router();
 const EDITABLE_KEYS = Object.freeze([
@@ -25,6 +26,152 @@ const EDITABLE_KEYS = Object.freeze([
   "escalation",
   "guardrails",
 ]);
+
+const COLLECTION_DIFF_SPECS = Object.freeze({
+  branches: { identity: "name" },
+  promotions: { identity: "name" },
+  services: { identity: "name" },
+  serviceAliases: { identity: "alias" },
+  faqs: { identity: "q" },
+});
+
+function text(value) {
+  return String(value || "").trim();
+}
+
+function cleanStrings(items) {
+  return (Array.isArray(items) ? items : []).map(text).filter(Boolean);
+}
+
+function isIsoDate(value) {
+  if (value === null || value === undefined || value === "") return true;
+  if (typeof value !== "string") return false;
+  return /^\d{4}-\d{2}-\d{2}$/.test(value)
+    && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+}
+
+function validationError(error, invalidKeys = []) {
+  return { ok: false, status: 400, error, invalidKeys };
+}
+
+function validateAdvancedConfigState(currentConfig, updates) {
+  const next = projectedConfig(currentConfig, updates);
+
+  const proposedGuardrails = cleanStrings(next.guardrails);
+  if (proposedGuardrails.length === 0) {
+    return validationError("Keep at least one AI guardrail.", ["guardrails"]);
+  }
+
+  const requiredGuardrails = protectedGuardrails(currentConfig);
+  const proposedGuardrailSet = new Set(proposedGuardrails);
+  const missingProtectedGuardrails = requiredGuardrails.filter(
+    (rule) => !proposedGuardrailSet.has(rule)
+  );
+  if (missingProtectedGuardrails.length > 0) {
+    return validationError(
+      "Built-in industry safety rules cannot be removed through Advanced Config.",
+      ["guardrails"]
+    );
+  }
+
+  const escalation = next.escalation || {};
+  if (!text(escalation.handoffMessage)) {
+    return validationError("The handoff message can't be empty.", ["escalation"]);
+  }
+  if (cleanStrings(escalation.outOfScopeTriggers).length === 0) {
+    return validationError("Keep at least one handoff trigger.", ["escalation"]);
+  }
+
+  const serviceNames = new Set(
+    (Array.isArray(next.services) ? next.services : [])
+      .map((service) => text(service?.name).toLowerCase())
+      .filter(Boolean)
+  );
+  for (const alias of Array.isArray(next.serviceAliases) ? next.serviceAliases : []) {
+    const officialService = text(alias?.officialService);
+    if (!text(alias?.alias) || !officialService) {
+      return validationError(
+        "Every service term needs both the customer wording and the service it maps to.",
+        ["serviceAliases"]
+      );
+    }
+    if (!serviceNames.has(officialService.toLowerCase())) {
+      return validationError(
+        "Every service term must map to a service currently configured.",
+        ["serviceAliases"]
+      );
+    }
+  }
+
+  for (const faq of Array.isArray(next.faqs) ? next.faqs : []) {
+    if (!text(faq?.q) || !text(faq?.a)) {
+      return validationError(
+        "Every FAQ needs both a question and an answer.",
+        ["faqs"]
+      );
+    }
+  }
+
+  for (const promotion of Array.isArray(next.promotions) ? next.promotions : []) {
+    if (!isIsoDate(promotion?.validFrom) || !isIsoDate(promotion?.validUntil)) {
+      return validationError("Promotion dates must be valid dates.", ["promotions"]);
+    }
+    const validFrom = promotion?.validFrom || null;
+    const validUntil = promotion?.validUntil || null;
+    if (validFrom && validUntil && validUntil < validFrom) {
+      return validationError(
+        `The end date for ${text(promotion?.name) || "a promotion"} cannot be before its start date.`,
+        ["promotions"]
+      );
+    }
+  }
+
+  return { ok: true };
+}
+
+function compactLabel(value, maxLength = 88) {
+  const label = text(value);
+  if (!label) return "";
+  return label.length > maxLength ? `${label.slice(0, maxLength - 1)}…` : label;
+}
+
+function collectionIndex(items, identityKey) {
+  const index = new Map();
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const identity = text(item[identityKey]);
+    if (!identity || index.has(identity)) return null;
+    index.set(identity, item);
+  }
+  return index;
+}
+
+function collectionChangeDetails(key, before, after) {
+  const spec = COLLECTION_DIFF_SPECS[key];
+  if (!spec || !Array.isArray(before) || !Array.isArray(after)) return null;
+
+  const beforeIndex = collectionIndex(before, spec.identity);
+  const afterIndex = collectionIndex(after, spec.identity);
+  if (!beforeIndex || !afterIndex) return null;
+
+  const added = [];
+  const removed = [];
+  const updated = [];
+
+  for (const [identity, item] of afterIndex) {
+    if (!beforeIndex.has(identity)) {
+      added.push(compactLabel(identity));
+    } else if (comparable(beforeIndex.get(identity)) !== comparable(item)) {
+      updated.push(compactLabel(identity));
+    }
+  }
+  for (const identity of beforeIndex.keys()) {
+    if (!afterIndex.has(identity)) removed.push(compactLabel(identity));
+  }
+
+  if (added.length === 0 && removed.length === 0 && updated.length === 0) return null;
+  return { added, removed, updated };
+}
 
 function requireAdministrator(req, res, next) {
   if (req.user?.role !== "admin") {
@@ -94,11 +241,15 @@ function buildConfigDiff(currentConfig, updates) {
   const next = projectedConfig(currentConfig, updates);
   return EDITABLE_KEYS
     .filter((key) => comparable(currentConfig[key]) !== comparable(next[key]))
-    .map((key) => ({
-      key,
-      before: valueSummary(currentConfig[key]),
-      after: valueSummary(next[key]),
-    }));
+    .map((key) => {
+      const details = collectionChangeDetails(key, currentConfig[key], next[key]);
+      return {
+        key,
+        before: valueSummary(currentConfig[key]),
+        after: valueSummary(next[key]),
+        ...(details ? { details } : {}),
+      };
+    });
 }
 
 function validationFailure(res, prepared) {
@@ -123,7 +274,13 @@ function prepareAdvancedConfigPayload(input, currentConfig) {
     };
   }
 
-  return prepareConfigUpdatePayload(input, currentConfig);
+  const prepared = prepareConfigUpdatePayload(input, currentConfig);
+  if (!prepared.ok) return prepared;
+
+  const stateValidation = validateAdvancedConfigState(currentConfig, prepared.updates);
+  if (!stateValidation.ok) return stateValidation;
+
+  return prepared;
 }
 
 function historyPayload(rows) {
@@ -282,3 +439,5 @@ module.exports.configFingerprint = configFingerprint;
 module.exports.editableConfigView = editableConfigView;
 module.exports.projectedConfig = projectedConfig;
 module.exports.prepareAdvancedConfigPayload = prepareAdvancedConfigPayload;
+module.exports.validateAdvancedConfigState = validateAdvancedConfigState;
+module.exports.collectionChangeDetails = collectionChangeDetails;
