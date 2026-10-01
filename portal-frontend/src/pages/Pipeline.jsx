@@ -32,6 +32,7 @@ const CATEGORY_OPTIONS = [
 ];
 const CATEGORY_KEYS = new Set(CATEGORY_OPTIONS.map(([key]) => key));
 const QUICK_CATEGORY_KEYS = new Set(["all", "hot", "warm"]);
+const DESKTOP_QUICK_CATEGORY_KEYS = new Set(["all", "hot", "warm", "attention"]);
 const ANALYTICS_PARAM_KEYS = ["from", "to", "channel", "source", "campaign", "treatment", "owner"];
 
 function parameterOrNull(searchParams, key) {
@@ -91,6 +92,8 @@ export default function Pipeline() {
   const requestStageMoveRef = useRef(null);
   const selectedLeadIdRef = useRef(null);
   const pendingActivityRefreshRef = useRef(false);
+  const filterTriggerRef = useRef(null);
+  const filterDialogRef = useRef(null);
   selectedLeadIdRef.current = selectedLeadId;
 
   const canManageLeads = permissions.manage_assigned_leads === true;
@@ -211,6 +214,56 @@ export default function Pipeline() {
     if (!canManageLeads) setPendingMove(null);
   }, [canCreateLeads, canManageLeads, canManageStages]);
 
+  useEffect(() => {
+    if (!showCompactFilters || typeof window === "undefined" || !window.matchMedia("(max-width: 639px)").matches) return undefined;
+    const dialog = filterDialogRef.current;
+    if (!dialog) return undefined;
+
+    const focusableSelector = [
+      "button:not([disabled])",
+      "select:not([disabled])",
+      "input:not([disabled])",
+      "[href]",
+      "[tabindex]:not([tabindex=\"-1\"])",
+    ].join(",");
+    const focusable = () => Array.from(dialog.querySelectorAll(focusableSelector))
+      .filter((element) => element.getClientRects().length > 0);
+
+    const first = focusable()[0];
+    (first || dialog).focus();
+
+    function handleFilterDialogKeyDown(event) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setShowCompactFilters(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const items = focusable();
+      if (!items.length) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const firstItem = items[0];
+      const lastItem = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === firstItem) {
+        event.preventDefault();
+        lastItem.focus();
+      } else if (!event.shiftKey && document.activeElement === lastItem) {
+        event.preventDefault();
+        firstItem.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleFilterDialogKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleFilterDialogKeyDown);
+      filterTriggerRef.current?.focus();
+    };
+  }, [showCompactFilters]);
+
   const analyticsBaseLeads = useMemo(() => {
     if (!hasAnalyticsDrilldown) return leads;
     return leads.filter((lead) => {
@@ -275,7 +328,13 @@ export default function Pipeline() {
     ])
   ), [drilldownLeads, noReplyHours, now]);
   const quickCategoryOptions = CATEGORY_OPTIONS.filter(([key]) => QUICK_CATEGORY_KEYS.has(key));
+  const desktopQuickCategoryOptions = CATEGORY_OPTIONS.filter(
+    ([key]) => DESKTOP_QUICK_CATEGORY_KEYS.has(key) && !QUICK_CATEGORY_KEYS.has(key)
+  );
   const secondaryCategoryOptions = CATEGORY_OPTIONS.filter(([key]) => !QUICK_CATEGORY_KEYS.has(key));
+  const desktopSecondaryCategoryOptions = CATEGORY_OPTIONS.filter(
+    ([key]) => !DESKTOP_QUICK_CATEGORY_KEYS.has(key)
+  );
   const hasSecondaryCategoryFilter = categoryFilter !== "all" && !QUICK_CATEGORY_KEYS.has(categoryFilter);
   const activeFilterCount = Number(branchFilter !== "all")
     + Number(sourceFilter !== "all")
@@ -606,10 +665,10 @@ export default function Pipeline() {
           {(canManageStages || canCreateLeads) && (
             <div className="flex shrink-0 items-center gap-1.5">
               {canCreateLeads && (
-                <button type="button" onClick={() => setShowAddLead(true)} className="h-9 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-[var(--color-primary-hover)] sm:hidden">+ Add</button>
+                <button type="button" onClick={() => setShowAddLead(true)} className="h-11 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-[var(--color-primary-hover)] sm:hidden">+ Add</button>
               )}
               {canManageStages && (
-                <button type="button" onClick={() => setShowStages(true)} aria-label="Manage pipeline stages" className="flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--color-border)] bg-white text-lg font-bold leading-none text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] sm:hidden">•••</button>
+                <button type="button" onClick={() => setShowStages(true)} aria-label="Manage pipeline stages" className="flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--color-border)] bg-white text-lg font-bold leading-none text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] sm:hidden">•••</button>
               )}
               <div className="hidden items-center gap-2 sm:flex">
                 {canManageStages && (
@@ -715,11 +774,12 @@ export default function Pipeline() {
           </select>
 
           <button
+            ref={filterTriggerRef}
             type="button"
             onClick={() => setShowCompactFilters((value) => !value)}
             aria-expanded={showCompactFilters}
             aria-controls="pipeline-secondary-filters"
-            className={`flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-semibold transition sm:h-11 sm:px-3 min-[1800px]:hidden ${showCompactFilters || activeFilterCount > 0 ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
+            className={`flex h-11 shrink-0 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-semibold transition sm:px-3 min-[1800px]:hidden ${showCompactFilters || activeFilterCount > 0 ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
           >
             <FilterIcon />
             <span className="sm:inline">Filters</span>
@@ -738,13 +798,26 @@ export default function Pipeline() {
                 selectCategory(key);
                 setShowCompactFilters(false);
               }}
-              className={`h-9 shrink-0 whitespace-nowrap rounded-xl px-2.5 text-[11px] font-semibold transition sm:h-10 sm:px-3 sm:text-xs min-[1800px]:hidden ${categoryFilter === key ? "bg-[var(--color-primary)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
+              className={`h-11 shrink-0 whitespace-nowrap rounded-xl px-2.5 text-[11px] font-semibold transition sm:h-10 sm:px-3 sm:text-xs min-[1800px]:hidden ${categoryFilter === key ? "bg-[var(--color-primary)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
+            >
+              {label} <span className="ml-1 opacity-70">{categoryCounts[key] || 0}</span>
+            </button>
+          ))}
+          {desktopQuickCategoryOptions.map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => {
+                selectCategory(key);
+                setShowCompactFilters(false);
+              }}
+              className={`hidden h-10 shrink-0 whitespace-nowrap rounded-xl px-3 text-xs font-semibold transition sm:inline-flex sm:items-center min-[1800px]:hidden ${categoryFilter === key ? "bg-[var(--color-primary)] text-white shadow-sm" : "border border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
             >
               {label} <span className="ml-1 opacity-70">{categoryCounts[key] || 0}</span>
             </button>
           ))}
           {hasSecondaryCategoryFilter && (
-            <button type="button" onClick={() => setShowCompactFilters(true)} className="h-9 shrink-0 rounded-xl border border-[var(--color-primary)] bg-[var(--color-primary-light)] px-2.5 text-[11px] font-semibold text-[var(--color-primary)] sm:h-10 sm:px-3 sm:text-xs min-[1800px]:hidden">
+            <button type="button" onClick={() => setShowCompactFilters(true)} className="h-11 shrink-0 rounded-xl border border-[var(--color-primary)] bg-[var(--color-primary-light)] px-2.5 text-[11px] font-semibold text-[var(--color-primary)] sm:h-10 sm:px-3 sm:text-xs min-[1800px]:hidden">
               {CATEGORY_OPTIONS.find(([key]) => key === categoryFilter)?.[1]} {categoryCounts[categoryFilter] || 0}
             </button>
           )}
@@ -755,13 +828,15 @@ export default function Pipeline() {
             <button
               type="button"
               aria-label="Close pipeline filters"
-              className="fixed inset-y-0 left-16 right-0 z-[80] bg-black/30 sm:hidden"
+              className="fixed inset-0 z-[80] sm:hidden" style={{ background: "linear-gradient(to right, transparent 0 4rem, rgba(0, 0, 0, 0.30) 4rem 100%)" }}
               onClick={() => setShowCompactFilters(false)}
             />
             <section
+              ref={filterDialogRef}
               role="dialog"
               aria-modal="true"
               aria-label="Pipeline filters"
+              tabIndex={-1}
               className="fixed bottom-0 left-16 right-0 z-[90] max-h-[78dvh] overflow-y-auto rounded-t-3xl border-t border-[var(--color-border)] bg-white px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 shadow-2xl sm:hidden"
             >
               <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-[var(--color-border)]" />
@@ -770,7 +845,7 @@ export default function Pipeline() {
                   <h2 className="text-base font-bold">Filters</h2>
                   <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">Narrow the leads without taking over the pipeline.</p>
                 </div>
-                <button type="button" onClick={() => setShowCompactFilters(false)} aria-label="Close filters" className="flex h-9 w-9 items-center justify-center rounded-xl border border-[var(--color-border)] text-sm text-[var(--color-text-muted)]">✕</button>
+                <button type="button" onClick={() => setShowCompactFilters(false)} aria-label="Close filters" className="flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--color-border)] text-sm text-[var(--color-text-muted)]">✕</button>
               </div>
 
               <div className="mt-4 space-y-4">
@@ -824,7 +899,7 @@ export default function Pipeline() {
 
             <div className="mt-2.5 hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-2.5 sm:block min-[1800px]:hidden">
               <div className="flex flex-wrap gap-1.5">
-                {secondaryCategoryOptions.map(([key, label]) => (
+                {desktopSecondaryCategoryOptions.map(([key, label]) => (
                   <button
                     key={key}
                     type="button"
