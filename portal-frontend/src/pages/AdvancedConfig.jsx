@@ -228,7 +228,7 @@ export default function AdvancedConfig() {
         </header>
 
         <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-xs leading-5 text-[var(--color-text-muted)]">
-          Internal profile/setup fields are intentionally excluded. Every JSON import creates a backup first, and applying through this page updates the running chatbot immediately without a Render restart.
+          Business profile internals and Automation Tools settings are intentionally excluded. Every JSON import creates a backup first, and applying through this page updates the running chatbot immediately without a Render restart.
         </div>
 
         {error && (
@@ -345,7 +345,7 @@ export default function AdvancedConfig() {
           <div>
             <h2 className="font-display text-lg font-bold">Import history</h2>
             <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-              The latest automatic backups are kept here. Restoring a backup also creates a new backup first.
+              The latest automatic backups are kept here. Up to 50 snapshots are retained, and restoring a backup also creates a new backup first.
             </p>
           </div>
 
