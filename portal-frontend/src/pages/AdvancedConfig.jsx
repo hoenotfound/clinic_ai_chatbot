@@ -502,7 +502,7 @@ export default function AdvancedConfig() {
       setPreview(null);
       setPreviewText("");
       await refreshUser().catch(() => {});
-      setNotice(`Applied ${result.changes?.length || 0} configuration change${result.changes?.length === 1 ? "" : "s"}.`);
+      setNotice("Configuration changes applied.");
     } catch (err) {
       setError(err.message || "Couldn't apply this configuration.");
       if (err.code === "CONFIG_PREVIEW_STALE") {
