@@ -35,7 +35,7 @@ test("Analytics cards use the flatter visual system", () => {
   const analytics = read("portal-frontend/src/pages/Analytics.jsx");
 
   assert.match(analytics, /function Panel\([\s\S]*rounded-xl border border-\[var\(--color-border\)\] bg-white p-4 sm:p-5/);
-  assert.match(analytics, /function MetricCard\([\s\S]*rounded-xl border border-\[var\(--color-border\)\] bg-white p-3\.5 sm:p-4/);
+  assert.match(analytics, /function MetricCard\([\s\S]*rounded-xl border border-\[var\(--color-border\)\] bg-white p-3 sm:p-4/);
   assert.doesNotMatch(analytics, /shadow-sm/);
 });
 
@@ -47,4 +47,17 @@ test("Analytics conversion summary keeps each rate definition visible", () => {
   assert.match(analytics, /labels\[1\]\?\.detail \|\| labels\[1\]\?\.label/);
   assert.match(analytics, /labels\[2\]\?\.detail \|\| labels\[2\]\?\.label/);
   assert.match(analytics, /\{definition\} <strong/);
+});
+
+
+test("Analytics mobile layout keeps filters compact and conversion rates structured", () => {
+  const analytics = read("portal-frontend/src/pages/Analytics.jsx");
+
+  assert.match(analytics, /data-testid="analytics-scroll"/);
+  assert.match(analytics, /overflow-x-hidden overflow-y-auto/);
+  assert.match(analytics, /Track leads, conversion and sales outcomes\./);
+  assert.match(analytics, /col-span-2 h-10 rounded-xl border[\s\S]*More filters/);
+  assert.match(analytics, /hasPendingChanges \? "inline-flex" : "hidden sm:inline-flex"/);
+  assert.match(analytics, /<div className="sm:hidden">[\s\S]*Overall conversion/);
+  assert.match(analytics, /mt-3 grid min-w-0 grid-cols-3 gap-2/);
 });
