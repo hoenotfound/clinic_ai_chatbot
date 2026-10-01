@@ -129,6 +129,8 @@ export default function Analytics() {
   const [appliedFilters, setAppliedFilters] = useState(initial);
   const [preset, setPreset] = useState("30");
   const [showMoreFilters, setShowMoreFilters] = useState(false);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [appliedPreset, setAppliedPreset] = useState("30");
   const [performanceTab, setPerformanceTab] = useState("source");
   const [refreshToken, setRefreshToken] = useState(0);
   const [data, setData] = useState(null);
@@ -178,7 +180,10 @@ export default function Analytics() {
   function applyFilters() {
     if (loading) return;
     setFilterActionPending(true);
+    setAppliedPreset(preset);
     setAppliedFilters({ ...draftFilters });
+    setMobileFiltersOpen(false);
+    setShowMoreFilters(false);
   }
 
   function clearFilters() {
@@ -195,6 +200,7 @@ export default function Analytics() {
     };
     setDraftFilters(next);
     setAppliedFilters(next);
+    setMobileFiltersOpen(false);
     setShowMoreFilters(false);
   }
 
@@ -219,6 +225,19 @@ export default function Analytics() {
     .filter((key) => draftFilters[key] !== "all").length;
   const hasAdvancedFilters = activeAdvancedFilterCount > 0;
   const hasPendingChanges = !filtersEqual(draftFilters, appliedFilters);
+  const appliedAdvancedFilterCount = ADVANCED_FILTERS
+    .filter((key) => appliedFilters[key] !== "all").length;
+  const appliedPresetLabel = PRESET_OPTIONS.find(([value]) => value === appliedPreset)?.[1] || "Custom range";
+  const appliedLocationLabel = appliedFilters.branch === "all"
+    ? analyticsUi.locationFilterLabel === "Branch" ? "All branches" : "All locations"
+    : appliedFilters.branch;
+  const appliedChannelLabel = appliedFilters.channel === "all" ? "All channels" : formatChannel(appliedFilters.channel);
+  const mobileFilterSummary = [
+    appliedPresetLabel,
+    appliedLocationLabel,
+    appliedChannelLabel,
+    appliedAdvancedFilterCount ? `${appliedAdvancedFilterCount} more` : null,
+  ].filter(Boolean).join(" · ");
 
   return (
     <div data-testid="analytics-scroll" className="h-full min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain bg-[var(--color-bg)]">
@@ -245,7 +264,23 @@ export default function Analytics() {
           </button>
         </div>
 
-        <div className="mt-3 flex min-w-0 flex-col gap-2.5 sm:mt-4 sm:gap-3 xl:flex-row xl:items-end xl:justify-between">
+        <button
+          type="button"
+          aria-label="Toggle analytics filters"
+          aria-expanded={mobileFiltersOpen}
+          onClick={() => setMobileFiltersOpen((current) => !current)}
+          className="mt-3 flex w-full items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-left sm:hidden"
+        >
+          <span className="min-w-0">
+            <span className="block text-xs font-semibold text-[var(--color-text)]">Filters</span>
+            <span className="mt-0.5 block truncate text-[11px] text-[var(--color-text-muted)]">
+              {filterActionPending ? "Updating analytics…" : mobileFilterSummary}
+            </span>
+          </span>
+          <ChevronIcon className={`h-4 w-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${mobileFiltersOpen ? "rotate-180" : ""}`} />
+        </button>
+
+        <div className={`${mobileFiltersOpen ? "flex" : "hidden"} mt-2.5 min-w-0 flex-col gap-2.5 sm:mt-4 sm:flex sm:gap-3 xl:flex-row xl:items-end xl:justify-between`}>
           <div className="grid grid-cols-2 gap-2.5 sm:flex sm:flex-1 sm:flex-wrap sm:items-end">
             <div className="col-span-2 sm:col-span-1">
               <FilterSelect
@@ -303,7 +338,7 @@ export default function Analytics() {
         </div>
 
         {showMoreFilters && (
-          <div className="mt-3 grid grid-cols-2 gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:flex sm:flex-wrap sm:items-end">
+          <div className={`${mobileFiltersOpen ? "grid" : "hidden"} mt-3 grid-cols-2 gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:flex sm:flex-wrap sm:items-end`}>
             <FilterSelect label="Source" value={draftFilters.source} onChange={(value) => updateDraft("source", value)} options={filterOptions.sources} format={formatSource} />
             <FilterSelect label="Campaign" value={draftFilters.campaign} onChange={(value) => updateDraft("campaign", value)} options={filterOptions.campaigns} />
             <FilterSelect label={analyticsUi.serviceFilterLabel} value={draftFilters.treatment} onChange={(value) => updateDraft("treatment", value)} options={filterOptions.treatments} />
