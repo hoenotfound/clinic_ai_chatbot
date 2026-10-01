@@ -124,30 +124,24 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
   color: var(--color-text-muted);
 }
 
-/* Analytics trend charts intentionally keep a small minimum plotting width on
-   phones so date labels and data points remain legible instead of shrinking
-   to a few pixels. Very narrow screens can swipe the chart a short distance. */
+/* Keep the Analytics trend chart fully inside the mobile content column.
+   The x-axis already limits itself to a few labels, so the chart can scale to
+   the available width instead of creating a second horizontal scroll area. */
 @media (max-width: 639px) {
   div:has(> svg[aria-label$="over time"]) {
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    padding-bottom: 2px;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  div:has(> svg[aria-label$="over time"])::-webkit-scrollbar {
-    display: none;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: hidden;
   }
 
   svg[aria-label$="over time"] {
-    width: 360px;
-    min-width: 360px;
-    max-width: none;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
   }
 
   svg[aria-label$="over time"] text {
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 600;
   }
 

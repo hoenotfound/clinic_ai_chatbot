@@ -124,7 +124,14 @@ async function mockPortalApi(page, { loggedIn = false } = {}) {
             { label: "Visits", count: 4, fromPreviousRate: 80, dropOff: 1, fromLeadRate: 33.3 },
             { label: "Won", count: 2, fromPreviousRate: 50, dropOff: 2, fromLeadRate: 16.7 },
           ],
-          trend: [],
+          trend: [
+            { day: "2026-09-25", newLeads: 2, appointments: 1, visits: 1, won: 0 },
+            { day: "2026-09-26", newLeads: 4, appointments: 2, visits: 1, won: 1 },
+            { day: "2026-09-27", newLeads: 1, appointments: 0, visits: 1, won: 0 },
+            { day: "2026-09-28", newLeads: 5, appointments: 2, visits: 1, won: 1 },
+            { day: "2026-09-29", newLeads: 3, appointments: 1, visits: 0, won: 0 },
+            { day: "2026-09-30", newLeads: 6, appointments: 3, visits: 2, won: 1 },
+          ],
           temperature: [],
           responseTimes: {
             automated: { samples: 0, medianSeconds: 0, p90Seconds: 0 },
@@ -248,6 +255,16 @@ async function expectNoHorizontalPageOverflow(page) {
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.viewport + 1);
 }
 
+async function expectNoHorizontalElementOverflow(page, testId) {
+  const element = page.getByTestId(testId);
+  await expect(element).toBeVisible();
+  const dimensions = await element.evaluate((node) => ({
+    clientWidth: node.clientWidth,
+    scrollWidth: node.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth + 1);
+}
+
 test("login page is usable without horizontal overflow", async ({ page }) => {
   await mockPortalApi(page);
   await page.goto("/login");
@@ -277,5 +294,9 @@ test("staff can reach the main portal routes without page-level overflow", async
     await expect(page).toHaveURL(new RegExp(path.replace("/", "\\/") + "$"));
     await expect(page.getByRole("navigation").first()).toBeVisible();
     await expectNoHorizontalPageOverflow(page);
+    if (path === "/analytics") {
+      await expect(page.getByRole("img", { name: "New leads over time" })).toBeVisible();
+      await expectNoHorizontalElementOverflow(page, "analytics-scroll");
+    }
   }
 });
