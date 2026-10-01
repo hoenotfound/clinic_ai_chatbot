@@ -164,14 +164,21 @@ test("pipeline keeps phone controls compact while preserving richer desktop cont
   );
 
   assert.match(source, /QUICK_CATEGORY_KEYS = new Set\(\["all", "hot", "warm"\]\)/);
+  assert.match(source, /DESKTOP_QUICK_CATEGORY_KEYS = new Set\(\["all", "hot", "warm", "attention"\]\)/);
   assert.match(source, /showCompactFilters/);
   assert.match(source, /hasSecondaryCategoryFilter/);
   assert.match(source, /activeFilterCount/);
   assert.match(source, /data-testid="pipeline-filter-bar"/);
   assert.match(source, /aria-label="Search leads"/);
   assert.match(source, /aria-label="Pipeline filters"/);
+  assert.match(source, /filterTriggerRef/);
+  assert.match(source, /filterDialogRef/);
+  assert.match(source, /event\.key === "Escape"/);
+  assert.match(source, /event\.key !== "Tab"/);
+  assert.match(source, /filterTriggerRef\.current\?\.focus\(\)/);
   assert.match(source, /aria-label="Filter by branch"/);
   assert.match(source, /aria-label="Filter by source"/);
+  assert.match(source, /fixed inset-0 z-\[80\]/);
   assert.match(source, /left-16 right-0 z-\[90\]/);
   assert.match(source, /hidden shrink-0 border-b[\s\S]*sm:block/);
   assert.match(source, /data-testid="pipeline-mobile-leads"/);
