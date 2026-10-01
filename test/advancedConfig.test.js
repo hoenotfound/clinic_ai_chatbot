@@ -17,6 +17,7 @@ const {
   MAX_CONFIG_IMPORT_SNAPSHOTS,
   pruneOldSnapshots,
 } = require("../src/db/configImportHistoryRepo");
+const { getIndustryProfile } = require("../src/config/industryProfiles");
 
 function read(relativePath) {
   return fs.readFileSync(path.join(__dirname, "..", relativePath), "utf8");
@@ -143,6 +144,197 @@ test("Advanced Config exposes business and AI content only", () => {
   }
 });
 
+test("Advanced Config enforces handoff rules and protected industry guardrails", () => {
+  const current = currentConfig();
+  current.businessType = "generic";
+  const protectedRule = getIndustryProfile("generic").guardrails[0];
+  current.guardrails = [protectedRule, "Custom client rule"];
+
+  const removedProtected = prepareAdvancedConfigPayload(
+    { guardrails: ["Custom client rule"] },
+    current
+  );
+  assert.equal(removedProtected.ok, false);
+  assert.deepEqual(removedProtected.invalidKeys, ["guardrails"]);
+  assert.match(removedProtected.error, /cannot be removed/i);
+
+  const emptyGuardrails = prepareAdvancedConfigPayload({ guardrails: [] }, current);
+  assert.equal(emptyGuardrails.ok, false);
+  assert.deepEqual(emptyGuardrails.invalidKeys, ["guardrails"]);
+
+  const emptyMessage = prepareAdvancedConfigPayload(
+    {
+      escalation: {
+        ...current.escalation,
+        handoffMessage: "   ",
+      },
+    },
+    current
+  );
+  assert.equal(emptyMessage.ok, false);
+  assert.deepEqual(emptyMessage.invalidKeys, ["escalation"]);
+
+  const emptyTriggers = prepareAdvancedConfigPayload(
+    {
+      escalation: {
+        ...current.escalation,
+        outOfScopeTriggers: ["  "],
+      },
+    },
+    current
+  );
+  assert.equal(emptyTriggers.ok, false);
+  assert.deepEqual(emptyTriggers.invalidKeys, ["escalation"]);
+
+  const valid = prepareAdvancedConfigPayload(
+    {
+      guardrails: [protectedRule, "Updated custom rule"],
+      escalation: {
+        ...current.escalation,
+        outOfScopeTriggers: ["Refund request"],
+        handoffMessage: "A team member will help you.",
+      },
+    },
+    current
+  );
+  assert.equal(valid.ok, true);
+});
+
+test("Advanced Config enforces alias, FAQ, and promotion integrity across partial imports", () => {
+  const current = currentConfig();
+
+  const badAlias = prepareAdvancedConfigPayload(
+    { serviceAliases: [{ alias: "facial", officialService: "Missing service" }] },
+    current
+  );
+  assert.equal(badAlias.ok, false);
+  assert.deepEqual(badAlias.invalidKeys, ["serviceAliases"]);
+
+  const blankAliasTarget = prepareAdvancedConfigPayload(
+    { serviceAliases: [{ alias: "facial", officialService: "   " }] },
+    current
+  );
+  assert.equal(blankAliasTarget.ok, false);
+  assert.deepEqual(blankAliasTarget.invalidKeys, ["serviceAliases"]);
+
+  const validServiceAndAlias = prepareAdvancedConfigPayload(
+    {
+      services: [
+        ...current.services,
+        { name: "Facial", description: "Deep cleanse", priceRange: "RM100", duration: "60 min" },
+      ],
+      serviceAliases: [{ alias: "deep clean", officialService: "Facial" }],
+    },
+    current
+  );
+  assert.equal(validServiceAndAlias.ok, true);
+
+  const blankFaq = prepareAdvancedConfigPayload(
+    { faqs: [{ q: "How much?", a: "   " }] },
+    current
+  );
+  assert.equal(blankFaq.ok, false);
+  assert.deepEqual(blankFaq.invalidKeys, ["faqs"]);
+
+  const invalidDate = prepareAdvancedConfigPayload(
+    {
+      promotions: [{
+        name: "October Promo",
+        imageUrl: "",
+        caption: "Promo",
+        validFrom: "01-10-2026",
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(invalidDate.ok, false);
+  assert.deepEqual(invalidDate.invalidKeys, ["promotions"]);
+
+  const reversedDates = prepareAdvancedConfigPayload(
+    {
+      promotions: [{
+        name: "October Promo",
+        imageUrl: "",
+        caption: "Promo",
+        validFrom: "2026-10-20",
+        validUntil: "2026-10-01",
+      }],
+    },
+    current
+  );
+  assert.equal(reversedDates.ok, false);
+  assert.deepEqual(reversedDates.invalidKeys, ["promotions"]);
+  assert.match(reversedDates.error, /cannot be before/i);
+});
+
+test("Advanced Config review reports item-level collection changes", () => {
+  const current = currentConfig();
+  current.branches = [{ name: "HQ", address: "Old address", phone: "" }];
+  current.services = [
+    { name: "Consultation", description: "Old", priceRange: "RM50", duration: "30 min" },
+  ];
+  current.serviceAliases = [{ alias: "consult", officialService: "Consultation" }];
+  current.faqs = [{ q: "Price?", a: "Old answer" }];
+  current.promotions = [{
+    name: "Old Promo",
+    imageUrl: "",
+    caption: "Old",
+    validFrom: null,
+    validUntil: null,
+  }];
+
+  const changes = buildConfigDiff(current, {
+    branches: [
+      { name: "HQ", address: "New address", phone: "" },
+      { name: "PJ", address: "PJ", phone: "" },
+    ],
+    services: [
+      { name: "Consultation", description: "Updated", priceRange: "RM50", duration: "30 min" },
+      { name: "Facial", description: "New", priceRange: "RM100", duration: "60 min" },
+    ],
+    serviceAliases: [{ alias: "consult", officialService: "Facial" }],
+    faqs: [
+      { q: "Price?", a: "New answer" },
+      { q: "Hours?", a: "Daily" },
+    ],
+    promotions: [{
+      name: "New Promo",
+      imageUrl: "",
+      caption: "New",
+      validFrom: null,
+      validUntil: null,
+    }],
+  });
+
+  const byKey = Object.fromEntries(changes.map((change) => [change.key, change]));
+  assert.deepEqual(byKey.branches.details, {
+    added: ["PJ"],
+    removed: [],
+    updated: ["HQ"],
+  });
+  assert.deepEqual(byKey.services.details, {
+    added: ["Facial"],
+    removed: [],
+    updated: ["Consultation"],
+  });
+  assert.deepEqual(byKey.serviceAliases.details, {
+    added: [],
+    removed: [],
+    updated: ["consult"],
+  });
+  assert.deepEqual(byKey.faqs.details, {
+    added: ["Hours?"],
+    removed: [],
+    updated: ["Price?"],
+  });
+  assert.deepEqual(byKey.promotions.details, {
+    added: ["New Promo"],
+    removed: ["Old Promo"],
+    updated: [],
+  });
+});
+
 test("Advanced Config fingerprint is stable for equivalent nested object key order", () => {
   const left = currentConfig();
   const right = currentConfig();
@@ -207,6 +399,9 @@ test("Advanced Config portal route stays admin-only and exposes validate, apply,
   assert.match(page, /Partial JSON is supported/);
   assert.match(page, /Validate & review/);
   assert.match(page, /Import history/);
+  assert.match(page, /change\.details\.added/);
+  assert.match(page, /change\.details\.removed/);
+  assert.match(page, /change\.details\.updated/);
   assert.match(page, /Automation Tools settings are intentionally excluded/);
   assert.match(page, /Up to 50 snapshots are retained/);
   assert.match(page, /refreshUser/);
