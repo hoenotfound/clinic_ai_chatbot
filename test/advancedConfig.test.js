@@ -11,6 +11,7 @@ const {
   buildConfigDiff,
   buildLineDiff,
   configFingerprint,
+  tokenizeDiffText,
   editableConfigView,
   prepareAdvancedConfigPayload,
 } = require("../src/routes/advancedConfig");
@@ -502,6 +503,26 @@ test("Advanced Config review produces readable text, guardrail, and handoff diff
     removed: [],
   });
   assert.equal(handoffFields.handoffMessage.textDiff.mode, "words");
+});
+
+test("text diff tokenization highlights Mandarin changes instead of replacing the whole sentence", () => {
+  assert.deepEqual(
+    tokenizeDiffText("我腰很酸，适合什么？"),
+    ["我", "腰", "很", "酸", "，", "适", "合", "什", "么", "？"]
+  );
+
+  const diff = buildLineDiff("我腰酸，适合什么？", "我腰很酸，适合什么？");
+  assert.equal(diff.mode, "words");
+  assert.ok(
+    diff.segments.some(
+      (segment) => segment.type === "added" && segment.text.includes("很")
+    )
+  );
+  assert.ok(
+    diff.segments.some(
+      (segment) => segment.type === "same" && segment.text.includes("我腰")
+    )
+  );
 });
 
 test("line diff keeps unchanged context while marking additions and removals", () => {
