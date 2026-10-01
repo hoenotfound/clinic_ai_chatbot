@@ -215,10 +215,9 @@ export default function Pipeline() {
   }, [canCreateLeads, canManageLeads, canManageStages]);
 
   useEffect(() => {
-    if (!showCompactFilters || typeof window === "undefined" || !window.matchMedia("(max-width: 639px)").matches) return undefined;
-    const dialog = filterDialogRef.current;
-    if (!dialog) return undefined;
+    if (!showCompactFilters || typeof window === "undefined") return undefined;
 
+    const phoneQuery = window.matchMedia("(max-width: 639px)");
     const focusableSelector = [
       "button:not([disabled])",
       "select:not([disabled])",
@@ -226,13 +225,19 @@ export default function Pipeline() {
       "[href]",
       "[tabindex]:not([tabindex=\"-1\"])",
     ].join(",");
-    const focusable = () => Array.from(dialog.querySelectorAll(focusableSelector))
-      .filter((element) => element.getClientRects().length > 0);
+    let trapActive = false;
 
-    const first = focusable()[0];
-    (first || dialog).focus();
+    function focusableItems() {
+      const dialog = filterDialogRef.current;
+      if (!dialog) return [];
+      return Array.from(dialog.querySelectorAll(focusableSelector))
+        .filter((element) => element.getClientRects().length > 0);
+    }
 
     function handleFilterDialogKeyDown(event) {
+      const dialog = filterDialogRef.current;
+      if (!dialog || !trapActive) return;
+
       if (event.key === "Escape") {
         event.preventDefault();
         setShowCompactFilters(false);
@@ -240,7 +245,7 @@ export default function Pipeline() {
       }
       if (event.key !== "Tab") return;
 
-      const items = focusable();
+      const items = focusableItems();
       if (!items.length) {
         event.preventDefault();
         dialog.focus();
@@ -257,10 +262,42 @@ export default function Pipeline() {
       }
     }
 
-    document.addEventListener("keydown", handleFilterDialogKeyDown);
-    return () => {
+    function activatePhoneTrap() {
+      if (trapActive || !phoneQuery.matches) return;
+      const dialog = filterDialogRef.current;
+      if (!dialog) return;
+      trapActive = true;
+      document.addEventListener("keydown", handleFilterDialogKeyDown);
+      const first = focusableItems()[0];
+      (first || dialog).focus();
+    }
+
+    function deactivatePhoneTrap({ restoreFocus = true } = {}) {
+      if (!trapActive) return;
+      trapActive = false;
       document.removeEventListener("keydown", handleFilterDialogKeyDown);
-      filterTriggerRef.current?.focus();
+      if (restoreFocus) filterTriggerRef.current?.focus();
+    }
+
+    function handlePhoneBreakpointChange(event) {
+      if (event.matches) activatePhoneTrap();
+      else deactivatePhoneTrap();
+    }
+
+    activatePhoneTrap();
+    if (typeof phoneQuery.addEventListener === "function") {
+      phoneQuery.addEventListener("change", handlePhoneBreakpointChange);
+    } else {
+      phoneQuery.addListener(handlePhoneBreakpointChange);
+    }
+
+    return () => {
+      if (typeof phoneQuery.removeEventListener === "function") {
+        phoneQuery.removeEventListener("change", handlePhoneBreakpointChange);
+      } else {
+        phoneQuery.removeListener(handlePhoneBreakpointChange);
+      }
+      deactivatePhoneTrap();
     };
   }, [showCompactFilters]);
 
