@@ -297,6 +297,32 @@ test("staff can reach the main portal routes without page-level overflow", async
     if (path === "/analytics") {
       await expect(page.getByRole("img", { name: "New leads over time" })).toBeVisible();
       await expectNoHorizontalElementOverflow(page, "analytics-scroll");
+
+      const viewport = page.viewportSize();
+      if (viewport && viewport.width < 640) {
+        const filterToggle = page.getByRole("button", { name: "Toggle analytics filters" });
+        await expect(filterToggle).toBeVisible();
+        await expect(filterToggle).toContainText("Last 30 days");
+        await expect(page.getByLabel("Date range")).not.toBeVisible();
+
+        await filterToggle.click();
+        await expect(page.getByLabel("Date range")).toBeVisible();
+        await page.getByLabel("Date range").selectOption("7");
+        await expect(page.getByRole("button", { name: "Apply filters" })).toBeVisible();
+
+        await filterToggle.click();
+        await expect(filterToggle).toContainText("Unsaved");
+        await expect(filterToggle).toContainText("Last 30 days");
+        await expect(page.getByLabel("Date range")).not.toBeVisible();
+
+        await filterToggle.click();
+        await expect(page.getByLabel("Date range")).toBeVisible();
+        await page.getByRole("button", { name: "Apply filters" }).click();
+
+        await expect(filterToggle).toContainText("Last 7 days");
+        await expect(filterToggle).not.toContainText("Unsaved");
+        await expect(page.getByLabel("Date range")).not.toBeVisible();
+      }
     }
   }
 });

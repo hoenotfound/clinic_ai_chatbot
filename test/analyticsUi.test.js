@@ -87,3 +87,37 @@ test("Analytics responsive smoke fixture renders the trend chart that previously
   assert.match(smoke, /newLeads: 6, appointments: 3, visits: 2, won: 1/);
   assert.match(smoke, /getByRole\("img", \{ name: "New leads over time" \}\)/);
 });
+
+
+test("Analytics mobile filters collapse by default and summarize the applied state", () => {
+  const analytics = read("portal-frontend/src/pages/Analytics.jsx");
+
+  assert.match(analytics, /const \[mobileFiltersOpen, setMobileFiltersOpen\] = useState\(false\)/);
+  assert.match(analytics, /const \[appliedPreset, setAppliedPreset\] = useState\("30"\)/);
+  assert.match(analytics, /aria-label="Toggle analytics filters"/);
+  assert.match(analytics, /mobileFilterSummary/);
+  assert.match(analytics, /All branches/);
+  assert.match(analytics, /All channels/);
+  assert.match(analytics, /setMobileFiltersOpen\(false\)/);
+  assert.match(analytics, /\$\{mobileFiltersOpen \? "flex" : "hidden"\}[\s\S]*sm:flex/);
+});
+
+test("Analytics mobile filter summary reports hidden advanced filters without exposing the full form", () => {
+  const analytics = read("portal-frontend/src/pages/Analytics.jsx");
+
+  assert.match(analytics, /appliedAdvancedFilterCount = ADVANCED_FILTERS/);
+  assert.match(analytics, /\$\{appliedAdvancedFilterCount\} more/);
+  assert.match(analytics, /filterActionPending \? "Updating analytics…" : mobileFilterSummary/);
+});
+
+
+test("Analytics collapsed mobile filters reveal unsaved draft changes", () => {
+  const analytics = read("portal-frontend/src/pages/Analytics.jsx");
+  const smoke = read("portal-frontend/e2e/portal-smoke.spec.js");
+
+  assert.match(analytics, /hasPendingChanges && !filterActionPending/);
+  assert.match(analytics, />\s*Unsaved\s*</);
+  assert.match(analytics, /text-\[10px\] font-bold text-\[var\(--color-accent\)\]/);
+  assert.match(smoke, /toContainText\("Unsaved"\)/);
+  assert.match(smoke, /not\.toContainText\("Unsaved"\)/);
+});
