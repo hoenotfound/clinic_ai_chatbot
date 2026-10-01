@@ -261,11 +261,27 @@ async function mockPortalApi(page, { loggedIn = false, user = STAFF_USER } = {})
       const updates = payload?.config || {};
       const changes = Object.keys(updates)
         .filter((key) => JSON.stringify(advancedConfig[key]) !== JSON.stringify(updates[key]))
-        .map((key) => ({
-          key,
-          before: String(advancedConfig[key] ?? "Empty"),
-          after: String(updates[key] ?? "Empty"),
-        }));
+        .map((key) => {
+          const before = advancedConfig[key];
+          const after = updates[key];
+          return {
+            key,
+            before: String(before ?? "Empty"),
+            after: String(after ?? "Empty"),
+            ...(key === "tone"
+              ? {
+                  details: {
+                    kind: "text",
+                    mode: "words",
+                    segments: [
+                      { type: "removed", text: String(before || "") },
+                      { type: "added", text: String(after || "") },
+                    ],
+                  },
+                }
+              : {}),
+          };
+        });
       return route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -398,7 +414,7 @@ test("staff can reach the main portal routes without page-level overflow", async
 });
 
 
-test("admin can validate and apply Advanced Config without horizontal overflow", async ({ page }) => {
+test("admin can review meaningful Advanced Config diff and apply without horizontal overflow", async ({ page }) => {
   await mockPortalApi(page, { loggedIn: true, user: ADMIN_USER });
   await page.goto("/settings/advanced-config");
 
@@ -410,9 +426,18 @@ test("admin can validate and apply Advanced Config without horizontal overflow",
   const editor = page.getByLabel("JSON configuration");
   await editor.fill(JSON.stringify({ tone: "Short and friendly" }, null, 2));
   await page.getByRole("button", { name: "Validate & review" }).click();
+
   await expect(page.getByRole("heading", { name: "Review changes" })).toBeVisible();
-  await expect(page.getByText("tone", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Apply 1 change" }).click();
+  await expect(page.getByText("1 section changed", { exact: false })).toBeVisible();
+  await expect(page.getByText("Tone", { exact: true })).toBeVisible();
+  await expect(page.getByText("Text changed", { exact: true })).toBeVisible();
+  await expect(page.getByText("Short and friendly", { exact: true })).toBeHidden();
+
+  await page.getByText("Tone", { exact: true }).click();
+  await expect(page.getByText("Warm and professional", { exact: true })).toBeVisible();
+  await expect(page.getByText("Short and friendly", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Apply changes" }).click();
   await expect(page.getByText("Applied 1 configuration change.")).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
 });
