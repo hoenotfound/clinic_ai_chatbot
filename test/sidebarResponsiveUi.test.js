@@ -18,6 +18,7 @@ test("sidebar uses coherent compact expanded and mobile-overlay layouts", () => 
   assert.match(sidebarSource, /matchMedia\("\(min-width: 1280px\)"\)/);
   assert.match(sidebarSource, /matchMedia\("\(max-width: 639px\)"\)/);
   assert.match(sidebarSource, /data-mobile-open=\{mobileOpen \? "true" : "false"\}/);
+  assert.match(sidebarSource, /aria-label="Dismiss navigation"/);
   assert.match(sidebarSource, /aria-controls="portal-sidebar-primary-nav"/);
   assert.match(sidebarSource, /aria-label="Utility navigation"/);
   assert.match(sidebarSource, /className="app-sidebar-label truncate"/);
@@ -29,7 +30,7 @@ test("sidebar uses coherent compact expanded and mobile-overlay layouts", () => 
   // Phone: 64px layout rail with a temporary 220px discoverable panel.
   assert.match(cssSource, /\.app-sidebar\s*\{[\s\S]*?width:\s*4rem;/);
   assert.match(cssSource, /@media \(max-width:\s*639px\)/);
-  assert.match(cssSource, /\.app-sidebar-mobile-backdrop\s*\{[\s\S]*?position:\s*fixed;/);
+  assert.match(cssSource, /\.app-sidebar-mobile-backdrop\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?left:\s*13\.75rem;/);
   assert.match(cssSource, /\.app-sidebar\[data-mobile-open="true"\]::before[\s\S]*?width:\s*13\.75rem;/);
   assert.match(cssSource, /\.app-sidebar\[data-mobile-open="true"\] \.app-sidebar-label[\s\S]*?opacity:\s*1;/);
 
