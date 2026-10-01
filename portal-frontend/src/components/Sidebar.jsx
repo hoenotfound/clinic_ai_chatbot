@@ -40,6 +40,11 @@ function getInitialSidebarPreference() {
   };
 }
 
+function getInitialPhoneState() {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia("(max-width: 639px)").matches;
+}
+
 function initialsForUser(value) {
   const words = String(value || "")
     .trim()
@@ -54,7 +59,12 @@ function canShowItem(item, user, permissions) {
   return item.capabilities.some((capability) => permissions[capability] === true);
 }
 
-function SidebarNavLink({ item, onShowTooltip, onHideTooltip }) {
+function SidebarNavLink({
+  item,
+  onShowTooltip,
+  onHideTooltip,
+  onNavigate,
+}) {
   return (
     <NavLink
       to={item.to}
@@ -63,7 +73,10 @@ function SidebarNavLink({ item, onShowTooltip, onHideTooltip }) {
       onMouseLeave={onHideTooltip}
       onFocus={(event) => onShowTooltip(event, item.label)}
       onBlur={onHideTooltip}
-      onClick={onHideTooltip}
+      onClick={() => {
+        onHideTooltip();
+        onNavigate?.();
+      }}
       className={({ isActive }) =>
         `app-sidebar-nav-item relative flex items-center rounded-xl font-medium transition-colors ${isActive ? "is-active" : ""}`
       }
@@ -79,11 +92,17 @@ export default function Sidebar() {
   const branding = useClientBranding();
   const navigate = useNavigate();
   const [sidebarPreference, setSidebarPreference] = useState(getInitialSidebarPreference);
+  const [isPhone, setIsPhone] = useState(getInitialPhoneState);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [tooltip, setTooltip] = useState(null);
   const sidebarExpanded = sidebarPreference.expanded;
+  const sidebarOpen = isPhone ? mobileOpen : sidebarExpanded;
   const visiblePrimaryItems = PRIMARY_NAV_ITEMS.filter((item) => canShowItem(item, user, permissions));
   const settingsVisible = canShowItem(SETTINGS_ITEM, user, permissions);
   const userDisplayName = user?.displayName || username || "User";
+  const toggleLabel = isPhone
+    ? (mobileOpen ? "Close sidebar" : "Open sidebar")
+    : (sidebarExpanded ? "Collapse sidebar" : "Expand sidebar");
 
   useEffect(() => {
     if (sidebarPreference.explicit) return undefined;
@@ -102,10 +121,36 @@ export default function Sidebar() {
   }, [sidebarPreference.explicit]);
 
   useEffect(() => {
-    if (sidebarExpanded) setTooltip(null);
-  }, [sidebarExpanded]);
+    const phoneQuery = window.matchMedia("(max-width: 639px)");
+    const syncPhoneState = (event) => {
+      setIsPhone(event.matches);
+      if (!event.matches) setMobileOpen(false);
+    };
+
+    phoneQuery.addEventListener("change", syncPhoneState);
+    return () => phoneQuery.removeEventListener("change", syncPhoneState);
+  }, []);
+
+  useEffect(() => {
+    if (sidebarOpen) setTooltip(null);
+  }, [sidebarOpen]);
+
+  useEffect(() => {
+    if (!mobileOpen) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setMobileOpen(false);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [mobileOpen]);
 
   function toggleSidebar() {
+    if (isPhone) {
+      setMobileOpen((current) => !current);
+      return;
+    }
+
     setSidebarPreference((current) => {
       const nextExpanded = !current.expanded;
       try {
@@ -117,8 +162,12 @@ export default function Sidebar() {
     });
   }
 
+  function closeMobileSidebar() {
+    if (isPhone) setMobileOpen(false);
+  }
+
   function showTooltip(event, label) {
-    if (sidebarExpanded) return;
+    if (sidebarOpen) return;
     const rect = event.currentTarget.getBoundingClientRect();
     setTooltip({
       label,
@@ -137,114 +186,137 @@ export default function Sidebar() {
   }
 
   return (
-    <aside
-      data-testid="app-sidebar"
-      data-expanded={sidebarExpanded ? "true" : "false"}
-      className="app-sidebar flex h-dvh shrink-0 flex-col bg-[var(--color-sidebar)] text-[var(--color-sidebar-text)]"
-    >
-      <div className="app-sidebar-brand flex items-center">
-        <div className="app-sidebar-brand-main flex min-w-0 items-center gap-2.5">
-          {branding.clientLogoUrl ? (
-            <img
-              src={branding.clientLogoUrl}
-              alt={`${branding.clientName} logo`}
-              className="h-8 w-8 shrink-0 rounded-lg object-contain"
-            />
-          ) : (
-            <div
-              aria-label={`${branding.clientName} logo`}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 text-xs font-bold text-white"
-            >
-              {branding.initials}
-            </div>
-          )}
-          <div className="app-sidebar-brand-copy min-w-0">
-            <p className="truncate font-display text-[14px] font-bold leading-5 text-white">
-              {branding.clientName}
-            </p>
-            <p className="truncate text-[10px] font-semibold tracking-[0.08em] text-[var(--color-sidebar-text-muted)]">
-              DA CHATBOT
-            </p>
-          </div>
-        </div>
-      </div>
+    <>
+      {isPhone && mobileOpen && (
+        <button
+          type="button"
+          aria-label="Close sidebar"
+          className="app-sidebar-mobile-backdrop"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
 
-      <button
-        type="button"
-        onClick={toggleSidebar}
-        aria-label={sidebarExpanded ? "Collapse sidebar" : "Expand sidebar"}
-        aria-expanded={sidebarExpanded}
-        className="app-sidebar-toggle"
+      <aside
+        data-testid="app-sidebar"
+        data-expanded={sidebarExpanded ? "true" : "false"}
+        data-mobile-open={mobileOpen ? "true" : "false"}
+        className="app-sidebar flex h-dvh shrink-0 flex-col bg-[var(--color-sidebar)] text-[var(--color-sidebar-text)]"
       >
-        <ChevronLeftIcon className={`h-3.5 w-3.5 transition-transform ${sidebarExpanded ? "" : "rotate-180"}`} />
-      </button>
-
-      <nav aria-label="Primary navigation" className="app-sidebar-nav flex-1 space-y-1 overflow-y-auto">
-        {visiblePrimaryItems.map((item) => (
-          <SidebarNavLink
-            key={item.to}
-            item={item}
-            onShowTooltip={showTooltip}
-            onHideTooltip={hideTooltip}
-          />
-        ))}
-      </nav>
-
-      <div className="app-sidebar-utility border-t border-white/10">
-        {settingsVisible && (
-          <SidebarNavLink
-            item={SETTINGS_ITEM}
-            onShowTooltip={showTooltip}
-            onHideTooltip={hideTooltip}
-          />
-        )}
-
-        <div
-          className="app-sidebar-user-row flex items-center"
-          onMouseEnter={(event) => showTooltip(event, `${userDisplayName} · ${user?.role || "staff"}`)}
-          onMouseLeave={hideTooltip}
-        >
-          <div
-            aria-hidden="true"
-            className="app-sidebar-user-avatar flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-[10px] font-bold text-white"
-          >
-            {initialsForUser(userDisplayName)}
-          </div>
-          <div className="app-sidebar-user-copy min-w-0">
-            <p className="truncate text-sm font-medium text-white">
-              {userDisplayName}
-            </p>
-            <p className="mt-0.5 truncate text-[11px] text-[var(--color-sidebar-text-muted)]">
-              @{username} · {user?.role || "staff"}
-            </p>
+        <div className="app-sidebar-brand flex items-center">
+          <div className="app-sidebar-brand-main flex min-w-0 items-center">
+            {branding.clientLogoUrl ? (
+              <img
+                src={branding.clientLogoUrl}
+                alt={`${branding.clientName} logo`}
+                className="h-8 w-8 shrink-0 rounded-lg object-contain"
+              />
+            ) : (
+              <div
+                aria-label={`${branding.clientName} logo`}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 text-xs font-bold text-white"
+              >
+                {branding.initials}
+              </div>
+            )}
+            <div className="app-sidebar-brand-copy min-w-0">
+              <p className="truncate font-display text-[14px] font-bold leading-5 text-white">
+                {branding.clientName}
+              </p>
+              <p className="truncate text-[10px] font-semibold tracking-[0.08em] text-[var(--color-sidebar-text-muted)]">
+                DA CHATBOT
+              </p>
+            </div>
           </div>
         </div>
 
         <button
           type="button"
-          onClick={handleLogout}
-          onMouseEnter={(event) => showTooltip(event, "Log out")}
-          onMouseLeave={hideTooltip}
-          onFocus={(event) => showTooltip(event, "Log out")}
-          onBlur={hideTooltip}
-          aria-label="Log out"
-          className="app-sidebar-logout flex w-full items-center rounded-xl"
+          onClick={toggleSidebar}
+          aria-label={toggleLabel}
+          aria-expanded={sidebarOpen}
+          aria-controls="portal-sidebar-primary-nav"
+          className="app-sidebar-toggle"
         >
-          <LogoutIcon className="h-[19px] w-[19px] shrink-0" />
-          <span className="app-sidebar-label truncate">Log out</span>
+          <span className="app-sidebar-toggle-visual">
+            <ChevronLeftIcon className={`h-3.5 w-3.5 transition-transform ${sidebarOpen ? "" : "rotate-180"}`} />
+          </span>
         </button>
-      </div>
 
-      {tooltip && (
-        <div
-          role="tooltip"
-          className="app-sidebar-tooltip"
-          style={{ top: tooltip.top, left: tooltip.left }}
+        <nav
+          id="portal-sidebar-primary-nav"
+          aria-label="Primary navigation"
+          className="app-sidebar-nav flex-1 space-y-1 overflow-y-auto"
         >
-          {tooltip.label}
+          {visiblePrimaryItems.map((item) => (
+            <SidebarNavLink
+              key={item.to}
+              item={item}
+              onShowTooltip={showTooltip}
+              onHideTooltip={hideTooltip}
+              onNavigate={closeMobileSidebar}
+            />
+          ))}
+        </nav>
+
+        <div className="app-sidebar-utility border-t border-white/10">
+          {settingsVisible && (
+            <nav aria-label="Utility navigation">
+              <SidebarNavLink
+                item={SETTINGS_ITEM}
+                onShowTooltip={showTooltip}
+                onHideTooltip={hideTooltip}
+                onNavigate={closeMobileSidebar}
+              />
+            </nav>
+          )}
+
+          <div
+            className="app-sidebar-user-row flex items-center"
+            onMouseEnter={(event) => showTooltip(event, `${userDisplayName} · ${user?.role || "staff"}`)}
+            onMouseLeave={hideTooltip}
+          >
+            <div
+              aria-hidden="true"
+              className="app-sidebar-user-avatar flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-[10px] font-bold text-white"
+            >
+              {initialsForUser(userDisplayName)}
+            </div>
+            <div className="app-sidebar-user-copy min-w-0">
+              <p className="truncate text-sm font-medium text-white">
+                {userDisplayName}
+              </p>
+              <p className="mt-0.5 truncate text-[11px] text-[var(--color-sidebar-text-muted)]">
+                @{username} · {user?.role || "staff"}
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleLogout}
+            onMouseEnter={(event) => showTooltip(event, "Log out")}
+            onMouseLeave={hideTooltip}
+            onFocus={(event) => showTooltip(event, "Log out")}
+            onBlur={hideTooltip}
+            aria-label="Log out"
+            className="app-sidebar-logout flex w-full items-center rounded-xl"
+          >
+            <LogoutIcon className="h-[19px] w-[19px] shrink-0" />
+            <span className="app-sidebar-label truncate">Log out</span>
+          </button>
         </div>
-      )}
-    </aside>
+
+        {tooltip && (
+          <div
+            role="tooltip"
+            className="app-sidebar-tooltip"
+            style={{ top: tooltip.top, left: tooltip.left }}
+          >
+            {tooltip.label}
+          </div>
+        )}
+      </aside>
+    </>
   );
 }
 
