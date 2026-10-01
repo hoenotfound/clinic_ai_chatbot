@@ -493,13 +493,25 @@ test("sidebar uses responsive compact and expanded states and remembers the choi
     await expect(toggle).toHaveAccessibleName("Close sidebar");
     await expect.poll(() => firstLabel.evaluate((node) => getComputedStyle(node).opacity)).toBe("1");
     await expect.poll(() => sidebar.locator(".app-sidebar-nav").evaluate((node) => Math.round(node.getBoundingClientRect().width))).toBe(220);
-    await expect(page.getByRole("button", { name: "Close sidebar" })).toHaveCount(2);
+
+    const backdrop = page.getByRole("button", { name: "Dismiss navigation" });
+    await expect(backdrop).toBeVisible();
+    await expect.poll(async () => {
+      const box = await backdrop.boundingBox();
+      return box ? Math.round(box.x) : null;
+    }).toBe(220);
     await expectNoHorizontalPageOverflow(page);
 
-    await page.getByRole("button", { name: "Close sidebar" }).first().click();
+    await backdrop.click();
     await expect(sidebar).toHaveAttribute("data-mobile-open", "false");
     await expect(toggle).toHaveAccessibleName("Open sidebar");
     await expect.poll(() => firstLabel.evaluate((node) => getComputedStyle(node).opacity)).toBe("0");
+
+    await toggle.click();
+    await expect(sidebar).toHaveAttribute("data-mobile-open", "true");
+    await page.keyboard.press("Escape");
+    await expect(sidebar).toHaveAttribute("data-mobile-open", "false");
+    await expect(toggle).toHaveAccessibleName("Open sidebar");
     return;
   }
 
