@@ -127,16 +127,20 @@ test("Advanced Config exposes business and AI content only", () => {
   const changes = buildConfigDiff(current, { businessName: "New Clinic" });
   assert.deepEqual(changes.map((change) => change.key), ["businessName"]);
 
-  const toolChange = prepareAdvancedConfigPayload(
-    { automatedFollowUp: current.automatedFollowUp },
-    current
-  );
-  assert.equal(toolChange.ok, false);
-  assert.deepEqual(toolChange.unknownKeys, ["automatedFollowUp"]);
-
-  const legacyAlias = prepareAdvancedConfigPayload({ clinicName: "Legacy Name" }, current);
-  assert.equal(legacyAlias.ok, false);
-  assert.deepEqual(legacyAlias.unknownKeys, ["clinicName"]);
+  for (const excludedKey of [
+    "automatedFollowUp",
+    "commentAutomation",
+    "leadScoring",
+    "leadDistribution",
+    "clinicName",
+  ]) {
+    const rejected = prepareAdvancedConfigPayload(
+      { [excludedKey]: excludedKey === "clinicName" ? "Legacy Name" : current[excludedKey] },
+      current
+    );
+    assert.equal(rejected.ok, false);
+    assert.deepEqual(rejected.unknownKeys, [excludedKey]);
+  }
 });
 
 test("Advanced Config fingerprint is stable for equivalent nested object key order", () => {
@@ -185,6 +189,9 @@ test("Advanced Config is admin-only, snapshots imports, and rejects stale previe
   assert.match(route, /configRepo\.updateConfig\(prepared\.updates\)/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS config_import_snapshots/);
   assert.match(createApp, /app\.use\("\/api\/advanced-config", requireAuth, advancedConfigRoutes\)/);
+  assert.match(createApp, /createAdvancedConfigJsonParser/);
+  assert.match(createApp, /req\.path === "\/advanced-config"/);
+  assert.match(createApp, /req\.path\.startsWith\("\/advanced-config\/"\)/);
 });
 
 test("Advanced Config portal route stays admin-only and exposes validate, apply, and restore APIs", () => {
