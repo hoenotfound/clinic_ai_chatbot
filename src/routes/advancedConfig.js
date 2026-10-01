@@ -28,12 +28,42 @@ const EDITABLE_KEYS = Object.freeze([
 ]);
 
 const COLLECTION_DIFF_SPECS = Object.freeze({
-  branches: { identity: "name" },
-  promotions: { identity: "name" },
-  services: { identity: "name" },
-  serviceAliases: { identity: "alias" },
-  faqs: { identity: "q" },
+  branches: {
+    identity: "name",
+    fields: ["address", "phone", "whatsapp"],
+  },
+  promotions: {
+    identity: "name",
+    fields: ["caption", "validFrom", "validUntil", "imageUrl"],
+  },
+  services: {
+    identity: "name",
+    fields: ["description", "priceRange", "duration"],
+  },
+  serviceAliases: {
+    identity: "alias",
+    fields: ["officialService"],
+  },
+  faqs: {
+    identity: "q",
+    fields: ["a"],
+  },
 });
+
+const OBJECT_DIFF_SPECS = Object.freeze({
+  hours: ["general", "closed"],
+  contact: ["whatsapp", "instagram", "facebook", "tiktok"],
+  escalation: ["outOfScopeTriggers", "handoffMessage", "handoffNote"],
+});
+
+const TEXT_DIFF_KEYS = new Set([
+  "businessDescription",
+  "introMessage",
+  "closingPlaybook",
+  "tone",
+  "messagingStyle",
+  "sop",
+]);
 
 function text(value) {
   return String(value || "").trim();
@@ -181,6 +211,120 @@ function compactLabel(value, maxLength = 88) {
   return label.length > maxLength ? `${label.slice(0, maxLength - 1)}…` : label;
 }
 
+function displayValue(value) {
+  if (value === null || value === undefined || value === "") return "Empty";
+  if (Array.isArray(value)) return value.map((item) => text(item)).filter(Boolean).join(" · ") || "Empty";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function groupDiffSegments(operations, valueKey) {
+  const segments = [];
+  for (const operation of operations) {
+    const previous = segments[segments.length - 1];
+    if (previous?.type === operation.type) {
+      previous[valueKey].push(operation.value);
+    } else {
+      segments.push({ type: operation.type, [valueKey]: [operation.value] });
+    }
+  }
+  return segments;
+}
+
+function lcsOperations(beforeItems, afterItems) {
+  const rows = beforeItems.length + 1;
+  const cols = afterItems.length + 1;
+  const table = Array.from({ length: rows }, () => new Uint16Array(cols));
+
+  for (let i = beforeItems.length - 1; i >= 0; i -= 1) {
+    for (let j = afterItems.length - 1; j >= 0; j -= 1) {
+      table[i][j] = beforeItems[i] === afterItems[j]
+        ? table[i + 1][j + 1] + 1
+        : Math.max(table[i + 1][j], table[i][j + 1]);
+    }
+  }
+
+  const operations = [];
+  let i = 0;
+  let j = 0;
+  while (i < beforeItems.length && j < afterItems.length) {
+    if (beforeItems[i] === afterItems[j]) {
+      operations.push({ type: "same", value: beforeItems[i] });
+      i += 1;
+      j += 1;
+    } else if (table[i + 1][j] >= table[i][j + 1]) {
+      operations.push({ type: "removed", value: beforeItems[i] });
+      i += 1;
+    } else {
+      operations.push({ type: "added", value: afterItems[j] });
+      j += 1;
+    }
+  }
+  while (i < beforeItems.length) {
+    operations.push({ type: "removed", value: beforeItems[i] });
+    i += 1;
+  }
+  while (j < afterItems.length) {
+    operations.push({ type: "added", value: afterItems[j] });
+    j += 1;
+  }
+  return operations;
+}
+
+function buildWordDiff(before, after) {
+  const beforeTokens = String(before ?? "").split(/(\s+)/).filter((token) => token !== "");
+  const afterTokens = String(after ?? "").split(/(\s+)/).filter((token) => token !== "");
+  if (beforeTokens.length > 700 || afterTokens.length > 700) return null;
+
+  const operations = lcsOperations(beforeTokens, afterTokens);
+  const grouped = [];
+  for (const operation of operations) {
+    const previous = grouped[grouped.length - 1];
+    if (previous?.type === operation.type) {
+      previous.text += operation.value;
+    } else {
+      grouped.push({ type: operation.type, text: operation.value });
+    }
+  }
+  return { kind: "text", mode: "words", segments: grouped };
+}
+
+function buildLineDiff(before, after) {
+  const beforeLines = String(before ?? "").replace(/\r\n/g, "\n").split("\n");
+  const afterLines = String(after ?? "").replace(/\r\n/g, "\n").split("\n");
+
+  if (beforeLines.length <= 2 && afterLines.length <= 2) {
+    const wordDiff = buildWordDiff(before, after);
+    if (wordDiff) return wordDiff;
+  }
+
+  if (beforeLines.length > 300 || afterLines.length > 300) {
+    return {
+      kind: "text",
+      mode: "before_after",
+      before: displayValue(before),
+      after: displayValue(after),
+    };
+  }
+
+  return {
+    kind: "text",
+    mode: "lines",
+    segments: groupDiffSegments(lcsOperations(beforeLines, afterLines), "lines"),
+  };
+}
+
+function stringListChangeDetails(before, after) {
+  const beforeItems = cleanStrings(before);
+  const afterItems = cleanStrings(after);
+  const beforeSet = new Set(beforeItems);
+  const afterSet = new Set(afterItems);
+  const added = afterItems.filter((item) => !beforeSet.has(item));
+  const removed = beforeItems.filter((item) => !afterSet.has(item));
+  if (added.length === 0 && removed.length === 0) return null;
+  return { kind: "string_list", added, removed };
+}
+
 function collectionIndex(items, identityKey) {
   const index = new Map();
   for (const item of Array.isArray(items) ? items : []) {
@@ -190,6 +334,30 @@ function collectionIndex(items, identityKey) {
     index.set(identity, item);
   }
   return index;
+}
+
+function collectionItemView(item, spec) {
+  return Object.fromEntries(
+    spec.fields.map((field) => [field, item?.[field] ?? null])
+  );
+}
+
+function collectionFieldChanges(beforeItem, afterItem, fields) {
+  const changes = [];
+  for (const field of fields) {
+    const before = beforeItem?.[field] ?? null;
+    const after = afterItem?.[field] ?? null;
+    if (comparable(before) === comparable(after)) continue;
+    changes.push({
+      field,
+      before: displayValue(before),
+      after: displayValue(after),
+      ...(typeof before === "string" && typeof after === "string"
+        ? { textDiff: buildLineDiff(before, after) }
+        : {}),
+    });
+  }
+  return changes;
 }
 
 function collectionChangeDetails(key, before, after) {
@@ -206,17 +374,72 @@ function collectionChangeDetails(key, before, after) {
 
   for (const [identity, item] of afterIndex) {
     if (!beforeIndex.has(identity)) {
-      added.push(compactLabel(identity));
-    } else if (comparable(beforeIndex.get(identity)) !== comparable(item)) {
-      updated.push(compactLabel(identity));
+      added.push({
+        identity: compactLabel(identity),
+        item: collectionItemView(item, spec),
+      });
+      continue;
+    }
+
+    const beforeItem = beforeIndex.get(identity);
+    if (comparable(beforeItem) !== comparable(item)) {
+      updated.push({
+        identity: compactLabel(identity),
+        changes: collectionFieldChanges(beforeItem, item, spec.fields),
+      });
     }
   }
-  for (const identity of beforeIndex.keys()) {
-    if (!afterIndex.has(identity)) removed.push(compactLabel(identity));
+
+  for (const [identity, item] of beforeIndex) {
+    if (!afterIndex.has(identity)) {
+      removed.push({
+        identity: compactLabel(identity),
+        item: collectionItemView(item, spec),
+      });
+    }
   }
 
   if (added.length === 0 && removed.length === 0 && updated.length === 0) return null;
-  return { added, removed, updated };
+  return { kind: "collection", added, removed, updated };
+}
+
+function objectChangeDetails(key, before, after) {
+  const fields = OBJECT_DIFF_SPECS[key];
+  if (!fields || !before || !after || typeof before !== "object" || typeof after !== "object") {
+    return null;
+  }
+
+  const changes = [];
+  for (const field of fields) {
+    const beforeValue = before[field] ?? null;
+    const afterValue = after[field] ?? null;
+    if (comparable(beforeValue) === comparable(afterValue)) continue;
+
+    const listDetails = Array.isArray(beforeValue) && Array.isArray(afterValue)
+      ? stringListChangeDetails(beforeValue, afterValue)
+      : null;
+    changes.push({
+      field,
+      before: displayValue(beforeValue),
+      after: displayValue(afterValue),
+      ...(listDetails ? { details: listDetails } : {}),
+      ...(!listDetails && typeof beforeValue === "string" && typeof afterValue === "string"
+        ? { textDiff: buildLineDiff(beforeValue, afterValue) }
+        : {}),
+    });
+  }
+
+  return changes.length > 0 ? { kind: "object", changes } : null;
+}
+
+function meaningfulChangeDetails(key, before, after) {
+  if (COLLECTION_DIFF_SPECS[key]) return collectionChangeDetails(key, before, after);
+  if (key === "guardrails" || key === "serviceAreas") return stringListChangeDetails(before, after);
+  if (OBJECT_DIFF_SPECS[key]) return objectChangeDetails(key, before, after);
+  if (TEXT_DIFF_KEYS.has(key) && typeof before === "string" && typeof after === "string") {
+    return buildLineDiff(before, after);
+  }
+  return null;
 }
 
 function requireAdministrator(req, res, next) {
@@ -288,7 +511,7 @@ function buildConfigDiff(currentConfig, updates) {
   return EDITABLE_KEYS
     .filter((key) => comparable(currentConfig[key]) !== comparable(next[key]))
     .map((key) => {
-      const details = collectionChangeDetails(key, currentConfig[key], next[key]);
+      const details = meaningfulChangeDetails(key, currentConfig[key], next[key]);
       return {
         key,
         before: valueSummary(currentConfig[key]),
@@ -487,4 +710,6 @@ module.exports.projectedConfig = projectedConfig;
 module.exports.prepareAdvancedConfigPayload = prepareAdvancedConfigPayload;
 module.exports.validateAdvancedConfigState = validateAdvancedConfigState;
 module.exports.collectionChangeDetails = collectionChangeDetails;
+module.exports.meaningfulChangeDetails = meaningfulChangeDetails;
+module.exports.buildLineDiff = buildLineDiff;
 module.exports.isValidWhatsapp = isValidWhatsapp;
