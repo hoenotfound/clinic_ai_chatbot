@@ -475,13 +475,14 @@ test("Advanced Config keeps a full long FAQ identity readable without horizontal
   }, null, 2));
   await page.getByRole("button", { name: "Validate & review" }).click();
 
-  await expect(page.getByText("FAQs", { exact: true })).toBeVisible();
-  await page.getByText("FAQs", { exact: true }).click();
-  await expect(page.getByText(LONG_FAQ_QUESTION, { exact: true })).toBeVisible();
+  const faqSection = page.getByTestId("config-change-faqs");
+  await expect(faqSection).toBeVisible();
+  await faqSection.locator("summary").first().click();
+  await expect(faqSection.getByText(LONG_FAQ_QUESTION, { exact: true })).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
 
-  await page.getByText(LONG_FAQ_QUESTION, { exact: true }).click();
-  await expect(page.getByText("新的完整答案，会先了解你的情况再建议合适的评估。", { exact: true })).toBeVisible();
+  await faqSection.getByText(LONG_FAQ_QUESTION, { exact: true }).click();
+  await expect(faqSection.getByText("新的完整答案，会先了解你的情况再建议合适的评估。", { exact: true })).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
 });
 
@@ -493,13 +494,14 @@ test("Advanced Config shows pure guardrail reordering instead of counts only", a
   await editor.fill(JSON.stringify({ guardrails: ["Rule C", "Rule A", "Rule B"] }, null, 2));
   await page.getByRole("button", { name: "Validate & review" }).click();
 
-  await expect(page.getByText("Guardrails", { exact: true })).toBeVisible();
-  await expect(page.getByText("Order changed", { exact: true }).first()).toBeVisible();
-  await page.getByText("Guardrails", { exact: true }).click();
+  const guardrailSection = page.getByTestId("config-change-guardrails");
+  await expect(guardrailSection).toBeVisible();
+  await expect(guardrailSection.getByText("Order changed", { exact: true }).first()).toBeVisible();
+  await guardrailSection.locator("summary").first().click();
 
-  await expect(page.getByText("Before", { exact: true })).toBeVisible();
-  await expect(page.getByText("After", { exact: true })).toBeVisible();
-  await expect(page.getByText("Rule C", { exact: true }).first()).toBeVisible();
+  await expect(guardrailSection.getByText("Before", { exact: true })).toBeVisible();
+  await expect(guardrailSection.getByText("After", { exact: true })).toBeVisible();
+  await expect(guardrailSection.getByText("Rule C", { exact: true }).first()).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
 });
 
