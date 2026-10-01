@@ -61,3 +61,11 @@ test("Analytics mobile layout keeps filters compact and conversion rates structu
   assert.match(analytics, /<div className="sm:hidden">[\s\S]*Overall conversion/);
   assert.match(analytics, /mt-3 grid min-w-0 grid-cols-3 gap-2/);
 });
+
+
+test("Analytics mobile chart scales to the content column instead of forcing horizontal scroll", () => {
+  const css = read("portal-frontend/src/index.css");
+
+  assert.match(css, /svg\[aria-label\$="over time"\][\s\S]*width: 100%;[\s\S]*min-width: 0;[\s\S]*max-width: 100%;/);
+  assert.doesNotMatch(css, /svg\[aria-label\$="over time"\][\s\S]*min-width: 360px/);
+});
