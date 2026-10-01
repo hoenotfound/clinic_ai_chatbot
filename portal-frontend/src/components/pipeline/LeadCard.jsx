@@ -73,7 +73,7 @@ export default function LeadCard({
         <Badge className="bg-[var(--color-primary-light)] text-[var(--color-primary)]">
           {lead.branch_name || "Unassigned"}
         </Badge>
-        <LeadSourceBadge source={lead.source || lead.attribution?.source} />
+        <LeadSourceBadge source={lead.source || lead.attribution?.source} className="px-1.5 py-0.5 sm:px-2 sm:py-1" />
         {noReply && <Badge className="bg-slate-100 text-slate-600">No reply</Badge>}
         {lead.appointment_status === "reschedule" && (
           <Badge className="bg-[var(--color-accent-light)] text-[#8a641f]">Reschedule</Badge>
