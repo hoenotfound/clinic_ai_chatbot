@@ -225,6 +225,38 @@ async function installApi(page, {
       });
     }
 
+    if (path === "/api/auth/branding/manifest.webmanifest" && method === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/manifest+json",
+        body: JSON.stringify({
+          name: "Test Clinic",
+          short_name: "Test Clinic",
+          start_url: "/login",
+          scope: "/",
+          display: "standalone",
+          icons: [
+            {
+              src: "/app-icons/da-chatbot-192.png",
+              sizes: "192x192",
+              type: "image/png",
+              purpose: "any",
+            },
+            {
+              src: "/app-icons/da-chatbot-512.png",
+              sizes: "512x512",
+              type: "image/png",
+              purpose: "any",
+            },
+          ],
+        }),
+      });
+    }
+
+    if (path === "/api/auth/branding/apple-touch-icon.png" && method === "GET") {
+      return route.fulfill({ status: 204, body: "" });
+    }
+
     if (path === "/api/auth/me" && method === "GET") {
       if (!authenticated) return fulfill(route, { error: "Not logged in." }, 401);
       return fulfill(route, { username: STAFF_USER.username, user: STAFF_USER });
