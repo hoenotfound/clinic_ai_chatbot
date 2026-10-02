@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const {
   DEFAULT_LOGIN_TAGLINE,
@@ -145,4 +147,30 @@ test("branding exposes only sanitized dedicated app-icon URLs", () => {
   assert.equal(branding.clientAppIcon180Url, "https://cdn.example.com/app-180.png");
   assert.equal(branding.clientAppIcon192Url, "/client-assets/app-192.png");
   assert.equal(branding.clientAppIcon512Url, "");
+});
+
+
+function readPngDimensions(filePath) {
+  const bytes = fs.readFileSync(filePath);
+  assert.equal(bytes.subarray(1, 4).toString("ascii"), "PNG");
+  return {
+    width: bytes.readUInt32BE(16),
+    height: bytes.readUInt32BE(20),
+  };
+}
+
+test("packaged DA fallback icons have the exact declared PNG dimensions", () => {
+  const publicDir = path.join(__dirname, "../portal-frontend/public/app-icons");
+  assert.deepEqual(
+    readPngDimensions(path.join(publicDir, "da-chatbot-180.png")),
+    { width: 180, height: 180 }
+  );
+  assert.deepEqual(
+    readPngDimensions(path.join(publicDir, "da-chatbot-192.png")),
+    { width: 192, height: 192 }
+  );
+  assert.deepEqual(
+    readPngDimensions(path.join(publicDir, "da-chatbot-512.png")),
+    { width: 512, height: 512 }
+  );
 });
