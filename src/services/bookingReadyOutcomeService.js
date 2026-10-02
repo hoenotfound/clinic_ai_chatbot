@@ -3,6 +3,7 @@ const clinicConfig = require("../config/clinicConfig");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
+const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
 
 const BOOKING_READY_REASON =
   "Booking ready: customer provided scheduling preferences; staff should confirm availability.";
@@ -88,6 +89,7 @@ function createBookingReadyOutcomeService({
   database = pool,
   publish = realtimeEvents.publish,
   sendBookingReadyAlert = telegramImmediateAlerts.sendBookingReadyAlert,
+  lockContactAlertQueue = telegramImmediateAlertRepo.lockContactAlertQueue,
 } = {}) {
   return async function markBookingReadyForContact(
     contactId,
@@ -104,6 +106,15 @@ function createBookingReadyOutcomeService({
 
     try {
       await client.query("BEGIN");
+
+      // Keep the per-contact lock order consistent with the Telegram workers:
+      // advisory alert lock first, then contact/lead rows. Taking the contact
+      // row first can deadlock with a worker that already owns this advisory
+      // lock and is revalidating the same conversation.
+      await lockContactAlertQueue(
+        contactId,
+        client.query.bind(client)
+      );
 
       // Normally an unresolved conversion-ready attention flag suppresses
       // another model outcome so an "ok"/"thanks" cannot spam staff. The
@@ -259,6 +270,7 @@ function createBookingReadyOutcomeService({
           reason,
           details,
           transactionClient: client,
+          queueLockHeld: true,
         });
         bookingAlertQueued = alert?.status === "queued";
       }
