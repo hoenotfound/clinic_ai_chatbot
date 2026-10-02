@@ -3,7 +3,10 @@ const bcrypt = require("bcryptjs");
 const usersRepo = require("../db/usersRepo");
 const clinicConfig = require("../config/clinicConfig");
 const realtimeEvents = require("../utils/realtimeEvents");
-const { buildClientBranding } = require("../services/clientBrandingService");
+const {
+  buildClientBranding,
+  buildWebAppManifest,
+} = require("../services/clientBrandingService");
 const { loginRateLimit, recordFailedAttempt, clearAttempts } = require("../middleware/loginRateLimit");
 const { verifyLoginCredentials } = require("../services/authCredentialService");
 const { requireAuth, requireCapability } = require("../middleware/requireAuth");
@@ -39,6 +42,11 @@ router.use((req, res, next) => {
 // the server through this endpoint.
 router.get("/branding", (req, res) => {
   res.json(buildClientBranding(clinicConfig, process.env));
+});
+
+router.get("/branding/manifest.webmanifest", (req, res) => {
+  res.type("application/manifest+json");
+  res.send(JSON.stringify(buildWebAppManifest(clinicConfig, process.env)));
 });
 
 function validateDisplayName(value) {
