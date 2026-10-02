@@ -58,7 +58,7 @@ function buildWebAppManifest(config = {}, env = process.env) {
     name: branding.clientName,
     short_name: text(branding.clientName, 30) || DEFAULT_CLIENT_NAME,
     description: `${branding.clientName} staff portal`,
-    start_url: "/",
+    start_url: "/login",
     scope: "/",
     display: "standalone",
     background_color: "#f8fafc",
