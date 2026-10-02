@@ -81,7 +81,7 @@ test("web app manifest uses client branding for installable home-screen identity
 
   assert.equal(manifest.name, "Neutro Sense TCM");
   assert.equal(manifest.short_name, "Neutro Sense TCM");
-  assert.equal(manifest.start_url, "/");
+  assert.equal(manifest.start_url, "/login");
   assert.equal(manifest.scope, "/");
   assert.equal(manifest.display, "standalone");
   assert.equal(manifest.theme_color, "#0f172a");
