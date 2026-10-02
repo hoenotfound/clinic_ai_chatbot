@@ -60,6 +60,14 @@ function cleanProfileValue(value) {
   return text || null;
 }
 
+function isMetaProfileNotFound(data) {
+  const code = Number(data?.error?.code);
+  const message = String(
+    data?.error?.error_user_msg || data?.error?.message || ""
+  );
+  return code === 100 && /no matching user found/i.test(message);
+}
+
 function cachedProfile(key) {
   const cached = profileCache.get(key);
   if (!cached) return { hit: false, value: null };
@@ -94,6 +102,7 @@ async function fetchUserProfile(channel, userId) {
   if (cached.hit) return cached.value;
   if (profileRequests.has(key)) return profileRequests.get(key);
 
+  let failureCacheTtlMs = PROFILE_FAILURE_CACHE_TTL_MS;
   const request = (async () => {
     const fields = channel === "facebook"
       ? "first_name,last_name,profile_pic"
@@ -111,9 +120,14 @@ async function fetchUserProfile(channel, userId) {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
+        const profileNotFound = isMetaProfileNotFound(data);
+        if (profileNotFound) {
+          failureCacheTtlMs = PROFILE_NOT_FOUND_CACHE_TTL_MS;
+        }
         console.warn(
           `[${channelLabel(channel)}] Failed to fetch user profile ${externalId}: ` +
-            extractErrorText(data, `HTTP ${response.status}`)
+            extractErrorText(data, `HTTP ${response.status}`) +
+            (profileNotFound ? " (suppressing repeated profile lookup for 24h)" : "")
         );
         return null;
       }
@@ -148,7 +162,7 @@ async function fetchUserProfile(channel, userId) {
     profileCache.set(key, {
       value: profile,
       expiresAt:
-        Date.now() + (profile ? PROFILE_CACHE_TTL_MS : PROFILE_FAILURE_CACHE_TTL_MS),
+        Date.now() + (profile ? PROFILE_CACHE_TTL_MS : failureCacheTtlMs),
     });
     return profile;
   } finally {
