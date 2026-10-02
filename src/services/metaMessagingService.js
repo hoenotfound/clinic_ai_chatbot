@@ -3,6 +3,7 @@ const MAX_REMOTE_MEDIA_BYTES = 16 * 1024 * 1024;
 const PROFILE_FETCH_TIMEOUT_MS = 5000;
 const PROFILE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const PROFILE_FAILURE_CACHE_TTL_MS = 5 * 60 * 1000;
+const PROFILE_NOT_FOUND_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const COMMENT_CONTEXT_CACHE_TTL_MS = 10 * 60 * 1000;
 const { normalizeSocialReferral } = require("../utils/leadAttribution");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
