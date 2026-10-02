@@ -447,7 +447,8 @@ test("actionable sends hold the shared contact lock through final revalidation a
       steps.push(["lock:end", contactId]);
       return result;
     },
-    async markSent(id, leaseToken) {
+    async markSent(id, leaseToken, query) {
+      assert.equal(query, lockQuery);
       steps.push(["markSent", id, leaseToken]);
       return {
         id,
