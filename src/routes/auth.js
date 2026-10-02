@@ -6,6 +6,7 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const {
   buildClientBranding,
   buildWebAppManifest,
+  resolveAppleTouchIconUrl,
 } = require("../services/clientBrandingService");
 const { loginRateLimit, recordFailedAttempt, clearAttempts } = require("../middleware/loginRateLimit");
 const { verifyLoginCredentials } = require("../services/authCredentialService");
@@ -47,6 +48,10 @@ router.get("/branding", (req, res) => {
 router.get("/branding/manifest.webmanifest", (req, res) => {
   res.type("application/manifest+json");
   res.send(JSON.stringify(buildWebAppManifest(clinicConfig, process.env)));
+});
+
+router.get("/branding/apple-touch-icon.png", (req, res) => {
+  res.redirect(302, resolveAppleTouchIconUrl(clinicConfig, process.env));
 });
 
 function validateDisplayName(value) {
