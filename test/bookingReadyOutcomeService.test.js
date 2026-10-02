@@ -5,6 +5,9 @@ const {
   BOOKING_READY_REASON,
   createBookingReadyOutcomeService,
 } = require("../src/services/bookingReadyOutcomeService");
+const {
+  HUMAN_ALERT_LOCK_NAMESPACE,
+} = require("../src/db/telegramImmediateAlertRepo");
 
 function fakeDatabase({
   temperature = "warm",
@@ -21,6 +24,9 @@ function fakeDatabase({
 
       if (["BEGIN", "COMMIT", "ROLLBACK"].includes(normalized)) {
         return { rows: [] };
+      }
+      if (normalized.startsWith("SELECT pg_advisory_xact_lock")) {
+        return { rows: [{}] };
       }
       if (normalized.startsWith("UPDATE contacts")) {
         return { rows: contactUpdated ? [{ id: 42 }] : [] };
@@ -99,6 +105,7 @@ test("booking-ready flags Inbox, makes an unlocked lead Hot, records activity, a
   assert.equal(alerts[0].contactId, 42);
   assert.equal(alerts[0].messageId, 777);
   assert.equal(alerts[0].reason, BOOKING_READY_REASON);
+  assert.equal(alerts[0].queueLockHeld, true);
   assert.deepEqual(alerts[0].details, {
     branch: null,
     treatment: null,
@@ -122,7 +129,16 @@ test("booking-ready flags Inbox, makes an unlocked lead Hot, records activity, a
   );
 
   const allSql = calls.map(({ sql }) => sql).join("\n");
-  const contactUpdate = calls.find(({ sql }) => sql.startsWith("UPDATE contacts"));
+  const alertLockIndex = calls.findIndex(({ sql }) =>
+    sql.startsWith("SELECT pg_advisory_xact_lock")
+  );
+  const contactUpdateIndex = calls.findIndex(({ sql }) =>
+    sql.startsWith("UPDATE contacts")
+  );
+  assert.ok(alertLockIndex > calls.findIndex(({ sql }) => sql === "BEGIN"));
+  assert.ok(alertLockIndex < contactUpdateIndex);
+  assert.deepEqual(calls[alertLockIndex].params, [HUMAN_ALERT_LOCK_NAMESPACE, 42]);
+  const contactUpdate = calls[contactUpdateIndex];
   assert.match(allSql, /mode = 'ai'/i);
   assert.doesNotMatch(contactUpdate.sql, /attention_reason LIKE 'Booking ready:%'/i);
   assert.doesNotMatch(allSql, /appointment_status/i);

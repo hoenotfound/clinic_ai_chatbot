@@ -26,6 +26,7 @@ function fakeDatabase() {
       const normalized = String(sql).replace(/\s+/g, " ").trim();
       calls.push({ sql: normalized, params });
       if (["BEGIN", "COMMIT", "ROLLBACK"].includes(normalized)) return { rows: [] };
+      if (normalized.startsWith("SELECT pg_advisory_xact_lock")) return { rows: [{}] };
       if (normalized.startsWith("UPDATE contacts")) return { rows: [{ id: 42 }] };
       if (normalized.startsWith("SELECT id, temperature, temperature_locked, branch_name, treatment_interest FROM leads")) {
         return {
