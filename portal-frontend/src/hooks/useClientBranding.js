@@ -99,14 +99,17 @@ export function useClientBranding() {
       clientBranding.clientAppIcon192Url ||
       clientBranding.clientLogoUrl ||
       "/app-icons/da-chatbot-192.png";
+    const faviconHasKnownPngSize =
+      Boolean(clientBranding.clientAppIcon192Url) ||
+      !clientBranding.clientLogoUrl;
     const appleTouchIconUrl =
       clientBranding.clientAppIcon180Url ||
       "/app-icons/da-chatbot-180.png";
 
     document.title = `${clientBranding.clientName} | AI Chatbot Portal`;
     setHeadLink("icon", faviconUrl, {
-      type: "image/png",
-      sizes: clientBranding.clientAppIcon192Url ? "192x192" : "",
+      type: faviconHasKnownPngSize ? "image/png" : "",
+      sizes: faviconHasKnownPngSize ? "192x192" : "",
     });
     setHeadLink("apple-touch-icon", appleTouchIconUrl, {
       sizes: "180x180",
