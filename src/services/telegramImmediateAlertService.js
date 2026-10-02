@@ -323,7 +323,8 @@ function createImmediateAlertQueueRunner({
                   ? "Staff-waiting reminder resolved before Telegram delivery."
                   : alert.alert_type === "booking_ready"
                     ? "Superseded by newer Booking Ready details before Telegram delivery."
-                    : "Alert no longer applies."
+                    : "Alert no longer applies.",
+                query
               );
               publishImmediateTerminalState(cancelled);
               return;
@@ -334,7 +335,11 @@ function createImmediateAlertQueueRunner({
               chatId: env.TELEGRAM_CHAT_ID,
               text: alert.message_text,
             });
-            const sent = await repository.markSent(alert.id, alert.lease_token);
+            const sent = await repository.markSent(
+              alert.id,
+              alert.lease_token,
+              query
+            );
             publishImmediateTerminalState(sent);
             sentCount += 1;
           };
@@ -440,6 +445,7 @@ function createTelegramImmediateAlertService({
     messageId = null,
     details = {},
     transactionClient = null,
+    queueLockHeld = false,
   }) {
     if (!isTelegramEnabled(env)) return { status: "disabled" };
 
@@ -491,7 +497,7 @@ function createTelegramImmediateAlertService({
     // without leaving recoverable Telegram work behind.
     if (type === "booking_ready" && transactionClient) {
       const queryInTransaction = transactionClient.query.bind(transactionClient);
-      if (typeof repository.lockContactAlertQueue === "function") {
+      if (!queueLockHeld && typeof repository.lockContactAlertQueue === "function") {
         await repository.lockContactAlertQueue(contactId, queryInTransaction);
       }
       await repository.cancelOlderPendingBookingReady(alertInput, queryInTransaction);
