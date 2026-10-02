@@ -4,6 +4,9 @@ import agencyLogo from "../assets/DAlogo.png";
 const FALLBACK = Object.freeze({
   clientName: "Client Portal",
   clientLogoUrl: "",
+  clientAppIcon180Url: "",
+  clientAppIcon192Url: "",
+  clientAppIcon512Url: "",
   loginTagline: "Sign in to manage customer conversations",
 });
 
@@ -14,6 +17,9 @@ function normalizeBranding(value = {}) {
   return {
     clientName: String(value.clientName || "").trim() || FALLBACK.clientName,
     clientLogoUrl: String(value.clientLogoUrl || "").trim(),
+    clientAppIcon180Url: String(value.clientAppIcon180Url || "").trim(),
+    clientAppIcon192Url: String(value.clientAppIcon192Url || "").trim(),
+    clientAppIcon512Url: String(value.clientAppIcon512Url || "").trim(),
     loginTagline: String(value.loginTagline || "").trim() || FALLBACK.loginTagline,
   };
 }
@@ -89,12 +95,29 @@ export function useClientBranding() {
   }, []);
 
   useEffect(() => {
-    const iconUrl = clientBranding.clientLogoUrl || agencyLogo;
+    const faviconUrl =
+      clientBranding.clientAppIcon192Url ||
+      clientBranding.clientLogoUrl ||
+      "/app-icons/da-chatbot-192.png";
+    const appleTouchIconUrl =
+      clientBranding.clientAppIcon180Url ||
+      "/app-icons/da-chatbot-180.png";
+
     document.title = `${clientBranding.clientName} | AI Chatbot Portal`;
-    setHeadLink("icon", iconUrl);
-    setHeadLink("apple-touch-icon", iconUrl, { sizes: "180x180" });
+    setHeadLink("icon", faviconUrl, {
+      type: "image/png",
+      sizes: clientBranding.clientAppIcon192Url ? "192x192" : "",
+    });
+    setHeadLink("apple-touch-icon", appleTouchIconUrl, {
+      sizes: "180x180",
+    });
     setNamedMeta("apple-mobile-web-app-title", clientBranding.clientName);
-  }, [clientBranding.clientLogoUrl, clientBranding.clientName]);
+  }, [
+    clientBranding.clientAppIcon180Url,
+    clientBranding.clientAppIcon192Url,
+    clientBranding.clientLogoUrl,
+    clientBranding.clientName,
+  ]);
 
   return {
     ...clientBranding,
