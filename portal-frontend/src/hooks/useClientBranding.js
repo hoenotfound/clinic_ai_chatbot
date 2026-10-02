@@ -114,7 +114,6 @@ export function useClientBranding() {
     });
     setNamedMeta("apple-mobile-web-app-title", clientBranding.clientName);
   }, [
-    clientBranding.clientAppIcon180Url,
     clientBranding.clientAppIcon192Url,
     clientBranding.clientLogoUrl,
     clientBranding.clientName,
