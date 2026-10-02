@@ -4,6 +4,9 @@ import agencyLogo from "../assets/DAlogo.png";
 const FALLBACK = Object.freeze({
   clientName: "Client Portal",
   clientLogoUrl: "",
+  clientAppIcon180Url: "",
+  clientAppIcon192Url: "",
+  clientAppIcon512Url: "",
   loginTagline: "Sign in to manage customer conversations",
 });
 
@@ -14,8 +17,36 @@ function normalizeBranding(value = {}) {
   return {
     clientName: String(value.clientName || "").trim() || FALLBACK.clientName,
     clientLogoUrl: String(value.clientLogoUrl || "").trim(),
+    clientAppIcon180Url: String(value.clientAppIcon180Url || "").trim(),
+    clientAppIcon192Url: String(value.clientAppIcon192Url || "").trim(),
+    clientAppIcon512Url: String(value.clientAppIcon512Url || "").trim(),
     loginTagline: String(value.loginTagline || "").trim() || FALLBACK.loginTagline,
   };
+}
+
+function setHeadLink(rel, href, attributes = {}) {
+  if (!href) return;
+  let link = document.head.querySelector(`link[rel="${rel}"]`);
+  if (!link) {
+    link = document.createElement("link");
+    link.rel = rel;
+    document.head.appendChild(link);
+  }
+  link.href = href;
+  for (const [key, value] of Object.entries(attributes)) {
+    if (value) link.setAttribute(key, value);
+    else link.removeAttribute(key);
+  }
+}
+
+function setNamedMeta(name, content) {
+  let meta = document.head.querySelector(`meta[name="${name}"]`);
+  if (!meta) {
+    meta = document.createElement("meta");
+    meta.name = name;
+    document.head.appendChild(meta);
+  }
+  meta.content = content;
 }
 
 function initialsFor(value) {
@@ -64,8 +95,29 @@ export function useClientBranding() {
   }, []);
 
   useEffect(() => {
+    const faviconUrl =
+      clientBranding.clientAppIcon192Url ||
+      clientBranding.clientLogoUrl ||
+      "/app-icons/da-chatbot-192.png";
+    const faviconHasKnownPngSize =
+      Boolean(clientBranding.clientAppIcon192Url) ||
+      !clientBranding.clientLogoUrl;
+    const appleTouchIconUrl = "/api/auth/branding/apple-touch-icon.png";
+
     document.title = `${clientBranding.clientName} | AI Chatbot Portal`;
-  }, [clientBranding.clientName]);
+    setHeadLink("icon", faviconUrl, {
+      type: faviconHasKnownPngSize ? "image/png" : "",
+      sizes: faviconHasKnownPngSize ? "192x192" : "",
+    });
+    setHeadLink("apple-touch-icon", appleTouchIconUrl, {
+      sizes: "180x180",
+    });
+    setNamedMeta("apple-mobile-web-app-title", clientBranding.clientName);
+  }, [
+    clientBranding.clientAppIcon192Url,
+    clientBranding.clientLogoUrl,
+    clientBranding.clientName,
+  ]);
 
   return {
     ...clientBranding,

@@ -34,7 +34,22 @@ const ADMIN_USER = {
 
 const LONG_FAQ_QUESTION = "我明明不胖可是小腹一直很凸，而且站久了腰容易酸，裤子左右穿起来也不太一样，这种情况是不是跟骨盆或体态有关，应该先做什么评估比较适合我？这是一个特意很长的问题用来测试手机画面不会横向溢出。";
 
-async function mockPortalApi(page, { loggedIn = false, user = STAFF_USER, pipelineData = null } = {}) {
+async function mockPortalApi(
+  page,
+  {
+    loggedIn = false,
+    user = STAFF_USER,
+    pipelineData = null,
+    branding = {
+      clientName: "Test Clinic",
+      clientLogoUrl: "",
+      clientAppIcon180Url: "",
+      clientAppIcon192Url: "",
+      clientAppIcon512Url: "",
+      loginTagline: "Staff portal",
+    },
+  } = {}
+) {
   let authenticated = loggedIn;
   let advancedConfig = {
     businessName: "Test Clinic",
@@ -57,10 +72,33 @@ async function mockPortalApi(page, { loggedIn = false, user = STAFF_USER, pipeli
       return route.fulfill({
         status: 200,
         contentType: "application/json",
+        body: JSON.stringify(branding),
+      });
+    }
+
+    if (path === "/api/auth/branding/manifest.webmanifest") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/manifest+json",
         body: JSON.stringify({
-          clientName: "Test Clinic",
-          clientLogoUrl: "",
-          loginTagline: "Staff portal",
+          name: branding.clientName,
+          short_name: branding.clientName,
+          start_url: "/login",
+          display: "standalone",
+          icons: [
+            {
+              src: branding.clientAppIcon192Url || "/app-icons/da-chatbot-192.png",
+              sizes: "192x192",
+              type: "image/png",
+              purpose: "any",
+            },
+            {
+              src: branding.clientAppIcon512Url || "/app-icons/da-chatbot-512.png",
+              sizes: "512x512",
+              type: "image/png",
+              purpose: "any",
+            },
+          ],
         }),
       });
     }
@@ -411,6 +449,58 @@ test("login page is usable without horizontal overflow", async ({ page }) => {
   await expect(page.locator("#password")).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
+});
+
+test("client branding updates browser and dimensioned home-screen identity", async ({ page }) => {
+  const clientLogoUrl = "https://cdn.example.test/neutro-logo.png";
+  const clientAppIcon180Url = "https://cdn.example.test/neutro-180.png";
+  const clientAppIcon192Url = "https://cdn.example.test/neutro-192.png";
+  const clientAppIcon512Url = "https://cdn.example.test/neutro-512.png";
+  await mockPortalApi(page, {
+    branding: {
+      clientName: "Neutro Sense TCM",
+      clientLogoUrl,
+      clientAppIcon180Url,
+      clientAppIcon192Url,
+      clientAppIcon512Url,
+      loginTagline: "Staff portal",
+    },
+  });
+  await page.goto("/login");
+
+  await expect(page).toHaveTitle("Neutro Sense TCM | AI Chatbot Portal");
+  await expect.poll(() =>
+    page.evaluate(() => document.querySelector('link[rel="icon"]')?.href)
+  ).toBe(clientAppIcon192Url);
+  await expect.poll(() =>
+    page.evaluate(() => document.querySelector('link[rel="apple-touch-icon"]')?.getAttribute("href"))
+  ).toBe("/api/auth/branding/apple-touch-icon.png");
+  await expect.poll(() =>
+    page.evaluate(() => document.querySelector('meta[name="apple-mobile-web-app-title"]')?.content)
+  ).toBe("Neutro Sense TCM");
+
+  const installMetadata = await page.evaluate(() => ({
+    manifest: document.querySelector('link[rel="manifest"]')?.getAttribute("href"),
+    faviconSizes: document.querySelector('link[rel="icon"]')?.getAttribute("sizes"),
+    appleSizes: document.querySelector('link[rel="apple-touch-icon"]')?.getAttribute("sizes"),
+    themeColor: document.querySelector('meta[name="theme-color"]')?.content,
+  }));
+  expect(installMetadata.manifest).toBe("/api/auth/branding/manifest.webmanifest");
+  expect(installMetadata.faviconSizes).toBe("192x192");
+  expect(installMetadata.appleSizes).toBe("180x180");
+  expect(installMetadata.themeColor).toBe("#0f172a");
+});
+
+test("home-screen metadata falls back to packaged DA icons without client install icons", async ({ page }) => {
+  await mockPortalApi(page);
+  await page.goto("/login");
+
+  const metadata = await page.evaluate(() => ({
+    favicon: document.querySelector('link[rel="icon"]')?.getAttribute("href"),
+    apple: document.querySelector('link[rel="apple-touch-icon"]')?.getAttribute("href"),
+  }));
+  expect(metadata.favicon).toBe("/app-icons/da-chatbot-192.png");
+  expect(metadata.apple).toBe("/api/auth/branding/apple-touch-icon.png");
 });
 
 test("protected routes send logged-out staff back to login", async ({ page }) => {

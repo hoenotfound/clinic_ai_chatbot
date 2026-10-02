@@ -1,10 +1,14 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const {
   DEFAULT_LOGIN_TAGLINE,
   buildClientBranding,
+  buildWebAppManifest,
   humanizeClientSlug,
+  resolveAppleTouchIconUrl,
   safeLogoUrl,
 } = require("../src/services/clientBrandingService");
 const {
@@ -69,4 +73,125 @@ test("provisioned display name seeds only the fresh client identity", () => {
   assert.deepEqual(config.services, []);
   assert.deepEqual(config.promotions, []);
   assert.deepEqual(config.branches, []);
+});
+
+
+test("web app manifest uses exact client app-icon sizes for installable identity", () => {
+  const manifest = buildWebAppManifest(
+    { businessName: "Neutro Sense TCM" },
+    {
+      CLIENT_APP_ICON_192_URL: "https://cdn.example.com/neutro-192.png",
+      CLIENT_APP_ICON_512_URL: "https://cdn.example.com/neutro-512.png",
+    }
+  );
+
+  assert.equal(manifest.name, "Neutro Sense TCM");
+  assert.equal(manifest.short_name, "Neutro Sense TCM");
+  assert.equal(manifest.start_url, "/login");
+  assert.equal(manifest.scope, "/");
+  assert.equal(manifest.display, "standalone");
+  assert.equal(manifest.theme_color, "#0f172a");
+  assert.deepEqual(manifest.icons, [
+    {
+      src: "https://cdn.example.com/neutro-192.png",
+      sizes: "192x192",
+      type: "image/png",
+      purpose: "any",
+    },
+    {
+      src: "https://cdn.example.com/neutro-512.png",
+      sizes: "512x512",
+      type: "image/png",
+      purpose: "any",
+    },
+  ]);
+});
+
+test("web app manifest falls back to packaged DA icons when client install icons are missing or unsafe", () => {
+  const unsafe = buildWebAppManifest(
+    { businessName: "Test Clinic" },
+    {
+      CLIENT_APP_ICON_192_URL: "javascript:alert(1)",
+      CLIENT_APP_ICON_512_URL: "http://example.com/icon.png",
+    }
+  );
+  const missing = buildWebAppManifest(
+    { businessName: "Test Clinic" },
+    {}
+  );
+
+  const expected = [
+    {
+      src: "/app-icons/da-chatbot-192.png",
+      sizes: "192x192",
+      type: "image/png",
+      purpose: "any",
+    },
+    {
+      src: "/app-icons/da-chatbot-512.png",
+      sizes: "512x512",
+      type: "image/png",
+      purpose: "any",
+    },
+  ];
+  assert.deepEqual(unsafe.icons, expected);
+  assert.deepEqual(missing.icons, expected);
+});
+
+test("branding exposes only sanitized dedicated app-icon URLs", () => {
+  const branding = buildClientBranding({}, {
+    CLIENT_APP_ICON_180_URL: "https://cdn.example.com/app-180.png",
+    CLIENT_APP_ICON_192_URL: "/client-assets/app-192.png",
+    CLIENT_APP_ICON_512_URL: "javascript:alert(1)",
+  });
+
+  assert.equal(branding.clientAppIcon180Url, "https://cdn.example.com/app-180.png");
+  assert.equal(branding.clientAppIcon192Url, "/client-assets/app-192.png");
+  assert.equal(branding.clientAppIcon512Url, "");
+});
+
+
+function readPngDimensions(filePath) {
+  const bytes = fs.readFileSync(filePath);
+  assert.equal(bytes.subarray(1, 4).toString("ascii"), "PNG");
+  return {
+    width: bytes.readUInt32BE(16),
+    height: bytes.readUInt32BE(20),
+  };
+}
+
+test("packaged DA fallback icons have the exact declared PNG dimensions", () => {
+  const publicDir = path.join(__dirname, "../portal-frontend/public/app-icons");
+  assert.deepEqual(
+    readPngDimensions(path.join(publicDir, "da-chatbot-180.png")),
+    { width: 180, height: 180 }
+  );
+  assert.deepEqual(
+    readPngDimensions(path.join(publicDir, "da-chatbot-192.png")),
+    { width: 192, height: 192 }
+  );
+  assert.deepEqual(
+    readPngDimensions(path.join(publicDir, "da-chatbot-512.png")),
+    { width: 512, height: 512 }
+  );
+});
+
+
+test("Apple touch icon resolver uses the exact client 180px icon or packaged fallback", () => {
+  assert.equal(
+    resolveAppleTouchIconUrl({}, {
+      CLIENT_APP_ICON_180_URL: "https://cdn.example.com/client-180.png",
+    }),
+    "https://cdn.example.com/client-180.png"
+  );
+  assert.equal(
+    resolveAppleTouchIconUrl({}, {
+      CLIENT_APP_ICON_180_URL: "javascript:alert(1)",
+    }),
+    "/app-icons/da-chatbot-180.png"
+  );
+  assert.equal(
+    resolveAppleTouchIconUrl({}, {}),
+    "/app-icons/da-chatbot-180.png"
+  );
 });
