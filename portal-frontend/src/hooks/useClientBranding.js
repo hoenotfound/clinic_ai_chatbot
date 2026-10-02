@@ -18,6 +18,31 @@ function normalizeBranding(value = {}) {
   };
 }
 
+function setHeadLink(rel, href, attributes = {}) {
+  if (!href) return;
+  let link = document.head.querySelector(`link[rel="${rel}"]`);
+  if (!link) {
+    link = document.createElement("link");
+    link.rel = rel;
+    document.head.appendChild(link);
+  }
+  link.href = href;
+  for (const [key, value] of Object.entries(attributes)) {
+    if (value) link.setAttribute(key, value);
+    else link.removeAttribute(key);
+  }
+}
+
+function setNamedMeta(name, content) {
+  let meta = document.head.querySelector(`meta[name="${name}"]`);
+  if (!meta) {
+    meta = document.createElement("meta");
+    meta.name = name;
+    document.head.appendChild(meta);
+  }
+  meta.content = content;
+}
+
 function initialsFor(value) {
   const words = String(value || "")
     .trim()
@@ -64,8 +89,12 @@ export function useClientBranding() {
   }, []);
 
   useEffect(() => {
+    const iconUrl = clientBranding.clientLogoUrl || agencyLogo;
     document.title = `${clientBranding.clientName} | AI Chatbot Portal`;
-  }, [clientBranding.clientName]);
+    setHeadLink("icon", iconUrl);
+    setHeadLink("apple-touch-icon", iconUrl, { sizes: "180x180" });
+    setNamedMeta("apple-mobile-web-app-title", clientBranding.clientName);
+  }, [clientBranding.clientLogoUrl, clientBranding.clientName]);
 
   return {
     ...clientBranding,
