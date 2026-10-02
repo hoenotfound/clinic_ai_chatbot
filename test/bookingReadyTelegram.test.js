@@ -86,6 +86,50 @@ test("booking-ready notification is durably queued once using its own alert type
   assert.match(queued[0].messageText, /^🔥 Booking Ready/);
 });
 
+test("prelocked transactional Booking Ready does not reacquire the contact alert lock", async () => {
+  const steps = [];
+  const transactionClient = {
+    async query() { return { rows: [] }; },
+  };
+  const service = createTelegramImmediateAlertService({
+    env: {
+      TELEGRAM_ALERTS_ENABLED: "true",
+      TELEGRAM_BOT_TOKEN: "test-token",
+      TELEGRAM_CHAT_ID: "test-chat",
+    },
+    async getContext() {
+      return context;
+    },
+    repository: {
+      async lockContactAlertQueue() {
+        steps.push(["lock"]);
+      },
+      async cancelOlderPendingBookingReady(input) {
+        steps.push(["cancel", input.eventKey]);
+      },
+      async insertAlert(input) {
+        steps.push(["insert", input.eventKey]);
+        return { id: 125 };
+      },
+    },
+    wakeQueue() {},
+  });
+
+  const result = await service.sendBookingReadyAlert({
+    contactId: 42,
+    messageId: 777,
+    reason: "Ready for staff confirmation.",
+    transactionClient,
+    queueLockHeld: true,
+  });
+
+  assert.deepEqual(result, { status: "queued", alertId: 125 });
+  assert.deepEqual(steps, [
+    ["cancel", "booking-ready:42:777"],
+    ["insert", "booking-ready:42:777"],
+  ]);
+});
+
 test("transactional Booking Ready inserts its alert on the caller's client", async () => {
   const steps = [];
   const transactionClient = {
