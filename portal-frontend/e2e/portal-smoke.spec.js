@@ -473,8 +473,8 @@ test("client branding updates browser and dimensioned home-screen identity", asy
     page.evaluate(() => document.querySelector('link[rel="icon"]')?.href)
   ).toBe(clientAppIcon192Url);
   await expect.poll(() =>
-    page.evaluate(() => document.querySelector('link[rel="apple-touch-icon"]')?.href)
-  ).toBe(clientAppIcon180Url);
+    page.evaluate(() => document.querySelector('link[rel="apple-touch-icon"]')?.getAttribute("href"))
+  ).toBe("/api/auth/branding/apple-touch-icon.png");
   await expect.poll(() =>
     page.evaluate(() => document.querySelector('meta[name="apple-mobile-web-app-title"]')?.content)
   ).toBe("Neutro Sense TCM");
@@ -500,7 +500,7 @@ test("home-screen metadata falls back to packaged DA icons without client instal
     apple: document.querySelector('link[rel="apple-touch-icon"]')?.getAttribute("href"),
   }));
   expect(metadata.favicon).toBe("/app-icons/da-chatbot-192.png");
-  expect(metadata.apple).toBe("/app-icons/da-chatbot-180.png");
+  expect(metadata.apple).toBe("/api/auth/branding/apple-touch-icon.png");
 });
 
 test("protected routes send logged-out staff back to login", async ({ page }) => {
