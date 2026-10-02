@@ -492,9 +492,11 @@ function createTelegramImmediateAlertService({
       cooldownMinutes,
     };
 
-    // The contact row is locked by the Booking Ready transaction. Persist its
-    // alert in that same transaction so a crash cannot commit the outcome
-    // without leaving recoverable Telegram work behind.
+    // Booking Ready normally acquires this per-contact advisory lock before it
+    // touches contact/lead rows. Keep a fallback lock here for any standalone
+    // transactional caller that has not already done so, then persist the alert
+    // in the same transaction so the outcome and durable notification commit
+    // together.
     if (type === "booking_ready" && transactionClient) {
       const queryInTransaction = transactionClient.query.bind(transactionClient);
       if (!queueLockHeld && typeof repository.lockContactAlertQueue === "function") {
