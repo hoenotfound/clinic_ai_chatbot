@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   DEFAULT_LOGIN_TAGLINE,
   buildClientBranding,
+  buildWebAppManifest,
   humanizeClientSlug,
   safeLogoUrl,
 } = require("../src/services/clientBrandingService");
@@ -69,4 +70,37 @@ test("provisioned display name seeds only the fresh client identity", () => {
   assert.deepEqual(config.services, []);
   assert.deepEqual(config.promotions, []);
   assert.deepEqual(config.branches, []);
+});
+
+
+test("web app manifest uses client branding for installable home-screen identity", () => {
+  const manifest = buildWebAppManifest(
+    { businessName: "Neutro Sense TCM" },
+    { CLIENT_LOGO_URL: "https://cdn.example.com/neutro-logo.png" }
+  );
+
+  assert.equal(manifest.name, "Neutro Sense TCM");
+  assert.equal(manifest.short_name, "Neutro Sense TCM");
+  assert.equal(manifest.start_url, "/");
+  assert.equal(manifest.scope, "/");
+  assert.equal(manifest.display, "standalone");
+  assert.equal(manifest.theme_color, "#0f172a");
+  assert.deepEqual(manifest.icons, [{
+    src: "https://cdn.example.com/neutro-logo.png",
+    purpose: "any",
+  }]);
+});
+
+test("web app manifest omits unsafe or missing client logos instead of exposing them", () => {
+  const unsafe = buildWebAppManifest(
+    { businessName: "Test Clinic" },
+    { CLIENT_LOGO_URL: "javascript:alert(1)" }
+  );
+  const missing = buildWebAppManifest(
+    { businessName: "Test Clinic" },
+    {}
+  );
+
+  assert.equal(Object.prototype.hasOwnProperty.call(unsafe, "icons"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(missing, "icons"), false);
 });
