@@ -102,9 +102,7 @@ export function useClientBranding() {
     const faviconHasKnownPngSize =
       Boolean(clientBranding.clientAppIcon192Url) ||
       !clientBranding.clientLogoUrl;
-    const appleTouchIconUrl =
-      clientBranding.clientAppIcon180Url ||
-      "/app-icons/da-chatbot-180.png";
+    const appleTouchIconUrl = "/api/auth/branding/apple-touch-icon.png";
 
     document.title = `${clientBranding.clientName} | AI Chatbot Portal`;
     setHeadLink("icon", faviconUrl, {
