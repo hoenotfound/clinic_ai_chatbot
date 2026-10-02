@@ -9,10 +9,13 @@ Put these values in that client's `--runtime-env-file` before provisioning:
 ```dotenv
 CLIENT_DISPLAY_NAME="Acme Renovation"
 CLIENT_LOGO_URL="https://cdn.example.com/acme-logo.png"
+CLIENT_APP_ICON_180_URL="https://cdn.example.com/acme-app-180.png"
+CLIENT_APP_ICON_192_URL="https://cdn.example.com/acme-app-192.png"
+CLIENT_APP_ICON_512_URL="https://cdn.example.com/acme-app-512.png"
 CLIENT_LOGIN_TAGLINE="Sign in to manage customer conversations"
 ```
 
-`CLIENT_DISPLAY_NAME` is recommended. `CLIENT_LOGO_URL` and `CLIENT_LOGIN_TAGLINE` are optional.
+`CLIENT_DISPLAY_NAME` is recommended. The logo, app-icon and login-tagline values are optional.
 
 The existing provisioner copies non-reserved runtime values only into that client's Render service. These branding values are not Ops control-plane secrets and are safe to expose on the public login screen.
 
@@ -50,19 +53,21 @@ The small `Powered by DA Smarketing Solutions` credit remains shared agency bran
 
 ## Home-screen / installed web app branding
 
-The portal exposes a client-specific web app manifest and updates the browser
-favicon plus iOS `apple-touch-icon` from the same branding values.
+The normal `CLIENT_LOGO_URL` remains the flexible logo used inside the portal.
+Installed-app icons use dedicated PNG assets so browsers never have to guess the
+file dimensions:
 
-For the best Home Screen result:
+- `CLIENT_APP_ICON_180_URL`: exact 180x180 PNG for iPhone/iPad `apple-touch-icon`;
+- `CLIENT_APP_ICON_192_URL`: exact 192x192 PNG for Chromium/PWA installability;
+- `CLIENT_APP_ICON_512_URL`: exact 512x512 PNG for Chromium/PWA installability.
 
-- set `CLIENT_DISPLAY_NAME` to the customer-facing portal name;
-- set `CLIENT_LOGO_URL` to an HTTPS or root-relative image URL;
-- prefer a square PNG (ideally at least 512x512) with some safe padding around
-  the logo so Android/iOS icon masks do not crop important artwork.
+Use square PNGs with safe padding around important artwork because mobile OS icon
+masks can crop the outer edges. The URLs accept the same HTTPS or root-relative
+forms as `CLIENT_LOGO_URL`; unsafe URLs are ignored.
 
-When `CLIENT_LOGO_URL` is missing, the browser UI falls back to the DA portal
-logo. The manifest intentionally omits a client icon rather than publishing an
-unsafe URL.
+If any install icon is missing or rejected, the portal uses packaged DA CHATBOT
+fallback PNGs at the correct dimensions. This keeps Android and iOS Home Screen
+icons valid even before a client-specific icon set is uploaded.
 
 Installed launches start at `/login` because `/` is reserved for the Render
 readiness endpoint. An already-authenticated staff session is then redirected
