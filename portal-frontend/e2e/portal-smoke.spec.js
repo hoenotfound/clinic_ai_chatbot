@@ -43,6 +43,9 @@ async function mockPortalApi(
     branding = {
       clientName: "Test Clinic",
       clientLogoUrl: "",
+      clientAppIcon180Url: "",
+      clientAppIcon192Url: "",
+      clientAppIcon512Url: "",
       loginTagline: "Staff portal",
     },
   } = {}
@@ -82,9 +85,20 @@ async function mockPortalApi(
           short_name: branding.clientName,
           start_url: "/login",
           display: "standalone",
-          ...(branding.clientLogoUrl
-            ? { icons: [{ src: branding.clientLogoUrl, purpose: "any" }] }
-            : {}),
+          icons: [
+            {
+              src: branding.clientAppIcon192Url || "/app-icons/da-chatbot-192.png",
+              sizes: "192x192",
+              type: "image/png",
+              purpose: "any",
+            },
+            {
+              src: branding.clientAppIcon512Url || "/app-icons/da-chatbot-512.png",
+              sizes: "512x512",
+              type: "image/png",
+              purpose: "any",
+            },
+          ],
         }),
       });
     }
@@ -437,12 +451,18 @@ test("login page is usable without horizontal overflow", async ({ page }) => {
   await expectNoHorizontalPageOverflow(page);
 });
 
-test("client branding updates browser and home-screen identity", async ({ page }) => {
-  const clientLogoUrl = "https://cdn.example.test/neutro-home-screen.png";
+test("client branding updates browser and dimensioned home-screen identity", async ({ page }) => {
+  const clientLogoUrl = "https://cdn.example.test/neutro-logo.png";
+  const clientAppIcon180Url = "https://cdn.example.test/neutro-180.png";
+  const clientAppIcon192Url = "https://cdn.example.test/neutro-192.png";
+  const clientAppIcon512Url = "https://cdn.example.test/neutro-512.png";
   await mockPortalApi(page, {
     branding: {
       clientName: "Neutro Sense TCM",
       clientLogoUrl,
+      clientAppIcon180Url,
+      clientAppIcon192Url,
+      clientAppIcon512Url,
       loginTagline: "Staff portal",
     },
   });
@@ -451,22 +471,36 @@ test("client branding updates browser and home-screen identity", async ({ page }
   await expect(page).toHaveTitle("Neutro Sense TCM | AI Chatbot Portal");
   await expect.poll(() =>
     page.evaluate(() => document.querySelector('link[rel="icon"]')?.href)
-  ).toBe(clientLogoUrl);
+  ).toBe(clientAppIcon192Url);
   await expect.poll(() =>
     page.evaluate(() => document.querySelector('link[rel="apple-touch-icon"]')?.href)
-  ).toBe(clientLogoUrl);
+  ).toBe(clientAppIcon180Url);
   await expect.poll(() =>
     page.evaluate(() => document.querySelector('meta[name="apple-mobile-web-app-title"]')?.content)
   ).toBe("Neutro Sense TCM");
 
   const installMetadata = await page.evaluate(() => ({
     manifest: document.querySelector('link[rel="manifest"]')?.getAttribute("href"),
+    faviconSizes: document.querySelector('link[rel="icon"]')?.getAttribute("sizes"),
     appleSizes: document.querySelector('link[rel="apple-touch-icon"]')?.getAttribute("sizes"),
     themeColor: document.querySelector('meta[name="theme-color"]')?.content,
   }));
   expect(installMetadata.manifest).toBe("/api/auth/branding/manifest.webmanifest");
+  expect(installMetadata.faviconSizes).toBe("192x192");
   expect(installMetadata.appleSizes).toBe("180x180");
   expect(installMetadata.themeColor).toBe("#0f172a");
+});
+
+test("home-screen metadata falls back to packaged DA icons without client install icons", async ({ page }) => {
+  await mockPortalApi(page);
+  await page.goto("/login");
+
+  const metadata = await page.evaluate(() => ({
+    favicon: document.querySelector('link[rel="icon"]')?.getAttribute("href"),
+    apple: document.querySelector('link[rel="apple-touch-icon"]')?.getAttribute("href"),
+  }));
+  expect(metadata.favicon).toBe("/app-icons/da-chatbot-192.png");
+  expect(metadata.apple).toBe("/app-icons/da-chatbot-180.png");
 });
 
 test("protected routes send logged-out staff back to login", async ({ page }) => {
