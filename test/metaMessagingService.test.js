@@ -375,6 +375,115 @@ test("fetches a Facebook Messenger user's display name and profile photo", async
   });
 });
 
+test("Meta #100 no-matching-user profile failures stay negatively cached for 24 hours", async (t) => {
+  const originalFetch = global.fetch;
+  const oldToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  let now = 1_800_000_000_000;
+  t.mock.method(Date, "now", () => now);
+  t.mock.method(console, "warn", () => {});
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (oldToken === undefined) delete process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    else process.env.FACEBOOK_PAGE_ACCESS_TOKEN = oldToken;
+  });
+
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN = "missing-profile-token";
+  let fetchCalls = 0;
+  global.fetch = async () => {
+    fetchCalls += 1;
+    return {
+      ok: false,
+      status: 400,
+      json: async () => ({
+        error: {
+          code: 100,
+          message: "(#100) No matching user found",
+        },
+      }),
+    };
+  };
+
+  assert.equal(
+    await meta.fetchUserProfile("facebook", "psid-missing-profile-cache"),
+    null
+  );
+  assert.equal(fetchCalls, 1);
+
+  // The old generic failure cache was only five minutes. A known #100
+  // no-matching-user response should remain suppressed well beyond that.
+  now += 10 * 60 * 1000;
+  assert.equal(
+    await meta.fetchUserProfile("facebook", "psid-missing-profile-cache"),
+    null
+  );
+  assert.equal(fetchCalls, 1);
+
+  // After the 24-hour negative cache expires, retry normally in case the
+  // Page/token relationship or Meta-side profile availability has changed.
+  now += 24 * 60 * 60 * 1000;
+  assert.equal(
+    await meta.fetchUserProfile("facebook", "psid-missing-profile-cache"),
+    null
+  );
+  assert.equal(fetchCalls, 2);
+});
+
+test("transient Meta profile failures still retry after the short failure cache", async (t) => {
+  const originalFetch = global.fetch;
+  const oldToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  let now = 1_810_000_000_000;
+  t.mock.method(Date, "now", () => now);
+  t.mock.method(console, "warn", () => {});
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (oldToken === undefined) delete process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    else process.env.FACEBOOK_PAGE_ACCESS_TOKEN = oldToken;
+  });
+
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN = "transient-profile-token";
+  let fetchCalls = 0;
+  global.fetch = async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 1) {
+      return {
+        ok: false,
+        status: 503,
+        json: async () => ({
+          error: {
+            code: 2,
+            message: "Service temporarily unavailable",
+          },
+        }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        first_name: "Recovered",
+        last_name: "User",
+      }),
+    };
+  };
+
+  assert.equal(
+    await meta.fetchUserProfile("facebook", "psid-transient-profile-cache"),
+    null
+  );
+  assert.equal(fetchCalls, 1);
+
+  now += 5 * 60 * 1000 + 1;
+  assert.deepEqual(
+    await meta.fetchUserProfile("facebook", "psid-transient-profile-cache"),
+    {
+      profileName: "Recovered User",
+      photoUrl: null,
+      username: null,
+    }
+  );
+  assert.equal(fetchCalls, 2);
+});
+
 test("fetches an Instagram user's profile through Facebook Graph with the Page token", async (t) => {
   const originalFetch = global.fetch;
   const oldToken = process.env.INSTAGRAM_PAGE_ACCESS_TOKEN;
