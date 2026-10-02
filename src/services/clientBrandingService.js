@@ -47,13 +47,16 @@ function buildClientBranding(config = {}, env = process.env) {
   return {
     clientName,
     clientLogoUrl: safeLogoUrl(env.CLIENT_LOGO_URL),
+    clientAppIcon180Url: safeLogoUrl(env.CLIENT_APP_ICON_180_URL),
+    clientAppIcon192Url: safeLogoUrl(env.CLIENT_APP_ICON_192_URL),
+    clientAppIcon512Url: safeLogoUrl(env.CLIENT_APP_ICON_512_URL),
     loginTagline: text(env.CLIENT_LOGIN_TAGLINE, 160) || DEFAULT_LOGIN_TAGLINE,
   };
 }
 
 function buildWebAppManifest(config = {}, env = process.env) {
   const branding = buildClientBranding(config, env);
-  const manifest = {
+  return {
     id: "/",
     name: branding.clientName,
     short_name: text(branding.clientName, 30) || DEFAULT_CLIENT_NAME,
@@ -63,20 +66,21 @@ function buildWebAppManifest(config = {}, env = process.env) {
     display: "standalone",
     background_color: "#f8fafc",
     theme_color: "#0f172a",
+    icons: [
+      {
+        src: branding.clientAppIcon192Url || "/app-icons/da-chatbot-192.png",
+        sizes: "192x192",
+        type: "image/png",
+        purpose: "any",
+      },
+      {
+        src: branding.clientAppIcon512Url || "/app-icons/da-chatbot-512.png",
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "any",
+      },
+    ],
   };
-
-  // CLIENT_LOGO_URL is deployment-controlled and already restricted to HTTPS
-  // or a root-relative same-origin URL. Leaving sizes/type unspecified lets the
-  // browser inspect the actual file instead of us lying about dimensions for
-  // arbitrary client-supplied brand assets.
-  if (branding.clientLogoUrl) {
-    manifest.icons = [{
-      src: branding.clientLogoUrl,
-      purpose: "any",
-    }];
-  }
-
-  return manifest;
 }
 
 module.exports = {
