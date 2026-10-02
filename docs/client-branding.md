@@ -46,3 +46,24 @@ The browser tab title also follows the resolved client name.
 ## Agency identity
 
 The small `Powered by DA Smarketing Solutions` credit remains shared agency branding. Client branding and agency branding are intentionally separate.
+
+
+## Home-screen / installed web app branding
+
+The portal exposes a client-specific web app manifest and updates the browser
+favicon plus iOS `apple-touch-icon` from the same branding values.
+
+For the best Home Screen result:
+
+- set `CLIENT_DISPLAY_NAME` to the customer-facing portal name;
+- set `CLIENT_LOGO_URL` to an HTTPS or root-relative image URL;
+- prefer a square PNG (ideally at least 512x512) with some safe padding around
+  the logo so Android/iOS icon masks do not crop important artwork.
+
+When `CLIENT_LOGO_URL` is missing, the browser UI falls back to the DA portal
+logo. The manifest intentionally omits a client icon rather than publishing an
+unsafe URL.
+
+Installed launches start at `/login` because `/` is reserved for the Render
+readiness endpoint. An already-authenticated staff session is then redirected
+into the normal portal by the frontend router.
