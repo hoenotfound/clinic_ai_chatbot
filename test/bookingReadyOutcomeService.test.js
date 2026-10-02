@@ -5,6 +5,9 @@ const {
   BOOKING_READY_REASON,
   createBookingReadyOutcomeService,
 } = require("../src/services/bookingReadyOutcomeService");
+const {
+  HUMAN_ALERT_LOCK_NAMESPACE,
+} = require("../src/db/telegramImmediateAlertRepo");
 
 function fakeDatabase({
   temperature = "warm",
@@ -134,7 +137,7 @@ test("booking-ready flags Inbox, makes an unlocked lead Hot, records activity, a
   );
   assert.ok(alertLockIndex > calls.findIndex(({ sql }) => sql === "BEGIN"));
   assert.ok(alertLockIndex < contactUpdateIndex);
-  assert.deepEqual(calls[alertLockIndex].params, [24682, 42]);
+  assert.deepEqual(calls[alertLockIndex].params, [HUMAN_ALERT_LOCK_NAMESPACE, 42]);
   const contactUpdate = calls[contactUpdateIndex];
   assert.match(allSql, /mode = 'ai'/i);
   assert.doesNotMatch(contactUpdate.sql, /attention_reason LIKE 'Booking ready:%'/i);
