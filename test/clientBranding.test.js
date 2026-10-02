@@ -73,10 +73,13 @@ test("provisioned display name seeds only the fresh client identity", () => {
 });
 
 
-test("web app manifest uses client branding for installable home-screen identity", () => {
+test("web app manifest uses exact client app-icon sizes for installable identity", () => {
   const manifest = buildWebAppManifest(
     { businessName: "Neutro Sense TCM" },
-    { CLIENT_LOGO_URL: "https://cdn.example.com/neutro-logo.png" }
+    {
+      CLIENT_APP_ICON_192_URL: "https://cdn.example.com/neutro-192.png",
+      CLIENT_APP_ICON_512_URL: "https://cdn.example.com/neutro-512.png",
+    }
   );
 
   assert.equal(manifest.name, "Neutro Sense TCM");
@@ -85,22 +88,61 @@ test("web app manifest uses client branding for installable home-screen identity
   assert.equal(manifest.scope, "/");
   assert.equal(manifest.display, "standalone");
   assert.equal(manifest.theme_color, "#0f172a");
-  assert.deepEqual(manifest.icons, [{
-    src: "https://cdn.example.com/neutro-logo.png",
-    purpose: "any",
-  }]);
+  assert.deepEqual(manifest.icons, [
+    {
+      src: "https://cdn.example.com/neutro-192.png",
+      sizes: "192x192",
+      type: "image/png",
+      purpose: "any",
+    },
+    {
+      src: "https://cdn.example.com/neutro-512.png",
+      sizes: "512x512",
+      type: "image/png",
+      purpose: "any",
+    },
+  ]);
 });
 
-test("web app manifest omits unsafe or missing client logos instead of exposing them", () => {
+test("web app manifest falls back to packaged DA icons when client install icons are missing or unsafe", () => {
   const unsafe = buildWebAppManifest(
     { businessName: "Test Clinic" },
-    { CLIENT_LOGO_URL: "javascript:alert(1)" }
+    {
+      CLIENT_APP_ICON_192_URL: "javascript:alert(1)",
+      CLIENT_APP_ICON_512_URL: "http://example.com/icon.png",
+    }
   );
   const missing = buildWebAppManifest(
     { businessName: "Test Clinic" },
     {}
   );
 
-  assert.equal(Object.prototype.hasOwnProperty.call(unsafe, "icons"), false);
-  assert.equal(Object.prototype.hasOwnProperty.call(missing, "icons"), false);
+  const expected = [
+    {
+      src: "/app-icons/da-chatbot-192.png",
+      sizes: "192x192",
+      type: "image/png",
+      purpose: "any",
+    },
+    {
+      src: "/app-icons/da-chatbot-512.png",
+      sizes: "512x512",
+      type: "image/png",
+      purpose: "any",
+    },
+  ];
+  assert.deepEqual(unsafe.icons, expected);
+  assert.deepEqual(missing.icons, expected);
+});
+
+test("branding exposes only sanitized dedicated app-icon URLs", () => {
+  const branding = buildClientBranding({}, {
+    CLIENT_APP_ICON_180_URL: "https://cdn.example.com/app-180.png",
+    CLIENT_APP_ICON_192_URL: "/client-assets/app-192.png",
+    CLIENT_APP_ICON_512_URL: "javascript:alert(1)",
+  });
+
+  assert.equal(branding.clientAppIcon180Url, "https://cdn.example.com/app-180.png");
+  assert.equal(branding.clientAppIcon192Url, "/client-assets/app-192.png");
+  assert.equal(branding.clientAppIcon512Url, "");
 });
