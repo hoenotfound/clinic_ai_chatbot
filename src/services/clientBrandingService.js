@@ -1,5 +1,8 @@
 const DEFAULT_CLIENT_NAME = "Client Portal";
 const DEFAULT_LOGIN_TAGLINE = "Sign in to manage customer conversations";
+const DEFAULT_APP_ICON_180_URL = "/app-icons/da-chatbot-180.png";
+const DEFAULT_APP_ICON_192_URL = "/app-icons/da-chatbot-192.png";
+const DEFAULT_APP_ICON_512_URL = "/app-icons/da-chatbot-512.png";
 const PLACEHOLDER_BUSINESS_NAMES = new Set([
   "your clinic",
   "your renovation business",
@@ -54,6 +57,11 @@ function buildClientBranding(config = {}, env = process.env) {
   };
 }
 
+function resolveAppleTouchIconUrl(config = {}, env = process.env) {
+  const branding = buildClientBranding(config, env);
+  return branding.clientAppIcon180Url || DEFAULT_APP_ICON_180_URL;
+}
+
 function buildWebAppManifest(config = {}, env = process.env) {
   const branding = buildClientBranding(config, env);
   return {
@@ -68,13 +76,13 @@ function buildWebAppManifest(config = {}, env = process.env) {
     theme_color: "#0f172a",
     icons: [
       {
-        src: branding.clientAppIcon192Url || "/app-icons/da-chatbot-192.png",
+        src: branding.clientAppIcon192Url || DEFAULT_APP_ICON_192_URL,
         sizes: "192x192",
         type: "image/png",
         purpose: "any",
       },
       {
-        src: branding.clientAppIcon512Url || "/app-icons/da-chatbot-512.png",
+        src: branding.clientAppIcon512Url || DEFAULT_APP_ICON_512_URL,
         sizes: "512x512",
         type: "image/png",
         purpose: "any",
@@ -86,9 +94,13 @@ function buildWebAppManifest(config = {}, env = process.env) {
 module.exports = {
   DEFAULT_CLIENT_NAME,
   DEFAULT_LOGIN_TAGLINE,
+  DEFAULT_APP_ICON_180_URL,
+  DEFAULT_APP_ICON_192_URL,
+  DEFAULT_APP_ICON_512_URL,
   PLACEHOLDER_BUSINESS_NAMES,
   buildClientBranding,
   buildWebAppManifest,
+  resolveAppleTouchIconUrl,
   configuredBusinessName,
   humanizeClientSlug,
   safeLogoUrl,
