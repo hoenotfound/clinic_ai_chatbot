@@ -80,7 +80,7 @@ async function mockPortalApi(
         body: JSON.stringify({
           name: branding.clientName,
           short_name: branding.clientName,
-          start_url: "/",
+          start_url: "/login",
           display: "standalone",
           ...(branding.clientLogoUrl
             ? { icons: [{ src: branding.clientLogoUrl, purpose: "any" }] }
