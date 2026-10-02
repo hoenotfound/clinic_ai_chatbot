@@ -24,7 +24,7 @@ export function sourceTone(value) {
 export function LeadSourceBadge({ source, className = "" }) {
   if (!source) return null;
   return (
-    <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${sourceTone(source)} ${className}`}>
+    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide sm:px-2 sm:py-1 ${sourceTone(source)} ${className}`}>
       {sourceLabel(source)}
     </span>
   );
