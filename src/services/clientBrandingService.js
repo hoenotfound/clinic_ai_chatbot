@@ -51,11 +51,40 @@ function buildClientBranding(config = {}, env = process.env) {
   };
 }
 
+function buildWebAppManifest(config = {}, env = process.env) {
+  const branding = buildClientBranding(config, env);
+  const manifest = {
+    id: "/",
+    name: branding.clientName,
+    short_name: text(branding.clientName, 30) || DEFAULT_CLIENT_NAME,
+    description: `${branding.clientName} staff portal`,
+    start_url: "/",
+    scope: "/",
+    display: "standalone",
+    background_color: "#f8fafc",
+    theme_color: "#0f172a",
+  };
+
+  // CLIENT_LOGO_URL is deployment-controlled and already restricted to HTTPS
+  // or a root-relative same-origin URL. Leaving sizes/type unspecified lets the
+  // browser inspect the actual file instead of us lying about dimensions for
+  // arbitrary client-supplied brand assets.
+  if (branding.clientLogoUrl) {
+    manifest.icons = [{
+      src: branding.clientLogoUrl,
+      purpose: "any",
+    }];
+  }
+
+  return manifest;
+}
+
 module.exports = {
   DEFAULT_CLIENT_NAME,
   DEFAULT_LOGIN_TAGLINE,
   PLACEHOLDER_BUSINESS_NAMES,
   buildClientBranding,
+  buildWebAppManifest,
   configuredBusinessName,
   humanizeClientSlug,
   safeLogoUrl,
