@@ -69,6 +69,11 @@ If any install icon is missing or rejected, the portal uses packaged DA CHATBOT
 fallback PNGs at the correct dimensions. This keeps Android and iOS Home Screen
 icons valid even before a client-specific icon set is uploaded.
 
+The HTML always points iOS at the stable same-origin
+`/api/auth/branding/apple-touch-icon.png` endpoint. That endpoint resolves the
+configured 180x180 client icon server-side and redirects to the packaged fallback
+when necessary, so Safari does not depend on React changing the icon tag after load.
+
 Installed launches start at `/login` because `/` is reserved for the Render
 readiness endpoint. An already-authenticated staff session is then redirected
 into the normal portal by the frontend router.
