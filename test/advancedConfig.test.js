@@ -412,6 +412,96 @@ test("Advanced Config enforces alias, FAQ, and promotion integrity across partia
   );
   assert.equal(validPricePromo.ok, true);
 
+  const validPackagePromotion = prepareAdvancedConfigPayload(
+    {
+      promotions: [{
+        name: "Consultation Packages",
+        linkedService: "Consultation",
+        sendOnPriceQuery: true,
+        imageUrl: "",
+        caption: "",
+        packages: [
+          {
+            name: "Package A",
+            title: "Basic",
+            aliases: ["A"],
+            imageUrl: "https://example.com/package-a.jpg",
+            caption: "Package A RM88",
+          },
+          {
+            name: "Package B",
+            title: "Premium",
+            aliases: ["B"],
+            imageUrl: "https://example.com/package-b.jpg",
+            caption: "Package B RM188",
+          },
+        ],
+        validFrom: "2026-10-01",
+        validUntil: "2026-10-31",
+      }],
+    },
+    current
+  );
+  assert.equal(validPackagePromotion.ok, true);
+
+  const packageMissingMedia = prepareAdvancedConfigPayload(
+    {
+      promotions: [{
+        name: "Consultation Packages",
+        linkedService: "Consultation",
+        sendOnPriceQuery: true,
+        imageUrl: "",
+        caption: "",
+        packages: [{
+          name: "Package A",
+          title: "Basic",
+          aliases: ["A"],
+          imageUrl: "",
+          caption: "Package A RM88",
+        }],
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(packageMissingMedia.ok, false);
+  assert.deepEqual(packageMissingMedia.invalidKeys, ["promotions"]);
+
+  const ambiguousPackageAliases = prepareAdvancedConfigPayload(
+    {
+      promotions: [{
+        name: "Consultation Packages",
+        linkedService: "Consultation",
+        sendOnPriceQuery: true,
+        imageUrl: "",
+        caption: "",
+        packages: [
+          {
+            name: "Package A",
+            title: "",
+            aliases: ["same"],
+            imageUrl: "https://example.com/a.jpg",
+            caption: "A",
+          },
+          {
+            name: "Package B",
+            title: "",
+            aliases: ["same"],
+            imageUrl: "https://example.com/b.jpg",
+            caption: "B",
+          },
+        ],
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(ambiguousPackageAliases.ok, false);
+  assert.deepEqual(ambiguousPackageAliases.invalidKeys, ["promotions"]);
+  assert.match(ambiguousPackageAliases.error, /ambiguous/i);
+
   const overlappingPricePromos = prepareConfigUpdatePayload(
     {
       promotions: [
