@@ -641,6 +641,7 @@ async function processIncomingMessage(
     let flagged = false;
     let bookingReady = false;
     let priceQuery = false;
+    let promotionOption = null;
     let details = null;
 
     if (urgentSafety) {
@@ -658,6 +659,7 @@ async function processIncomingMessage(
         flagged,
         bookingReady,
         priceQuery,
+        promotionOption,
         details,
       } = parsedReply);
 
@@ -782,9 +784,11 @@ async function processIncomingMessage(
     // price of one known configured service. Existing safety/ownership gates
     // remain unchanged.
     {
-      const promo = await resolvePricePromotionForReply({
+      const promoBundle = await resolvePricePromotionForReply({
         priceQuery,
         treatment: details?.treatment,
+        promotionOption,
+        customerText: text,
         flagged,
         bookingReady,
         keywordReason,
@@ -794,80 +798,86 @@ async function processIncomingMessage(
         contactId: contact.id,
         wasPromoRecentlySent: messagesRepo.wasPromoRecentlySent,
       });
-      if (promo) {
-        const promoContact = await getAiOwnedContact(contact, {
-          channel,
-          from,
-          reason: "automatic promo image",
-        });
-        // Re-check both ownership and attention immediately before the promo.
-        if (!promoContact || promoContact.needs_attention) {
-          return { wasFirstMessage, keywordReason };
-        }
-        contact = promoContact;
-
-        if (canSendAutomatedReply && canSendAutomatedReply() !== true) {
-          return { wasFirstMessage, keywordReason };
-        }
-
-        const guardedPromo = typeof canSendAutomatedReply === "function";
-        const savedPromo = await conversationStore.appendMessageForContact(
-          contact.id,
-          "assistant",
-          promo.caption || "",
-          null,
-          null,
-          promo.imageUrl,
-          null,
-          guardedPromo ? { publish: false } : undefined
-        );
-        const promoProviderRecorder = messagesRepo.socialProviderAliasRecorder(
-          savedPromo.id,
-          contact.channel
-        );
-        const promoResult = await channelMessaging.sendImageByUrl(
-          contact,
-          promo.imageUrl,
-          promo.caption,
-          {
-            ...(guardedPromo
-              ? { preSendCheck: canSendAutomatedReply }
-              : {}),
-            ...(promoProviderRecorder
-              ? { onProviderMessageId: promoProviderRecorder }
-              : {}),
-          }
-        );
-
-        if (promoResult.cancelled) {
-          await messagesRepo.deleteUnsentAssistantMessage(savedPromo.id);
-          return { wasFirstMessage, keywordReason };
-        }
-
-        if (guardedPromo) {
-          realtimeEvents.publish("conversation_changed", {
-            contactId: savedPromo.contact_id,
-            messageId: savedPromo.id,
-            reason: "message",
+      if (promoBundle) {
+        for (const promoPackage of promoBundle.packages) {
+          const promoContact = await getAiOwnedContact(contact, {
+            channel,
+            from,
+            reason: `automatic promo package ${promoPackage.name || "image"}`,
           });
-        }
+          // Re-check ownership and attention before every package so a staff
+          // takeover between Package A and B stops the remaining automation.
+          if (!promoContact || promoContact.needs_attention) {
+            return { wasFirstMessage, keywordReason };
+          }
+          contact = promoContact;
 
-        const promoError = deliveryErrorForSend(
-          promoResult,
-          promoResult.error || channelMessaging.rejectedError(contact.channel)
-        );
-        await persistSendOutcome(
-          savedPromo,
-          promoResult,
-          promoError,
-          contact.channel || "whatsapp"
-        );
-        if (!promoResult.success) {
-          console.warn(`Promo image failed to send to ${channel}:${from}, continuing without it.`);
-          await contactsRepo.setDeliveryAttention(
+          if (canSendAutomatedReply && canSendAutomatedReply() !== true) {
+            return { wasFirstMessage, keywordReason };
+          }
+
+          const guardedPromo = typeof canSendAutomatedReply === "function";
+          const savedPromo = await conversationStore.appendMessageForContact(
             contact.id,
-            `Delivery failed: ${publicDeliveryError(promoError)}`
+            "assistant",
+            promoPackage.caption || "",
+            null,
+            null,
+            promoPackage.imageUrl,
+            null,
+            guardedPromo ? { publish: false } : undefined
           );
+          const promoProviderRecorder = messagesRepo.socialProviderAliasRecorder(
+            savedPromo.id,
+            contact.channel
+          );
+          const promoResult = await channelMessaging.sendImageByUrl(
+            contact,
+            promoPackage.imageUrl,
+            promoPackage.caption,
+            {
+              ...(guardedPromo
+                ? { preSendCheck: canSendAutomatedReply }
+                : {}),
+              ...(promoProviderRecorder
+                ? { onProviderMessageId: promoProviderRecorder }
+                : {}),
+            }
+          );
+
+          if (promoResult.cancelled) {
+            await messagesRepo.deleteUnsentAssistantMessage(savedPromo.id);
+            return { wasFirstMessage, keywordReason };
+          }
+
+          if (guardedPromo) {
+            realtimeEvents.publish("conversation_changed", {
+              contactId: savedPromo.contact_id,
+              messageId: savedPromo.id,
+              reason: "message",
+            });
+          }
+
+          const promoError = deliveryErrorForSend(
+            promoResult,
+            promoResult.error || channelMessaging.rejectedError(contact.channel)
+          );
+          await persistSendOutcome(
+            savedPromo,
+            promoResult,
+            promoError,
+            contact.channel || "whatsapp"
+          );
+          if (!promoResult.success) {
+            console.warn(
+              `Promo package ${promoPackage.name || "image"} failed to send to ${channel}:${from}; stopping the remaining package sequence.`
+            );
+            await contactsRepo.setDeliveryAttention(
+              contact.id,
+              `Delivery failed: ${publicDeliveryError(promoError)}`
+            );
+            return { wasFirstMessage, keywordReason };
+          }
         }
       }
     }
