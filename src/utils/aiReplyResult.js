@@ -36,7 +36,7 @@ function cleanNextStep(value) {
 function normalizeName(value) {
   return String(value || "")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim()
     .replace(/\s+/g, " ");
 }
@@ -172,6 +172,7 @@ function parseStructuredReply(raw) {
   const outcome = typeof parsed.outcome === "string"
     ? parsed.outcome.trim().toLowerCase()
     : "";
+  const priceQuery = parsed.priceQuery === true;
 
   if (!reply || !VALID_OUTCOMES.has(outcome)) {
     throw invalidResponse("AI structured response is missing a valid reply/outcome.");
@@ -187,6 +188,7 @@ function parseStructuredReply(raw) {
       text: reply,
       flagged: false,
       bookingReady: false,
+      priceQuery,
       outcome: "normal",
       structured: true,
       details: emptyDetails(),
@@ -202,9 +204,7 @@ function parseStructuredReply(raw) {
       : null;
   const treatment = parsed.treatment == null
     ? null
-    : isProjectMode
-      ? canonicalConfiguredService(parsed.treatment)
-      : canonicalConfiguredName(parsed.treatment, clinicConfig.services);
+    : canonicalConfiguredService(parsed.treatment);
   const appointmentPreference = cleanOptionalText(parsed.appointmentPreference);
   const staffSummary = outcome === "booking_ready"
     ? cleanStaffSummary(parsed.staffSummary)
@@ -277,6 +277,7 @@ function parseStructuredReply(raw) {
     text: reply,
     flagged: outcome === "needs_human",
     bookingReady: outcome === "booking_ready",
+    priceQuery,
     outcome,
     structured: true,
     details,
@@ -303,6 +304,7 @@ function parseAiReplyResult(raw) {
   return {
     ...legacy,
     bookingReady,
+    priceQuery: false,
     outcome: legacy.flagged
       ? "needs_human"
       : bookingReady
