@@ -783,8 +783,8 @@ async function processIncomingMessage(
 
     // Promotional media is reactive, not a first-message blast. Only follow a
     // successful normal AI reply when the customer explicitly asked about the
-    // price of one known configured service. Existing safety/ownership gates
-    // remain unchanged.
+    // price or available packages for one known configured service. Existing
+    // safety/ownership gates remain unchanged.
     {
       const promoBundle = await resolvePricePromotionForReply({
         priceQuery,
