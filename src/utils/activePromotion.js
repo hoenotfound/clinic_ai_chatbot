@@ -105,6 +105,117 @@ function promotionWindowsOverlap(a, b) {
   return aStart <= bEnd && bStart <= aEnd;
 }
 
+function promotionPackages(promotion) {
+  const configured = Array.isArray(promotion?.packages)
+    ? promotion.packages.filter((item) => item && typeof item === "object")
+    : [];
+
+  if (configured.length > 0) {
+    return configured.map((item) => ({
+      name: String(item.name || "").trim(),
+      title: String(item.title || "").trim(),
+      aliases: Array.isArray(item.aliases)
+        ? item.aliases.map((alias) => String(alias || "").trim()).filter(Boolean)
+        : [],
+      imageUrl: String(item.imageUrl || "").trim(),
+      caption: String(item.caption || "").trim(),
+    }));
+  }
+
+  const imageUrl = String(promotion?.imageUrl || "").trim();
+  const caption = String(promotion?.caption || "").trim();
+  if (!imageUrl && !caption) return [];
+
+  // Backward compatibility: every existing single-image promotion behaves as
+  // one package option without requiring a config migration.
+  return [{
+    name: "Main offer",
+    title: String(promotion?.name || "").trim(),
+    aliases: [],
+    imageUrl,
+    caption,
+    legacy: true,
+  }];
+}
+
+function packageTerms(packageOption) {
+  return [
+    packageOption?.name,
+    packageOption?.title,
+    ...(Array.isArray(packageOption?.aliases) ? packageOption.aliases : []),
+  ]
+    .map(normalizeServiceName)
+    .filter(Boolean);
+}
+
+function findAmbiguousPromotionPackageTerm(promotion) {
+  const packages = promotionPackages(promotion);
+  const owners = new Map();
+
+  packages.forEach((packageOption, index) => {
+    const terms = [...new Set(packageTerms(packageOption))];
+    for (const term of terms) {
+      const existing = owners.get(term);
+      if (existing && existing.index !== index) {
+        owners.set("__ambiguity__", {
+          term,
+          firstPackage: existing.name,
+          secondPackage: packageOption.name,
+        });
+        return;
+      }
+      owners.set(term, { index, name: packageOption.name });
+    }
+  });
+
+  const ambiguity = owners.get("__ambiguity__");
+  if (ambiguity) return ambiguity;
+  return null;
+}
+
+function promotionTermAppearsInText(term, text) {
+  const normalizedTerm = normalizeServiceName(term);
+  const normalizedText = normalizeServiceName(text);
+  if (!normalizedTerm || !normalizedText) return false;
+
+  // Single-character Latin aliases such as A/B/C must be standalone tokens so
+  // "A" does not accidentally match ordinary words like "berapa".
+  if (/^[a-z0-9]$/u.test(normalizedTerm)) {
+    return normalizedText.split(" ").includes(normalizedTerm);
+  }
+
+  const paddedText = ` ${normalizedText} `;
+  if (paddedText.includes(` ${normalizedTerm} `)) return true;
+
+  // Compact matching covers harmless spacing differences such as "PackageB"
+  // and mixed Latin/Chinese configured wording.
+  const compactTerm = normalizedTerm.replace(/\s+/g, "");
+  const compactText = normalizedText.replace(/\s+/g, "");
+  return compactTerm.length >= 2 && compactText.includes(compactTerm);
+}
+
+function findMentionedPromotionPackages(packages, customerText) {
+  if (!customerText) return [];
+  return packages.filter((packageOption) =>
+    packageTerms(packageOption).some((term) =>
+      promotionTermAppearsInText(term, customerText)
+    )
+  );
+}
+
+function resolvePromotionPackage(packages, requestedOption) {
+  const requested = normalizeServiceName(requestedOption);
+  if (!requested) return null;
+
+  const compactRequested = requested.replace(/\s+/g, "");
+  const matches = packages.filter((packageOption) =>
+    packageTerms(packageOption).some((term) =>
+      term === requested || term.replace(/\s+/g, "") === compactRequested
+    )
+  );
+  return matches.length === 1 ? matches[0] : null;
+}
+
 function findOverlappingPricePromotionPair(promotions) {
   const enabled = (Array.isArray(promotions) ? promotions : []).filter(
     (promotion) =>
@@ -127,13 +238,14 @@ function findOverlappingPricePromotionPair(promotions) {
 }
 
 /**
- * Returns the first active promotion explicitly linked to the canonical service
- * for price-enquiry delivery. Missing/legacy fields fail closed, so deploying
- * this feature cannot make an old promotion start sending unexpectedly.
+ * Resolves one active service-level promotion set and then the package media
+ * inside it. Generic price enquiries return every package. If the customer
+ * explicitly named a package, only that exact configured package/alias returns.
  */
-function getPricePromotion(
+function getPricePromotionBundle(
   promotions,
   serviceName,
+  requestedOption = null,
   now = new Date(),
   options = {}
 ) {
@@ -146,19 +258,55 @@ function getPricePromotion(
       normalizeServiceName(promotion?.linkedService) === target
   );
 
-  // Fail closed if configuration is ambiguous. Count every active auto-send
-  // promo for the service before checking media completeness so stale/manual
-  // config cannot silently make one of several offers "win".
+  // Only one active service-level campaign may own automatic price media.
   if (serviceMatches.length !== 1) return null;
 
   const [promotion] = serviceMatches;
+  if (findAmbiguousPromotionPackageTerm(promotion)) return null;
+
+  const packages = promotionPackages(promotion);
   if (
-    !String(promotion?.imageUrl || "").trim() ||
-    !String(promotion?.caption || "").trim()
+    packages.length === 0 ||
+    packages.some((item) => !item.name || !item.imageUrl || !item.caption)
   ) {
     return null;
   }
-  return promotion;
+
+  const requested = String(requestedOption || "").trim();
+  if (!requested) {
+    return { promotion, packages };
+  }
+
+  const matchedPackage = resolvePromotionPackage(packages, requested);
+  return matchedPackage
+    ? { promotion, packages: [matchedPackage] }
+    : null;
+}
+
+/**
+ * Backward-compatible helper for older callers/tests. It only returns a single
+ * media option; multi-package campaigns intentionally return null.
+ */
+function getPricePromotion(
+  promotions,
+  serviceName,
+  now = new Date(),
+  options = {}
+) {
+  const bundle = getPricePromotionBundle(
+    promotions,
+    serviceName,
+    null,
+    now,
+    options
+  );
+  if (bundle?.packages?.length !== 1) return null;
+  const [packageOption] = bundle.packages;
+  return {
+    ...bundle.promotion,
+    imageUrl: packageOption.imageUrl,
+    caption: packageOption.caption,
+  };
 }
 
 module.exports = {
@@ -167,6 +315,10 @@ module.exports = {
   getActivePromotion,
   getActivePromotions,
   getPricePromotion,
+  getPricePromotionBundle,
+  promotionPackages,
+  findAmbiguousPromotionPackageTerm,
+  findMentionedPromotionPackages,
   findOverlappingPricePromotionPair,
   isPromotionActive,
   localDateString,
