@@ -192,8 +192,21 @@ function promotionTermAppearsInText(term, text) {
   const paddedText = ` ${normalizedText} `;
   if (paddedText.includes(` ${normalizedTerm} `)) return true;
 
-  // Compact matching covers harmless spacing differences such as "PackageB"
-  // and mixed Latin/Chinese configured wording.
+  // For ASCII-only multi-word terms such as "Package A", allow omitted spaces
+  // while preserving an alphanumeric boundary around the whole configured
+  // term. Without this, compact "packagea" would falsely match common phrases
+  // such as "package available" or Malaysian "package apa ada".
+  if (/^[a-z0-9 ]+$/u.test(normalizedTerm)) {
+    const words = normalizedTerm.split(" ").filter(Boolean);
+    const compactPattern = words.join("\\s*");
+    return new RegExp(
+      "(^|[^a-z0-9])" + compactPattern + "([^a-z0-9]|$)",
+      "i"
+    ).test(normalizedText);
+  }
+
+  // Compact matching is still useful for mixed Latin/CJK wording such as
+  // "3D 小颜术" versus "3D小颜术".
   const compactTerm = normalizedTerm.replace(/\s+/g, "");
   const compactText = normalizedText.replace(/\s+/g, "");
   return compactTerm.length >= 2 && compactText.includes(compactTerm);
