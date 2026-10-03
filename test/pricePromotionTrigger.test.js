@@ -41,7 +41,7 @@ test("explicit price enquiry resolves the matching service promotion", async () 
   }));
 
   assert.equal(promo?.name, "3D First Trial");
-  assert.deepEqual(calls, [[42, "https://example.test/3d.jpg", 24]]);
+  assert.deepEqual(calls, [[42, "https://example.test/3d.jpg", "3D promo", 24]]);
 });
 
 test("normal service questions and unknown services do not resolve promo media", async () => {
