@@ -152,20 +152,24 @@ function findAmbiguousPromotionPackageTerm(promotion) {
   const packages = promotionPackages(promotion);
   const owners = new Map();
 
-  for (const packageOption of packages) {
+  packages.forEach((packageOption, index) => {
     const terms = [...new Set(packageTerms(packageOption))];
     for (const term of terms) {
       const existing = owners.get(term);
-      if (existing && existing !== packageOption.name) {
-        return {
+      if (existing && existing.index !== index) {
+        owners.set("__ambiguity__", {
           term,
-          firstPackage: existing,
+          firstPackage: existing.name,
           secondPackage: packageOption.name,
-        };
+        });
+        return;
       }
-      owners.set(term, packageOption.name);
+      owners.set(term, { index, name: packageOption.name });
     }
-  }
+  });
+
+  const ambiguity = owners.get("__ambiguity__");
+  if (ambiguity) return ambiguity;
   return null;
 }
 
