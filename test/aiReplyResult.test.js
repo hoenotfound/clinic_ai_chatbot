@@ -205,3 +205,23 @@ test("canonical service matching preserves Chinese names and aliases without col
   assert.equal(canonicalConfiguredName("3D 骨盆调理", services), "3D 骨盆调理");
   assert.equal(canonicalConfiguredService("小脸", services, aliases), "3D 小颜术");
 });
+
+test("canonical service matching tolerates harmless Latin-Chinese spacing changes", () => {
+  const services = [
+    { name: "3D 小颜术" },
+    { name: "9D 逆龄抗衰" },
+  ];
+
+  assert.equal(canonicalConfiguredName("3D小颜术", services), "3D 小颜术");
+  assert.equal(canonicalConfiguredService("9D逆龄抗衰", services, []), "9D 逆龄抗衰");
+});
+
+test("compact canonical matching fails closed when formatting would be ambiguous", () => {
+  const services = [
+    { name: "AB C" },
+    { name: "A BC" },
+  ];
+
+  assert.equal(canonicalConfiguredName("ABC", services), null);
+});
+
