@@ -87,6 +87,21 @@ test("price promotion fails closed when two active auto-send promos match the sa
   assert.equal(findOverlappingPricePromotionPair([promo, second])?.length, 2);
 });
 
+test("stale second active auto-send promo still makes selection ambiguous even if its media is broken", () => {
+  const now = new Date("2026-09-10T04:00:00Z");
+  const brokenSecond = {
+    ...promo,
+    name: "Broken HIFU Offer",
+    imageUrl: "",
+    caption: "",
+  };
+
+  assert.equal(
+    getPricePromotion([promo, brokenSecond], "HIFU Non-Surgical Facelift", now),
+    null
+  );
+});
+
 test("non-overlapping auto-send promo windows for one service are allowed", () => {
   const september = { ...promo, validFrom: "2026-09-01", validUntil: "2026-09-30" };
   const october = {
