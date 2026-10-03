@@ -36,7 +36,8 @@ function activePromotionsList() {
         promotion.validFrom ? `from ${promotion.validFrom}` : null,
         promotion.validUntil ? `until ${promotion.validUntil}` : null,
       ].filter(Boolean).join(" ");
-      return `- ${promotion.name}: ${promotion.caption || "No additional caption configured."}${dates ? ` | ${dates}` : ""}`;
+      const linkedService = promotion.linkedService ? ` | service: ${promotion.linkedService}` : "";
+      return `- ${promotion.name}: ${promotion.caption || "No additional caption configured."}${linkedService}${dates ? ` | ${dates}` : ""}`;
     })
     .join("\n");
 }
@@ -323,6 +324,7 @@ STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code f
 {
   "reply": "the exact short customer-facing message",
   "outcome": "normal | needs_human | booking_ready",
+  "priceQuery": false,
   "treatment": "canonical configured service name if clearly known, otherwise null",
   "branch": "canonical configured business location name if clearly chosen, otherwise null",
   "appointmentPreference": "brief current day/date + time/range/daypart preference if clearly known, otherwise null",
@@ -334,6 +336,9 @@ STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code f
 
 Rules for structured fields:
 - "reply" must contain only what the ${terms.customerSingular} should see. Never put internal outcome names, control tokens, analysis, or JSON instructions inside it.
+- Set "priceQuery" to true ONLY when the customer's CURRENT message explicitly asks for a price, cost, fee, charge, package price, first-trial price, promotion price, or equivalent wording. A short follow-up such as "多少钱?", "price?", or "berapa?" counts when the current conversation clearly establishes which service it refers to. Do not set it true merely because your answer happens to mention a price.
+- When "priceQuery" is true and exactly one configured service is clearly being priced, set "treatment" to that canonical configured service even if the customer used an alias. If the price question covers multiple services or the service is unclear, set "treatment" to null rather than guessing.
+- "priceQuery" is internal metadata. Never mention it to the customer. Keep the visible price reply concise and do not promise that an image or promotion will be sent, because media delivery is handled separately and may fail.
 - The legacy internal field name "treatment" means the canonical configured ${terms.serviceSingular}; it is kept for backend compatibility while the product is migrated to industry-neutral naming.
 - The legacy internal field name "branch" means a canonical configured ${terms.locationSingular}; it is kept for backend compatibility. For renovation, the customer's property belongs in "projectLocation", not "branch".
 - The legacy internal field name "appointmentPreference" is still used for clinic scheduling. For renovation it carries a clearly stated site-visit timing preference and is REQUIRED when "nextStep" is "site_visit".
