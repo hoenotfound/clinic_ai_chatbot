@@ -1453,7 +1453,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                         onClick={() => setOpenIndex(null)}
                         className="h-10 rounded-xl border border-[var(--color-border)] bg-white px-4 text-xs font-semibold"
                       >
-                        Done
+                        Finish editing
                       </button>
                     </div>
                   </div>
