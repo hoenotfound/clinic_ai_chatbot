@@ -789,6 +789,7 @@ async function processIncomingMessage(
         treatment: details?.treatment,
         promotionOption,
         customerText: text,
+        conversationHistory: history,
         flagged,
         bookingReady,
         keywordReason,
