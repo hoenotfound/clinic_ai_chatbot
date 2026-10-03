@@ -1133,7 +1133,7 @@ function ConversationList({
                       {displayName(conversation)}
                     </span>
                     <span className={`shrink-0 text-[10px] ${conversation.is_unread ? "font-semibold text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
-                      {formatTime(conversation.last_message_at)}
+                      {formatConversationTime(conversation.last_message_at)}
                     </span>
                   </div>
                   <div className="mt-0.5 flex items-center gap-2">
@@ -2065,7 +2065,7 @@ function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
         {message.content && <p className="whitespace-pre-wrap break-words">{message.content}</p>}
         <div className={`mt-1.5 flex items-center gap-1.5 text-[10px] ${isPatient ? "text-[var(--color-text-muted)]" : "justify-end text-white/70"}`}>
           {message._optimistic && <Spinner className="h-2.5 w-2.5" />}
-          <span>{formatTime(message.created_at)}</span>
+          <span>{formatMessageTime(message.created_at)}</span>
           {!isPatient && !message._optimistic && !deliveryNeedsAction && (
             <DeliveryIndicator status={message.delivery_status} />
           )}
@@ -2150,7 +2150,7 @@ function formatDuration(seconds) {
   return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
 }
 
-function formatTime(value) {
+function formatConversationTime(value) {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -2163,4 +2163,14 @@ function formatTime(value) {
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function formatMessageTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    console.warn("Invalid date received:", value);
+    return "";
+  }
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
