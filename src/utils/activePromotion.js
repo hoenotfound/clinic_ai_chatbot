@@ -140,18 +140,25 @@ function getPricePromotion(
   const target = normalizeServiceName(serviceName);
   if (!target) return null;
 
-  const matches = getActivePromotions(promotions, now, options).filter(
+  const serviceMatches = getActivePromotions(promotions, now, options).filter(
     (promotion) =>
       promotion?.sendOnPriceQuery === true &&
-      Boolean(String(promotion?.imageUrl || "").trim()) &&
-      Boolean(String(promotion?.caption || "").trim()) &&
       normalizeServiceName(promotion?.linkedService) === target
   );
 
-  // Fail closed if configuration is ambiguous. Settings validation prevents
-  // overlapping auto-send windows, but this protects live delivery from stale
-  // or manually edited config too.
-  return matches.length === 1 ? matches[0] : null;
+  // Fail closed if configuration is ambiguous. Count every active auto-send
+  // promo for the service before checking media completeness so stale/manual
+  // config cannot silently make one of several offers "win".
+  if (serviceMatches.length !== 1) return null;
+
+  const [promotion] = serviceMatches;
+  if (
+    !String(promotion?.imageUrl || "").trim() ||
+    !String(promotion?.caption || "").trim()
+  ) {
+    return null;
+  }
+  return promotion;
 }
 
 module.exports = {
