@@ -5,6 +5,8 @@ const {
   getActivePromotion,
   getActivePromotions,
   getPricePromotion,
+  getPricePromotionBundle,
+  findAmbiguousPromotionPackageTerm,
   findOverlappingPricePromotionPair,
   isPromotionActive,
   localDateString,
@@ -121,4 +123,146 @@ test("non-overlapping auto-send promo windows for one service are allowed", () =
     )?.name,
     "HIFU October"
   );
+});
+
+
+test("multi-package promotion returns all packages for a generic service price enquiry", () => {
+  const now = new Date("2026-09-10T04:00:00Z");
+  const packagePromo = {
+    ...promo,
+    name: "Pelvis Packages",
+    linkedService: "Pelvis 骨盆调理",
+    imageUrl: "",
+    caption: "",
+    packages: [
+      {
+        name: "Package A",
+        title: "全身深层调理 + 骨盆全身体态调整（7合1）",
+        aliases: ["A", "7合1"],
+        imageUrl: "https://example.com/a.jpg",
+        caption: "Package A promo",
+      },
+      {
+        name: "Package B",
+        title: "骨盆 + 全身针对性调整子宫调理套餐",
+        aliases: ["B", "子宫套餐"],
+        imageUrl: "https://example.com/b.jpg",
+        caption: "Package B promo",
+      },
+      {
+        name: "Package C",
+        title: "骨盆 + 全身针对性整骨",
+        aliases: ["C", "整骨套餐"],
+        imageUrl: "https://example.com/c.jpg",
+        caption: "Package C promo",
+      },
+    ],
+  };
+
+  const bundle = getPricePromotionBundle(
+    [packagePromo],
+    "Pelvis 骨盆调理",
+    null,
+    now
+  );
+  assert.deepEqual(
+    bundle.packages.map((item) => item.name),
+    ["Package A", "Package B", "Package C"]
+  );
+  assert.equal(getPricePromotion([packagePromo], "Pelvis 骨盆调理", now), null);
+});
+
+test("named package or alias resolves only that package and unknown package fails closed", () => {
+  const now = new Date("2026-09-10T04:00:00Z");
+  const packagePromo = {
+    ...promo,
+    name: "Pelvis Packages",
+    linkedService: "Pelvis 骨盆调理",
+    imageUrl: "",
+    caption: "",
+    packages: [
+      {
+        name: "Package A",
+        title: "全身深层调理 + 骨盆全身体态调整（7合1）",
+        aliases: ["A", "7合1"],
+        imageUrl: "https://example.com/a.jpg",
+        caption: "Package A promo",
+      },
+      {
+        name: "Package B",
+        title: "骨盆 + 全身针对性调整子宫调理套餐",
+        aliases: ["B", "子宫套餐"],
+        imageUrl: "https://example.com/b.jpg",
+        caption: "Package B promo",
+      },
+    ],
+  };
+
+  assert.deepEqual(
+    getPricePromotionBundle([packagePromo], "Pelvis 骨盆调理", "Package B", now)
+      .packages.map((item) => item.name),
+    ["Package B"]
+  );
+  assert.deepEqual(
+    getPricePromotionBundle([packagePromo], "Pelvis 骨盆调理", "子宫套餐", now)
+      .packages.map((item) => item.name),
+    ["Package B"]
+  );
+  assert.equal(
+    getPricePromotionBundle([packagePromo], "Pelvis 骨盆调理", "Package D", now),
+    null
+  );
+});
+
+test("ambiguous package aliases fail closed", () => {
+  const packagePromo = {
+    ...promo,
+    name: "Pelvis Packages",
+    linkedService: "Pelvis 骨盆调理",
+    imageUrl: "",
+    caption: "",
+    packages: [
+      {
+        name: "Package A",
+        title: "",
+        aliases: ["pelvis"],
+        imageUrl: "https://example.com/a.jpg",
+        caption: "A",
+      },
+      {
+        name: "Package B",
+        title: "",
+        aliases: ["pelvis"],
+        imageUrl: "https://example.com/b.jpg",
+        caption: "B",
+      },
+    ],
+  };
+
+  const ambiguous = findAmbiguousPromotionPackageTerm(packagePromo);
+  assert.equal(ambiguous.firstPackage, "Package A");
+  assert.equal(ambiguous.secondPackage, "Package B");
+  assert.equal(
+    getPricePromotionBundle([packagePromo], "Pelvis 骨盆调理", null),
+    null
+  );
+});
+
+
+test("duplicate package names are treated as ambiguous configuration", () => {
+  const duplicateNames = {
+    ...promo,
+    name: "Pelvis Packages",
+    linkedService: "Pelvis 骨盆调理",
+    imageUrl: "",
+    caption: "",
+    packages: [
+      { name: "Package A", title: "First", aliases: [], imageUrl: "https://example.com/a1.jpg", caption: "A1" },
+      { name: "Package A", title: "Second", aliases: [], imageUrl: "https://example.com/a2.jpg", caption: "A2" },
+    ],
+  };
+
+  const ambiguous = findAmbiguousPromotionPackageTerm(duplicateNames);
+  assert.equal(ambiguous.firstPackage, "Package A");
+  assert.equal(ambiguous.secondPackage, "Package A");
 });
