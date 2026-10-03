@@ -199,5 +199,7 @@ test(
     assert.equal(byId.get("999").spend, 0);
     assert.equal(byId.get("999").crmLeads, 1);
     assert.equal(byId.get("999").currency, null);
+    assert.equal(byId.get("999").costPerLead, null);
+    assert.equal(byId.get("999").cpc, null);
   }
 );
