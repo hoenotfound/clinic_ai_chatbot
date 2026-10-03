@@ -1193,15 +1193,17 @@ test("Promotions confirms before switching a populated package campaign to Singl
   await expect(page.getByRole("button", { name: "Multiple packages", pressed: true })).toBeVisible();
 
   const dismissDialog = page.waitForEvent("dialog");
-  await page.getByRole("button", { name: "Single offer" }).click();
+  const firstClick = page.getByRole("button", { name: "Single offer" }).click();
   const firstDialog = await dismissDialog;
   expect(firstDialog.message()).toContain("Changing to Single offer will remove 2 package options when you save.");
   await firstDialog.dismiss();
+  await firstClick;
   await expect(page.getByRole("button", { name: "Multiple packages", pressed: true })).toBeVisible();
 
   const acceptDialog = page.waitForEvent("dialog");
-  await page.getByRole("button", { name: "Single offer" }).click();
+  const secondClick = page.getByRole("button", { name: "Single offer" }).click();
   const secondDialog = await acceptDialog;
   await secondDialog.accept();
+  await secondClick;
   await expect(page.getByRole("button", { name: "Single offer", pressed: true })).toBeVisible();
 });
