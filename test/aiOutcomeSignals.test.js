@@ -74,6 +74,8 @@ test("system prompt uses structured outcomes and keeps Booking Ready separate fr
   assert.match(prompt, /answer the requested prices\/comparison directly/i);
   assert.match(prompt, /Do not rely on automatic media for a multi-package explicit comparison/i);
   assert.match(prompt, /Never choose Package A\/B\/C merely from symptoms/i);
+  assert.match(prompt, /Outbound media routing does NOT trust this field/i);
+  assert.match(prompt, /customer's own current\/recent message/i);
   assert.match(prompt, /If the customer asks the service price\/packages generally, set it to null/i);
   assert.match(prompt, /Set "packageQuery" to true ONLY when the customer's CURRENT message explicitly asks to see, list, compare, or know the available packages/i);
   assert.match(prompt, /Merely mentioning a package while asking about suitability, symptoms, results, or treatment details is not a packageQuery/i);
