@@ -115,11 +115,27 @@ function cleanPromotions(items) {
     const caption = text(item?.caption).trim();
     const validFrom = text(item?.validFrom).trim();
     const validUntil = text(item?.validUntil).trim();
-    if (!name && !linkedService && !imageUrl && !caption && !validFrom && !validUntil) return null;
+    const packages = cleanList(item?.packages, (packageOption) => {
+      const packageName = text(packageOption?.name).trim();
+      const title = text(packageOption?.title).trim();
+      const aliases = cleanStrings(packageOption?.aliases || []);
+      const packageImageUrl = text(packageOption?.imageUrl).trim();
+      const packageCaption = text(packageOption?.caption).trim();
+      if (!packageName && !title && !aliases.length && !packageImageUrl && !packageCaption) return null;
+      return {
+        name: packageName,
+        title,
+        aliases,
+        imageUrl: packageImageUrl,
+        caption: packageCaption,
+      };
+    });
+    if (!name && !linkedService && !imageUrl && !caption && !packages.length && !validFrom && !validUntil) return null;
     return {
       name,
       linkedService,
       sendOnPriceQuery: item?.sendOnPriceQuery === true,
+      packages,
       imageUrl,
       caption,
       validFrom: validFrom || null,
@@ -380,8 +396,12 @@ export default function ClientSetupWizard() {
         if (!promotion.linkedService || !serviceNames.has(promotion.linkedService.toLowerCase())) {
           return "Price-triggered promotions must link to a service currently configured.";
         }
-        if (!promotion.imageUrl || !promotion.caption) {
-          return "Price-triggered promotions need both an image and a caption.";
+        if (promotion.packages.length > 0) {
+          if (promotion.packages.some((item) => !item.name || !item.imageUrl || !item.caption)) {
+            return "Every automatic package option needs a package name, image, and caption.";
+          }
+        } else if (!promotion.imageUrl || !promotion.caption) {
+          return "Add package options, or provide a single-offer image and caption.";
         }
       }
       if (!isIsoDate(promotion.validFrom) || !isIsoDate(promotion.validUntil)) {
@@ -884,26 +904,39 @@ function PromotionsStep({ draft, setDraft, onError }) {
     ...item,
     linkedService: item.linkedService || "",
     sendOnPriceQuery: item.sendOnPriceQuery === true,
+    packages: Array.isArray(item.packages)
+      ? item.packages.map((packageOption) => ({
+          ...packageOption,
+          name: packageOption.name || "",
+          title: packageOption.title || "",
+          aliases: Array.isArray(packageOption.aliases) ? [...packageOption.aliases] : [],
+          imageUrl: packageOption.imageUrl || "",
+          caption: packageOption.caption || "",
+        }))
+      : [],
+    imageUrl: item.imageUrl || "",
+    caption: item.caption || "",
     validFrom: item.validFrom || "",
     validUntil: item.validUntil || "",
   }));
   return (
     <div>
-      <StepHeading eyebrow="8 · Promotions" title="Promotions" optional description="Add current offers and optionally send the matching image + caption when a customer asks that service's price. Leaving this empty does not block business setup." />
+      <StepHeading eyebrow="8 · Promotions" title="Promotions" optional description="Link one promotion campaign to a service. Add package options inside it when that service has Package A/B/C or similar choices." />
       <ObjectList
         items={promotions}
         setItems={(items) => setDraft((current) => ({ ...current, promotions: items }))}
-        emptyItem={{ name: "", linkedService: "", sendOnPriceQuery: true, imageUrl: "", caption: "", validFrom: "", validUntil: "" }}
-        addLabel="Add promotion"
+        emptyItem={{ name: "", linkedService: "", sendOnPriceQuery: true, packages: [], imageUrl: "", caption: "", validFrom: "", validUntil: "" }}
+        addLabel="Add promotion campaign"
         onError={onError}
         fields={[
-          { key: "name", label: "Promotion name" },
+          { key: "name", label: "Promotion / campaign name" },
           { key: "linkedService", label: "Linked service", type: "select", options: serviceNames, placeholder: "Choose a configured service" },
-          { key: "imageUrl", label: "Promotion image", type: "image" },
-          { key: "caption", label: "Caption", textarea: true },
           { key: "validFrom", label: "Valid from", type: "date" },
           { key: "validUntil", label: "Valid until", type: "date" },
-          { key: "sendOnPriceQuery", label: "Automatic send", type: "checkbox", checkboxLabel: "Send image + caption when a customer asks this service's price" },
+          { key: "sendOnPriceQuery", label: "Automatic send", type: "checkbox", checkboxLabel: "Send matching package media when a customer asks this service's price" },
+          { key: "packages", label: "Package options (optional)", type: "packages" },
+          { key: "imageUrl", label: "Single-offer image (only when no package options are added)", type: "image" },
+          { key: "caption", label: "Single-offer caption (only when no package options are added)", textarea: true },
         ]}
       />
     </div>
@@ -1021,9 +1054,15 @@ function ObjectList({ items, setItems, emptyItem, addLabel, fields, onError }) {
           <div className="mb-3 flex items-center justify-between gap-3"><p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Entry {index + 1}</p><button type="button" onClick={() => setItems(items.filter((_, itemIndex) => itemIndex !== index))} className="min-h-10 rounded-lg px-3 text-xs font-semibold text-[var(--color-danger)] transition hover:bg-[var(--color-danger-light)]">Remove</button></div>
           <div className="grid gap-3 sm:grid-cols-2">
             {fields.map((field) => (
-              <label key={field.key} className={field.textarea || field.type === "image" ? "sm:col-span-2" : ""}>
+              <label key={field.key} className={field.textarea || field.type === "image" || field.type === "packages" ? "sm:col-span-2" : ""}>
                 <span className="mb-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">{field.label}</span>
-                {field.type === "checkbox" ? (
+                {field.type === "packages" ? (
+                  <PromotionPackagesField
+                    items={Array.isArray(item?.[field.key]) ? item[field.key] : []}
+                    setItems={(value) => change(index, field.key, value)}
+                    onError={onError}
+                  />
+                ) : field.type === "checkbox" ? (
                   <span className="flex min-h-11 items-center gap-3 rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-sm">
                     <input type="checkbox" checked={item?.[field.key] === true} onChange={(event) => change(index, field.key, event.target.checked)} />
                     <span>{field.checkboxLabel || "Enabled"}</span>
@@ -1084,6 +1123,47 @@ function StringList({ items, setItems, addLabel }) {
         <div key={index} className="flex items-start gap-2"><textarea rows={2} className={`${TEXTAREA_CLASS} min-w-0 flex-1`} value={item || ""} onChange={(event) => change(index, event.target.value)} /><button type="button" onClick={() => setItems(items.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove entry ${index + 1}`} className="h-11 w-11 shrink-0 rounded-xl text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]">✕</button></div>
       ))}
       <button type="button" onClick={() => setItems([...items, ""])} className="h-11 w-full rounded-xl border border-dashed border-[var(--color-border)] px-3 text-sm font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]">+ {addLabel}</button>
+    </div>
+  );
+}
+
+function PromotionPackagesField({ items, setItems, onError }) {
+  function change(index, key, value) {
+    const next = items.slice();
+    next[index] = { ...next[index], [key]: value };
+    setItems(next);
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-[11px] leading-5 text-[var(--color-text-muted)]">
+        Add Package A/B/C here when one service has several price options. General
+        price enquiries send all options; a named package sends only that option.
+      </p>
+      {items.map((item, index) => (
+        <div key={index} className="rounded-xl border border-[var(--color-border)] bg-white p-3">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Package {index + 1}</p>
+            <button type="button" onClick={() => setItems(items.filter((_, itemIndex) => itemIndex !== index))} className="min-h-9 rounded-lg px-2.5 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]">Remove</button>
+          </div>
+          <div className="grid gap-3">
+            <Field label="Package name"><input className={INPUT_CLASS} value={item.name || ""} placeholder="Package A" onChange={(event) => change(index, "name", event.target.value)} /></Field>
+            <Field label="Package title / description"><input className={INPUT_CLASS} value={item.title || ""} placeholder="全身深层调理 + 骨盆全身体态调整（7合1）" onChange={(event) => change(index, "title", event.target.value)} /></Field>
+            <Field label="Customer wording / aliases">
+              <StringList items={Array.isArray(item.aliases) ? item.aliases : []} setItems={(value) => change(index, "aliases", value)} addLabel="Add package alias" />
+            </Field>
+            <Field label="Package image"><PromoImageField value={item.imageUrl || ""} onChange={(value) => change(index, "imageUrl", value)} onError={onError} /></Field>
+            <Field label="Package caption"><textarea rows={3} className={TEXTAREA_CLASS} value={item.caption || ""} onChange={(event) => change(index, "caption", event.target.value)} /></Field>
+          </div>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => setItems([...items, { name: "", title: "", aliases: [], imageUrl: "", caption: "" }])}
+        className="h-10 w-full rounded-xl border border-dashed border-[var(--color-border)] px-3 text-xs font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"
+      >
+        + Add package option
+      </button>
     </div>
   );
 }
