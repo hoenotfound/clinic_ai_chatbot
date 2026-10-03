@@ -440,10 +440,10 @@ function ImageFieldEditor({ value, onChange, onError }) {
         <img
           src={value}
           alt="Promotion graphic"
-          className="mb-2 max-h-48 w-full rounded-xl border border-[var(--color-border)] object-cover sm:max-h-56"
+          className="mb-3 max-h-52 w-full rounded-xl border border-[var(--color-border)] object-cover"
         />
       )}
-      <div className="mb-2 flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <input ref={fileInputRef} type="file" accept="image/jpeg,image/png" onChange={handleFilePicked} className="hidden" />
         <button
           type="button"
@@ -464,17 +464,83 @@ function ImageFieldEditor({ value, onChange, onError }) {
           </button>
         )}
       </div>
-      <input
-        className={`${inputClass} text-xs`}
-        value={value}
-        placeholder="or paste an already-hosted image URL"
-        onChange={(e) => onChange(e.target.value)}
-      />
+      <details className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
+        <summary className="cursor-pointer text-[11px] font-semibold text-[var(--color-text-muted)]">
+          Advanced · use image URL
+        </summary>
+        <input
+          className={`${inputClass} mt-2 text-xs`}
+          value={value}
+          placeholder="https://..."
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </details>
+    </div>
+  );
+}
+
+function PromotionAliasChips({ items, onChange }) {
+  const [draft, setDraft] = useState("");
+
+  function addDraft() {
+    const value = draft.trim();
+    if (!value) return;
+    const exists = items.some((item) => String(item).trim().toLowerCase() === value.toLowerCase());
+    if (!exists) onChange([...items, value]);
+    setDraft("");
+  }
+
+  function onKeyDown(event) {
+    if (event.key === "Enter" || event.key === ",") {
+      event.preventDefault();
+      addDraft();
+    }
+  }
+
+  return (
+    <div>
+      {items.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-2">
+          {items.map((item, index) => (
+            <span key={`${item}-${index}`} className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-xs">
+              <span className="truncate">{item}</span>
+              <button
+                type="button"
+                onClick={() => onChange(items.filter((_, itemIndex) => itemIndex !== index))}
+                aria-label={`Remove ${item}`}
+                className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <input
+          className={`${inputClass} min-w-0 flex-1`}
+          value={draft}
+          placeholder="e.g. 子宫套餐, 7合1"
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={onKeyDown}
+         
+        />
+        <button
+          type="button"
+          onClick={addDraft}
+          className="h-11 shrink-0 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold"
+        >
+          Add
+        </button>
+      </div>
+      <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">Add the words customers may naturally use for this package.</p>
     </div>
   );
 }
 
 function PromotionPackagesEditor({ items, onChange, onError }) {
+  const [openIndex, setOpenIndex] = useState(null);
+
   function updatePackage(index, key, value) {
     const next = items.slice();
     next[index] = { ...next[index], [key]: value };
@@ -483,90 +549,130 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
 
   function removePackage(index) {
     onChange(items.filter((_, itemIndex) => itemIndex !== index));
+    setOpenIndex((current) => {
+      if (current === index) return null;
+      if (current != null && current > index) return current - 1;
+      return current;
+    });
   }
 
   function addPackage() {
-    onChange([
+    const next = [
       ...items,
       { name: "", title: "", aliases: [], imageUrl: "", caption: "" },
-    ]);
+    ];
+    onChange(next);
+    setOpenIndex(next.length - 1);
   }
 
   return (
     <div className="space-y-3">
-      <p className="text-[11px] leading-5 text-[var(--color-text-muted)]">
-        Use package options when one service has choices such as Package A / B / C.
-        A general price enquiry sends all options; a customer who names one package
-        receives only that package.
-      </p>
-      {items.map((item, index) => (
-        <div key={index} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
-              Package {index + 1}
-            </p>
-            <button
-              type="button"
-              onClick={() => removePackage(index)}
-              className="min-h-9 rounded-lg px-2.5 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
-            >
-              Remove
-            </button>
+      <div className="rounded-xl bg-[var(--color-bg)] px-3.5 py-3 text-xs leading-5 text-[var(--color-text-muted)]">
+        A general price/package enquiry sends all options. If a customer names one package, only that package is sent.
+      </div>
+
+      {items.map((item, index) => {
+        const expanded = openIndex === index;
+        const packageName = item.name?.trim() || `Package ${index + 1}`;
+        const subtitle = item.title?.trim() || (item.imageUrl ? "Image added" : "Details not completed");
+        return (
+          <div key={index} className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+            <div className="flex items-center gap-3 p-3">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] text-[10px] text-[var(--color-text-muted)]">
+                {item.imageUrl ? <img src={item.imageUrl} alt="" className="h-full w-full object-cover" /> : "No image"}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-bold">{packageName}</p>
+                <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-[var(--color-text-muted)]">{subtitle}</p>
+                {item.aliases?.length > 0 && (
+                  <p className="mt-1 truncate text-[10px] text-[var(--color-text-muted)]">
+                    Also called: {item.aliases.join(", ")}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpenIndex(expanded ? null : index)}
+                className="h-10 shrink-0 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold"
+              >
+                {expanded ? "Close" : "Edit"}
+              </button>
+            </div>
+
+            {expanded && (
+              <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:p-4">
+                <div className="grid gap-4">
+                  <div>
+                    <label className={labelClass}>Package name</label>
+                    <input
+                      className={inputClass}
+                      value={item.name || ""}
+                      placeholder="Package A"
+                      onChange={(e) => updatePackage(index, "name", e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Package title / description</label>
+                    <input
+                      className={inputClass}
+                      value={item.title || ""}
+                      placeholder="全身深层调理 + 骨盆全身体态调整（7合1）"
+                      onChange={(e) => updatePackage(index, "title", e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Customer may also call this</label>
+                    <PromotionAliasChips
+                      items={Array.isArray(item.aliases) ? item.aliases : []}
+                      onChange={(value) => updatePackage(index, "aliases", value)}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Promotion image</label>
+                    <ImageFieldEditor
+                      value={item.imageUrl || ""}
+                      onChange={(value) => updatePackage(index, "imageUrl", value)}
+                      onError={onError}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Caption sent with this image</label>
+                    <textarea
+                      rows={3}
+                      className={textareaClass}
+                      value={item.caption || ""}
+                      onChange={(e) => updatePackage(index, "caption", e.target.value)}
+                    />
+                  </div>
+                  <div className="flex flex-col-reverse gap-2 border-t border-[var(--color-border)] pt-3 sm:flex-row sm:items-center sm:justify-between">
+                    <button
+                      type="button"
+                      onClick={() => removePackage(index)}
+                      className="h-10 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+                    >
+                      Remove package
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOpenIndex(null)}
+                      className="h-10 rounded-xl bg-[var(--color-primary)] px-4 text-xs font-semibold text-white"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-          <div className="grid gap-3">
-            <div>
-              <label className="mb-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">Package name</label>
-              <input
-                className={inputClass}
-                value={item.name || ""}
-                placeholder="Package A"
-                onChange={(e) => updatePackage(index, "name", e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">Package title / description</label>
-              <input
-                className={inputClass}
-                value={item.title || ""}
-                placeholder="全身深层调理 + 骨盆全身体态调整（7合1）"
-                onChange={(e) => updatePackage(index, "title", e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">Customer wording / aliases</label>
-              <StringListEditor
-                items={Array.isArray(item.aliases) ? item.aliases : []}
-                onChange={(value) => updatePackage(index, "aliases", value)}
-                addLabel="Add package alias"
-                placeholder="e.g. A, 7合1, 子宫套餐"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">Package image</label>
-              <ImageFieldEditor
-                value={item.imageUrl || ""}
-                onChange={(value) => updatePackage(index, "imageUrl", value)}
-                onError={onError}
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">Package caption</label>
-              <textarea
-                rows={3}
-                className={textareaClass}
-                value={item.caption || ""}
-                onChange={(e) => updatePackage(index, "caption", e.target.value)}
-              />
-            </div>
-          </div>
-        </div>
-      ))}
+        );
+      })}
+
       <button
         type="button"
         onClick={addPackage}
-        className="h-10 w-full rounded-xl border border-dashed border-[var(--color-border)] px-3 text-xs font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"
+        className="h-11 w-full rounded-xl border border-dashed border-[var(--color-border)] px-3 text-sm font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"
       >
-        + Add package option
+        + Add package
       </button>
     </div>
   );
@@ -999,19 +1105,10 @@ function FaqsTab({ config, onSaved, onError }) {
 
 function PromotionsTab({ config, onSaved, onError }) {
   const serviceNames = (config.services || []).map((service) => service.name).filter(Boolean);
-  const promotionFields = [
-    { key: "name", label: "Promotion / campaign name" },
-    { key: "linkedService", label: "Linked service", type: "select", options: serviceNames, placeholder: "Choose the service this promotion belongs to" },
-    { key: "validFrom", label: "Valid from (optional)", type: "date" },
-    { key: "validUntil", label: "Valid until (optional)", type: "date" },
-    { key: "sendOnPriceQuery", label: "Automatic send", type: "checkbox", checkboxLabel: "Send matching package media when a customer asks this service's price or available packages" },
-    { key: "packages", label: "Package options (optional)", type: "packages" },
-    { key: "imageUrl", label: "Single-offer image (used only when no package options are added)", type: "image" },
-    { key: "caption", label: "Single-offer caption (used only when no package options are added)", type: "textarea", rows: 2 },
-  ];
   const [items, setItems] = useState(() =>
     (config.promotions || []).map((p) => ({
       ...p,
+      _offerType: Array.isArray(p.packages) && p.packages.length > 0 ? "packages" : "single",
       linkedService: p.linkedService || "",
       sendOnPriceQuery: p.sendOnPriceQuery === true,
       packages: Array.isArray(p.packages)
@@ -1030,7 +1127,52 @@ function PromotionsTab({ config, onSaved, onError }) {
       validUntil: p.validUntil || "",
     }))
   );
+  const [openIndex, setOpenIndex] = useState(null);
   const [saving, setSaving] = useState(false);
+
+  function updateItem(index, patch) {
+    const next = items.slice();
+    next[index] = { ...next[index], ...patch };
+    setItems(next);
+  }
+
+  function addPromotion() {
+    const service = serviceNames.length === 1 ? serviceNames[0] : "";
+    const next = [
+      ...items,
+      {
+        name: service ? `${service} Promotion` : "",
+        linkedService: service,
+        sendOnPriceQuery: true,
+        _offerType: "single",
+        packages: [],
+        imageUrl: "",
+        caption: "",
+        validFrom: "",
+        validUntil: "",
+      },
+    ];
+    setItems(next);
+    setOpenIndex(next.length - 1);
+  }
+
+  function removePromotion(index) {
+    setItems(items.filter((_, itemIndex) => itemIndex !== index));
+    setOpenIndex((current) => {
+      if (current === index) return null;
+      if (current != null && current > index) return current - 1;
+      return current;
+    });
+  }
+
+  function selectService(index, service) {
+    const current = items[index];
+    const autoName = !current.name?.trim() || current.name === `${current.linkedService} Promotion`;
+    updateItem(index, {
+      linkedService: service,
+      ...(autoName && service ? { name: `${service} Promotion` } : {}),
+    });
+  }
 
   async function handleSave() {
     const cleaned = items
@@ -1043,30 +1185,35 @@ function PromotionsTab({ config, onSaved, onError }) {
         p.validFrom ||
         p.validUntil
       )
-      .map((p) => ({
-        name: p.name.trim(),
-        linkedService: p.linkedService.trim(),
-        sendOnPriceQuery: p.sendOnPriceQuery === true,
-        packages: (Array.isArray(p.packages) ? p.packages : [])
-          .filter((item) =>
-            String(item?.name || "").trim() ||
-            String(item?.title || "").trim() ||
-            String(item?.imageUrl || "").trim() ||
-            String(item?.caption || "").trim() ||
-            (Array.isArray(item?.aliases) && item.aliases.some((alias) => String(alias || "").trim()))
-          )
-          .map((item) => ({
-            name: String(item.name || "").trim(),
-            title: String(item.title || "").trim(),
-            aliases: cleanStrings(item.aliases || []),
-            imageUrl: String(item.imageUrl || "").trim(),
-            caption: String(item.caption || "").trim(),
-          })),
-        imageUrl: p.imageUrl.trim(),
-        caption: p.caption.trim(),
-        validFrom: p.validFrom.trim() || null,
-        validUntil: p.validUntil.trim() || null,
-      }));
+      .map((p) => {
+        const packageMode = p._offerType === "packages";
+        return {
+          name: p.name.trim(),
+          linkedService: p.linkedService.trim(),
+          sendOnPriceQuery: p.sendOnPriceQuery === true,
+          packages: packageMode
+            ? (Array.isArray(p.packages) ? p.packages : [])
+                .filter((item) =>
+                  String(item?.name || "").trim() ||
+                  String(item?.title || "").trim() ||
+                  String(item?.imageUrl || "").trim() ||
+                  String(item?.caption || "").trim() ||
+                  (Array.isArray(item?.aliases) && item.aliases.some((alias) => String(alias || "").trim()))
+                )
+                .map((item) => ({
+                  name: String(item.name || "").trim(),
+                  title: String(item.title || "").trim(),
+                  aliases: cleanStrings(item.aliases || []),
+                  imageUrl: String(item.imageUrl || "").trim(),
+                  caption: String(item.caption || "").trim(),
+                }))
+            : [],
+          imageUrl: packageMode ? "" : p.imageUrl.trim(),
+          caption: packageMode ? "" : p.caption.trim(),
+          validFrom: p.validFrom.trim() || null,
+          validUntil: p.validUntil.trim() || null,
+        };
+      });
 
     if (cleaned.some((p) => !p.name)) {
       onError("Every promotion needs a name.");
@@ -1077,16 +1224,16 @@ function PromotionsTab({ config, onSaved, onError }) {
     for (const promotion of cleaned) {
       if (promotion.sendOnPriceQuery) {
         if (!promotion.linkedService || !canonicalServices.has(promotion.linkedService.toLowerCase())) {
-          onError("Price-triggered promotions must link to a configured service.");
+          onError("Automatic promotions must link to a configured service.");
           return;
         }
         if (promotion.packages.length > 0) {
           if (promotion.packages.some((item) => !item.name || !item.imageUrl || !item.caption)) {
-            onError("Every automatic package option needs a package name, image, and caption.");
+            onError("Every package needs a name, image, and caption.");
             return;
           }
         } else if (!promotion.imageUrl || !promotion.caption) {
-          onError("Add package options, or provide a single-offer image and caption.");
+          onError("Add an image and caption for this offer.");
           return;
         }
       }
@@ -1105,9 +1252,11 @@ function PromotionsTab({ config, onSaved, onError }) {
       const updated = await api.updateConfig({ promotions: cleaned });
       setItems(cleaned.map((p) => ({
         ...p,
+        _offerType: p.packages.length > 0 ? "packages" : "single",
         validFrom: p.validFrom || "",
         validUntil: p.validUntil || "",
       })));
+      setOpenIndex(null);
       onSaved(updated);
     } catch (err) {
       onError(err.message || "Couldn't save promotions.");
@@ -1120,18 +1269,195 @@ function PromotionsTab({ config, onSaved, onError }) {
     <div>
       <SectionHeading
         title="Promotions"
-        description="Link one active promotion campaign to a service. Add Package A/B/C inside that campaign when the service has multiple price options. General price enquiries send all package options; named package enquiries send only the matching option."
+        description="Create the offers your AI can share when customers ask about prices or packages."
       />
-      {serviceNames.length === 0 && <p className="mb-4 rounded-xl bg-[var(--color-accent-light)] p-3 text-xs">Add at least one service before linking a price-triggered promotion.</p>}
-      <RepeatableListEditor
-        items={items}
-        fields={promotionFields}
-        onChange={setItems}
-        emptyItem={{ name: "", linkedService: "", sendOnPriceQuery: true, packages: [], imageUrl: "", caption: "", validFrom: "", validUntil: "" }}
-        addLabel="Add promotion campaign"
-        onError={onError}
-      />
-      <div className="mt-4">
+      {serviceNames.length === 0 && (
+        <p className="mb-4 rounded-xl bg-[var(--color-accent-light)] p-3 text-xs">
+          Add at least one service before creating a promotion.
+        </p>
+      )}
+
+      <div className="space-y-3">
+        {items.map((item, index) => {
+          const expanded = openIndex === index;
+          const packageMode = item._offerType === "packages";
+          const displayName = item.linkedService || item.name || "New promotion";
+          const offerSummary = packageMode
+            ? `${item.packages.length} package${item.packages.length === 1 ? "" : "s"}`
+            : "Single offer";
+          const dateSummary = item.validFrom || item.validUntil
+            ? `${item.validFrom || "Now"} – ${item.validUntil || "No end date"}`
+            : "No date limit";
+
+          return (
+            <div key={index} className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+              <div className="flex items-start gap-3 p-4">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="truncate text-sm font-bold sm:text-base">{displayName}</p>
+                    <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
+                      {offerSummary}
+                    </span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${item.sendOnPriceQuery ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
+                      {item.sendOnPriceQuery ? "Auto-send on" : "Auto-send off"}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">{dateSummary}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOpenIndex(expanded ? null : index)}
+                  className="h-10 shrink-0 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold"
+                >
+                  {expanded ? "Close" : "Edit"}
+                </button>
+              </div>
+
+              {expanded && (
+                <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+                  <div className="grid gap-5">
+                    <div>
+                      <label className={labelClass}>Service</label>
+                      <select
+                        className={inputClass}
+                        value={item.linkedService}
+                        onChange={(event) => selectService(index, event.target.value)}
+                      >
+                        <option value="">Choose the service</option>
+                        {serviceNames.map((service) => <option key={service} value={service}>{service}</option>)}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className={labelClass}>Offer type</label>
+                      <div className="grid grid-cols-2 gap-2 rounded-xl bg-[var(--color-surface)] p-1">
+                        {[
+                          ["single", "Single offer"],
+                          ["packages", "Multiple packages"],
+                        ].map(([value, label]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            aria-pressed={item._offerType === value}
+                            onClick={() => updateItem(index, { _offerType: value })}
+                            className={`min-h-10 rounded-lg px-3 text-xs font-semibold transition ${item._offerType === value ? "bg-white text-[var(--color-primary)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className={labelClass}>Valid from <span className="font-normal">(optional)</span></label>
+                        <input type="date" className={inputClass} value={item.validFrom} onChange={(e) => updateItem(index, { validFrom: e.target.value })} />
+                      </div>
+                      <div>
+                        <label className={labelClass}>Valid until <span className="font-normal">(optional)</span></label>
+                        <input type="date" className={inputClass} value={item.validUntil} onChange={(e) => updateItem(index, { validUntil: e.target.value })} />
+                      </div>
+                    </div>
+
+                    <label className="flex min-h-12 items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3 text-sm">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={item.sendOnPriceQuery === true}
+                        onChange={(e) => updateItem(index, { sendOnPriceQuery: e.target.checked })}
+                      />
+                      <span>
+                        <span className="block font-semibold">Send automatically on price/package enquiries</span>
+                        <span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-muted)]">
+                          The AI only sends media when it can match this service and offer safely.
+                        </span>
+                      </span>
+                    </label>
+
+                    {packageMode ? (
+                      <div>
+                        <div className="mb-2 flex items-end justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-bold">Packages</p>
+                            <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">Each package can use a different image and caption.</p>
+                          </div>
+                        </div>
+                        <PromotionPackagesEditor
+                          items={item.packages}
+                          onChange={(packages) => updateItem(index, { packages })}
+                          onError={onError}
+                        />
+                      </div>
+                    ) : (
+                      <div className="grid gap-4">
+                        <div>
+                          <label className={labelClass}>Promotion image</label>
+                          <ImageFieldEditor
+                            value={item.imageUrl}
+                            onChange={(imageUrl) => updateItem(index, { imageUrl })}
+                            onError={onError}
+                          />
+                        </div>
+                        <div>
+                          <label className={labelClass}>Caption sent with the image</label>
+                          <textarea
+                            rows={3}
+                            className={textareaClass}
+                            value={item.caption}
+                            onChange={(e) => updateItem(index, { caption: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <details className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3">
+                      <summary className="cursor-pointer text-xs font-semibold text-[var(--color-text-muted)]">Advanced details</summary>
+                      <div className="mt-3">
+                        <label className={labelClass}>Internal campaign name</label>
+                        <input
+                          className={inputClass}
+                          value={item.name}
+                          placeholder={item.linkedService ? `${item.linkedService} Promotion` : "October promotion"}
+                          onChange={(e) => updateItem(index, { name: e.target.value })}
+                        />
+                        <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">Used internally to identify this promotion. Customers do not see it.</p>
+                      </div>
+                    </details>
+
+                    <div className="flex flex-col-reverse gap-2 border-t border-[var(--color-border)] pt-3 sm:flex-row sm:items-center sm:justify-between">
+                      <button
+                        type="button"
+                        onClick={() => removePromotion(index)}
+                        className="h-10 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+                      >
+                        Remove promotion
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOpenIndex(null)}
+                        className="h-10 rounded-xl border border-[var(--color-border)] bg-white px-4 text-xs font-semibold"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        <button
+          type="button"
+          onClick={addPromotion}
+          disabled={serviceNames.length === 0}
+          className="h-11 w-full rounded-xl border border-dashed border-[var(--color-border)] px-3 text-sm font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-50"
+        >
+          + Add promotion
+        </button>
+      </div>
+
+      <div className="mt-5">
         <SaveButton saving={saving} onClick={handleSave} />
       </div>
     </div>
