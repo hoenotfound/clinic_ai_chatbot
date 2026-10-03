@@ -642,7 +642,6 @@ async function processIncomingMessage(
     let bookingReady = false;
     let priceQuery = false;
     let packageQuery = false;
-    let promotionOption = null;
     let details = null;
 
     if (urgentSafety) {
@@ -661,7 +660,6 @@ async function processIncomingMessage(
         bookingReady,
         priceQuery,
         packageQuery,
-        promotionOption,
         details,
       } = parsedReply);
 
