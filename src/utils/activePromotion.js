@@ -110,7 +110,8 @@ function getPricePromotion(
     getActivePromotions(promotions, now, options).find(
       (promotion) =>
         promotion?.sendOnPriceQuery === true &&
-        Boolean(promotion?.imageUrl) &&
+        Boolean(String(promotion?.imageUrl || "").trim()) &&
+        Boolean(String(promotion?.caption || "").trim()) &&
         normalizeServiceName(promotion?.linkedService) === target
     ) || null
   );
