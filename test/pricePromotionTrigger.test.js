@@ -412,3 +412,34 @@ test("generic price enquiry with no package context returns all configured packa
 
   assert.deepEqual(bundle.packages.map((item) => item.name), ["Package A", "Package B"]);
 });
+
+
+test("older package mentions do not narrow a later generic price enquiry after an unrelated customer turn", async () => {
+  const packagePromo = {
+    name: "Pelvis Packages",
+    linkedService: "3D 小颜术",
+    sendOnPriceQuery: true,
+    imageUrl: "",
+    caption: "",
+    validFrom: null,
+    validUntil: null,
+    packages: [
+      { name: "Package A", title: "", aliases: ["A"], imageUrl: "https://example.test/a.jpg", caption: "A promo" },
+      { name: "Package B", title: "子宫调理套餐", aliases: ["B", "子宫套餐"], imageUrl: "https://example.test/b.jpg", caption: "B promo" },
+    ],
+  };
+
+  const bundle = await resolvePricePromotionForReply(base({
+    promotions: [packagePromo],
+    customerText: "多少钱？",
+    conversationHistory: [
+      { role: "user", content: "我想了解子宫套餐" },
+      { role: "assistant", content: "可以的" },
+      { role: "user", content: "一般多久做一次？" },
+      { role: "assistant", content: "会看个人情况" },
+      { role: "user", content: "多少钱？" },
+    ],
+  }));
+
+  assert.deepEqual(bundle.packages.map((item) => item.name), ["Package A", "Package B"]);
+});
