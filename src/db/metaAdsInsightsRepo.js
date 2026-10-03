@@ -87,6 +87,10 @@ async function insertChunk(client, rows) {
 }
 
 async function replaceInsightsRange(accountId, since, until, rows = []) {
+  if (rows.some((row) => String(row?.accountId || "") !== String(accountId))) {
+    throw new Error("Meta Ads insight rows must belong to the account being replaced.");
+  }
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
