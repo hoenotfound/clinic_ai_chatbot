@@ -384,6 +384,38 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
     };
   }
 
+  if (Object.prototype.hasOwnProperty.call(updates, "promotions")) {
+    const services = Object.prototype.hasOwnProperty.call(updates, "services")
+      ? updates.services
+      : currentConfig.services;
+    const serviceNames = new Set(
+      (Array.isArray(services) ? services : [])
+        .map((service) => String(service?.name || "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+
+    for (const promotion of updates.promotions) {
+      if (promotion?.sendOnPriceQuery !== true) continue;
+      const linkedService = String(promotion?.linkedService || "").trim();
+      if (!linkedService || !serviceNames.has(linkedService.toLowerCase())) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Price-triggered promotions must link to a currently configured service.",
+          invalidKeys: ["promotions"],
+        };
+      }
+      if (!String(promotion?.imageUrl || "").trim() || !String(promotion?.caption || "").trim()) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Price-triggered promotions need both an image and a caption.",
+          invalidKeys: ["promotions"],
+        };
+      }
+    }
+  }
+
   return { ok: true, updates, keys };
 }
 
