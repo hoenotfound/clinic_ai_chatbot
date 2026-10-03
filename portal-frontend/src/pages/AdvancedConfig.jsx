@@ -71,6 +71,7 @@ const FIELD_LABELS = {
   a: "Answer",
   linkedService: "Linked service",
   sendOnPriceQuery: "Send on price enquiry",
+  packages: "Package options",
   caption: "Caption",
   validFrom: "Valid from",
   validUntil: "Valid until",
