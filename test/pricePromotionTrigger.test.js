@@ -18,6 +18,7 @@ const nowActivePromo = {
 function base(overrides = {}) {
   return {
     priceQuery: true,
+    packageQuery: false,
     treatment: "3D 小颜术",
     flagged: false,
     bookingReady: false,
@@ -303,6 +304,58 @@ test("mentioning multiple configured packages in the current price question send
     await resolvePricePromotionForReply(base({
       promotions: [packagePromo],
       customerText: "Package A 跟 Package B 分别多少钱？",
+    })),
+    null
+  );
+});
+
+
+test("explicit package-list enquiry can send packages without a price question", async () => {
+  const packagePromo = {
+    name: "Pelvis Packages",
+    linkedService: "3D 小颜术",
+    sendOnPriceQuery: true,
+    imageUrl: "",
+    caption: "",
+    validFrom: null,
+    validUntil: null,
+    packages: [
+      { name: "Package A", title: "", aliases: ["A"], imageUrl: "https://example.test/a.jpg", caption: "A promo" },
+      { name: "Package B", title: "", aliases: ["B"], imageUrl: "https://example.test/b.jpg", caption: "B promo" },
+    ],
+  };
+
+  const bundle = await resolvePricePromotionForReply(base({
+    priceQuery: false,
+    packageQuery: true,
+    promotions: [packagePromo],
+    customerText: "有什么package？",
+  }));
+
+  assert.deepEqual(bundle.packages.map((item) => item.name), ["Package A", "Package B"]);
+});
+
+test("mentioning a package in a normal suitability question does not trigger media", async () => {
+  const packagePromo = {
+    name: "Pelvis Packages",
+    linkedService: "3D 小颜术",
+    sendOnPriceQuery: true,
+    imageUrl: "",
+    caption: "",
+    validFrom: null,
+    validUntil: null,
+    packages: [
+      { name: "Package B", title: "", aliases: ["B"], imageUrl: "https://example.test/b.jpg", caption: "B promo" },
+    ],
+  };
+
+  assert.equal(
+    await resolvePricePromotionForReply(base({
+      priceQuery: false,
+      packageQuery: false,
+      promotionOption: "Package B",
+      customerText: "Package B适合产后吗？",
+      promotions: [packagePromo],
     })),
     null
   );
