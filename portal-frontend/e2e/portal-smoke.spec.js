@@ -976,7 +976,7 @@ test("admin can review meaningful Advanced Config diff and apply without horizon
 });
 
 
-test("Promotions supports nested Package A/B/C options without horizontal overflow", async ({ page }) => {
+test("Promotions keeps package setup compact and mobile-safe", async ({ page }) => {
   await mockPortalApi(page, {
     loggedIn: true,
     businessConfig: {
@@ -1016,20 +1016,34 @@ test("Promotions supports nested Package A/B/C options without horizontal overfl
   await page.goto("/settings?tab=promotions");
 
   await expect(page.getByRole("heading", { name: "Promotions" })).toBeVisible();
-  await page.getByRole("button", { name: "+ Add promotion campaign" }).click();
+  await page.getByRole("button", { name: "+ Add promotion" }).click();
 
-  const serviceSelect = page.getByRole("combobox").filter({ has: page.locator("option") }).last();
-  await serviceSelect.selectOption("Pelvis 骨盆调理");
+  await expect(page.getByText("Pelvis 骨盆调理", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Single offer", pressed: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Multiple packages", pressed: false })).toBeVisible();
 
-  await page.getByRole("button", { name: "+ Add package option" }).click();
+  await page.getByRole("button", { name: "Multiple packages" }).click();
+  await expect(page.getByRole("button", { name: "Multiple packages", pressed: true })).toBeVisible();
+  await page.getByRole("button", { name: "+ Add package" }).click();
+
   await page.getByPlaceholder("Package A").fill("Package A");
   await page
     .getByPlaceholder("全身深层调理 + 骨盆全身体态调整（7合1）")
     .fill("全身深层调理 + 骨盆全身体态调整（7合1）");
 
-  await page.getByRole("button", { name: "+ Add package alias" }).click();
-  await page.getByPlaceholder("e.g. A, 7合1, 子宫套餐").fill("7合1");
+  const aliasInput = page.getByPlaceholder("e.g. 子宫套餐, 7合1");
+  await aliasInput.fill("7合1");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText("7合1", { exact: true })).toBeVisible();
 
-  await expect(page.getByText("Package 1", { exact: true })).toBeVisible();
+  await expect(page.getByText("Advanced · use image URL", { exact: true })).toBeVisible();
+  await expect(page.getByPlaceholder("https://...")).toBeHidden();
+
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(page.getByText("Package A", { exact: true }).first()).toBeVisible();
+  await expect(
+    page.getByText("全身深层调理 + 骨盆全身体态调整（7合1）", { exact: true }).first()
+  ).toBeVisible();
+
   await expectNoHorizontalPageOverflow(page);
 });
