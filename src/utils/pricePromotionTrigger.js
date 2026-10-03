@@ -40,6 +40,7 @@ async function resolvePricePromotionForReply({
   const recentlySent = await wasPromoRecentlySent(
     contactId,
     promo.imageUrl,
+    promo.caption,
     duplicateWindowHours
   );
   return recentlySent ? null : promo;
