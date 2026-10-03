@@ -341,7 +341,13 @@ function RepeatableListEditor({ items, fields, onChange, emptyItem, addLabel, on
             {fields.map((f) => (
               <div key={f.key}>
                 <label className="mb-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">{f.label}</label>
-                {f.type === "checkbox" ? (
+                {f.type === "packages" ? (
+                  <PromotionPackagesEditor
+                    items={Array.isArray(item[f.key]) ? item[f.key] : []}
+                    onChange={(value) => updateItem(idx, f.key, value)}
+                    onError={onError}
+                  />
+                ) : f.type === "checkbox" ? (
                   <label className="flex min-h-11 items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 text-sm">
                     <input
                       type="checkbox"
@@ -464,6 +470,104 @@ function ImageFieldEditor({ value, onChange, onError }) {
         placeholder="or paste an already-hosted image URL"
         onChange={(e) => onChange(e.target.value)}
       />
+    </div>
+  );
+}
+
+function PromotionPackagesEditor({ items, onChange, onError }) {
+  function updatePackage(index, key, value) {
+    const next = items.slice();
+    next[index] = { ...next[index], [key]: value };
+    onChange(next);
+  }
+
+  function removePackage(index) {
+    onChange(items.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  function addPackage() {
+    onChange([
+      ...items,
+      { name: "", title: "", aliases: [], imageUrl: "", caption: "" },
+    ]);
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-[11px] leading-5 text-[var(--color-text-muted)]">
+        Use package options when one service has choices such as Package A / B / C.
+        A general price enquiry sends all options; a customer who names one package
+        receives only that package.
+      </p>
+      {items.map((item, index) => (
+        <div key={index} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
+              Package {index + 1}
+            </p>
+            <button
+              type="button"
+              onClick={() => removePackage(index)}
+              className="min-h-9 rounded-lg px-2.5 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+            >
+              Remove
+            </button>
+          </div>
+          <div className="grid gap-3">
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">Package name</label>
+              <input
+                className={inputClass}
+                value={item.name || ""}
+                placeholder="Package A"
+                onChange={(e) => updatePackage(index, "name", e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">Package title / description</label>
+              <input
+                className={inputClass}
+                value={item.title || ""}
+                placeholder="全身深层调理 + 骨盆全身体态调整（7合1）"
+                onChange={(e) => updatePackage(index, "title", e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">Customer wording / aliases</label>
+              <StringListEditor
+                items={Array.isArray(item.aliases) ? item.aliases : []}
+                onChange={(value) => updatePackage(index, "aliases", value)}
+                addLabel="Add package alias"
+                placeholder="e.g. A, 7合1, 子宫套餐"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">Package image</label>
+              <ImageFieldEditor
+                value={item.imageUrl || ""}
+                onChange={(value) => updatePackage(index, "imageUrl", value)}
+                onError={onError}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">Package caption</label>
+              <textarea
+                rows={3}
+                className={textareaClass}
+                value={item.caption || ""}
+                onChange={(e) => updatePackage(index, "caption", e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={addPackage}
+        className="h-10 w-full rounded-xl border border-dashed border-[var(--color-border)] px-3 text-xs font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"
+      >
+        + Add package option
+      </button>
     </div>
   );
 }
@@ -896,19 +1000,32 @@ function FaqsTab({ config, onSaved, onError }) {
 function PromotionsTab({ config, onSaved, onError }) {
   const serviceNames = (config.services || []).map((service) => service.name).filter(Boolean);
   const promotionFields = [
-    { key: "name", label: "Promo name" },
-    { key: "linkedService", label: "Linked service", type: "select", options: serviceNames, placeholder: "Choose the service this promo belongs to" },
-    { key: "imageUrl", label: "Promo image", type: "image" },
-    { key: "caption", label: "Caption", type: "textarea", rows: 2 },
+    { key: "name", label: "Promotion / campaign name" },
+    { key: "linkedService", label: "Linked service", type: "select", options: serviceNames, placeholder: "Choose the service this promotion belongs to" },
     { key: "validFrom", label: "Valid from (optional)", type: "date" },
     { key: "validUntil", label: "Valid until (optional)", type: "date" },
-    { key: "sendOnPriceQuery", label: "Automatic send", type: "checkbox", checkboxLabel: "Send image + caption when a customer asks this service's price" },
+    { key: "sendOnPriceQuery", label: "Automatic send", type: "checkbox", checkboxLabel: "Send the matching package media when a customer asks this service's price" },
+    { key: "packages", label: "Package options (optional)", type: "packages" },
+    { key: "imageUrl", label: "Single-offer image (used only when no package options are added)", type: "image" },
+    { key: "caption", label: "Single-offer caption (used only when no package options are added)", type: "textarea", rows: 2 },
   ];
   const [items, setItems] = useState(() =>
     (config.promotions || []).map((p) => ({
       ...p,
       linkedService: p.linkedService || "",
       sendOnPriceQuery: p.sendOnPriceQuery === true,
+      packages: Array.isArray(p.packages)
+        ? p.packages.map((item) => ({
+            ...item,
+            name: item.name || "",
+            title: item.title || "",
+            aliases: Array.isArray(item.aliases) ? [...item.aliases] : [],
+            imageUrl: item.imageUrl || "",
+            caption: item.caption || "",
+          }))
+        : [],
+      imageUrl: p.imageUrl || "",
+      caption: p.caption || "",
       validFrom: p.validFrom || "",
       validUntil: p.validUntil || "",
     }))
@@ -917,20 +1034,45 @@ function PromotionsTab({ config, onSaved, onError }) {
 
   async function handleSave() {
     const cleaned = items
-      .filter((p) => p.name.trim() || p.linkedService.trim() || p.imageUrl.trim() || p.caption.trim() || p.validFrom || p.validUntil)
+      .filter((p) =>
+        p.name.trim() ||
+        p.linkedService.trim() ||
+        p.imageUrl.trim() ||
+        p.caption.trim() ||
+        (Array.isArray(p.packages) && p.packages.length > 0) ||
+        p.validFrom ||
+        p.validUntil
+      )
       .map((p) => ({
         name: p.name.trim(),
         linkedService: p.linkedService.trim(),
         sendOnPriceQuery: p.sendOnPriceQuery === true,
+        packages: (Array.isArray(p.packages) ? p.packages : [])
+          .filter((item) =>
+            String(item?.name || "").trim() ||
+            String(item?.title || "").trim() ||
+            String(item?.imageUrl || "").trim() ||
+            String(item?.caption || "").trim() ||
+            (Array.isArray(item?.aliases) && item.aliases.some((alias) => String(alias || "").trim()))
+          )
+          .map((item) => ({
+            name: String(item.name || "").trim(),
+            title: String(item.title || "").trim(),
+            aliases: cleanStrings(item.aliases || []),
+            imageUrl: String(item.imageUrl || "").trim(),
+            caption: String(item.caption || "").trim(),
+          })),
         imageUrl: p.imageUrl.trim(),
         caption: p.caption.trim(),
         validFrom: p.validFrom.trim() || null,
         validUntil: p.validUntil.trim() || null,
       }));
+
     if (cleaned.some((p) => !p.name)) {
       onError("Every promotion needs a name.");
       return;
     }
+
     const canonicalServices = new Set(serviceNames.map((name) => name.toLowerCase()));
     for (const promotion of cleaned) {
       if (promotion.sendOnPriceQuery) {
@@ -938,8 +1080,13 @@ function PromotionsTab({ config, onSaved, onError }) {
           onError("Price-triggered promotions must link to a configured service.");
           return;
         }
-        if (!promotion.imageUrl || !promotion.caption) {
-          onError("Price-triggered promotions need both an image and a caption.");
+        if (promotion.packages.length > 0) {
+          if (promotion.packages.some((item) => !item.name || !item.imageUrl || !item.caption)) {
+            onError("Every automatic package option needs a package name, image, and caption.");
+            return;
+          }
+        } else if (!promotion.imageUrl || !promotion.caption) {
+          onError("Add package options, or provide a single-offer image and caption.");
           return;
         }
       }
@@ -952,10 +1099,15 @@ function PromotionsTab({ config, onSaved, onError }) {
         return;
       }
     }
+
     setSaving(true);
     try {
       const updated = await api.updateConfig({ promotions: cleaned });
-      setItems(cleaned.map((p) => ({ ...p, validFrom: p.validFrom || "", validUntil: p.validUntil || "" })));
+      setItems(cleaned.map((p) => ({
+        ...p,
+        validFrom: p.validFrom || "",
+        validUntil: p.validUntil || "",
+      })));
       onSaved(updated);
     } catch (err) {
       onError(err.message || "Couldn't save promotions.");
@@ -968,15 +1120,15 @@ function PromotionsTab({ config, onSaved, onError }) {
     <div>
       <SectionHeading
         title="Promotions"
-        description="Active promos are the AI's source of truth for offers. Enable automatic send to deliver the linked promo image and caption only when a customer asks that service's price."
+        description="Link one active promotion campaign to a service. Add Package A/B/C inside that campaign when the service has multiple price options. General price enquiries send all package options; named package enquiries send only the matching option."
       />
       {serviceNames.length === 0 && <p className="mb-4 rounded-xl bg-[var(--color-accent-light)] p-3 text-xs">Add at least one service before linking a price-triggered promotion.</p>}
       <RepeatableListEditor
         items={items}
         fields={promotionFields}
         onChange={setItems}
-        emptyItem={{ name: "", linkedService: "", sendOnPriceQuery: true, imageUrl: "", caption: "", validFrom: "", validUntil: "" }}
-        addLabel="Add promotion"
+        emptyItem={{ name: "", linkedService: "", sendOnPriceQuery: true, packages: [], imageUrl: "", caption: "", validFrom: "", validUntil: "" }}
+        addLabel="Add promotion campaign"
         onError={onError}
       />
       <div className="mt-4">
