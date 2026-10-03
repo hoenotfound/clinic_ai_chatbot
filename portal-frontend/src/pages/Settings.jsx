@@ -523,7 +523,7 @@ function PromotionAliasChips({ items, onChange }) {
           placeholder="e.g. 子宫套餐, 7合1"
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onKeyDown}
-          onBlur={addDraft}
+         
         />
         <button
           type="button"
