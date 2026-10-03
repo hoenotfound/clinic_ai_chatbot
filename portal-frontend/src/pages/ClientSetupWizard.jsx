@@ -933,7 +933,7 @@ function PromotionsStep({ draft, setDraft, onError }) {
           { key: "linkedService", label: "Linked service", type: "select", options: serviceNames, placeholder: "Choose a configured service" },
           { key: "validFrom", label: "Valid from", type: "date" },
           { key: "validUntil", label: "Valid until", type: "date" },
-          { key: "sendOnPriceQuery", label: "Automatic send", type: "checkbox", checkboxLabel: "Send matching package media when a customer asks this service's price" },
+          { key: "sendOnPriceQuery", label: "Automatic send", type: "checkbox", checkboxLabel: "Send matching package media when a customer asks this service's price or available packages" },
           { key: "packages", label: "Package options (optional)", type: "packages" },
           { key: "imageUrl", label: "Single-offer image (only when no package options are added)", type: "image" },
           { key: "caption", label: "Single-offer caption (only when no package options are added)", textarea: true },
