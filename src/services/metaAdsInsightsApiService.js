@@ -11,6 +11,8 @@ const INSIGHT_FIELDS = [
   "date_start",
   "date_stop",
   "account_id",
+  "account_name",
+  "account_currency",
   "campaign_id",
   "campaign_name",
   "adset_id",
@@ -92,12 +94,14 @@ function buildInsightsUrl(
 
 function normalizeInsightRow(row, expectedAccountId) {
   const accountId = cleanAccountId(row?.account_id) || cleanAccountId(expectedAccountId);
+  const accountName = cleanText(row?.account_name);
+  const accountCurrency = cleanText(row?.account_currency);
   const date = cleanText(row?.date_start);
   const adId = cleanId(row?.ad_id);
 
-  if (!accountId || !date || !validDate(date) || !adId) {
+  if (!accountId || !accountCurrency || !date || !validDate(date) || !adId) {
     throw new MetaAdsApiError(
-      "Meta Ads Insights returned a row without a valid account, date, or ad ID.",
+      "Meta Ads Insights returned a row without a valid account, currency, date, or ad ID.",
       { code: "INVALID_INSIGHT_ROW", retryable: true }
     );
   }
@@ -112,6 +116,8 @@ function normalizeInsightRow(row, expectedAccountId) {
 
   return {
     accountId,
+    accountName,
+    accountCurrency,
     date,
     campaignId: cleanId(row?.campaign_id),
     campaignName: cleanText(row?.campaign_name),
@@ -121,6 +127,10 @@ function normalizeInsightRow(row, expectedAccountId) {
     adName: cleanText(row?.ad_name),
     spend: numeric(row?.spend, 0),
     impressions: integer(row?.impressions),
+    // These are daily rows because the request uses time_increment=1.
+    // Spend/impressions/clicks can be summed across dates. Reach is unique
+    // within each day and frequency is a daily ratio, so neither is safely
+    // additive across a multi-day reporting range.
     reach: integer(row?.reach),
     clicks: integer(row?.clicks),
     ctr: numeric(row?.ctr),
