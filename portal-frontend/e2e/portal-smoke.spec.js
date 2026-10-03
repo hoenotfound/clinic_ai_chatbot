@@ -49,6 +49,7 @@ async function mockPortalApi(
       loginTagline: "Staff portal",
     },
     businessConfig = null,
+    onConfigUpdate = null,
   } = {}
 ) {
   let authenticated = loggedIn;
@@ -280,6 +281,17 @@ async function mockPortalApi(
             mode: "round_robin",
           },
         };
+
+      if (method === "PATCH") {
+        const updates = request.postDataJSON();
+        onConfigUpdate?.(updates);
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ...configResponse, ...updates }),
+        });
+      }
+
       return route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -976,7 +988,8 @@ test("admin can review meaningful Advanced Config diff and apply without horizon
 });
 
 
-test("Promotions supports nested Package A/B/C options without horizontal overflow", async ({ page }) => {
+test("Promotions keeps package setup compact, saves packages, and stays mobile-safe", async ({ page }) => {
+  let savedPayload = null;
   await mockPortalApi(page, {
     loggedIn: true,
     businessConfig: {
@@ -1011,25 +1024,240 @@ test("Promotions supports nested Package A/B/C options without horizontal overfl
       closingPlaybook: "",
       sop: "",
     },
+    onConfigUpdate: (payload) => {
+      savedPayload = payload;
+    },
   });
 
   await page.goto("/settings?tab=promotions");
 
   await expect(page.getByRole("heading", { name: "Promotions" })).toBeVisible();
-  await page.getByRole("button", { name: "+ Add promotion campaign" }).click();
+  await page.getByRole("button", { name: "+ Add promotion" }).click();
 
-  const serviceSelect = page.getByRole("combobox").filter({ has: page.locator("option") }).last();
-  await serviceSelect.selectOption("Pelvis 骨盆调理");
+  await expect(page.getByText("Pelvis 骨盆调理", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Single offer", pressed: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Multiple packages", pressed: false })).toBeVisible();
 
-  await page.getByRole("button", { name: "+ Add package option" }).click();
+  await page.getByRole("button", { name: "Multiple packages" }).click();
+  await expect(page.getByRole("button", { name: "Multiple packages", pressed: true })).toBeVisible();
+  await page.getByRole("button", { name: "+ Add package" }).click();
+
   await page.getByPlaceholder("Package A").fill("Package A");
   await page
     .getByPlaceholder("全身深层调理 + 骨盆全身体态调整（7合1）")
     .fill("全身深层调理 + 骨盆全身体态调整（7合1）");
 
-  await page.getByRole("button", { name: "+ Add package alias" }).click();
-  await page.getByPlaceholder("e.g. A, 7合1, 子宫套餐").fill("7合1");
+  const aliasInput = page.getByPlaceholder("e.g. 子宫套餐, 7合1");
+  await aliasInput.fill("7合1");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText("7合1", { exact: true })).toBeVisible();
 
-  await expect(page.getByText("Package 1", { exact: true })).toBeVisible();
+  await expect(page.getByText("Advanced · use image URL", { exact: true })).toBeVisible();
+  await expect(page.getByPlaceholder("https://...")).toBeHidden();
+  await page.getByText("Advanced · use image URL", { exact: true }).click();
+  await page.getByPlaceholder("https://...").fill("https://example.test/package-a.jpg");
+  await page
+    .getByText("Caption sent with this image", { exact: true })
+    .locator("..")
+    .locator("textarea")
+    .fill("Package A promo caption");
+
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(page.getByText("Package A", { exact: true }).first()).toBeVisible();
+  await expect(
+    page.getByText("全身深层调理 + 骨盆全身体态调整（7合1）", { exact: true }).first()
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => savedPayload).not.toBeNull();
+  expect(savedPayload.promotions).toEqual([
+    {
+      name: "Pelvis 骨盆调理 Promotion",
+      linkedService: "Pelvis 骨盆调理",
+      sendOnPriceQuery: true,
+      packages: [
+        {
+          name: "Package A",
+          title: "全身深层调理 + 骨盆全身体态调整（7合1）",
+          aliases: ["7合1"],
+          imageUrl: "https://example.test/package-a.jpg",
+          caption: "Package A promo caption",
+        },
+      ],
+      imageUrl: "",
+      caption: "",
+      validFrom: null,
+      validUntil: null,
+    },
+  ]);
+
   await expectNoHorizontalPageOverflow(page);
+});
+
+
+test("Promotions blocks saving Multiple packages with no package options", async ({ page }) => {
+  let savedPayload = null;
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      businessType: "tcm_clinic",
+      businessName: "Test TCM",
+      clinicName: "Test TCM",
+      businessDescription: "TCM test clinic",
+      aiAssistantName: "Ava",
+      introMessage: "Hi",
+      tone: "Warm",
+      services: [{ name: "Pelvis 骨盆调理", description: "", priceRange: "", duration: "" }],
+      serviceAliases: [],
+      promotions: [],
+      branches: [],
+      faqs: [],
+      guardrails: [],
+      escalation: { outOfScopeTriggers: [], handoffMessage: "", handoffNote: "" },
+      hours: { general: "", closed: "" },
+      contact: { whatsapp: "", instagram: "", facebook: "", tiktok: "" },
+      messagingStyle: "",
+      closingPlaybook: "",
+      sop: "",
+    },
+    onConfigUpdate: (payload) => {
+      savedPayload = payload;
+    },
+  });
+
+  await page.goto("/settings?tab=promotions");
+  await page.getByRole("button", { name: "+ Add promotion" }).click();
+  await page.getByRole("button", { name: "Multiple packages" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  await expect(
+    page.getByText("Add at least one package, or switch this promotion to Single offer.")
+  ).toBeVisible();
+  expect(savedPayload).toBeNull();
+});
+
+test("Promotions confirms before switching a populated package campaign to Single offer", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      businessType: "tcm_clinic",
+      businessName: "Test TCM",
+      clinicName: "Test TCM",
+      businessDescription: "TCM test clinic",
+      aiAssistantName: "Ava",
+      introMessage: "Hi",
+      tone: "Warm",
+      services: [{ name: "Pelvis 骨盆调理", description: "", priceRange: "", duration: "" }],
+      serviceAliases: [],
+      promotions: [
+        {
+          name: "Pelvis 骨盆调理 Promotion",
+          linkedService: "Pelvis 骨盆调理",
+          sendOnPriceQuery: true,
+          packages: [
+            {
+              name: "Package A",
+              title: "7合1",
+              aliases: ["A"],
+              imageUrl: "https://example.test/a.jpg",
+              caption: "A promo",
+            },
+            {
+              name: "Package B",
+              title: "子宫套餐",
+              aliases: ["B"],
+              imageUrl: "https://example.test/b.jpg",
+              caption: "B promo",
+            },
+          ],
+          imageUrl: "",
+          caption: "",
+          validFrom: null,
+          validUntil: null,
+        },
+      ],
+      branches: [],
+      faqs: [],
+      guardrails: [],
+      escalation: { outOfScopeTriggers: [], handoffMessage: "", handoffNote: "" },
+      hours: { general: "", closed: "" },
+      contact: { whatsapp: "", instagram: "", facebook: "", tiktok: "" },
+      messagingStyle: "",
+      closingPlaybook: "",
+      sop: "",
+    },
+  });
+
+  await page.goto("/settings?tab=promotions");
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByRole("button", { name: "Multiple packages", pressed: true })).toBeVisible();
+
+  const dismissDialog = page.waitForEvent("dialog");
+  const firstClick = page.getByRole("button", { name: "Single offer" }).click();
+  const firstDialog = await dismissDialog;
+  expect(firstDialog.message()).toContain("Changing to Single offer will remove 2 package options when you save.");
+  await firstDialog.dismiss();
+  await firstClick;
+  await expect(page.getByRole("button", { name: "Multiple packages", pressed: true })).toBeVisible();
+
+  const acceptDialog = page.waitForEvent("dialog");
+  const secondClick = page.getByRole("button", { name: "Single offer" }).click();
+  const secondDialog = await acceptDialog;
+  await secondDialog.accept();
+  await secondClick;
+  await expect(page.getByRole("button", { name: "Single offer", pressed: true })).toBeVisible();
+});
+
+
+test("Promotions confirms before switching a populated Single offer to Multiple packages", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      businessType: "tcm_clinic",
+      businessName: "Test TCM",
+      clinicName: "Test TCM",
+      businessDescription: "TCM test clinic",
+      aiAssistantName: "Ava",
+      introMessage: "Hi",
+      tone: "Warm",
+      services: [{ name: "3D 小颜术", description: "", priceRange: "", duration: "" }],
+      serviceAliases: [],
+      promotions: [
+        {
+          name: "3D 小颜术 Promotion",
+          linkedService: "3D 小颜术",
+          sendOnPriceQuery: true,
+          packages: [],
+          imageUrl: "https://example.test/3d.jpg",
+          caption: "3D promo",
+          validFrom: null,
+          validUntil: null,
+        },
+      ],
+      branches: [],
+      faqs: [],
+      guardrails: [],
+      escalation: { outOfScopeTriggers: [], handoffMessage: "", handoffNote: "" },
+      hours: { general: "", closed: "" },
+      contact: { whatsapp: "", instagram: "", facebook: "", tiktok: "" },
+      messagingStyle: "",
+      closingPlaybook: "",
+      sop: "",
+    },
+  });
+
+  await page.goto("/settings?tab=promotions");
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByRole("button", { name: "Single offer", pressed: true })).toBeVisible();
+
+  const dialogPromise = page.waitForEvent("dialog");
+  const clickPromise = page.getByRole("button", { name: "Multiple packages" }).click();
+  const dialog = await dialogPromise;
+  expect(dialog.message()).toContain(
+    "Changing to Multiple packages will remove the current single-offer image and caption when you save."
+  );
+  await dialog.dismiss();
+  await clickPromise;
+
+  await expect(page.getByRole("button", { name: "Single offer", pressed: true })).toBeVisible();
 });
