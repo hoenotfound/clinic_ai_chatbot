@@ -36,19 +36,37 @@ function cleanNextStep(value) {
 function normalizeName(value) {
   return String(value || "")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim()
     .replace(/\s+/g, " ");
+}
+
+function compactName(value) {
+  return normalizeName(value).replace(/\s+/g, "");
 }
 
 function canonicalConfiguredName(value, items) {
   const cleaned = cleanOptionalText(value);
   if (!cleaned) return null;
   const target = normalizeName(cleaned);
-  const match = (items || []).find(
+  const exactMatches = (items || []).filter(
     (item) => normalizeName(item?.name) === target
   );
-  return match ? String(match.name).trim() : null;
+  if (exactMatches.length === 1) {
+    return String(exactMatches[0].name).trim();
+  }
+  if (exactMatches.length > 1) return null;
+
+  // Models sometimes preserve the right canonical words but alter spacing
+  // between Latin digits and Chinese text (e.g. "3D小颜术" vs "3D 小颜术").
+  // Accept that only when the compact form identifies exactly one service.
+  const compactTarget = compactName(cleaned);
+  const compactMatches = (items || []).filter(
+    (item) => compactName(item?.name) === compactTarget
+  );
+  return compactMatches.length === 1
+    ? String(compactMatches[0].name).trim()
+    : null;
 }
 
 function canonicalConfiguredService(
@@ -70,7 +88,11 @@ function canonicalConfiguredService(
   const resolved = [
     ...new Set(
       (aliases || [])
-        .filter((alias) => normalizeName(alias?.alias) === target)
+        .filter(
+          (alias) =>
+            normalizeName(alias?.alias) === target ||
+            compactName(alias?.alias) === compactName(cleaned)
+        )
         .map((alias) => canonicalConfiguredName(alias?.officialService, services))
         .filter(Boolean)
     ),
@@ -172,6 +194,7 @@ function parseStructuredReply(raw) {
   const outcome = typeof parsed.outcome === "string"
     ? parsed.outcome.trim().toLowerCase()
     : "";
+  const priceQuery = parsed.priceQuery === true;
 
   if (!reply || !VALID_OUTCOMES.has(outcome)) {
     throw invalidResponse("AI structured response is missing a valid reply/outcome.");
@@ -187,6 +210,7 @@ function parseStructuredReply(raw) {
       text: reply,
       flagged: false,
       bookingReady: false,
+      priceQuery,
       outcome: "normal",
       structured: true,
       details: emptyDetails(),
@@ -202,9 +226,7 @@ function parseStructuredReply(raw) {
       : null;
   const treatment = parsed.treatment == null
     ? null
-    : isProjectMode
-      ? canonicalConfiguredService(parsed.treatment)
-      : canonicalConfiguredName(parsed.treatment, clinicConfig.services);
+    : canonicalConfiguredService(parsed.treatment);
   const appointmentPreference = cleanOptionalText(parsed.appointmentPreference);
   const staffSummary = outcome === "booking_ready"
     ? cleanStaffSummary(parsed.staffSummary)
@@ -277,6 +299,7 @@ function parseStructuredReply(raw) {
     text: reply,
     flagged: outcome === "needs_human",
     bookingReady: outcome === "booking_ready",
+    priceQuery,
     outcome,
     structured: true,
     details,
@@ -303,6 +326,7 @@ function parseAiReplyResult(raw) {
   return {
     ...legacy,
     bookingReady,
+    priceQuery: false,
     outcome: legacy.flagged
       ? "needs_human"
       : bookingReady

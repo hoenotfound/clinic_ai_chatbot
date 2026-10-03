@@ -22,7 +22,7 @@ const {
 } = require("./services/inboundProcessingService");
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const conversationStore = require("./utils/conversationStore");
-const { getActivePromotion } = require("./utils/activePromotion");
+const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const clinicConfig = require("./config/clinicConfig");
@@ -640,6 +640,7 @@ async function processIncomingMessage(
     let aiReply;
     let flagged = false;
     let bookingReady = false;
+    let priceQuery = false;
     let details = null;
 
     if (urgentSafety) {
@@ -656,6 +657,7 @@ async function processIncomingMessage(
         text: aiReply,
         flagged,
         bookingReady,
+        priceQuery,
         details,
       } = parsedReply);
 
@@ -775,19 +777,23 @@ async function processIncomingMessage(
       }
     }
 
-    // Never follow a sensitive handoff, deterministic safety match, Booking
-    // Ready outcome, unresolved staff-attention state, or failed text delivery
-    // with a sales graphic. A first-time complaint/medical issue should not be
-    // answered with a HIFU promo immediately after the handoff message.
-    if (
-      isFirstMessage &&
-      !flagged &&
-      !bookingReady &&
-      !keywordReason &&
-      !contact.needs_attention &&
-      sendOutcome.sendResult.success
-    ) {
-      const promo = getActivePromotion(clinicConfig.promotions);
+    // Promotional media is reactive, not a first-message blast. Only follow a
+    // successful normal AI reply when the customer explicitly asked about the
+    // price of one known configured service. Existing safety/ownership gates
+    // remain unchanged.
+    {
+      const promo = await resolvePricePromotionForReply({
+        priceQuery,
+        treatment: details?.treatment,
+        flagged,
+        bookingReady,
+        keywordReason,
+        needsAttention: contact.needs_attention,
+        textSendSucceeded: sendOutcome.sendResult.success,
+        promotions: clinicConfig.promotions,
+        contactId: contact.id,
+        wasPromoRecentlySent: messagesRepo.wasPromoRecentlySent,
+      });
       if (promo) {
         const promoContact = await getAiOwnedContact(contact, {
           channel,

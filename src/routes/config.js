@@ -10,6 +10,7 @@ const commentAutomationReadiness = require("../services/commentAutomationReadine
 const { normalizeIndustrySetup } = require("../config/industrySetup");
 const { evaluateClientSetup } = require("../services/clientSetupService");
 const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
+const { findOverlappingPricePromotionPair } = require("../utils/activePromotion");
 
 const router = express.Router();
 
@@ -60,7 +61,15 @@ const VALIDATORS = {
   serviceAreas: (v) => Array.isArray(v) && v.every(isNonEmptyString),
   promotions: (v) =>
     Array.isArray(v) &&
-    v.every((p) => isPlainObject(p) && isNonEmptyString(p.name) && isString(p.imageUrl) && isString(p.caption)),
+    v.every(
+      (p) =>
+        isPlainObject(p) &&
+        isNonEmptyString(p.name) &&
+        isString(p.imageUrl) &&
+        isString(p.caption) &&
+        (p.linkedService === undefined || isString(p.linkedService)) &&
+        (p.sendOnPriceQuery === undefined || typeof p.sendOnPriceQuery === "boolean")
+    ),
   services: (v) =>
     Array.isArray(v) &&
     v.every(
@@ -374,6 +383,57 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
       error: `Invalid value for: ${invalidKeys.join(", ")}`,
       invalidKeys,
     };
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(updates, "promotions") ||
+    Object.prototype.hasOwnProperty.call(updates, "services")
+  ) {
+    const services = Object.prototype.hasOwnProperty.call(updates, "services")
+      ? updates.services
+      : currentConfig.services;
+    const promotions = Object.prototype.hasOwnProperty.call(updates, "promotions")
+      ? updates.promotions
+      : currentConfig.promotions;
+    const serviceNames = new Set(
+      (Array.isArray(services) ? services : [])
+        .map((service) => String(service?.name || "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+
+    for (const promotion of Array.isArray(promotions) ? promotions : []) {
+      if (promotion?.sendOnPriceQuery !== true) continue;
+      const linkedService = String(promotion?.linkedService || "").trim();
+      if (!linkedService || !serviceNames.has(linkedService.toLowerCase())) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Price-triggered promotions must link to a currently configured service.",
+          invalidKeys: ["promotions"],
+        };
+      }
+      if (!String(promotion?.imageUrl || "").trim() || !String(promotion?.caption || "").trim()) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Price-triggered promotions need both an image and a caption.",
+          invalidKeys: ["promotions"],
+        };
+      }
+    }
+
+    const overlap = findOverlappingPricePromotionPair(promotions);
+    if (overlap) {
+      const [first, second] = overlap;
+      return {
+        ok: false,
+        status: 400,
+        error:
+          `Only one automatic price promotion can be active for ${String(first.linkedService).trim()} at a time. ` +
+          `"${first.name}" overlaps with "${second.name}". Adjust the dates or disable automatic send on one promotion.`,
+        invalidKeys: ["promotions"],
+      };
+    }
   }
 
   return { ok: true, updates, keys };

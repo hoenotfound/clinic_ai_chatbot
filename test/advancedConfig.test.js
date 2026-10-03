@@ -343,6 +343,133 @@ test("Advanced Config enforces alias, FAQ, and promotion integrity across partia
   assert.equal(invalidDate.ok, false);
   assert.deepEqual(invalidDate.invalidKeys, ["promotions"]);
 
+  const pricePromoMissingService = prepareConfigUpdatePayload(
+    {
+      promotions: [{
+        name: "Consultation Promo",
+        linkedService: "",
+        sendOnPriceQuery: true,
+        imageUrl: "https://example.com/promo.jpg",
+        caption: "RM88",
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(pricePromoMissingService.ok, false);
+  assert.deepEqual(pricePromoMissingService.invalidKeys, ["promotions"]);
+
+  const configWithLinkedPromo = currentConfig();
+  configWithLinkedPromo.promotions = [{
+    name: "Consultation Promo",
+    linkedService: "Consultation",
+    sendOnPriceQuery: true,
+    imageUrl: "https://example.com/promo.jpg",
+    caption: "RM88",
+    validFrom: null,
+    validUntil: null,
+  }];
+  const serviceRenameBreaksPromo = prepareConfigUpdatePayload(
+    {
+      services: [{ name: "Renamed Consultation", description: "", priceRange: "", duration: "" }],
+    },
+    configWithLinkedPromo
+  );
+  assert.equal(serviceRenameBreaksPromo.ok, false);
+  assert.deepEqual(serviceRenameBreaksPromo.invalidKeys, ["promotions"]);
+
+  const pricePromoMissingImage = prepareAdvancedConfigPayload(
+    {
+      promotions: [{
+        name: "Consultation Promo",
+        linkedService: "Consultation",
+        sendOnPriceQuery: true,
+        imageUrl: "",
+        caption: "RM88",
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(pricePromoMissingImage.ok, false);
+  assert.deepEqual(pricePromoMissingImage.invalidKeys, ["promotions"]);
+
+  const validPricePromo = prepareAdvancedConfigPayload(
+    {
+      promotions: [{
+        name: "Consultation Promo",
+        linkedService: "Consultation",
+        sendOnPriceQuery: true,
+        imageUrl: "https://example.com/promo.jpg",
+        caption: "RM88",
+        validFrom: "2026-10-01",
+        validUntil: "2026-10-31",
+      }],
+    },
+    current
+  );
+  assert.equal(validPricePromo.ok, true);
+
+  const overlappingPricePromos = prepareConfigUpdatePayload(
+    {
+      promotions: [
+        {
+          name: "Consultation Early October",
+          linkedService: "Consultation",
+          sendOnPriceQuery: true,
+          imageUrl: "https://example.com/promo-a.jpg",
+          caption: "RM88",
+          validFrom: "2026-10-01",
+          validUntil: "2026-10-15",
+        },
+        {
+          name: "Consultation Mid October",
+          linkedService: "Consultation",
+          sendOnPriceQuery: true,
+          imageUrl: "https://example.com/promo-b.jpg",
+          caption: "RM98",
+          validFrom: "2026-10-15",
+          validUntil: "2026-10-31",
+        },
+      ],
+    },
+    current
+  );
+  assert.equal(overlappingPricePromos.ok, false);
+  assert.deepEqual(overlappingPricePromos.invalidKeys, ["promotions"]);
+  assert.match(overlappingPricePromos.error, /only one automatic price promotion/i);
+  assert.match(overlappingPricePromos.error, /Consultation Early October/);
+  assert.match(overlappingPricePromos.error, /Consultation Mid October/);
+
+  const scheduledPricePromos = prepareConfigUpdatePayload(
+    {
+      promotions: [
+        {
+          name: "Consultation October",
+          linkedService: "Consultation",
+          sendOnPriceQuery: true,
+          imageUrl: "https://example.com/promo-oct.jpg",
+          caption: "RM88",
+          validFrom: "2026-10-01",
+          validUntil: "2026-10-31",
+        },
+        {
+          name: "Consultation November",
+          linkedService: "Consultation",
+          sendOnPriceQuery: true,
+          imageUrl: "https://example.com/promo-nov.jpg",
+          caption: "RM98",
+          validFrom: "2026-11-01",
+          validUntil: "2026-11-30",
+        },
+      ],
+    },
+    current
+  );
+  assert.equal(scheduledPricePromos.ok, true);
+
   const reversedDates = prepareAdvancedConfigPayload(
     {
       promotions: [{

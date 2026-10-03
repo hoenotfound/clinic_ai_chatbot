@@ -59,6 +59,15 @@ test("system prompt uses structured outcomes and keeps Booking Ready separate fr
   assert.match(prompt, /currently replying on Instagram/i);
   assert.match(prompt, /RETURN ONLY ONE VALID JSON OBJECT/i);
   assert.match(prompt, /"outcome": "normal \| needs_human \| booking_ready"/i);
+  assert.match(prompt, /"priceQuery": false/i);
+  assert.match(prompt, /Set "priceQuery" to true ONLY when the customer's CURRENT message explicitly asks for a price/i);
+  assert.match(prompt, /If the price question covers multiple services or the service is unclear, set "treatment" to null/i);
+  assert.match(prompt, /applies ONLY to that exact canonical configured service/i);
+  assert.match(prompt, /Never borrow its price, discount, bundle, free add-on, or deadline for another service/i);
+  assert.match(prompt, /more than one ACTIVE PROMOTION.*same service/i);
+  assert.match(prompt, /do not choose one/i);
+  assert.match(prompt, /auto-send on price enquiry: yes/i);
+  assert.match(prompt, /do not repeat the full promotion caption or package details/i);
   assert.match(prompt, /"staffSummary":/i);
   assert.match(prompt, /staffSummary.*internal metadata/i);
   assert.match(prompt, /For booking_ready, "staffSummary" should be 1-3 concise sentences/i);
@@ -81,4 +90,17 @@ test("system prompt makes active promotions override stale promotional wording e
   assert.match(prompt, /overrides promotion\/discount\/deadline wording in SERVICES, FAQs, SOP/i);
   assert.match(prompt, /matching deal is not listed in ACTIVE PROMOTIONS, treat that promotional price as stale/i);
   assert.match(prompt, /Do not quote it as current/i);
+});
+
+test("comment automation keeps linked promotions scoped to their configured service", () => {
+  const prompt = buildSystemPrompt({
+    surface: "comment_automation",
+    channel: "facebook",
+    publicReplyEnabled: true,
+    privateReplyEnabled: true,
+  });
+
+  assert.match(prompt, /applies ONLY to that exact configured service/i);
+  assert.match(prompt, /Never borrow its price, discount, bundle, free add-on, or deadline for another service/i);
+  assert.match(prompt, /auto-send on price enquiry.*must not be mentioned/i);
 });
