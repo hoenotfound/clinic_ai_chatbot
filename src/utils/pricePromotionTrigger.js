@@ -29,7 +29,6 @@ function recentCustomerPackageContext(packages, conversationHistory, currentText
 async function resolvePricePromotionForReply({
   priceQuery,
   treatment,
-  promotionOption,
   customerText,
   conversationHistory,
   flagged,
@@ -78,20 +77,9 @@ async function resolvePricePromotionForReply({
 
   // Customer wording is authoritative. A model-only promotionOption must never
   // turn a generic service price enquiry into one arbitrarily selected package.
-  // promotionOption is accepted only when it agrees with a package actually
-  // established by the customer's current/recent wording.
+  // The structured promotionOption is still useful for AI wording/debugging,
+  // but outbound media is selected only from configured customer terms.
   const contextualPackage = mentionedPackages[0] || recentPackages[0] || null;
-  const modelPackage = promotionOption
-    ? getPricePromotionBundle(promotions, treatment, promotionOption)
-    : null;
-  if (
-    contextualPackage &&
-    modelPackage?.packages?.length === 1 &&
-    modelPackage.packages[0].name !== contextualPackage.name
-  ) {
-    // Explicit/recent customer wording wins over a mistaken model label.
-  }
-
   const selectedOption = contextualPackage?.name || null;
   const bundle = selectedOption
     ? getPricePromotionBundle(promotions, treatment, selectedOption)
