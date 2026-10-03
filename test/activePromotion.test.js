@@ -247,3 +247,22 @@ test("ambiguous package aliases fail closed", () => {
     null
   );
 });
+
+
+test("duplicate package names are treated as ambiguous configuration", () => {
+  const duplicateNames = {
+    ...promo,
+    name: "Pelvis Packages",
+    linkedService: "Pelvis 骨盆调理",
+    imageUrl: "",
+    caption: "",
+    packages: [
+      { name: "Package A", title: "First", aliases: [], imageUrl: "https://example.com/a1.jpg", caption: "A1" },
+      { name: "Package A", title: "Second", aliases: [], imageUrl: "https://example.com/a2.jpg", caption: "A2" },
+    ],
+  };
+
+  const ambiguous = findAmbiguousPromotionPackageTerm(duplicateNames);
+  assert.equal(ambiguous.firstPackage, "Package A");
+  assert.equal(ambiguous.secondPackage, "Package A");
+});
