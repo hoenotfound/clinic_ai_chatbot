@@ -854,6 +854,7 @@ async function getAnalytics(filters) {
 
 module.exports = {
   ANALYTICS_QUERY_CONCURRENCY,
+  analyticsQuery,
   PERFORMANCE_DIMENSIONS,
   buildComparison,
   buildFunnel,

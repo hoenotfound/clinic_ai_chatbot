@@ -231,6 +231,14 @@ export const api = {
     const query = params.toString();
     return request(`/pipeline/analytics${query ? `?${query}` : ""}`);
   },
+  getMetaAdsAnalytics: (filters = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (value != null && value !== "" && value !== "all") params.set(key, String(value));
+    }
+    const query = params.toString();
+    return request(`/pipeline/analytics/meta-ads${query ? `?${query}` : ""}`);
+  },
   getGoLiveGate: () => request("/go-live"),
   runGoLiveGate: () => request("/go-live/run", { method: "POST" }),
   getSetupStatus: () => request("/setup-status"),

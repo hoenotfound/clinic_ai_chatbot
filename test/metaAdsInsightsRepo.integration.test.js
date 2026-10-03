@@ -135,6 +135,16 @@ test(
       },
     ]);
 
+    const hierarchy = await insightsRepo.getLatestHierarchyForAdIds(
+      ["303", "not-an-id"],
+      database
+    );
+    assert.equal(hierarchy.size, 1);
+    assert.equal(hierarchy.get("303")?.account_id, accountId);
+    assert.equal(hierarchy.get("303")?.campaign_id, "100");
+    assert.equal(hierarchy.get("303")?.adset_id, "200");
+    assert.equal(hierarchy.get("303")?.ad_name, "Ad 303");
+
     assert.equal(
       await insightsRepo.tryAcquireSyncLease(
         accountId,

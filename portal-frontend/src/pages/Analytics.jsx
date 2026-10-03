@@ -4,6 +4,7 @@ import { api } from "../api";
 import { useBusinessConfig } from "../context/BusinessConfigContext";
 import { getBusinessTerminology } from "../utils/businessTerminology";
 import Spinner from "../components/Spinner";
+import MetaAdsAnalyticsView from "../components/analytics/MetaAdsAnalyticsView";
 
 const TIME_ZONE = "Asia/Kuala_Lumpur";
 const PRESET_OPTIONS = [
@@ -132,6 +133,7 @@ export default function Analytics() {
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [appliedPreset, setAppliedPreset] = useState("30");
   const [performanceTab, setPerformanceTab] = useState("source");
+  const [analyticsView, setAnalyticsView] = useState("crm");
   const [refreshToken, setRefreshToken] = useState(0);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -145,6 +147,10 @@ export default function Analytics() {
   const performanceTabs = buildPerformanceTabs(analyticsUi);
 
   useEffect(() => {
+    if (analyticsView !== "crm") {
+      setLoading(false);
+      return undefined;
+    }
     const requestId = ++requestIdRef.current;
     setLoading(true);
     setError("");
@@ -164,7 +170,11 @@ export default function Analytics() {
           setFilterActionPending(false);
         }
       });
-  }, [appliedFilters, refreshToken]);
+  }, [analyticsView, appliedFilters, refreshToken]);
+
+  if (analyticsView === "meta_ads") {
+    return <MetaAdsAnalyticsView onSwitchToCrm={() => setAnalyticsView("crm")} />;
+  }
 
   function updateDraft(key, value) {
     setDraftFilters((current) => ({ ...current, [key]: value }));
@@ -260,6 +270,22 @@ export default function Analytics() {
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--color-border)] bg-white text-[var(--color-text-muted)] transition hover:bg-[var(--color-bg)] disabled:opacity-50"
           >
             <RefreshIcon className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-4 inline-flex rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-1">
+          <button
+            type="button"
+            className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-[var(--color-text)]"
+          >
+            CRM Analytics
+          </button>
+          <button
+            type="button"
+            onClick={() => setAnalyticsView("meta_ads")}
+            className="rounded-lg px-3 py-2 text-xs font-semibold text-[var(--color-text-muted)] transition hover:text-[var(--color-text)]"
+          >
+            Meta Ads
           </button>
         </div>
 
