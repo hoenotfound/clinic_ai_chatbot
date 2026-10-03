@@ -49,6 +49,7 @@ async function mockPortalApi(
       loginTagline: "Staff portal",
     },
     businessConfig = null,
+    onConfigUpdate = null,
   } = {}
 ) {
   let authenticated = loggedIn;
@@ -280,6 +281,17 @@ async function mockPortalApi(
             mode: "round_robin",
           },
         };
+
+      if (method === "PATCH") {
+        const updates = request.postDataJSON();
+        onConfigUpdate?.(updates);
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ...configResponse, ...updates }),
+        });
+      }
+
       return route.fulfill({
         status: 200,
         contentType: "application/json",
