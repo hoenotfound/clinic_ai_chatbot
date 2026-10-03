@@ -31,9 +31,12 @@ function recentCustomerPackageContext(packages, conversationHistory, currentText
     // history, otherwise a stale Package B mention can narrow a later generic
     // service-price enquiry many turns after the conversation moved on.
     const matches = findMentionedPromotionPackages(packages, content);
-    return matches.length === 1 ? matches : [];
+    return {
+      packages: matches.length === 1 ? matches : [],
+      ambiguous: matches.length > 1,
+    };
   }
-  return [];
+  return { packages: [], ambiguous: false };
 }
 
 async function resolvePricePromotionForReply({
@@ -77,18 +80,19 @@ async function resolvePricePromotionForReply({
   );
   if (mentionedPackages.length > 1) return null;
 
-  const recentPackages = mentionedPackages.length === 0
+  const recentContext = mentionedPackages.length === 0
     ? recentCustomerPackageContext(
         genericBundle.packages,
         conversationHistory,
         customerText
       )
-    : [];
-  if (recentPackages.length > 1) return null;
+    : { packages: [], ambiguous: false };
+  if (recentContext.ambiguous) return null;
 
   // Customer wording is authoritative. Never let a model-only package guess
   // narrow a generic service enquiry to one arbitrary package.
-  const contextualPackage = mentionedPackages[0] || recentPackages[0] || null;
+  const contextualPackage =
+    mentionedPackages[0] || recentContext.packages[0] || null;
   const selectedOption = contextualPackage?.name || null;
   const bundle = selectedOption
     ? getPricePromotionBundle(promotions, treatment, selectedOption)
