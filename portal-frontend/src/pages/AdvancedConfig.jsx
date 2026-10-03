@@ -69,6 +69,8 @@ const FIELD_LABELS = {
   duration: "Duration",
   officialService: "Maps to service",
   a: "Answer",
+  linkedService: "Linked service",
+  sendOnPriceQuery: "Send on price enquiry",
   caption: "Caption",
   validFrom: "Valid from",
   validUntil: "Valid until",
