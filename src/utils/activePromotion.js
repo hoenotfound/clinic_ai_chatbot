@@ -73,8 +73,9 @@ function getActivePromotions(
 }
 
 /**
- * Picks the first active promotion that also has an image for the existing
- * first-reply promo-graphic workflow.
+ * Kept for backward compatibility with older callers/tests. New automated
+ * promotion delivery should use getPricePromotion so a graphic is never chosen
+ * solely because it happens to be first in Settings.
  */
 function getActivePromotion(promotions, now = new Date(), options = {}) {
   return (
@@ -83,11 +84,44 @@ function getActivePromotion(promotions, now = new Date(), options = {}) {
   );
 }
 
+function normalizeServiceName(value) {
+  return String(value || "")
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * Returns the first active promotion explicitly linked to the canonical service
+ * for price-enquiry delivery. Missing/legacy fields fail closed, so deploying
+ * this feature cannot make an old promotion start sending unexpectedly.
+ */
+function getPricePromotion(
+  promotions,
+  serviceName,
+  now = new Date(),
+  options = {}
+) {
+  const target = normalizeServiceName(serviceName);
+  if (!target) return null;
+
+  return (
+    getActivePromotions(promotions, now, options).find(
+      (promotion) =>
+        promotion?.sendOnPriceQuery === true &&
+        Boolean(promotion?.imageUrl) &&
+        normalizeServiceName(promotion?.linkedService) === target
+    ) || null
+  );
+}
+
 module.exports = {
   DEFAULT_CLINIC_TIMEZONE,
   FALLBACK_CLINIC_TIMEZONE,
   getActivePromotion,
   getActivePromotions,
+  getPricePromotion,
   isPromotionActive,
   localDateString,
 };
