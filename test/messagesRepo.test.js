@@ -209,3 +209,57 @@ test("outbound WhatsApp template metadata is stored atomically with the message"
   assert.equal(saved.whatsapp_template.name, "lead_follow_up");
 });
 
+
+
+test("promo duplicate lookup counts only provider-accepted non-failed media sends", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  let call = 0;
+  pool.query = async (sql, params) => {
+    call += 1;
+    assert.match(sql, /contact_id = \$1/);
+    assert.match(sql, /media_url = \$2/);
+    assert.match(sql, /whatsapp_message_id IS NOT NULL/);
+    assert.match(sql, /delivery_status NOT IN \('failed', 'unknown'\)/);
+    assert.match(sql, /\$3::integer \* INTERVAL '1 hour'/);
+    assert.deepEqual(params, [42, "https://example.test/promo.jpg", 24]);
+    return { rowCount: call === 1 ? 1 : 0, rows: [] };
+  };
+
+  assert.equal(
+    await messagesRepo.wasPromoRecentlySent(
+      42,
+      "https://example.test/promo.jpg",
+      24
+    ),
+    true
+  );
+  assert.equal(
+    await messagesRepo.wasPromoRecentlySent(
+      42,
+      "https://example.test/promo.jpg",
+      24
+    ),
+    false
+  );
+});
+
+test("promo duplicate lookup fails open for invalid lookup inputs without querying Postgres", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  let queried = false;
+  pool.query = async () => {
+    queried = true;
+    return { rowCount: 0, rows: [] };
+  };
+
+  assert.equal(await messagesRepo.wasPromoRecentlySent(42, "", 24), false);
+  assert.equal(await messagesRepo.wasPromoRecentlySent(42, "https://example.test/promo.jpg", 0), false);
+  assert.equal(queried, false);
+});
