@@ -1218,6 +1218,7 @@ function AliasesTab({ config, onSaved, onError }) {
               <div>
                 <label className={labelClass}>Maps to service</label>
                 <select
+                  aria-label="Maps to service"
                   className={inputClass}
                   value={bulkService}
                   onChange={(event) => {
