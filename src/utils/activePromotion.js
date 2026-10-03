@@ -178,10 +178,15 @@ function promotionTermAppearsInText(term, text) {
   const normalizedText = normalizeServiceName(text);
   if (!normalizedTerm || !normalizedText) return false;
 
-  // Single-character Latin aliases such as A/B/C must be standalone tokens so
-  // "A" does not accidentally match ordinary words like "berapa".
+  // Single-character Latin aliases such as A/B/C must be bounded by
+  // non-ASCII-alphanumeric characters. This avoids matching ordinary words
+  // like "berapa" while still recognizing Malaysian mixed text like "A跟B".
   if (/^[a-z0-9]$/u.test(normalizedTerm)) {
-    return normalizedText.split(" ").includes(normalizedTerm);
+    const rawText = String(text || "").toLowerCase();
+    return new RegExp(
+      "(^|[^a-z0-9])" + normalizedTerm + "([^a-z0-9]|$)",
+      "i"
+    ).test(rawText);
   }
 
   const paddedText = ` ${normalizedText} `;
