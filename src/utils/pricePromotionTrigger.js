@@ -1,4 +1,7 @@
-const { getPricePromotionBundle } = require("./activePromotion");
+const {
+  findMentionedPromotionPackages,
+  getPricePromotionBundle,
+} = require("./activePromotion");
 
 /**
  * Resolves whether the current AI reply is allowed to trigger promotional media.
@@ -9,6 +12,7 @@ async function resolvePricePromotionForReply({
   priceQuery,
   treatment,
   promotionOption,
+  customerText,
   flagged,
   bookingReady,
   keywordReason,
@@ -31,11 +35,25 @@ async function resolvePricePromotionForReply({
     return null;
   }
 
-  const bundle = getPricePromotionBundle(
+  const genericBundle = getPricePromotionBundle(
     promotions,
     treatment,
-    promotionOption
+    null
   );
+  if (!genericBundle) return null;
+
+  const mentionedPackages = findMentionedPromotionPackages(
+    genericBundle.packages,
+    customerText
+  );
+  if (mentionedPackages.length > 1) return null;
+
+  const selectedOption = mentionedPackages.length === 1
+    ? mentionedPackages[0].name
+    : promotionOption;
+  const bundle = selectedOption
+    ? getPricePromotionBundle(promotions, treatment, selectedOption)
+    : genericBundle;
   if (!bundle) return null;
 
   if (typeof wasPromoRecentlySent !== "function" || !contactId) {
