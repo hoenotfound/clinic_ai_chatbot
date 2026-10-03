@@ -37,7 +37,10 @@ function activePromotionsList() {
         promotion.validUntil ? `until ${promotion.validUntil}` : null,
       ].filter(Boolean).join(" ");
       const linkedService = promotion.linkedService ? ` | service: ${promotion.linkedService}` : "";
-      return `- ${promotion.name}: ${promotion.caption || "No additional caption configured."}${linkedService}${dates ? ` | ${dates}` : ""}`;
+      const autoSend = promotion.sendOnPriceQuery === true
+        ? " | auto-send on price enquiry: yes"
+        : " | auto-send on price enquiry: no";
+      return `- ${promotion.name}: ${promotion.caption || "No additional caption configured."}${linkedService}${autoSend}${dates ? ` | ${dates}` : ""}`;
     })
     .join("\n");
 }
@@ -292,6 +295,8 @@ ${activePromotionsList()}
 
 PROMOTION AUTHORITY — follow this even if another section below contains older wording:
 - ACTIVE PROMOTIONS overrides promotion/discount/deadline wording in SERVICES, FAQs, SOP, the conversion playbook, guardrails, or earlier chat history.
+- A promotion that shows "service: X" applies ONLY to that exact canonical configured service X. Never borrow its price, discount, bundle, free add-on, or deadline for another service, even if the services sound related.
+- A promotion without a linked service is not eligible for automatic promotional media. Only describe it as a general promotion if its own wording clearly says it applies generally.
 - If a deal, discount, bundle, free add-on, or deadline is NOT present in ACTIVE PROMOTIONS, never present it as currently available and never create urgency from it.
 - If a service Price field contains words such as "promo", "promotion", "promotional", "discount", "offer", "free", or an old campaign price but the matching deal is not listed in ACTIVE PROMOTIONS, treat that promotional price as stale. Do not quote it as current; say the current promotional price needs to be confirmed by the team.
 - Standing non-promotional facts explicitly described as always available may still be used, but never turn them into a time-limited promotion unless ACTIVE PROMOTIONS says so.
@@ -338,7 +343,9 @@ Rules for structured fields:
 - "reply" must contain only what the ${terms.customerSingular} should see. Never put internal outcome names, control tokens, analysis, or JSON instructions inside it.
 - Set "priceQuery" to true ONLY when the customer's CURRENT message explicitly asks for a price, cost, fee, charge, package price, first-trial price, promotion price, or equivalent wording. A short follow-up such as "多少钱?", "price?", or "berapa?" counts when the current conversation clearly establishes which service it refers to. Do not set it true merely because your answer happens to mention a price.
 - When "priceQuery" is true and exactly one configured service is clearly being priced, set "treatment" to that canonical configured service even if the customer used an alias. If the price question covers multiple services or the service is unclear, set "treatment" to null rather than guessing.
-- "priceQuery" is internal metadata. Never mention it to the customer. Keep the visible price reply concise and do not promise that an image or promotion will be sent, because media delivery is handled separately and may fail.
+- "priceQuery" is internal metadata. Never mention it to the customer.
+- If "priceQuery" is true and the matching ACTIVE PROMOTION for that service says "auto-send on price enquiry: yes", keep the visible reply very short and do not repeat the full promotion caption or package details; the configured promotion media is handled separately. Do not promise that an image will definitely be sent because media delivery may fail.
+- If the matching promotion says "auto-send on price enquiry: no", answer the price question normally from ACTIVE PROMOTIONS in text.
 - The legacy internal field name "treatment" means the canonical configured ${terms.serviceSingular}; it is kept for backend compatibility while the product is migrated to industry-neutral naming.
 - The legacy internal field name "branch" means a canonical configured ${terms.locationSingular}; it is kept for backend compatibility. For renovation, the customer's property belongs in "projectLocation", not "branch".
 - The legacy internal field name "appointmentPreference" is still used for clinic scheduling. For renovation it carries a clearly stated site-visit timing preference and is REQUIRED when "nextStep" is "site_visit".
