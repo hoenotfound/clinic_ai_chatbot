@@ -41,14 +41,32 @@ function normalizeName(value) {
     .replace(/\s+/g, " ");
 }
 
+function compactName(value) {
+  return normalizeName(value).replace(/\s+/g, "");
+}
+
 function canonicalConfiguredName(value, items) {
   const cleaned = cleanOptionalText(value);
   if (!cleaned) return null;
   const target = normalizeName(cleaned);
-  const match = (items || []).find(
+  const exactMatches = (items || []).filter(
     (item) => normalizeName(item?.name) === target
   );
-  return match ? String(match.name).trim() : null;
+  if (exactMatches.length === 1) {
+    return String(exactMatches[0].name).trim();
+  }
+  if (exactMatches.length > 1) return null;
+
+  // Models sometimes preserve the right canonical words but alter spacing
+  // between Latin digits and Chinese text (e.g. "3D小颜术" vs "3D 小颜术").
+  // Accept that only when the compact form identifies exactly one service.
+  const compactTarget = compactName(cleaned);
+  const compactMatches = (items || []).filter(
+    (item) => compactName(item?.name) === compactTarget
+  );
+  return compactMatches.length === 1
+    ? String(compactMatches[0].name).trim()
+    : null;
 }
 
 function canonicalConfiguredService(
@@ -70,7 +88,11 @@ function canonicalConfiguredService(
   const resolved = [
     ...new Set(
       (aliases || [])
-        .filter((alias) => normalizeName(alias?.alias) === target)
+        .filter(
+          (alias) =>
+            normalizeName(alias?.alias) === target ||
+            compactName(alias?.alias) === compactName(cleaned)
+        )
         .map((alias) => canonicalConfiguredName(alias?.officialService, services))
         .filter(Boolean)
     ),
