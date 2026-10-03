@@ -34,7 +34,7 @@ const COLLECTION_DIFF_SPECS = Object.freeze({
   },
   promotions: {
     identity: "name",
-    fields: ["caption", "validFrom", "validUntil", "imageUrl"],
+    fields: ["linkedService", "sendOnPriceQuery", "caption", "validFrom", "validUntil", "imageUrl"],
   },
   services: {
     identity: "name",
@@ -189,6 +189,21 @@ function validateAdvancedConfigState(currentConfig, updates) {
   }
 
   for (const promotion of Array.isArray(next.promotions) ? next.promotions : []) {
+    if (promotion?.sendOnPriceQuery === true) {
+      const linkedService = text(promotion?.linkedService);
+      if (!linkedService || !serviceNames.has(linkedService.toLowerCase())) {
+        return validationError(
+          "Price-triggered promotions must link to a currently configured service.",
+          ["promotions"]
+        );
+      }
+      if (!text(promotion?.imageUrl) || !text(promotion?.caption)) {
+        return validationError(
+          "Price-triggered promotions need both an image and a caption.",
+          ["promotions"]
+        );
+      }
+    }
     if (!isIsoDate(promotion?.validFrom) || !isIsoDate(promotion?.validUntil)) {
       return validationError("Promotion dates must be valid dates.", ["promotions"]);
     }
