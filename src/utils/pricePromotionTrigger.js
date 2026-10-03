@@ -8,12 +8,29 @@ const {
  * This keeps the sales side effect fail-closed and independently testable from
  * the channel-specific delivery code in server.js.
  */
+function recentCustomerPackageContext(packages, conversationHistory, currentText) {
+  const history = Array.isArray(conversationHistory) ? conversationHistory : [];
+  const current = String(currentText || "").trim();
+
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const entry = history[index];
+    if (entry?.role !== "user" || typeof entry?.content !== "string") continue;
+    const content = entry.content.trim();
+    if (!content || (current && index === history.length - 1 && content === current)) continue;
+
+    const matches = findMentionedPromotionPackages(packages, content);
+    if (matches.length > 1) return [];
+    if (matches.length === 1) return matches;
+  }
+  return [];
+}
+
 async function resolvePricePromotionForReply({
   priceQuery,
   packageQuery,
   treatment,
-  promotionOption,
   customerText,
+  conversationHistory,
   flagged,
   bookingReady,
   keywordReason,
@@ -49,9 +66,19 @@ async function resolvePricePromotionForReply({
   );
   if (mentionedPackages.length > 1) return null;
 
-  const selectedOption = mentionedPackages.length === 1
-    ? mentionedPackages[0].name
-    : promotionOption;
+  const recentPackages = mentionedPackages.length === 0
+    ? recentCustomerPackageContext(
+        genericBundle.packages,
+        conversationHistory,
+        customerText
+      )
+    : [];
+  if (recentPackages.length > 1) return null;
+
+  // Customer wording is authoritative. Never let a model-only package guess
+  // narrow a generic service enquiry to one arbitrary package.
+  const contextualPackage = mentionedPackages[0] || recentPackages[0] || null;
+  const selectedOption = contextualPackage?.name || null;
   const bundle = selectedOption
     ? getPricePromotionBundle(promotions, treatment, selectedOption)
     : genericBundle;
