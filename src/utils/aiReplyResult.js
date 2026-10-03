@@ -1,6 +1,7 @@
 const clinicConfig = require("../config/clinicConfig");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const {
+  AI_OUTCOME_MARKERS,
   extractAiOutcomeSignals,
   stripInternalOutcomeMarkers,
 } = require("./attentionTriggers");
@@ -155,6 +156,30 @@ function looksLikeStructuredReply(value) {
   return text.startsWith("{") || /^```(?:json)?\s*\{/i.test(text);
 }
 
+function startsWithLegacyOutcomeMarker(value) {
+  const text = String(value || "").trimStart();
+  return AI_OUTCOME_MARKERS.some((marker) => text.startsWith(marker));
+}
+
+function containsInternalAiScaffolding(value) {
+  const text = String(value || "");
+  if (!text) return false;
+
+  return (
+    /json\s+construction\s*:/i.test(text)
+    || /structured\s+output\s*[-:：]?/i.test(text)
+    || /(?:^|[{,\n])\s*["']?(?:priceQuery|packageQuery|promotionOption|appointmentPreference|projectLocation|projectSummary|nextStep|staffSummary)["']?\s*:/m.test(text)
+    || /(?:^|[{,\n])\s*["']?outcome["']?\s*:\s*["']?(?:normal|needs_human|booking_ready)\b/im.test(text)
+    || /\{\s*["']?reply["']?\s*:[\s\S]{0,1200}["']?outcome["']?\s*:/i.test(text)
+  );
+}
+
+function assertCustomerFacingReplySafe(value) {
+  if (containsInternalAiScaffolding(value)) {
+    throw invalidResponse("AI reply contained internal structured-output content.");
+  }
+}
+
 function emptyDetails() {
   return {
     branch: null,
@@ -201,6 +226,7 @@ function parseStructuredReply(raw) {
   if (!reply || !VALID_OUTCOMES.has(outcome)) {
     throw invalidResponse("AI structured response is missing a valid reply/outcome.");
   }
+  assertCustomerFacingReplySafe(reply);
 
   const conversion = conversionProfile();
 
@@ -322,10 +348,21 @@ function parseAiReplyResult(raw) {
   const structured = parseStructuredReply(raw);
   if (structured) return structured;
 
+  // The production prompt requires structured JSON. Do not treat arbitrary
+  // provider prose as customer-safe output, because models can append internal
+  // scaffolding such as "JSON Construction" after an otherwise natural reply.
+  // Keep only the explicit marker-based legacy contract during rollout.
+  if (!startsWithLegacyOutcomeMarker(raw)) {
+    throw invalidResponse(
+      "AI returned unstructured text instead of the required structured JSON response."
+    );
+  }
+
   // Backward-compatible rollout path. Legacy marker-based booking readiness is
   // safe only for the existing appointment contract because it carries no
   // structured project metadata. Renovation must use the JSON contract above.
   const legacy = extractAiOutcomeSignals(raw);
+  assertCustomerFacingReplySafe(legacy.text);
   const conversion = conversionProfile();
   const allowLegacyBookingReady = conversion.enabled && conversion.mode === "appointment";
   const bookingReady = allowLegacyBookingReady && legacy.bookingReady;
