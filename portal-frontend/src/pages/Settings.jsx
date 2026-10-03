@@ -1004,7 +1004,7 @@ function PromotionsTab({ config, onSaved, onError }) {
     { key: "linkedService", label: "Linked service", type: "select", options: serviceNames, placeholder: "Choose the service this promotion belongs to" },
     { key: "validFrom", label: "Valid from (optional)", type: "date" },
     { key: "validUntil", label: "Valid until (optional)", type: "date" },
-    { key: "sendOnPriceQuery", label: "Automatic send", type: "checkbox", checkboxLabel: "Send the matching package media when a customer asks this service's price" },
+    { key: "sendOnPriceQuery", label: "Automatic send", type: "checkbox", checkboxLabel: "Send matching package media when a customer asks this service's price or available packages" },
     { key: "packages", label: "Package options (optional)", type: "packages" },
     { key: "imageUrl", label: "Single-offer image (used only when no package options are added)", type: "image" },
     { key: "caption", label: "Single-offer caption (used only when no package options are added)", type: "textarea", rows: 2 },
