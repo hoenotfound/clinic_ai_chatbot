@@ -676,7 +676,6 @@ test("older Inbox messages keep their sent time while the conversation list keep
   });
 
   await page.goto("/inbox");
-  await openInboxConversation(page);
 
   const { expectedDate, expectedTime } = await page.evaluate((value) => {
     const date = new Date(value);
@@ -689,6 +688,8 @@ test("older Inbox messages keep their sent time while the conversation list keep
   const inbox = page.getByRole("complementary", { name: "Conversation inbox" });
   const conversationRow = inbox.getByRole("button").filter({ hasText: "Alex Customer" }).first();
   await expect(conversationRow).toContainText(expectedDate);
+
+  await openInboxConversation(page);
 
   const messageText = page.getByText("Older timestamp test", { exact: true }).last();
   await expect(messageText).toBeVisible();
