@@ -156,6 +156,11 @@ function looksLikeStructuredReply(value) {
   return text.startsWith("{") || /^```(?:json)?\s*\{/i.test(text);
 }
 
+function startsWithLegacyOutcomeMarker(value) {
+  const text = String(value || "").trimStart();
+  return AI_OUTCOME_MARKERS.some((marker) => text.startsWith(marker));
+}
+
 function emptyDetails() {
   return {
     branch: null,
