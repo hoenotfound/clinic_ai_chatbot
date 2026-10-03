@@ -352,7 +352,7 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
         )}
 
         {mixedCurrency && (
-          <div className="rounded-2xl border border-[var(--color-warning)]/30 bg-white p-4 text-xs leading-5 text-[var(--color-text-muted)]">
+          <div className="rounded-2xl border border-[var(--color-accent)]/30 bg-white p-4 text-xs leading-5 text-[var(--color-text-muted)]">
             Multiple ad-account currencies are selected ({(money.currencies || []).join(", ")}). Spend-based totals are hidden until you select one account, so currencies are never added together.
           </div>
         )}
