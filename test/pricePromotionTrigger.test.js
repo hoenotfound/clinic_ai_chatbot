@@ -443,3 +443,58 @@ test("older package mentions do not narrow a later generic price enquiry after a
 
   assert.deepEqual(bundle.packages.map((item) => item.name), ["Package A", "Package B"]);
 });
+
+
+test("generic English and Malaysian package wording does not falsely match Package A", async () => {
+  const packagePromo = {
+    name: "Pelvis Packages",
+    linkedService: "3D 小颜术",
+    sendOnPriceQuery: true,
+    imageUrl: "",
+    caption: "",
+    validFrom: null,
+    validUntil: null,
+    packages: [
+      { name: "Package A", title: "", aliases: ["A"], imageUrl: "https://example.test/a.jpg", caption: "A promo" },
+      { name: "Package B", title: "", aliases: ["B"], imageUrl: "https://example.test/b.jpg", caption: "B promo" },
+      { name: "Package C", title: "", aliases: ["C"], imageUrl: "https://example.test/c.jpg", caption: "C promo" },
+    ],
+  };
+
+  for (const customerText of ["what package available?", "package apa ada?"]) {
+    const bundle = await resolvePricePromotionForReply(base({
+      priceQuery: false,
+      packageQuery: true,
+      promotions: [packagePromo],
+      customerText,
+    }));
+    assert.deepEqual(
+      bundle.packages.map((item) => item.name),
+      ["Package A", "Package B", "Package C"],
+      customerText
+    );
+  }
+});
+
+test("concatenated explicit PackageB wording still resolves Package B", async () => {
+  const packagePromo = {
+    name: "Pelvis Packages",
+    linkedService: "3D 小颜术",
+    sendOnPriceQuery: true,
+    imageUrl: "",
+    caption: "",
+    validFrom: null,
+    validUntil: null,
+    packages: [
+      { name: "Package A", title: "", aliases: ["A"], imageUrl: "https://example.test/a.jpg", caption: "A promo" },
+      { name: "Package B", title: "", aliases: ["B"], imageUrl: "https://example.test/b.jpg", caption: "B promo" },
+    ],
+  };
+
+  const bundle = await resolvePricePromotionForReply(base({
+    promotions: [packagePromo],
+    customerText: "PackageB多少钱？",
+  }));
+
+  assert.deepEqual(bundle.packages.map((item) => item.name), ["Package B"]);
+});
