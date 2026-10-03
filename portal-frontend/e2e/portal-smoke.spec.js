@@ -988,7 +988,8 @@ test("admin can review meaningful Advanced Config diff and apply without horizon
 });
 
 
-test("Promotions keeps package setup compact and mobile-safe", async ({ page }) => {
+test("Promotions keeps package setup compact, saves packages, and stays mobile-safe", async ({ page }) => {
+  let savedPayload = null;
   await mockPortalApi(page, {
     loggedIn: true,
     businessConfig: {
@@ -1023,6 +1024,9 @@ test("Promotions keeps package setup compact and mobile-safe", async ({ page }) 
       closingPlaybook: "",
       sop: "",
     },
+    onConfigUpdate: (payload) => {
+      savedPayload = payload;
+    },
   });
 
   await page.goto("/settings?tab=promotions");
@@ -1050,12 +1054,42 @@ test("Promotions keeps package setup compact and mobile-safe", async ({ page }) 
 
   await expect(page.getByText("Advanced · use image URL", { exact: true })).toBeVisible();
   await expect(page.getByPlaceholder("https://...")).toBeHidden();
+  await page.getByText("Advanced · use image URL", { exact: true }).click();
+  await page.getByPlaceholder("https://...").fill("https://example.test/package-a.jpg");
+  await page
+    .getByText("Caption sent with this image", { exact: true })
+    .locator("..")
+    .locator("textarea")
+    .fill("Package A promo caption");
 
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect(page.getByText("Package A", { exact: true }).first()).toBeVisible();
   await expect(
     page.getByText("全身深层调理 + 骨盆全身体态调整（7合1）", { exact: true }).first()
   ).toBeVisible();
+
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => savedPayload).not.toBeNull();
+  expect(savedPayload.promotions).toEqual([
+    {
+      name: "Pelvis 骨盆调理 Promotion",
+      linkedService: "Pelvis 骨盆调理",
+      sendOnPriceQuery: true,
+      packages: [
+        {
+          name: "Package A",
+          title: "全身深层调理 + 骨盆全身体态调整（7合1）",
+          aliases: ["7合1"],
+          imageUrl: "https://example.test/package-a.jpg",
+          caption: "Package A promo caption",
+        },
+      ],
+      imageUrl: "",
+      caption: "",
+      validFrom: null,
+      validUntil: null,
+    },
+  ]);
 
   await expectNoHorizontalPageOverflow(page);
 });
