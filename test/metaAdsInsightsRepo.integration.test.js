@@ -2,11 +2,15 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { Pool } = require("pg");
+const { Client } = require("pg");
 
 const insightsRepo = require("../src/db/metaAdsInsightsRepo");
 
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
+
+function quoteIdentifier(value) {
+  return `"${String(value).replaceAll('"', '""')}"`;
+}
 
 function insight(accountId, date, adId, spend) {
   return {
@@ -36,31 +40,47 @@ test(
   "Meta Ads repository atomically replaces only the requested date range and leases one owner",
   { skip: !TEST_DATABASE_URL },
   async (t) => {
-    const database = new Pool({
+    const client = new Client({
       connectionString: TEST_DATABASE_URL,
       ssl: false,
-      max: 4,
     });
+    await client.connect();
+
+    const schemaName = `meta_ads_it_${process.pid}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const accountId = `88${Date.now()}`;
 
     t.after(async () => {
-      await database.query(
-        "DELETE FROM meta_ad_insights_daily WHERE account_id = $1",
-        [accountId]
+      await client.query("SET search_path TO public").catch(() => {});
+      await client.query(
+        `DROP SCHEMA IF EXISTS ${quoteIdentifier(schemaName)} CASCADE`
       ).catch(() => {});
-      await database.query(
-        "DELETE FROM meta_ads_insights_sync_state WHERE account_id = $1",
-        [accountId]
-      ).catch(() => {});
-      await database.end().catch(() => {});
+      await client.end().catch(() => {});
     });
 
-    await database.query(
+    await client.query(`CREATE SCHEMA ${quoteIdentifier(schemaName)}`);
+    await client.query(
+      `SET search_path TO ${quoteIdentifier(schemaName)}, public`
+    );
+    await client.query(
       fs.readFileSync(
         path.join(__dirname, "..", "src/db/migrations/027_meta_ads_insights.sql"),
         "utf8"
       )
     );
+
+    const database = {
+      query(text, params) {
+        return client.query(text, params);
+      },
+      async connect() {
+        return {
+          query(text, params) {
+            return client.query(text, params);
+          },
+          release() {},
+        };
+      },
+    };
 
     await insightsRepo.replaceInsightsRange(
       accountId,
@@ -85,7 +105,7 @@ test(
       database
     );
 
-    const rows = await database.query(
+    const rows = await client.query(
       `SELECT insight_date::text AS insight_date, ad_id, spend::text AS spend,
               account_currency
        FROM meta_ad_insights_daily
