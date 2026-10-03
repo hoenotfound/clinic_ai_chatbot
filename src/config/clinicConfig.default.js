@@ -88,15 +88,17 @@ module.exports = {
     activatedAt: null,
   },
 
-  // Promo graphic sent alongside the first reply to a new conversation —
-  // same reliability pattern as introMessage (code-triggered, not AI-decided).
-  // See src/utils/activePromotion.js for the date-filtering logic.
+  // Promotions are authoritative sales offers. A graphic is sent only after an
+  // explicit price enquiry for its linked service, never automatically on the
+  // first reply. See src/utils/activePromotion.js for selection/date filtering.
   // validFrom/validUntil use "YYYY-MM-DD" format, or omit for an always-on promo.
   // TODO: replace imageUrl with a real hosted graphic before going live —
   // this is a placeholder so the send-image code path is provably wired up.
   promotions: [
     {
       name: "HIFU Buy 1 Free 1",
+      linkedService: "HIFU Non-Surgical Facelift",
+      sendOnPriceQuery: true,
       imageUrl: "https://res.cloudinary.com/dboju5krg/image/upload/v1787414189/487510987_1062467509234755_8247724301894839842_n_ubilq7.jpg",
       caption: "HIFU Buy 1 Free 1 — from RM 1,288! Message us to find out more 😊",
       validFrom: null,
