@@ -41,6 +41,7 @@ test(
         id SERIAL PRIMARY KEY,
         contact_id INTEGER NOT NULL,
         role TEXT NOT NULL,
+        content TEXT,
         media_url TEXT,
         whatsapp_message_id TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -51,32 +52,43 @@ test(
     const imageUrl = "https://example.test/3d.jpg";
 
     assert.equal(
-      await wasPromoRecentlySentWithExecutor(client, 42, imageUrl, 24),
+      await wasPromoRecentlySentWithExecutor(client, 42, imageUrl, "3D promo", 24),
       false
     );
 
     await client.query(
       `INSERT INTO messages (
-         contact_id, role, media_url, whatsapp_message_id, delivery_status
-       ) VALUES ($1, 'assistant', $2, 'provider-accepted', 'pending')`,
+         contact_id, role, content, media_url, whatsapp_message_id, delivery_status
+       ) VALUES ($1, 'assistant', '3D promo', $2, 'provider-accepted', 'pending')`,
       [42, imageUrl]
     );
 
     assert.equal(
-      await wasPromoRecentlySentWithExecutor(client, 42, imageUrl, 24),
+      await wasPromoRecentlySentWithExecutor(client, 42, imageUrl, "3D promo", 24),
       true
+    );
+
+    assert.equal(
+      await wasPromoRecentlySentWithExecutor(
+        client,
+        42,
+        imageUrl,
+        "Different promo caption",
+        24
+      ),
+      false
     );
 
     await client.query("TRUNCATE messages RESTART IDENTITY");
     await client.query(
       `INSERT INTO messages (
-         contact_id, role, media_url, whatsapp_message_id, delivery_status
+         contact_id, role, content, media_url, whatsapp_message_id, delivery_status
        ) VALUES
-         (42, 'assistant', $1, 'provider-failed', 'failed'),
-         (42, 'assistant', $1, NULL, NULL),
-         (42, 'user', $1, 'provider-user', 'pending'),
-         (99, 'assistant', $1, 'provider-other-contact', 'pending'),
-         (42, 'assistant', $1, 'provider-old', 'pending')`,
+         (42, 'assistant', '3D promo', $1, 'provider-failed', 'failed'),
+         (42, 'assistant', '3D promo', $1, NULL, NULL),
+         (42, 'user', '3D promo', $1, 'provider-user', 'pending'),
+         (99, 'assistant', '3D promo', $1, 'provider-other-contact', 'pending'),
+         (42, 'assistant', '3D promo', $1, 'provider-old', 'pending')`,
       [imageUrl]
     );
     await client.query(
@@ -84,7 +96,7 @@ test(
     );
 
     assert.equal(
-      await wasPromoRecentlySentWithExecutor(client, 42, imageUrl, 24),
+      await wasPromoRecentlySentWithExecutor(client, 42, imageUrl, "3D promo", 24),
       false
     );
   }
