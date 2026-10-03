@@ -34,7 +34,7 @@ const COLLECTION_DIFF_SPECS = Object.freeze({
   },
   promotions: {
     identity: "name",
-    fields: ["linkedService", "sendOnPriceQuery", "caption", "validFrom", "validUntil", "imageUrl"],
+    fields: ["linkedService", "sendOnPriceQuery", "packages", "caption", "validFrom", "validUntil", "imageUrl"],
   },
   services: {
     identity: "name",
@@ -197,9 +197,19 @@ function validateAdvancedConfigState(currentConfig, updates) {
           ["promotions"]
         );
       }
-      if (!text(promotion?.imageUrl) || !text(promotion?.caption)) {
+      const packages = Array.isArray(promotion?.packages)
+        ? promotion.packages
+        : [];
+      if (packages.length > 0) {
+        if (packages.some((item) => !text(item?.name) || !text(item?.imageUrl) || !text(item?.caption))) {
+          return validationError(
+            "Every automatic promotion package needs a name, image, and caption.",
+            ["promotions"]
+          );
+        }
+      } else if (!text(promotion?.imageUrl) || !text(promotion?.caption)) {
         return validationError(
-          "Price-triggered promotions need both an image and a caption.",
+          "Price-triggered promotions need either package options or a single image and caption.",
           ["promotions"]
         );
       }
