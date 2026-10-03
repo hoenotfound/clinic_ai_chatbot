@@ -76,7 +76,7 @@ function formatDateTime(value) {
 
 function SummaryCard({ label, value, detail }) {
   return (
-    <div className="min-w-0 rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-sm">
+    <div className="min-w-0 rounded-2xl border border-[var(--color-border)] bg-white p-4">
       <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
         {label}
       </p>
@@ -265,7 +265,7 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
           </button>
           <button
             type="button"
-            className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-[var(--color-text)] shadow-sm"
+            className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-[var(--color-text)]"
           >
             Meta Ads
           </button>
@@ -358,7 +358,7 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
         )}
 
         {noDataConfigured ? (
-          <div className="rounded-3xl border border-[var(--color-border)] bg-white p-6 text-center shadow-sm sm:p-8">
+          <div className="rounded-3xl border border-[var(--color-border)] bg-white p-6 text-center sm:p-8">
             <h2 className="font-display text-lg font-bold">Meta Ads data isn't available yet</h2>
             <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-[var(--color-text-muted)]">
               Configure the Meta Marketing access token and ad account ID, then let the background sync complete its first backfill. This page reads the local synced data only.
@@ -399,7 +399,7 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
               />
             </section>
 
-            <section className="rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-sm">
+            <section className="rounded-2xl border border-[var(--color-border)] bg-white p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold">Attribution coverage</p>
@@ -424,7 +424,7 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
               )}
             </section>
 
-            <section className="rounded-2xl border border-[var(--color-border)] bg-white shadow-sm">
+            <section className="rounded-2xl border border-[var(--color-border)] bg-white">
               <div className="border-b border-[var(--color-border)] p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -439,7 +439,7 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
                         type="button"
                         key={value}
                         onClick={() => changeLevel(value)}
-                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${level === value ? "bg-white text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${level === value ? "bg-white text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}
                       >
                         {label}
                       </button>
@@ -585,7 +585,7 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
               )}
             </section>
 
-            <section className="rounded-2xl border border-[var(--color-border)] bg-white p-4 text-xs leading-5 text-[var(--color-text-muted)] shadow-sm">
+            <section className="rounded-2xl border border-[var(--color-border)] bg-white p-4 text-xs leading-5 text-[var(--color-text-muted)]">
               <div className="flex flex-wrap justify-between gap-2">
                 <span>
                   Data through: <strong className="text-[var(--color-text)]">{selectedAccount?.dataThrough || "No synced rows"}</strong>
