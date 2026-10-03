@@ -5,6 +5,7 @@ const metaAdsAnalyticsRepo = require("../db/metaAdsAnalyticsRepo");
 const configRepo = require("../db/configRepo");
 const { getAnalyticsPipelineProfile } = require("../db/analyticsPipelineProfile");
 const leadAttributionRepo = require("../db/leadAttributionRepo");
+const metaAdsInsightsRepo = require("../db/metaAdsInsightsRepo");
 const contactsRepo = require("../db/contactsRepo");
 const usersRepo = require("../db/usersRepo");
 const clinicConfig = require("../config/clinicConfig");
@@ -60,14 +61,34 @@ function publicAttribution(attribution) {
   };
 }
 
-function withAttribution(lead, attribution) {
+function withAttribution(lead, attribution, insightHierarchy = null) {
   if (!lead) return lead;
-  return { ...lead, attribution: publicAttribution(attribution) };
+  const publicValue = publicAttribution(attribution);
+  if (!publicValue || !insightHierarchy) {
+    return { ...lead, attribution: publicValue };
+  }
+  return {
+    ...lead,
+    attribution: {
+      ...publicValue,
+      meta_account_id: publicValue.meta_account_id || insightHierarchy.account_id || null,
+      campaign_id: publicValue.campaign_id || insightHierarchy.campaign_id || null,
+      campaign_name: publicValue.campaign_name || insightHierarchy.campaign_name || null,
+      adset_id: publicValue.adset_id || insightHierarchy.adset_id || null,
+      adset_name: publicValue.adset_name || insightHierarchy.adset_name || null,
+      ad_name: publicValue.ad_name || insightHierarchy.ad_name || null,
+    },
+  };
 }
 
 async function enrichLead(lead) {
   if (!lead) return null;
-  return withAttribution(lead, await leadAttributionRepo.getForLead(lead.id));
+  const attribution = await leadAttributionRepo.getForLead(lead.id);
+  const hierarchy = attribution?.meta_ad_id
+    ? (await metaAdsInsightsRepo.getLatestHierarchyForAdIds([attribution.meta_ad_id]))
+      .get(String(attribution.meta_ad_id))
+    : null;
+  return withAttribution(lead, attribution, hierarchy);
 }
 
 function handlePipelineError(res, err, fallbackMessage) {
@@ -111,9 +132,17 @@ router.get("/", async (req, res) => {
     const attributionByLead = await leadAttributionRepo.getForLeadIds(
       rawLeads.map((lead) => lead.id)
     );
-    const leads = rawLeads.map((lead) =>
-      withAttribution(lead, attributionByLead.get(Number(lead.id)))
-    );
+    const metaAdIds = [...attributionByLead.values()]
+      .map((attribution) => attribution?.meta_ad_id)
+      .filter(Boolean);
+    const hierarchyByAd = await metaAdsInsightsRepo.getLatestHierarchyForAdIds(metaAdIds);
+    const leads = rawLeads.map((lead) => {
+      const attribution = attributionByLead.get(Number(lead.id));
+      const hierarchy = attribution?.meta_ad_id
+        ? hierarchyByAd.get(String(attribution.meta_ad_id))
+        : null;
+      return withAttribution(lead, attribution, hierarchy);
+    });
     const configuredBranches = configuredBranchNames();
     const savedBranches = distinctNames(leads.map((lead) => lead.branch_name));
 
