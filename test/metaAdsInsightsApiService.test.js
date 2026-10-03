@@ -41,6 +41,8 @@ test("normalizes Insights rows and follows Meta pagination using the auth header
               date_start: "2026-10-01",
               date_stop: "2026-10-01",
               account_id: "123456789",
+              account_name: "Neutro Sense Ads",
+              account_currency: "MYR",
               campaign_id: "100",
               campaign_name: "October Pelvis",
               adset_id: "200",
@@ -72,6 +74,8 @@ test("normalizes Insights rows and follows Meta pagination using the auth header
           data: [{
             date_start: "2026-10-02",
             account_id: "123456789",
+            account_name: "Neutro Sense Ads",
+            account_currency: "MYR",
             campaign_id: "100",
             adset_id: "200",
             ad_id: "300",
@@ -97,6 +101,8 @@ test("normalizes Insights rows and follows Meta pagination using the auth header
   assert.equal(rows.length, 2);
   assert.deepEqual(rows[0], {
     accountId: "123456789",
+    accountName: "Neutro Sense Ads",
+    accountCurrency: "MYR",
     date: "2026-10-01",
     campaignId: "100",
     campaignName: "October Pelvis",
@@ -147,6 +153,7 @@ test("rejects Insights rows that claim a different ad account", async () => {
         data: [{
           date_start: "2026-10-01",
           account_id: "999999999",
+          account_currency: "MYR",
           ad_id: "300",
           spend: "1.00",
         }],
@@ -163,5 +170,34 @@ test("rejects Insights rows that claim a different ad account", async () => {
       version: "v26.0",
     }),
     /unexpected ad account/
+  );
+});
+
+
+test("rejects spend rows without an account currency", async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    async text() {
+      return JSON.stringify({
+        data: [{
+          date_start: "2026-10-01",
+          account_id: "123456789",
+          ad_id: "300",
+          spend: "12.50",
+        }],
+      });
+    },
+  });
+
+  await assert.rejects(
+    fetchAdInsights("123456789", {
+      since: "2026-10-01",
+      until: "2026-10-01",
+      fetchImpl,
+      token: "secret-token",
+      version: "v26.0",
+    }),
+    /currency/
   );
 });
