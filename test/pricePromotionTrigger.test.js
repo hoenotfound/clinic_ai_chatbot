@@ -93,6 +93,28 @@ test("handoff, booking-ready, attention and failed text delivery all suppress pr
   }
 });
 
+test("ambiguous active promotions for one service fail closed before duplicate lookup", async () => {
+  let dedupeChecks = 0;
+  const promo = await resolvePricePromotionForReply(base({
+    promotions: [
+      nowActivePromo,
+      {
+        ...nowActivePromo,
+        name: "3D Second Offer",
+        imageUrl: "https://example.test/3d-second.jpg",
+        caption: "second 3D promo",
+      },
+    ],
+    wasPromoRecentlySent: async () => {
+      dedupeChecks += 1;
+      return false;
+    },
+  }));
+
+  assert.equal(promo, null);
+  assert.equal(dedupeChecks, 0);
+});
+
 test("same accepted promo within the duplicate window is suppressed", async () => {
   const promo = await resolvePricePromotionForReply(base({
     wasPromoRecentlySent: async () => true,
