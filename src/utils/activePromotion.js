@@ -266,9 +266,13 @@ function getPricePromotion(
     now,
     options
   );
-  return bundle?.packages?.length === 1
-    ? { ...bundle.promotion, ...bundle.packages[0] }
-    : null;
+  if (bundle?.packages?.length !== 1) return null;
+  const [packageOption] = bundle.packages;
+  return {
+    ...bundle.promotion,
+    imageUrl: packageOption.imageUrl,
+    caption: packageOption.caption,
+  };
 }
 
 module.exports = {
