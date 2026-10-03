@@ -1296,7 +1296,7 @@ function PromotionAliasChips({ items, setItems }) {
         </div>
       )}
       <div className="flex gap-2">
-        <input className={`${INPUT_CLASS} min-w-0 flex-1`} value={draft} placeholder="e.g. 子宫套餐, 7合1" onChange={(event) => setDraft(event.target.value)} onKeyDown={onKeyDown} onBlur={addDraft} />
+        <input className={`${INPUT_CLASS} min-w-0 flex-1`} value={draft} placeholder="e.g. 子宫套餐, 7合1" onChange={(event) => setDraft(event.target.value)} onKeyDown={onKeyDown} />
         <button type="button" onClick={addDraft} className="h-11 shrink-0 rounded-xl border border-[var(--color-border)] bg-white px-3 text-xs font-semibold">Add</button>
       </div>
     </div>
