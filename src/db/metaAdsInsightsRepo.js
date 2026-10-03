@@ -121,10 +121,10 @@ function validateRows(accountId, rows) {
   }
 }
 
-async function replaceInsightsRange(accountId, since, until, rows = []) {
+async function replaceInsightsRange(accountId, since, until, rows = [], database = pool) {
   validateRows(accountId, rows);
 
-  const client = await pool.connect();
+  const client = await database.connect();
   try {
     await client.query("BEGIN");
     await client.query(
@@ -149,10 +149,10 @@ async function replaceInsightsRange(accountId, since, until, rows = []) {
   }
 }
 
-async function tryAcquireSyncLease(accountId, leaseToken, leaseMs) {
+async function tryAcquireSyncLease(accountId, leaseToken, leaseMs, database = pool) {
   const token = requireLeaseToken(leaseToken);
   const durationMs = normalizeLeaseMs(leaseMs);
-  const result = await pool.query(
+  const result = await database.query(
     `INSERT INTO meta_ads_insights_sync_state (
        account_id, lease_token, lease_until, updated_at
      ) VALUES (
@@ -171,10 +171,10 @@ async function tryAcquireSyncLease(accountId, leaseToken, leaseMs) {
   return Boolean(result.rows[0]);
 }
 
-async function renewSyncLease(accountId, leaseToken, leaseMs) {
+async function renewSyncLease(accountId, leaseToken, leaseMs, database = pool) {
   const token = requireLeaseToken(leaseToken);
   const durationMs = normalizeLeaseMs(leaseMs);
-  const result = await pool.query(
+  const result = await database.query(
     `UPDATE meta_ads_insights_sync_state
      SET lease_until = now() + ($3::bigint * interval '1 millisecond'),
          updated_at = now()
@@ -187,9 +187,9 @@ async function renewSyncLease(accountId, leaseToken, leaseMs) {
   return Boolean(result.rows[0]);
 }
 
-async function releaseSyncLease(accountId, leaseToken) {
+async function releaseSyncLease(accountId, leaseToken, database = pool) {
   const token = requireLeaseToken(leaseToken);
-  const result = await pool.query(
+  const result = await database.query(
     `UPDATE meta_ads_insights_sync_state
      SET lease_token = NULL, lease_until = NULL, updated_at = now()
      WHERE account_id = $1 AND lease_token = $2
@@ -199,8 +199,8 @@ async function releaseSyncLease(accountId, leaseToken) {
   return Boolean(result.rows[0]);
 }
 
-async function getSyncState(accountId) {
-  const result = await pool.query(
+async function getSyncState(accountId, database = pool) {
+  const result = await database.query(
     `SELECT account_id, last_attempt_at, last_success_at, last_error,
             last_backfill_completed_at, backfill_next_date,
             last_range_start, last_range_end,
@@ -212,9 +212,9 @@ async function getSyncState(accountId) {
   return result.rows[0] || null;
 }
 
-async function markSyncStarted(accountId, since, until, leaseToken) {
+async function markSyncStarted(accountId, since, until, leaseToken, database = pool) {
   const token = requireLeaseToken(leaseToken);
-  const result = await pool.query(
+  const result = await database.query(
     `UPDATE meta_ads_insights_sync_state
      SET last_attempt_at = now(),
          last_range_start = $2::date,
@@ -232,9 +232,9 @@ async function markSyncStarted(accountId, since, until, leaseToken) {
   }
 }
 
-async function markBackfillProgress(accountId, since, until, nextDate, leaseToken) {
+async function markBackfillProgress(accountId, since, until, nextDate, leaseToken, database = pool) {
   const token = requireLeaseToken(leaseToken);
-  const result = await pool.query(
+  const result = await database.query(
     `UPDATE meta_ads_insights_sync_state
      SET last_success_at = now(),
          last_error = NULL,
@@ -258,10 +258,11 @@ async function markSyncSuccess(
   since,
   until,
   leaseToken,
-  { backfillCompleted = false } = {}
+  { backfillCompleted = false } = {},
+  database = pool
 ) {
   const token = requireLeaseToken(leaseToken);
-  const result = await pool.query(
+  const result = await database.query(
     `UPDATE meta_ads_insights_sync_state
      SET last_success_at = now(),
          last_error = NULL,
@@ -286,9 +287,9 @@ async function markSyncSuccess(
   }
 }
 
-async function markSyncFailure(accountId, since, until, errorText, leaseToken) {
+async function markSyncFailure(accountId, since, until, errorText, leaseToken, database = pool) {
   const token = requireLeaseToken(leaseToken);
-  const result = await pool.query(
+  const result = await database.query(
     `UPDATE meta_ads_insights_sync_state
      SET last_attempt_at = now(),
          last_error = $4,
