@@ -55,6 +55,7 @@ test("price promotion must be active, enabled, imaged, and linked to the request
   assert.equal(getPricePromotion([promo], "Pico Laser", now), null);
   assert.equal(getPricePromotion([{ ...promo, sendOnPriceQuery: false }], "HIFU Non-Surgical Facelift", now), null);
   assert.equal(getPricePromotion([{ ...promo, imageUrl: "" }], "HIFU Non-Surgical Facelift", now), null);
+  assert.equal(getPricePromotion([{ ...promo, caption: "" }], "HIFU Non-Surgical Facelift", now), null);
 });
 
 test("price promotion service matching preserves Chinese service names", () => {
