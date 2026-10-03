@@ -1093,3 +1093,115 @@ test("Promotions keeps package setup compact, saves packages, and stays mobile-s
 
   await expectNoHorizontalPageOverflow(page);
 });
+
+
+test("Promotions blocks saving Multiple packages with no package options", async ({ page }) => {
+  let savedPayload = null;
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      businessType: "tcm_clinic",
+      businessName: "Test TCM",
+      clinicName: "Test TCM",
+      businessDescription: "TCM test clinic",
+      aiAssistantName: "Ava",
+      introMessage: "Hi",
+      tone: "Warm",
+      services: [{ name: "Pelvis 骨盆调理", description: "", priceRange: "", duration: "" }],
+      serviceAliases: [],
+      promotions: [],
+      branches: [],
+      faqs: [],
+      guardrails: [],
+      escalation: { outOfScopeTriggers: [], handoffMessage: "", handoffNote: "" },
+      hours: { general: "", closed: "" },
+      contact: { whatsapp: "", instagram: "", facebook: "", tiktok: "" },
+      messagingStyle: "",
+      closingPlaybook: "",
+      sop: "",
+    },
+    onConfigUpdate: (payload) => {
+      savedPayload = payload;
+    },
+  });
+
+  await page.goto("/settings?tab=promotions");
+  await page.getByRole("button", { name: "+ Add promotion" }).click();
+  await page.getByRole("button", { name: "Multiple packages" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  await expect(
+    page.getByText("Add at least one package, or switch this promotion to Single offer.")
+  ).toBeVisible();
+  expect(savedPayload).toBeNull();
+});
+
+test("Promotions confirms before switching a populated package campaign to Single offer", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      businessType: "tcm_clinic",
+      businessName: "Test TCM",
+      clinicName: "Test TCM",
+      businessDescription: "TCM test clinic",
+      aiAssistantName: "Ava",
+      introMessage: "Hi",
+      tone: "Warm",
+      services: [{ name: "Pelvis 骨盆调理", description: "", priceRange: "", duration: "" }],
+      serviceAliases: [],
+      promotions: [
+        {
+          name: "Pelvis 骨盆调理 Promotion",
+          linkedService: "Pelvis 骨盆调理",
+          sendOnPriceQuery: true,
+          packages: [
+            {
+              name: "Package A",
+              title: "7合1",
+              aliases: ["A"],
+              imageUrl: "https://example.test/a.jpg",
+              caption: "A promo",
+            },
+            {
+              name: "Package B",
+              title: "子宫套餐",
+              aliases: ["B"],
+              imageUrl: "https://example.test/b.jpg",
+              caption: "B promo",
+            },
+          ],
+          imageUrl: "",
+          caption: "",
+          validFrom: null,
+          validUntil: null,
+        },
+      ],
+      branches: [],
+      faqs: [],
+      guardrails: [],
+      escalation: { outOfScopeTriggers: [], handoffMessage: "", handoffNote: "" },
+      hours: { general: "", closed: "" },
+      contact: { whatsapp: "", instagram: "", facebook: "", tiktok: "" },
+      messagingStyle: "",
+      closingPlaybook: "",
+      sop: "",
+    },
+  });
+
+  await page.goto("/settings?tab=promotions");
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByRole("button", { name: "Multiple packages", pressed: true })).toBeVisible();
+
+  const dismissDialog = page.waitForEvent("dialog");
+  await page.getByRole("button", { name: "Single offer" }).click();
+  const firstDialog = await dismissDialog;
+  expect(firstDialog.message()).toContain("Changing to Single offer will remove 2 package options when you save.");
+  await firstDialog.dismiss();
+  await expect(page.getByRole("button", { name: "Multiple packages", pressed: true })).toBeVisible();
+
+  const acceptDialog = page.waitForEvent("dialog");
+  await page.getByRole("button", { name: "Single offer" }).click();
+  const secondDialog = await acceptDialog;
+  await secondDialog.accept();
+  await expect(page.getByRole("button", { name: "Single offer", pressed: true })).toBeVisible();
+});
