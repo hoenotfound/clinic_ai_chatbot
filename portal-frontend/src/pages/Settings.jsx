@@ -341,7 +341,16 @@ function RepeatableListEditor({ items, fields, onChange, emptyItem, addLabel, on
             {fields.map((f) => (
               <div key={f.key}>
                 <label className="mb-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">{f.label}</label>
-                {f.type === "image" ? (
+                {f.type === "checkbox" ? (
+                  <label className="flex min-h-11 items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2.5 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={item[f.key] === true}
+                      onChange={(e) => updateItem(idx, f.key, e.target.checked)}
+                    />
+                    <span>{f.checkboxLabel || "Enabled"}</span>
+                  </label>
+                ) : f.type === "image" ? (
                   <ImageFieldEditor
                     value={item[f.key] ?? ""}
                     onChange={(value) => updateItem(idx, f.key, value)}
@@ -884,25 +893,35 @@ function FaqsTab({ config, onSaved, onError }) {
   );
 }
 
-const PROMOTION_FIELDS = [
-  { key: "name", label: "Promo name" },
-  { key: "imageUrl", label: "Promo image", type: "image" },
-  { key: "caption", label: "Caption", type: "textarea", rows: 2 },
-  { key: "validFrom", label: "Valid from (optional)", type: "date" },
-  { key: "validUntil", label: "Valid until (optional)", type: "date" },
-];
-
 function PromotionsTab({ config, onSaved, onError }) {
+  const serviceNames = (config.services || []).map((service) => service.name).filter(Boolean);
+  const promotionFields = [
+    { key: "name", label: "Promo name" },
+    { key: "linkedService", label: "Linked service", type: "select", options: serviceNames, placeholder: "Choose the service this promo belongs to" },
+    { key: "imageUrl", label: "Promo image", type: "image" },
+    { key: "caption", label: "Caption", type: "textarea", rows: 2 },
+    { key: "validFrom", label: "Valid from (optional)", type: "date" },
+    { key: "validUntil", label: "Valid until (optional)", type: "date" },
+    { key: "sendOnPriceQuery", label: "Automatic send", type: "checkbox", checkboxLabel: "Send image + caption when a customer asks this service's price" },
+  ];
   const [items, setItems] = useState(() =>
-    (config.promotions || []).map((p) => ({ ...p, validFrom: p.validFrom || "", validUntil: p.validUntil || "" }))
+    (config.promotions || []).map((p) => ({
+      ...p,
+      linkedService: p.linkedService || "",
+      sendOnPriceQuery: p.sendOnPriceQuery === true,
+      validFrom: p.validFrom || "",
+      validUntil: p.validUntil || "",
+    }))
   );
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
     const cleaned = items
-      .filter((p) => p.name.trim() || p.imageUrl.trim() || p.caption.trim() || p.validFrom || p.validUntil)
+      .filter((p) => p.name.trim() || p.linkedService.trim() || p.imageUrl.trim() || p.caption.trim() || p.validFrom || p.validUntil)
       .map((p) => ({
         name: p.name.trim(),
+        linkedService: p.linkedService.trim(),
+        sendOnPriceQuery: p.sendOnPriceQuery === true,
         imageUrl: p.imageUrl.trim(),
         caption: p.caption.trim(),
         validFrom: p.validFrom.trim() || null,
@@ -912,7 +931,18 @@ function PromotionsTab({ config, onSaved, onError }) {
       onError("Every promotion needs a name.");
       return;
     }
+    const canonicalServices = new Set(serviceNames.map((name) => name.toLowerCase()));
     for (const promotion of cleaned) {
+      if (promotion.sendOnPriceQuery) {
+        if (!promotion.linkedService || !canonicalServices.has(promotion.linkedService.toLowerCase())) {
+          onError("Price-triggered promotions must link to a configured service.");
+          return;
+        }
+        if (!promotion.imageUrl || !promotion.caption) {
+          onError("Price-triggered promotions need both an image and a caption.");
+          return;
+        }
+      }
       if (!isIsoDate(promotion.validFrom) || !isIsoDate(promotion.validUntil)) {
         onError("Promotion dates must be valid dates.");
         return;
@@ -938,13 +968,14 @@ function PromotionsTab({ config, onSaved, onError }) {
     <div>
       <SectionHeading
         title="Promotions"
-        description="Sent as an image alongside the first reply to a brand-new customer, while a promo is within its valid dates."
+        description="Active promos are the AI's source of truth for offers. Enable automatic send to deliver the linked promo image and caption only when a customer asks that service's price."
       />
+      {serviceNames.length === 0 && <p className="mb-4 rounded-xl bg-[var(--color-accent-light)] p-3 text-xs">Add at least one service before linking a price-triggered promotion.</p>}
       <RepeatableListEditor
         items={items}
-        fields={PROMOTION_FIELDS}
+        fields={promotionFields}
         onChange={setItems}
-        emptyItem={{ name: "", imageUrl: "", caption: "", validFrom: "", validUntil: "" }}
+        emptyItem={{ name: "", linkedService: "", sendOnPriceQuery: true, imageUrl: "", caption: "", validFrom: "", validUntil: "" }}
         addLabel="Add promotion"
         onError={onError}
       />
