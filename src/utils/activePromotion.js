@@ -178,16 +178,19 @@ function promotionTermAppearsInText(term, text) {
   const normalizedText = normalizeServiceName(text);
   if (!normalizedTerm || !normalizedText) return false;
 
-  // Single-character Latin aliases such as A/B/C must be bounded by
-  // non-ASCII-alphanumeric characters. This avoids matching ordinary words
-  // like "berapa" while still recognizing Malaysian mixed text like "A跟B".
-  if (/^[a-z0-9]$/u.test(normalizedTerm)) {
-    const rawText = String(text || "").toLowerCase();
+  // Single-letter package aliases such as A/B/C are intentionally
+  // case-sensitive. A lowercase "a" is a common English article ("have a
+  // package") and must not silently select Package A. Explicit uppercase
+  // "A跟B", "A price", etc. remain supported. Single-digit aliases are too
+  // ambiguous for automatic routing; use a name such as "Package 1" instead.
+  if (/^[a-z]$/u.test(normalizedTerm)) {
+    const rawText = String(text || "");
+    const explicitLetter = normalizedTerm.toUpperCase();
     return new RegExp(
-      "(^|[^a-z0-9])" + normalizedTerm + "([^a-z0-9]|$)",
-      "i"
+      "(^|[^A-Za-z0-9])" + explicitLetter + "([^A-Za-z0-9]|$)"
     ).test(rawText);
   }
+  if (/^[0-9]$/u.test(normalizedTerm)) return false;
 
   const paddedText = ` ${normalizedText} `;
   if (paddedText.includes(` ${normalizedTerm} `)) return true;
