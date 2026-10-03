@@ -22,7 +22,7 @@ const {
 } = require("./services/inboundProcessingService");
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const conversationStore = require("./utils/conversationStore");
-const { getPricePromotion } = require("./utils/activePromotion");
+const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const clinicConfig = require("./config/clinicConfig");
@@ -781,28 +781,20 @@ async function processIncomingMessage(
     // successful normal AI reply when the customer explicitly asked about the
     // price of one known configured service. Existing safety/ownership gates
     // remain unchanged.
-    if (
-      priceQuery &&
-      details?.treatment &&
-      !flagged &&
-      !bookingReady &&
-      !keywordReason &&
-      !contact.needs_attention &&
-      sendOutcome.sendResult.success
-    ) {
-      const promo = getPricePromotion(
-        clinicConfig.promotions,
-        details.treatment
-      );
+    {
+      const promo = await resolvePricePromotionForReply({
+        priceQuery,
+        treatment: details?.treatment,
+        flagged,
+        bookingReady,
+        keywordReason,
+        needsAttention: contact.needs_attention,
+        textSendSucceeded: sendOutcome.sendResult.success,
+        promotions: clinicConfig.promotions,
+        contactId: contact.id,
+        wasPromoRecentlySent: messagesRepo.wasPromoRecentlySent,
+      });
       if (promo) {
-        const recentlySent = await messagesRepo.wasPromoRecentlySent(
-          contact.id,
-          promo.imageUrl,
-          24
-        );
-        if (recentlySent) {
-          return { wasFirstMessage, keywordReason };
-        }
         const promoContact = await getAiOwnedContact(contact, {
           channel,
           from,
