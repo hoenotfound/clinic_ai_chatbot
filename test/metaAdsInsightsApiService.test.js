@@ -126,3 +126,42 @@ test("rejects unexpected pagination hosts", () => {
     /unexpected paging host/
   );
 });
+
+
+test("rejects paging to a different Graph endpoint for the same account token", () => {
+  assert.throws(
+    () => safePagingUrl(
+      "https://graph.facebook.com/v26.0/me/accounts?after=cursor",
+      "123456789"
+    ),
+    /unexpected paging path/
+  );
+});
+
+test("rejects Insights rows that claim a different ad account", async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    async text() {
+      return JSON.stringify({
+        data: [{
+          date_start: "2026-10-01",
+          account_id: "999999999",
+          ad_id: "300",
+          spend: "1.00",
+        }],
+      });
+    },
+  });
+
+  await assert.rejects(
+    fetchAdInsights("123456789", {
+      since: "2026-10-01",
+      until: "2026-10-01",
+      fetchImpl,
+      token: "secret-token",
+      version: "v26.0",
+    }),
+    /unexpected ad account/
+  );
+});
