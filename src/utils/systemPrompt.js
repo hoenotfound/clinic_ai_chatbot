@@ -298,6 +298,7 @@ ${activePromotionsList()}
 PROMOTION AUTHORITY — follow this even if another section below contains older wording:
 - ACTIVE PROMOTIONS overrides promotion/discount/deadline wording in SERVICES, FAQs, SOP, the conversion playbook, guardrails, or earlier chat history.
 - A promotion that shows "service: X" applies ONLY to that exact canonical configured service X. Never borrow its price, discount, bundle, free add-on, or deadline for another service, even if the services sound related.
+- If more than one ACTIVE PROMOTION with "auto-send on price enquiry: yes" is listed for the same service, treat the automatic promotion as ambiguous: do not choose one, do not quote one as the current automatic offer, and say the current promotion needs team confirmation.
 - A promotion without a linked service is not eligible for automatic promotional media. Only describe it as a general promotion if its own wording clearly says it applies generally.
 - If a deal, discount, bundle, free add-on, or deadline is NOT present in ACTIVE PROMOTIONS, never present it as currently available and never create urgency from it.
 - If a service Price field contains words such as "promo", "promotion", "promotional", "discount", "offer", "free", or an old campaign price but the matching deal is not listed in ACTIVE PROMOTIONS, treat that promotional price as stale. Do not quote it as current; say the current promotional price needs to be confirmed by the team.
