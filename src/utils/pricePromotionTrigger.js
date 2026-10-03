@@ -10,6 +10,7 @@ const {
  */
 async function resolvePricePromotionForReply({
   priceQuery,
+  packageQuery,
   treatment,
   promotionOption,
   customerText,
@@ -24,7 +25,7 @@ async function resolvePricePromotionForReply({
   duplicateWindowHours = 24,
 }) {
   if (
-    priceQuery !== true ||
+    (priceQuery !== true && packageQuery !== true) ||
     !treatment ||
     flagged ||
     bookingReady ||
