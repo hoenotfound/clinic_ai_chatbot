@@ -5,6 +5,7 @@ const {
   getActivePromotion,
   getActivePromotions,
   getPricePromotion,
+  findOverlappingPricePromotionPair,
   isPromotionActive,
   localDateString,
 } = require("../src/utils/activePromotion");
@@ -67,4 +68,42 @@ test("price promotion service matching preserves Chinese service names", () => {
   };
   assert.equal(getPricePromotion([chinesePromo], "3D 小颜术", now)?.name, "3D First Trial");
   assert.equal(getPricePromotion([chinesePromo], "3D 骨盆调理", now), null);
+});
+
+
+test("price promotion fails closed when two active auto-send promos match the same service", () => {
+  const now = new Date("2026-09-10T04:00:00Z");
+  const second = {
+    ...promo,
+    name: "HIFU September Special",
+    imageUrl: "https://example.com/hifu-2.jpg",
+    caption: "second promo",
+  };
+
+  assert.equal(
+    getPricePromotion([promo, second], "HIFU Non-Surgical Facelift", now),
+    null
+  );
+  assert.equal(findOverlappingPricePromotionPair([promo, second])?.length, 2);
+});
+
+test("non-overlapping auto-send promo windows for one service are allowed", () => {
+  const september = { ...promo, validFrom: "2026-09-01", validUntil: "2026-09-30" };
+  const october = {
+    ...promo,
+    name: "HIFU October",
+    imageUrl: "https://example.com/hifu-oct.jpg",
+    validFrom: "2026-10-01",
+    validUntil: "2026-10-31",
+  };
+
+  assert.equal(findOverlappingPricePromotionPair([september, october]), null);
+  assert.equal(
+    getPricePromotion(
+      [september, october],
+      "HIFU Non-Surgical Facelift",
+      new Date("2026-10-10T04:00:00Z")
+    )?.name,
+    "HIFU October"
+  );
 });
