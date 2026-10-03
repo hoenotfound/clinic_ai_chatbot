@@ -83,8 +83,8 @@ CREATE TABLE IF NOT EXISTS messages (
 -- Inbox. Always null for inbound ('user') messages.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS sent_by_username TEXT;
 
--- Image messages (currently just the promo graphic sent on a patient's
--- first message) — media_url is the hosted image link; content holds the
+-- Image messages (including promo graphics sent after a matching service
+-- price enquiry) — media_url is the hosted image link; content holds the
 -- caption (may be empty). Null media_url means a plain text message.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_url TEXT;
 
