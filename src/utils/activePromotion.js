@@ -92,6 +92,40 @@ function normalizeServiceName(value) {
     .replace(/\s+/g, " ");
 }
 
+function normalizedPromotionBound(value, fallback) {
+  const text = String(value || "").trim();
+  return DATE_ONLY.test(text) ? text : fallback;
+}
+
+function promotionWindowsOverlap(a, b) {
+  const aStart = normalizedPromotionBound(a?.validFrom, "0000-01-01");
+  const aEnd = normalizedPromotionBound(a?.validUntil, "9999-12-31");
+  const bStart = normalizedPromotionBound(b?.validFrom, "0000-01-01");
+  const bEnd = normalizedPromotionBound(b?.validUntil, "9999-12-31");
+  return aStart <= bEnd && bStart <= aEnd;
+}
+
+function findOverlappingPricePromotionPair(promotions) {
+  const enabled = (Array.isArray(promotions) ? promotions : []).filter(
+    (promotion) =>
+      promotion?.sendOnPriceQuery === true &&
+      Boolean(normalizeServiceName(promotion?.linkedService))
+  );
+
+  for (let i = 0; i < enabled.length; i += 1) {
+    for (let j = i + 1; j < enabled.length; j += 1) {
+      if (
+        normalizeServiceName(enabled[i].linkedService) ===
+          normalizeServiceName(enabled[j].linkedService) &&
+        promotionWindowsOverlap(enabled[i], enabled[j])
+      ) {
+        return [enabled[i], enabled[j]];
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Returns the first active promotion explicitly linked to the canonical service
  * for price-enquiry delivery. Missing/legacy fields fail closed, so deploying
@@ -106,15 +140,18 @@ function getPricePromotion(
   const target = normalizeServiceName(serviceName);
   if (!target) return null;
 
-  return (
-    getActivePromotions(promotions, now, options).find(
-      (promotion) =>
-        promotion?.sendOnPriceQuery === true &&
-        Boolean(String(promotion?.imageUrl || "").trim()) &&
-        Boolean(String(promotion?.caption || "").trim()) &&
-        normalizeServiceName(promotion?.linkedService) === target
-    ) || null
+  const matches = getActivePromotions(promotions, now, options).filter(
+    (promotion) =>
+      promotion?.sendOnPriceQuery === true &&
+      Boolean(String(promotion?.imageUrl || "").trim()) &&
+      Boolean(String(promotion?.caption || "").trim()) &&
+      normalizeServiceName(promotion?.linkedService) === target
   );
+
+  // Fail closed if configuration is ambiguous. Settings validation prevents
+  // overlapping auto-send windows, but this protects live delivery from stale
+  // or manually edited config too.
+  return matches.length === 1 ? matches[0] : null;
 }
 
 module.exports = {
@@ -123,6 +160,7 @@ module.exports = {
   getActivePromotion,
   getActivePromotions,
   getPricePromotion,
+  findOverlappingPricePromotionPair,
   isPromotionActive,
   localDateString,
 };
