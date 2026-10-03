@@ -1110,12 +1110,20 @@ function AliasesTab({ config, onSaved, onError }) {
   }
 
   async function handleSave() {
-    const cleaned = items
+    const prepared = items
       .filter((a) => String(a.alias || "").trim() || String(a.officialService || "").trim())
       .map((a) => ({
         alias: String(a.alias || "").trim(),
         officialService: String(a.officialService || "").trim(),
       }));
+
+    const seenMappings = new Set();
+    const cleaned = prepared.filter((item) => {
+      const key = `${normalizeAlias(item.alias)}::${item.officialService.toLowerCase()}`;
+      if (seenMappings.has(key)) return false;
+      seenMappings.add(key);
+      return true;
+    });
 
     if (cleaned.some((a) => !a.alias || !a.officialService)) {
       onError("Every service term needs both the customer wording and the service it maps to.");
