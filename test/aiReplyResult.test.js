@@ -112,6 +112,35 @@ test("malformed JSON-looking AI output fails closed instead of leaking raw contr
   );
 });
 
+test("unstructured provider prose is rejected instead of being sent to the customer", () => {
+  assert.throws(
+    () => parseAiReplyResult("Hi there, how can I help?"),
+    (err) => err.code === "INVALID_AI_RESPONSE"
+  );
+});
+
+test("customer-facing prose plus leaked JSON construction is rejected", () => {
+  const leaked = [
+    "Hi 你好 👋 欢迎来到 Neutro Sense TCM~",
+    "",
+    "有几款不同的限时配套可以选择哦~",
+    "",
+    "3. **JSON Construction:**",
+    JSON.stringify({
+      reply: "这段内部结构不应该显示给顾客",
+      outcome: "normal",
+      treatment: null,
+      branch: null,
+      appointmentPreference: null,
+    }),
+  ].join("\n");
+
+  assert.throws(
+    () => parseAiReplyResult(leaked),
+    (err) => err.code === "INVALID_AI_RESPONSE"
+  );
+});
+
 test("legacy markers remain supported during structured-output rollout", () => {
   const result = parseAiReplyResult("[[NEEDS_HUMAN]] our team will check this for u");
   assert.equal(result.flagged, true);
@@ -193,10 +222,10 @@ test("structured replies expose only an explicit boolean priceQuery signal", () 
   }));
   assert.equal(stringFalse.priceQuery, false);
 
-  const legacy = parseAiReplyResult("How can I help?");
-  assert.equal(legacy.priceQuery, false);
-  assert.equal(legacy.packageQuery, false);
-  assert.equal(legacy.promotionOption, null);
+  assert.throws(
+    () => parseAiReplyResult("How can I help?"),
+    (err) => err.code === "INVALID_AI_RESPONSE"
+  );
 });
 
 test("canonical service matching preserves Chinese names and aliases without collisions", () => {
