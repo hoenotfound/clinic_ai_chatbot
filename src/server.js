@@ -641,6 +641,7 @@ async function processIncomingMessage(
     let flagged = false;
     let bookingReady = false;
     let priceQuery = false;
+    let packageQuery = false;
     let promotionOption = null;
     let details = null;
 
@@ -659,6 +660,7 @@ async function processIncomingMessage(
         flagged,
         bookingReady,
         priceQuery,
+        packageQuery,
         promotionOption,
         details,
       } = parsedReply);
@@ -786,6 +788,7 @@ async function processIncomingMessage(
     {
       const promoBundle = await resolvePricePromotionForReply({
         priceQuery,
+        packageQuery,
         treatment: details?.treatment,
         promotionOption,
         customerText: text,
