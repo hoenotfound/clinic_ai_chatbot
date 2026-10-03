@@ -161,6 +161,25 @@ function startsWithLegacyOutcomeMarker(value) {
   return AI_OUTCOME_MARKERS.some((marker) => text.startsWith(marker));
 }
 
+function containsInternalAiScaffolding(value) {
+  const text = String(value || "");
+  if (!text) return false;
+
+  return (
+    /json\s+construction\s*:/i.test(text)
+    || /structured\s+output\s*[-:：]?/i.test(text)
+    || /(?:^|[{,\n])\s*["']?(?:priceQuery|packageQuery|promotionOption|appointmentPreference|projectLocation|projectSummary|nextStep|staffSummary)["']?\s*:/m.test(text)
+    || /(?:^|[{,\n])\s*["']?outcome["']?\s*:\s*["']?(?:normal|needs_human|booking_ready)\b/im.test(text)
+    || /\{\s*["']?reply["']?\s*:[\s\S]{0,1200}["']?outcome["']?\s*:/i.test(text)
+  );
+}
+
+function assertCustomerFacingReplySafe(value) {
+  if (containsInternalAiScaffolding(value)) {
+    throw invalidResponse("AI reply contained internal structured-output content.");
+  }
+}
+
 function emptyDetails() {
   return {
     branch: null,
@@ -207,6 +226,7 @@ function parseStructuredReply(raw) {
   if (!reply || !VALID_OUTCOMES.has(outcome)) {
     throw invalidResponse("AI structured response is missing a valid reply/outcome.");
   }
+  assertCustomerFacingReplySafe(reply);
 
   const conversion = conversionProfile();
 
@@ -342,6 +362,7 @@ function parseAiReplyResult(raw) {
   // safe only for the existing appointment contract because it carries no
   // structured project metadata. Renovation must use the JSON contract above.
   const legacy = extractAiOutcomeSignals(raw);
+  assertCustomerFacingReplySafe(legacy.text);
   const conversion = conversionProfile();
   const allowLegacyBookingReady = conversion.enabled && conversion.mode === "appointment";
   const bookingReady = allowLegacyBookingReady && legacy.bookingReady;
