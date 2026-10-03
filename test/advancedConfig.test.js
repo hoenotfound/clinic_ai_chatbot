@@ -360,6 +360,25 @@ test("Advanced Config enforces alias, FAQ, and promotion integrity across partia
   assert.equal(pricePromoMissingService.ok, false);
   assert.deepEqual(pricePromoMissingService.invalidKeys, ["promotions"]);
 
+  const configWithLinkedPromo = currentConfig();
+  configWithLinkedPromo.promotions = [{
+    name: "Consultation Promo",
+    linkedService: "Consultation",
+    sendOnPriceQuery: true,
+    imageUrl: "https://example.com/promo.jpg",
+    caption: "RM88",
+    validFrom: null,
+    validUntil: null,
+  }];
+  const serviceRenameBreaksPromo = prepareConfigUpdatePayload(
+    {
+      services: [{ name: "Renamed Consultation", description: "", priceRange: "", duration: "" }],
+    },
+    configWithLinkedPromo
+  );
+  assert.equal(serviceRenameBreaksPromo.ok, false);
+  assert.deepEqual(serviceRenameBreaksPromo.invalidKeys, ["promotions"]);
+
   const pricePromoMissingImage = prepareAdvancedConfigPayload(
     {
       promotions: [{
