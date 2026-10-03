@@ -1,4 +1,4 @@
-const { getPricePromotion } = require("./activePromotion");
+const { getPricePromotionBundle } = require("./activePromotion");
 
 /**
  * Resolves whether the current AI reply is allowed to trigger promotional media.
@@ -8,6 +8,7 @@ const { getPricePromotion } = require("./activePromotion");
 async function resolvePricePromotionForReply({
   priceQuery,
   treatment,
+  promotionOption,
   flagged,
   bookingReady,
   keywordReason,
@@ -30,20 +31,31 @@ async function resolvePricePromotionForReply({
     return null;
   }
 
-  const promo = getPricePromotion(promotions, treatment);
-  if (!promo) return null;
+  const bundle = getPricePromotionBundle(
+    promotions,
+    treatment,
+    promotionOption
+  );
+  if (!bundle) return null;
 
   if (typeof wasPromoRecentlySent !== "function" || !contactId) {
     return null;
   }
 
-  const recentlySent = await wasPromoRecentlySent(
-    contactId,
-    promo.imageUrl,
-    promo.caption,
-    duplicateWindowHours
-  );
-  return recentlySent ? null : promo;
+  const unsentPackages = [];
+  for (const packageOption of bundle.packages) {
+    const recentlySent = await wasPromoRecentlySent(
+      contactId,
+      packageOption.imageUrl,
+      packageOption.caption,
+      duplicateWindowHours
+    );
+    if (!recentlySent) unsentPackages.push(packageOption);
+  }
+
+  return unsentPackages.length > 0
+    ? { ...bundle, packages: unsentPackages }
+    : null;
 }
 
 module.exports = {
