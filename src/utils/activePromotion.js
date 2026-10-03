@@ -169,6 +169,36 @@ function findAmbiguousPromotionPackageTerm(promotion) {
   return null;
 }
 
+function promotionTermAppearsInText(term, text) {
+  const normalizedTerm = normalizeServiceName(term);
+  const normalizedText = normalizeServiceName(text);
+  if (!normalizedTerm || !normalizedText) return false;
+
+  // Single-character Latin aliases such as A/B/C must be standalone tokens so
+  // "A" does not accidentally match ordinary words like "berapa".
+  if (/^[a-z0-9]$/u.test(normalizedTerm)) {
+    return normalizedText.split(" ").includes(normalizedTerm);
+  }
+
+  const paddedText = ` ${normalizedText} `;
+  if (paddedText.includes(` ${normalizedTerm} `)) return true;
+
+  // Compact matching covers harmless spacing differences such as "PackageB"
+  // and mixed Latin/Chinese configured wording.
+  const compactTerm = normalizedTerm.replace(/\s+/g, "");
+  const compactText = normalizedText.replace(/\s+/g, "");
+  return compactTerm.length >= 2 && compactText.includes(compactTerm);
+}
+
+function findMentionedPromotionPackages(packages, customerText) {
+  if (!customerText) return [];
+  return packages.filter((packageOption) =>
+    packageTerms(packageOption).some((term) =>
+      promotionTermAppearsInText(term, customerText)
+    )
+  );
+}
+
 function resolvePromotionPackage(packages, requestedOption) {
   const requested = normalizeServiceName(requestedOption);
   if (!requested) return null;
@@ -284,6 +314,7 @@ module.exports = {
   getPricePromotionBundle,
   promotionPackages,
   findAmbiguousPromotionPackageTerm,
+  findMentionedPromotionPackages,
   findOverlappingPricePromotionPair,
   isPromotionActive,
   localDateString,
