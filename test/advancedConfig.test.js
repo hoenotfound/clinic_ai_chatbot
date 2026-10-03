@@ -444,6 +444,27 @@ test("Advanced Config enforces alias, FAQ, and promotion integrity across partia
   );
   assert.equal(validPackagePromotion.ok, true);
 
+  const packageWithoutOptionalTitleOrAliases = prepareAdvancedConfigPayload(
+    {
+      promotions: [{
+        name: "Consultation Packages Minimal",
+        linkedService: "Consultation",
+        sendOnPriceQuery: true,
+        imageUrl: "",
+        caption: "",
+        packages: [{
+          name: "Package A",
+          imageUrl: "https://example.com/package-a-minimal.jpg",
+          caption: "Package A RM88",
+        }],
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(packageWithoutOptionalTitleOrAliases.ok, true);
+
   const packageMissingMedia = prepareAdvancedConfigPayload(
     {
       promotions: [{
