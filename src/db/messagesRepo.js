@@ -238,6 +238,7 @@ async function wasPromoRecentlySent(contactId, imageUrl, withinHours = 24) {
      WHERE contact_id = $1
        AND role = 'assistant'
        AND media_url = $2
+       AND whatsapp_message_id IS NOT NULL
        AND created_at >= NOW() - ($3::integer * INTERVAL '1 hour')
        AND (
          delivery_status IS NULL
