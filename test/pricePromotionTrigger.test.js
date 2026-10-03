@@ -236,3 +236,50 @@ test("unrecognized requested package fails closed instead of sending all options
     null
   );
 });
+
+
+test("explicit current-message package wording overrides an incorrect model package label", async () => {
+  const packagePromo = {
+    name: "Pelvis Packages",
+    linkedService: "3D 小颜术",
+    sendOnPriceQuery: true,
+    imageUrl: "",
+    caption: "",
+    validFrom: null,
+    validUntil: null,
+    packages: [
+      { name: "Package A", title: "", aliases: ["A"], imageUrl: "https://example.test/a.jpg", caption: "A promo" },
+      { name: "Package B", title: "子宫调理套餐", aliases: ["B", "子宫套餐"], imageUrl: "https://example.test/b.jpg", caption: "B promo" },
+    ],
+  };
+  const bundle = await resolvePricePromotionForReply(base({
+    promotions: [packagePromo],
+    promotionOption: "Package A",
+    customerText: "Package B多少钱？",
+  }));
+
+  assert.deepEqual(bundle.packages.map((item) => item.name), ["Package B"]);
+});
+
+test("mentioning multiple configured packages in the current price question sends no automatic media", async () => {
+  const packagePromo = {
+    name: "Pelvis Packages",
+    linkedService: "3D 小颜术",
+    sendOnPriceQuery: true,
+    imageUrl: "",
+    caption: "",
+    validFrom: null,
+    validUntil: null,
+    packages: [
+      { name: "Package A", title: "", aliases: ["A"], imageUrl: "https://example.test/a.jpg", caption: "A promo" },
+      { name: "Package B", title: "", aliases: ["B"], imageUrl: "https://example.test/b.jpg", caption: "B promo" },
+    ],
+  };
+  assert.equal(
+    await resolvePricePromotionForReply(base({
+      promotions: [packagePromo],
+      customerText: "Package A 跟 Package B 分别多少钱？",
+    })),
+    null
+  );
+});
