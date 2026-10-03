@@ -1186,7 +1186,7 @@ function PromotionsTab({ config, onSaved, onError }) {
     const autoName = !current.name?.trim() || current.name === `${current.linkedService} Promotion`;
     updateItem(index, {
       linkedService: service,
-      ...(autoName && service ? { name: `${service} Promotion` } : {}),
+      ...(autoName ? { name: service ? `${service} Promotion` : "" } : {}),
     });
   }
 
