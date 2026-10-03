@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const { analyticsQuery } = require("./analyticsRepo");
 const {
   getAnalyticsPipelineProfile,
   milestoneTimesCte,
@@ -303,7 +304,10 @@ function enrichPerformance(row, { allowValueRoas = false } = {}) {
 
 async function getMetaAdsAnalytics(filters, { database = pool, analyticsProfile = null } = {}) {
   const profile = analyticsProfile || getAnalyticsPipelineProfile();
-  const result = await database.query(
+  const query = database === pool
+    ? analyticsQuery
+    : (text, params) => database.query(text, params);
+  const result = await query(
     buildAnalyticsSql(filters.level, profile),
     [
       filters.from,
@@ -351,7 +355,7 @@ async function getMetaAdsAnalytics(filters, { database = pool, analyticsProfile 
     });
   });
 
-  const accountResult = await database.query(
+  const accountResult = await query(
     `WITH account_meta AS (
        SELECT DISTINCT ON (account_id)
          account_id, account_name, account_currency, insight_date
