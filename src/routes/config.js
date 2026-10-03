@@ -384,17 +384,23 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
     };
   }
 
-  if (Object.prototype.hasOwnProperty.call(updates, "promotions")) {
+  if (
+    Object.prototype.hasOwnProperty.call(updates, "promotions") ||
+    Object.prototype.hasOwnProperty.call(updates, "services")
+  ) {
     const services = Object.prototype.hasOwnProperty.call(updates, "services")
       ? updates.services
       : currentConfig.services;
+    const promotions = Object.prototype.hasOwnProperty.call(updates, "promotions")
+      ? updates.promotions
+      : currentConfig.promotions;
     const serviceNames = new Set(
       (Array.isArray(services) ? services : [])
         .map((service) => String(service?.name || "").trim().toLowerCase())
         .filter(Boolean)
     );
 
-    for (const promotion of updates.promotions) {
+    for (const promotion of Array.isArray(promotions) ? promotions : []) {
       if (promotion?.sendOnPriceQuery !== true) continue;
       const linkedService = String(promotion?.linkedService || "").trim();
       if (!linkedService || !serviceNames.has(linkedService.toLowerCase())) {
