@@ -158,7 +158,6 @@ test("generic package price enquiry returns all unsent package options", async (
   const calls = [];
   const bundle = await resolvePricePromotionForReply(base({
     promotions: [packagePromo],
-    promotionOption: null,
     wasPromoRecentlySent: async (...args) => {
       calls.push(args);
       return false;
@@ -185,7 +184,7 @@ test("specific package enquiry sends only that configured package", async () => 
   };
   const bundle = await resolvePricePromotionForReply(base({
     promotions: [packagePromo],
-    promotionOption: "子宫套餐",
+    customerText: "子宫套餐多少钱？",
   }));
 
   assert.deepEqual(bundle.packages.map((item) => item.name), ["Package B"]);
@@ -215,7 +214,7 @@ test("per-package duplicate suppression keeps only unsent package options", asyn
   assert.deepEqual(bundle.packages.map((item) => item.name), ["Package B", "Package C"]);
 });
 
-test("unrecognized requested package fails closed instead of sending all options", async () => {
+test("generic customer price enquiry is never narrowed by a model-only package guess", async () => {
   const packagePromo = {
     name: "Pelvis Packages",
     linkedService: "3D 小颜术",
@@ -229,13 +228,11 @@ test("unrecognized requested package fails closed instead of sending all options
       { name: "Package B", title: "", aliases: [], imageUrl: "https://example.test/b.jpg", caption: "B promo" },
     ],
   };
-  assert.equal(
-    await resolvePricePromotionForReply(base({
-      promotions: [packagePromo],
-      promotionOption: "Package D",
-    })),
-    null
-  );
+  const bundle = await resolvePricePromotionForReply(base({
+    promotions: [packagePromo],
+    customerText: "多少钱？",
+  }));
+  assert.deepEqual(bundle.packages.map((item) => item.name), ["Package A", "Package B"]);
 });
 
 
@@ -255,7 +252,6 @@ test("explicit current-message package wording overrides an incorrect model pack
   };
   const bundle = await resolvePricePromotionForReply(base({
     promotions: [packagePromo],
-    promotionOption: "Package A",
     customerText: "Package B多少钱？",
   }));
 
@@ -353,10 +349,66 @@ test("mentioning a package in a normal suitability question does not trigger med
     await resolvePricePromotionForReply(base({
       priceQuery: false,
       packageQuery: false,
-      promotionOption: "Package B",
       customerText: "Package B适合产后吗？",
       promotions: [packagePromo],
     })),
     null
   );
+});
+
+
+test("short price follow-up reuses the most recent customer-named package", async () => {
+  const packagePromo = {
+    name: "Pelvis Packages",
+    linkedService: "3D 小颜术",
+    sendOnPriceQuery: true,
+    imageUrl: "",
+    caption: "",
+    validFrom: null,
+    validUntil: null,
+    packages: [
+      { name: "Package A", title: "", aliases: ["A"], imageUrl: "https://example.test/a.jpg", caption: "A promo" },
+      { name: "Package B", title: "子宫调理套餐", aliases: ["B", "子宫套餐"], imageUrl: "https://example.test/b.jpg", caption: "B promo" },
+    ],
+  };
+
+  const bundle = await resolvePricePromotionForReply(base({
+    promotions: [packagePromo],
+    customerText: "多少钱？",
+    conversationHistory: [
+      { role: "user", content: "我想了解子宫套餐" },
+      { role: "assistant", content: "可以，你想了解哪方面？" },
+      { role: "user", content: "多少钱？" },
+    ],
+  }));
+
+  assert.deepEqual(bundle.packages.map((item) => item.name), ["Package B"]);
+});
+
+test("generic price enquiry with no package context returns all configured package options", async () => {
+  const packagePromo = {
+    name: "Pelvis Packages",
+    linkedService: "3D 小颜术",
+    sendOnPriceQuery: true,
+    imageUrl: "",
+    caption: "",
+    validFrom: null,
+    validUntil: null,
+    packages: [
+      { name: "Package A", title: "", aliases: ["A"], imageUrl: "https://example.test/a.jpg", caption: "A promo" },
+      { name: "Package B", title: "", aliases: ["B"], imageUrl: "https://example.test/b.jpg", caption: "B promo" },
+    ],
+  };
+
+  const bundle = await resolvePricePromotionForReply(base({
+    promotions: [packagePromo],
+    customerText: "骨盆多少钱？",
+    conversationHistory: [
+      { role: "user", content: "我想了解骨盆" },
+      { role: "assistant", content: "可以的" },
+      { role: "user", content: "骨盆多少钱？" },
+    ],
+  }));
+
+  assert.deepEqual(bundle.packages.map((item) => item.name), ["Package A", "Package B"]);
 });
