@@ -1261,3 +1261,78 @@ test("Promotions confirms before switching a populated Single offer to Multiple 
 
   await expect(page.getByRole("button", { name: "Single offer", pressed: true })).toBeVisible();
 });
+
+
+test("Service Terms supports bulk paste, duplicate skipping, conflict blocking, and mobile-safe save", async ({ page }) => {
+  let savedPayload = null;
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      businessType: "tcm_clinic",
+      businessName: "Test TCM",
+      clinicName: "Test TCM",
+      businessDescription: "TCM test clinic",
+      aiAssistantName: "Ava",
+      introMessage: "Hi",
+      tone: "Warm",
+      services: [
+        { name: "骨盆调理", description: "", priceRange: "", duration: "" },
+        { name: "9D 逆龄抗衰", description: "", priceRange: "", duration: "" },
+      ],
+      serviceAliases: [
+        { alias: "骨盆", officialService: "骨盆调理" },
+        { alias: "9D", officialService: "9D 逆龄抗衰" },
+      ],
+      promotions: [],
+      branches: [],
+      faqs: [],
+      guardrails: [],
+      escalation: { outOfScopeTriggers: [], handoffMessage: "", handoffNote: "" },
+      hours: { general: "", closed: "" },
+      contact: { whatsapp: "", instagram: "", facebook: "", tiktok: "" },
+      messagingStyle: "",
+      closingPlaybook: "",
+      sop: "",
+    },
+    onConfigUpdate: (payload) => {
+      savedPayload = payload;
+    },
+  });
+
+  await page.goto("/settings?tab=aliases");
+
+  await expect(page.getByRole("heading", { name: "Service Terms" })).toBeVisible();
+  await expect(page.getByText("Quick add terms", { exact: true })).toBeVisible();
+  await expect(page.getByText("2 terms across 2 services.", { exact: true })).toBeVisible();
+
+  await page.getByLabel("Maps to service", { exact: true }).selectOption("骨盆调理");
+  const bulkInput = page.locator("textarea").first();
+  await bulkInput.fill("骨盘\n骨盆调整，pelvic adjustment\n骨盆");
+  await page.getByRole("button", { name: "Add terms", exact: true }).first().click();
+
+  await expect(
+    page.getByText("Added 3 terms to 骨盆调理. Skipped 1 already-added duplicate.")
+  ).toBeVisible();
+  await expect(page.getByText("骨盘", { exact: true })).toBeVisible();
+  await expect(page.getByText("骨盆调整", { exact: true })).toBeVisible();
+  await expect(page.getByText("pelvic adjustment", { exact: true })).toBeVisible();
+
+  await bulkInput.fill("9D");
+  await page.getByRole("button", { name: "Add terms", exact: true }).first().click();
+  await expect(
+    page.getByText("“9D” is already mapped to “9D 逆龄抗衰”. Remove it there first if you want to remap it.")
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => savedPayload).not.toBeNull();
+
+  expect(savedPayload.serviceAliases).toEqual([
+    { alias: "骨盆", officialService: "骨盆调理" },
+    { alias: "9D", officialService: "9D 逆龄抗衰" },
+    { alias: "骨盘", officialService: "骨盆调理" },
+    { alias: "骨盆调整", officialService: "骨盆调理" },
+    { alias: "pelvic adjustment", officialService: "骨盆调理" },
+  ]);
+
+  await expectNoHorizontalPageOverflow(page);
+});
