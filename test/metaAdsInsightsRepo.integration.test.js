@@ -1,13 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const { Pool } = require("pg");
+
+const insightsRepo = require("../src/db/metaAdsInsightsRepo");
 
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
-if (TEST_DATABASE_URL) {
-  process.env.DATABASE_URL = TEST_DATABASE_URL;
-}
-
-const { initSchema, pool } = require("../src/db/db");
-const insightsRepo = require("../src/db/metaAdsInsightsRepo");
 
 function insight(accountId, date, adId, spend) {
   return {
@@ -37,20 +36,31 @@ test(
   "Meta Ads repository atomically replaces only the requested date range and leases one owner",
   { skip: !TEST_DATABASE_URL },
   async (t) => {
-    await initSchema({ quiet: true });
+    const database = new Pool({
+      connectionString: TEST_DATABASE_URL,
+      ssl: false,
+      max: 4,
+    });
     const accountId = `88${Date.now()}`;
 
     t.after(async () => {
-      await pool.query(
+      await database.query(
         "DELETE FROM meta_ad_insights_daily WHERE account_id = $1",
         [accountId]
       ).catch(() => {});
-      await pool.query(
+      await database.query(
         "DELETE FROM meta_ads_insights_sync_state WHERE account_id = $1",
         [accountId]
       ).catch(() => {});
-      await pool.end().catch(() => {});
+      await database.end().catch(() => {});
     });
+
+    await database.query(
+      fs.readFileSync(
+        path.join(__dirname, "..", "src/db/migrations/027_meta_ads_insights.sql"),
+        "utf8"
+      )
+    );
 
     await insightsRepo.replaceInsightsRange(
       accountId,
@@ -60,7 +70,8 @@ test(
         insight(accountId, "2026-10-01", "301", 10),
         insight(accountId, "2026-10-02", "302", 20),
         insight(accountId, "2026-10-04", "304", 40),
-      ]
+      ],
+      database
     );
 
     await insightsRepo.replaceInsightsRange(
@@ -70,10 +81,11 @@ test(
       [
         insight(accountId, "2026-10-01", "301", 11),
         insight(accountId, "2026-10-03", "303", 30),
-      ]
+      ],
+      database
     );
 
-    const rows = await pool.query(
+    const rows = await database.query(
       `SELECT insight_date::text AS insight_date, ad_id, spend::text AS spend,
               account_currency
        FROM meta_ad_insights_daily
@@ -104,19 +116,34 @@ test(
     ]);
 
     assert.equal(
-      await insightsRepo.tryAcquireSyncLease(accountId, "owner-a", 300000),
+      await insightsRepo.tryAcquireSyncLease(
+        accountId,
+        "owner-a",
+        300000,
+        database
+      ),
       true
     );
     assert.equal(
-      await insightsRepo.tryAcquireSyncLease(accountId, "owner-b", 300000),
+      await insightsRepo.tryAcquireSyncLease(
+        accountId,
+        "owner-b",
+        300000,
+        database
+      ),
       false
     );
     assert.equal(
-      await insightsRepo.releaseSyncLease(accountId, "owner-a"),
+      await insightsRepo.releaseSyncLease(accountId, "owner-a", database),
       true
     );
     assert.equal(
-      await insightsRepo.tryAcquireSyncLease(accountId, "owner-b", 300000),
+      await insightsRepo.tryAcquireSyncLease(
+        accountId,
+        "owner-b",
+        300000,
+        database
+      ),
       true
     );
   }
