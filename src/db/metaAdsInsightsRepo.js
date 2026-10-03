@@ -2,6 +2,8 @@ const { pool } = require("./db");
 
 const INSERT_COLUMNS = [
   "account_id",
+  "account_name",
+  "account_currency",
   "insight_date",
   "campaign_id",
   "campaign_name",
@@ -21,10 +23,13 @@ const INSERT_COLUMNS = [
 ];
 
 const UPSERT_CHUNK_SIZE = 250;
+const MAX_LEASE_MS = 2 * 60 * 60 * 1000;
 
 function rowValues(row) {
   return [
     row.accountId,
+    row.accountName || null,
+    row.accountCurrency,
     row.date,
     row.campaignId || null,
     row.campaignName || null,
@@ -42,6 +47,22 @@ function rowValues(row) {
     row.frequency ?? null,
     JSON.stringify(Array.isArray(row.actions) ? row.actions : []),
   ];
+}
+
+function normalizeLeaseMs(value) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new TypeError("Meta Ads sync lease duration must be a positive integer.");
+  }
+  return Math.min(parsed, MAX_LEASE_MS);
+}
+
+function requireLeaseToken(value) {
+  const token = String(value || "").trim();
+  if (!token || token.length > 200) {
+    throw new TypeError("Meta Ads sync lease token is missing or invalid.");
+  }
+  return token;
 }
 
 async function insertChunk(client, rows) {
@@ -66,6 +87,8 @@ async function insertChunk(client, rows) {
        ${INSERT_COLUMNS.join(", ")}
      ) VALUES ${tuples.join(", ")}
      ON CONFLICT (account_id, insight_date, ad_id) DO UPDATE SET
+       account_name = EXCLUDED.account_name,
+       account_currency = EXCLUDED.account_currency,
        campaign_id = EXCLUDED.campaign_id,
        campaign_name = EXCLUDED.campaign_name,
        adset_id = EXCLUDED.adset_id,
@@ -86,10 +109,20 @@ async function insertChunk(client, rows) {
   );
 }
 
-async function replaceInsightsRange(accountId, since, until, rows = []) {
-  if (rows.some((row) => String(row?.accountId || "") !== String(accountId))) {
-    throw new Error("Meta Ads insight rows must belong to the account being replaced.");
+function validateRows(accountId, rows) {
+  const normalizedAccountId = String(accountId);
+  for (const row of rows) {
+    if (String(row?.accountId || "") !== normalizedAccountId) {
+      throw new Error("Meta Ads insight rows must belong to the account being replaced.");
+    }
+    if (!String(row?.accountCurrency || "").trim()) {
+      throw new Error("Meta Ads insight rows must include account currency.");
+    }
   }
+}
+
+async function replaceInsightsRange(accountId, since, until, rows = []) {
+  validateRows(accountId, rows);
 
   const client = await pool.connect();
   try {
@@ -116,10 +149,62 @@ async function replaceInsightsRange(accountId, since, until, rows = []) {
   }
 }
 
+async function tryAcquireSyncLease(accountId, leaseToken, leaseMs) {
+  const token = requireLeaseToken(leaseToken);
+  const durationMs = normalizeLeaseMs(leaseMs);
+  const result = await pool.query(
+    `INSERT INTO meta_ads_insights_sync_state (
+       account_id, lease_token, lease_until, updated_at
+     ) VALUES (
+       $1, $2, now() + ($3::bigint * interval '1 millisecond'), now()
+     )
+     ON CONFLICT (account_id) DO UPDATE SET
+       lease_token = EXCLUDED.lease_token,
+       lease_until = EXCLUDED.lease_until,
+       updated_at = now()
+     WHERE meta_ads_insights_sync_state.lease_until IS NULL
+        OR meta_ads_insights_sync_state.lease_until <= now()
+        OR meta_ads_insights_sync_state.lease_token = EXCLUDED.lease_token
+     RETURNING account_id`,
+    [accountId, token, durationMs]
+  );
+  return Boolean(result.rows[0]);
+}
+
+async function renewSyncLease(accountId, leaseToken, leaseMs) {
+  const token = requireLeaseToken(leaseToken);
+  const durationMs = normalizeLeaseMs(leaseMs);
+  const result = await pool.query(
+    `UPDATE meta_ads_insights_sync_state
+     SET lease_until = now() + ($3::bigint * interval '1 millisecond'),
+         updated_at = now()
+     WHERE account_id = $1
+       AND lease_token = $2
+       AND lease_until > now()
+     RETURNING account_id`,
+    [accountId, token, durationMs]
+  );
+  return Boolean(result.rows[0]);
+}
+
+async function releaseSyncLease(accountId, leaseToken) {
+  const token = requireLeaseToken(leaseToken);
+  const result = await pool.query(
+    `UPDATE meta_ads_insights_sync_state
+     SET lease_token = NULL, lease_until = NULL, updated_at = now()
+     WHERE account_id = $1 AND lease_token = $2
+     RETURNING account_id`,
+    [accountId, token]
+  );
+  return Boolean(result.rows[0]);
+}
+
 async function getSyncState(accountId) {
   const result = await pool.query(
     `SELECT account_id, last_attempt_at, last_success_at, last_error,
-            last_backfill_completed_at, last_range_start, last_range_end, updated_at
+            last_backfill_completed_at, backfill_next_date,
+            last_range_start, last_range_end,
+            lease_token, lease_until, updated_at
      FROM meta_ads_insights_sync_state
      WHERE account_id = $1`,
     [accountId]
@@ -127,68 +212,115 @@ async function getSyncState(accountId) {
   return result.rows[0] || null;
 }
 
-async function markSyncStarted(accountId, since, until) {
-  await pool.query(
-    `INSERT INTO meta_ads_insights_sync_state (
-       account_id, last_attempt_at, last_range_start, last_range_end, last_error, updated_at
-     ) VALUES ($1, now(), $2::date, $3::date, NULL, now())
-     ON CONFLICT (account_id) DO UPDATE SET
-       last_attempt_at = now(),
-       last_range_start = EXCLUDED.last_range_start,
-       last_range_end = EXCLUDED.last_range_end,
-       last_error = NULL,
-       updated_at = now()`,
-    [accountId, since, until]
+async function markSyncStarted(accountId, since, until, leaseToken) {
+  const token = requireLeaseToken(leaseToken);
+  const result = await pool.query(
+    `UPDATE meta_ads_insights_sync_state
+     SET last_attempt_at = now(),
+         last_range_start = $2::date,
+         last_range_end = $3::date,
+         last_error = NULL,
+         updated_at = now()
+     WHERE account_id = $1 AND lease_token = $4
+     RETURNING account_id`,
+    [accountId, since, until, token]
   );
+  if (!result.rows[0]) {
+    const err = new Error("Meta Ads Insights sync lease was lost before the sync started.");
+    err.code = "SYNC_LEASE_LOST";
+    throw err;
+  }
 }
 
-async function markSyncSuccess(accountId, since, until, { backfillCompleted = false } = {}) {
-  await pool.query(
-    `INSERT INTO meta_ads_insights_sync_state (
-       account_id, last_attempt_at, last_success_at, last_error,
-       last_backfill_completed_at, last_range_start, last_range_end, updated_at
-     ) VALUES (
-       $1, now(), now(), NULL,
-       CASE WHEN $4::boolean THEN now() ELSE NULL END,
-       $2::date, $3::date, now()
-     )
-     ON CONFLICT (account_id) DO UPDATE SET
-       last_success_at = now(),
-       last_error = NULL,
-       last_backfill_completed_at = CASE
-         WHEN $4::boolean THEN COALESCE(
-           meta_ads_insights_sync_state.last_backfill_completed_at,
-           now()
-         )
-         ELSE meta_ads_insights_sync_state.last_backfill_completed_at
-       END,
-       last_range_start = EXCLUDED.last_range_start,
-       last_range_end = EXCLUDED.last_range_end,
-       updated_at = now()`,
-    [accountId, since, until, Boolean(backfillCompleted)]
+async function markBackfillProgress(accountId, since, until, nextDate, leaseToken) {
+  const token = requireLeaseToken(leaseToken);
+  const result = await pool.query(
+    `UPDATE meta_ads_insights_sync_state
+     SET last_success_at = now(),
+         last_error = NULL,
+         backfill_next_date = $4::date,
+         last_range_start = $2::date,
+         last_range_end = $3::date,
+         updated_at = now()
+     WHERE account_id = $1 AND lease_token = $5
+     RETURNING account_id`,
+    [accountId, since, until, nextDate, token]
   );
+  if (!result.rows[0]) {
+    const err = new Error("Meta Ads Insights sync lease was lost while saving backfill progress.");
+    err.code = "SYNC_LEASE_LOST";
+    throw err;
+  }
 }
 
-async function markSyncFailure(accountId, since, until, errorText) {
-  await pool.query(
-    `INSERT INTO meta_ads_insights_sync_state (
-       account_id, last_attempt_at, last_error, last_range_start, last_range_end, updated_at
-     ) VALUES ($1, now(), $4, $2::date, $3::date, now())
-     ON CONFLICT (account_id) DO UPDATE SET
-       last_attempt_at = now(),
-       last_error = EXCLUDED.last_error,
-       last_range_start = EXCLUDED.last_range_start,
-       last_range_end = EXCLUDED.last_range_end,
-       updated_at = now()`,
-    [accountId, since, until, String(errorText || "Meta Ads Insights sync failed.").slice(0, 1000)]
+async function markSyncSuccess(
+  accountId,
+  since,
+  until,
+  leaseToken,
+  { backfillCompleted = false } = {}
+) {
+  const token = requireLeaseToken(leaseToken);
+  const result = await pool.query(
+    `UPDATE meta_ads_insights_sync_state
+     SET last_success_at = now(),
+         last_error = NULL,
+         last_backfill_completed_at = CASE
+           WHEN $5::boolean THEN COALESCE(last_backfill_completed_at, now())
+           ELSE last_backfill_completed_at
+         END,
+         backfill_next_date = CASE WHEN $5::boolean THEN NULL ELSE backfill_next_date END,
+         last_range_start = $2::date,
+         last_range_end = $3::date,
+         lease_token = NULL,
+         lease_until = NULL,
+         updated_at = now()
+     WHERE account_id = $1 AND lease_token = $4
+     RETURNING account_id`,
+    [accountId, since, until, token, Boolean(backfillCompleted)]
   );
+  if (!result.rows[0]) {
+    const err = new Error("Meta Ads Insights sync lease was lost before success could be recorded.");
+    err.code = "SYNC_LEASE_LOST";
+    throw err;
+  }
+}
+
+async function markSyncFailure(accountId, since, until, errorText, leaseToken) {
+  const token = requireLeaseToken(leaseToken);
+  const result = await pool.query(
+    `UPDATE meta_ads_insights_sync_state
+     SET last_attempt_at = now(),
+         last_error = $4,
+         last_range_start = $2::date,
+         last_range_end = $3::date,
+         lease_token = NULL,
+         lease_until = NULL,
+         updated_at = now()
+     WHERE account_id = $1 AND lease_token = $5
+     RETURNING account_id`,
+    [
+      accountId,
+      since,
+      until,
+      String(errorText || "Meta Ads Insights sync failed.").slice(0, 1000),
+      token,
+    ]
+  );
+  return Boolean(result.rows[0]);
 }
 
 module.exports = {
+  MAX_LEASE_MS,
   UPSERT_CHUNK_SIZE,
   getSyncState,
+  markBackfillProgress,
   markSyncFailure,
   markSyncStarted,
   markSyncSuccess,
+  releaseSyncLease,
+  renewSyncLease,
   replaceInsightsRange,
+  tryAcquireSyncLease,
+  validateRows,
 };
