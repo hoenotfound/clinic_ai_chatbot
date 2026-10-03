@@ -33,7 +33,19 @@ const CATEGORY_OPTIONS = [
 const CATEGORY_KEYS = new Set(CATEGORY_OPTIONS.map(([key]) => key));
 const QUICK_CATEGORY_KEYS = new Set(["all", "hot", "warm"]);
 const DESKTOP_QUICK_CATEGORY_KEYS = new Set(["all", "hot", "warm", "attention"]);
-const ANALYTICS_PARAM_KEYS = ["from", "to", "channel", "source", "campaign", "treatment", "owner"];
+const ANALYTICS_PARAM_KEYS = [
+  "from",
+  "to",
+  "channel",
+  "source",
+  "campaign",
+  "treatment",
+  "owner",
+  "meta_account_id",
+  "meta_campaign_id",
+  "meta_adset_id",
+  "meta_ad_id",
+];
 
 function parameterOrNull(searchParams, key) {
   const value = searchParams.get(key);
@@ -108,6 +120,10 @@ export default function Pipeline() {
     campaign: parameterOrNull(searchParams, "campaign"),
     treatment: parameterOrNull(searchParams, "treatment"),
     owner: parameterOrNull(searchParams, "owner"),
+    metaAccountId: parameterOrNull(searchParams, "meta_account_id"),
+    metaCampaignId: parameterOrNull(searchParams, "meta_campaign_id"),
+    metaAdsetId: parameterOrNull(searchParams, "meta_adset_id"),
+    metaAdId: parameterOrNull(searchParams, "meta_ad_id"),
   }), [searchParams]);
   const hasAnalyticsDrilldown = Object.values(analyticsFilters).some(Boolean);
 
@@ -305,8 +321,27 @@ export default function Pipeline() {
     if (!hasAnalyticsDrilldown) return leads;
     return leads.filter((lead) => {
       if (analyticsFilters.channel && lead.channel !== analyticsFilters.channel) return false;
-      if (analyticsFilters.source && lead.source !== analyticsFilters.source) return false;
+      if (
+        analyticsFilters.source
+        && (lead.attribution?.source || lead.source) !== analyticsFilters.source
+      ) return false;
       if (analyticsFilters.campaign && lead.campaign_name !== analyticsFilters.campaign) return false;
+      if (
+        analyticsFilters.metaAccountId
+        && String(lead.attribution?.meta_account_id || "") !== analyticsFilters.metaAccountId
+      ) return false;
+      if (
+        analyticsFilters.metaCampaignId
+        && String(lead.attribution?.campaign_id || "") !== analyticsFilters.metaCampaignId
+      ) return false;
+      if (
+        analyticsFilters.metaAdsetId
+        && String(lead.attribution?.adset_id || "") !== analyticsFilters.metaAdsetId
+      ) return false;
+      if (
+        analyticsFilters.metaAdId
+        && String(lead.attribution?.meta_ad_id || "") !== analyticsFilters.metaAdId
+      ) return false;
       if (analyticsFilters.treatment && lead.treatment_interest !== analyticsFilters.treatment) return false;
       if (analyticsFilters.owner && lead.owner_username !== analyticsFilters.owner) return false;
       if (analyticsFilters.from || analyticsFilters.to) {
