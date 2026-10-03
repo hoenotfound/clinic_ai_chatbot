@@ -2,7 +2,11 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const clinicConfig = require("../src/config/clinicConfig");
-const { parseAiReplyResult } = require("../src/utils/aiReplyResult");
+const {
+  canonicalConfiguredName,
+  canonicalConfiguredService,
+  parseAiReplyResult,
+} = require("../src/utils/aiReplyResult");
 
 test("parses a structured booking-ready response and keeps booking metadata internal", () => {
   const result = parseAiReplyResult(JSON.stringify({
@@ -160,4 +164,44 @@ test("non-clinic profiles also suppress legacy booking-ready markers", (t) => {
   assert.equal(result.outcome, "normal");
   assert.equal(result.text, "our team will follow up on the quotation");
   assert.equal(result.structured, false);
+});
+
+
+test("structured replies expose only an explicit boolean priceQuery signal", () => {
+  const yes = parseAiReplyResult(JSON.stringify({
+    reply: "The current price is shown below.",
+    outcome: "normal",
+    priceQuery: true,
+    treatment: "HIFU Non-Surgical Facelift",
+    branch: null,
+    appointmentPreference: null,
+  }));
+  assert.equal(yes.priceQuery, true);
+  assert.equal(yes.details.treatment, "HIFU Non-Surgical Facelift");
+
+  const stringFalse = parseAiReplyResult(JSON.stringify({
+    reply: "HIFU can help with lifting.",
+    outcome: "normal",
+    priceQuery: "true",
+    treatment: "HIFU Non-Surgical Facelift",
+    branch: null,
+    appointmentPreference: null,
+  }));
+  assert.equal(stringFalse.priceQuery, false);
+
+  const legacy = parseAiReplyResult("How can I help?");
+  assert.equal(legacy.priceQuery, false);
+});
+
+test("canonical service matching preserves Chinese names and aliases without collisions", () => {
+  const services = [
+    { name: "3D 小颜术" },
+    { name: "3D 骨盆调理" },
+  ];
+  const aliases = [
+    { alias: "小脸", officialService: "3D 小颜术" },
+  ];
+
+  assert.equal(canonicalConfiguredName("3D 骨盆调理", services), "3D 骨盆调理");
+  assert.equal(canonicalConfiguredService("小脸", services, aliases), "3D 小颜术");
 });
