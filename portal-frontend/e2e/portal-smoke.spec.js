@@ -1207,3 +1207,57 @@ test("Promotions confirms before switching a populated package campaign to Singl
   await secondClick;
   await expect(page.getByRole("button", { name: "Single offer", pressed: true })).toBeVisible();
 });
+
+
+test("Promotions confirms before switching a populated Single offer to Multiple packages", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      businessType: "tcm_clinic",
+      businessName: "Test TCM",
+      clinicName: "Test TCM",
+      businessDescription: "TCM test clinic",
+      aiAssistantName: "Ava",
+      introMessage: "Hi",
+      tone: "Warm",
+      services: [{ name: "3D 小颜术", description: "", priceRange: "", duration: "" }],
+      serviceAliases: [],
+      promotions: [
+        {
+          name: "3D 小颜术 Promotion",
+          linkedService: "3D 小颜术",
+          sendOnPriceQuery: true,
+          packages: [],
+          imageUrl: "https://example.test/3d.jpg",
+          caption: "3D promo",
+          validFrom: null,
+          validUntil: null,
+        },
+      ],
+      branches: [],
+      faqs: [],
+      guardrails: [],
+      escalation: { outOfScopeTriggers: [], handoffMessage: "", handoffNote: "" },
+      hours: { general: "", closed: "" },
+      contact: { whatsapp: "", instagram: "", facebook: "", tiktok: "" },
+      messagingStyle: "",
+      closingPlaybook: "",
+      sop: "",
+    },
+  });
+
+  await page.goto("/settings?tab=promotions");
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByRole("button", { name: "Single offer", pressed: true })).toBeVisible();
+
+  const dialogPromise = page.waitForEvent("dialog");
+  const clickPromise = page.getByRole("button", { name: "Multiple packages" }).click();
+  const dialog = await dialogPromise;
+  expect(dialog.message()).toContain(
+    "Changing to Multiple packages will remove the current single-offer image and caption when you save."
+  );
+  await dialog.dismiss();
+  await clickPromise;
+
+  await expect(page.getByRole("button", { name: "Single offer", pressed: true })).toBeVisible();
+});
