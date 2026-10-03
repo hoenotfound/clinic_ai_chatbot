@@ -1006,7 +1006,7 @@ function PromotionsStep({ draft, setDraft, onError }) {
                         const autoName = !item.name?.trim() || item.name === `${item.linkedService} Promotion`;
                         updatePromotion(index, {
                           linkedService: service,
-                          ...(autoName && service ? { name: `${service} Promotion` } : {}),
+                          ...(autoName ? { name: service ? `${service} Promotion` : "" } : {}),
                         });
                       }}
                     >
@@ -1077,7 +1077,7 @@ function PromotionsStep({ draft, setDraft, onError }) {
                     >
                       Remove promotion
                     </button>
-                    <button type="button" onClick={() => setOpenIndex(null)} className="h-10 rounded-xl border border-[var(--color-border)] px-4 text-xs font-semibold">Done</button>
+                    <button type="button" onClick={() => setOpenIndex(null)} className="h-10 rounded-xl border border-[var(--color-border)] px-4 text-xs font-semibold">Finish editing</button>
                   </div>
                 </div>
               )}
