@@ -60,7 +60,15 @@ const VALIDATORS = {
   serviceAreas: (v) => Array.isArray(v) && v.every(isNonEmptyString),
   promotions: (v) =>
     Array.isArray(v) &&
-    v.every((p) => isPlainObject(p) && isNonEmptyString(p.name) && isString(p.imageUrl) && isString(p.caption)),
+    v.every(
+      (p) =>
+        isPlainObject(p) &&
+        isNonEmptyString(p.name) &&
+        isString(p.imageUrl) &&
+        isString(p.caption) &&
+        (p.linkedService === undefined || isString(p.linkedService)) &&
+        (p.sendOnPriceQuery === undefined || typeof p.sendOnPriceQuery === "boolean")
+    ),
   services: (v) =>
     Array.isArray(v) &&
     v.every(
