@@ -40,7 +40,26 @@ function activePromotionsList() {
       const autoSend = promotion.sendOnPriceQuery === true
         ? " | auto-send on price enquiry: yes"
         : " | auto-send on price enquiry: no";
-      return `- ${promotion.name}: ${promotion.caption || "No additional caption configured."}${linkedService}${autoSend}${dates ? ` | ${dates}` : ""}`;
+      const packages = Array.isArray(promotion.packages)
+        ? promotion.packages.filter((item) => item && typeof item === "object")
+        : [];
+      if (packages.length === 0) {
+        return `- ${promotion.name}: ${promotion.caption || "No additional caption configured."}${linkedService}${autoSend}${dates ? ` | ${dates}` : ""}`;
+      }
+
+      const packageLines = packages.map((item) => {
+        const aliases = Array.isArray(item.aliases)
+          ? item.aliases.map((alias) => String(alias || "").trim()).filter(Boolean)
+          : [];
+        const parts = [
+          item.title ? `title: ${item.title}` : null,
+          aliases.length ? `aliases: ${aliases.join(", ")}` : null,
+          item.caption ? `caption: ${item.caption}` : null,
+        ].filter(Boolean).join(" | ");
+        return `  - ${item.name || "Unnamed package"}${parts ? ` | ${parts}` : ""}`;
+      }).join("\n");
+
+      return `- ${promotion.name}${linkedService}${autoSend}${dates ? ` | ${dates}` : ""}\n  package options:\n${packageLines}`;
     })
     .join("\n");
 }
@@ -333,6 +352,7 @@ STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code f
   "reply": "the exact short customer-facing message",
   "outcome": "normal | needs_human | booking_ready",
   "priceQuery": false,
+  "promotionOption": null,
   "treatment": "canonical configured service name if clearly known, otherwise null",
   "branch": "canonical configured business location name if clearly chosen, otherwise null",
   "appointmentPreference": "brief current day/date + time/range/daypart preference if clearly known, otherwise null",
@@ -346,8 +366,9 @@ Rules for structured fields:
 - "reply" must contain only what the ${terms.customerSingular} should see. Never put internal outcome names, control tokens, analysis, or JSON instructions inside it.
 - Set "priceQuery" to true ONLY when the customer's CURRENT message explicitly asks for a price, cost, fee, charge, package price, first-trial price, promotion price, or equivalent wording. A short follow-up such as "多少钱?", "price?", or "berapa?" counts when the current conversation clearly establishes which service it refers to. Do not set it true merely because your answer happens to mention a price.
 - When "priceQuery" is true and exactly one configured service is clearly being priced, set "treatment" to that canonical configured service even if the customer used an alias. If the price question covers multiple services or the service is unclear, set "treatment" to null rather than guessing.
-- "priceQuery" is internal metadata. Never mention it to the customer.
-- If "priceQuery" is true and the matching ACTIVE PROMOTION for that service says "auto-send on price enquiry: yes", keep the visible reply very short and do not repeat the full promotion caption or package details; the configured promotion media is handled separately. Do not promise that an image will definitely be sent because media delivery may fail.
+- "promotionOption" is internal metadata for package options inside the matching active promotion. If the customer explicitly names one configured package or one of its listed aliases, set "promotionOption" to that package's exact configured name (for example "Package B"). If the customer asks the service price/packages generally, set it to null so the backend can show all configured options. Never choose Package A/B/C merely from symptoms, preferences, budget assumptions, or your own recommendation. If the customer appears to request a specific package but you cannot map it confidently, preserve their short package wording in "promotionOption" rather than guessing another configured package; the backend will fail closed if it does not match.
+- "priceQuery" and "promotionOption" are internal metadata. Never mention either field name to the customer.
+- If "priceQuery" is true and the matching ACTIVE PROMOTION for that service says "auto-send on price enquiry: yes", keep the visible reply very short and do not repeat the full promotion caption or package details; the configured promotion media is handled separately. When "promotionOption" is null and that promotion has several package options, do not pick one in the text response. Do not promise that an image will definitely be sent because media delivery may fail.
 - If the matching promotion says "auto-send on price enquiry: no", answer the price question normally from ACTIVE PROMOTIONS in text.
 - The legacy internal field name "treatment" means the canonical configured ${terms.serviceSingular}; it is kept for backend compatibility while the product is migrated to industry-neutral naming.
 - The legacy internal field name "branch" means a canonical configured ${terms.locationSingular}; it is kept for backend compatibility. For renovation, the customer's property belongs in "projectLocation", not "branch".
