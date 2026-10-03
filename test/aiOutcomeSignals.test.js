@@ -60,6 +60,7 @@ test("system prompt uses structured outcomes and keeps Booking Ready separate fr
   assert.match(prompt, /RETURN ONLY ONE VALID JSON OBJECT/i);
   assert.match(prompt, /"outcome": "normal \| needs_human \| booking_ready"/i);
   assert.match(prompt, /"priceQuery": false/i);
+  assert.match(prompt, /"packageQuery": false/i);
   assert.match(prompt, /"promotionOption": null/i);
   assert.match(prompt, /Set "priceQuery" to true ONLY when the customer's CURRENT message explicitly asks for a price/i);
   assert.match(prompt, /If the price question covers multiple services or the service is unclear, set "treatment" to null/i);
@@ -71,6 +72,8 @@ test("system prompt uses structured outcomes and keeps Booking Ready separate fr
   assert.match(prompt, /do not repeat the full promotion caption or package details/i);
   assert.match(prompt, /Never choose Package A\/B\/C merely from symptoms/i);
   assert.match(prompt, /If the customer asks the service price\/packages generally, set it to null/i);
+  assert.match(prompt, /Set "packageQuery" to true ONLY when the customer's CURRENT message explicitly asks to see, list, compare, or know the available packages/i);
+  assert.match(prompt, /Merely mentioning a package while asking about suitability, symptoms, results, or treatment details is not a packageQuery/i);
   assert.match(prompt, /"staffSummary":/i);
   assert.match(prompt, /staffSummary.*internal metadata/i);
   assert.match(prompt, /For booking_ready, "staffSummary" should be 1-3 concise sentences/i);
