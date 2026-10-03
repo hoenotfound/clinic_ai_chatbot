@@ -149,6 +149,26 @@ async function replaceInsightsRange(accountId, since, until, rows = [], database
   }
 }
 
+async function getLatestHierarchyForAdIds(adIds, database = pool) {
+  const ids = [...new Set(
+    (adIds || [])
+      .map((value) => String(value || "").trim())
+      .filter((value) => /^\d+$/.test(value))
+  )];
+  if (!ids.length) return new Map();
+
+  const result = await database.query(
+    `SELECT DISTINCT ON (ad_id)
+       ad_id, account_id, account_name, account_currency,
+       campaign_id, campaign_name, adset_id, adset_name, ad_name
+     FROM meta_ad_insights_daily
+     WHERE ad_id = ANY($1::text[])
+     ORDER BY ad_id, insight_date DESC, updated_at DESC`,
+    [ids]
+  );
+  return new Map(result.rows.map((row) => [String(row.ad_id), row]));
+}
+
 async function tryAcquireSyncLease(accountId, leaseToken, leaseMs, database = pool) {
   const token = requireLeaseToken(leaseToken);
   const durationMs = normalizeLeaseMs(leaseMs);
@@ -314,6 +334,7 @@ async function markSyncFailure(accountId, since, until, errorText, leaseToken, d
 module.exports = {
   MAX_LEASE_MS,
   UPSERT_CHUNK_SIZE,
+  getLatestHierarchyForAdIds,
   getSyncState,
   markBackfillProgress,
   markSyncFailure,
