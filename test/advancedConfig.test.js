@@ -343,6 +343,56 @@ test("Advanced Config enforces alias, FAQ, and promotion integrity across partia
   assert.equal(invalidDate.ok, false);
   assert.deepEqual(invalidDate.invalidKeys, ["promotions"]);
 
+  const pricePromoMissingService = prepareConfigUpdatePayload(
+    {
+      promotions: [{
+        name: "Consultation Promo",
+        linkedService: "",
+        sendOnPriceQuery: true,
+        imageUrl: "https://example.com/promo.jpg",
+        caption: "RM88",
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(pricePromoMissingService.ok, false);
+  assert.deepEqual(pricePromoMissingService.invalidKeys, ["promotions"]);
+
+  const pricePromoMissingImage = prepareAdvancedConfigPayload(
+    {
+      promotions: [{
+        name: "Consultation Promo",
+        linkedService: "Consultation",
+        sendOnPriceQuery: true,
+        imageUrl: "",
+        caption: "RM88",
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(pricePromoMissingImage.ok, false);
+  assert.deepEqual(pricePromoMissingImage.invalidKeys, ["promotions"]);
+
+  const validPricePromo = prepareAdvancedConfigPayload(
+    {
+      promotions: [{
+        name: "Consultation Promo",
+        linkedService: "Consultation",
+        sendOnPriceQuery: true,
+        imageUrl: "https://example.com/promo.jpg",
+        caption: "RM88",
+        validFrom: "2026-10-01",
+        validUntil: "2026-10-31",
+      }],
+    },
+    current
+  );
+  assert.equal(validPricePromo.ok, true);
+
   const reversedDates = prepareAdvancedConfigPayload(
     {
       promotions: [{
