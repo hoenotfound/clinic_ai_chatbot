@@ -1,6 +1,7 @@
 const clinicConfig = require("../config/clinicConfig");
 const { getConversionProfile } = require("../config/conversionProfiles");
 const {
+  AI_OUTCOME_MARKERS,
   extractAiOutcomeSignals,
   stripInternalOutcomeMarkers,
 } = require("./attentionTriggers");
@@ -321,6 +322,16 @@ function parseAiReplyResult(raw) {
 
   const structured = parseStructuredReply(raw);
   if (structured) return structured;
+
+  // The production prompt requires structured JSON. Do not treat arbitrary
+  // provider prose as customer-safe output, because models can append internal
+  // scaffolding such as "JSON Construction" after an otherwise natural reply.
+  // Keep only the explicit marker-based legacy contract during rollout.
+  if (!startsWithLegacyOutcomeMarker(raw)) {
+    throw invalidResponse(
+      "AI returned unstructured text instead of the required structured JSON response."
+    );
+  }
 
   // Backward-compatible rollout path. Legacy marker-based booking readiness is
   // safe only for the existing appointment contract because it carries no
