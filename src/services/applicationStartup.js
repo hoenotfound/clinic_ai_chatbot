@@ -15,6 +15,7 @@ const {
   startWhatsAppDeliveryStatusRecovery,
 } = require("./whatsappDeliveryStatusService");
 const metaCommentAutomation = require("./metaCommentAutomationService");
+const { start: startMetaAdsInsightsSync } = require("./metaAdsInsightsSyncService");
 const {
   startScheduledMessageWorker,
 } = require("./scheduledMessageBootstrap");
@@ -81,6 +82,7 @@ async function startApplication({
     startStaffWaitingAlerts();
     startLeadScoring();
     metaCommentAutomation.startRecovery();
+    startMetaAdsInsightsSync();
     console.log("[Startup] Maintenance and recovery workers started.");
 
     startupReadiness.markReady();
