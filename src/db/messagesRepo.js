@@ -228,6 +228,27 @@ async function getMessagesForContact(contactId, limit = 50, includeMedia = true)
   return rows;
 }
 
+async function wasPromoRecentlySent(contactId, imageUrl, withinHours = 24) {
+  const hours = Number(withinHours);
+  if (!imageUrl || !Number.isSafeInteger(hours) || hours < 1) return false;
+
+  const result = await pool.query(
+    `SELECT 1
+     FROM messages
+     WHERE contact_id = $1
+       AND role = 'assistant'
+       AND media_url = $2
+       AND created_at >= NOW() - ($3::integer * INTERVAL '1 hour')
+       AND (
+         delivery_status IS NULL
+         OR delivery_status NOT IN ('failed', 'unknown')
+       )
+     LIMIT 1`,
+    [contactId, imageUrl, hours]
+  );
+  return result.rowCount > 0;
+}
+
 /**
  * Lightweight portal page. Initial/before pages fetch one extra row so the
  * UI knows whether a "Load older messages" button is needed without a second
@@ -657,6 +678,7 @@ module.exports = {
   saveInboundMessageIfNew,
   updateInboundMessage,
   getMessagesForContact,
+  wasPromoRecentlySent,
   getMessagePageForContact,
   getMessageMediaReferenceForContact,
   getMessageMediaForContact,
