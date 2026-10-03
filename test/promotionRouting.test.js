@@ -180,8 +180,8 @@ test("pelvis generic pricing routes all packages while explicit package alias ro
   assert.equal(generic.promotionOption, null);
   const genericBundle = await resolvePricePromotionForReply({
     priceQuery: generic.priceQuery,
-    promotionOption: generic.promotionOption,
     treatment: generic.details.treatment,
+    customerText: "骨盆多少钱？",
     flagged: generic.flagged,
     bookingReady: generic.bookingReady,
     keywordReason: null,
@@ -201,8 +201,8 @@ test("pelvis generic pricing routes all packages while explicit package alias ro
   );
   const packageBBundle = await resolvePricePromotionForReply({
     priceQuery: packageB.priceQuery,
-    promotionOption: packageB.promotionOption,
     treatment: packageB.details.treatment,
+    customerText: "Package B多少钱？",
     flagged: packageB.flagged,
     bookingReady: packageB.bookingReady,
     keywordReason: null,
@@ -219,8 +219,8 @@ test("pelvis generic pricing routes all packages while explicit package alias ro
 
   const aliasBundle = await resolvePricePromotionForReply({
     priceQuery: true,
-    promotionOption: "子宫套餐",
     treatment: "Pelvis 骨盆调理",
+    customerText: "子宫套餐多少钱？",
     flagged: false,
     bookingReady: false,
     keywordReason: null,
