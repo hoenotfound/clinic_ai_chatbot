@@ -498,3 +498,81 @@ test("concatenated explicit PackageB wording still resolves Package B", async ()
 
   assert.deepEqual(bundle.packages.map((item) => item.name), ["Package B"]);
 });
+
+
+test("lowercase English article a does not select Package A", async () => {
+  const packagePromo = {
+    name: "Pelvis Packages",
+    linkedService: "3D 小颜术",
+    sendOnPriceQuery: true,
+    imageUrl: "",
+    caption: "",
+    validFrom: null,
+    validUntil: null,
+    packages: [
+      { name: "Package A", title: "", aliases: ["A"], imageUrl: "https://example.test/a.jpg", caption: "A promo" },
+      { name: "Package B", title: "", aliases: ["B"], imageUrl: "https://example.test/b.jpg", caption: "B promo" },
+    ],
+  };
+
+  const bundle = await resolvePricePromotionForReply(base({
+    priceQuery: false,
+    packageQuery: true,
+    promotions: [packagePromo],
+    customerText: "do you have a package?",
+  }));
+
+  assert.deepEqual(bundle.packages.map((item) => item.name), ["Package A", "Package B"]);
+});
+
+test("explicit uppercase single-letter alias still selects its package", async () => {
+  const packagePromo = {
+    name: "Pelvis Packages",
+    linkedService: "3D 小颜术",
+    sendOnPriceQuery: true,
+    imageUrl: "",
+    caption: "",
+    validFrom: null,
+    validUntil: null,
+    packages: [
+      { name: "Package A", title: "", aliases: ["A"], imageUrl: "https://example.test/a.jpg", caption: "A promo" },
+      { name: "Package B", title: "", aliases: ["B"], imageUrl: "https://example.test/b.jpg", caption: "B promo" },
+    ],
+  };
+
+  const bundle = await resolvePricePromotionForReply(base({
+    promotions: [packagePromo],
+    customerText: "A多少钱？",
+  }));
+
+  assert.deepEqual(bundle.packages.map((item) => item.name), ["Package A"]);
+});
+
+test("short follow-up after multiple packages were named fails closed", async () => {
+  const packagePromo = {
+    name: "Pelvis Packages",
+    linkedService: "3D 小颜术",
+    sendOnPriceQuery: true,
+    imageUrl: "",
+    caption: "",
+    validFrom: null,
+    validUntil: null,
+    packages: [
+      { name: "Package A", title: "", aliases: ["A"], imageUrl: "https://example.test/a.jpg", caption: "A promo" },
+      { name: "Package B", title: "", aliases: ["B"], imageUrl: "https://example.test/b.jpg", caption: "B promo" },
+      { name: "Package C", title: "", aliases: ["C"], imageUrl: "https://example.test/c.jpg", caption: "C promo" },
+    ],
+  };
+
+  const bundle = await resolvePricePromotionForReply(base({
+    promotions: [packagePromo],
+    customerText: "多少钱？",
+    conversationHistory: [
+      { role: "user", content: "Package A 跟 Package B 有什么分别？" },
+      { role: "assistant", content: "主要差别在配套内容。" },
+      { role: "user", content: "多少钱？" },
+    ],
+  }));
+
+  assert.equal(bundle, null);
+});
