@@ -38,8 +38,8 @@ function activePromotionsList() {
       ].filter(Boolean).join(" ");
       const linkedService = promotion.linkedService ? ` | service: ${promotion.linkedService}` : "";
       const autoSend = promotion.sendOnPriceQuery === true
-        ? " | auto-send on price enquiry: yes"
-        : " | auto-send on price enquiry: no";
+        ? " | auto-send on price/package enquiry: yes"
+        : " | auto-send on price/package enquiry: no";
       const packages = Array.isArray(promotion.packages)
         ? promotion.packages.filter((item) => item && typeof item === "object")
         : [];
@@ -317,7 +317,7 @@ ${activePromotionsList()}
 PROMOTION AUTHORITY — follow this even if another section below contains older wording:
 - ACTIVE PROMOTIONS overrides promotion/discount/deadline wording in SERVICES, FAQs, SOP, the conversion playbook, guardrails, or earlier chat history.
 - A promotion that shows "service: X" applies ONLY to that exact canonical configured service X. Never borrow its price, discount, bundle, free add-on, or deadline for another service, even if the services sound related.
-- If more than one ACTIVE PROMOTION with "auto-send on price enquiry: yes" is listed for the same service, treat the automatic promotion as ambiguous: do not choose one, do not quote one as the current automatic offer, and say the current promotion needs team confirmation.
+- If more than one ACTIVE PROMOTION with "auto-send on price/package enquiry: yes" is listed for the same service, treat the automatic promotion as ambiguous: do not choose one, do not quote one as the current automatic offer, and say the current promotion needs team confirmation.
 - A promotion without a linked service is not eligible for automatic promotional media. Only describe it as a general promotion if its own wording clearly says it applies generally.
 - If a deal, discount, bundle, free add-on, or deadline is NOT present in ACTIVE PROMOTIONS, never present it as currently available and never create urgency from it.
 - If a service Price field contains words such as "promo", "promotion", "promotional", "discount", "offer", "free", or an old campaign price but the matching deal is not listed in ACTIVE PROMOTIONS, treat that promotional price as stale. Do not quote it as current; say the current promotional price needs to be confirmed by the team.
@@ -370,8 +370,9 @@ Rules for structured fields:
 - When either "priceQuery" or "packageQuery" is true and exactly one configured service is clearly being discussed, set "treatment" to that canonical configured service even if the customer used an alias. If the request covers multiple services or the service is unclear, set "treatment" to null rather than guessing.
 - "promotionOption" is internal metadata for package options inside the matching active promotion. If the customer explicitly names one configured package or one of its listed aliases, set "promotionOption" to that package's exact configured name (for example "Package B"). If the customer asks the service price/packages generally, set it to null so the backend can show all configured options. Never choose Package A/B/C merely from symptoms, preferences, budget assumptions, or your own recommendation. If the customer appears to request a specific package but you cannot map it confidently, preserve their short package wording in "promotionOption" rather than guessing another configured package; the backend will fail closed if it does not match.
 - "priceQuery", "packageQuery", and "promotionOption" are internal metadata. Never mention these field names to the customer.
-- If either "priceQuery" or "packageQuery" is true and the matching ACTIVE PROMOTION for that service says "auto-send on price enquiry: yes", keep the visible reply very short and do not repeat the full promotion caption or package details; the configured promotion media is handled separately. When "promotionOption" is null and that promotion has several package options, do not pick one in the text response. Do not promise that an image will definitely be sent because media delivery may fail.
-- If the matching promotion says "auto-send on price enquiry: no", answer the price question normally from ACTIVE PROMOTIONS in text.
+- If the customer's CURRENT request explicitly names two or more configured package options, set "promotionOption" to null and answer the requested prices/comparison directly in "reply" from ACTIVE PROMOTIONS. Do not rely on automatic media for a multi-package explicit comparison, because the backend intentionally fails closed rather than choosing or blasting several specifically named options.
+- Otherwise, if either "priceQuery" or "packageQuery" is true and the matching ACTIVE PROMOTION for that service says "auto-send on price/package enquiry: yes", keep the visible reply very short and do not repeat the full promotion caption or package details; the configured promotion media is handled separately. When "promotionOption" is null and the customer asked about the service/packages generally, do not pick one package in the text response. Do not promise that an image will definitely be sent because media delivery may fail.
+- If the matching promotion says "auto-send on price/package enquiry: no", answer the price/package question normally from ACTIVE PROMOTIONS in text.
 - The legacy internal field name "treatment" means the canonical configured ${terms.serviceSingular}; it is kept for backend compatibility while the product is migrated to industry-neutral naming.
 - The legacy internal field name "branch" means a canonical configured ${terms.locationSingular}; it is kept for backend compatibility. For renovation, the customer's property belongs in "projectLocation", not "branch".
 - The legacy internal field name "appointmentPreference" is still used for clinic scheduling. For renovation it carries a clearly stated site-visit timing preference and is REQUIRED when "nextStep" is "site_visit".
