@@ -1,6 +1,7 @@
 const express = require("express");
 const pipelineRepo = require("../db/pipelineRepo");
 const analyticsRepo = require("../db/analyticsRepo");
+const metaAdsAnalyticsRepo = require("../db/metaAdsAnalyticsRepo");
 const configRepo = require("../db/configRepo");
 const { getAnalyticsPipelineProfile } = require("../db/analyticsPipelineProfile");
 const leadAttributionRepo = require("../db/leadAttributionRepo");
@@ -16,6 +17,7 @@ const {
 const {
   AnalyticsValidationError,
   normalizeAnalyticsQuery,
+  normalizeMetaAdsAnalyticsQuery,
 } = require("../utils/analyticsValidation");
 
 const router = express.Router();
@@ -131,6 +133,19 @@ router.get("/", async (req, res) => {
 
 router.get("/configured-branches", (req, res) => {
   res.json({ branches: configuredBranchNames() });
+});
+
+router.get("/analytics/meta-ads", async (req, res) => {
+  try {
+    const filters = normalizeMetaAdsAnalyticsQuery(req.query);
+    const analytics = await metaAdsAnalyticsRepo.getMetaAdsAnalytics(filters);
+    res.json({
+      ...analytics,
+      analyticsBusinessType: getAnalyticsPipelineProfile().businessType,
+    });
+  } catch (err) {
+    handlePipelineError(res, err, "Something went wrong loading Meta Ads analytics.");
+  }
 });
 
 router.get("/analytics", async (req, res) => {
