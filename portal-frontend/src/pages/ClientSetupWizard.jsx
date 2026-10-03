@@ -110,13 +110,16 @@ function cleanFaqs(items) {
 function cleanPromotions(items) {
   return cleanList(items, (item) => {
     const name = text(item?.name).trim();
+    const linkedService = text(item?.linkedService).trim();
     const imageUrl = text(item?.imageUrl).trim();
     const caption = text(item?.caption).trim();
     const validFrom = text(item?.validFrom).trim();
     const validUntil = text(item?.validUntil).trim();
-    if (!name && !imageUrl && !caption && !validFrom && !validUntil) return null;
+    if (!name && !linkedService && !imageUrl && !caption && !validFrom && !validUntil) return null;
     return {
       name,
+      linkedService,
+      sendOnPriceQuery: item?.sendOnPriceQuery === true,
       imageUrl,
       caption,
       validFrom: validFrom || null,
@@ -369,7 +372,18 @@ export default function ClientSetupWizard() {
   function validatePromotions() {
     const promotions = cleanPromotions(draft.promotions);
     if (promotions.some((item) => !item.name)) return "Every promotion needs a name.";
+    const serviceNames = new Set(
+      cleanServices(draft.services).map((item) => item.name.toLowerCase())
+    );
     for (const promotion of promotions) {
+      if (promotion.sendOnPriceQuery) {
+        if (!promotion.linkedService || !serviceNames.has(promotion.linkedService.toLowerCase())) {
+          return "Price-triggered promotions must link to a service currently configured.";
+        }
+        if (!promotion.imageUrl || !promotion.caption) {
+          return "Price-triggered promotions need both an image and a caption.";
+        }
+      }
       if (!isIsoDate(promotion.validFrom) || !isIsoDate(promotion.validUntil)) {
         return "Promotion dates must use a valid YYYY-MM-DD date.";
       }
@@ -865,22 +879,31 @@ function HandoffStep({ draft, setDraft, ui, protectedGuardrails }) {
 }
 
 function PromotionsStep({ draft, setDraft, onError }) {
-  const promotions = (draft.promotions || []).map((item) => ({ ...item, validFrom: item.validFrom || "", validUntil: item.validUntil || "" }));
+  const serviceNames = (draft.services || []).map((service) => service.name).filter(Boolean);
+  const promotions = (draft.promotions || []).map((item) => ({
+    ...item,
+    linkedService: item.linkedService || "",
+    sendOnPriceQuery: item.sendOnPriceQuery === true,
+    validFrom: item.validFrom || "",
+    validUntil: item.validUntil || "",
+  }));
   return (
     <div>
-      <StepHeading eyebrow="8 · Promotions" title="Promotions" optional description="Add active promotional content only when the client wants it. Leaving this empty does not block business setup." />
+      <StepHeading eyebrow="8 · Promotions" title="Promotions" optional description="Add current offers and optionally send the matching image + caption when a customer asks that service's price. Leaving this empty does not block business setup." />
       <ObjectList
         items={promotions}
         setItems={(items) => setDraft((current) => ({ ...current, promotions: items }))}
-        emptyItem={{ name: "", imageUrl: "", caption: "", validFrom: "", validUntil: "" }}
+        emptyItem={{ name: "", linkedService: "", sendOnPriceQuery: true, imageUrl: "", caption: "", validFrom: "", validUntil: "" }}
         addLabel="Add promotion"
         onError={onError}
         fields={[
           { key: "name", label: "Promotion name" },
+          { key: "linkedService", label: "Linked service", type: "select", options: serviceNames, placeholder: "Choose a configured service" },
           { key: "imageUrl", label: "Promotion image", type: "image" },
           { key: "caption", label: "Caption", textarea: true },
           { key: "validFrom", label: "Valid from", type: "date" },
           { key: "validUntil", label: "Valid until", type: "date" },
+          { key: "sendOnPriceQuery", label: "Automatic send", type: "checkbox", checkboxLabel: "Send image + caption when a customer asks this service's price" },
         ]}
       />
     </div>
@@ -1000,8 +1023,18 @@ function ObjectList({ items, setItems, emptyItem, addLabel, fields, onError }) {
             {fields.map((field) => (
               <label key={field.key} className={field.textarea || field.type === "image" ? "sm:col-span-2" : ""}>
                 <span className="mb-1 block text-[11px] font-semibold text-[var(--color-text-muted)]">{field.label}</span>
-                {field.type === "image" ? (
+                {field.type === "checkbox" ? (
+                  <span className="flex min-h-11 items-center gap-3 rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-sm">
+                    <input type="checkbox" checked={item?.[field.key] === true} onChange={(event) => change(index, field.key, event.target.checked)} />
+                    <span>{field.checkboxLabel || "Enabled"}</span>
+                  </span>
+                ) : field.type === "image" ? (
                   <PromoImageField value={item?.[field.key] || ""} onChange={(value) => change(index, field.key, value)} onError={onError} />
+                ) : field.type === "select" ? (
+                  <select className={INPUT_CLASS} value={item?.[field.key] || ""} onChange={(event) => change(index, field.key, event.target.value)}>
+                    <option value="">{field.placeholder || "Choose an option"}</option>
+                    {(field.options || []).map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
                 ) : field.textarea ? (
                   <textarea rows={3} className={TEXTAREA_CLASS} value={item?.[field.key] || ""} onChange={(event) => change(index, field.key, event.target.value)} />
                 ) : (
