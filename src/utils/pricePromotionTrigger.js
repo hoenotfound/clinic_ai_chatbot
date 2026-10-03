@@ -12,15 +12,26 @@ function recentCustomerPackageContext(packages, conversationHistory, currentText
   const history = Array.isArray(conversationHistory) ? conversationHistory : [];
   const current = String(currentText || "").trim();
 
+  let skippedCurrentTurn = false;
   for (let index = history.length - 1; index >= 0; index -= 1) {
     const entry = history[index];
     if (entry?.role !== "user" || typeof entry?.content !== "string") continue;
     const content = entry.content.trim();
-    if (!content || (current && index === history.length - 1 && content === current)) continue;
+    if (!content) continue;
 
+    // The history snapshot normally ends with the current inbound customer
+    // turn. Skip that copy because currentText was already checked directly.
+    if (!skippedCurrentTurn && current && content === current) {
+      skippedCurrentTurn = true;
+      continue;
+    }
+
+    // Only the immediately previous meaningful customer turn may carry package
+    // context into a short follow-up such as "多少钱？". Do not scan older
+    // history, otherwise a stale Package B mention can narrow a later generic
+    // service-price enquiry many turns after the conversation moved on.
     const matches = findMentionedPromotionPackages(packages, content);
-    if (matches.length > 1) return [];
-    if (matches.length === 1) return matches;
+    return matches.length === 1 ? matches : [];
   }
   return [];
 }
