@@ -232,6 +232,7 @@ async function wasPromoRecentlySentWithExecutor(
   executor,
   contactId,
   imageUrl,
+  caption,
   withinHours = 24
 ) {
   const hours = Number(withinHours);
@@ -239,6 +240,7 @@ async function wasPromoRecentlySentWithExecutor(
     !executor ||
     typeof executor.query !== "function" ||
     !imageUrl ||
+    typeof caption !== "string" ||
     !Number.isSafeInteger(hours) ||
     hours < 1
   ) {
@@ -251,23 +253,30 @@ async function wasPromoRecentlySentWithExecutor(
      WHERE contact_id = $1
        AND role = 'assistant'
        AND media_url = $2
+       AND content = $3
        AND whatsapp_message_id IS NOT NULL
-       AND created_at >= NOW() - ($3::integer * INTERVAL '1 hour')
+       AND created_at >= NOW() - ($4::integer * INTERVAL '1 hour')
        AND (
          delivery_status IS NULL
          OR delivery_status NOT IN ('failed', 'unknown')
        )
      LIMIT 1`,
-    [contactId, imageUrl, hours]
+    [contactId, imageUrl, caption, hours]
   );
   return result.rowCount > 0;
 }
 
-async function wasPromoRecentlySent(contactId, imageUrl, withinHours = 24) {
+async function wasPromoRecentlySent(
+  contactId,
+  imageUrl,
+  caption,
+  withinHours = 24
+) {
   return wasPromoRecentlySentWithExecutor(
     pool,
     contactId,
     imageUrl,
+    caption,
     withinHours
   );
 }
