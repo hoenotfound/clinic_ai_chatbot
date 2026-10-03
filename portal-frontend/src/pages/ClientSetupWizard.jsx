@@ -390,6 +390,19 @@ export default function ClientSetupWizard() {
   }
 
   function validatePromotions() {
+    const emptyPackagePromotion = (draft.promotions || []).find(
+      (promotion) =>
+        promotion?._offerType === "packages" &&
+        !(Array.isArray(promotion?.packages) && promotion.packages.some((item) =>
+          text(item?.name).trim() ||
+          text(item?.title).trim() ||
+          text(item?.imageUrl).trim() ||
+          text(item?.caption).trim() ||
+          cleanStrings(item?.aliases || []).length
+        ))
+    );
+    if (emptyPackagePromotion) return "Add at least one package, or switch this promotion to Single offer.";
+
     const promotions = cleanPromotions(draft.promotions);
     if (promotions.some((item) => !item.name)) return "Every promotion needs a name.";
     const serviceNames = new Set(
