@@ -228,11 +228,24 @@ async function getMessagesForContact(contactId, limit = 50, includeMedia = true)
   return rows;
 }
 
-async function wasPromoRecentlySent(contactId, imageUrl, withinHours = 24) {
+async function wasPromoRecentlySentWithExecutor(
+  executor,
+  contactId,
+  imageUrl,
+  withinHours = 24
+) {
   const hours = Number(withinHours);
-  if (!imageUrl || !Number.isSafeInteger(hours) || hours < 1) return false;
+  if (
+    !executor ||
+    typeof executor.query !== "function" ||
+    !imageUrl ||
+    !Number.isSafeInteger(hours) ||
+    hours < 1
+  ) {
+    return false;
+  }
 
-  const result = await pool.query(
+  const result = await executor.query(
     `SELECT 1
      FROM messages
      WHERE contact_id = $1
@@ -248,6 +261,15 @@ async function wasPromoRecentlySent(contactId, imageUrl, withinHours = 24) {
     [contactId, imageUrl, hours]
   );
   return result.rowCount > 0;
+}
+
+async function wasPromoRecentlySent(contactId, imageUrl, withinHours = 24) {
+  return wasPromoRecentlySentWithExecutor(
+    pool,
+    contactId,
+    imageUrl,
+    withinHours
+  );
 }
 
 /**
@@ -680,6 +702,7 @@ module.exports = {
   updateInboundMessage,
   getMessagesForContact,
   wasPromoRecentlySent,
+  wasPromoRecentlySentWithExecutor,
   getMessagePageForContact,
   getMessageMediaReferenceForContact,
   getMessageMediaForContact,
