@@ -1305,7 +1305,7 @@ test("Service Terms supports bulk paste, duplicate skipping, conflict blocking, 
   await expect(page.getByText("Quick add terms", { exact: true })).toBeVisible();
   await expect(page.getByText("2 terms across 2 services.", { exact: true })).toBeVisible();
 
-  await page.locator("select").selectOption("骨盆调理");
+  await page.getByLabel("Maps to service", { exact: true }).selectOption("骨盆调理");
   const bulkInput = page.locator("textarea").first();
   await bulkInput.fill("骨盘\n骨盆调整，pelvic adjustment\n骨盆");
   await page.getByRole("button", { name: "Add terms", exact: true }).first().click();
