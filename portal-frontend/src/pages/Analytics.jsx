@@ -276,7 +276,7 @@ export default function Analytics() {
         <div className="mt-4 inline-flex rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-1">
           <button
             type="button"
-            className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-[var(--color-text)] shadow-sm"
+            className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-[var(--color-text)]"
           >
             CRM Analytics
           </button>
