@@ -48,6 +48,7 @@ async function mockPortalApi(
       clientAppIcon512Url: "",
       loginTagline: "Staff portal",
     },
+    businessConfig = null,
   } = {}
 ) {
   let authenticated = loggedIn;
@@ -241,10 +242,7 @@ async function mockPortalApi(
     }
 
     if (path === "/api/config") {
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
+      const configResponse = businessConfig || {
           automatedFollowUp: {
             enabled: false,
             delayMinutes: 10,
@@ -281,7 +279,11 @@ async function mockPortalApi(
             enabled: false,
             mode: "round_robin",
           },
-        }),
+        };
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(configResponse),
       });
     }
 
@@ -970,5 +972,64 @@ test("admin can review meaningful Advanced Config diff and apply without horizon
 
   await page.getByRole("button", { name: "Apply changes" }).click();
   await expect(page.getByText("Configuration changes applied.")).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+
+test("Promotions supports nested Package A/B/C options without horizontal overflow", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      businessType: "tcm_clinic",
+      businessName: "Test TCM",
+      clinicName: "Test TCM",
+      businessDescription: "TCM test clinic",
+      aiAssistantName: "Ava",
+      introMessage: "Hi",
+      tone: "Warm",
+      services: [
+        {
+          name: "Pelvis 骨盆调理",
+          description: "",
+          priceRange: "",
+          duration: "",
+        },
+      ],
+      serviceAliases: [],
+      promotions: [],
+      branches: [],
+      faqs: [],
+      guardrails: [],
+      escalation: {
+        outOfScopeTriggers: [],
+        handoffMessage: "",
+        handoffNote: "",
+      },
+      hours: { general: "", closed: "" },
+      contact: { whatsapp: "", instagram: "", facebook: "", tiktok: "" },
+      messagingStyle: "",
+      closingPlaybook: "",
+      sop: "",
+    },
+  });
+
+  await page.goto("/settings?tab=promotions");
+
+  await expect(page.getByRole("heading", { name: "Promotions" })).toBeVisible();
+  await page.getByRole("button", { name: "+ Add promotion campaign" }).click();
+
+  const serviceSelect = page.getByRole("combobox").filter({ has: page.locator("option") }).last();
+  await serviceSelect.selectOption("Pelvis 骨盆调理");
+
+  await page.getByRole("button", { name: "+ Add package option" }).click();
+  await page.getByPlaceholder("Package A").fill("Package A");
+  await page
+    .getByPlaceholder("全身深层调理 + 骨盆全身体态调整（7合1）")
+    .fill("全身深层调理 + 骨盆全身体态调整（7合1）");
+
+  await page.getByRole("button", { name: "+ Add package alias" }).click();
+  await page.getByPlaceholder("e.g. A, 7合1, 子宫套餐").fill("7合1");
+
+  await expect(page.getByText("Package 1", { exact: true })).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
 });

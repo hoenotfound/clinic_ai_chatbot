@@ -10,7 +10,10 @@ const commentAutomationReadiness = require("../services/commentAutomationReadine
 const { normalizeIndustrySetup } = require("../config/industrySetup");
 const { evaluateClientSetup } = require("../services/clientSetupService");
 const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
-const { findOverlappingPricePromotionPair } = require("../utils/activePromotion");
+const {
+  findAmbiguousPromotionPackageTerm,
+  findOverlappingPricePromotionPair,
+} = require("../utils/activePromotion");
 
 const router = express.Router();
 
@@ -68,7 +71,14 @@ const VALIDATORS = {
         isString(p.imageUrl) &&
         isString(p.caption) &&
         (p.linkedService === undefined || isString(p.linkedService)) &&
-        (p.sendOnPriceQuery === undefined || typeof p.sendOnPriceQuery === "boolean")
+        (p.sendOnPriceQuery === undefined || typeof p.sendOnPriceQuery === "boolean") &&
+        (
+          p.packages === undefined ||
+          (
+            Array.isArray(p.packages) &&
+            p.packages.every(isPromotionPackage)
+          )
+        )
     ),
   services: (v) =>
     Array.isArray(v) &&
@@ -100,6 +110,20 @@ function isNonEmptyString(v) {
 }
 function isPlainObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function isPromotionPackage(value) {
+  return (
+    isPlainObject(value) &&
+    isNonEmptyString(value.name) &&
+    (value.title === undefined || isString(value.title)) &&
+    (
+      value.aliases === undefined ||
+      (Array.isArray(value.aliases) && value.aliases.every(isString))
+    ) &&
+    isString(value.imageUrl) &&
+    isString(value.caption)
+  );
 }
 
 function decorateConfig(config) {
@@ -412,11 +436,39 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
           invalidKeys: ["promotions"],
         };
       }
-      if (!String(promotion?.imageUrl || "").trim() || !String(promotion?.caption || "").trim()) {
+      const packages = Array.isArray(promotion?.packages)
+        ? promotion.packages
+        : [];
+      if (packages.length > 0) {
+        const incompletePackage = packages.find(
+          (item) =>
+            !String(item?.name || "").trim() ||
+            !String(item?.imageUrl || "").trim() ||
+            !String(item?.caption || "").trim()
+        );
+        if (incompletePackage) {
+          return {
+            ok: false,
+            status: 400,
+            error: "Every automatic promotion package needs a name, image, and caption.",
+            invalidKeys: ["promotions"],
+          };
+        }
+        const ambiguousTerm = findAmbiguousPromotionPackageTerm(promotion);
+        if (ambiguousTerm) {
+          return {
+            ok: false,
+            status: 400,
+            error:
+              `Package wording "${ambiguousTerm.term}" is ambiguous between "${ambiguousTerm.firstPackage}" and "${ambiguousTerm.secondPackage}". Use unique package names/titles/aliases.`,
+            invalidKeys: ["promotions"],
+          };
+        }
+      } else if (!String(promotion?.imageUrl || "").trim() || !String(promotion?.caption || "").trim()) {
         return {
           ok: false,
           status: 400,
-          error: "Price-triggered promotions need both an image and a caption.",
+          error: "Price-triggered promotions need either package options or a single image and caption.",
           invalidKeys: ["promotions"],
         };
       }
