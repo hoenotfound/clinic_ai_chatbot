@@ -335,6 +335,7 @@ async function getMetaAdsAnalytics(filters, { database = pool, analyticsProfile 
   }, { allowValueRoas });
 
   if (!allowMoneyMetrics) {
+    summary.spend = null;
     summary.costPerLead = null;
     summary.costPerAppointment = null;
     summary.costPerVisit = null;
