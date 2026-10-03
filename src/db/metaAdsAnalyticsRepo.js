@@ -350,9 +350,18 @@ async function getMetaAdsAnalytics(filters, { database = pool, analyticsProfile 
 
   const rows = (Array.isArray(raw.rows) ? raw.rows : []).map((entry) => {
     const rowCurrency = entry.currency || null;
-    return enrichPerformance(entry, {
+    const enriched = enrichPerformance(entry, {
       allowValueRoas: rowCurrency === CRM_VALUE_CURRENCY,
     });
+    if (!rowCurrency) {
+      enriched.cpc = null;
+      enriched.cpm = null;
+      enriched.costPerLead = null;
+      enriched.costPerAppointment = null;
+      enriched.costPerVisit = null;
+      enriched.costPerWon = null;
+    }
+    return enriched;
   });
 
   const accountResult = await query(
