@@ -818,6 +818,22 @@ function BranchesTab({ config, onSaved, onError }) {
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
+    const emptyPackagePromotion = items.find(
+      (promotion) =>
+        promotion._offerType === "packages" &&
+        !(Array.isArray(promotion.packages) && promotion.packages.some((item) =>
+          String(item?.name || "").trim() ||
+          String(item?.title || "").trim() ||
+          String(item?.imageUrl || "").trim() ||
+          String(item?.caption || "").trim() ||
+          (Array.isArray(item?.aliases) && item.aliases.some((alias) => String(alias || "").trim()))
+        ))
+    );
+    if (emptyPackagePromotion) {
+      onError("Add at least one package, or switch this promotion to Single offer.");
+      return;
+    }
+
     const cleaned = items
       .filter((b) => b.name.trim() || b.address.trim() || b.phone.trim() || b.whatsapp.trim())
       .map((b) => ({
