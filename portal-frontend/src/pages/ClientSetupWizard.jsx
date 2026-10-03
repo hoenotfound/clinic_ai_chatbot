@@ -949,6 +949,45 @@ function PromotionsStep({ draft, setDraft, onError }) {
     setPromotions(next);
   }
 
+  function hasPackageContent(promotion) {
+    return Array.isArray(promotion?.packages) && promotion.packages.some((item) =>
+      text(item?.name).trim() ||
+      text(item?.title).trim() ||
+      text(item?.imageUrl).trim() ||
+      text(item?.caption).trim() ||
+      cleanStrings(item?.aliases || []).length
+    );
+  }
+
+  function hasSingleOfferContent(promotion) {
+    return Boolean(
+      text(promotion?.imageUrl).trim() ||
+      text(promotion?.caption).trim()
+    );
+  }
+
+  function changeOfferType(index, nextType) {
+    const current = promotions[index];
+    if (!current || current._offerType === nextType) return;
+
+    let warning = "";
+    if (nextType === "single" && hasPackageContent(current)) {
+      const packageCount = current.packages.filter((item) =>
+        text(item?.name).trim() ||
+        text(item?.title).trim() ||
+        text(item?.imageUrl).trim() ||
+        text(item?.caption).trim() ||
+        cleanStrings(item?.aliases || []).length
+      ).length;
+      warning = `Changing to Single offer will remove ${packageCount} package option${packageCount === 1 ? "" : "s"} when you save. Continue?`;
+    } else if (nextType === "packages" && hasSingleOfferContent(current)) {
+      warning = "Changing to Multiple packages will remove the current single-offer image and caption when you save. Continue?";
+    }
+
+    if (warning && !window.confirm(warning)) return;
+    updatePromotion(index, { _offerType: nextType });
+  }
+
   function addPromotion() {
     const service = serviceNames.length === 1 ? serviceNames[0] : "";
     const next = [...promotions, {
@@ -1025,7 +1064,7 @@ function PromotionsStep({ draft, setDraft, onError }) {
                           key={value}
                           type="button"
                           aria-pressed={item._offerType === value}
-                          onClick={() => updatePromotion(index, { _offerType: value })}
+                          onClick={() => changeOfferType(index, value)}
                           className={`min-h-10 rounded-lg px-3 text-xs font-semibold ${item._offerType === value ? "bg-white text-[var(--color-primary)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
                         >
                           {label}
