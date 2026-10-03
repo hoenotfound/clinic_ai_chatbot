@@ -651,6 +651,55 @@ test("Contacts export waits for the current search and downloads the filtered CS
   expectNoUnexpectedApi(apiState);
 });
 
+test("older Inbox messages keep their sent time while the conversation list keeps the date", async ({ page }) => {
+  const olderTimestamp = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+  const apiState = await installApi(page, {
+    initialConversations: [
+      conversation({
+        last_message_at: olderTimestamp,
+        last_message_content: "Older timestamp test",
+        latest_inbound_at: olderTimestamp,
+        latest_customer_message_at: olderTimestamp,
+      }),
+    ],
+    initialMessages: [
+      {
+        id: 1,
+        role: "user",
+        content: "Older timestamp test",
+        created_at: olderTimestamp,
+        media_url: null,
+        media_base64: null,
+        media_mime_type: null,
+      },
+    ],
+  });
+
+  await page.goto("/inbox");
+
+  const { expectedDate, expectedTime } = await page.evaluate((value) => {
+    const date = new Date(value);
+    return {
+      expectedDate: date.toLocaleDateString([], { month: "short", day: "numeric" }),
+      expectedTime: date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+  }, olderTimestamp);
+
+  const inbox = page.getByRole("complementary", { name: "Conversation inbox" });
+  const conversationRow = inbox.getByRole("button").filter({ hasText: "Alex Customer" }).first();
+  await expect(conversationRow).toContainText(expectedDate);
+
+  await openInboxConversation(page);
+
+  const messageText = page.getByText("Older timestamp test", { exact: true }).last();
+  await expect(messageText).toBeVisible();
+  const messageBubble = messageText.locator("..");
+  await expect(messageBubble).toContainText(expectedTime);
+  await expect(messageBubble).not.toContainText(expectedDate);
+
+  expectNoUnexpectedApi(apiState);
+});
+
 test("manual Inbox reply sends the exact text and takes ownership", async ({ page }) => {
   const apiState = await installApi(page);
 
