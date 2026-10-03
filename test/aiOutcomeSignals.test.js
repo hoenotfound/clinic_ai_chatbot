@@ -70,6 +70,7 @@ test("system prompt uses structured outcomes and keeps Booking Ready separate fr
   assert.match(prompt, /do not choose one/i);
   assert.match(prompt, /auto-send on price\/package enquiry: yes/i);
   assert.match(prompt, /do not repeat the full promotion caption or package details/i);
+  assert.match(prompt, /immediately previous customer turn/i);
   assert.match(prompt, /explicitly names two or more configured package options/i);
   assert.match(prompt, /answer the requested prices\/comparison directly/i);
   assert.match(prompt, /Do not rely on automatic media for a multi-package explicit comparison/i);
