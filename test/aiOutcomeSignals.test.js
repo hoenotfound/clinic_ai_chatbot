@@ -89,3 +89,16 @@ test("system prompt makes active promotions override stale promotional wording e
   assert.match(prompt, /matching deal is not listed in ACTIVE PROMOTIONS, treat that promotional price as stale/i);
   assert.match(prompt, /Do not quote it as current/i);
 });
+
+test("comment automation keeps linked promotions scoped to their configured service", () => {
+  const prompt = buildSystemPrompt({
+    surface: "comment_automation",
+    channel: "facebook",
+    publicReplyEnabled: true,
+    privateReplyEnabled: true,
+  });
+
+  assert.match(prompt, /applies ONLY to that exact configured service/i);
+  assert.match(prompt, /Never borrow its price, discount, bundle, free add-on, or deadline for another service/i);
+  assert.match(prompt, /auto-send on price enquiry.*must not be mentioned/i);
+});
