@@ -62,6 +62,10 @@ test("system prompt uses structured outcomes and keeps Booking Ready separate fr
   assert.match(prompt, /"priceQuery": false/i);
   assert.match(prompt, /Set "priceQuery" to true ONLY when the customer's CURRENT message explicitly asks for a price/i);
   assert.match(prompt, /If the price question covers multiple services or the service is unclear, set "treatment" to null/i);
+  assert.match(prompt, /applies ONLY to that exact canonical configured service/i);
+  assert.match(prompt, /Never borrow its price, discount, bundle, free add-on, or deadline for another service/i);
+  assert.match(prompt, /auto-send on price enquiry: yes/i);
+  assert.match(prompt, /do not repeat the full promotion caption or package details/i);
   assert.match(prompt, /"staffSummary":/i);
   assert.match(prompt, /staffSummary.*internal metadata/i);
   assert.match(prompt, /For booking_ready, "staffSummary" should be 1-3 concise sentences/i);
