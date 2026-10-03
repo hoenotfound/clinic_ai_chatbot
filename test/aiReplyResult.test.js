@@ -172,11 +172,13 @@ test("structured replies expose only an explicit boolean priceQuery signal", () 
     reply: "The current price is shown below.",
     outcome: "normal",
     priceQuery: true,
+    promotionOption: "Package B",
     treatment: "HIFU Non-Surgical Facelift",
     branch: null,
     appointmentPreference: null,
   }));
   assert.equal(yes.priceQuery, true);
+  assert.equal(yes.promotionOption, "Package B");
   assert.equal(yes.details.treatment, "HIFU Non-Surgical Facelift");
 
   const stringFalse = parseAiReplyResult(JSON.stringify({
@@ -191,6 +193,7 @@ test("structured replies expose only an explicit boolean priceQuery signal", () 
 
   const legacy = parseAiReplyResult("How can I help?");
   assert.equal(legacy.priceQuery, false);
+  assert.equal(legacy.promotionOption, null);
 });
 
 test("canonical service matching preserves Chinese names and aliases without collisions", () => {
