@@ -94,6 +94,94 @@ test("a hanging Gemini provider cannot consume the time reserved for Claude fall
   }
 });
 
+test("unstructured control output falls through to the next AI provider", async () => {
+  resetGeminiKeyPoolState();
+  const originalGemini = geminiService.getReply;
+  const originalClaude = claudeService.getReply;
+  const calls = [];
+
+  geminiService.getReply = async () => {
+    calls.push("gemini");
+    return [
+      "Hi 你好 👋",
+      "",
+      "3. **JSON Construction:**",
+      "{\"reply\":\"internal\",\"outcome\":\"normal\"}",
+    ].join("\n");
+  };
+  claudeService.getReply = async () => {
+    calls.push("claude");
+    return VALID_REPLY;
+  };
+
+  try {
+    const result = await getReplyWithEnv(
+      [{ role: "user", content: "hello" }],
+      { channel: "whatsapp", isFirstMessage: false, privateSetupCheck: true },
+      baseEnv({
+        AI_REPLY_GLOBAL_BUDGET_MS: "500",
+        AI_REPLY_FALLBACK_PROVIDER_RESERVE_MS: "200",
+        GEMINI_REPLY_5XX_RETRY_COUNT: "0",
+        AI_REPLY_RETRY_COUNT: "0",
+      })
+    );
+
+    assert.equal(result, VALID_REPLY);
+    assert.deepEqual(calls, ["gemini", "claude"]);
+  } finally {
+    geminiService.getReply = originalGemini;
+    claudeService.getReply = originalClaude;
+    resetGeminiKeyPoolState();
+  }
+});
+
+test("structured reply with leaked internal scaffolding falls through to the next AI provider", async () => {
+  resetGeminiKeyPoolState();
+  const originalGemini = geminiService.getReply;
+  const originalClaude = claudeService.getReply;
+  const calls = [];
+
+  geminiService.getReply = async () => {
+    calls.push("gemini");
+    return JSON.stringify({
+      reply: [
+        "你好～我可以帮你了解 😊",
+        "",
+        "3. **JSON Construction:**",
+        "{\"outcome\":\"normal\"}",
+      ].join("\n"),
+      outcome: "normal",
+      treatment: null,
+      branch: null,
+      appointmentPreference: null,
+    });
+  };
+  claudeService.getReply = async () => {
+    calls.push("claude");
+    return VALID_REPLY;
+  };
+
+  try {
+    const result = await getReplyWithEnv(
+      [{ role: "user", content: "hello" }],
+      { channel: "whatsapp", isFirstMessage: false, privateSetupCheck: true },
+      baseEnv({
+        AI_REPLY_GLOBAL_BUDGET_MS: "500",
+        AI_REPLY_FALLBACK_PROVIDER_RESERVE_MS: "200",
+        GEMINI_REPLY_5XX_RETRY_COUNT: "0",
+        AI_REPLY_RETRY_COUNT: "0",
+      })
+    );
+
+    assert.equal(result, VALID_REPLY);
+    assert.deepEqual(calls, ["gemini", "claude"]);
+  } finally {
+    geminiService.getReply = originalGemini;
+    claudeService.getReply = originalClaude;
+    resetGeminiKeyPoolState();
+  }
+});
+
 test("Claude rate-limit failure cools the candidate and skips the next immediate attempt", async () => {
   resetGeminiKeyPoolState();
   const originalClaude = claudeService.getReply;

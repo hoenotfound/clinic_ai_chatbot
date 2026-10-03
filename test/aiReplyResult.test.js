@@ -112,11 +112,96 @@ test("malformed JSON-looking AI output fails closed instead of leaking raw contr
   );
 });
 
+test("unstructured provider prose is rejected instead of being sent to the customer", () => {
+  assert.throws(
+    () => parseAiReplyResult("Hi there, how can I help?"),
+    (err) => err.code === "INVALID_AI_RESPONSE"
+  );
+});
+
+test("customer-facing prose plus leaked JSON construction is rejected", () => {
+  const leaked = [
+    "Hi 你好 👋 欢迎来到 Neutro Sense TCM~",
+    "",
+    "有几款不同的限时配套可以选择哦~",
+    "",
+    "3. **JSON Construction:**",
+    JSON.stringify({
+      reply: "这段内部结构不应该显示给顾客",
+      outcome: "normal",
+      treatment: null,
+      branch: null,
+      appointmentPreference: null,
+    }),
+  ].join("\n");
+
+  assert.throws(
+    () => parseAiReplyResult(leaked),
+    (err) => err.code === "INVALID_AI_RESPONSE"
+  );
+});
+
+test("structured reply rejects leaked JSON construction inside the customer-facing reply field", () => {
+  assert.throws(
+    () => parseAiReplyResult(JSON.stringify({
+      reply: [
+        "你好～我可以帮你了解 😊",
+        "",
+        "3. **JSON Construction:**",
+        "{\"outcome\":\"normal\"}",
+      ].join("\n"),
+      outcome: "normal",
+      treatment: null,
+      branch: null,
+      appointmentPreference: null,
+    })),
+    (err) => err.code === "INVALID_AI_RESPONSE"
+      && /internal structured-output content/i.test(err.message)
+  );
+});
+
+test("structured reply rejects internal schema fields even without a JSON Construction heading", () => {
+  assert.throws(
+    () => parseAiReplyResult(JSON.stringify({
+      reply: "我先帮你了解一下～\n{\"outcome\":\"normal\",\"priceQuery\":false}",
+      outcome: "normal",
+      treatment: null,
+      branch: null,
+      appointmentPreference: null,
+    })),
+    (err) => err.code === "INVALID_AI_RESPONSE"
+  );
+});
+
+test("benign customer-facing use of the word JSON is not overblocked", () => {
+  const result = parseAiReplyResult(JSON.stringify({
+    reply: "如果你是问 JSON 文件本身，我可以帮你说明。",
+    outcome: "normal",
+    treatment: null,
+    branch: null,
+    appointmentPreference: null,
+  }));
+
+  assert.equal(result.text, "如果你是问 JSON 文件本身，我可以帮你说明。");
+});
+
 test("legacy markers remain supported during structured-output rollout", () => {
   const result = parseAiReplyResult("[[NEEDS_HUMAN]] our team will check this for u");
   assert.equal(result.flagged, true);
   assert.equal(result.structured, false);
   assert.equal(result.text, "our team will check this for u");
+});
+
+test("legacy marker reply rejects leaked internal JSON scaffolding", () => {
+  assert.throws(
+    () => parseAiReplyResult([
+      "[[NEEDS_HUMAN]] 我帮你转给客服～",
+      "",
+      "3. **JSON Construction:**",
+      "{\"reply\":\"internal\",\"outcome\":\"needs_human\"}",
+    ].join("\n")),
+    (err) => err.code === "INVALID_AI_RESPONSE"
+  );
 });
 
 test("non-clinic profiles downgrade structured booking_ready without validating clinic metadata", (t) => {
@@ -193,10 +278,10 @@ test("structured replies expose only an explicit boolean priceQuery signal", () 
   }));
   assert.equal(stringFalse.priceQuery, false);
 
-  const legacy = parseAiReplyResult("How can I help?");
-  assert.equal(legacy.priceQuery, false);
-  assert.equal(legacy.packageQuery, false);
-  assert.equal(legacy.promotionOption, null);
+  assert.throws(
+    () => parseAiReplyResult("How can I help?"),
+    (err) => err.code === "INVALID_AI_RESPONSE"
+  );
 });
 
 test("canonical service matching preserves Chinese names and aliases without collisions", () => {
