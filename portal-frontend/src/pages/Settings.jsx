@@ -1004,26 +1004,141 @@ function ServicesTab({ config, onSaved, onError }) {
 
 function AliasesTab({ config, onSaved, onError }) {
   const serviceNames = (config.services || []).map((service) => service.name).filter(Boolean);
-  const aliasFields = [
-    { key: "alias", label: "What customers type", placeholder: "e.g. common shorthand or nickname" },
-    { key: "officialService", label: "Maps to service", type: "select", options: serviceNames, placeholder: "Choose a configured service" },
-  ];
   const [items, setItems] = useState(() => config.serviceAliases || []);
   const [saving, setSaving] = useState(false);
+  const [bulkService, setBulkService] = useState(() => serviceNames.length === 1 ? serviceNames[0] : "");
+  const [bulkText, setBulkText] = useState("");
+  const [bulkMessage, setBulkMessage] = useState(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const bulkInputRef = useRef(null);
+
+  function normalizeAlias(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function parseBulkTerms(value) {
+    const seen = new Set();
+    return String(value || "")
+      .split(/[\n,，;；\t]+/u)
+      .map((term) => term.trim())
+      .filter((term) => {
+        if (!term) return false;
+        const key = normalizeAlias(term);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+
+  function addBulkTerms() {
+    setBulkMessage(null);
+    if (!bulkService) {
+      setBulkMessage({ type: "error", text: "Choose the service these terms should map to." });
+      return;
+    }
+
+    const terms = parseBulkTerms(bulkText);
+    if (terms.length === 0) {
+      setBulkMessage({ type: "error", text: "Paste or type at least one customer term first." });
+      return;
+    }
+
+    const existingByAlias = new Map();
+    for (const item of items) {
+      const key = normalizeAlias(item.alias);
+      if (key && !existingByAlias.has(key)) {
+        existingByAlias.set(key, item.officialService);
+      }
+    }
+
+    const conflicts = terms.filter((term) => {
+      const existingService = existingByAlias.get(normalizeAlias(term));
+      return existingService && existingService.toLowerCase() !== bulkService.toLowerCase();
+    });
+    if (conflicts.length > 0) {
+      const first = conflicts[0];
+      const existingService = existingByAlias.get(normalizeAlias(first));
+      setBulkMessage({
+        type: "error",
+        text: `“${first}” is already mapped to “${existingService}”. Remove it there first if you want to remap it.`,
+      });
+      return;
+    }
+
+    const additions = terms
+      .filter((term) => !existingByAlias.has(normalizeAlias(term)))
+      .map((alias) => ({ alias, officialService: bulkService }));
+    const skipped = terms.length - additions.length;
+
+    if (additions.length > 0) {
+      setItems((current) => [...current, ...additions]);
+      setBulkText("");
+    }
+
+    if (additions.length > 0 && skipped > 0) {
+      setBulkMessage({
+        type: "success",
+        text: `Added ${additions.length} term${additions.length === 1 ? "" : "s"} to ${bulkService}. Skipped ${skipped} already-added duplicate${skipped === 1 ? "" : "s"}.`,
+      });
+    } else if (additions.length > 0) {
+      setBulkMessage({
+        type: "success",
+        text: `Added ${additions.length} term${additions.length === 1 ? "" : "s"} to ${bulkService}.`,
+      });
+    } else {
+      setBulkMessage({
+        type: "success",
+        text: "Those terms are already added to this service.",
+      });
+    }
+  }
+
+  function removeTerm(alias, officialService) {
+    setItems((current) =>
+      current.filter(
+        (item) =>
+          !(item.alias === alias && item.officialService === officialService)
+      )
+    );
+  }
+
+  function addMoreForService(service) {
+    setBulkService(service);
+    setBulkMessage(null);
+    bulkInputRef.current?.focus();
+    bulkInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
 
   async function handleSave() {
     const cleaned = items
-      .filter((a) => a.alias.trim() || a.officialService.trim())
-      .map((a) => ({ alias: a.alias.trim(), officialService: a.officialService.trim() }));
+      .filter((a) => String(a.alias || "").trim() || String(a.officialService || "").trim())
+      .map((a) => ({
+        alias: String(a.alias || "").trim(),
+        officialService: String(a.officialService || "").trim(),
+      }));
+
     if (cleaned.some((a) => !a.alias || !a.officialService)) {
       onError("Every service term needs both the customer wording and the service it maps to.");
       return;
     }
+
     const canonical = new Set(serviceNames.map((name) => name.toLowerCase()));
     if (cleaned.some((a) => !canonical.has(a.officialService.toLowerCase()))) {
       onError("Every service term must map to a service currently configured.");
       return;
     }
+
+    const owners = new Map();
+    for (const item of cleaned) {
+      const key = normalizeAlias(item.alias);
+      const previous = owners.get(key);
+      if (previous && previous.toLowerCase() !== item.officialService.toLowerCase()) {
+        onError(`“${item.alias}” is mapped to more than one service. Keep only one mapping before saving.`);
+        return;
+      }
+      owners.set(key, item.officialService);
+    }
+
     setSaving(true);
     try {
       const updated = await api.updateConfig({ serviceAliases: cleaned });
@@ -1036,23 +1151,242 @@ function AliasesTab({ config, onSaved, onError }) {
     }
   }
 
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const groupedServices = serviceNames
+    .map((service) => {
+      const serviceMatchesSearch = service.toLowerCase().includes(normalizedSearch);
+      const serviceItems = items.filter((item) => item.officialService === service);
+      const visibleItems = normalizedSearch
+        ? serviceItems.filter(
+            (item) =>
+              serviceMatchesSearch ||
+              String(item.alias || "").toLowerCase().includes(normalizedSearch)
+          )
+        : serviceItems;
+      return {
+        service,
+        allItems: serviceItems,
+        visibleItems,
+        visible: !normalizedSearch || serviceMatchesSearch || visibleItems.length > 0,
+      };
+    })
+    .filter((group) => group.visible);
+
+  const orphanedItems = items.filter(
+    (item) => !serviceNames.includes(item.officialService)
+  );
+  const totalTerms = items.length;
+  const mappedServices = new Set(items.map((item) => item.officialService).filter(Boolean)).size;
+
   return (
     <div>
       <SectionHeading
         title="Service Terms"
-        description="Casual terms customers type, mapped to an actual configured service."
+        description="Teach the AI the different names and shorthand customers use for each configured service."
       />
-      {serviceNames.length === 0 && <p className="mb-4 rounded-xl bg-[var(--color-accent-light)] p-3 text-xs">Add at least one service before creating customer terms.</p>}
-      <RepeatableListEditor
-        items={items}
-        fields={aliasFields}
-        onChange={setItems}
-        emptyItem={{ alias: "", officialService: "" }}
-        addLabel="Add term"
-      />
-      <div className="mt-4">
-        <SaveButton saving={saving} onClick={handleSave} />
-      </div>
+
+      {serviceNames.length === 0 ? (
+        <p className="rounded-xl bg-[var(--color-accent-light)] p-3 text-xs">
+          Add at least one service before creating customer terms.
+        </p>
+      ) : (
+        <>
+          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 sm:p-5">
+            <div className="mb-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold sm:text-base">Quick add terms</h3>
+                  <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                    Choose one service, then paste many customer terms at once.
+                  </p>
+                </div>
+                <span className="rounded-full bg-[var(--color-surface)] px-2.5 py-1 text-[10px] font-semibold text-[var(--color-text-muted)]">
+                  Comma or new line
+                </span>
+              </div>
+            </div>
+
+            <div className="grid gap-3">
+              <div>
+                <label className={labelClass}>Maps to service</label>
+                <select
+                  className={inputClass}
+                  value={bulkService}
+                  onChange={(event) => {
+                    setBulkService(event.target.value);
+                    setBulkMessage(null);
+                  }}
+                >
+                  <option value="">Choose a configured service</option>
+                  {serviceNames.map((service) => (
+                    <option key={service} value={service}>{service}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className={labelClass}>Customer terms</label>
+                <textarea
+                  ref={bulkInputRef}
+                  rows={4}
+                  className={textareaClass}
+                  value={bulkText}
+                  placeholder={"Example:\n骨盆\n骨盘\n骨盆调整\npelvic adjustment"}
+                  onChange={(event) => {
+                    setBulkText(event.target.value);
+                    setBulkMessage(null);
+                  }}
+                />
+                <p className="mt-1.5 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                  Paste from Excel/Sheets or type terms separated by commas, semicolons, or new lines. Use names and shorthand customers actually type—not symptoms such as 小腹凸 or 腰酸.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <button
+                  type="button"
+                  onClick={addBulkTerms}
+                  className="h-11 rounded-xl bg-[var(--color-primary)] px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[var(--color-primary-hover)]"
+                >
+                  Add terms
+                </button>
+                {bulkText.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkText("");
+                      setBulkMessage(null);
+                    }}
+                    className="h-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 text-sm font-semibold text-[var(--color-text-muted)]"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {bulkMessage && (
+                <div
+                  className={`rounded-xl px-3.5 py-3 text-xs leading-5 ${
+                    bulkMessage.type === "error"
+                      ? "bg-[var(--color-danger-light)] text-[var(--color-danger)]"
+                      : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                  }`}
+                >
+                  {bulkMessage.text}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h3 className="text-sm font-bold sm:text-base">Existing terms</h3>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                {totalTerms} term{totalTerms === 1 ? "" : "s"} across {mappedServices} service{mappedServices === 1 ? "" : "s"}.
+              </p>
+            </div>
+            <div className="w-full sm:max-w-xs">
+              <label className={labelClass}>Search</label>
+              <input
+                type="search"
+                className={inputClass}
+                value={searchTerm}
+                placeholder="Search service or term"
+                onChange={(event) => setSearchTerm(event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="mt-3 space-y-3">
+            {groupedServices.map(({ service, allItems, visibleItems }) => (
+              <div
+                key={service}
+                className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3.5 sm:p-4"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-sm font-bold">{service}</p>
+                      <span className="rounded-full bg-[var(--color-surface)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
+                        {allItems.length} term{allItems.length === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => addMoreForService(service)}
+                    className="h-9 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold"
+                  >
+                    + Add terms
+                  </button>
+                </div>
+
+                {visibleItems.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {visibleItems.map((item, index) => (
+                      <span
+                        key={`${item.alias}-${index}`}
+                        className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs"
+                      >
+                        <span className="max-w-[15rem] truncate sm:max-w-[22rem]">{item.alias}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeTerm(item.alias, item.officialService)}
+                          aria-label={`Remove ${item.alias}`}
+                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-danger-light)] hover:text-[var(--color-danger)]"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+                    {normalizedSearch ? "No matching terms in this service." : "No customer terms added yet."}
+                  </p>
+                )}
+              </div>
+            ))}
+
+            {groupedServices.length === 0 && (
+              <div className="rounded-2xl border border-dashed border-[var(--color-border)] p-5 text-center text-xs text-[var(--color-text-muted)]">
+                No service terms match “{searchTerm}”.
+              </div>
+            )}
+
+            {orphanedItems.length > 0 && !normalizedSearch && (
+              <div className="rounded-2xl border border-[var(--color-danger)]/30 bg-[var(--color-danger-light)] p-4">
+                <p className="text-sm font-bold text-[var(--color-danger)]">Needs attention</p>
+                <p className="mt-1 text-xs leading-5 text-[var(--color-danger)]">
+                  These terms point to services that no longer exist. Remove them or recreate the missing service before saving.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {orphanedItems.map((item, index) => (
+                    <span
+                      key={`${item.alias}-orphan-${index}`}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-surface)] px-2.5 py-1.5 text-xs"
+                    >
+                      <span>{item.alias} → {item.officialService}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeTerm(item.alias, item.officialService)}
+                        aria-label={`Remove ${item.alias}`}
+                        className="text-[var(--color-danger)]"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-5">
+            <SaveButton saving={saving} onClick={handleSave} />
+          </div>
+        </>
+      )}
     </div>
   );
 }
