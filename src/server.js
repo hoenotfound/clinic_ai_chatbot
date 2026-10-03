@@ -787,7 +787,6 @@ async function processIncomingMessage(
       const promoBundle = await resolvePricePromotionForReply({
         priceQuery,
         treatment: details?.treatment,
-        promotionOption,
         customerText: text,
         conversationHistory: history,
         flagged,
