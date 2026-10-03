@@ -261,6 +261,30 @@ test("explicit current-message package wording overrides an incorrect model pack
   assert.deepEqual(bundle.packages.map((item) => item.name), ["Package B"]);
 });
 
+test("single-letter package aliases beside Chinese text are detected separately", async () => {
+  const packagePromo = {
+    name: "Pelvis Packages",
+    linkedService: "3D 小颜术",
+    sendOnPriceQuery: true,
+    imageUrl: "",
+    caption: "",
+    validFrom: null,
+    validUntil: null,
+    packages: [
+      { name: "Package A", title: "", aliases: ["A"], imageUrl: "https://example.test/a.jpg", caption: "A promo" },
+      { name: "Package B", title: "", aliases: ["B"], imageUrl: "https://example.test/b.jpg", caption: "B promo" },
+    ],
+  };
+
+  assert.equal(
+    await resolvePricePromotionForReply(base({
+      promotions: [packagePromo],
+      customerText: "A跟B多少钱？",
+    })),
+    null
+  );
+});
+
 test("mentioning multiple configured packages in the current price question sends no automatic media", async () => {
   const packagePromo = {
     name: "Pelvis Packages",
