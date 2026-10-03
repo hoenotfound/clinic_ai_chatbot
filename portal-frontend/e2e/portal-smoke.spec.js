@@ -147,6 +147,100 @@ async function mockPortalApi(
     }
 
 
+    if (path === "/api/pipeline/analytics/meta-ads" && method === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          range: {
+            from: url.searchParams.get("from") || "2026-09-05",
+            to: url.searchParams.get("to") || "2026-10-04",
+            dayCount: 30,
+            timeZone: "Asia/Kuala_Lumpur",
+          },
+          level: url.searchParams.get("level") || "campaign",
+          filters: {
+            accountId: url.searchParams.get("accountId"),
+            campaignId: url.searchParams.get("campaignId"),
+            adsetId: url.searchParams.get("adsetId"),
+            adId: url.searchParams.get("adId"),
+          },
+          money: {
+            currency: "MYR",
+            currencies: ["MYR"],
+            mixedCurrency: false,
+            crmValueCurrency: "MYR",
+            estimatedRoasAvailable: true,
+          },
+          summary: {
+            spend: 500,
+            impressions: 25000,
+            clicks: 500,
+            crmLeads: 20,
+            hotLeads: 8,
+            appointments: 7,
+            visits: 5,
+            won: 3,
+            estimatedWonValue: 2400,
+            ctr: 2,
+            cpc: 1,
+            cpm: 20,
+            leadToAppointmentRate: 35,
+            leadToWonRate: 15,
+            costPerLead: 25,
+            costPerAppointment: 71.43,
+            costPerVisit: 100,
+            costPerWon: 166.67,
+            estimatedRoas: 4.8,
+          },
+          attributionCoverage: {
+            metaAttributedLeads: 20,
+            matchedToSyncedAds: 18,
+            unmatchedToSyncedAds: 2,
+            matchedRate: 90,
+          },
+          rows: [{
+            accountId: "123",
+            accountName: "Test Clinic Ads",
+            currency: "MYR",
+            id: "100",
+            name: "October Campaign",
+            spend: 500,
+            impressions: 25000,
+            clicks: 500,
+            crmLeads: 20,
+            hotLeads: 8,
+            appointments: 7,
+            visits: 5,
+            won: 3,
+            estimatedWonValue: 2400,
+            ctr: 2,
+            cpc: 1,
+            cpm: 20,
+            leadToAppointmentRate: 35,
+            leadToWonRate: 15,
+            costPerLead: 25,
+            costPerAppointment: 71.43,
+            costPerVisit: 100,
+            costPerWon: 166.67,
+            estimatedRoas: 4.8,
+          }],
+          accounts: [{
+            accountId: "123",
+            accountName: "Test Clinic Ads",
+            currency: "MYR",
+            dataThrough: "2026-10-04",
+            lastSuccessAt: "2026-10-04T00:30:00.000Z",
+            lastError: null,
+            backfillCompletedAt: "2026-10-03T00:00:00.000Z",
+            backfillNextDate: null,
+            syncing: false,
+          }],
+          analyticsBusinessType: "aesthetic_clinic",
+        }),
+      });
+    }
+
     if (path === "/api/pipeline/analytics" && method === "GET") {
       return route.fulfill({
         status: 200,
@@ -568,6 +662,22 @@ test("staff can reach the main portal routes without page-level overflow", async
   }
 });
 
+
+test("Meta Ads analytics renders spend-to-CRM metrics without horizontal page overflow", async ({ page }) => {
+  await mockPortalApi(page, { loggedIn: true });
+  await page.goto("/analytics");
+
+  await page.getByRole("button", { name: "Meta Ads" }).click();
+  const metaView = page.getByTestId("meta-ads-analytics");
+  await expect(metaView).toBeVisible();
+  await expect(page.getByText("Cost / Lead", { exact: true })).toBeVisible();
+  await expect(page.getByText("RM25.00", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("October Campaign", { exact: true })).toBeVisible();
+  await expect(page.getByText("90.0%", { exact: true })).toBeVisible();
+  await expect(page.getByText("4.80×", { exact: true }).first()).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+  await expectNoHorizontalElementOverflow(page, "meta-ads-analytics");
+});
 
 test("mobile Pipeline keeps controls compact and prioritizes lead cards", async ({ page }) => {
   const viewport = page.viewportSize();
