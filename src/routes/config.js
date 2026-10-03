@@ -10,6 +10,7 @@ const commentAutomationReadiness = require("../services/commentAutomationReadine
 const { normalizeIndustrySetup } = require("../config/industrySetup");
 const { evaluateClientSetup } = require("../services/clientSetupService");
 const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
+const { findOverlappingPricePromotionPair } = require("../utils/activePromotion");
 
 const router = express.Router();
 
@@ -419,6 +420,19 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
           invalidKeys: ["promotions"],
         };
       }
+    }
+
+    const overlap = findOverlappingPricePromotionPair(promotions);
+    if (overlap) {
+      const [first, second] = overlap;
+      return {
+        ok: false,
+        status: 400,
+        error:
+          `Only one automatic price promotion can be active for ${String(first.linkedService).trim()} at a time. ` +
+          `"${first.name}" overlaps with "${second.name}". Adjust the dates or disable automatic send on one promotion.`,
+        invalidKeys: ["promotions"],
+      };
     }
   }
 
