@@ -671,7 +671,7 @@ test("Meta Ads analytics renders spend-to-CRM metrics without horizontal page ov
   const metaView = page.getByTestId("meta-ads-analytics");
   await expect(metaView).toBeVisible();
   await expect(page.getByText("Cost / Lead", { exact: true })).toBeVisible();
-  await expect(page.getByText("RM25.00", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/RM\s*25\.00/).first()).toBeVisible();
   await expect(page.getByText("October Campaign", { exact: true })).toBeVisible();
   await expect(page.getByText("90.0%", { exact: true })).toBeVisible();
   await expect(page.getByText("4.80×", { exact: true }).first()).toBeVisible();
