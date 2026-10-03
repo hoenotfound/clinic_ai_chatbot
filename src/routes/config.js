@@ -116,9 +116,11 @@ function isPromotionPackage(value) {
   return (
     isPlainObject(value) &&
     isNonEmptyString(value.name) &&
-    isString(value.title) &&
-    Array.isArray(value.aliases) &&
-    value.aliases.every(isString) &&
+    (value.title === undefined || isString(value.title)) &&
+    (
+      value.aliases === undefined ||
+      (Array.isArray(value.aliases) && value.aliases.every(isString))
+    ) &&
     isString(value.imageUrl) &&
     isString(value.caption)
   );
