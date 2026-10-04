@@ -50,7 +50,7 @@ function positiveInt(value, fallback, max = 60_000) {
   return Math.min(parsed, max);
 }
 
-function withTimeout(promise, timeoutMs, label) {
+function withTimeout(promise, timeoutMs, label, { onTimeout = null } = {}) {
   let timer;
   return Promise.race([
     Promise.resolve(promise).finally(() => clearTimeout(timer)),
@@ -59,6 +59,11 @@ function withTimeout(promise, timeoutMs, label) {
         const err = new Error(`${label} timed out after ${timeoutMs}ms.`);
         err.code = "AI_TIMEOUT";
         reject(err);
+        try {
+          onTimeout?.();
+        } catch {
+          // Timeout cleanup is best-effort and must never mask AI_TIMEOUT.
+        }
       }, timeoutMs);
     }),
   ]);
@@ -99,10 +104,15 @@ async function runCandidate(
       : timeoutMs;
 
     try {
+      const controller = new AbortController();
       const raw = await withTimeout(
-        candidate.run(messages, options),
+        candidate.run(messages, options, {
+          timeoutMs: attemptTimeoutMs,
+          signal: controller.signal,
+        }),
         attemptTimeoutMs,
-        candidate.label
+        candidate.label,
+        { onTimeout: () => controller.abort() }
       );
       parseAiReplyResult(raw);
       candidate.reportOutcome?.({ status: "ready", failureKind: null });
@@ -283,11 +293,12 @@ function buildCandidates(env = process.env) {
           label: "Claude fallback",
           provider: "claude",
           healthKey: `claude_${credentialFingerprint(env.ANTHROPIC_API_KEY)}`,
-          run: (messages, options) => claude.getReply(
+          run: (messages, options, requestControl = {}) => claude.getReply(
             messages,
             options,
             env.ANTHROPIC_API_KEY,
-            env.ANTHROPIC_WORKSPACE_ID
+            env.ANTHROPIC_WORKSPACE_ID,
+            requestControl
           ),
         };
         candidate.reportOutcome = (outcome) => recordCandidateHealth(candidate, outcome, { env });
@@ -429,6 +440,12 @@ function createGeminiModelsFailedError(failures) {
     model,
     code: error?.code || null,
     message: String(error?.message || "Gemini request failed.").slice(0, 240),
+    failures: Array.isArray(error?.failures)
+      ? error.failures.map((failure) => ({
+          code: failure?.code || null,
+          message: String(failure?.message || "Gemini request failed.").slice(0, 240),
+        }))
+      : [],
   }));
   return err;
 }
