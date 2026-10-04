@@ -18,46 +18,135 @@ const STALE_CLAIM_GRACE_MINUTES = 10;
 let sweepRunning = false;
 let followUpTimer = null;
 
+function normalizeFollowUpTranslations(value, fallbackMessage) {
+  if (value !== undefined && (typeof value !== "object" || value === null)) {
+    return null;
+  }
+  return Object.fromEntries(
+    ["en", "ms", "zh"].map((key) => [
+      key,
+      typeof value?.[key] === "string" && value[key].trim()
+        ? value[key].trim()
+        : fallbackMessage,
+    ])
+  );
+}
+
+function normalizeServiceOverrides(value) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 50) return null;
+
+  const seen = new Set();
+  const normalized = [];
+  for (const item of value) {
+    const serviceName =
+      typeof item?.serviceName === "string" ? item.serviceName.trim() : "";
+    const message = typeof item?.message === "string" ? item.message.trim() : "";
+    if (!serviceName || !message || message.length > 1000) return null;
+
+    const key = serviceName.toLocaleLowerCase();
+    if (seen.has(key)) return null;
+    seen.add(key);
+
+    const translations = normalizeFollowUpTranslations(
+      item.translations,
+      message
+    );
+    if (!translations) return null;
+    normalized.push({ serviceName, message, translations });
+  }
+  return normalized;
+}
+
+function normalizeFollowUpStep(value) {
+  const delayMinutes = Number(value?.delayMinutes);
+  const message = typeof value?.message === "string" ? value.message.trim() : "";
+  if (
+    !Number.isInteger(delayMinutes) ||
+    delayMinutes < 5 ||
+    delayMinutes > 23 * 60 ||
+    !message ||
+    message.length > 1000 ||
+    (value?.imageUrl !== undefined && typeof value.imageUrl !== "string")
+  ) {
+    return null;
+  }
+
+  const translations = normalizeFollowUpTranslations(
+    value.translations,
+    message
+  );
+  const serviceOverrides = normalizeServiceOverrides(value.serviceOverrides);
+  if (!translations || !serviceOverrides) return null;
+
+  return {
+    delayMinutes,
+    message,
+    translations,
+    imageUrl: value.imageUrl?.trim() || "",
+    serviceOverrides,
+  };
+}
+
 function getActiveSettings() {
   if (!automatedRepliesEnabled()) return null;
 
   const settings = clinicConfig.automatedFollowUp;
   if (
     !settings?.enabled ||
-    !Number.isInteger(settings.delayMinutes) ||
-    settings.delayMinutes < 5 ||
-    settings.delayMinutes > 23 * 60 ||
     !["all", "staff"].includes(settings.triggerMode) ||
-    typeof settings.message !== "string" ||
-    !settings.message.trim() ||
-    (settings.translations !== undefined &&
-      (typeof settings.translations !== "object" || settings.translations === null)) ||
-    (settings.imageUrl !== undefined && typeof settings.imageUrl !== "string") ||
     typeof settings.activatedAt !== "string" ||
     Number.isNaN(Date.parse(settings.activatedAt))
   ) {
     return null;
   }
 
+  const rawAdditionalSteps =
+    settings.additionalSteps === undefined ? [] : settings.additionalSteps;
+  if (!Array.isArray(rawAdditionalSteps) || rawAdditionalSteps.length > 2) {
+    return null;
+  }
+
+  const steps = [
+    normalizeFollowUpStep(settings),
+    ...rawAdditionalSteps.map(normalizeFollowUpStep),
+  ];
+  if (steps.some((step) => !step)) return null;
+
+  for (let index = 1; index < steps.length; index += 1) {
+    if (steps[index].delayMinutes <= steps[index - 1].delayMinutes) {
+      return null;
+    }
+  }
+
   return {
-    delayMinutes: settings.delayMinutes,
     triggerMode: settings.triggerMode,
-    message: settings.message.trim(),
-    translations: Object.fromEntries(
-      ["en", "ms", "zh"].map((key) => [
-        key,
-        typeof settings.translations?.[key] === "string" &&
-        settings.translations[key].trim()
-          ? settings.translations[key].trim()
-          : settings.message.trim(),
-      ])
-    ),
-    imageUrl: settings.imageUrl?.trim() || "",
     activatedAt: settings.activatedAt,
+    steps,
   };
 }
 
-function publishConversationChange(message, reason) {
+function normalizedServiceName(value) {
+  return typeof value === "string"
+    ? value.trim().replace(/\s+/g, " ").toLocaleLowerCase()
+    : "";
+}
+
+function messageForCandidate(step, candidate, language) {
+  const interest = normalizedServiceName(candidate.treatment_interest);
+  const targeted = interest
+    ? step.serviceOverrides.find(
+        (item) => normalizedServiceName(item.serviceName) === interest
+      )
+    : null;
+  const source = targeted || step;
+  return {
+    message: source.translations[language] || source.message,
+    targetedService: targeted?.serviceName || null,
+  };
+}
+
+function publishConversationChangefunction publishConversationChange(message, reason) {
   if (!message) return;
   realtimeEvents.publish("conversation_changed", {
     contactId: message.contact_id,
@@ -188,11 +277,19 @@ async function sendCandidate(candidate) {
   const settings = getActiveSettings();
   if (!settings) return;
 
+  const stepIndex = Number(candidate.next_follow_up_step) || 1;
+  const step = settings.steps[stepIndex - 1];
+  if (!step) return;
+
   const language = detectConversationLanguage([
     ...(candidate.recent_inbound_messages || []),
     candidate.trigger_message_content,
   ]);
-  const followUpMessage = settings.translations[language] || settings.message;
+  const { message: followUpMessage } = messageForCandidate(
+    step,
+    candidate,
+    language
+  );
   const contact = contactForCandidate(candidate);
   const channel = contact.channel || "whatsapp";
   const isSocial = channel === "facebook" || channel === "instagram";
@@ -204,8 +301,9 @@ async function sendCandidate(candidate) {
     contactId: candidate.contact_id,
     triggerMessageId: candidate.trigger_message_id,
     content: followUpMessage,
-    mediaUrl: !isSocial && settings.imageUrl ? settings.imageUrl : null,
-    delayMinutes: settings.delayMinutes,
+    mediaUrl: !isSocial && step.imageUrl ? step.imageUrl : null,
+    stepIndex,
+    delayMinutes: step.delayMinutes,
     triggerMode: settings.triggerMode,
     activatedAt: settings.activatedAt,
   });
@@ -239,10 +337,10 @@ async function sendCandidate(candidate) {
       );
     } else {
       const policyOptions = { purpose: "marketing" };
-      sendResult = settings.imageUrl
+      sendResult = step.imageUrl
         ? await channelMessaging.sendImageByUrl(
             contact,
-            settings.imageUrl,
+            step.imageUrl,
             followUpMessage,
             policyOptions
           )
@@ -296,11 +394,11 @@ async function sendCandidate(candidate) {
   // Contacted. Optional social image delivery is tracked independently below.
   await markContacted(candidate.contact_id);
 
-  if (isSocial && settings.imageUrl) {
+  if (isSocial && step.imageUrl) {
     await sendSocialImageCompanion(
       contact,
       candidate.contact_id,
-      settings.imageUrl
+      step.imageUrl
     );
   }
 }
@@ -365,7 +463,7 @@ async function runAutomatedFollowUps() {
     }
 
     const candidates = await followUpRepo.findCandidates({
-      delayMinutes: settings.delayMinutes,
+      delayMinutes: settings.steps.map((step) => step.delayMinutes),
       triggerMode: settings.triggerMode,
       activatedAt: settings.activatedAt,
       limit: FOLLOW_UP_BATCH_SIZE,
@@ -385,7 +483,7 @@ async function runAutomatedFollowUps() {
     const liveSettings = getActiveSettings();
     const nextDueAt = liveSettings && typeof followUpRepo.getNextCandidateDueAt === "function"
       ? await followUpRepo.getNextCandidateDueAt({
-          delayMinutes: liveSettings.delayMinutes,
+          delayMinutes: liveSettings.steps.map((step) => step.delayMinutes),
           triggerMode: liveSettings.triggerMode,
           activatedAt: liveSettings.activatedAt,
         })
