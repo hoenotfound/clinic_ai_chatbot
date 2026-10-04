@@ -506,15 +506,52 @@ function createSetupStatusService({
     if (!definition.isConfigured) {
       return result("ai", "error", "No AI provider key is configured.", checkedAt);
     }
+
     try {
       await ai.getReply(
         [{ role: "user", content: "Private setup check: reply briefly to confirm the assistant is available." }],
         { channel: "whatsapp", isFirstMessage: false }
       );
-      return result("ai", "ready", "The AI reply engine completed a private test request.", checkedAt);
     } catch (err) {
       return result("ai", "error", privateError(err, "The AI test request failed."), checkedAt);
     }
+
+    // The normal Gemini-preferred setup path uses metadata-only Gemini checks.
+    // If Claude is configured as fallback, validate it independently so a bad
+    // workspace/key cannot hide behind a healthy Gemini primary.
+    if (text(env.ANTHROPIC_API_KEY) && typeof ai.runClaudeReply === "function") {
+      try {
+        await ai.runClaudeReply(
+          [{ role: "user", content: "Private setup check: reply briefly to confirm the assistant is available." }],
+          {
+            channel: "whatsapp",
+            isFirstMessage: false,
+            privateSetupCheck: true,
+          },
+          5000,
+          0,
+          env,
+          { globalBudgetMs: 5000 }
+        );
+      } catch (err) {
+        return result(
+          "ai",
+          "warning",
+          `The main AI reply path is available, but the configured Claude fallback failed its private check. ${privateError(err, "Claude fallback check failed.")}`,
+          checkedAt,
+          { reason: "claude_fallback_failed" }
+        );
+      }
+    }
+
+    return result(
+      "ai",
+      "ready",
+      text(env.ANTHROPIC_API_KEY) && typeof ai.runClaudeReply === "function"
+        ? "The AI reply engine and configured Claude fallback completed private test requests."
+        : "The AI reply engine completed a private test request.",
+      checkedAt
+    );
   }
 
   async function checkGraphObject({ key, definition, objectId, token, fields, readyLabel, checkedAt }) {
