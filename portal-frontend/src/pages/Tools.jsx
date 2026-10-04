@@ -982,6 +982,80 @@ function TranslationDetails({
   );
 }
 
+function FollowUpMessageMode({
+  mode = "fixed",
+  instruction = "",
+  onChange,
+}) {
+  const normalizedMode = mode === "ai" ? "ai" : "fixed";
+  const options = [
+    {
+      key: "fixed",
+      title: "Fixed message",
+      description: "Always use the reviewed message you write below.",
+    },
+    {
+      key: "ai",
+      title: "AI personalized",
+      description: "Review the recent chat and write a useful continuation when a follow-up makes sense.",
+    },
+  ];
+
+  return (
+    <div className="mt-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+      <div>
+        <p className="text-sm font-semibold">Message type</p>
+        <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+          AI mode can send, skip, or flag a conversation for staff. If AI generation fails, the fixed fallback message is used.
+        </p>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Follow-up message type">
+        {options.map((option) => {
+          const selected = normalizedMode === option.key;
+          return (
+            <button
+              key={option.key}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              onClick={() => onChange({ messageMode: option.key })}
+              className={`rounded-xl border px-3.5 py-3 text-left transition ${selected ? "border-[var(--color-primary)] bg-white ring-2 ring-[var(--color-primary-light)]" : "border-[var(--color-border)] bg-white hover:border-[var(--color-primary)]/35"}`}
+            >
+              <div className="flex items-center gap-2">
+                <span className={`h-3.5 w-3.5 rounded-full border ${selected ? "border-[var(--color-primary)] bg-[var(--color-primary)] shadow-[inset_0_0_0_3px_white]" : "border-[var(--color-border-strong)]"}`} />
+                <span className="text-xs font-semibold">{option.title}</span>
+              </div>
+              <p className="mt-1.5 pl-5.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                {option.description}
+              </p>
+            </button>
+          );
+        })}
+      </div>
+
+      {normalizedMode === "ai" && (
+        <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <label className="text-xs font-semibold">Optional AI instruction</label>
+            <span className="text-[10px] text-[var(--color-text-muted)]">{instruction.length}/1000</span>
+          </div>
+          <textarea
+            rows="3"
+            maxLength="1000"
+            value={instruction}
+            onChange={(event) => onChange({ aiInstruction: event.target.value })}
+            placeholder="Example: Gently guide interested customers toward booking an assessment. Do not push if they are still comparing options."
+            className="mt-1.5 w-full resize-y rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)]"
+          />
+          <p className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
+            The AI still follows your current services, promotions, SOP and guardrails. This only guides the follow-up angle.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StepImagePicker({
   imageUrl,
   uploading,
@@ -1430,9 +1504,22 @@ function FollowUpTool({
           </Card>
 
           <Card>
-            <SectionHeading number="2" title="Follow-up 1 message" description="This is the fallback message for every service unless you add a targeted version." />
+            <SectionHeading
+              number="2"
+              title="Follow-up 1 message"
+              description={form.messageMode === "ai"
+                ? "AI writes from the recent conversation. The message below remains the safe fallback if generation fails."
+                : "Use a reviewed fixed message, with optional service-specific versions."}
+            />
+            <FollowUpMessageMode
+              mode={form.messageMode}
+              instruction={form.aiInstruction}
+              onChange={(patch) => setForm((current) => ({ ...current, ...patch }))}
+            />
             <div className="mt-6 flex items-center justify-between gap-3">
-              <label htmlFor="follow-up-message" className="text-sm font-semibold">Default message</label>
+              <label htmlFor="follow-up-message" className="text-sm font-semibold">
+                {form.messageMode === "ai" ? "Fallback message" : "Default message"}
+              </label>
               <span className="text-xs text-[var(--color-text-muted)]">{form.message.length}/1000</span>
             </div>
             <textarea
@@ -1555,6 +1642,12 @@ function FollowUpTool({
                       </button>
                     </div>
 
+                    <FollowUpMessageMode
+                      mode={step.messageMode}
+                      instruction={step.aiInstruction}
+                      onChange={(patch) => updateAdditionalStep(index, patch)}
+                    />
+
                     <div className="mt-4 grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
                       <div>
                         <label className="text-xs font-semibold">Send after</label>
@@ -1580,7 +1673,9 @@ function FollowUpTool({
                       </div>
                       <div>
                         <div className="flex items-center justify-between gap-3">
-                          <label className="text-xs font-semibold">Default message</label>
+                          <label className="text-xs font-semibold">
+                            {step.messageMode === "ai" ? "Fallback message" : "Default message"}
+                          </label>
                           <span className="text-[10px] text-[var(--color-text-muted)]">{step.message.length}/1000</span>
                         </div>
                         <textarea
@@ -1596,7 +1691,11 @@ function FollowUpTool({
                           placeholder="Write the next follow-up message."
                           className="mt-1.5 w-full resize-y rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)]"
                         />
-                        <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">Language versions are generated automatically when you save.</p>
+                        <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                          {step.messageMode === "ai"
+                            ? "Used only if AI generation is unavailable or invalid. Language versions are prepared automatically."
+                            : "Language versions are generated automatically when you save."}
+                        </p>
                         <TranslationDetails
                           sourceMessage={step.message}
                           translations={step.translations}
@@ -1675,7 +1774,7 @@ function FollowUpTool({
           </Card>
 
           <Card>
-            <SectionHeading number="4" title="Add a graphic to Follow-up 1" description="Optional. The selected customer-language version is used as the image caption." />
+            <SectionHeading number="4" title="Add a graphic to Follow-up 1" description="Optional. The final follow-up text, AI-generated or fixed, is used as the image caption." />
             <input ref={imageInputRef} type="file" accept="image/jpeg,image/png" onChange={onImagePicked} className="hidden" />
             {form.imageUrl ? (
               <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]">
@@ -1707,6 +1806,11 @@ function FollowUpTool({
           <Card>
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Preview</p>
             <h2 className="mt-1 font-display text-sm font-bold">Follow-up 1</h2>
+            {form.messageMode === "ai" && (
+              <p className="mt-1 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                AI will write the live message from the conversation. Previewing the fixed fallback below.
+              </p>
+            )}
             <div className="inbox-thread-bg mt-4 min-h-48 rounded-2xl border border-[var(--color-border)] p-4">
               <div className="ml-auto max-w-[94%] overflow-hidden rounded-2xl rounded-br-md bg-[var(--color-primary)] text-white shadow-sm">
                 {form.imageUrl && <img src={form.imageUrl} alt="" className="max-h-56 w-full object-cover" />}
