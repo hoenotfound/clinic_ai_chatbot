@@ -350,6 +350,30 @@ export default function Tools() {
     }
   }
 
+  async function requestTranslationBatch(messages) {
+    const uniqueMessages = [
+      ...new Set(
+        messages
+          .map((message) => String(message || "").trim())
+          .filter(Boolean)
+      ),
+    ];
+    if (!uniqueMessages.length) return new Map();
+
+    setTranslating(true);
+    try {
+      const { translations } = await api.translateFollowUps(uniqueMessages);
+      if (!Array.isArray(translations) || translations.length !== uniqueMessages.length) {
+        throw new Error("The translation batch was incomplete.");
+      }
+      return new Map(
+        uniqueMessages.map((message, index) => [message, translations[index]])
+      );
+    } finally {
+      setTranslating(false);
+    }
+  }
+
   async function handleGenerateTranslations() {
     const message = form.message.trim();
     if (!message) {
@@ -361,6 +385,15 @@ export default function Tools() {
     setForm((current) => ({ ...current, translations }));
     setTranslationsSource(message);
     setManualTranslationEdits([]);
+  }
+
+  async function generateTranslationsForMessage(message) {
+    const source = String(message || "").trim();
+    if (!source) {
+      showToast("Add the message first.", "error");
+      return null;
+    }
+    return requestTranslations(source, { announce: false });
   }
 
   function handleSourceMessageChange(value) {
@@ -381,28 +414,34 @@ export default function Tools() {
     );
   }
 
-  async function handleImagePicked(event) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
+  async function uploadFollowUpImage(file) {
+    if (!file) return null;
     if (!FOLLOW_UP_IMAGE_TYPES.has(file.type)) {
       showToast("Please choose a JPG or PNG image.", "error");
-      return;
+      return null;
     }
     if (file.size > MAX_FOLLOW_UP_IMAGE_BYTES) {
       showToast("That image is larger than 5MB. Please choose a smaller file.", "error");
-      return;
+      return null;
     }
 
     setUploadingImage(true);
     try {
       const { url } = await api.uploadFollowUpImage(file);
-      setForm((current) => ({ ...current, imageUrl: url }));
+      return url;
     } catch (err) {
       showToast(err.message || "Couldn't upload that image.", "error");
+      return null;
     } finally {
       setUploadingImage(false);
     }
+  }
+
+  async function handleImagePicked(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    const url = await uploadFollowUpImage(file);
+    if (url) setForm((current) => ({ ...current, imageUrl: url }));
   }
 
   function followUpValidationError() {
@@ -416,6 +455,11 @@ export default function Tools() {
     ];
     if (steps.length > 3) return "You can configure up to 3 follow-ups.";
 
+    const configuredServices = new Set(
+      (config?.services || [])
+        .map((service) => String(service?.name || "").trim().toLocaleLowerCase())
+        .filter(Boolean)
+    );
     let previousDelay = 0;
     for (let index = 0; index < steps.length; index += 1) {
       const step = steps[index];
@@ -443,6 +487,9 @@ export default function Tools() {
         if (!serviceName || !targetedMessage) {
           return `Complete every targeted service message in Follow-up ${index + 1}.`;
         }
+        if (!configuredServices.has(serviceName.toLocaleLowerCase())) {
+          return `${serviceName} is no longer in Services. Remap or remove that targeted follow-up.`;
+        }
         if (targetedMessage.length > 1000) {
           return `Keep targeted messages in Follow-up ${index + 1} under 1,000 characters.`;
         }
@@ -457,49 +504,75 @@ export default function Tools() {
     return "";
   }
 
-  async function prepareServiceOverridesForSave(overrides = []) {
-    const prepared = [];
-    for (const item of overrides) {
-      const serviceName = item.serviceName.trim();
-      const message = item.message.trim();
-      let translations = item.translations;
-      if (!hasCompleteTranslations(translations)) {
-        translations = await requestTranslations(message, {
-          announce: false,
-        });
-        if (!translations) {
-          throw new Error("Couldn't generate targeted language versions.");
-        }
-      }
-      prepared.push({ serviceName, message, translations });
-    }
-    return prepared;
+  function trimmedTranslations(value = {}) {
+    return Object.fromEntries(
+      FOLLOW_UP_LANGUAGES.map(({ key }) => [
+        key,
+        String(value?.[key] || "").trim(),
+      ])
+    );
   }
 
-  async function prepareAdditionalStepsForSave(steps = []) {
-    const prepared = [];
-    for (const step of steps) {
-      const message = step.message.trim();
-      let translations = step.translations;
-      if (!hasCompleteTranslations(translations)) {
-        translations = await requestTranslations(message, {
-          announce: false,
-        });
-        if (!translations) {
-          throw new Error("Couldn't generate sequence language versions.");
+  function missingTranslationMessages() {
+    const messages = [];
+    const firstMessage = form.message.trim();
+    if (translationsNeedRefresh) messages.push(firstMessage);
+
+    const collectOverrides = (overrides = []) => {
+      for (const item of overrides) {
+        if (!hasCompleteTranslations(item.translations)) {
+          messages.push(String(item.message || "").trim());
         }
       }
-      prepared.push({
+    };
+
+    collectOverrides(form.serviceOverrides);
+    for (const step of form.additionalSteps || []) {
+      if (!hasCompleteTranslations(step.translations)) {
+        messages.push(String(step.message || "").trim());
+      }
+      collectOverrides(step.serviceOverrides);
+    }
+    return messages.filter(Boolean);
+  }
+
+  function preparedServiceOverrides(overrides, generatedByMessage) {
+    return (overrides || []).map((item) => {
+      const message = item.message.trim();
+      const translations = hasCompleteTranslations(item.translations)
+        ? trimmedTranslations(item.translations)
+        : generatedByMessage.get(message);
+      if (!translations) {
+        throw new Error("Couldn't generate targeted language versions.");
+      }
+      return {
+        serviceName: item.serviceName.trim(),
+        message,
+        translations,
+      };
+    });
+  }
+
+  function preparedAdditionalSteps(steps, generatedByMessage) {
+    return (steps || []).map((step) => {
+      const message = step.message.trim();
+      const translations = hasCompleteTranslations(step.translations)
+        ? trimmedTranslations(step.translations)
+        : generatedByMessage.get(message);
+      if (!translations) {
+        throw new Error("Couldn't generate sequence language versions.");
+      }
+      return {
         delayMinutes: Number(step.delayMinutes),
         message,
         translations,
         imageUrl: step.imageUrl || "",
-        serviceOverrides: await prepareServiceOverridesForSave(
-          step.serviceOverrides || []
+        serviceOverrides: preparedServiceOverrides(
+          step.serviceOverrides,
+          generatedByMessage
         ),
-      });
-    }
-    return prepared;
+      };
+    });
   }
 
   async function handleSave() {
@@ -514,17 +587,16 @@ export default function Tools() {
 
     setSaving(true);
     try {
-      let translations = Object.fromEntries(
-        FOLLOW_UP_LANGUAGES.map(({ key }) => [
-          key,
-          form.translations[key]?.trim() || "",
-        ])
+      const generatedByMessage = await requestTranslationBatch(
+        missingTranslationMessages()
       );
 
+      let translations = trimmedTranslations(form.translations);
       if (translationsNeedRefresh) {
-        const generated = await requestTranslations(message, { announce: false });
-        if (!generated) return;
-
+        const generated = generatedByMessage.get(message);
+        if (!generated) {
+          throw new Error("Couldn't generate the main follow-up language versions.");
+        }
         translations = Object.fromEntries(
           FOLLOW_UP_LANGUAGES.map(({ key }) => {
             const manualValue = form.translations[key]?.trim() || "";
@@ -535,11 +607,13 @@ export default function Tools() {
         );
       }
 
-      const serviceOverrides = await prepareServiceOverridesForSave(
-        form.serviceOverrides || []
+      const serviceOverrides = preparedServiceOverrides(
+        form.serviceOverrides,
+        generatedByMessage
       );
-      const additionalSteps = await prepareAdditionalStepsForSave(
-        form.additionalSteps || []
+      const additionalSteps = preparedAdditionalSteps(
+        form.additionalSteps,
+        generatedByMessage
       );
 
       const updated = await api.updateConfig({
