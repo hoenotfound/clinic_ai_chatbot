@@ -407,7 +407,13 @@ function RepeatableListEditor({ items, fields, onChange, emptyItem, addLabel, on
 const MAX_PROMO_IMAGE_BYTES = 5 * 1024 * 1024;
 const PROMO_IMAGE_TYPES = new Set(["image/jpeg", "image/png"]);
 
-function ImageFieldEditor({ value, onChange, onError }) {
+function ImageFieldEditor({
+  value,
+  onChange,
+  onError,
+  uploadImage = api.uploadPromoImage,
+  alt = "Promotion graphic",
+}) {
   const fileInputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
 
@@ -425,7 +431,7 @@ function ImageFieldEditor({ value, onChange, onError }) {
     }
     setUploading(true);
     try {
-      const { url } = await api.uploadPromoImage(file);
+      const { url } = await uploadImage(file);
       onChange(url);
     } catch (err) {
       onError(err.message || "Couldn't upload that image.");
@@ -439,7 +445,7 @@ function ImageFieldEditor({ value, onChange, onError }) {
       {value && (
         <img
           src={value}
-          alt="Promotion graphic"
+          alt={alt}
           className="mb-3 max-h-52 w-full rounded-xl border border-[var(--color-border)] object-cover"
         />
       )}
