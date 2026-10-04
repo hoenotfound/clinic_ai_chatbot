@@ -310,6 +310,21 @@ function prepareFollowUpStep(requested) {
   return serviceOverrides && isFollowUpStep(prepared) ? prepared : null;
 }
 
+function followUpTargetedServiceNames(value) {
+  if (!isPlainObject(value)) return [];
+  const steps = [
+    value,
+    ...(Array.isArray(value.additionalSteps) ? value.additionalSteps : []),
+  ];
+  return steps.flatMap((step) =>
+    Array.isArray(step?.serviceOverrides)
+      ? step.serviceOverrides
+          .map((item) => String(item?.serviceName || "").trim())
+          .filter(Boolean)
+      : []
+  );
+}
+
 function prepareAutomatedFollowUpConfig(requested, current) {
   if (!isPlainObject(requested)) return null;
 
@@ -524,6 +539,35 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
       error: `Invalid value for: ${invalidKeys.join(", ")}`,
       invalidKeys,
     };
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(updates, "services") ||
+    Object.prototype.hasOwnProperty.call(updates, "automatedFollowUp")
+  ) {
+    const services = Object.prototype.hasOwnProperty.call(updates, "services")
+      ? updates.services
+      : currentConfig.services;
+    const followUp = Object.prototype.hasOwnProperty.call(updates, "automatedFollowUp")
+      ? updates.automatedFollowUp
+      : currentConfig.automatedFollowUp;
+    const configuredServiceNames = new Set(
+      (Array.isArray(services) ? services : [])
+        .map((service) => String(service?.name || "").trim().toLocaleLowerCase())
+        .filter(Boolean)
+    );
+    const staleTarget = followUpTargetedServiceNames(followUp).find(
+      (serviceName) => !configuredServiceNames.has(serviceName.toLocaleLowerCase())
+    );
+    if (staleTarget) {
+      return {
+        ok: false,
+        status: 400,
+        error:
+          `Follow-up targeting still references "${staleTarget}", which is not a configured service. Remap or remove that targeted follow-up before saving the service change.`,
+        invalidKeys: ["automatedFollowUp"],
+      };
+    }
   }
 
   if (
