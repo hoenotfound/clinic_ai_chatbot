@@ -85,7 +85,9 @@ async function getSnapshot(id) {
 
 function collectPromoImageIds(value, output = new Set()) {
   if (typeof value === "string") {
-    const matches = value.matchAll(/\/promo-images\/(\d+)(?:[/?#]|$)/g);
+    const matches = value.matchAll(
+      /\/(?:promo-images|api\/config\/result-media\/image)\/(\d+)(?:[/?#]|$)/g
+    );
     for (const match of matches) {
       const id = Number(match[1]);
       if (Number.isSafeInteger(id) && id > 0) output.add(id);
