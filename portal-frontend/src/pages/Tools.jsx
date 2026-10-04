@@ -405,43 +405,132 @@ export default function Tools() {
     }
   }
 
+  function followUpValidationError() {
+    const steps = [
+      {
+        delayMinutes: form.delayMinutes,
+        message: form.message,
+        serviceOverrides: form.serviceOverrides,
+      },
+      ...(form.additionalSteps || []),
+    ];
+    if (steps.length > 3) return "You can configure up to 3 follow-ups.";
+
+    let previousDelay = 0;
+    for (let index = 0; index < steps.length; index += 1) {
+      const step = steps[index];
+      const delayMinutes = Number(step.delayMinutes);
+      const message = String(step.message || "").trim();
+      if (
+        !Number.isInteger(delayMinutes) ||
+        delayMinutes < 5 ||
+        delayMinutes > 1380
+      ) {
+        return `Follow-up ${index + 1} needs a delay between 5 minutes and 23 hours.`;
+      }
+      if (index > 0 && delayMinutes <= previousDelay) {
+        return `Follow-up ${index + 1} must be later than Follow-up ${index}.`;
+      }
+      if (!message) return `Add a message for Follow-up ${index + 1}.`;
+      if (message.length > 1000) {
+        return `Keep Follow-up ${index + 1} under 1,000 characters.`;
+      }
+
+      const seenServices = new Set();
+      for (const override of step.serviceOverrides || []) {
+        const serviceName = String(override?.serviceName || "").trim();
+        const targetedMessage = String(override?.message || "").trim();
+        if (!serviceName || !targetedMessage) {
+          return `Complete every targeted service message in Follow-up ${index + 1}.`;
+        }
+        if (targetedMessage.length > 1000) {
+          return `Keep targeted messages in Follow-up ${index + 1} under 1,000 characters.`;
+        }
+        const serviceKey = serviceName.toLocaleLowerCase();
+        if (seenServices.has(serviceKey)) {
+          return `${serviceName} is targeted more than once in Follow-up ${index + 1}.`;
+        }
+        seenServices.add(serviceKey);
+      }
+      previousDelay = delayMinutes;
+    }
+    return "";
+  }
+
+  async function prepareServiceOverridesForSave(overrides = []) {
+    const prepared = [];
+    for (const item of overrides) {
+      const serviceName = item.serviceName.trim();
+      const message = item.message.trim();
+      const translations = await requestTranslations(message, {
+        announce: false,
+      });
+      if (!translations) throw new Error("Couldn't generate targeted language versions.");
+      prepared.push({ serviceName, message, translations });
+    }
+    return prepared;
+  }
+
+  async function prepareAdditionalStepsForSave(steps = []) {
+    const prepared = [];
+    for (const step of steps) {
+      const message = step.message.trim();
+      const translations = await requestTranslations(message, {
+        announce: false,
+      });
+      if (!translations) throw new Error("Couldn't generate sequence language versions.");
+      prepared.push({
+        delayMinutes: Number(step.delayMinutes),
+        message,
+        translations,
+        imageUrl: step.imageUrl || "",
+        serviceOverrides: await prepareServiceOverridesForSave(
+          step.serviceOverrides || []
+        ),
+      });
+    }
+    return prepared;
+  }
+
   async function handleSave() {
+    const validationError = followUpValidationError();
+    if (validationError) {
+      showToast(validationError, "error");
+      return;
+    }
+
     const delayMinutes = Number(form.delayMinutes);
     const message = form.message.trim();
-    if (!Number.isInteger(delayMinutes) || delayMinutes < 5 || delayMinutes > 1380) {
-      showToast("Choose a delay between 5 minutes and 23 hours.", "error");
-      return;
-    }
-    if (!message) {
-      showToast("Add a follow-up message before saving.", "error");
-      return;
-    }
-    if (message.length > 1000) {
-      showToast("Keep the follow-up message under 1,000 characters.", "error");
-      return;
-    }
 
     setSaving(true);
     try {
       let translations = Object.fromEntries(
-        FOLLOW_UP_LANGUAGES.map(({ key }) => [key, form.translations[key]?.trim() || ""])
+        FOLLOW_UP_LANGUAGES.map(({ key }) => [
+          key,
+          form.translations[key]?.trim() || "",
+        ])
       );
 
       if (translationsNeedRefresh) {
         const generated = await requestTranslations(message, { announce: false });
         if (!generated) return;
 
-        // Preserve only language versions the user manually edited after the
-        // latest source-message change. Untouched/stale versions are refreshed
-        // from AI so manual fine-tuning is never silently overwritten.
         translations = Object.fromEntries(
           FOLLOW_UP_LANGUAGES.map(({ key }) => {
             const manualValue = form.translations[key]?.trim() || "";
-            const preserveManual = manualTranslationEdits.includes(key) && manualValue;
+            const preserveManual =
+              manualTranslationEdits.includes(key) && manualValue;
             return [key, preserveManual ? manualValue : generated[key]];
           })
         );
       }
+
+      const serviceOverrides = await prepareServiceOverridesForSave(
+        form.serviceOverrides || []
+      );
+      const additionalSteps = await prepareAdditionalStepsForSave(
+        form.additionalSteps || []
+      );
 
       const updated = await api.updateConfig({
         automatedFollowUp: {
@@ -451,6 +540,8 @@ export default function Tools() {
           message,
           translations,
           imageUrl: form.imageUrl,
+          serviceOverrides,
+          additionalSteps,
         },
       });
       const saved = followUpFormFromSettings(updated.automatedFollowUp);
@@ -458,7 +549,12 @@ export default function Tools() {
       setForm(saved);
       setTranslationsSource(saved.message);
       setManualTranslationEdits([]);
-      showToast(saved.enabled ? "Automated follow-up is active." : "Automated follow-up is paused.", "info");
+      showToast(
+        saved.enabled
+          ? `Automated follow-up sequence is active (${1 + saved.additionalSteps.length} step${saved.additionalSteps.length ? "s" : ""}).`
+          : "Automated follow-up is paused.",
+        "info"
+      );
     } catch (err) {
       showToast(err.message || "Couldn't save the follow-up tool.", "error");
     } finally {
