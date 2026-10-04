@@ -173,6 +173,7 @@ function buildGenericProfile() {
     introMessage: "Hi! Thanks for messaging us 😊",
     ...neutralAutomationDefaults(),
     promotions: [],
+    resultMedia: [],
     services: [],
     serviceAliases: [],
     faqs: [],
