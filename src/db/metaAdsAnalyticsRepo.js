@@ -116,6 +116,16 @@ function buildAnalyticsSql(level, profile) {
       FROM meta_ad_insights_daily
       ORDER BY ad_id, insight_date DESC, updated_at DESC
     ),
+    filtered_insights AS (
+      SELECT *
+      FROM meta_ad_insights_daily fi
+      WHERE fi.insight_date >= $1::date
+        AND fi.insight_date <= $2::date
+        AND ($3::text IS NULL OR fi.account_id = $3)
+        AND ($4::text IS NULL OR fi.campaign_id = $4)
+        AND ($5::text IS NULL OR fi.adset_id = $5)
+        AND ($6::text IS NULL OR fi.ad_id = $6)
+    ),
     crm_source_raw AS (
       SELECT
         j.id AS lead_id,
@@ -133,7 +143,11 @@ function buildAnalyticsSql(level, profile) {
         COALESCE(la.adset_id, ah.adset_id) AS adset_id,
         COALESCE(la.adset_name, ah.adset_name) AS adset_name,
         COALESCE(la.ad_name, ah.ad_name) AS ad_name,
-        (ah.ad_id IS NOT NULL) AS matched_to_synced_ad
+        EXISTS (
+          SELECT 1
+          FROM filtered_insights fi
+          WHERE fi.ad_id = la.meta_ad_id
+        ) AS matched_to_synced_ad
       FROM journeys_with_milestones j
       JOIN lead_attributions la ON la.lead_id = j.id
       LEFT JOIN ad_hierarchy ah ON ah.ad_id = la.meta_ad_id
@@ -148,16 +162,6 @@ function buildAnalyticsSql(level, profile) {
         AND ($4::text IS NULL OR crm.campaign_id = $4)
         AND ($5::text IS NULL OR crm.adset_id = $5)
         AND ($6::text IS NULL OR crm.meta_ad_id = $6)
-    ),
-    filtered_insights AS (
-      SELECT *
-      FROM meta_ad_insights_daily fi
-      WHERE fi.insight_date >= $1::date
-        AND fi.insight_date <= $2::date
-        AND ($3::text IS NULL OR fi.account_id = $3)
-        AND ($4::text IS NULL OR fi.campaign_id = $4)
-        AND ($5::text IS NULL OR fi.adset_id = $5)
-        AND ($6::text IS NULL OR fi.ad_id = $6)
     ),
     spend_summary AS (
       SELECT
@@ -206,7 +210,8 @@ function buildAnalyticsSql(level, profile) {
         COUNT(*) FILTER (WHERE crm.reached_appointment)::int AS appointments,
         COUNT(*) FILTER (WHERE crm.reached_visited)::int AS visits,
         COUNT(*) FILTER (WHERE crm.reached_won)::int AS won,
-        COALESCE(SUM(crm.estimated_value) FILTER (WHERE crm.reached_won), 0)::numeric AS estimated_won_value
+        COALESCE(SUM(crm.estimated_value) FILTER (WHERE crm.reached_won), 0)::numeric AS estimated_won_value,
+        COUNT(*) FILTER (WHERE crm.matched_to_synced_ad)::int AS matched_leads
       FROM crm_source crm
       WHERE ${dimension.crmId} IS NOT NULL
       GROUP BY crm.account_id, ${dimension.crmId}
@@ -226,7 +231,8 @@ function buildAnalyticsSql(level, profile) {
         COALESCE(c.appointments, 0)::int AS appointments,
         COALESCE(c.visits, 0)::int AS visits,
         COALESCE(c.won, 0)::int AS won,
-        COALESCE(c.estimated_won_value, 0)::numeric AS estimated_won_value
+        COALESCE(c.estimated_won_value, 0)::numeric AS estimated_won_value,
+        COALESCE(c.matched_leads, 0)::int AS matched_leads
       FROM spend_groups s
       FULL OUTER JOIN crm_groups c
         ON c.account_id IS NOT DISTINCT FROM s.account_id
@@ -259,7 +265,8 @@ function buildAnalyticsSql(level, profile) {
           'appointments', jr.appointments,
           'visits', jr.visits,
           'won', jr.won,
-          'estimatedWonValue', jr.estimated_won_value
+          'estimatedWonValue', jr.estimated_won_value,
+          'matchedLeads', jr.matched_leads
         ) ORDER BY jr.spend DESC, jr.crm_leads DESC, jr.entity_name ASC NULLS LAST)
         FROM joined_rows jr
       ), '[]'::json) AS rows
@@ -380,6 +387,8 @@ async function getMetaAdsAnalytics(filters, { database = pool, analyticsProfile 
        ss.last_error,
        ss.last_backfill_completed_at,
        ss.backfill_next_date,
+       ss.coverage_start_date::text AS coverage_start_date,
+       ss.coverage_end_date::text AS coverage_end_date,
        ss.lease_until
      FROM account_ids ids
      LEFT JOIN meta_ads_insights_sync_state ss
