@@ -1895,12 +1895,7 @@ function ThreadView({
                     onToggleUnread();
                   }}
                 />
-                <AcquisitionContextBar
-          context={acquisitionContext}
-          loading={acquisitionLoading}
-        />
-
-        {contact.needs_attention && (
+                {contact.needs_attention && (
                   <ConversationActionItem
                     icon={AlertIcon}
                     label="Dismiss attention"
@@ -1915,6 +1910,11 @@ function ThreadView({
             )}
           </div>
         </div>
+
+        <AcquisitionContextBar
+          context={acquisitionContext}
+          loading={acquisitionLoading}
+        />
 
         {contact.needs_attention && (
           <div className="flex items-center gap-2 border-t border-[var(--color-danger)]/15 bg-[var(--color-danger-light)] px-4 py-2 text-[var(--color-danger)] sm:px-5">
