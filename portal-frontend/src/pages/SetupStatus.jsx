@@ -419,7 +419,7 @@ function AiHealthCard({ health }) {
             detail={model.cooldownUntil ? `Cooldown until ${formatTime(model.cooldownUntil)}` : null}
           />
         ))}
-        <ProviderRow name="Claude fallback" status={health?.claude?.status} label={health?.claude?.label} />
+        <ProviderRow name={health?.claude?.name || "Claude"} status={health?.claude?.status} label={health?.claude?.label} />
       </div>
       <dl className="mt-4 space-y-2 border-t border-[var(--color-border)]/70 pt-3 text-[11px] text-[var(--color-text-muted)]">
         <HealthRow label="Gemini fallbacks (24h)" value={health?.fallbacksLast24h?.geminiModel ?? "—"} />
