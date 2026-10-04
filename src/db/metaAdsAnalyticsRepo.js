@@ -315,7 +315,12 @@ function enrichPerformance(row, { allowValueRoas = false } = {}) {
   };
 }
 
-async function getMetaAdsLeadPreview(filters, profile, query) {
+async function getMetaAdsLeadPreview(
+  filters,
+  profile,
+  query,
+  { accessibleLeadIds = null, limit = 25 } = {}
+) {
   const result = await query(
     `${JOURNEY_BASE_CTE}
     ${milestoneTimesCte(profile)},
@@ -373,6 +378,17 @@ async function getMetaAdsLeadPreview(filters, profile, query) {
       SELECT m.content, m.role, m.created_at
       FROM messages m
       WHERE m.contact_id = j.contact_id
+        AND (
+          (j.started_message_id IS NOT NULL AND m.id >= j.started_message_id)
+          OR (j.started_message_id IS NULL AND m.created_at >= j.created_at)
+        )
+        AND (
+          (j.next_started_message_id IS NOT NULL AND m.id < j.next_started_message_id)
+          OR (
+            j.next_started_message_id IS NULL
+            AND (j.next_journey_created_at IS NULL OR m.created_at < j.next_journey_created_at)
+          )
+        )
       ORDER BY m.created_at DESC, m.id DESC
       LIMIT 1
     ) latest_message ON true
@@ -383,8 +399,9 @@ async function getMetaAdsLeadPreview(filters, profile, query) {
       AND ($4::text IS NULL OR COALESCE(la.campaign_id, ah.campaign_id) = $4)
       AND ($5::text IS NULL OR COALESCE(la.adset_id, ah.adset_id) = $5)
       AND ($6::text IS NULL OR la.meta_ad_id = $6)
+      AND ($7::int[] IS NULL OR j.id = ANY($7::int[]))
     ORDER BY j.journey_started_at DESC, j.id DESC
-    LIMIT 25`,
+    LIMIT $8`,
     [
       filters.from,
       filters.to,
@@ -392,6 +409,8 @@ async function getMetaAdsLeadPreview(filters, profile, query) {
       filters.campaignId || null,
       filters.adsetId || null,
       filters.adId || null,
+      accessibleLeadIds === null ? null : accessibleLeadIds,
+      Math.max(1, Math.min(Number(limit) || 25, 100)),
     ]
   );
 
@@ -604,8 +623,6 @@ async function getMetaAdsAnalytics(filters, { database = pool, analyticsProfile 
     return enriched;
   });
 
-  const leadPreview = await getMetaAdsLeadPreview(filters, profile, query);
-
   return {
     range: {
       from: filters.from,
@@ -643,7 +660,6 @@ async function getMetaAdsAnalytics(filters, { database = pool, analyticsProfile 
       coverageFrom: commonCoverageFrom,
       coverageThrough: commonCoverageThrough,
     },
-    leadPreview,
     rows,
     accounts,
   };
