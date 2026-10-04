@@ -17,6 +17,8 @@ const DEFAULT_FOLLOW_UP = {
     zh: "嗨！想跟进一下，看看您是否还需要任何帮助。方便时回复我们就可以了 😊",
   },
   imageUrl: "",
+  serviceOverrides: [],
+  additionalSteps: [],
 };
 
 const DEFAULT_LEAD_SCORING = {
@@ -59,20 +61,67 @@ function hasCompleteTranslations(value) {
   return !!value && FOLLOW_UP_LANGUAGES.every(({ key }) => value[key]?.trim());
 }
 
+function normalizeTranslations(value, fallbackMessage, useDefaultTranslations = false) {
+  if (hasCompleteTranslations(value)) {
+    return Object.fromEntries(
+      FOLLOW_UP_LANGUAGES.map(({ key }) => [key, value[key]])
+    );
+  }
+  return {
+    en: fallbackMessage,
+    ms: useDefaultTranslations ? DEFAULT_FOLLOW_UP.translations.ms : "",
+    zh: useDefaultTranslations ? DEFAULT_FOLLOW_UP.translations.zh : "",
+  };
+}
+
+function normalizeServiceOverrides(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const serviceName = String(item?.serviceName || "").trim();
+      const message = String(item?.message || "").trim();
+      if (!serviceName || !message) return null;
+      return {
+        serviceName,
+        message,
+        translations: normalizeTranslations(item?.translations, message),
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeSequenceStep(value = {}) {
+  const message = String(value.message || "").trim();
+  return {
+    delayMinutes: Number(value.delayMinutes) || 120,
+    message,
+    translations: normalizeTranslations(value.translations, message),
+    imageUrl: value.imageUrl || "",
+    serviceOverrides: normalizeServiceOverrides(value.serviceOverrides),
+  };
+}
+
 function normalizeFollowUpSettings(value = {}) {
   const settings = { ...DEFAULT_FOLLOW_UP, ...value };
-  const hasSavedTranslations = hasCompleteTranslations(value.translations);
   const usesDefaultMessage = settings.message === DEFAULT_FOLLOW_UP.message;
+  const firstStep = {
+    delayMinutes: Number(settings.delayMinutes) || DEFAULT_FOLLOW_UP.delayMinutes,
+    message: settings.message || DEFAULT_FOLLOW_UP.message,
+    translations: normalizeTranslations(
+      value.translations,
+      settings.message || DEFAULT_FOLLOW_UP.message,
+      usesDefaultMessage
+    ),
+    imageUrl: settings.imageUrl || "",
+    serviceOverrides: normalizeServiceOverrides(value.serviceOverrides),
+  };
 
   return {
     ...settings,
-    translations: hasSavedTranslations
-      ? Object.fromEntries(FOLLOW_UP_LANGUAGES.map(({ key }) => [key, value.translations[key]]))
-      : {
-          en: settings.message || DEFAULT_FOLLOW_UP.message,
-          ms: usesDefaultMessage ? DEFAULT_FOLLOW_UP.translations.ms : "",
-          zh: usesDefaultMessage ? DEFAULT_FOLLOW_UP.translations.zh : "",
-        },
+    ...firstStep,
+    additionalSteps: Array.isArray(value.additionalSteps)
+      ? value.additionalSteps.slice(0, 2).map(normalizeSequenceStep)
+      : [],
   };
 }
 
@@ -80,11 +129,25 @@ function followUpFormFromSettings(value = {}) {
   const settings = normalizeFollowUpSettings(value);
   return {
     enabled: !!settings.enabled,
-    delayMinutes: Number(settings.delayMinutes) || DEFAULT_FOLLOW_UP.delayMinutes,
     triggerMode: settings.triggerMode === "staff" ? "staff" : "all",
-    message: settings.message || DEFAULT_FOLLOW_UP.message,
+    delayMinutes: settings.delayMinutes,
+    message: settings.message,
     translations: settings.translations,
-    imageUrl: settings.imageUrl || "",
+    imageUrl: settings.imageUrl,
+    serviceOverrides: settings.serviceOverrides,
+    additionalSteps: settings.additionalSteps,
+  };
+}
+
+function comparableFollowUp(value = {}) {
+  const settings = followUpFormFromSettings(value);
+  return {
+    ...settings,
+    delayMinutes: Number(settings.delayMinutes),
+    additionalSteps: settings.additionalSteps.map((step) => ({
+      ...step,
+      delayMinutes: Number(step.delayMinutes),
+    })),
   };
 }
 
@@ -212,12 +275,8 @@ export default function Tools() {
       (key) => key !== "activatedAt" && commentForm[key] !== savedCommentSettings[key]
     );
   const hasUnsavedChanges =
-    form.enabled !== savedEnabled ||
-    Number(form.delayMinutes) !== Number(savedSettings.delayMinutes) ||
-    form.triggerMode !== savedSettings.triggerMode ||
-    form.message !== savedSettings.message ||
-    FOLLOW_UP_LANGUAGES.some(({ key }) => form.translations[key] !== savedSettings.translations[key]) ||
-    form.imageUrl !== (savedSettings.imageUrl || "");
+    JSON.stringify(comparableFollowUp(form)) !==
+    JSON.stringify(comparableFollowUp(config?.automatedFollowUp));
   const translationsNeedRefresh =
     form.message.trim() !== translationsSource || !hasCompleteTranslations(form.translations);
   const translationReadyCount = FOLLOW_UP_LANGUAGES.filter(({ key }) => form.translations[key]?.trim()).length;
@@ -531,6 +590,7 @@ export default function Tools() {
             uploadingImage={uploadingImage}
             saving={saving}
             delayDescription={delayDescription}
+            services={config.services || []}
             imageInputRef={imageInputRef}
             onSourceMessageChange={handleSourceMessageChange}
             onTranslationChange={handleTranslationChange}
