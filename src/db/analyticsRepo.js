@@ -542,6 +542,7 @@ async function getFollowUps(filters, analyticsProfile) {
          m.created_at,
          COALESCE(m.automated_follow_up_step, 1)::int AS follow_up_step,
          NULLIF(TRIM(m.automated_follow_up_target_service), '') AS target_service,
+         COALESCE(m.automated_follow_up_targeting_recorded, false) AS targeting_recorded,
          (
            SELECT MIN(next_follow_up.created_at)
            FROM messages next_follow_up
@@ -648,7 +649,11 @@ async function getFollowUps(filters, analyticsProfile) {
      ),
      targeting_stats AS (
        SELECT
-         CASE WHEN target_service IS NULL THEN 'general' ELSE 'targeted' END AS targeting,
+         CASE
+           WHEN target_service IS NOT NULL THEN 'targeted'
+           WHEN targeting_recorded THEN 'general'
+           ELSE 'legacy_unknown'
+         END AS targeting,
          COUNT(*)::int AS sent,
          COUNT(DISTINCT lead_id)::int AS leads,
          COUNT(DISTINCT lead_id) FILTER (WHERE replied_72h)::int AS replied,
