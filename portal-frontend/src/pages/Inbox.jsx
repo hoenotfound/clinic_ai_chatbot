@@ -154,12 +154,16 @@ export default function Inbox() {
   const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
   const [contactDetailsOpen, setContactDetailsOpen] = useState(false);
   const [whatsappTemplateOpen, setWhatsAppTemplateOpen] = useState(false);
+  const [acquisitionContext, setAcquisitionContext] = useState(null);
+  const [acquisitionLoading, setAcquisitionLoading] = useState(false);
   const selectedIdRef = useRef(selectedId);
+  const acquisitionContextRef = useRef(acquisitionContext);
   const messagesRef = useRef(messages);
   const latestMessageIdRef = useRef(null);
   const threadRequestVersionRef = useRef(0);
 
   selectedIdRef.current = selectedId;
+  acquisitionContextRef.current = acquisitionContext;
   messagesRef.current = messages;
   latestMessageIdRef.current = newestPersistedMessageId(messages);
 
@@ -172,6 +176,21 @@ export default function Inbox() {
     }
   }
 
+  async function refreshAcquisitionContext(contactId) {
+    if (contactId == null) {
+      setAcquisitionContext(null);
+      return;
+    }
+    try {
+      const data = await api.getConversationAttribution(contactId);
+      if (selectedIdRef.current === contactId) {
+        setAcquisitionContext(data);
+      }
+    } catch (err) {
+      console.error("Failed to load conversation acquisition context:", err);
+      if (selectedIdRef.current === contactId) setAcquisitionContext(null);
+    }
+  }
   async function refreshMessagesForContact(contactId) {
     if (contactId == null) return;
     const requestVersion = ++threadRequestVersionRef.current;
@@ -345,6 +364,38 @@ export default function Inbox() {
   }, [selectedId]);
 
   useEffect(() => {
+    if (selectedId == null) {
+      setAcquisitionContext(null);
+      setAcquisitionLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setAcquisitionContext(null);
+    setAcquisitionLoading(true);
+    api.getConversationAttribution(selectedId)
+      .then((data) => {
+        if (!cancelled && selectedIdRef.current === selectedId) {
+          setAcquisitionContext(data);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load acquisition details:", err);
+        if (!cancelled && selectedIdRef.current === selectedId) {
+          setAcquisitionContext(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled && selectedIdRef.current === selectedId) {
+          setAcquisitionLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
+  useEffect(() => {
     const source = new EventSource("/api/conversations/events", { withCredentials: true });
     const pendingContactIds = new Set();
     let debounceTimer = null;
@@ -417,7 +468,40 @@ export default function Inbox() {
       }
     }
 
+    function handlePipelineChanged(event) {
+      const currentId = selectedIdRef.current;
+      if (currentId == null) return;
+      try {
+        const payload = JSON.parse(event.data || "{}");
+        const targetsSelectedContact =
+          payload.contactId != null
+          && Number(payload.contactId) === Number(currentId);
+
+        // A newly-created journey has a new lead ID. The contact ID lets the
+        // selected Inbox thread refresh to that new current journey instead of
+        // keeping the previous journey's acquisition context.
+        if (targetsSelectedContact) {
+          refreshAcquisitionContext(currentId);
+          return;
+        }
+
+        const currentLeadId = acquisitionContextRef.current?.lead?.id;
+        if (
+          payload.leadId != null
+          && currentLeadId != null
+          && Number(payload.leadId) !== Number(currentLeadId)
+        ) {
+          return;
+        }
+      } catch {
+        // If an event payload is malformed, a single lightweight refresh is safer
+        // than leaving the visible attribution stale.
+      }
+      refreshAcquisitionContext(currentId);
+    }
+
     source.addEventListener("conversation_changed", handleConversationChanged);
+    source.addEventListener("pipeline_changed", handlePipelineChanged);
     source.onopen = () => {
       scheduleRefresh();
     };
@@ -426,6 +510,7 @@ export default function Inbox() {
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       source.removeEventListener("conversation_changed", handleConversationChanged);
+      source.removeEventListener("pipeline_changed", handlePipelineChanged);
       source.close();
     };
   }, []);
@@ -744,6 +829,8 @@ export default function Inbox() {
         hasMoreOlderMessages={hasMoreOlderMessages}
         actionPending={actionPending}
         conversationStatePending={conversationStatePending}
+        acquisitionContext={acquisitionContext}
+        acquisitionLoading={acquisitionLoading}
         onLoadOlder={loadOlderMessages}
         onTakeOver={handleTakeOver}
         onReturnToAi={handleReturnToAi}
@@ -1231,6 +1318,47 @@ function StatusBadge({ tone, children }) {
   );
 }
 
+function AcquisitionContextBar({ context, loading }) {
+  if (loading) {
+    return (
+      <div className="border-t border-[var(--color-border)] bg-white px-4 py-2 sm:px-5">
+        <div className="h-3 w-52 animate-pulse rounded bg-[var(--color-border)]/60" />
+      </div>
+    );
+  }
+
+  const attribution = context?.attribution;
+  const lead = context?.lead;
+  if (!attribution || attribution.source !== "meta_ads") return null;
+
+  const adName = attribution.ad_name || attribution.headline || (attribution.meta_ad_id ? `Ad ${attribution.meta_ad_id}` : "Meta ad");
+  const campaignName = attribution.campaign_name || "Campaign details pending";
+  const temperature = lead?.temperature
+    ? lead.temperature.charAt(0).toUpperCase() + lead.temperature.slice(1)
+    : null;
+
+  return (
+    <div className="border-t border-blue-100 bg-blue-50/70 px-4 py-2 sm:px-5">
+      <div className="flex min-w-0 items-center gap-2 text-[10px] sm:text-[11px]">
+        <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 font-bold text-blue-700">
+          Meta Ads
+        </span>
+        <span className="min-w-0 truncate font-semibold text-[var(--color-text)]" title={adName || undefined}>
+          {adName}
+        </span>
+        <span className="hidden shrink-0 text-[var(--color-text-muted)] sm:inline">·</span>
+        <span className="hidden min-w-0 truncate text-[var(--color-text-muted)] sm:inline" title={campaignName}>
+          {campaignName}
+        </span>
+        {temperature && (
+          <span className="ml-auto shrink-0 rounded-full bg-white px-2 py-0.5 font-semibold text-[var(--color-text-muted)]">
+            {temperature}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 function ThreadLoadingSkeleton() {
   return (
     <div className="space-y-4 py-4" aria-label="Loading messages">
@@ -1280,6 +1408,8 @@ function ThreadView({
   hasMoreOlderMessages,
   actionPending,
   conversationStatePending,
+  acquisitionContext,
+  acquisitionLoading,
   onLoadOlder,
   onTakeOver,
   onReturnToAi,
@@ -1792,6 +1922,11 @@ function ThreadView({
             )}
           </div>
         </div>
+
+        <AcquisitionContextBar
+          context={acquisitionContext}
+          loading={acquisitionLoading}
+        />
 
         {contact.needs_attention && (
           <div className="flex items-center gap-2 border-t border-[var(--color-danger)]/15 bg-[var(--color-danger-light)] px-4 py-2 text-[var(--color-danger)] sm:px-5">

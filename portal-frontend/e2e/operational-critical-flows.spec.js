@@ -251,6 +251,11 @@ async function installOperationalApi(page, {
       return fulfill(route, conversations);
     }
 
+    const attributionMatch = path.match(/^\/api\/conversations\/(\d+)\/attribution$/);
+    if (attributionMatch && method === "GET") {
+      return fulfill(route, { lead: null, attribution: null });
+    }
+
     const messagesMatch = path.match(/^\/api\/conversations\/(\d+)\/messages$/);
     if (messagesMatch && method === "GET") {
       const afterId = Number(url.searchParams.get("afterId") || 0);

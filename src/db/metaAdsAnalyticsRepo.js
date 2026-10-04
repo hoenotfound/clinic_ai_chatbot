@@ -17,9 +17,13 @@ WITH journey_window AS (
     l.temperature,
     l.estimated_value,
     l.appointment_status,
+    l.treatment_interest,
+    l.owner_username,
+    l.branch_name,
     l.created_at,
     l.started_message_id,
     c.channel,
+    s.name AS current_stage_name,
     s.stage_type AS current_stage_type,
     COALESCE(start_message.created_at, l.created_at) AS journey_started_at,
     LEAD(l.started_message_id) OVER (
@@ -280,6 +284,7 @@ function enrichPerformance(row, { allowValueRoas = false } = {}) {
   const impressions = number(row.impressions);
   const clicks = number(row.clicks);
   const crmLeads = number(row.crmLeads ?? row.crm_leads);
+  const hotLeads = number(row.hotLeads ?? row.hot_leads);
   const appointments = number(row.appointments);
   const visits = number(row.visits);
   const won = number(row.won);
@@ -291,7 +296,7 @@ function enrichPerformance(row, { allowValueRoas = false } = {}) {
     impressions,
     clicks,
     crmLeads,
-    hotLeads: number(row.hotLeads ?? row.hot_leads),
+    hotLeads,
     appointments,
     visits,
     won,
@@ -302,6 +307,7 @@ function enrichPerformance(row, { allowValueRoas = false } = {}) {
     leadToAppointmentRate: percent(appointments, crmLeads),
     leadToWonRate: percent(won, crmLeads),
     costPerLead: moneyMetric(spend, crmLeads),
+    costPerHotLead: moneyMetric(spend, hotLeads),
     costPerAppointment: moneyMetric(spend, appointments),
     costPerVisit: moneyMetric(spend, visits),
     costPerWon: moneyMetric(spend, won),
@@ -309,6 +315,142 @@ function enrichPerformance(row, { allowValueRoas = false } = {}) {
   };
 }
 
+async function getMetaAdsLeadPreview(
+  filters,
+  profile = getAnalyticsPipelineProfile(),
+  query = analyticsQuery,
+  { accessibleLeadIds = null, accessibleContactIds = null, limit = 25 } = {}
+) {
+  const result = await query(
+    `${JOURNEY_BASE_CTE}
+    ${milestoneTimesCte(profile)},
+    ad_hierarchy AS (
+      SELECT DISTINCT ON (ad_id)
+        ad_id,
+        account_id,
+        campaign_id,
+        campaign_name,
+        adset_id,
+        adset_name,
+        ad_name
+      FROM meta_ad_insights_daily
+      ORDER BY ad_id, insight_date DESC, updated_at DESC
+    )
+    SELECT
+      COUNT(*) OVER()::int AS total_count,
+      j.id AS lead_id,
+      j.contact_id,
+      COALESCE(
+        NULLIF(TRIM(c.name), ''),
+        NULLIF(TRIM(c.whatsapp_profile_name), ''),
+        NULLIF(TRIM(c.whatsapp_number), ''),
+        'Lead ' || j.id::text
+      ) AS lead_name,
+      c.channel,
+      c.photo_url,
+      j.temperature,
+      j.treatment_interest,
+      j.owner_username,
+      j.branch_name,
+      j.current_stage_name AS stage_name,
+      j.current_stage_type AS stage_type,
+      j.appointment_status,
+      j.estimated_value,
+      j.reached_appointment,
+      j.reached_visited,
+      j.reached_won,
+      j.journey_started_at,
+      la.meta_ad_id,
+      COALESCE(la.meta_account_id, ah.account_id) AS meta_account_id,
+      COALESCE(la.campaign_id, ah.campaign_id) AS campaign_id,
+      COALESCE(la.campaign_name, ah.campaign_name) AS campaign_name,
+      COALESCE(la.adset_id, ah.adset_id) AS adset_id,
+      COALESCE(la.adset_name, ah.adset_name) AS adset_name,
+      COALESCE(la.ad_name, ah.ad_name) AS ad_name,
+      latest_message.content AS last_message,
+      latest_message.role AS last_message_role,
+      latest_message.created_at AS last_message_at,
+      ($9::int[] IS NULL OR j.contact_id = ANY($9::int[])) AS can_open_conversation
+    FROM journeys_with_milestones j
+    JOIN contacts c ON c.id = j.contact_id
+    JOIN lead_attributions la ON la.lead_id = j.id
+    LEFT JOIN ad_hierarchy ah ON ah.ad_id = la.meta_ad_id
+    LEFT JOIN LATERAL (
+      SELECT m.content, m.role, m.created_at
+      FROM messages m
+      WHERE m.contact_id = j.contact_id
+        AND (
+          (j.started_message_id IS NOT NULL AND m.id >= j.started_message_id)
+          OR (j.started_message_id IS NULL AND m.created_at >= j.created_at)
+        )
+        AND (
+          (j.next_started_message_id IS NOT NULL AND m.id < j.next_started_message_id)
+          OR (
+            j.next_started_message_id IS NULL
+            AND (j.next_journey_created_at IS NULL OR m.created_at < j.next_journey_created_at)
+          )
+        )
+      ORDER BY m.created_at DESC, m.id DESC
+      LIMIT 1
+    ) latest_message ON true
+    WHERE la.source = 'meta_ads'
+      AND la.meta_ad_id IS NOT NULL
+      AND ${periodSql("j.journey_started_at")}
+      AND ($3::text IS NULL OR COALESCE(la.meta_account_id, ah.account_id) = $3)
+      AND ($4::text IS NULL OR COALESCE(la.campaign_id, ah.campaign_id) = $4)
+      AND ($5::text IS NULL OR COALESCE(la.adset_id, ah.adset_id) = $5)
+      AND ($6::text IS NULL OR la.meta_ad_id = $6)
+      AND ($7::int[] IS NULL OR j.id = ANY($7::int[]))
+    ORDER BY j.journey_started_at DESC, j.id DESC
+    LIMIT $8`,
+    [
+      filters.from,
+      filters.to,
+      filters.accountId || null,
+      filters.campaignId || null,
+      filters.adsetId || null,
+      filters.adId || null,
+      accessibleLeadIds === null ? null : accessibleLeadIds,
+      Math.max(1, Math.min(Number(limit) || 25, 100)),
+      accessibleContactIds === null ? null : accessibleContactIds,
+    ]
+  );
+
+  const rows = result.rows || [];
+  return {
+    total: number(rows[0]?.total_count),
+    leads: rows.map((row) => ({
+      leadId: number(row.lead_id),
+      contactId: number(row.contact_id),
+      name: row.lead_name || null,
+      channel: row.channel || null,
+      photoUrl: row.photo_url || null,
+      temperature: row.temperature || null,
+      treatmentInterest: row.treatment_interest || null,
+      ownerUsername: row.owner_username || null,
+      branchName: row.branch_name || null,
+      stageName: row.stage_name || null,
+      stageType: row.stage_type || null,
+      appointmentStatus: row.appointment_status || null,
+      estimatedValue: rounded(row.estimated_value, 2),
+      reachedAppointment: Boolean(row.reached_appointment),
+      reachedVisited: Boolean(row.reached_visited),
+      reachedWon: Boolean(row.reached_won),
+      journeyStartedAt: row.journey_started_at || null,
+      metaAdId: row.meta_ad_id || null,
+      metaAccountId: row.meta_account_id || null,
+      campaignId: row.campaign_id || null,
+      campaignName: row.campaign_name || null,
+      adsetId: row.adset_id || null,
+      adsetName: row.adset_name || null,
+      adName: row.ad_name || null,
+      lastMessage: row.last_message || null,
+      lastMessageRole: row.last_message_role || null,
+      lastMessageAt: row.last_message_at || null,
+      canOpenConversation: Boolean(row.can_open_conversation),
+    })),
+  };
+}
 async function getMetaAdsAnalytics(filters, { database = pool, analyticsProfile = null } = {}) {
   const profile = analyticsProfile || getAnalyticsPipelineProfile();
   const query = database === pool
@@ -451,6 +593,7 @@ async function getMetaAdsAnalytics(filters, { database = pool, analyticsProfile 
   }
   if (!allowMoneyMetrics || !spendCoverageComplete) {
     summary.costPerLead = null;
+    summary.costPerHotLead = null;
     summary.costPerAppointment = null;
     summary.costPerVisit = null;
     summary.costPerWon = null;
@@ -474,6 +617,7 @@ async function getMetaAdsAnalytics(filters, { database = pool, analyticsProfile 
     }
     if (!rowCurrency || !rowCoverageComplete) {
       enriched.costPerLead = null;
+      enriched.costPerHotLead = null;
       enriched.costPerAppointment = null;
       enriched.costPerVisit = null;
       enriched.costPerWon = null;
@@ -530,5 +674,6 @@ module.exports = {
   buildAnalyticsSql,
   enrichPerformance,
   getMetaAdsAnalytics,
+  getMetaAdsLeadPreview,
   nullableRatio,
 };

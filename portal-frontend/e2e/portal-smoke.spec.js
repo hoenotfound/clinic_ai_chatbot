@@ -40,6 +40,10 @@ async function mockPortalApi(
     loggedIn = false,
     user = STAFF_USER,
     pipelineData = null,
+    conversations = [],
+    conversationAttributionByContact = {},
+    conversationMessagesByContact = {},
+    metaAdsLeadPreview = { total: 0, leads: [] },
     branding = {
       clientName: "Test Clinic",
       clientLogoUrl: "",
@@ -142,10 +146,46 @@ async function mockPortalApi(
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify([]),
+        body: JSON.stringify(conversations),
       });
     }
 
+    const conversationAttributionMatch = /^\/api\/conversations\/(\d+)\/attribution$/.exec(path);
+    if (conversationAttributionMatch && method === "GET") {
+      const contactId = Number(conversationAttributionMatch[1]);
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(
+          conversationAttributionByContact[contactId]
+          || { lead: null, attribution: null }
+        ),
+      });
+    }
+
+    const conversationMessagesMatch = /^\/api\/conversations\/(\d+)\/messages$/.exec(path);
+    if (conversationMessagesMatch && method === "GET") {
+      const contactId = Number(conversationMessagesMatch[1]);
+      const messages = conversationMessagesByContact[contactId] || [];
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          messages,
+          hasMore: false,
+          oldestId: messages[0]?.id || null,
+          newestId: messages[messages.length - 1]?.id || null,
+        }),
+      });
+    }
+
+    if (path === "/api/pipeline/analytics/meta-ads/leads" && method === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(metaAdsLeadPreview),
+      });
+    }
 
     if (path === "/api/pipeline/analytics/meta-ads" && method === "GET") {
       return route.fulfill({
@@ -852,6 +892,104 @@ test("Meta Ads analytics renders spend-to-CRM metrics without horizontal page ov
   await expect(page.getByText("4.80×", { exact: true }).first()).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
   await expectNoHorizontalElementOverflow(page, "meta-ads-analytics");
+});
+
+test("Meta Ads lead preview opens the correct attributed Inbox conversation", async ({ page }) => {
+  await mockPortalApi(page, {
+    loggedIn: true,
+    conversations: [{
+      contact_id: 42,
+      channel: "whatsapp",
+      name: "Alice Meta Lead",
+      whatsapp_profile_name: "Alice Meta Lead",
+      whatsapp_number: "60123456789",
+      mode: "ai",
+      needs_attention: false,
+      needs_follow_up: false,
+      is_unread: false,
+      last_message: "Can I book the pelvis treatment?",
+      last_message_role: "user",
+      last_message_at: "2026-10-04T12:00:00.000Z",
+      lead_owner_username: "staff",
+    }],
+    conversationMessagesByContact: {
+      42: [{
+        id: 501,
+        contact_id: 42,
+        role: "user",
+        content: "Can I book the pelvis treatment?",
+        created_at: "2026-10-04T12:00:00.000Z",
+      }],
+    },
+    conversationAttributionByContact: {
+      42: {
+        lead: {
+          id: 7001,
+          contactId: 42,
+          temperature: "hot",
+          treatmentInterest: "Pelvis",
+          stageName: "Appointment",
+          stageType: "open",
+        },
+        attribution: {
+          source: "meta_ads",
+          channel: "whatsapp",
+          platform: "whatsapp",
+          meta_ad_id: "300",
+          meta_account_id: "123",
+          campaign_id: "100",
+          campaign_name: "October Campaign",
+          adset_id: "200",
+          adset_name: "Women KL",
+          ad_name: "Pelvis Creative",
+          enrichment_status: "enriched",
+        },
+      },
+    },
+    metaAdsLeadPreview: {
+      total: 1,
+      leads: [{
+        leadId: 7001,
+        contactId: 42,
+        name: "Alice Meta Lead",
+        channel: "whatsapp",
+        temperature: "hot",
+        treatmentInterest: "Pelvis",
+        stageName: "Appointment",
+        stageType: "open",
+        reachedAppointment: true,
+        reachedVisited: false,
+        reachedWon: false,
+        metaAdId: "300",
+        campaignId: "100",
+        campaignName: "October Campaign",
+        adsetId: "200",
+        adsetName: "Women KL",
+        adName: "Pelvis Creative",
+        lastMessage: "Can I book the pelvis treatment?",
+        canOpenConversation: true,
+      }],
+    },
+  });
+
+  await page.goto("/analytics");
+  await page.getByRole("button", { name: "Meta Ads" }).click();
+  await page.getByRole("button", { name: "Show chatbot leads" }).click();
+
+  await expect(page.getByText("Alice Meta Lead", { exact: true })).toBeVisible();
+  await expect(page.getByText("Pelvis Creative", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Open chat" }).click();
+
+  await expect(page).toHaveURL(/\/inbox\?contact=42$/);
+  const conversationThread = page.locator('section[aria-label="Conversation with Alice Meta Lead"]');
+  await expect(conversationThread).toBeVisible();
+  await expect(conversationThread.getByRole("heading", { name: "Alice Meta Lead", exact: true })).toBeVisible();
+  await expect(page.getByText("Meta Ads", { exact: true })).toBeVisible();
+  await expect(page.getByText("Pelvis Creative", { exact: true })).toBeVisible();
+  const viewport = page.viewportSize();
+  if (viewport && viewport.width >= 640) {
+    await expect(page.getByText("October Campaign", { exact: true })).toBeVisible();
+  }
 });
 
 test("mobile Pipeline keeps controls compact and prioritizes lead cards", async ({ page }) => {

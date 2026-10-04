@@ -6,10 +6,17 @@ const {
 
 const NO_REPLY_HOURS = 24;
 
-function publishPipelineChange(leadId = null, { refreshInbox = false } = {}) {
-  realtimeEvents.publish("pipeline_changed", { leadId });
+function publishPipelineChange(
+  leadId = null,
+  { refreshInbox = false, contactId = null } = {}
+) {
+  realtimeEvents.publish("pipeline_changed", {
+    leadId,
+    ...(contactId != null ? { contactId } : {}),
+  });
   if (refreshInbox) {
     realtimeEvents.publish("conversation_changed", {
+      ...(contactId != null ? { contactId } : {}),
       reason: "lead_assignment_changed",
     });
   }
@@ -253,6 +260,7 @@ async function ensureLeadForContact(
 
   if (outcome.created || outcome.boundaryInitialized) {
     publishPipelineChange(outcome.lead.id, {
+      contactId: outcome.lead.contact_id,
       refreshInbox: outcome.created && Boolean(outcome.lead.owner_username),
     });
   }
@@ -427,6 +435,7 @@ async function createLead(data, actor) {
 
   if (outcome.created) {
     publishPipelineChange(outcome.lead.id, {
+      contactId: outcome.lead.contact_id,
       refreshInbox: Boolean(outcome.lead.owner_username),
     });
   }

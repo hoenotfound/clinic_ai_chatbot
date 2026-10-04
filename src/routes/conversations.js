@@ -4,6 +4,7 @@ const { pipeline } = require("node:stream/promises");
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
+const leadAttributionRepo = require("../db/leadAttributionRepo");
 const conversationStore = require("../utils/conversationStore");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
@@ -251,6 +252,54 @@ router.get("/", async (req, res) => {
   } catch (err) {
     console.error("Failed to list conversations:", err);
     res.status(500).json({ error: "Something went wrong loading conversations." });
+  }
+});
+
+router.get("/:contactId/attribution", async (req, res) => {
+  try {
+    const contactId = parsePositiveInt(req.params.contactId);
+    if (!contactId) return res.status(400).json({ error: "Invalid contact id." });
+
+    const context = await leadAttributionRepo.getForContactCurrentLead(contactId);
+    if (!context) return res.json({ lead: null, attribution: null });
+
+    res.json({
+      lead: {
+        id: context.lead_id,
+        contactId: context.contact_id,
+        temperature: context.temperature || null,
+        treatmentInterest: context.treatment_interest || null,
+        appointmentStatus: context.appointment_status || null,
+        estimatedValue: context.estimated_value == null ? null : Number(context.estimated_value),
+        ownerUsername: context.owner_username || null,
+        branchName: context.branch_name || null,
+        stageName: context.stage_name || null,
+        stageType: context.stage_type || null,
+      },
+      attribution: context.source ? {
+        source: context.source,
+        channel: context.attribution_channel || null,
+        platform: context.platform || null,
+        meta_ad_id: context.meta_ad_id || null,
+        meta_account_id: context.meta_account_id || null,
+        campaign_id: context.campaign_id || null,
+        campaign_name: context.campaign_name || null,
+        adset_id: context.adset_id || null,
+        adset_name: context.adset_name || null,
+        ad_name: context.ad_name || null,
+        ctwa_clid: context.ctwa_clid || null,
+        headline: context.headline || null,
+        body: context.body || null,
+        media_type: context.media_type || null,
+        media_url: context.media_url || null,
+        enrichment_status: context.enrichment_status || null,
+        enriched_at: context.enriched_at || null,
+        attributed_at: context.attributed_at || null,
+      } : null,
+    });
+  } catch (err) {
+    console.error("Failed to load conversation attribution:", err);
+    res.status(500).json({ error: "Something went wrong loading acquisition details." });
   }
 });
 

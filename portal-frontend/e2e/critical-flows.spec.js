@@ -279,6 +279,11 @@ async function installApi(page, {
       return fulfill(route, conversations);
     }
 
+    const attributionMatch = path.match(/^\/api\/conversations\/(\d+)\/attribution$/);
+    if (attributionMatch && method === "GET") {
+      return fulfill(route, { lead: null, attribution: null });
+    }
+
     const messageMatch = path.match(/^\/api\/conversations\/(\d+)\/messages$/);
     if (messageMatch && method === "GET") {
       const contactId = Number(messageMatch[1]);
