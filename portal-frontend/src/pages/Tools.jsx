@@ -539,12 +539,19 @@ export default function Tools() {
   function preparedServiceOverrides(overrides, generatedByMessage) {
     return (overrides || []).map((item) => {
       const message = item.message.trim();
-      const translations = hasCompleteTranslations(item.translations)
-        ? trimmedTranslations(item.translations)
+      const existingTranslations = trimmedTranslations(item.translations);
+      const generated = hasCompleteTranslations(item.translations)
+        ? null
         : generatedByMessage.get(message);
-      if (!translations) {
+      if (!hasCompleteTranslations(item.translations) && !generated) {
         throw new Error("Couldn't generate targeted language versions.");
       }
+      const translations = Object.fromEntries(
+        FOLLOW_UP_LANGUAGES.map(({ key }) => [
+          key,
+          existingTranslations[key] || generated?.[key] || "",
+        ])
+      );
       return {
         serviceName: item.serviceName.trim(),
         message,
@@ -556,12 +563,19 @@ export default function Tools() {
   function preparedAdditionalSteps(steps, generatedByMessage) {
     return (steps || []).map((step) => {
       const message = step.message.trim();
-      const translations = hasCompleteTranslations(step.translations)
-        ? trimmedTranslations(step.translations)
+      const existingTranslations = trimmedTranslations(step.translations);
+      const generated = hasCompleteTranslations(step.translations)
+        ? null
         : generatedByMessage.get(message);
-      if (!translations) {
+      if (!hasCompleteTranslations(step.translations) && !generated) {
         throw new Error("Couldn't generate sequence language versions.");
       }
+      const translations = Object.fromEntries(
+        FOLLOW_UP_LANGUAGES.map(({ key }) => [
+          key,
+          existingTranslations[key] || generated?.[key] || "",
+        ])
+      );
       return {
         delayMinutes: Number(step.delayMinutes),
         message,
