@@ -13,6 +13,9 @@ const {
   metaAdContextSection,
   normalizeOptions,
 } = require("../src/utils/systemPrompt");
+const {
+  normalizeReplyOptions,
+} = require("../src/services/aiService");
 
 test("normalizes only Meta Ads attribution into bounded AI reply context", () => {
   const context = normalizeMetaAdReplyContext({
@@ -98,6 +101,22 @@ test("system prompt uses ad creative as soft intent rather than customer truth",
   assert.match(prompt, /Ad headline: 产后小腹凸？了解骨盆调理/);
   assert.match(prompt, /ACTIVE PROMOTIONS/);
   assert.match(prompt, /answer naturally in the context of that service/);
+});
+
+test("AI provider routing preserves Meta ad context for Gemini and Claude", () => {
+  const metaAdContext = {
+    adName: "骨盆 1",
+    headline: "骨盆调理",
+  };
+
+  const options = normalizeReplyOptions({
+    isFirstMessage: true,
+    channel: "whatsapp",
+    metaAdContext,
+  });
+
+  assert.equal(options.metaAdContext, metaAdContext);
+  assert.deepEqual(normalizeReplyOptions(false).metaAdContext, null);
 });
 
 test("server feeds local Meta ad context to AI without calling Meta on the reply path", () => {
