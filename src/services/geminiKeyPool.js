@@ -109,6 +109,7 @@ function isRetryableAiError(err) {
       "UND_ERR_CONNECT_TIMEOUT",
       "UND_ERR_SOCKET",
       "AI_TIMEOUT",
+      "AI_OUTPUT_TRUNCATED",
       "INVALID_AI_RESPONSE",
       "EMPTY_AI_RESPONSE",
     ].includes(code)
@@ -149,7 +150,7 @@ function classifyCandidateHealthFailure(err) {
   ) {
     return { status: "invalid", failureKind: "authentication" };
   }
-  if (["INVALID_AI_RESPONSE", "EMPTY_AI_RESPONSE"].includes(code)) {
+  if (["AI_OUTPUT_TRUNCATED", "INVALID_AI_RESPONSE", "EMPTY_AI_RESPONSE"].includes(code)) {
     return { status: "failed", failureKind: "invalid_response" };
   }
   if (
