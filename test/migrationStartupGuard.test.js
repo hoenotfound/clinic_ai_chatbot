@@ -82,6 +82,10 @@ test("follow-up targeting analytics metadata is forward-migrated", () => {
   );
   assert.match(
     migration031Source,
+    /ADD COLUMN IF NOT EXISTS automated_follow_up_targeting_recorded BOOLEAN NOT NULL DEFAULT false/i
+  );
+  assert.match(
+    migration031Source,
     /automated_follow_up_for_message_id IS NOT NULL/i
   );
 });
