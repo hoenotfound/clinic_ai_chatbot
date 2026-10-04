@@ -131,8 +131,8 @@ async function addAiUsage(overview) {
           const readyChecks = geminiChecks.filter((item) => item.status === "ready").length;
           const totalKeys = Number(aiCheck.geminiKeyCount) || geminiChecks.length;
           aiCheck.summary = geminiChecks.length
-            ? `${readyChecks}/${totalKeys} configured Gemini keys passed the latest metadata-only setup check. Run all checks does not generate AI text or consume prompt/output tokens.`
-            : "Gemini credentials and the configured model are accessible. Run all checks uses metadata only and does not generate AI text or consume prompt/output tokens.";
+            ? `${readyChecks}/${totalKeys} configured Gemini keys passed the latest metadata-only setup check. Gemini validation does not generate AI text; a configured Claude fallback is checked separately with a private request.`
+            : "Gemini credentials and the configured model are accessible. Gemini validation uses metadata only; a configured Claude fallback is checked separately with a private request.";
         }
       }
       const usageText = usage.requests > 0

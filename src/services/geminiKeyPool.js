@@ -145,7 +145,7 @@ function classifyCandidateHealthFailure(err) {
   if (
     ["authentication", "permission_denied"].includes(providerCode)
     || [401, 403].includes(status)
-    || /api.?key.*invalid|invalid.*api.?key|unauthorized|permission denied/.test(message)
+    || /api.?key.*invalid|invalid.*api.?key|unauthorized|permission denied|not scoped to a workspace|anthropic-workspace-id/.test(message)
   ) {
     return { status: "invalid", failureKind: "authentication" };
   }
@@ -378,6 +378,7 @@ async function runWithGeminiKeys(
     fallbackTimeoutMs = 0,
     minRemainingKeyWindowMs = 0,
     smartRetry = false,
+    confirmModelUnavailableAcrossKeys = true,
     stopKeyRotationOnTimeout = false,
     smartRetryDelayMinMs = 500,
     smartRetryDelayMaxMs = 1000,
@@ -466,6 +467,7 @@ async function runWithGeminiKeys(
 
           if (
             smartRetry
+            && confirmModelUnavailableAcrossKeys
             && isModelCapacityFailure
             && !confirmingModelUnavailable
             && nextCandidate

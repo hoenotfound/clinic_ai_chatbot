@@ -1,4 +1,4 @@
-const Anthropic = require("@anthropic-ai/sdk");
+const { createAnthropicClient } = require("./anthropicClient");
 const { buildSystemPrompt, normalizeOptions } = require("../utils/systemPrompt");
 
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
@@ -16,7 +16,13 @@ function buildClaudeMessages(messages) {
   });
 }
 
-async function getReply(messages, optionsOrFirstMessage = false, apiKey = null) {
+async function getReply(
+  messages,
+  optionsOrFirstMessage = false,
+  apiKey = null,
+  workspaceId = null,
+  requestControl = {}
+) {
   const options = normalizeOptions(optionsOrFirstMessage);
   const resolvedKey = apiKey || process.env.ANTHROPIC_API_KEY;
   if (!resolvedKey) {
@@ -25,13 +31,29 @@ async function getReply(messages, optionsOrFirstMessage = false, apiKey = null) 
     throw err;
   }
 
-  const anthropic = new Anthropic({ apiKey: resolvedKey });
+  const anthropic = createAnthropicClient({
+    apiKey: resolvedKey,
+    workspaceId: workspaceId || process.env.ANTHROPIC_WORKSPACE_ID,
+    // Customer-reply retries are controlled by aiService. Background Claude
+    // jobs create their own client without this override and retain SDK retries.
+    maxRetries: 0,
+  });
+
+  const sdkRequestOptions = {};
+  const requestTimeoutMs = Number(requestControl?.timeoutMs);
+  if (Number.isFinite(requestTimeoutMs) && requestTimeoutMs > 0) {
+    sdkRequestOptions.timeout = Math.max(1, Math.floor(requestTimeoutMs));
+  }
+  if (requestControl?.signal) {
+    sdkRequestOptions.signal = requestControl.signal;
+  }
+
   const response = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 1000,
     system: buildSystemPrompt(options),
     messages: buildClaudeMessages(messages),
-  });
+  }, sdkRequestOptions);
 
   const textBlock = response.content.find((block) => block.type === "text");
   const text = textBlock?.text?.trim();

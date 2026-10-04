@@ -1,4 +1,4 @@
-const Anthropic = require("@anthropic-ai/sdk");
+const { createAnthropicClient } = require("./anthropicClient");
 const { GoogleGenAI } = require("@google/genai");
 const { generateGeminiContent } = require("./aiUsageService");
 const { runWithGeminiKeys } = require("./geminiKeyPool");
@@ -82,7 +82,7 @@ async function translateWithGemini(message) {
 }
 
 async function translateWithClaude(message) {
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const anthropic = createAnthropicClient();
   const response = await anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 1400,

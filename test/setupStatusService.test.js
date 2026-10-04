@@ -238,6 +238,54 @@ test("unconfigured optional services do not make network requests", async () => 
   assert.equal(byKey.get("meta_marketing").status, "not_configured");
 });
 
+test("Setup Status warns when configured Claude fallback cannot use its workspace", async () => {
+  const env = {
+    AI_PROVIDER: "gemini",
+    GEMINI_API_KEY: "gemini-key",
+    ANTHROPIC_API_KEY: "claude-key",
+    SESSION_SECRET: "a-strong-random-session-secret-with-more-than-32-characters",
+    PUBLIC_BASE_URL: "https://clinic.example.test",
+  };
+  let claudeChecks = 0;
+  const service = createSetupStatusService({
+    env,
+    repository: memoryRepository(),
+    database: {
+      async query(sql) {
+        return /COUNT/.test(sql) ? { rows: [{ count: 1 }] } : { rows: [{ ok: 1 }] };
+      },
+    },
+    ai: {
+      async getReply() {
+        return "ok";
+      },
+      async runClaudeReply(_messages, options, timeoutMs, retryCount, receivedEnv, budget) {
+        claudeChecks += 1;
+        assert.equal(options.privateSetupCheck, true);
+        assert.equal(timeoutMs, 5000);
+        assert.equal(retryCount, 0);
+        assert.equal(receivedEnv, env);
+        assert.equal(budget.globalBudgetMs, 5000);
+        const err = new Error(
+          "This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header."
+        );
+        err.status = 400;
+        throw err;
+      },
+    },
+  });
+
+  const status = await service.runAll();
+  const ai = status.checks.find((check) => check.key === "ai");
+
+  assert.equal(claudeChecks, 1);
+  assert.equal(ai.status, "warning");
+  assert.equal(ai.reason, "claude_fallback_failed");
+  assert.match(ai.summary, /Claude fallback failed/i);
+  assert.match(ai.summary, /anthropic-workspace-id/i);
+  assert.equal(JSON.stringify(ai).includes(env.ANTHROPIC_API_KEY), false);
+});
+
 test("provider errors are shown safely and prior success is preserved", async () => {
   const repository = memoryRepository([
     {

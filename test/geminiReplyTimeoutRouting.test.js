@@ -6,6 +6,7 @@ const {
   DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS,
   DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS,
   DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS,
+  DEFAULT_GEMINI_PRIMARY_MODEL_MIN_BUDGET_MS,
   resetGeminiModelHealth,
   runGeminiReply,
 } = require("../src/services/aiService");
@@ -24,8 +25,9 @@ const VALID_REPLY = JSON.stringify({
 
 test("reply timing defaults give the primary more time while reserving fallback capacity", () => {
   assert.equal(DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS, 10_000);
-  assert.equal(DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS, 8_000);
-  assert.equal(DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS, 9_000);
+  assert.equal(DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS, 12_000);
+  assert.equal(DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS, 12_000);
+  assert.equal(DEFAULT_GEMINI_PRIMARY_MODEL_MIN_BUDGET_MS, 8_000);
 });
 
 test("a slow primary model switches to fallback on the same healthy key", async () => {

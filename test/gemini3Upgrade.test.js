@@ -137,7 +137,7 @@ test("Gemini 3 request keeps mixed Malaysian language content and structured out
   assert.equal(Object.hasOwn(request.config, "topK"), false);
 });
 
-test("default 3.8 capacity failure is confirmed once before falling back to 3.5 Flash-Lite", async () => {
+test("default 3.8 capacity failure switches directly to 3.5 Flash-Lite", async () => {
   resetGeminiKeyPoolState();
   resetGeminiModelHealth();
   const originalGetReply = geminiService.getReply;
@@ -173,7 +173,6 @@ test("default 3.8 capacity failure is confirmed once before falling back to 3.5 
     assert.equal(result, validReply);
     assert.deepEqual(calls, [
       { apiKey: "key-a", model: "gemini-3.8-flash" },
-      { apiKey: "key-b", model: "gemini-3.8-flash" },
       { apiKey: "key-a", model: "gemini-3.5-flash-lite" },
     ]);
   } finally {

@@ -486,7 +486,7 @@ function ConnectionCard({ check }) {
           <div className="mt-3 flex flex-wrap gap-1.5">
             <MiniBadge text={`Preferred: ${check.aiProvider || "gemini"}`} />
             <MiniBadge text={`${check.geminiKeyCount || 0} Gemini key${check.geminiKeyCount === 1 ? "" : "s"}`} />
-            {check.claudeFallback && <MiniBadge text="Claude available" />}
+            {check.claudeFallback && <MiniBadge text="Claude configured" />}
           </div>
           <AiKeyHealth
             candidates={check.candidateHealth || []}

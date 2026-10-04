@@ -9,6 +9,7 @@ const {
   DEFAULT_GEMINI_GLOBAL_BUDGET_MS,
   DEFAULT_GEMINI_MIN_KEY_WINDOW_MS,
   DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS,
+  DEFAULT_GEMINI_PRIMARY_MODEL_MIN_BUDGET_MS,
   classifyCandidateHealthFailure,
   computeGeminiModelBudgetMs,
   credentialFingerprint,
@@ -17,6 +18,7 @@ const {
   getGeminiReplyPolicy,
   getRuntimeGeminiModelHealth,
   isGeminiModelUnavailableError,
+  isRecoverableAiReplyFailure,
   isRetryableAiError,
   resetGeminiModelHealth,
   runCandidate,
@@ -62,11 +64,13 @@ test("Gemini customer replies default to a 25s global adaptive budget", () => {
   assert.equal(policy.preferredTimeoutMs, DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS);
   assert.equal(policy.preferredTimeoutMs, 10000);
   assert.equal(policy.fallbackTimeoutMs, DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS);
-  assert.equal(policy.fallbackTimeoutMs, 8000);
+  assert.equal(policy.fallbackTimeoutMs, 12000);
   assert.equal(policy.minRemainingKeyWindowMs, DEFAULT_GEMINI_MIN_KEY_WINDOW_MS);
   assert.equal(policy.minRemainingKeyWindowMs, 4000);
   assert.equal(policy.fallbackModelReserveMs, DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS);
-  assert.equal(policy.fallbackModelReserveMs, 9000);
+  assert.equal(policy.fallbackModelReserveMs, 12000);
+  assert.equal(policy.primaryModelMinBudgetMs, DEFAULT_GEMINI_PRIMARY_MODEL_MIN_BUDGET_MS);
+  assert.equal(policy.primaryModelMinBudgetMs, 8000);
   assert.equal(policy.retryCount, 1);
 });
 
@@ -77,6 +81,7 @@ test("Gemini customer reply timing can be tuned through environment settings", (
     GEMINI_REPLY_FALLBACK_TIMEOUT_MS: "6000",
     GEMINI_REPLY_MIN_KEY_WINDOW_MS: "4500",
     GEMINI_REPLY_FALLBACK_MODEL_RESERVE_MS: "9000",
+    GEMINI_REPLY_PRIMARY_MODEL_MIN_BUDGET_MS: "7000",
     GEMINI_REPLY_5XX_RETRY_COUNT: "0",
   });
   assert.deepEqual(policy, {
@@ -85,6 +90,7 @@ test("Gemini customer reply timing can be tuned through environment settings", (
     fallbackTimeoutMs: 6000,
     minRemainingKeyWindowMs: 4500,
     fallbackModelReserveMs: 9000,
+    primaryModelMinBudgetMs: 7000,
     retryCount: 0,
   });
 });
@@ -117,7 +123,7 @@ test("Gemini model-capacity errors are distinguished from key failures", () => {
   );
 });
 
-test("503 model overload is confirmed by one extra healthy key before Flash-Lite fallback", async () => {
+test("503 model overload switches directly to Flash-Lite when a fallback model is ready", async () => {
   resetGeminiKeyPoolState();
   resetGeminiModelHealth();
   const originalGetReply = geminiService.getReply;
@@ -160,18 +166,14 @@ test("503 model overload is confirmed by one extra healthy key before Flash-Lite
     assert.equal(result, validReply);
     assert.deepEqual(calls, [
       { apiKey: "key-a", model: "gemini-2.5-flash" },
-      { apiKey: "key-b", model: "gemini-2.5-flash" },
       { apiKey: "key-a", model: "gemini-2.5-flash-lite" },
     ]);
-    assert.ok(
-      warnings.some(
-        (line) => line.includes("confirming with Gemini key 2") && line.includes("high demand")
-      )
+    assert.equal(
+      warnings.some((line) => line.includes("confirming with Gemini key 2")),
+      false
     );
     assert.ok(
-      warnings.some(
-        (line) => line.includes("confirmed gemini-2.5-flash capacity failure") && line.includes("high demand")
-      )
+      warnings.some((line) => line.includes("switching to gemini-2.5-flash-lite"))
     );
   } finally {
     console.warn = originalWarn;
@@ -197,7 +199,7 @@ test("a second healthy key can rescue the primary model after a first-key 503", 
   const env = {
     GEMINI_API_KEYS: "key-a,key-b,key-c",
     GEMINI_MODEL: "gemini-3.8-flash",
-    GEMINI_FALLBACK_MODEL: "gemini-3.5-flash-lite",
+    GEMINI_FALLBACK_MODEL: "",
     GEMINI_REPLY_5XX_RETRY_COUNT: "0",
   };
 
@@ -283,6 +285,85 @@ test("primary-model quota cooldown does not block the fallback reply model", asy
   }
 });
 
+test("recoverable AI reply failures stay eligible for a later automatic retry", () => {
+  assert.equal(isRecoverableAiReplyFailure({ code: "AI_GLOBAL_BUDGET_EXCEEDED" }), true);
+  assert.equal(
+    isRecoverableAiReplyFailure({
+      code: "ALL_AI_PROVIDERS_FAILED",
+      failures: [
+        { code: "ALL_GEMINI_MODELS_FAILED", recoverable: true, message: "Gemini timed out" },
+        { code: null, recoverable: false, message: "Claude bad configuration" },
+      ],
+    }),
+    true
+  );
+  assert.equal(
+    isRecoverableAiReplyFailure({
+      code: "ALL_AI_PROVIDERS_FAILED",
+      failures: [
+        { code: null, recoverable: false, message: "Unauthorized" },
+        { code: null, recoverable: false, message: "anthropic-workspace-id is required" },
+      ],
+    }),
+    false
+  );
+  assert.equal(
+    isRecoverableAiReplyFailure({
+      code: "ALL_GEMINI_MODELS_FAILED",
+      failures: [{
+        code: "ALL_GEMINI_KEYS_FAILED",
+        message: "All available Gemini keys failed.",
+        failures: [
+          { code: null, message: "Rate limit exceeded for this project." },
+          { code: null, message: "Quota temporarily exhausted." },
+        ],
+      }],
+    }),
+    true
+  );
+  assert.equal(isRecoverableAiReplyFailure({ code: "AI_PROVIDER_NOT_CONFIGURED" }), false);
+});
+
+test("real all-key Gemini rate limiting remains recoverable after model wrapping", async () => {
+  resetGeminiKeyPoolState();
+  resetGeminiModelHealth();
+  const originalGetReply = geminiService.getReply;
+
+  geminiService.getReply = async () => {
+    const err = new Error("Rate limit exceeded for this project.");
+    err.status = 429;
+    throw err;
+  };
+
+  try {
+    await assert.rejects(
+      runGeminiReply(
+        [{ role: "user", content: "hello" }],
+        { channel: "whatsapp", isFirstMessage: false, privateSetupCheck: true },
+        {
+          GEMINI_API_KEYS: "key-a,key-b",
+          GEMINI_MODEL: "gemini-3.8-flash",
+          GEMINI_FALLBACK_MODEL: "",
+          GEMINI_REPLY_5XX_RETRY_COUNT: "0",
+          GEMINI_REPLY_GLOBAL_BUDGET_MS: "1000",
+          GEMINI_REPLY_MIN_KEY_WINDOW_MS: "1",
+        }
+      ),
+      (err) => {
+        assert.equal(err.code, "ALL_GEMINI_MODELS_FAILED");
+        assert.equal(err.failures[0].code, "ALL_GEMINI_KEYS_FAILED");
+        assert.equal(err.failures[0].failures.length, 2);
+        assert.equal(isRecoverableAiReplyFailure(err), true);
+        return true;
+      }
+    );
+  } finally {
+    geminiService.getReply = originalGetReply;
+    resetGeminiKeyPoolState();
+    resetGeminiModelHealth();
+  }
+});
+
 test("transient provider errors and invalid model output are retryable", () => {
   assert.equal(isRetryableAiError({ status: 429, message: "quota" }), true);
   assert.equal(isRetryableAiError({ code: "ETIMEDOUT" }), true);
@@ -309,6 +390,13 @@ test("AI candidate health classifies quota, credential and temporary failures", 
   );
   assert.deepEqual(
     classifyCandidateHealthFailure({ status: 401, message: "Unauthorized" }),
+    { status: "invalid", failureKind: "authentication" }
+  );
+  assert.deepEqual(
+    classifyCandidateHealthFailure({
+      status: 400,
+      message: "This API key is not scoped to a workspace; add anthropic-workspace-id.",
+    }),
     { status: "invalid", failureKind: "authentication" }
   );
   assert.deepEqual(

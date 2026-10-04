@@ -75,7 +75,7 @@ test("setup status exposes real 24h Gemini request, token and failure totals", a
   }
 });
 
-test("Gemini Setup Status explains that every key check is non-generative", async () => {
+test("Gemini Setup Status distinguishes metadata checks from the Claude fallback request", async () => {
   const originalGetUsageSummary = aiUsage.getUsageSummary;
   const originalListSetupChecks = setupStatusRepo.listAiCandidateSetupChecks;
   const originalProvider = process.env.AI_PROVIDER;
@@ -109,8 +109,9 @@ test("Gemini Setup Status explains that every key check is non-generative", asyn
     const aiCheck = decorated.checks[0];
     assert.equal(aiCheck.setupCheckMode, "model_metadata");
     assert.match(aiCheck.summary, /metadata/i);
-    assert.match(aiCheck.summary, /does not generate AI text/i);
-    assert.match(aiCheck.summary, /consume prompt\/output tokens/i);
+    assert.match(aiCheck.summary, /Gemini validation/i);
+    assert.match(aiCheck.summary, /Claude fallback/i);
+    assert.match(aiCheck.summary, /private request/i);
   } finally {
     aiUsage.getUsageSummary = originalGetUsageSummary;
     setupStatusRepo.listAiCandidateSetupChecks = originalListSetupChecks;

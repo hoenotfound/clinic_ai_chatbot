@@ -16,7 +16,7 @@ const VALID_REPLY = JSON.stringify({
   appointmentPreference: null,
 });
 
-test("503 uses one confirmation key before switching to the available fallback model", async () => {
+test("503 switches directly to the available fallback model", async () => {
   resetGeminiKeyPoolState();
   resetGeminiModelHealth();
   const originalGetReply = geminiService.getReply;
@@ -49,7 +49,6 @@ test("503 uses one confirmation key before switching to the available fallback m
     assert.equal(result, VALID_REPLY);
     assert.deepEqual(calls, [
       { apiKey: "key-a", model: "gemini-2.5-flash" },
-      { apiKey: "key-b", model: "gemini-2.5-flash" },
       { apiKey: "key-a", model: "gemini-2.5-flash-lite" },
     ]);
   } finally {
