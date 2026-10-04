@@ -397,7 +397,7 @@ async function getMostRecentlySentMediaUrlWithExecutor(
              media_url = ANY($2::text[])
              OR EXISTS (
                SELECT 1
-               FROM unnest($3::int[]) AS stored_id
+               FROM unnest($3::int[]) AS ids(stored_id)
                WHERE split_part(split_part(media_url, '?', 1), '#', 1)
                        LIKE '%/promo-images/' || stored_id::text
                   OR split_part(split_part(media_url, '?', 1), '#', 1)
