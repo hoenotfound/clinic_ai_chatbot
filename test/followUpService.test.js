@@ -234,6 +234,77 @@ test("sends the matching service-specific message for a later sequence step", as
   });
 });
 
+test("can infer one targeted service from a configured alias in recent conversation", async (t) => {
+  enableTool();
+  const originalAliases = clinicConfig.serviceAliases;
+  t.after(() => {
+    clinicConfig.serviceAliases = originalAliases;
+  });
+  clinicConfig.serviceAliases = [
+    { alias: "3D", officialService: "3D 小颜术" },
+  ];
+  clinicConfig.automatedFollowUp.additionalSteps = [
+    {
+      delayMinutes: 480,
+      message: "Second follow-up",
+      translations: {
+        en: "Second follow-up",
+        ms: "Susulan kedua",
+        zh: "第二次跟进",
+      },
+      imageUrl: "",
+      serviceOverrides: [
+        {
+          serviceName: "3D 小颜术",
+          message: "3D follow-up",
+          translations: {
+            en: "3D follow-up",
+            ms: "Susulan 3D",
+            zh: "想跟进一下刚才你了解的3D小颜术。",
+          },
+        },
+      ],
+    },
+  ];
+
+  let sentMessage = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 18,
+      whatsapp_number: "60188888888",
+      trigger_message_id: 94,
+      next_follow_up_step: 2,
+      treatment_interest: null,
+      recent_inbound_messages: ["3D适合双下巴吗？"],
+      trigger_message_content: "3D小颜术主要是针对脸部线条做调整。",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => ({
+    id: 95,
+    contact_id: 18,
+    content: input.content,
+    delivery_status: null,
+  });
+  whatsapp.sendMessage = async (number, message) => {
+    sentMessage = { number, message };
+    return { success: true, wamid: "wamid-95" };
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 18,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.deepEqual(sentMessage, {
+    number: "60188888888",
+    message: "想跟进一下刚才你了解的3D小颜术。",
+  });
+});
+
 test("falls back to the step default when service interest is not an exact match", async () => {
   enableTool();
   clinicConfig.automatedFollowUp.additionalSteps = [
