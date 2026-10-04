@@ -2077,7 +2077,7 @@ function ResultMediaSection({ config, onSaved, onError }) {
         <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)] sm:text-sm">
           Add approved result examples by service. After a successful price reply,
           the bot can send these after the promotion image. Automatic result media is suppressed
-          for 7 days after one of the configured examples is sent.
+          for 7 days after a send, then continues with the next configured example.
         </p>
       </div>
 
@@ -2201,8 +2201,8 @@ function ResultMediaSection({ config, onSaved, onError }) {
                         <option value={2}>2 examples</option>
                       </select>
                       <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">
-                        One is recommended. If several package graphics were already sent in the same turn,
-                        the bot skips automatic result media to avoid a message burst.
+                        One is recommended. Examples rotate in the order shown after each 7-day cooldown.
+                        If several package graphics were already sent in the same turn, the bot skips result media.
                       </p>
                     </div>
 
