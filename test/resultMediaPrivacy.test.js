@@ -10,6 +10,7 @@ function read(relativePath) {
 test("result-media uploads are private from the moment they are stored", () => {
   const route = read("src/routes/config.js");
   const repo = read("src/db/promoImagesRepo.js");
+  const migration = read("src/db/migrations/032_private_result_media.sql");
 
   assert.match(
     route,
@@ -20,8 +21,9 @@ test("result-media uploads are private from the moment they are stored", () => {
     route,
     /url:\s*`\/api\/config\/result-media\/image\/\$\{id\}`/
   );
+  assert.match(repo, /RESULT_MEDIA:\s*"result_media"/);
   assert.match(
-    repo,
+    migration,
     /purpose IN \('public_config', 'result_media'\)/
   );
 });
@@ -70,7 +72,10 @@ test("legacy result-media URLs are reclassified and normalized to the private pr
   const configRepo = read("src/db/configRepo.js");
   const migration = read("src/db/migrations/032_private_result_media.sql");
 
-  assert.match(configRepo, /promoImagesRepo\.markResultMedia\(resultImageIds\)/);
+  assert.match(
+    configRepo,
+    /promoImagesRepo\.markResultMedia\(resultImageIds, client\)/
+  );
   assert.match(
     configRepo,
     /\/api\/config\/result-media\/image\/\$\{id\}/
