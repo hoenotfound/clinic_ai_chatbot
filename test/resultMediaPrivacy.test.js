@@ -82,5 +82,6 @@ test("legacy result-media URLs are reclassified and normalized to the private pr
   );
   assert.match(migration, /ADD COLUMN IF NOT EXISTS purpose/);
   assert.match(migration, /SET purpose = 'result_media'/);
-  assert.match(migration, /data->'resultMedia'/);
+  assert.match(migration, /config->'resultMedia'/);
+  assert.match(migration, /FROM config_import_snapshots/);
 });
