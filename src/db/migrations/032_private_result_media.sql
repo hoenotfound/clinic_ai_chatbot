@@ -32,7 +32,7 @@ WITH result_media_urls AS (
 ),
 result_media_ids AS (
   SELECT DISTINCT
-    (regexp_match(image_url, '/promo-images/([0-9]+)(?:[/?#]|$)'))[1]::integer AS id
+    (regexp_match(image_url, '/promo-images/([0-9]+)([/?#]|$)'))[1]::integer AS id
   FROM result_media_urls
   WHERE image_url ~ '/promo-images/[0-9]+'
 )
