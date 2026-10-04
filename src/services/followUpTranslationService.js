@@ -8,7 +8,8 @@ const GEMINI_MODEL = process.env.FOLLOW_UP_TRANSLATION_GEMINI_MODEL || "gemini-3
 const CLAUDE_MODEL = "claude-sonnet-5";
 const LANGUAGE_KEYS = ["en", "ms", "zh"];
 const MAX_TRANSLATION_BATCH = 24;
-const PROVIDER_TRANSLATION_BATCH = 6;
+const MAX_PROVIDER_BATCH_MESSAGES = 3;
+const MAX_PROVIDER_BATCH_SOURCE_CHARS = 2400;
 
 function translationRules() {
   return [
@@ -43,6 +44,32 @@ Rules:
 
 Source messages:
 ${JSON.stringify(messages.map((message, index) => ({ index, message })))}`;
+}
+
+function chunkProviderMessages(messages) {
+  const chunks = [];
+  let current = [];
+  let currentChars = 0;
+
+  for (const message of messages) {
+    const messageChars = message.length;
+    const wouldExceedCount = current.length >= MAX_PROVIDER_BATCH_MESSAGES;
+    const wouldExceedChars =
+      current.length > 0 &&
+      currentChars + messageChars > MAX_PROVIDER_BATCH_SOURCE_CHARS;
+
+    if (wouldExceedCount || wouldExceedChars) {
+      chunks.push(current);
+      current = [];
+      currentChars = 0;
+    }
+
+    current.push(message);
+    currentChars += messageChars;
+  }
+
+  if (current.length) chunks.push(current);
+  return chunks;
 }
 
 function parseJsonObject(rawText) {
@@ -212,12 +239,7 @@ async function translateFollowUps(messages) {
   }
 
   const translated = [];
-  for (
-    let start = 0;
-    start < normalized.length;
-    start += PROVIDER_TRANSLATION_BATCH
-  ) {
-    const chunk = normalized.slice(start, start + PROVIDER_TRANSLATION_BATCH);
+  for (const chunk of chunkProviderMessages(normalized)) {
     if (provider === "gemini") {
       translated.push(...(await translateBatchWithGemini(chunk)));
       continue;
@@ -234,6 +256,9 @@ async function translateFollowUps(messages) {
 module.exports = {
   GEMINI_MODEL,
   MAX_TRANSLATION_BATCH,
+  MAX_PROVIDER_BATCH_MESSAGES,
+  MAX_PROVIDER_BATCH_SOURCE_CHARS,
+  chunkProviderMessages,
   parseTranslationBatch,
   parseTranslations,
   translateFollowUp,
