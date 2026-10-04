@@ -41,10 +41,15 @@ function promptContextText(value, maxLength = 1200) {
 function metaAdContextSection(metaAdContext) {
   if (!metaAdContext || typeof metaAdContext !== "object") return "";
 
+  const headline = promptContextText(metaAdContext.headline, 500);
+  const body = promptContextText(metaAdContext.body, 1200);
+  const adNameFallback = headline || body
+    ? null
+    : promptContextText(metaAdContext.adName, 240);
   const fields = [
-    ["Ad headline", promptContextText(metaAdContext.headline, 500)],
-    ["Ad body/caption", promptContextText(metaAdContext.body, 1200)],
-    ["Ad name fallback", promptContextText(metaAdContext.adName, 240)],
+    ["Ad headline", headline],
+    ["Ad body/caption", body],
+    ["Ad name fallback", adNameFallback],
   ].filter(([, value]) => Boolean(value));
 
   if (!fields.length) return "";
