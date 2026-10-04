@@ -49,6 +49,8 @@ export const api = {
   logout: () => request("/auth/logout", { method: "POST" }),
   me: () => request("/auth/me"),
   listConversations: () => request("/conversations"),
+  getConversationAttribution: (contactId) =>
+    request(`/conversations/${contactId}/attribution`),
   getMessages: (
     contactId,
     { includeMedia = false, limit = 50, beforeId = null, afterId = null } = {}
