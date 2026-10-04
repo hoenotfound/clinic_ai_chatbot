@@ -326,3 +326,57 @@ test("result media duplicate lookup fails open for invalid inputs without queryi
   );
   assert.equal(queried, false);
 });
+
+
+test("result media rotation history returns the most recently accepted configured URL", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /media_url = ANY\(\$2::text\[\]\)/);
+    assert.match(sql, /whatsapp_message_id IS NOT NULL/);
+    assert.match(sql, /delivery_status NOT IN \('failed', 'unknown'\)/);
+    assert.match(sql, /ORDER BY created_at DESC, id DESC/);
+    assert.deepEqual(params, [
+      42,
+      [
+        "https://example.test/result-1.jpg",
+        "https://example.test/result-2.jpg",
+      ],
+    ]);
+    return {
+      rows: [{ media_url: "https://example.test/result-2.jpg" }],
+    };
+  };
+
+  assert.equal(
+    await messagesRepo.getMostRecentlySentMediaUrl(
+      42,
+      [
+        "https://example.test/result-1.jpg",
+        "https://example.test/result-2.jpg",
+        "https://example.test/result-2.jpg",
+      ]
+    ),
+    "https://example.test/result-2.jpg"
+  );
+});
+
+test("result media rotation history fails closed without a contact or URLs", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  let queried = false;
+  pool.query = async () => {
+    queried = true;
+    return { rows: [] };
+  };
+
+  assert.equal(await messagesRepo.getMostRecentlySentMediaUrl(null, ["x"]), null);
+  assert.equal(await messagesRepo.getMostRecentlySentMediaUrl(42, []), null);
+  assert.equal(queried, false);
+});
