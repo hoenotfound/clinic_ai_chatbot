@@ -967,15 +967,22 @@ function ServiceOverridesEditor({
   services = [],
   onChange,
   stepLabel,
+  translating,
+  onTranslateMessage,
 }) {
+  const [expanded, setExpanded] = useState(false);
   const serviceNames = services
     .map((service) => String(service?.name || "").trim())
     .filter(Boolean);
+  const normalizedServices = new Set(
+    serviceNames.map((name) => name.toLocaleLowerCase())
+  );
   const selected = new Set(overrides.map((item) => item.serviceName));
   const available = serviceNames.filter((name) => !selected.has(name));
 
   function addOverride() {
     if (!available.length) return;
+    setExpanded(true);
     onChange([
       ...overrides,
       {
@@ -987,103 +994,161 @@ function ServiceOverridesEditor({
   }
 
   return (
-    <div className="mt-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <div className="mt-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]">
+      <button
+        type="button"
+        onClick={() => setExpanded((current) => !current)}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left"
+        aria-expanded={expanded}
+      >
         <div>
-          <p className="text-sm font-semibold">Target by service <span className="font-normal text-[var(--color-text-muted)]">Optional</span></p>
+          <p className="text-sm font-semibold">
+            Target by service
+            <span className="ml-2 font-normal text-[var(--color-text-muted)]">
+              Optional · {overrides.length} configured
+            </span>
+          </p>
           <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-            When the lead has one matching service interest, use this message instead of the default {stepLabel}.
+            Use a more relevant message when exactly one service interest is clear.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={addOverride}
-          disabled={!available.length}
-          className="shrink-0 rounded-xl border border-[var(--color-primary)]/25 bg-white px-3 py-2 text-xs font-semibold text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          + Add service message
-        </button>
-      </div>
+        <span className="shrink-0 text-xs font-semibold text-[var(--color-primary)]">
+          {expanded ? "Hide" : "Manage"}
+        </span>
+      </button>
 
-      {!serviceNames.length && (
-        <p className="mt-3 rounded-xl border border-dashed border-[var(--color-border)] bg-white px-3 py-2.5 text-xs text-[var(--color-text-muted)]">
-          Add services in Settings first. The default follow-up will still work for every lead.
-        </p>
-      )}
+      {expanded && (
+        <div className="border-t border-[var(--color-border)] p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs leading-5 text-[var(--color-text-muted)]">
+              If interest is unclear or multiple services are being compared, the default {stepLabel} is used.
+            </p>
+            <button
+              type="button"
+              onClick={addOverride}
+              disabled={!available.length}
+              className="shrink-0 rounded-xl border border-[var(--color-primary)]/25 bg-white px-3 py-2 text-xs font-semibold text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              + Add service message
+            </button>
+          </div>
 
-      {overrides.length > 0 && (
-        <div className="mt-4 space-y-3">
-          {overrides.map((item, index) => {
-            const usedByOthers = new Set(
-              overrides
-                .filter((_, otherIndex) => otherIndex !== index)
-                .map((override) => override.serviceName)
-            );
-            const choices = [
-              item.serviceName,
-              ...serviceNames.filter((name) => name !== item.serviceName),
-            ].filter((name, choiceIndex, all) => name && all.indexOf(name) === choiceIndex);
+          {!serviceNames.length && (
+            <p className="mt-3 rounded-xl border border-dashed border-[var(--color-border)] bg-white px-3 py-2.5 text-xs text-[var(--color-text-muted)]">
+              Add services in Settings first. The default follow-up will still work for every lead.
+            </p>
+          )}
 
-            return (
-              <div key={`${item.serviceName || "service"}-${index}`} className="rounded-xl border border-[var(--color-border)] bg-white p-3.5">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <select
-                    value={item.serviceName}
-                    onChange={(event) => {
-                      const next = overrides.map((override, overrideIndex) =>
-                        overrideIndex === index
-                          ? { ...override, serviceName: event.target.value }
-                          : override
-                      );
-                      onChange(next);
-                    }}
-                    className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
-                  >
-                    {choices.map((name) => (
-                      <option key={name} value={name} disabled={usedByOthers.has(name)}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onChange(overrides.filter((_, overrideIndex) => overrideIndex !== index))
-                    }
-                    className="self-start px-1 py-2 text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)] sm:self-auto"
-                  >
-                    Remove
-                  </button>
-                </div>
-                <div className="mt-3 flex items-center justify-between gap-3">
-                  <label className="text-xs font-semibold">Targeted message</label>
-                  <span className="text-[10px] text-[var(--color-text-muted)]">{item.message.length}/1000</span>
-                </div>
-                <textarea
-                  rows="3"
-                  maxLength="1000"
-                  value={item.message}
-                  onChange={(event) => {
-                    const next = overrides.map((override, overrideIndex) =>
-                      overrideIndex === index
-                        ? {
-                            ...override,
-                            message: event.target.value,
-                            translations: { en: "", ms: "", zh: "" },
-                          }
-                        : override
-                    );
-                    onChange(next);
-                  }}
-                  placeholder="Write a more relevant follow-up for customers interested in this service."
-                  className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
-                />
-                <p className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
-                  English, BM and Chinese versions are generated automatically when you save.
-                </p>
-              </div>
-            );
-          })}
+          {overrides.length > 0 && (
+            <div className="mt-4 space-y-3">
+              {overrides.map((item, index) => {
+                const usedByOthers = new Set(
+                  overrides
+                    .filter((_, otherIndex) => otherIndex !== index)
+                    .map((override) => override.serviceName)
+                );
+                const choices = [
+                  item.serviceName,
+                  ...serviceNames.filter((name) => name !== item.serviceName),
+                ].filter((name, choiceIndex, all) => name && all.indexOf(name) === choiceIndex);
+                const stale = !normalizedServices.has(
+                  String(item.serviceName || "").trim().toLocaleLowerCase()
+                );
+
+                return (
+                  <div key={`${item.serviceName || "service"}-${index}`} className="rounded-xl border border-[var(--color-border)] bg-white p-3.5">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <select
+                        value={item.serviceName}
+                        onChange={(event) => {
+                          const next = overrides.map((override, overrideIndex) =>
+                            overrideIndex === index
+                              ? { ...override, serviceName: event.target.value }
+                              : override
+                          );
+                          onChange(next);
+                        }}
+                        className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
+                      >
+                        {choices.map((name) => (
+                          <option key={name} value={name} disabled={usedByOthers.has(name)}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onChange(overrides.filter((_, overrideIndex) => overrideIndex !== index))
+                        }
+                        className="self-start px-1 py-2 text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)] sm:self-auto"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    {stale && (
+                      <p className="mt-2 text-[10px] font-semibold text-[var(--color-danger)]">
+                        This service no longer exists. Choose a current service or remove this targeted message.
+                      </p>
+                    )}
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <label className="text-xs font-semibold">Targeted message</label>
+                      <span className="text-[10px] text-[var(--color-text-muted)]">{item.message.length}/1000</span>
+                    </div>
+                    <textarea
+                      rows="3"
+                      maxLength="1000"
+                      value={item.message}
+                      onChange={(event) => {
+                        const next = overrides.map((override, overrideIndex) =>
+                          overrideIndex === index
+                            ? {
+                                ...override,
+                                message: event.target.value,
+                                translations: { en: "", ms: "", zh: "" },
+                              }
+                            : override
+                        );
+                        onChange(next);
+                      }}
+                      placeholder="Write a more relevant follow-up for customers interested in this service."
+                      className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+                    />
+                    <TranslationDetails
+                      sourceMessage={item.message}
+                      translations={item.translations}
+                      translating={translating}
+                      onTranslate={onTranslateMessage}
+                      onReplace={(translations) =>
+                        onChange(
+                          overrides.map((override, overrideIndex) =>
+                            overrideIndex === index
+                              ? { ...override, translations }
+                              : override
+                          )
+                        )
+                      }
+                      onChange={(languageKey, value) =>
+                        onChange(
+                          overrides.map((override, overrideIndex) =>
+                            overrideIndex === index
+                              ? {
+                                  ...override,
+                                  translations: {
+                                    ...override.translations,
+                                    [languageKey]: value,
+                                  },
+                                }
+                              : override
+                          )
+                        )
+                      }
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
