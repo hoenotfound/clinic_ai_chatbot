@@ -740,6 +740,143 @@ export default function Tools() {
   );
 }
 
+function nextSequenceDelay(previousDelay) {
+  const previous = Number(previousDelay);
+  const preferred = [480, 1200, 1320, 1380].find(
+    (minutes) => minutes > previous
+  );
+  if (preferred) return preferred;
+  return previous < 1380 ? Math.min(1380, previous + 5) : null;
+}
+
+function ServiceOverridesEditor({
+  overrides = [],
+  services = [],
+  onChange,
+  stepLabel,
+}) {
+  const serviceNames = services
+    .map((service) => String(service?.name || "").trim())
+    .filter(Boolean);
+  const selected = new Set(overrides.map((item) => item.serviceName));
+  const available = serviceNames.filter((name) => !selected.has(name));
+
+  function addOverride() {
+    if (!available.length) return;
+    onChange([
+      ...overrides,
+      {
+        serviceName: available[0],
+        message: "",
+        translations: { en: "", ms: "", zh: "" },
+      },
+    ]);
+  }
+
+  return (
+    <div className="mt-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold">Target by service <span className="font-normal text-[var(--color-text-muted)]">Optional</span></p>
+          <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+            When the lead has one matching service interest, use this message instead of the default {stepLabel}.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={addOverride}
+          disabled={!available.length}
+          className="shrink-0 rounded-xl border border-[var(--color-primary)]/25 bg-white px-3 py-2 text-xs font-semibold text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          + Add service message
+        </button>
+      </div>
+
+      {!serviceNames.length && (
+        <p className="mt-3 rounded-xl border border-dashed border-[var(--color-border)] bg-white px-3 py-2.5 text-xs text-[var(--color-text-muted)]">
+          Add services in Settings first. The default follow-up will still work for every lead.
+        </p>
+      )}
+
+      {overrides.length > 0 && (
+        <div className="mt-4 space-y-3">
+          {overrides.map((item, index) => {
+            const usedByOthers = new Set(
+              overrides
+                .filter((_, otherIndex) => otherIndex !== index)
+                .map((override) => override.serviceName)
+            );
+            const choices = [
+              item.serviceName,
+              ...serviceNames.filter((name) => name !== item.serviceName),
+            ].filter((name, choiceIndex, all) => name && all.indexOf(name) === choiceIndex);
+
+            return (
+              <div key={`${item.serviceName || "service"}-${index}`} className="rounded-xl border border-[var(--color-border)] bg-white p-3.5">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <select
+                    value={item.serviceName}
+                    onChange={(event) => {
+                      const next = overrides.map((override, overrideIndex) =>
+                        overrideIndex === index
+                          ? { ...override, serviceName: event.target.value }
+                          : override
+                      );
+                      onChange(next);
+                    }}
+                    className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
+                  >
+                    {choices.map((name) => (
+                      <option key={name} value={name} disabled={usedByOthers.has(name)}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onChange(overrides.filter((_, overrideIndex) => overrideIndex !== index))
+                    }
+                    className="self-start px-1 py-2 text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)] sm:self-auto"
+                  >
+                    Remove
+                  </button>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <label className="text-xs font-semibold">Targeted message</label>
+                  <span className="text-[10px] text-[var(--color-text-muted)]">{item.message.length}/1000</span>
+                </div>
+                <textarea
+                  rows="3"
+                  maxLength="1000"
+                  value={item.message}
+                  onChange={(event) => {
+                    const next = overrides.map((override, overrideIndex) =>
+                      overrideIndex === index
+                        ? {
+                            ...override,
+                            message: event.target.value,
+                            translations: { en: "", ms: "", zh: "" },
+                          }
+                        : override
+                    );
+                    onChange(next);
+                  }}
+                  placeholder="Write a more relevant follow-up for customers interested in this service."
+                  className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+                />
+                <p className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                  English, BM and Chinese versions are generated automatically when you save.
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FollowUpTool({
   form,
   setForm,
@@ -756,6 +893,7 @@ function FollowUpTool({
   uploadingImage,
   saving,
   delayDescription,
+  services,
   imageInputRef,
   onSourceMessageChange,
   onTranslationChange,
@@ -765,10 +903,26 @@ function FollowUpTool({
   toasts,
   dismissToast,
 }) {
+  const allSteps = [
+    { delayMinutes: form.delayMinutes, message: form.message },
+    ...(form.additionalSteps || []),
+  ];
+  const lastDelay = allSteps[allSteps.length - 1]?.delayMinutes;
+  const suggestedNextDelay = nextSequenceDelay(lastDelay);
+
+  function updateAdditionalStep(index, patch) {
+    setForm((current) => ({
+      ...current,
+      additionalSteps: current.additionalSteps.map((step, stepIndex) =>
+        stepIndex === index ? { ...step, ...patch } : step
+      ),
+    }));
+  }
+
   return (
     <ToolShell
       title="Automated follow-up"
-      description="Send one helpful reminder when a customer has not replied to your last message."
+      description="Send a short sequence when a customer goes quiet, with optional service-specific messages."
       enabled={form.enabled}
       savedEnabled={savedEnabled}
       hasUnsavedChanges={hasUnsavedChanges}
@@ -783,10 +937,10 @@ function FollowUpTool({
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
         <div className="space-y-5">
           <Card>
-            <SectionHeading number="1" title="Choose when it sends" description="Set the wait time and which outgoing messages should start the timer." />
+            <SectionHeading number="1" title="Choose when it starts" description="The sequence is timed from the latest normal AI or staff reply." />
             <div className="mt-6 grid gap-6 xl:grid-cols-2">
               <div>
-                <label htmlFor="follow-up-delay" className="text-sm font-semibold">Wait before following up</label>
+                <label htmlFor="follow-up-delay" className="text-sm font-semibold">Follow-up 1 sends after</label>
                 <div className="mt-2 flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)]">
                   <input
                     id="follow-up-delay"
@@ -816,18 +970,18 @@ function FollowUpTool({
               </div>
 
               <fieldset>
-                <legend className="text-sm font-semibold">Start the timer after</legend>
+                <legend className="text-sm font-semibold">Start the sequence after</legend>
                 <div className="mt-2 space-y-2">
                   <Choice
                     checked={form.triggerMode === "all"}
                     label="Any outgoing message"
-                    description="Messages sent by the AI or clinic staff can start the timer."
+                    description="Messages sent by the AI or clinic staff can start the sequence."
                     onChange={() => setForm((current) => ({ ...current, triggerMode: "all" }))}
                   />
                   <Choice
                     checked={form.triggerMode === "staff"}
                     label="Staff messages only"
-                    description="AI replies will not start a follow-up timer."
+                    description="AI replies will not start a follow-up sequence."
                     onChange={() => setForm((current) => ({ ...current, triggerMode: "staff" }))}
                   />
                 </div>
@@ -836,9 +990,9 @@ function FollowUpTool({
           </Card>
 
           <Card>
-            <SectionHeading number="2" title="Write the message" description="Write the main message. Language versions are generated automatically when you save." />
+            <SectionHeading number="2" title="Follow-up 1 message" description="This is the fallback message for every service unless you add a targeted version." />
             <div className="mt-6 flex items-center justify-between gap-3">
-              <label htmlFor="follow-up-message" className="text-sm font-semibold">Follow-up message</label>
+              <label htmlFor="follow-up-message" className="text-sm font-semibold">Default message</label>
               <span className="text-xs text-[var(--color-text-muted)]">{form.message.length}/1000</span>
             </div>
             <textarea
@@ -916,10 +1070,145 @@ function FollowUpTool({
                 </div>
               )}
             </div>
+
+            <ServiceOverridesEditor
+              overrides={form.serviceOverrides}
+              services={services}
+              stepLabel="Follow-up 1"
+              onChange={(serviceOverrides) =>
+                setForm((current) => ({ ...current, serviceOverrides }))
+              }
+            />
           </Card>
 
           <Card>
-            <SectionHeading number="3" title="Add a graphic" description="Optional. The selected customer-language version is used as the image caption." />
+            <SectionHeading
+              number="3"
+              title="Follow-up sequence"
+              description="Add up to two more messages. Times are cumulative from the original outgoing reply, not from the previous follow-up."
+            />
+
+            {form.additionalSteps.length > 0 ? (
+              <div className="mt-5 space-y-4">
+                {form.additionalSteps.map((step, index) => (
+                  <div key={index} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 sm:p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-bold">Follow-up {index + 2}</p>
+                        <p className="mt-1 text-xs text-[var(--color-text-muted)]">Stops automatically if the customer replies first.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setForm((current) => ({
+                            ...current,
+                            additionalSteps: current.additionalSteps.filter(
+                              (_, stepIndex) => stepIndex !== index
+                            ),
+                          }))
+                        }
+                        className="text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
+                      >
+                        Remove
+                      </button>
+                    </div>
+
+                    <div className="mt-4 grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
+                      <div>
+                        <label className="text-xs font-semibold">Send after</label>
+                        <div className="mt-1.5 flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-white">
+                          <input
+                            type="number"
+                            min="5"
+                            max="1380"
+                            step="1"
+                            value={step.delayMinutes}
+                            onChange={(event) =>
+                              updateAdditionalStep(index, {
+                                delayMinutes: event.target.value,
+                              })
+                            }
+                            className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm outline-none"
+                          />
+                          <span className="border-l border-[var(--color-border)] px-2.5 py-2.5 text-[10px] text-[var(--color-text-muted)]">min</span>
+                        </div>
+                        <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                          {formatDelay(Number(step.delayMinutes))} after the original reply
+                        </p>
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between gap-3">
+                          <label className="text-xs font-semibold">Default message</label>
+                          <span className="text-[10px] text-[var(--color-text-muted)]">{step.message.length}/1000</span>
+                        </div>
+                        <textarea
+                          rows="3"
+                          maxLength="1000"
+                          value={step.message}
+                          onChange={(event) =>
+                            updateAdditionalStep(index, {
+                              message: event.target.value,
+                              translations: { en: "", ms: "", zh: "" },
+                            })
+                          }
+                          placeholder="Write the next follow-up message."
+                          className="mt-1.5 w-full resize-y rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)]"
+                        />
+                        <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">Language versions are generated when you save.</p>
+                      </div>
+                    </div>
+
+                    {step.imageUrl && (
+                      <p className="mt-3 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2 text-[10px] text-[var(--color-text-muted)]">
+                        This step has a saved graphic from imported configuration. It will remain attached.
+                      </p>
+                    )}
+
+                    <ServiceOverridesEditor
+                      overrides={step.serviceOverrides}
+                      services={services}
+                      stepLabel={`Follow-up ${index + 2}`}
+                      onChange={(serviceOverrides) =>
+                        updateAdditionalStep(index, { serviceOverrides })
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-5 rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-6 text-center">
+                <p className="text-sm font-semibold">Only Follow-up 1 is active</p>
+                <p className="mt-1 text-xs text-[var(--color-text-muted)]">Add another step if you want to re-engage customers who stay silent.</p>
+              </div>
+            )}
+
+            <button
+              type="button"
+              disabled={form.additionalSteps.length >= 2 || suggestedNextDelay === null}
+              onClick={() => {
+                if (suggestedNextDelay === null) return;
+                setForm((current) => ({
+                  ...current,
+                  additionalSteps: [
+                    ...current.additionalSteps,
+                    {
+                      delayMinutes: suggestedNextDelay,
+                      message: "",
+                      translations: { en: "", ms: "", zh: "" },
+                      imageUrl: "",
+                      serviceOverrides: [],
+                    },
+                  ],
+                }));
+              }}
+              className="mt-4 rounded-xl border border-[var(--color-primary)]/25 bg-white px-4 py-2.5 text-xs font-semibold text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              + Add follow-up
+            </button>
+          </Card>
+
+          <Card>
+            <SectionHeading number="4" title="Add a graphic to Follow-up 1" description="Optional. The selected customer-language version is used as the image caption." />
             <input ref={imageInputRef} type="file" accept="image/jpeg,image/png" onChange={onImagePicked} className="hidden" />
             {form.imageUrl ? (
               <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]">
@@ -950,7 +1239,7 @@ function FollowUpTool({
         <aside className="space-y-5 2xl:sticky 2xl:top-6 2xl:self-start">
           <Card>
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Preview</p>
-            <h2 className="mt-1 font-display text-sm font-bold">Customer message</h2>
+            <h2 className="mt-1 font-display text-sm font-bold">Follow-up 1</h2>
             <div className="inbox-thread-bg mt-4 min-h-48 rounded-2xl border border-[var(--color-border)] p-4">
               <div className="ml-auto max-w-[94%] overflow-hidden rounded-2xl rounded-br-md bg-[var(--color-primary)] text-white shadow-sm">
                 {form.imageUrl && <img src={form.imageUrl} alt="" className="max-h-56 w-full object-cover" />}
@@ -965,13 +1254,28 @@ function FollowUpTool({
               </div>
             </div>
           </Card>
+
+          <Card>
+            <h2 className="font-display text-sm font-bold">Sequence</h2>
+            <div className="mt-4 space-y-2">
+              {allSteps.map((step, index) => (
+                <div key={index} className="flex items-center justify-between gap-3 rounded-xl bg-[var(--color-bg)] px-3 py-2.5">
+                  <span className="text-xs font-semibold">Follow-up {index + 1}</span>
+                  <span className="text-xs text-[var(--color-text-muted)]">{formatDelay(Number(step.delayMinutes))}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+
           <Card>
             <h2 className="font-display text-sm font-bold">Before it sends</h2>
             <ul className="mt-4 space-y-3">
-              <Rule text="A customer reply cancels the timer immediately." />
-              <Rule text="Each timer sends only one automated follow-up." />
+              <Rule text="Any customer reply stops all remaining follow-ups in that sequence." />
+              <Rule text="A newer normal AI or staff reply starts a fresh sequence from that message." />
+              <Rule text="A targeted message is used only when the lead interest clearly matches one configured service; otherwise the default message is used." />
               <Rule text="WhatsApp, Messenger, and Instagram follow-ups only send inside the permitted reply window. WhatsApp opt-outs remain a hard stop." />
-              <Rule text="Saving does not add timers to older conversations." />
+              <Rule text="A failed or unconfirmed follow-up blocks later steps for staff review instead of continuing blindly." />
+              <Rule text="Saving does not add follow-ups to older conversations." />
             </ul>
           </Card>
         </aside>
