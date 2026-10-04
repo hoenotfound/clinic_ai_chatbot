@@ -281,6 +281,54 @@ async function wasPromoRecentlySent(
   );
 }
 
+async function wasMediaRecentlySentWithExecutor(
+  executor,
+  contactId,
+  imageUrl,
+  withinHours = 168
+) {
+  const hours = Number(withinHours);
+  if (
+    !executor ||
+    typeof executor.query !== "function" ||
+    !imageUrl ||
+    !Number.isSafeInteger(hours) ||
+    hours < 1
+  ) {
+    return false;
+  }
+
+  const result = await executor.query(
+    `SELECT 1
+     FROM messages
+     WHERE contact_id = $1
+       AND role = 'assistant'
+       AND media_url = $2
+       AND whatsapp_message_id IS NOT NULL
+       AND created_at >= NOW() - ($3::integer * INTERVAL '1 hour')
+       AND (
+         delivery_status IS NULL
+         OR delivery_status NOT IN ('failed', 'unknown')
+       )
+     LIMIT 1`,
+    [contactId, imageUrl, hours]
+  );
+  return result.rowCount > 0;
+}
+
+async function wasMediaRecentlySent(
+  contactId,
+  imageUrl,
+  withinHours = 168
+) {
+  return wasMediaRecentlySentWithExecutor(
+    pool,
+    contactId,
+    imageUrl,
+    withinHours
+  );
+}
+
 /**
  * Lightweight portal page. Initial/before pages fetch one extra row so the
  * UI knows whether a "Load older messages" button is needed without a second
@@ -712,6 +760,8 @@ module.exports = {
   getMessagesForContact,
   wasPromoRecentlySent,
   wasPromoRecentlySentWithExecutor,
+  wasMediaRecentlySent,
+  wasMediaRecentlySentWithExecutor,
   getMessagePageForContact,
   getMessageMediaReferenceForContact,
   getMessageMediaForContact,
