@@ -455,6 +455,122 @@ async function saveIfStillEligible({
   return result.rows[0] || null;
 }
 
+async function isClaimStillEligible({ messageId, contactId }) {
+  const numericMessageId = Number(messageId);
+  const numericContactId = Number(contactId);
+  if (
+    !Number.isInteger(numericMessageId) ||
+    numericMessageId <= 0 ||
+    !Number.isInteger(numericContactId) ||
+    numericContactId <= 0
+  ) {
+    return false;
+  }
+
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     ), claim AS (
+       SELECT
+         m.id,
+         m.contact_id,
+         m.created_at,
+         m.delivery_status,
+         m.whatsapp_message_id
+       FROM messages m, conversation_lock
+       WHERE m.id = $2
+         AND m.contact_id = $1
+         AND m.role = 'assistant'
+         AND m.is_automated_follow_up = true
+         AND m.automated_follow_up_for_message_id IS NOT NULL
+       LIMIT 1
+     )
+     SELECT EXISTS (
+       SELECT 1
+       FROM claim
+       JOIN contacts c ON c.id = claim.contact_id
+       LEFT JOIN LATERAL (
+         SELECT
+           l.id,
+           l.is_closed,
+           l.appointment_status,
+           s.stage_type,
+           s.system_key
+         FROM leads l
+         LEFT JOIN pipeline_stages s ON s.id = l.stage_id
+         WHERE l.contact_id = c.id
+         ORDER BY l.created_at DESC, l.id DESC
+         LIMIT 1
+       ) latest_lead ON true
+       WHERE c.needs_attention = false
+         AND claim.delivery_status IS NULL
+         AND claim.whatsapp_message_id IS NULL
+         AND (
+           latest_lead.id IS NULL
+           OR (
+             latest_lead.is_closed = false
+             AND COALESCE(latest_lead.stage_type, 'open') = 'open'
+             AND (
+               COALESCE(latest_lead.appointment_status, 'none') IN ('reschedule', 'cancelled')
+               OR (
+                 COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
+                 AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+               )
+             )
+           )
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM messages newer
+           WHERE newer.contact_id = claim.contact_id
+             AND (newer.created_at, newer.id) > (claim.created_at, claim.id)
+             AND (
+               newer.role = 'user'
+               OR (
+                 newer.role = 'assistant'
+                 AND newer.is_automated_follow_up = false
+               )
+             )
+         )
+     ) AS eligible`,
+    [numericContactId, numericMessageId]
+  );
+
+  return result.rows[0]?.eligible === true;
+}
+
+async function discardUnsentClaim({ messageId, contactId }) {
+  const numericMessageId = Number(messageId);
+  const numericContactId = Number(contactId);
+  if (
+    !Number.isInteger(numericMessageId) ||
+    numericMessageId <= 0 ||
+    !Number.isInteger(numericContactId) ||
+    numericContactId <= 0
+  ) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     )
+     DELETE FROM messages
+     WHERE id = $2
+       AND contact_id = $1
+       AND role = 'assistant'
+       AND is_automated_follow_up = true
+       AND automated_follow_up_for_message_id IS NOT NULL
+       AND delivery_status IS NULL
+       AND whatsapp_message_id IS NULL
+       AND EXISTS (SELECT 1 FROM conversation_lock)
+     RETURNING ${FOLLOW_UP_MESSAGE_COLUMNS}`,
+    [numericContactId, numericMessageId]
+  );
+
+  return result.rows[0] || null;
+}
+
 /**
  * Facebook Messenger and Instagram send text and linked images as separate
  * Meta messages. Companion image rows do not participate in sequence progress
@@ -514,6 +630,8 @@ module.exports = {
   getNextCandidateDueAt,
   getNextStaleClaimDueAt,
   saveIfStillEligible,
+  isClaimStillEligible,
+  discardUnsentClaim,
   saveSocialImageCompanion,
   markStaleClaimsUnconfirmed,
 };
