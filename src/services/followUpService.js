@@ -429,16 +429,17 @@ async function sendCandidate(candidate) {
 
   if (step.messageMode === "ai") {
     try {
-      const conversation = await followUpRepo.getAiFollowUpContext({
+      const aiContext = await followUpRepo.getAiFollowUpContext({
         contactId: candidate.contact_id,
       });
       const aiDecision = await followUpAiService.generatePersonalizedFollowUp({
-        conversation,
+        conversation: aiContext.messages,
         stepNumber: stepIndex,
-        treatmentInterest: candidate.treatment_interest,
-        stageName: candidate.stage_name,
-        branchName: candidate.branch_name,
-        appointmentStatus: candidate.appointment_status,
+        treatmentInterest:
+          aiContext.lead?.treatment_interest || candidate.treatment_interest,
+        stageName: aiContext.lead?.stage_name,
+        branchName: aiContext.lead?.branch_name,
+        appointmentStatus: aiContext.lead?.appointment_status,
         instruction: step.aiInstruction,
         channel: candidate.channel || "whatsapp",
       });
