@@ -111,3 +111,19 @@ test("urgent safety handling bypasses model generation and first-message intro c
     /fallbackHandoffReply\([\s\S]*?\{ urgent: true \}/
   );
 });
+
+
+test("optional result media exceptions stay isolated from the main AI handoff path", () => {
+  const resultStart = serverSource.indexOf("// Result examples are optional social proof");
+  const localCatch = serverSource.indexOf("} catch (resultMediaErr)", resultStart);
+  const globalCatch = serverSource.indexOf("} catch (err)", localCatch);
+
+  assert.ok(resultStart >= 0, "optional result media block should exist");
+  assert.ok(localCatch > resultStart, "result media should have its own exception boundary");
+  assert.ok(globalCatch > localCatch, "local result-media catch must run before the main inbound catch");
+
+  const isolatedBlock = serverSource.slice(resultStart, globalCatch);
+  assert.match(isolatedBlock, /getMostRecentlySentMediaUrl/);
+  assert.match(isolatedBlock, /setDeliveryStatusById\([\s\S]*?"unknown"/);
+  assert.doesNotMatch(isolatedBlock, /pauseAiForHumanHandoff/);
+});
