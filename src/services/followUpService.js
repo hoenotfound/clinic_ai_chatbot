@@ -633,6 +633,13 @@ realtimeEvents.subscribe("conversation_changed", () => {
   wakeAutomatedFollowUps(0);
 });
 
+// Pipeline changes can make a previously booked lead eligible again
+// (cancelled/reschedule) or make a pending follow-up ineligible (booked/visited).
+// Recalculate immediately instead of waiting for an unrelated chat event.
+realtimeEvents.subscribe("pipeline_changed", () => {
+  wakeAutomatedFollowUps(0);
+});
+
 realtimeEvents.subscribe("config_changed", (payload) => {
   if (payload?.keys?.includes("automatedFollowUp")) wakeAutomatedFollowUps(0);
 });
