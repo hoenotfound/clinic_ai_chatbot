@@ -929,6 +929,8 @@ async function processIncomingMessage(
     // hand an otherwise healthy conversation to Staff mode.
     if (automaticPromoMediaSent <= 1) {
       let pendingResultMessage = null;
+      let pendingResultSend = null;
+      let pendingResultError = null;
       try {
         const resultBundle = await resolveResultMediaForReply({
           priceQuery,
@@ -990,10 +992,12 @@ async function processIncomingMessage(
                   : {}),
               }
             );
+            pendingResultSend = resultSend;
 
             if (resultSend.cancelled) {
               await messagesRepo.deleteUnsentAssistantMessage(savedResult.id);
               pendingResultMessage = null;
+              pendingResultSend = null;
               return { wasFirstMessage, keywordReason };
             }
 
@@ -1009,6 +1013,7 @@ async function processIncomingMessage(
               resultSend,
               resultSend.error || channelMessaging.rejectedError(contact.channel)
             );
+            pendingResultError = resultError;
             await persistSendOutcome(
               savedResult,
               resultSend,
@@ -1016,6 +1021,8 @@ async function processIncomingMessage(
               contact.channel || "whatsapp"
             );
             pendingResultMessage = null;
+            pendingResultSend = null;
+            pendingResultError = null;
 
             if (!resultSend.success) {
               console.warn(
@@ -1035,9 +1042,43 @@ async function processIncomingMessage(
           resultMediaErr
         );
 
-        // If the row was created but an exception interrupted the provider
-        // flow before a normal outcome was persisted, keep it visible as an
-        // unconfirmed send rather than leaving a healthy-looking ghost row.
+        // If the provider returned an outcome but persisting it threw, retry
+        // that idempotent persistence first. This preserves a known provider ID
+        // instead of accidentally downgrading an accepted send to "unknown".
+        if (pendingResultMessage?.id && pendingResultSend) {
+          try {
+            await persistSendOutcome(
+              pendingResultMessage,
+              pendingResultSend,
+              pendingResultError ||
+                deliveryErrorForSend(
+                  pendingResultSend,
+                  pendingResultSend.error ||
+                    channelMessaging.rejectedError(contact.channel)
+                ),
+              contact.channel || "whatsapp"
+            );
+
+            if (!pendingResultSend.success) {
+              await contactsRepo.setDeliveryAttention(
+                contact.id,
+                `Delivery failed: ${publicDeliveryError(
+                  pendingResultError || pendingResultSend.error
+                )}`
+              );
+            }
+            pendingResultMessage = null;
+          } catch (recoveryErr) {
+            console.error(
+              `Failed to recover result media delivery state for message ${pendingResultMessage.id}:`,
+              recoveryErr
+            );
+          }
+        }
+
+        // If no provider outcome was available, or persistence is still
+        // unavailable, keep the row visible as unconfirmed. This changes only
+        // message delivery state and never changes the conversation owner.
         if (pendingResultMessage?.id) {
           try {
             const unknown = await messagesRepo.setDeliveryStatusById(
