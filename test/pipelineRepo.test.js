@@ -47,7 +47,10 @@ test("creates one open lead with an atomic partial-conflict claim", async (t) =>
   assert.equal(queries[0].sql, "BEGIN");
   assert.equal(queries.at(-1).sql, "COMMIT");
   assert.equal(released, true);
-  assert.deepEqual(published, [{ event: "pipeline_changed", payload: { leadId: 41 } }]);
+  assert.deepEqual(published, [{
+    event: "pipeline_changed",
+    payload: { leadId: 41, contactId: 7 },
+  }]);
 });
 
 test("the first new message initializes a staff-created journey boundary", async (t) => {
@@ -84,7 +87,10 @@ test("the first new message initializes a staff-created journey boundary", async
   assert.match(update.sql, /SELECT MIN\(m\.id\) FROM messages m/);
   assert.match(update.sql, /m\.created_at >= l\.created_at/);
   assert.deepEqual(update.params, [42, 77]);
-  assert.deepEqual(published, [{ event: "pipeline_changed", payload: { leadId: 42 } }]);
+  assert.deepEqual(published, [{
+    event: "pipeline_changed",
+    payload: { leadId: 42, contactId: 7 },
+  }]);
 });
 
 test("a concurrent lead claim still keeps the earliest inbound message", async (t) => {
@@ -126,7 +132,10 @@ test("a concurrent lead claim still keeps the earliest inbound message", async (
   assert.equal(result.boundaryInitialized, true);
   assert.equal(result.lead.started_message_id, 101);
   assert.deepEqual(boundaryParams, [43, 101]);
-  assert.deepEqual(published, [{ event: "pipeline_changed", payload: { leadId: 43 } }]);
+  assert.deepEqual(published, [{
+    event: "pipeline_changed",
+    payload: { leadId: 43, contactId: 7 },
+  }]);
 });
 
 test("backfill ignores contacts that already have any recorded journey", async (t) => {
