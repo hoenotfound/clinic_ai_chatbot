@@ -981,7 +981,9 @@ test("Meta Ads lead preview opens the correct attributed Inbox conversation", as
   await page.getByRole("button", { name: "Open chat" }).click();
 
   await expect(page).toHaveURL(/\/inbox\?contact=42$/);
-  await expect(page.getByText("Alice Meta Lead", { exact: true }).first()).toBeVisible();
+  const conversationThread = page.locator('section[aria-label="Conversation with Alice Meta Lead"]');
+  await expect(conversationThread).toBeVisible();
+  await expect(conversationThread.getByRole("heading", { name: "Alice Meta Lead", exact: true })).toBeVisible();
   await expect(page.getByText("Meta Ads", { exact: true })).toBeVisible();
   await expect(page.getByText("Pelvis Creative", { exact: true })).toBeVisible();
   const viewport = page.viewportSize();
