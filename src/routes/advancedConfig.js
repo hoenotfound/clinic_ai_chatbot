@@ -503,6 +503,19 @@ function editableConfigView(config = {}) {
   );
 }
 
+function restorableEditableConfigView(config = {}) {
+  const editable = editableConfigView(config);
+
+  // Snapshots created before result media existed cannot contain this key.
+  // Treat its absence as the old feature-off state so restoring an older
+  // snapshot really rolls automatic Before/After delivery back as expected.
+  if (!Object.prototype.hasOwnProperty.call(config, "resultMedia")) {
+    editable.resultMedia = [];
+  }
+
+  return editable;
+}
+
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
   if (value && typeof value === "object") {
@@ -706,7 +719,7 @@ router.post("/restore/:id", async (req, res) => {
 
     const current = configRepo.getConfig();
     const prepared = prepareAdvancedConfigPayload(
-      editableConfigView(snapshot.editable_config || {}),
+      restorableEditableConfigView(snapshot.editable_config || {}),
       current
     );
     if (!prepared.ok) return validationFailure(res, prepared);
@@ -750,6 +763,7 @@ module.exports.EDITABLE_KEYS = EDITABLE_KEYS;
 module.exports.buildConfigDiff = buildConfigDiff;
 module.exports.configFingerprint = configFingerprint;
 module.exports.editableConfigView = editableConfigView;
+module.exports.restorableEditableConfigView = restorableEditableConfigView;
 module.exports.projectedConfig = projectedConfig;
 module.exports.prepareAdvancedConfigPayload = prepareAdvancedConfigPayload;
 module.exports.validateAdvancedConfigState = validateAdvancedConfigState;
