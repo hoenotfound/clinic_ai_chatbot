@@ -35,17 +35,25 @@ test(
     await client.query(`
       CREATE TABLE contacts (
         id INTEGER PRIMARY KEY,
-        channel TEXT NOT NULL
+        channel TEXT NOT NULL,
+        name TEXT,
+        whatsapp_profile_name TEXT,
+        whatsapp_number TEXT,
+        photo_url TEXT
       );
 
       CREATE TABLE pipeline_stages (
         id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
         stage_type TEXT NOT NULL,
         system_key TEXT
       );
 
       CREATE TABLE messages (
         id INTEGER PRIMARY KEY,
+        contact_id INTEGER,
+        role TEXT,
+        content TEXT,
         created_at TIMESTAMPTZ NOT NULL
       );
 
@@ -56,6 +64,9 @@ test(
         temperature TEXT,
         estimated_value NUMERIC,
         appointment_status TEXT,
+        treatment_interest TEXT,
+        owner_username TEXT,
+        branch_name TEXT,
         created_at TIMESTAMPTZ NOT NULL,
         started_message_id INTEGER
       );
@@ -78,29 +89,32 @@ test(
         ad_name TEXT
       );
 
-      INSERT INTO contacts (id, channel) VALUES
-        (1, 'whatsapp'),
-        (2, 'whatsapp'),
-        (3, 'instagram');
+      INSERT INTO contacts (
+        id, channel, name, whatsapp_profile_name, whatsapp_number
+      ) VALUES
+        (1, 'whatsapp', 'Alice', 'Alice WA', '60111111111'),
+        (2, 'whatsapp', NULL, 'May', '60222222222'),
+        (3, 'instagram', 'Jess', 'Jess IG', 'instagram:3');
 
-      INSERT INTO pipeline_stages (id, stage_type, system_key) VALUES
-        (1, 'open', 'new'),
-        (2, 'open', 'appointment_set'),
-        (3, 'open', 'visited'),
-        (4, 'won', 'won');
+      INSERT INTO pipeline_stages (id, name, stage_type, system_key) VALUES
+        (1, 'New', 'open', 'new'),
+        (2, 'Appointment', 'open', 'appointment_set'),
+        (3, 'Visited', 'open', 'visited'),
+        (4, 'Won', 'won', 'won');
 
-      INSERT INTO messages (id, created_at) VALUES
-        (101, '2026-10-02T02:00:00Z'),
-        (102, '2026-10-03T02:00:00Z'),
-        (103, '2026-10-03T03:00:00Z');
+      INSERT INTO messages (id, contact_id, role, content, created_at) VALUES
+        (101, 1, 'user', 'Interested in pelvis treatment', '2026-10-02T02:00:00Z'),
+        (102, 2, 'user', 'How much is the package?', '2026-10-03T02:00:00Z'),
+        (103, 3, 'user', 'Can I book?', '2026-10-03T03:00:00Z');
 
       INSERT INTO leads (
         id, contact_id, stage_id, temperature, estimated_value,
-        appointment_status, created_at, started_message_id
+        appointment_status, treatment_interest, owner_username, branch_name,
+        created_at, started_message_id
       ) VALUES
-        (1, 1, 4, 'hot', 500, 'visited', '2026-10-02T02:00:00Z', 101),
-        (2, 2, 1, 'warm', 800, NULL, '2026-10-03T02:00:00Z', 102),
-        (3, 3, 4, 'warm', 300, NULL, '2026-10-03T03:00:00Z', 103);
+        (1, 1, 4, 'hot', 500, 'visited', 'Pelvis', 'caden', 'PJ', '2026-10-02T02:00:00Z', 101),
+        (2, 2, 1, 'warm', 800, NULL, 'Pelvis', NULL, 'PJ', '2026-10-03T02:00:00Z', 102),
+        (3, 3, 4, 'warm', 300, NULL, '3D', 'staff', 'PJ', '2026-10-03T03:00:00Z', 103);
 
       INSERT INTO lead_stage_history (lead_id, to_stage_id, created_at) VALUES
         (1, 2, '2026-10-02T04:00:00Z'),
@@ -195,6 +209,7 @@ test(
     assert.equal(campaign.summary.won, 2);
     assert.equal(campaign.summary.estimatedWonValue, 800);
     assert.equal(campaign.summary.costPerLead, null);
+    assert.equal(campaign.summary.costPerHotLead, null);
     assert.equal(campaign.summary.costPerWon, null);
     assert.equal(campaign.summary.estimatedRoas, null);
     assert.equal(campaign.money.estimatedRoasAvailable, false);
@@ -226,6 +241,13 @@ test(
     assert.equal(campaign.accounts[0].dataThrough, "2026-10-03");
     assert.equal(campaign.accounts[0].coverageFrom, "2026-10-01");
     assert.equal(campaign.accounts[0].coverageThrough, "2026-10-04");
+    assert.equal(campaign.leadPreview.total, 3);
+    assert.equal(campaign.leadPreview.leads.length, 3);
+    assert.equal(campaign.leadPreview.leads[0].name, "Jess");
+    assert.equal(campaign.leadPreview.leads[0].lastMessage, "Can I book?");
+    assert.equal(campaign.leadPreview.leads[0].campaignName, null);
+    assert.equal(campaign.leadPreview.leads[1].name, "May");
+    assert.equal(campaign.leadPreview.leads[1].campaignName, "Old Campaign Name");
 
     const indexResult = await client.query(
       `SELECT indexname
