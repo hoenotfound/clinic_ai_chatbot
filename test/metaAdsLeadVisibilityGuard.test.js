@@ -15,6 +15,10 @@ const inboxSource = fs.readFileSync(
   path.join(__dirname, "../portal-frontend/src/pages/Inbox.jsx"),
   "utf8"
 );
+const pipelineRepoSource = fs.readFileSync(
+  path.join(__dirname, "../src/db/pipelineRepo.js"),
+  "utf8"
+);
 
 test("Meta Ads lead details stay lazy and respect lead access", () => {
   const leadRouteAt = pipelineSource.indexOf(
@@ -31,8 +35,10 @@ test("Meta Ads lead details stay lazy and respect lead access", () => {
 
   const leadRoute = pipelineSource.slice(leadRouteAt, aggregateRouteAt);
   assert.match(leadRoute, /getAccessibleLeadIds\(req\.user\)/);
+  assert.match(leadRoute, /getAccessibleContactIds\(req\.user\)/);
   assert.match(leadRoute, /getMetaAdsLeadPreview/);
   assert.match(leadRoute, /accessibleLeadIds/);
+  assert.match(leadRoute, /accessibleContactIds/);
 
   const aggregateStart = analyticsSource.indexOf(
     "async function getMetaAdsAnalytics("
@@ -65,5 +71,21 @@ test("Inbox acquisition context renders outside the actions menu", () => {
   assert.ok(
     menuCloseAt > menuAt && menuCloseAt < contextAt,
     "conversation actions menu should close before acquisition context renders"
+  );
+});
+
+
+test("new lead journeys publish their contact id so Inbox acquisition can refresh", () => {
+  assert.match(
+    pipelineRepoSource,
+    /realtimeEvents\.publish\("pipeline_changed", \{[\s\S]*contactId/
+  );
+  assert.match(
+    pipelineRepoSource,
+    /publishPipelineChange\(outcome\.lead\.id, \{[\s\S]*contactId: outcome\.lead\.contact_id/
+  );
+  assert.match(
+    inboxSource,
+    /payload\.contactId[\s\S]*targetsSelectedContact[\s\S]*refreshAcquisitionContext\(currentId\)/
   );
 });
