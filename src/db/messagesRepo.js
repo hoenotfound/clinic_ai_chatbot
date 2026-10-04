@@ -281,6 +281,17 @@ async function wasPromoRecentlySent(
   );
 }
 
+function storedConfigMediaId(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const match = raw.match(
+    /\/(?:promo-images|api\/config\/result-media\/image)\/(\d+)(?:[/?#]|$)/
+  );
+  if (!match) return null;
+  const id = Number(match[1]);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
 async function wasMediaRecentlySentWithExecutor(
   executor,
   contactId,
@@ -298,21 +309,44 @@ async function wasMediaRecentlySentWithExecutor(
     return false;
   }
 
-  const result = await executor.query(
-    `SELECT 1
-     FROM messages
-     WHERE contact_id = $1
-       AND role = 'assistant'
-       AND media_url = $2
-       AND whatsapp_message_id IS NOT NULL
-       AND created_at >= NOW() - ($3::integer * INTERVAL '1 hour')
-       AND (
-         delivery_status IS NULL
-         OR delivery_status NOT IN ('failed', 'unknown')
-       )
-     LIMIT 1`,
-    [contactId, imageUrl, hours]
-  );
+  const storedId = storedConfigMediaId(imageUrl);
+  const result = storedId
+    ? await executor.query(
+        `SELECT 1
+         FROM messages
+         WHERE contact_id = $1
+           AND role = 'assistant'
+           AND (
+             media_url = $2
+             OR split_part(split_part(media_url, '?', 1), '#', 1)
+                  LIKE '%/promo-images/' || $4::integer::text
+             OR split_part(split_part(media_url, '?', 1), '#', 1)
+                  LIKE '%/api/config/result-media/image/' || $4::integer::text
+           )
+           AND whatsapp_message_id IS NOT NULL
+           AND created_at >= NOW() - ($3::integer * INTERVAL '1 hour')
+           AND (
+             delivery_status IS NULL
+             OR delivery_status NOT IN ('failed', 'unknown')
+           )
+         LIMIT 1`,
+        [contactId, imageUrl, hours, storedId]
+      )
+    : await executor.query(
+        `SELECT 1
+         FROM messages
+         WHERE contact_id = $1
+           AND role = 'assistant'
+           AND media_url = $2
+           AND whatsapp_message_id IS NOT NULL
+           AND created_at >= NOW() - ($3::integer * INTERVAL '1 hour')
+           AND (
+             delivery_status IS NULL
+             OR delivery_status NOT IN ('failed', 'unknown')
+           )
+         LIMIT 1`,
+        [contactId, imageUrl, hours]
+      );
   return result.rowCount > 0;
 }
 
@@ -350,21 +384,50 @@ async function getMostRecentlySentMediaUrlWithExecutor(
     return null;
   }
 
-  const result = await executor.query(
-    `SELECT media_url
-     FROM messages
-     WHERE contact_id = $1
-       AND role = 'assistant'
-       AND media_url = ANY($2::text[])
-       AND whatsapp_message_id IS NOT NULL
-       AND (
-         delivery_status IS NULL
-         OR delivery_status NOT IN ('failed', 'unknown')
-       )
-     ORDER BY created_at DESC, id DESC
-     LIMIT 1`,
-    [contactId, urls]
-  );
+  const storedIds = [...new Set(
+    urls.map(storedConfigMediaId).filter((id) => id !== null)
+  )];
+  const result = storedIds.length > 0
+    ? await executor.query(
+        `SELECT media_url
+         FROM messages
+         WHERE contact_id = $1
+           AND role = 'assistant'
+           AND (
+             media_url = ANY($2::text[])
+             OR EXISTS (
+               SELECT 1
+               FROM unnest($3::int[]) AS stored_id
+               WHERE split_part(split_part(media_url, '?', 1), '#', 1)
+                       LIKE '%/promo-images/' || stored_id::text
+                  OR split_part(split_part(media_url, '?', 1), '#', 1)
+                       LIKE '%/api/config/result-media/image/' || stored_id::text
+             )
+           )
+           AND whatsapp_message_id IS NOT NULL
+           AND (
+             delivery_status IS NULL
+             OR delivery_status NOT IN ('failed', 'unknown')
+           )
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`,
+        [contactId, urls, storedIds]
+      )
+    : await executor.query(
+        `SELECT media_url
+         FROM messages
+         WHERE contact_id = $1
+           AND role = 'assistant'
+           AND media_url = ANY($2::text[])
+           AND whatsapp_message_id IS NOT NULL
+           AND (
+             delivery_status IS NULL
+             OR delivery_status NOT IN ('failed', 'unknown')
+           )
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`,
+        [contactId, urls]
+      );
   return result.rows[0]?.media_url || null;
 }
 
