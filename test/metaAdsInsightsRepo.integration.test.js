@@ -67,6 +67,12 @@ test(
         "utf8"
       )
     );
+    await client.query(
+      fs.readFileSync(
+        path.join(__dirname, "..", "src/db/migrations/028_meta_ads_analytics_read_indexes.sql"),
+        "utf8"
+      )
+    );
 
     const database = {
       query(text, params) {
