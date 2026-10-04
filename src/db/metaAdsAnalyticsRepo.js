@@ -317,8 +317,8 @@ function enrichPerformance(row, { allowValueRoas = false } = {}) {
 
 async function getMetaAdsLeadPreview(
   filters,
-  profile,
-  query,
+  profile = getAnalyticsPipelineProfile(),
+  query = analyticsQuery,
   { accessibleLeadIds = null, limit = 25 } = {}
 ) {
   const result = await query(
