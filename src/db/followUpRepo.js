@@ -69,7 +69,7 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
          latest_inbound.created_at AS latest_inbound_created_at,
          COALESCE(progress.max_step, 0) + 1 AS next_follow_up_step,
          COALESCE(progress.has_blocking_claim, false) AS has_blocking_claim,
-         open_lead.treatment_interest,
+         latest_lead.treatment_interest,
          ARRAY(
            SELECT recent_inbound.content
            FROM messages recent_inbound
@@ -129,13 +129,19 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
            AND follow_up.automated_follow_up_for_message_id = anchor.id
        ) progress ON true
        LEFT JOIN LATERAL (
-         SELECT treatment_interest
-         FROM leads
-         WHERE contact_id = c.id
-           AND is_closed = false
-         ORDER BY created_at DESC, id DESC
+         SELECT
+           l.id,
+           l.treatment_interest,
+           l.is_closed,
+           l.appointment_status,
+           s.stage_type,
+           s.system_key
+         FROM leads l
+         LEFT JOIN pipeline_stages s ON s.id = l.stage_id
+         WHERE l.contact_id = c.id
+         ORDER BY l.created_at DESC, l.id DESC
          LIMIT 1
-       ) open_lead ON true
+       ) latest_lead ON true
        WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
          AND c.needs_attention = false
          AND (
@@ -143,6 +149,15 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
            OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
          )
          AND anchor.delivery_status IS DISTINCT FROM 'failed'
+         AND (
+           latest_lead.id IS NULL
+           OR (
+             latest_lead.is_closed = false
+             AND COALESCE(latest_lead.stage_type, 'open') = 'open'
+             AND COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
+             AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+           )
+         )
          AND anchor.created_at >= $3::timestamptz
          AND latest_inbound.created_at > now() - interval '23 hours 50 minutes'
          AND ($2 = 'all' OR anchor.sent_by_username IS NOT NULL)
@@ -225,6 +240,19 @@ async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt })
            AND follow_up.is_automated_follow_up = true
            AND follow_up.automated_follow_up_for_message_id = anchor.id
        ) progress ON true
+       LEFT JOIN LATERAL (
+         SELECT
+           l.id,
+           l.is_closed,
+           l.appointment_status,
+           s.stage_type,
+           s.system_key
+         FROM leads l
+         LEFT JOIN pipeline_stages s ON s.id = l.stage_id
+         WHERE l.contact_id = c.id
+         ORDER BY l.created_at DESC, l.id DESC
+         LIMIT 1
+       ) latest_lead ON true
        WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
          AND c.needs_attention = false
          AND (
@@ -232,6 +260,15 @@ async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt })
            OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
          )
          AND anchor.delivery_status IS DISTINCT FROM 'failed'
+         AND (
+           latest_lead.id IS NULL
+           OR (
+             latest_lead.is_closed = false
+             AND COALESCE(latest_lead.stage_type, 'open') = 'open'
+             AND COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
+             AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+           )
+         )
          AND anchor.created_at >= $3::timestamptz
          AND latest_inbound.created_at > now() - interval '23 hours 50 minutes'
          AND ($2 = 'all' OR anchor.sent_by_username IS NOT NULL)
@@ -344,6 +381,19 @@ async function saveIfStillEligible({
      )
      SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2, $5, $6
      FROM anchor, latest_inbound, progress, contacts c
+     LEFT JOIN LATERAL (
+       SELECT
+         l.id,
+         l.is_closed,
+         l.appointment_status,
+         s.stage_type,
+         s.system_key
+       FROM leads l
+       LEFT JOIN pipeline_stages s ON s.id = l.stage_id
+       WHERE l.contact_id = c.id
+       ORDER BY l.created_at DESC, l.id DESC
+       LIMIT 1
+     ) latest_lead ON true
      WHERE c.id = $1
        AND c.needs_attention = false
        AND c.channel IN ('whatsapp', 'facebook', 'instagram')
@@ -353,6 +403,15 @@ async function saveIfStillEligible({
        )
        AND anchor.id = $2
        AND anchor.delivery_status IS DISTINCT FROM 'failed'
+       AND (
+         latest_lead.id IS NULL
+         OR (
+           latest_lead.is_closed = false
+           AND COALESCE(latest_lead.stage_type, 'open') = 'open'
+           AND COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
+           AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+         )
+       )
        AND anchor.created_at >= $9::timestamptz
        AND anchor.created_at <= now() - ($7::integer * interval '1 minute')
        AND anchor.created_at + ($7::integer * interval '1 minute')
