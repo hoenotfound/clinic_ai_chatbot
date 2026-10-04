@@ -274,3 +274,55 @@ test("promo duplicate lookup fails open for invalid lookup inputs without queryi
   );
   assert.equal(queried, false);
 });
+
+
+test("result media duplicate lookup matches accepted media by URL for seven-day suppression", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /contact_id = \$1/);
+    assert.match(sql, /media_url = \$2/);
+    assert.doesNotMatch(sql, /content = \$3/);
+    assert.match(sql, /whatsapp_message_id IS NOT NULL/);
+    assert.match(sql, /delivery_status NOT IN \('failed', 'unknown'\)/);
+    assert.match(sql, /\$3::integer \* INTERVAL '1 hour'/);
+    assert.deepEqual(params, [42, "https://example.test/result.jpg", 168]);
+    return { rowCount: 1, rows: [] };
+  };
+
+  assert.equal(
+    await messagesRepo.wasMediaRecentlySent(
+      42,
+      "https://example.test/result.jpg",
+      168
+    ),
+    true
+  );
+});
+
+test("result media duplicate lookup fails open for invalid inputs without querying Postgres", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  let queried = false;
+  pool.query = async () => {
+    queried = true;
+    return { rowCount: 0, rows: [] };
+  };
+
+  assert.equal(await messagesRepo.wasMediaRecentlySent(42, "", 168), false);
+  assert.equal(
+    await messagesRepo.wasMediaRecentlySent(
+      42,
+      "https://example.test/result.jpg",
+      0
+    ),
+    false
+  );
+  assert.equal(queried, false);
+});
