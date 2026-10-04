@@ -13,7 +13,8 @@ test("automated follow-up inserts take the conversation scoring lock and re-chec
 
   pool.query = async (sql, params) => {
     assert.match(sql, new RegExp(`pg_advisory_xact_lock\\(${CONVERSATION_LOCK_NAMESPACE}`));
-    assert.match(sql, /FROM messages, conversation_lock/);
+    assert.match(sql, /FROM messages inbound, conversation_lock/);
+    assert.match(sql, /FROM messages outbound, latest_inbound/);
     assert.match(sql, /c\.needs_attention = false/);
     assert.deepEqual(params, [
       7,
