@@ -17,6 +17,8 @@ const DEFAULT_FOLLOW_UP = {
     zh: "嗨！想跟进一下，看看您是否还需要任何帮助。方便时回复我们就可以了 😊",
   },
   imageUrl: "",
+  serviceOverrides: [],
+  additionalSteps: [],
 };
 
 const DEFAULT_LEAD_SCORING = {
@@ -59,20 +61,67 @@ function hasCompleteTranslations(value) {
   return !!value && FOLLOW_UP_LANGUAGES.every(({ key }) => value[key]?.trim());
 }
 
+function normalizeTranslations(value, fallbackMessage, useDefaultTranslations = false) {
+  if (hasCompleteTranslations(value)) {
+    return Object.fromEntries(
+      FOLLOW_UP_LANGUAGES.map(({ key }) => [key, value[key]])
+    );
+  }
+  return {
+    en: fallbackMessage,
+    ms: useDefaultTranslations ? DEFAULT_FOLLOW_UP.translations.ms : "",
+    zh: useDefaultTranslations ? DEFAULT_FOLLOW_UP.translations.zh : "",
+  };
+}
+
+function normalizeServiceOverrides(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const serviceName = String(item?.serviceName || "").trim();
+      const message = String(item?.message || "").trim();
+      if (!serviceName || !message) return null;
+      return {
+        serviceName,
+        message,
+        translations: normalizeTranslations(item?.translations, message),
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeSequenceStep(value = {}) {
+  const message = String(value.message || "").trim();
+  return {
+    delayMinutes: Number(value.delayMinutes) || 120,
+    message,
+    translations: normalizeTranslations(value.translations, message),
+    imageUrl: value.imageUrl || "",
+    serviceOverrides: normalizeServiceOverrides(value.serviceOverrides),
+  };
+}
+
 function normalizeFollowUpSettings(value = {}) {
   const settings = { ...DEFAULT_FOLLOW_UP, ...value };
-  const hasSavedTranslations = hasCompleteTranslations(value.translations);
   const usesDefaultMessage = settings.message === DEFAULT_FOLLOW_UP.message;
+  const firstStep = {
+    delayMinutes: Number(settings.delayMinutes) || DEFAULT_FOLLOW_UP.delayMinutes,
+    message: settings.message || DEFAULT_FOLLOW_UP.message,
+    translations: normalizeTranslations(
+      value.translations,
+      settings.message || DEFAULT_FOLLOW_UP.message,
+      usesDefaultMessage
+    ),
+    imageUrl: settings.imageUrl || "",
+    serviceOverrides: normalizeServiceOverrides(value.serviceOverrides),
+  };
 
   return {
     ...settings,
-    translations: hasSavedTranslations
-      ? Object.fromEntries(FOLLOW_UP_LANGUAGES.map(({ key }) => [key, value.translations[key]]))
-      : {
-          en: settings.message || DEFAULT_FOLLOW_UP.message,
-          ms: usesDefaultMessage ? DEFAULT_FOLLOW_UP.translations.ms : "",
-          zh: usesDefaultMessage ? DEFAULT_FOLLOW_UP.translations.zh : "",
-        },
+    ...firstStep,
+    additionalSteps: Array.isArray(value.additionalSteps)
+      ? value.additionalSteps.slice(0, 2).map(normalizeSequenceStep)
+      : [],
   };
 }
 
@@ -80,11 +129,25 @@ function followUpFormFromSettings(value = {}) {
   const settings = normalizeFollowUpSettings(value);
   return {
     enabled: !!settings.enabled,
-    delayMinutes: Number(settings.delayMinutes) || DEFAULT_FOLLOW_UP.delayMinutes,
     triggerMode: settings.triggerMode === "staff" ? "staff" : "all",
-    message: settings.message || DEFAULT_FOLLOW_UP.message,
+    delayMinutes: settings.delayMinutes,
+    message: settings.message,
     translations: settings.translations,
-    imageUrl: settings.imageUrl || "",
+    imageUrl: settings.imageUrl,
+    serviceOverrides: settings.serviceOverrides,
+    additionalSteps: settings.additionalSteps,
+  };
+}
+
+function comparableFollowUp(value = {}) {
+  const settings = followUpFormFromSettings(value);
+  return {
+    ...settings,
+    delayMinutes: Number(settings.delayMinutes),
+    additionalSteps: settings.additionalSteps.map((step) => ({
+      ...step,
+      delayMinutes: Number(step.delayMinutes),
+    })),
   };
 }
 
@@ -212,12 +275,8 @@ export default function Tools() {
       (key) => key !== "activatedAt" && commentForm[key] !== savedCommentSettings[key]
     );
   const hasUnsavedChanges =
-    form.enabled !== savedEnabled ||
-    Number(form.delayMinutes) !== Number(savedSettings.delayMinutes) ||
-    form.triggerMode !== savedSettings.triggerMode ||
-    form.message !== savedSettings.message ||
-    FOLLOW_UP_LANGUAGES.some(({ key }) => form.translations[key] !== savedSettings.translations[key]) ||
-    form.imageUrl !== (savedSettings.imageUrl || "");
+    JSON.stringify(comparableFollowUp(form)) !==
+    JSON.stringify(comparableFollowUp(config?.automatedFollowUp));
   const translationsNeedRefresh =
     form.message.trim() !== translationsSource || !hasCompleteTranslations(form.translations);
   const translationReadyCount = FOLLOW_UP_LANGUAGES.filter(({ key }) => form.translations[key]?.trim()).length;
@@ -346,43 +405,142 @@ export default function Tools() {
     }
   }
 
+  function followUpValidationError() {
+    const steps = [
+      {
+        delayMinutes: form.delayMinutes,
+        message: form.message,
+        serviceOverrides: form.serviceOverrides,
+      },
+      ...(form.additionalSteps || []),
+    ];
+    if (steps.length > 3) return "You can configure up to 3 follow-ups.";
+
+    let previousDelay = 0;
+    for (let index = 0; index < steps.length; index += 1) {
+      const step = steps[index];
+      const delayMinutes = Number(step.delayMinutes);
+      const message = String(step.message || "").trim();
+      if (
+        !Number.isInteger(delayMinutes) ||
+        delayMinutes < 5 ||
+        delayMinutes > 1380
+      ) {
+        return `Follow-up ${index + 1} needs a delay between 5 minutes and 23 hours.`;
+      }
+      if (index > 0 && delayMinutes <= previousDelay) {
+        return `Follow-up ${index + 1} must be later than Follow-up ${index}.`;
+      }
+      if (!message) return `Add a message for Follow-up ${index + 1}.`;
+      if (message.length > 1000) {
+        return `Keep Follow-up ${index + 1} under 1,000 characters.`;
+      }
+
+      const seenServices = new Set();
+      for (const override of step.serviceOverrides || []) {
+        const serviceName = String(override?.serviceName || "").trim();
+        const targetedMessage = String(override?.message || "").trim();
+        if (!serviceName || !targetedMessage) {
+          return `Complete every targeted service message in Follow-up ${index + 1}.`;
+        }
+        if (targetedMessage.length > 1000) {
+          return `Keep targeted messages in Follow-up ${index + 1} under 1,000 characters.`;
+        }
+        const serviceKey = serviceName.toLocaleLowerCase();
+        if (seenServices.has(serviceKey)) {
+          return `${serviceName} is targeted more than once in Follow-up ${index + 1}.`;
+        }
+        seenServices.add(serviceKey);
+      }
+      previousDelay = delayMinutes;
+    }
+    return "";
+  }
+
+  async function prepareServiceOverridesForSave(overrides = []) {
+    const prepared = [];
+    for (const item of overrides) {
+      const serviceName = item.serviceName.trim();
+      const message = item.message.trim();
+      let translations = item.translations;
+      if (!hasCompleteTranslations(translations)) {
+        translations = await requestTranslations(message, {
+          announce: false,
+        });
+        if (!translations) {
+          throw new Error("Couldn't generate targeted language versions.");
+        }
+      }
+      prepared.push({ serviceName, message, translations });
+    }
+    return prepared;
+  }
+
+  async function prepareAdditionalStepsForSave(steps = []) {
+    const prepared = [];
+    for (const step of steps) {
+      const message = step.message.trim();
+      let translations = step.translations;
+      if (!hasCompleteTranslations(translations)) {
+        translations = await requestTranslations(message, {
+          announce: false,
+        });
+        if (!translations) {
+          throw new Error("Couldn't generate sequence language versions.");
+        }
+      }
+      prepared.push({
+        delayMinutes: Number(step.delayMinutes),
+        message,
+        translations,
+        imageUrl: step.imageUrl || "",
+        serviceOverrides: await prepareServiceOverridesForSave(
+          step.serviceOverrides || []
+        ),
+      });
+    }
+    return prepared;
+  }
+
   async function handleSave() {
+    const validationError = followUpValidationError();
+    if (validationError) {
+      showToast(validationError, "error");
+      return;
+    }
+
     const delayMinutes = Number(form.delayMinutes);
     const message = form.message.trim();
-    if (!Number.isInteger(delayMinutes) || delayMinutes < 5 || delayMinutes > 1380) {
-      showToast("Choose a delay between 5 minutes and 23 hours.", "error");
-      return;
-    }
-    if (!message) {
-      showToast("Add a follow-up message before saving.", "error");
-      return;
-    }
-    if (message.length > 1000) {
-      showToast("Keep the follow-up message under 1,000 characters.", "error");
-      return;
-    }
 
     setSaving(true);
     try {
       let translations = Object.fromEntries(
-        FOLLOW_UP_LANGUAGES.map(({ key }) => [key, form.translations[key]?.trim() || ""])
+        FOLLOW_UP_LANGUAGES.map(({ key }) => [
+          key,
+          form.translations[key]?.trim() || "",
+        ])
       );
 
       if (translationsNeedRefresh) {
         const generated = await requestTranslations(message, { announce: false });
         if (!generated) return;
 
-        // Preserve only language versions the user manually edited after the
-        // latest source-message change. Untouched/stale versions are refreshed
-        // from AI so manual fine-tuning is never silently overwritten.
         translations = Object.fromEntries(
           FOLLOW_UP_LANGUAGES.map(({ key }) => {
             const manualValue = form.translations[key]?.trim() || "";
-            const preserveManual = manualTranslationEdits.includes(key) && manualValue;
+            const preserveManual =
+              manualTranslationEdits.includes(key) && manualValue;
             return [key, preserveManual ? manualValue : generated[key]];
           })
         );
       }
+
+      const serviceOverrides = await prepareServiceOverridesForSave(
+        form.serviceOverrides || []
+      );
+      const additionalSteps = await prepareAdditionalStepsForSave(
+        form.additionalSteps || []
+      );
 
       const updated = await api.updateConfig({
         automatedFollowUp: {
@@ -392,6 +550,8 @@ export default function Tools() {
           message,
           translations,
           imageUrl: form.imageUrl,
+          serviceOverrides,
+          additionalSteps,
         },
       });
       const saved = followUpFormFromSettings(updated.automatedFollowUp);
@@ -399,7 +559,12 @@ export default function Tools() {
       setForm(saved);
       setTranslationsSource(saved.message);
       setManualTranslationEdits([]);
-      showToast(saved.enabled ? "Automated follow-up is active." : "Automated follow-up is paused.", "info");
+      showToast(
+        saved.enabled
+          ? `Automated follow-up sequence is active (${1 + saved.additionalSteps.length} step${saved.additionalSteps.length ? "s" : ""}).`
+          : "Automated follow-up is paused.",
+        "info"
+      );
     } catch (err) {
       showToast(err.message || "Couldn't save the follow-up tool.", "error");
     } finally {
@@ -531,6 +696,7 @@ export default function Tools() {
             uploadingImage={uploadingImage}
             saving={saving}
             delayDescription={delayDescription}
+            services={config.services || []}
             imageInputRef={imageInputRef}
             onSourceMessageChange={handleSourceMessageChange}
             onTranslationChange={handleTranslationChange}
@@ -584,6 +750,143 @@ export default function Tools() {
   );
 }
 
+function nextSequenceDelay(previousDelay) {
+  const previous = Number(previousDelay);
+  const preferred = [480, 1200, 1320, 1380].find(
+    (minutes) => minutes > previous
+  );
+  if (preferred) return preferred;
+  return previous < 1380 ? Math.min(1380, previous + 5) : null;
+}
+
+function ServiceOverridesEditor({
+  overrides = [],
+  services = [],
+  onChange,
+  stepLabel,
+}) {
+  const serviceNames = services
+    .map((service) => String(service?.name || "").trim())
+    .filter(Boolean);
+  const selected = new Set(overrides.map((item) => item.serviceName));
+  const available = serviceNames.filter((name) => !selected.has(name));
+
+  function addOverride() {
+    if (!available.length) return;
+    onChange([
+      ...overrides,
+      {
+        serviceName: available[0],
+        message: "",
+        translations: { en: "", ms: "", zh: "" },
+      },
+    ]);
+  }
+
+  return (
+    <div className="mt-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold">Target by service <span className="font-normal text-[var(--color-text-muted)]">Optional</span></p>
+          <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+            When the lead has one matching service interest, use this message instead of the default {stepLabel}.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={addOverride}
+          disabled={!available.length}
+          className="shrink-0 rounded-xl border border-[var(--color-primary)]/25 bg-white px-3 py-2 text-xs font-semibold text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          + Add service message
+        </button>
+      </div>
+
+      {!serviceNames.length && (
+        <p className="mt-3 rounded-xl border border-dashed border-[var(--color-border)] bg-white px-3 py-2.5 text-xs text-[var(--color-text-muted)]">
+          Add services in Settings first. The default follow-up will still work for every lead.
+        </p>
+      )}
+
+      {overrides.length > 0 && (
+        <div className="mt-4 space-y-3">
+          {overrides.map((item, index) => {
+            const usedByOthers = new Set(
+              overrides
+                .filter((_, otherIndex) => otherIndex !== index)
+                .map((override) => override.serviceName)
+            );
+            const choices = [
+              item.serviceName,
+              ...serviceNames.filter((name) => name !== item.serviceName),
+            ].filter((name, choiceIndex, all) => name && all.indexOf(name) === choiceIndex);
+
+            return (
+              <div key={`${item.serviceName || "service"}-${index}`} className="rounded-xl border border-[var(--color-border)] bg-white p-3.5">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <select
+                    value={item.serviceName}
+                    onChange={(event) => {
+                      const next = overrides.map((override, overrideIndex) =>
+                        overrideIndex === index
+                          ? { ...override, serviceName: event.target.value }
+                          : override
+                      );
+                      onChange(next);
+                    }}
+                    className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
+                  >
+                    {choices.map((name) => (
+                      <option key={name} value={name} disabled={usedByOthers.has(name)}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onChange(overrides.filter((_, overrideIndex) => overrideIndex !== index))
+                    }
+                    className="self-start px-1 py-2 text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)] sm:self-auto"
+                  >
+                    Remove
+                  </button>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <label className="text-xs font-semibold">Targeted message</label>
+                  <span className="text-[10px] text-[var(--color-text-muted)]">{item.message.length}/1000</span>
+                </div>
+                <textarea
+                  rows="3"
+                  maxLength="1000"
+                  value={item.message}
+                  onChange={(event) => {
+                    const next = overrides.map((override, overrideIndex) =>
+                      overrideIndex === index
+                        ? {
+                            ...override,
+                            message: event.target.value,
+                            translations: { en: "", ms: "", zh: "" },
+                          }
+                        : override
+                    );
+                    onChange(next);
+                  }}
+                  placeholder="Write a more relevant follow-up for customers interested in this service."
+                  className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+                />
+                <p className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                  English, BM and Chinese versions are generated automatically when you save.
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FollowUpTool({
   form,
   setForm,
@@ -600,6 +903,7 @@ function FollowUpTool({
   uploadingImage,
   saving,
   delayDescription,
+  services,
   imageInputRef,
   onSourceMessageChange,
   onTranslationChange,
@@ -609,10 +913,26 @@ function FollowUpTool({
   toasts,
   dismissToast,
 }) {
+  const allSteps = [
+    { delayMinutes: form.delayMinutes, message: form.message },
+    ...(form.additionalSteps || []),
+  ];
+  const lastDelay = allSteps[allSteps.length - 1]?.delayMinutes;
+  const suggestedNextDelay = nextSequenceDelay(lastDelay);
+
+  function updateAdditionalStep(index, patch) {
+    setForm((current) => ({
+      ...current,
+      additionalSteps: current.additionalSteps.map((step, stepIndex) =>
+        stepIndex === index ? { ...step, ...patch } : step
+      ),
+    }));
+  }
+
   return (
     <ToolShell
       title="Automated follow-up"
-      description="Send one helpful reminder when a customer has not replied to your last message."
+      description="Send a short sequence when a customer goes quiet, with optional service-specific messages."
       enabled={form.enabled}
       savedEnabled={savedEnabled}
       hasUnsavedChanges={hasUnsavedChanges}
@@ -627,10 +947,10 @@ function FollowUpTool({
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
         <div className="space-y-5">
           <Card>
-            <SectionHeading number="1" title="Choose when it sends" description="Set the wait time and which outgoing messages should start the timer." />
+            <SectionHeading number="1" title="Choose when it starts" description="The sequence is timed from the latest normal AI or staff reply." />
             <div className="mt-6 grid gap-6 xl:grid-cols-2">
               <div>
-                <label htmlFor="follow-up-delay" className="text-sm font-semibold">Wait before following up</label>
+                <label htmlFor="follow-up-delay" className="text-sm font-semibold">Follow-up 1 sends after</label>
                 <div className="mt-2 flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)]">
                   <input
                     id="follow-up-delay"
@@ -660,18 +980,18 @@ function FollowUpTool({
               </div>
 
               <fieldset>
-                <legend className="text-sm font-semibold">Start the timer after</legend>
+                <legend className="text-sm font-semibold">Start the sequence after</legend>
                 <div className="mt-2 space-y-2">
                   <Choice
                     checked={form.triggerMode === "all"}
                     label="Any outgoing message"
-                    description="Messages sent by the AI or clinic staff can start the timer."
+                    description="Messages sent by the AI or clinic staff can start the sequence."
                     onChange={() => setForm((current) => ({ ...current, triggerMode: "all" }))}
                   />
                   <Choice
                     checked={form.triggerMode === "staff"}
                     label="Staff messages only"
-                    description="AI replies will not start a follow-up timer."
+                    description="AI replies will not start a follow-up sequence."
                     onChange={() => setForm((current) => ({ ...current, triggerMode: "staff" }))}
                   />
                 </div>
@@ -680,9 +1000,9 @@ function FollowUpTool({
           </Card>
 
           <Card>
-            <SectionHeading number="2" title="Write the message" description="Write the main message. Language versions are generated automatically when you save." />
+            <SectionHeading number="2" title="Follow-up 1 message" description="This is the fallback message for every service unless you add a targeted version." />
             <div className="mt-6 flex items-center justify-between gap-3">
-              <label htmlFor="follow-up-message" className="text-sm font-semibold">Follow-up message</label>
+              <label htmlFor="follow-up-message" className="text-sm font-semibold">Default message</label>
               <span className="text-xs text-[var(--color-text-muted)]">{form.message.length}/1000</span>
             </div>
             <textarea
@@ -760,10 +1080,145 @@ function FollowUpTool({
                 </div>
               )}
             </div>
+
+            <ServiceOverridesEditor
+              overrides={form.serviceOverrides}
+              services={services}
+              stepLabel="Follow-up 1"
+              onChange={(serviceOverrides) =>
+                setForm((current) => ({ ...current, serviceOverrides }))
+              }
+            />
           </Card>
 
           <Card>
-            <SectionHeading number="3" title="Add a graphic" description="Optional. The selected customer-language version is used as the image caption." />
+            <SectionHeading
+              number="3"
+              title="Follow-up sequence"
+              description="Add up to two more messages. Times are cumulative from the original outgoing reply, not from the previous follow-up."
+            />
+
+            {form.additionalSteps.length > 0 ? (
+              <div className="mt-5 space-y-4">
+                {form.additionalSteps.map((step, index) => (
+                  <div key={index} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 sm:p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-bold">Follow-up {index + 2}</p>
+                        <p className="mt-1 text-xs text-[var(--color-text-muted)]">Stops automatically if the customer replies first.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setForm((current) => ({
+                            ...current,
+                            additionalSteps: current.additionalSteps.filter(
+                              (_, stepIndex) => stepIndex !== index
+                            ),
+                          }))
+                        }
+                        className="text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
+                      >
+                        Remove
+                      </button>
+                    </div>
+
+                    <div className="mt-4 grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
+                      <div>
+                        <label className="text-xs font-semibold">Send after</label>
+                        <div className="mt-1.5 flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-white">
+                          <input
+                            type="number"
+                            min="5"
+                            max="1380"
+                            step="1"
+                            value={step.delayMinutes}
+                            onChange={(event) =>
+                              updateAdditionalStep(index, {
+                                delayMinutes: event.target.value,
+                              })
+                            }
+                            className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm outline-none"
+                          />
+                          <span className="border-l border-[var(--color-border)] px-2.5 py-2.5 text-[10px] text-[var(--color-text-muted)]">min</span>
+                        </div>
+                        <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                          {formatDelay(Number(step.delayMinutes))} after the original reply
+                        </p>
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between gap-3">
+                          <label className="text-xs font-semibold">Default message</label>
+                          <span className="text-[10px] text-[var(--color-text-muted)]">{step.message.length}/1000</span>
+                        </div>
+                        <textarea
+                          rows="3"
+                          maxLength="1000"
+                          value={step.message}
+                          onChange={(event) =>
+                            updateAdditionalStep(index, {
+                              message: event.target.value,
+                              translations: { en: "", ms: "", zh: "" },
+                            })
+                          }
+                          placeholder="Write the next follow-up message."
+                          className="mt-1.5 w-full resize-y rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)]"
+                        />
+                        <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">Language versions are generated when you save.</p>
+                      </div>
+                    </div>
+
+                    {step.imageUrl && (
+                      <p className="mt-3 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2 text-[10px] text-[var(--color-text-muted)]">
+                        This step has a saved graphic from imported configuration. It will remain attached.
+                      </p>
+                    )}
+
+                    <ServiceOverridesEditor
+                      overrides={step.serviceOverrides}
+                      services={services}
+                      stepLabel={`Follow-up ${index + 2}`}
+                      onChange={(serviceOverrides) =>
+                        updateAdditionalStep(index, { serviceOverrides })
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-5 rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-6 text-center">
+                <p className="text-sm font-semibold">Only Follow-up 1 is active</p>
+                <p className="mt-1 text-xs text-[var(--color-text-muted)]">Add another step if you want to re-engage customers who stay silent.</p>
+              </div>
+            )}
+
+            <button
+              type="button"
+              disabled={form.additionalSteps.length >= 2 || suggestedNextDelay === null}
+              onClick={() => {
+                if (suggestedNextDelay === null) return;
+                setForm((current) => ({
+                  ...current,
+                  additionalSteps: [
+                    ...current.additionalSteps,
+                    {
+                      delayMinutes: suggestedNextDelay,
+                      message: "",
+                      translations: { en: "", ms: "", zh: "" },
+                      imageUrl: "",
+                      serviceOverrides: [],
+                    },
+                  ],
+                }));
+              }}
+              className="mt-4 rounded-xl border border-[var(--color-primary)]/25 bg-white px-4 py-2.5 text-xs font-semibold text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              + Add follow-up
+            </button>
+          </Card>
+
+          <Card>
+            <SectionHeading number="4" title="Add a graphic to Follow-up 1" description="Optional. The selected customer-language version is used as the image caption." />
             <input ref={imageInputRef} type="file" accept="image/jpeg,image/png" onChange={onImagePicked} className="hidden" />
             {form.imageUrl ? (
               <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]">
@@ -794,7 +1249,7 @@ function FollowUpTool({
         <aside className="space-y-5 2xl:sticky 2xl:top-6 2xl:self-start">
           <Card>
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Preview</p>
-            <h2 className="mt-1 font-display text-sm font-bold">Customer message</h2>
+            <h2 className="mt-1 font-display text-sm font-bold">Follow-up 1</h2>
             <div className="inbox-thread-bg mt-4 min-h-48 rounded-2xl border border-[var(--color-border)] p-4">
               <div className="ml-auto max-w-[94%] overflow-hidden rounded-2xl rounded-br-md bg-[var(--color-primary)] text-white shadow-sm">
                 {form.imageUrl && <img src={form.imageUrl} alt="" className="max-h-56 w-full object-cover" />}
@@ -809,13 +1264,28 @@ function FollowUpTool({
               </div>
             </div>
           </Card>
+
+          <Card>
+            <h2 className="font-display text-sm font-bold">Sequence</h2>
+            <div className="mt-4 space-y-2">
+              {allSteps.map((step, index) => (
+                <div key={index} className="flex items-center justify-between gap-3 rounded-xl bg-[var(--color-bg)] px-3 py-2.5">
+                  <span className="text-xs font-semibold">Follow-up {index + 1}</span>
+                  <span className="text-xs text-[var(--color-text-muted)]">{formatDelay(Number(step.delayMinutes))}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+
           <Card>
             <h2 className="font-display text-sm font-bold">Before it sends</h2>
             <ul className="mt-4 space-y-3">
-              <Rule text="A customer reply cancels the timer immediately." />
-              <Rule text="Each timer sends only one automated follow-up." />
+              <Rule text="Any customer reply stops all remaining follow-ups in that sequence." />
+              <Rule text="A newer normal AI or staff reply starts a fresh sequence from that message." />
+              <Rule text="A targeted message is used only when the lead interest clearly matches one configured service; otherwise the default message is used." />
               <Rule text="WhatsApp, Messenger, and Instagram follow-ups only send inside the permitted reply window. WhatsApp opt-outs remain a hard stop." />
-              <Rule text="Saving does not add timers to older conversations." />
+              <Rule text="A failed or unconfirmed follow-up blocks later steps for staff review instead of continuing blindly." />
+              <Rule text="Saving does not add follow-ups to older conversations." />
             </ul>
           </Card>
         </aside>

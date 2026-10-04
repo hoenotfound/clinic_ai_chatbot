@@ -349,6 +349,24 @@ async function mockPortalApi(
       });
     }
 
+    if (
+      path === "/api/config/automated-follow-up/translations" &&
+      method === "POST"
+    ) {
+      const { message = "" } = request.postDataJSON() || {};
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          translations: {
+            en: message,
+            ms: `BM: ${message}`,
+            zh: `中文：${message}`,
+          },
+        }),
+      });
+    }
+
     if (path === "/api/config") {
       const configResponse = businessConfig || {
           automatedFollowUp: {
@@ -632,6 +650,99 @@ test("protected routes send logged-out staff back to login", async ({ page }) =>
     await expect(page).toHaveURL(/\/login$/);
     await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
   }
+});
+
+test("Automated follow-up saves a multi-step service-targeted sequence", async ({ page }) => {
+  let savedPayload = null;
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      businessType: "tcm_clinic",
+      businessName: "Test TCM",
+      clinicName: "Test TCM",
+      services: [
+        { name: "Pelvis 骨盆调理", description: "", priceRange: "", duration: "" },
+        { name: "3D 小颜术", description: "", priceRange: "", duration: "" },
+      ],
+      serviceAliases: [],
+      automatedFollowUp: {
+        enabled: false,
+        delayMinutes: 120,
+        triggerMode: "all",
+        message: "Just checking in.",
+        translations: {
+          en: "Just checking in.",
+          ms: "Sekadar ingin membuat susulan.",
+          zh: "想跟进一下。",
+        },
+        imageUrl: "",
+        serviceOverrides: [],
+        additionalSteps: [],
+        activatedAt: null,
+      },
+      commentAutomation: {
+        enabled: false,
+        facebookEnabled: false,
+        instagramEnabled: false,
+        publicReplyEnabled: false,
+        privateReplyEnabled: false,
+        publicReplyStyle: "ai",
+        fixedPublicReply: "",
+        skipEmojiOnly: true,
+        skipNestedReplies: true,
+        activatedAt: null,
+      },
+      leadScoring: {
+        enabled: false,
+        inactivityMinutes: 10,
+        maxConversationMinutes: 60,
+        maxMessages: 40,
+        activatedAt: null,
+      },
+      leadDistribution: {
+        enabled: false,
+        mode: "round_robin",
+      },
+    },
+    onConfigUpdate: (payload) => {
+      savedPayload = payload;
+    },
+  });
+
+  await page.goto("/tools");
+  await expect(page.getByRole("heading", { name: "Automated follow-up" })).toBeVisible();
+
+  await page.getByRole("button", { name: "+ Add follow-up" }).click();
+  await page
+    .getByPlaceholder("Write the next follow-up message.")
+    .fill("Still deciding? I can help with the details.");
+
+  await page.getByRole("button", { name: "+ Add service message" }).last().click();
+  await page
+    .getByPlaceholder("Write a more relevant follow-up for customers interested in this service.")
+    .last()
+    .fill("For Pelvis 骨盆调理, I can help you understand which concern this suits.");
+
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => savedPayload).not.toBeNull();
+
+  expect(savedPayload.automatedFollowUp.additionalSteps).toHaveLength(1);
+  expect(savedPayload.automatedFollowUp.additionalSteps[0]).toMatchObject({
+    delayMinutes: 480,
+    message: "Still deciding? I can help with the details.",
+    serviceOverrides: [
+      {
+        serviceName: "Pelvis 骨盆调理",
+        message: "For Pelvis 骨盆调理, I can help you understand which concern this suits.",
+      },
+    ],
+  });
+  expect(
+    savedPayload.automatedFollowUp.additionalSteps[0].serviceOverrides[0]
+      .translations.zh
+  ).toContain("For Pelvis 骨盆调理");
+
+  await expectNoHorizontalPageOverflow(page);
 });
 
 test("staff can reach the main portal routes without page-level overflow", async ({ page }) => {

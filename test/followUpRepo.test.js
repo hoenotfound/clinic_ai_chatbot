@@ -20,10 +20,13 @@ test("automated follow-up inserts take the conversation scoring lock and re-chec
       55,
       "Still interested?",
       "",
+      1,
       120,
       "all",
       "2026-08-28T00:00:00.000Z",
     ]);
+    assert.match(sql, /automated_follow_up_step/);
+    assert.match(sql, /COALESCE\(progress\.max_step, 0\) \+ 1 = \$5/);
     return { rows: [] };
   };
 
@@ -49,8 +52,11 @@ test("automated follow-up discovery excludes conversations already waiting for s
   pool.query = async (sql, params) => {
     assert.match(sql, /FROM contacts c/);
     assert.match(sql, /c\.needs_attention = false/);
+    assert.match(sql, /previous_outbound/);
+    assert.match(sql, /recent_inbound\.id <= latest_inbound\.id/);
+    assert.match(sql, /recent_inbound\.id > previous_outbound\.id/);
     assert.deepEqual(params, [
-      120,
+      [120],
       "all",
       "2026-08-28T00:00:00.000Z",
       25,

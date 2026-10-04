@@ -164,6 +164,219 @@ test("uses the outgoing reply as a language signal when customer text is unclear
   });
 });
 
+test("sends the matching service-specific message for a later sequence step", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.additionalSteps = [
+    {
+      delayMinutes: 480,
+      message: "Second follow-up",
+      translations: {
+        en: "Second follow-up",
+        ms: "Susulan kedua",
+        zh: "第二次跟进",
+      },
+      imageUrl: "",
+      serviceOverrides: [
+        {
+          serviceName: "Pelvic Care",
+          message: "Pelvic care follow-up",
+          translations: {
+            en: "Pelvic care follow-up",
+            ms: "Susulan penjagaan pelvis",
+            zh: "骨盆调理跟进",
+          },
+        },
+      ],
+    },
+  ];
+
+  let discoveryInput = null;
+  let claimInput = null;
+  let sentMessage = null;
+  followUpRepo.findCandidates = async (input) => {
+    discoveryInput = input;
+    return [
+      {
+        contact_id: 16,
+        whatsapp_number: "60166666666",
+        trigger_message_id: 90,
+        next_follow_up_step: 2,
+        treatment_interest: "  Pelvic Care  ",
+        recent_inbound_messages: ["请问骨盆调理适合我吗？"],
+      },
+    ];
+  };
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 91, contact_id: 16, delivery_status: null };
+  };
+  whatsapp.sendMessage = async (number, message) => {
+    sentMessage = { number, message };
+    return { success: true, wamid: "wamid-91" };
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 16,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.deepEqual(discoveryInput.delayMinutes, [120, 480]);
+  assert.equal(claimInput.stepIndex, 2);
+  assert.equal(claimInput.delayMinutes, 480);
+  assert.equal(claimInput.content, "骨盆调理跟进");
+  assert.deepEqual(sentMessage, {
+    number: "60166666666",
+    message: "骨盆调理跟进",
+  });
+});
+
+test("can infer one targeted service from a configured alias in recent conversation", async (t) => {
+  enableTool();
+  const originalAliases = clinicConfig.serviceAliases;
+  t.after(() => {
+    clinicConfig.serviceAliases = originalAliases;
+  });
+  clinicConfig.serviceAliases = [
+    { alias: "3D", officialService: "3D 小颜术" },
+  ];
+  clinicConfig.automatedFollowUp.additionalSteps = [
+    {
+      delayMinutes: 480,
+      message: "Second follow-up",
+      translations: {
+        en: "Second follow-up",
+        ms: "Susulan kedua",
+        zh: "第二次跟进",
+      },
+      imageUrl: "",
+      serviceOverrides: [
+        {
+          serviceName: "3D 小颜术",
+          message: "3D follow-up",
+          translations: {
+            en: "3D follow-up",
+            ms: "Susulan 3D",
+            zh: "想跟进一下刚才你了解的3D小颜术。",
+          },
+        },
+      ],
+    },
+  ];
+
+  let sentMessage = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 18,
+      whatsapp_number: "60188888888",
+      trigger_message_id: 94,
+      next_follow_up_step: 2,
+      treatment_interest: null,
+      recent_inbound_messages: ["3D适合双下巴吗？"],
+      trigger_message_content: "3D小颜术主要是针对脸部线条做调整。",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => ({
+    id: 95,
+    contact_id: 18,
+    content: input.content,
+    delivery_status: null,
+  });
+  whatsapp.sendMessage = async (number, message) => {
+    sentMessage = { number, message };
+    return { success: true, wamid: "wamid-95" };
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 18,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.deepEqual(sentMessage, {
+    number: "60188888888",
+    message: "想跟进一下刚才你了解的3D小颜术。",
+  });
+});
+
+test("falls back to the step default when service interest is not an exact match", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.additionalSteps = [
+    {
+      delayMinutes: 480,
+      message: "Second follow-up",
+      translations: {
+        en: "Second follow-up",
+        ms: "Susulan kedua",
+        zh: "第二次跟进",
+      },
+      imageUrl: "",
+      serviceOverrides: [
+        {
+          serviceName: "Pelvic Care",
+          message: "Pelvic care follow-up",
+          translations: {
+            en: "Pelvic care follow-up",
+            ms: "Susulan penjagaan pelvis",
+            zh: "骨盆调理跟进",
+          },
+        },
+        {
+          serviceName: "Uterus Care",
+          message: "Uterus care follow-up",
+          translations: {
+            en: "Uterus care follow-up",
+            ms: "Susulan penjagaan rahim",
+            zh: "子宫调理跟进",
+          },
+        },
+      ],
+    },
+  ];
+
+  let sentMessage = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 17,
+      whatsapp_number: "60177777777",
+      trigger_message_id: 92,
+      next_follow_up_step: 2,
+      treatment_interest: "Pelvic Care",
+      recent_inbound_messages: ["I'm comparing Pelvic Care and Uterus Care."],
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => ({
+    id: 93,
+    contact_id: 17,
+    content: input.content,
+    delivery_status: null,
+  });
+  whatsapp.sendMessage = async (number, message) => {
+    sentMessage = { number, message };
+    return { success: true, wamid: "wamid-93" };
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 17,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.deepEqual(sentMessage, {
+    number: "60177777777",
+    message: "Second follow-up",
+  });
+});
+
 test("does not send when the database no longer considers the trigger eligible", async () => {
   enableTool();
   let sendCount = 0;

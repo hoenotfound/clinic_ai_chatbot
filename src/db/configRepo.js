@@ -96,12 +96,15 @@ async function pruneOrphanedPromoImages(force = false, now = Date.now()) {
     const promotionIds = (clinicConfig.promotions || [])
       .map((p) => extractPromoImageId(p.imageUrl))
       .filter((id) => id !== null);
-    const followUpImageId = extractPromoImageId(
-      clinicConfig.automatedFollowUp?.imageUrl
-    );
-    const referencedIds = followUpImageId === null
-      ? promotionIds
-      : [...promotionIds, followUpImageId];
+    const followUpImageIds = [
+      clinicConfig.automatedFollowUp?.imageUrl,
+      ...(Array.isArray(clinicConfig.automatedFollowUp?.additionalSteps)
+        ? clinicConfig.automatedFollowUp.additionalSteps.map((step) => step?.imageUrl)
+        : []),
+    ]
+      .map(extractPromoImageId)
+      .filter((id) => id !== null);
+    const referencedIds = [...promotionIds, ...followUpImageIds];
     await promoImagesRepo.pruneUnreferenced(referencedIds);
     lastPromoImageBackstopPruneAt = now;
     return true;

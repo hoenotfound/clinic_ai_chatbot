@@ -104,6 +104,192 @@ test("shared config preparation accepts partial editable JSON and rejects intern
   assert.deepEqual(internal.unknownKeys, ["businessType", "industrySetup"]);
 });
 
+test("follow-up config accepts a targeted sequence and keeps legacy one-step payloads compatible", () => {
+  const current = currentConfig();
+
+  const legacy = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        triggerMode: "all",
+        message: "Checking in",
+        translations: {
+          en: "Checking in",
+          ms: "Checking in",
+          zh: "Checking in",
+        },
+        imageUrl: "",
+      },
+    },
+    current
+  );
+  assert.equal(legacy.ok, true);
+  assert.deepEqual(legacy.updates.automatedFollowUp.serviceOverrides, []);
+  assert.deepEqual(legacy.updates.automatedFollowUp.additionalSteps, []);
+
+  const sequence = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        enabled: true,
+        delayMinutes: 120,
+        triggerMode: "all",
+        message: "Checking in",
+        translations: {
+          en: "Checking in",
+          ms: "Checking in",
+          zh: "Checking in",
+        },
+        imageUrl: "",
+        serviceOverrides: [
+          {
+            serviceName: "Consultation",
+            message: "Consultation follow-up",
+            translations: {
+              en: "Consultation follow-up",
+              ms: "Susulan konsultasi",
+              zh: "咨询跟进",
+            },
+          },
+        ],
+        additionalSteps: [
+          {
+            delayMinutes: 480,
+            message: "Second follow-up",
+            translations: {
+              en: "Second follow-up",
+              ms: "Susulan kedua",
+              zh: "第二次跟进",
+            },
+            imageUrl: "",
+            serviceOverrides: [],
+          },
+          {
+            delayMinutes: 1200,
+            message: "Final follow-up",
+            translations: {
+              en: "Final follow-up",
+              ms: "Susulan terakhir",
+              zh: "最后一次跟进",
+            },
+            imageUrl: "",
+            serviceOverrides: [],
+          },
+        ],
+      },
+    },
+    current
+  );
+
+  assert.equal(sequence.ok, true);
+  assert.equal(sequence.updates.automatedFollowUp.additionalSteps.length, 2);
+  assert.equal(
+    sequence.updates.automatedFollowUp.serviceOverrides[0].serviceName,
+    "Consultation"
+  );
+
+  const outOfOrder = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        ...sequence.updates.automatedFollowUp,
+        additionalSteps: [
+          {
+            ...sequence.updates.automatedFollowUp.additionalSteps[0],
+            delayMinutes: 60,
+          },
+        ],
+      },
+    },
+    current
+  );
+  assert.equal(outOfOrder.ok, false);
+  assert.match(outOfOrder.error, /increasing delays/i);
+});
+
+test("changing follow-up timing starts a fresh activation window", () => {
+  const current = currentConfig();
+  current.automatedFollowUp = {
+    ...current.automatedFollowUp,
+    enabled: true,
+    activatedAt: "2026-10-01T00:00:00.000Z",
+  };
+
+  const sameSchedule = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        ...current.automatedFollowUp,
+      },
+    },
+    current
+  );
+  assert.equal(sameSchedule.ok, true);
+  assert.equal(
+    sameSchedule.updates.automatedFollowUp.activatedAt,
+    "2026-10-01T00:00:00.000Z"
+  );
+
+  const expandedSchedule = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        ...current.automatedFollowUp,
+        additionalSteps: [
+          {
+            delayMinutes: 480,
+            message: "Second follow-up",
+            translations: {
+              en: "Second follow-up",
+              ms: "Susulan kedua",
+              zh: "第二次跟进",
+            },
+            imageUrl: "",
+            serviceOverrides: [],
+          },
+        ],
+      },
+    },
+    current
+  );
+  assert.equal(expandedSchedule.ok, true);
+  assert.notEqual(
+    expandedSchedule.updates.automatedFollowUp.activatedAt,
+    current.automatedFollowUp.activatedAt
+  );
+  assert.ok(
+    Date.parse(expandedSchedule.updates.automatedFollowUp.activatedAt) >
+      Date.parse(current.automatedFollowUp.activatedAt)
+  );
+});
+
+test("changing follow-up trigger mode starts a fresh activation window", () => {
+  const current = currentConfig();
+  current.automatedFollowUp = {
+    ...current.automatedFollowUp,
+    enabled: true,
+    triggerMode: "staff",
+    activatedAt: "2026-10-01T00:00:00.000Z",
+  };
+
+  const changedMode = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        ...current.automatedFollowUp,
+        triggerMode: "all",
+      },
+    },
+    current
+  );
+
+  assert.equal(changedMode.ok, true);
+  assert.notEqual(
+    changedMode.updates.automatedFollowUp.activatedAt,
+    current.automatedFollowUp.activatedAt
+  );
+  assert.ok(
+    Date.parse(changedMode.updates.automatedFollowUp.activatedAt) >
+      Date.parse(current.automatedFollowUp.activatedAt)
+  );
+});
+
 test("Advanced Config exposes business and AI content only", () => {
   const current = currentConfig();
   const editable = editableConfigView(current);
