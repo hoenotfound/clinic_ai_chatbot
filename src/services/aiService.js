@@ -613,6 +613,30 @@ async function runClaudeReply(
   );
 }
 
+function normalizeReplyOptions(optionsOrFirstMessage = false) {
+  if (typeof optionsOrFirstMessage === "boolean") {
+    return {
+      isFirstMessage: optionsOrFirstMessage,
+      channel: "whatsapp",
+      privateSetupCheck: false,
+      surface: "conversation",
+      publicReplyEnabled: true,
+      privateReplyEnabled: true,
+      metaAdContext: null,
+    };
+  }
+
+  return {
+    isFirstMessage: Boolean(optionsOrFirstMessage?.isFirstMessage),
+    channel: optionsOrFirstMessage?.channel || "whatsapp",
+    privateSetupCheck: Boolean(optionsOrFirstMessage?.privateSetupCheck),
+    surface: optionsOrFirstMessage?.surface || "conversation",
+    publicReplyEnabled: optionsOrFirstMessage?.publicReplyEnabled !== false,
+    privateReplyEnabled: optionsOrFirstMessage?.privateReplyEnabled !== false,
+    metaAdContext: optionsOrFirstMessage?.metaAdContext || null,
+  };
+}
+
 async function getReplyWithEnv(
   messages,
   optionsOrFirstMessage = false,
@@ -621,23 +645,7 @@ async function getReplyWithEnv(
     clock = () => Date.now(),
   } = {}
 ) {
-  const options = typeof optionsOrFirstMessage === "boolean"
-    ? {
-        isFirstMessage: optionsOrFirstMessage,
-        channel: "whatsapp",
-        privateSetupCheck: false,
-        surface: "conversation",
-        publicReplyEnabled: true,
-        privateReplyEnabled: true,
-      }
-    : {
-        isFirstMessage: Boolean(optionsOrFirstMessage?.isFirstMessage),
-        channel: optionsOrFirstMessage?.channel || "whatsapp",
-        privateSetupCheck: Boolean(optionsOrFirstMessage?.privateSetupCheck),
-        surface: optionsOrFirstMessage?.surface || "conversation",
-        publicReplyEnabled: optionsOrFirstMessage?.publicReplyEnabled !== false,
-        privateReplyEnabled: optionsOrFirstMessage?.privateReplyEnabled !== false,
-      };
+  const options = normalizeReplyOptions(optionsOrFirstMessage);
 
   const timeoutMs = positiveInt(env.AI_REPLY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
   const retryCount = positiveInt(env.AI_REPLY_RETRY_COUNT, DEFAULT_RETRY_COUNT, 3);
@@ -804,6 +812,7 @@ module.exports = {
   isRecoverableAiReplyFailure,
   isRetryableAiError,
   markGeminiModelUnavailable,
+  normalizeReplyOptions,
   resetGeminiModelHealth,
   runCandidate,
   runClaudeReply,
