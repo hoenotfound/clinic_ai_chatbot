@@ -18,6 +18,8 @@ const {
 } = require("../src/routes/advancedConfig");
 const {
   MAX_CONFIG_IMPORT_SNAPSHOTS,
+  collectPromoImageIds,
+  listReferencedPromoImageIds,
   pruneOldSnapshots,
 } = require("../src/db/configImportHistoryRepo");
 const { getIndustryProfile } = require("../src/config/industryProfiles");
@@ -1151,6 +1153,67 @@ test("Advanced Config snapshot retention keeps at most 50 newest backups", async
   assert.match(repo, /await client\.query\("BEGIN"\)/);
   assert.match(repo, /await pruneOldSnapshots\(client\)/);
   assert.match(repo, /await client\.query\("COMMIT"\)/);
+});
+
+
+
+test("retained Advanced Config snapshots protect their stored image URLs from cleanup", async () => {
+  const database = {
+    async query(sql, params) {
+      assert.match(sql, /SELECT editable_config/);
+      assert.match(sql, /FROM config_import_snapshots/);
+      assert.match(sql, /LIMIT \$1/);
+      assert.deepEqual(params, [MAX_CONFIG_IMPORT_SNAPSHOTS]);
+      return {
+        rows: [
+          {
+            editable_config: {
+              promotions: [{
+                imageUrl: "https://example.test/promo-images/101",
+                packages: [{
+                  imageUrl: "https://example.test/promo-images/102?cache=1",
+                }],
+              }],
+              resultMedia: [{
+                service: "Consultation",
+                items: [{
+                  imageUrl: "https://example.test/promo-images/103#result",
+                }],
+              }],
+            },
+          },
+          {
+            editable_config: {
+              automatedFollowUp: {
+                imageUrl: "https://example.test/promo-images/104/",
+              },
+              duplicateReference: "https://example.test/promo-images/101",
+              externalImage: "https://cdn.example.test/image.jpg",
+            },
+          },
+        ],
+      };
+    },
+  };
+
+  assert.deepEqual(
+    (await listReferencedPromoImageIds(database)).sort((a, b) => a - b),
+    [101, 102, 103, 104]
+  );
+});
+
+test("snapshot image reference extraction walks nested arrays and ignores invalid URLs", () => {
+  const ids = collectPromoImageIds({
+    one: "https://host.test/promo-images/12",
+    nested: [
+      "https://host.test/promo-images/13?x=1",
+      { value: "prefix /promo-images/14#fragment" },
+      "/promo-images/not-a-number",
+      null,
+    ],
+  });
+
+  assert.deepEqual([...ids].sort((a, b) => a - b), [12, 13, 14]);
 });
 
 test("Advanced Config is admin-only, snapshots imports, and rejects stale previews", () => {
