@@ -364,7 +364,7 @@ async function sendCandidate(candidate) {
     ...(candidate.recent_inbound_messages || []),
     candidate.trigger_message_content,
   ]);
-  const { message: followUpMessage } = messageForCandidate(
+  const { message: followUpMessage, targetedService } = messageForCandidate(
     step,
     candidate,
     language
@@ -382,6 +382,7 @@ async function sendCandidate(candidate) {
     content: followUpMessage,
     mediaUrl: !isSocial && step.imageUrl ? step.imageUrl : null,
     stepIndex,
+    targetedService,
     delayMinutes: step.delayMinutes,
     triggerMode: settings.triggerMode,
     activatedAt: settings.activatedAt,
