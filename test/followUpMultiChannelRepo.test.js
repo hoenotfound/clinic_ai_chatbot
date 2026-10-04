@@ -30,8 +30,9 @@ test("candidate discovery covers all supported messaging channels inside the saf
   assert.match(capturedSql, /c\.channel IN \('whatsapp', 'facebook', 'instagram'\)/);
   assert.match(capturedSql, /c\.channel_user_id/);
   assert.match(capturedSql, /23 hours 50 minutes/);
-  assert.match(capturedSql, /latest\.is_automated_follow_up = false/);
-  assert.match(capturedSql, /automated_follow_up_for_message_id = latest\.id/);
+  assert.match(capturedSql, /is_automated_follow_up = false/);
+  assert.match(capturedSql, /automated_follow_up_for_message_id = anchor\.id/);
+  assert.match(capturedSql, /next_follow_up_step/);
   assert.deepEqual(capturedParams, [
     [120],
     "all",
