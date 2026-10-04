@@ -64,6 +64,24 @@ function extractPromoImageId(url) {
   return match ? Number(match[1]) : null;
 }
 
+function privateResultMediaUrl(url) {
+  const id = extractPromoImageId(url);
+  return id ? `/api/config/result-media/image/${id}` : url;
+}
+
+function normalizeResultMediaUrls(resultMedia) {
+  if (!Array.isArray(resultMedia)) return [];
+  return resultMedia.map((entry) => ({
+    ...entry,
+    items: Array.isArray(entry?.items)
+      ? entry.items.map((item) => ({
+          ...item,
+          imageUrl: privateResultMediaUrl(item?.imageUrl),
+        }))
+      : [],
+  }));
+}
+
 function hydrateStoredConfig(storedConfig = {}) {
   const hydratedConfig = hydrateBusinessConfig(storedConfig);
   return {
@@ -84,6 +102,9 @@ function hydrateStoredConfig(storedConfig = {}) {
       ...DEFAULT_LEAD_DISTRIBUTION,
       ...(storedConfig.leadDistribution || {}),
     },
+    resultMedia: normalizeResultMediaUrls(
+      storedConfig.resultMedia ?? hydratedConfig.resultMedia
+    ),
   };
 }
 
@@ -187,7 +208,10 @@ async function updateConfig(updates, database = pool) {
 
     for (const key of [...CONFIG_KEYS, ...INTERNAL_CONFIG_KEYS]) {
       if (Object.prototype.hasOwnProperty.call(updates, key)) {
-        nextConfig[key] = updates[key];
+        nextConfig[key] =
+          key === "resultMedia"
+            ? normalizeResultMediaUrls(updates[key])
+            : updates[key];
         changedKeys.push(key);
       }
     }
