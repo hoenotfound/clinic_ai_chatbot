@@ -101,10 +101,27 @@ function buildCommentOutputSchema() {
   };
 }
 
+function buildFollowUpOutputSchema() {
+  return {
+    type: "object",
+    properties: {
+      action: {
+        type: "string",
+        enum: ["send", "skip", "human_review"],
+      },
+      message: { type: "string" },
+      reason: { type: "string" },
+      topic: { type: "string" },
+    },
+    required: ["action", "message", "reason", "topic"],
+    additionalProperties: false,
+  };
+}
+
 function buildClaudeOutputSchema(options = {}) {
-  return options.surface === "comment_automation"
-    ? buildCommentOutputSchema()
-    : buildConversationOutputSchema();
+  if (options.surface === "comment_automation") return buildCommentOutputSchema();
+  if (options.surface === "follow_up") return buildFollowUpOutputSchema();
+  return buildConversationOutputSchema();
 }
 
 function createClaudeHttpError(status, bodyText, parsedBody = null) {
@@ -246,6 +263,7 @@ module.exports = {
   MODEL,
   buildClaudeMessages,
   buildClaudeOutputSchema,
+  buildFollowUpOutputSchema,
   createClaudeHttpError,
   createClaudeMessage,
   getReply,
