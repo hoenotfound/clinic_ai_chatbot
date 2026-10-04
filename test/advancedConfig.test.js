@@ -127,6 +127,11 @@ test("follow-up config accepts a targeted sequence and keeps legacy one-step pay
   assert.equal(legacy.ok, true);
   assert.deepEqual(legacy.updates.automatedFollowUp.serviceOverrides, []);
   assert.deepEqual(legacy.updates.automatedFollowUp.additionalSteps, []);
+  assert.deepEqual(legacy.updates.automatedFollowUp.quietHours, {
+    enabled: true,
+    start: "00:00",
+    end: "07:00",
+  });
 
   const sequence = prepareConfigUpdatePayload(
     {
@@ -204,6 +209,55 @@ test("follow-up config accepts a targeted sequence and keeps legacy one-step pay
   );
   assert.equal(outOfOrder.ok, false);
   assert.match(outOfOrder.error, /increasing delays/i);
+});
+
+test("follow-up quiet hours validate and do not reset an active sequence", () => {
+  const current = currentConfig();
+  current.automatedFollowUp = {
+    ...current.automatedFollowUp,
+    enabled: true,
+    activatedAt: "2026-10-01T00:00:00.000Z",
+  };
+
+  const changed = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        ...current.automatedFollowUp,
+        quietHours: {
+          enabled: true,
+          start: "00:00",
+          end: "07:00",
+        },
+      },
+    },
+    current
+  );
+  assert.equal(changed.ok, true);
+  assert.deepEqual(changed.updates.automatedFollowUp.quietHours, {
+    enabled: true,
+    start: "00:00",
+    end: "07:00",
+  });
+  assert.equal(
+    changed.updates.automatedFollowUp.activatedAt,
+    current.automatedFollowUp.activatedAt
+  );
+
+  const invalid = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        ...current.automatedFollowUp,
+        quietHours: {
+          enabled: true,
+          start: "07:00",
+          end: "07:00",
+        },
+      },
+    },
+    current
+  );
+  assert.equal(invalid.ok, false);
+  assert.match(invalid.error, /automated follow-up settings/i);
 });
 
 test("follow-up service targeting cannot reference removed or unknown services", () => {
