@@ -2075,7 +2075,7 @@ function ResultMediaSection({ config, onSaved, onError }) {
       <div className="mb-5">
         <h3 className="font-display text-base font-bold sm:text-lg">Before & After</h3>
         <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)] sm:text-sm">
-          Add approved result examples by service. After a successful price or package reply,
+          Add approved result examples by service. After a successful price reply,
           the bot can send these after the promotion image. Automatic result media is suppressed
           for 7 days after one of the configured examples is sent.
         </p>
@@ -2181,7 +2181,7 @@ function ResultMediaSection({ config, onSaved, onError }) {
                         onChange={(event) => updateSet(index, { sendAfterPrice: event.target.checked })}
                       />
                       <span>
-                        <span className="block font-semibold">Send after price/package enquiries</span>
+                        <span className="block font-semibold">Send after price enquiries</span>
                         <span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-muted)]">
                           Sends only after the normal AI reply succeeds and the service is matched safely.
                         </span>
