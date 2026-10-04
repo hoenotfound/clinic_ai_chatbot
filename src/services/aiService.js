@@ -93,8 +93,9 @@ async function runCandidate(
       ? globalBudgetMs - elapsedMs
       : Number.POSITIVE_INFINITY;
 
+    const attemptLabel = candidate.logLabel || candidate.label;
     if (remainingBudgetMs <= 0) {
-      const err = new Error(`${candidate.label} exhausted its provider time budget.`);
+      const err = new Error(`${attemptLabel} exhausted its provider time budget.`);
       err.code = "AI_GLOBAL_BUDGET_EXCEEDED";
       throw err;
     }
@@ -111,7 +112,7 @@ async function runCandidate(
           signal: controller.signal,
         }),
         attemptTimeoutMs,
-        candidate.label,
+        attemptLabel,
         { onTimeout: () => controller.abort() }
       );
       parseAiReplyResult(raw);
@@ -125,7 +126,7 @@ async function runCandidate(
         && !["rate_limit", "quota_exhausted", "authentication"].includes(outcome.failureKind)
         && isRetryableAiError(err);
       console.warn(
-        `${candidate.label} attempt ${attempt + 1} failed${retry ? "; retrying" : ""}:`,
+        `${attemptLabel} attempt ${attempt + 1} failed${retry ? "; retrying" : ""}:`,
         err?.message || err
       );
       if (!retry) break;
@@ -287,10 +288,14 @@ function buildCandidates(env = process.env) {
     return candidate;
   });
 
+  const claudeIsPrimary = getProviderPreference(env) === "claude";
   const claudeCandidates = env.ANTHROPIC_API_KEY
     ? (() => {
         const candidate = {
+          // Keep the persisted health label stable for compatibility, but make
+          // runtime logs reflect the actual provider order.
           label: "Claude fallback",
+          logLabel: claudeIsPrimary ? "Claude primary" : "Claude fallback",
           provider: "claude",
           healthKey: `claude_${credentialFingerprint(env.ANTHROPIC_API_KEY)}`,
           run: (messages, options, requestControl = {}) => claude.getReply(
@@ -306,7 +311,7 @@ function buildCandidates(env = process.env) {
       })()
     : [];
 
-  return getProviderPreference(env) === "claude"
+  return claudeIsPrimary
     ? [...claudeCandidates, ...geminiCandidates]
     : [...geminiCandidates, ...claudeCandidates];
 }
