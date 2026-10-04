@@ -329,6 +329,53 @@ async function wasMediaRecentlySent(
   );
 }
 
+async function getMostRecentlySentMediaUrlWithExecutor(
+  executor,
+  contactId,
+  imageUrls
+) {
+  const urls = Array.isArray(imageUrls)
+    ? [...new Set(
+        imageUrls
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      )]
+    : [];
+  if (
+    !executor ||
+    typeof executor.query !== "function" ||
+    !contactId ||
+    urls.length === 0
+  ) {
+    return null;
+  }
+
+  const result = await executor.query(
+    `SELECT media_url
+     FROM messages
+     WHERE contact_id = $1
+       AND role = 'assistant'
+       AND media_url = ANY($2::text[])
+       AND whatsapp_message_id IS NOT NULL
+       AND (
+         delivery_status IS NULL
+         OR delivery_status NOT IN ('failed', 'unknown')
+       )
+     ORDER BY created_at DESC, id DESC
+     LIMIT 1`,
+    [contactId, urls]
+  );
+  return result.rows[0]?.media_url || null;
+}
+
+async function getMostRecentlySentMediaUrl(contactId, imageUrls) {
+  return getMostRecentlySentMediaUrlWithExecutor(
+    pool,
+    contactId,
+    imageUrls
+  );
+}
+
 /**
  * Lightweight portal page. Initial/before pages fetch one extra row so the
  * UI knows whether a "Load older messages" button is needed without a second
@@ -762,6 +809,8 @@ module.exports = {
   wasPromoRecentlySentWithExecutor,
   wasMediaRecentlySent,
   wasMediaRecentlySentWithExecutor,
+  getMostRecentlySentMediaUrl,
+  getMostRecentlySentMediaUrlWithExecutor,
   getMessagePageForContact,
   getMessageMediaReferenceForContact,
   getMessageMediaForContact,
