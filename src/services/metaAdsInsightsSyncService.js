@@ -160,17 +160,37 @@ function createMetaAdsInsightsSyncService({
 
     try {
       const state = await insightsRepo.getSyncState(accountId);
-      const isBackfill = !state?.last_backfill_completed_at;
       const today = dateInTimeZone(now());
+      const fullRange = dateRangeForDays(today, backfillDays());
+      const recentRange = dateRangeForDays(today, recentDays());
+      const coverageStart = dateOnly(state?.coverage_start_date);
+      const coverageEnd = dateOnly(state?.coverage_end_date);
+      const latestContiguousDayBeforeRecent = shiftDate(recentRange.since, -1);
+      const needsBackfill = (
+        !state?.last_backfill_completed_at
+        || !coverageStart
+        || !coverageEnd
+        || coverageStart > fullRange.since
+        || coverageEnd < latestContiguousDayBeforeRecent
+      );
 
-      if (isBackfill) {
-        const fullRange = dateRangeForDays(today, backfillDays());
+      if (needsBackfill) {
         const savedNext = dateOnly(state?.backfill_next_date);
-        let nextDate = savedNext
+        const canResume = (
+          !state?.last_backfill_completed_at
+          && savedNext
           && savedNext >= fullRange.since
           && savedNext <= fullRange.until
-          ? savedNext
-          : fullRange.since;
+          && coverageStart === fullRange.since
+        );
+        let nextDate = canResume ? savedNext : fullRange.since;
+        if (!canResume) {
+          await insightsRepo.resetBackfillCoverage(
+            accountId,
+            fullRange.since,
+            leaseToken
+          );
+        }
         let totalRows = 0;
 
         while (nextDate <= fullRange.until) {
@@ -245,7 +265,7 @@ function createMetaAdsInsightsSyncService({
         }
       }
 
-      const { since, until } = dateRangeForDays(today, recentDays());
+      const { since, until } = recentRange;
       activeSince = since;
       activeUntil = until;
 
