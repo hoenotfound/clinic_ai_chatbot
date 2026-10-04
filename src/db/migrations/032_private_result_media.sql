@@ -11,14 +11,22 @@ ALTER TABLE promo_images
 -- Result-media uploads created before this migration used the historical
 -- /promo-images/:id URL. Mark any images referenced by the live resultMedia
 -- config private so upgrading an existing client does not leave patient result
--- photos publicly fetchable.
-WITH result_media_urls AS (
+-- photos publicly fetchable. Retained Advanced Config snapshots are included
+-- too, so rollback-only result photos are private before they are restored.
+WITH retained_configs AS (
+  SELECT data AS config
+  FROM clinic_config
+  UNION ALL
+  SELECT editable_config AS config
+  FROM config_import_snapshots
+),
+result_media_urls AS (
   SELECT item->>'imageUrl' AS image_url
-  FROM clinic_config c
+  FROM retained_configs c
   CROSS JOIN LATERAL jsonb_array_elements(
     CASE
-      WHEN jsonb_typeof(c.data->'resultMedia') = 'array'
-        THEN c.data->'resultMedia'
+      WHEN jsonb_typeof(c.config->'resultMedia') = 'array'
+        THEN c.config->'resultMedia'
       ELSE '[]'::jsonb
     END
   ) AS rs(result_set)
