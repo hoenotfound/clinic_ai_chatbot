@@ -303,7 +303,9 @@ async function markContacted(contactId) {
   }
 }
 
-async function sendSocialImageCompanion(contact, contactId, imageUrl) {
+async function sendSocialImageCompanion(contact, contactId, imageUrl, quietHours) {
+  if (quietHoursStatus(new Date(), quietHours).active) return;
+
   let imageMessage;
   try {
     imageMessage = await followUpRepo.saveSocialImageCompanion({
@@ -341,6 +343,8 @@ async function sendSocialImageCompanion(contact, contactId, imageUrl) {
       undefined,
       {
         purpose: "marketing",
+        preSendCheck: async () =>
+          !quietHoursStatus(new Date(), quietHours).active,
         ...(imageProviderRecorder
           ? { onProviderMessageId: imageProviderRecorder }
           : {}),
@@ -349,6 +353,17 @@ async function sendSocialImageCompanion(contact, contactId, imageUrl) {
   } catch (err) {
     console.error("Optional social follow-up image send failed:", err);
     imageResult = { success: false, wamid: null, externalMessageId: null };
+  }
+
+  if (imageResult?.cancelled && !imageResult?.preSendCheckFailed) {
+    const discarded = await followUpRepo.discardUnsentSocialImageCompanion({
+      messageId: imageMessage.id,
+      contactId,
+    });
+    if (discarded) {
+      publishConversationChange(discarded, "message_cancelled");
+    }
+    return;
   }
 
   const imageError = imageResult?.policyBlocked && imageResult.error
@@ -547,7 +562,8 @@ async function sendCandidate(candidate) {
     await sendSocialImageCompanion(
       contact,
       candidate.contact_id,
-      step.imageUrl
+      step.imageUrl,
+      settings.quietHours
     );
   }
 }
