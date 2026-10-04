@@ -19,7 +19,8 @@ const FOLLOW_UP_MESSAGE_COLUMNS = `
   delivery_error,
   is_automated_follow_up,
   automated_follow_up_step,
-  automated_follow_up_target_service
+  automated_follow_up_target_service,
+  automated_follow_up_targeting_recorded
 `;
 
 function normalizeDelayMinutes(value) {
@@ -377,9 +378,10 @@ async function saveIfStillEligible({
        is_automated_follow_up,
        automated_follow_up_for_message_id,
        automated_follow_up_step,
-       automated_follow_up_target_service
+       automated_follow_up_target_service,
+       automated_follow_up_targeting_recorded
      )
-     SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2, $5, $6
+     SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2, $5, $6, true
      FROM anchor, latest_inbound, progress, contacts c
      LEFT JOIN LATERAL (
        SELECT
