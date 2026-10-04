@@ -109,8 +109,22 @@ function normalizeAttribution(channel, referral = null) {
     referralSource,
     referralType,
     ctwaClid: clean(referral.ctwaClid ?? referral.ctwa_clid),
-    headline: clean(referral.headline ?? referral.ad_title),
-    body: clean(referral.body ?? referral.ad_body),
+    headline: clean(
+      referral.headline ??
+        referral.ad_title ??
+        referral.adsContextData?.adTitle ??
+        referral.adsContextData?.ad_title ??
+        referral.ads_context_data?.adTitle ??
+        referral.ads_context_data?.ad_title
+    ),
+    body: clean(
+      referral.body ??
+        referral.ad_body ??
+        referral.adsContextData?.adBody ??
+        referral.adsContextData?.ad_body ??
+        referral.ads_context_data?.adBody ??
+        referral.ads_context_data?.ad_body
+    ),
     mediaType: clean(referral.mediaType ?? referral.media_type),
     mediaUrl,
     campaignId: clean(referral.campaignId ?? referral.campaign_id),
