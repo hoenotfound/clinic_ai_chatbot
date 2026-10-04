@@ -3,6 +3,9 @@ const assert = require("node:assert/strict");
 
 const {
   GEMINI_MODEL,
+  MAX_PROVIDER_BATCH_MESSAGES,
+  MAX_PROVIDER_BATCH_SOURCE_CHARS,
+  chunkProviderMessages,
   parseTranslationBatch,
   parseTranslations,
 } = require("../src/services/followUpTranslationService");
@@ -50,4 +53,33 @@ test("rejects incomplete follow-up translation batches", () => {
       ),
     /incomplete/i
   );
+});
+
+
+test("provider translation chunks stay within count and source-size bounds", () => {
+  const messages = [
+    "a".repeat(1000),
+    "b".repeat(1000),
+    "c".repeat(1000),
+    "short one",
+    "short two",
+    "short three",
+    "short four",
+  ];
+
+  const chunks = chunkProviderMessages(messages);
+  assert.deepEqual(chunks.flat(), messages);
+  for (const chunk of chunks) {
+    assert.ok(chunk.length <= MAX_PROVIDER_BATCH_MESSAGES);
+    assert.ok(
+      chunk.reduce((sum, message) => sum + message.length, 0) <=
+        MAX_PROVIDER_BATCH_SOURCE_CHARS
+    );
+  }
+  assert.deepEqual(chunks.map((chunk) => chunk.length), [2, 3, 2]);
+});
+
+test("a single maximum-length message remains a valid provider chunk", () => {
+  const message = "x".repeat(1000);
+  assert.deepEqual(chunkProviderMessages([message]), [[message]]);
 });
