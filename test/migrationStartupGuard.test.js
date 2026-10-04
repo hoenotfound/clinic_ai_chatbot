@@ -21,6 +21,10 @@ const migration022Source = fs.readFileSync(
   path.join(__dirname, "../src/db/migrations/022_cancelled_outbound_attempt_durability.sql"),
   "utf8"
 );
+const migration031Source = fs.readFileSync(
+  path.join(__dirname, "../src/db/migrations/031_follow_up_targeting_analytics.sql"),
+  "utf8"
+);
 
 test("database bootstrap uses the versioned runner instead of replaying schema files directly", () => {
   assert.match(dbSource, /runMigrations\(pool(?:\s*,|\s*\))/);
@@ -67,5 +71,17 @@ test("scheduled-message schema is versioned instead of created by the runtime re
     migration022Source,
     /assistant_message_id[\s\S]*ON DELETE SET NULL/i,
     "cancelled outbound attempts must survive deletion of their unsent assistant row"
+  );
+});
+
+
+test("follow-up targeting analytics metadata is forward-migrated", () => {
+  assert.match(
+    migration031Source,
+    /ADD COLUMN IF NOT EXISTS automated_follow_up_target_service TEXT/i
+  );
+  assert.match(
+    migration031Source,
+    /automated_follow_up_for_message_id IS NOT NULL/i
   );
 });
