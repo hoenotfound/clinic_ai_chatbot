@@ -100,7 +100,7 @@ test(
       ) VALUES
         (1, 1, 4, 'hot', 500, 'visited', '2026-10-02T02:00:00Z', 101),
         (2, 2, 1, 'warm', 800, NULL, '2026-10-03T02:00:00Z', 102),
-        (3, 3, 1, 'warm', 300, NULL, '2026-10-03T03:00:00Z', 103);
+        (3, 3, 4, 'warm', 300, NULL, '2026-10-03T03:00:00Z', 103);
 
       INSERT INTO lead_stage_history (lead_id, to_stage_id, created_at) VALUES
         (1, 2, '2026-10-02T04:00:00Z'),
@@ -128,6 +128,21 @@ test(
         "utf8"
       )
     );
+    await client.query(
+      fs.readFileSync(
+        path.join(__dirname, "..", "src/db/migrations/029_meta_ads_spend_coverage.sql"),
+        "utf8"
+      )
+    );
+
+    await client.query(`
+      INSERT INTO meta_ads_insights_sync_state (
+        account_id, last_backfill_completed_at,
+        coverage_start_date, coverage_end_date
+      ) VALUES (
+        '123', now(), '2026-10-01', '2026-10-04'
+      )
+    `);
 
     await client.query(`
       INSERT INTO meta_ad_insights_daily (
@@ -177,9 +192,21 @@ test(
     assert.equal(campaign.summary.hotLeads, 1);
     assert.equal(campaign.summary.appointments, 1);
     assert.equal(campaign.summary.visits, 1);
-    assert.equal(campaign.summary.won, 1);
-    assert.equal(campaign.summary.estimatedWonValue, 500);
-    assert.equal(campaign.summary.estimatedRoas, 2.86);
+    assert.equal(campaign.summary.won, 2);
+    assert.equal(campaign.summary.estimatedWonValue, 800);
+    assert.equal(campaign.summary.costPerLead, null);
+    assert.equal(campaign.summary.costPerWon, null);
+    assert.equal(campaign.summary.estimatedRoas, null);
+    assert.equal(campaign.money.estimatedRoasAvailable, false);
+    assert.deepEqual(campaign.spendCoverage, {
+      complete: false,
+      historyComplete: true,
+      attributionComplete: false,
+      relevantAccountIds: ["123"],
+      uncoveredAccountIds: [],
+      coverageFrom: "2026-10-01",
+      coverageThrough: "2026-10-04",
+    });
     assert.deepEqual(campaign.attributionCoverage, {
       metaAttributedLeads: 3,
       matchedToSyncedAds: 2,
@@ -197,6 +224,8 @@ test(
     assert.equal(campaign.accounts[0].accountName, "Clinic Ads Current");
     assert.equal(campaign.accounts[0].currency, "MYR");
     assert.equal(campaign.accounts[0].dataThrough, "2026-10-03");
+    assert.equal(campaign.accounts[0].coverageFrom, "2026-10-01");
+    assert.equal(campaign.accounts[0].coverageThrough, "2026-10-04");
 
     const indexResult = await client.query(
       `SELECT indexname
@@ -215,6 +244,26 @@ test(
         "idx_meta_ad_insights_daily_ad_latest",
       ]
     );
+
+    const olderRange = await getMetaAdsAnalytics(
+      {
+        ...baseFilters,
+        from: "2026-09-01",
+        dayCount: 34,
+        level: "campaign",
+        accountId: "123",
+        campaignId: "100",
+      },
+      { database, analyticsProfile }
+    );
+    assert.equal(olderRange.spendCoverage.historyComplete, false);
+    assert.equal(olderRange.spendCoverage.attributionComplete, true);
+    assert.equal(olderRange.spendCoverage.complete, false);
+    assert.deepEqual(olderRange.spendCoverage.uncoveredAccountIds, ["123"]);
+    assert.equal(olderRange.summary.costPerLead, null);
+    assert.equal(olderRange.summary.costPerAppointment, null);
+    assert.equal(olderRange.summary.costPerWon, null);
+    assert.equal(olderRange.summary.estimatedRoas, null);
 
     const ads = await getMetaAdsAnalytics(
       { ...baseFilters, level: "ad" },
