@@ -10,6 +10,7 @@ const commentAutomationReadiness = require("../services/commentAutomationReadine
 const { normalizeIndustrySetup } = require("../config/industrySetup");
 const { evaluateClientSetup } = require("../services/clientSetupService");
 const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution");
+const { normalizeQuietHours } = require("../utils/quietHours");
 const {
   findAmbiguousPromotionPackageTerm,
   findOverlappingPricePromotionPair,
@@ -178,6 +179,7 @@ function isAutomatedFollowUpConfig(value) {
     !isPlainObject(value) ||
     typeof value.enabled !== "boolean" ||
     !["all", "staff"].includes(value.triggerMode) ||
+    !normalizeQuietHours(value.quietHours) ||
     !isFollowUpStep(value) ||
     !Array.isArray(value.additionalSteps) ||
     value.additionalSteps.length > 2 ||
@@ -330,6 +332,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
 
   const enabled = requested.enabled;
   const triggerMode = requested.triggerMode;
+  const quietHours = normalizeQuietHours(requested.quietHours);
   const firstStep = prepareFollowUpStep(requested);
   const additionalInput =
     requested.additionalSteps === undefined ? [] : requested.additionalSteps;
@@ -337,6 +340,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   if (
     typeof enabled !== "boolean" ||
     !["all", "staff"].includes(triggerMode) ||
+    !quietHours ||
     !firstStep ||
     !Array.isArray(additionalInput) ||
     additionalInput.length > 2
@@ -382,6 +386,7 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   return {
     enabled,
     triggerMode,
+    quietHours,
     ...firstStep,
     additionalSteps,
     activatedAt: enabled
