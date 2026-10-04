@@ -4,6 +4,9 @@ const { buildSystemPrompt, normalizeOptions } = require("../utils/systemPrompt")
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
+const DEFAULT_REPLY_MAX_TOKENS = 4096;
+const TRUNCATION_RETRY_MAX_TOKENS = 8192;
+const DEFAULT_REPLY_EFFORT = "medium";
 
 function buildClaudeMessages(messages) {
   return messages.map((m) => {
@@ -184,6 +187,10 @@ async function getReply(
     throw err;
   }
 
+  const maxTokens = requestControl?.previousFailureCode === "AI_OUTPUT_TRUNCATED"
+    ? TRUNCATION_RETRY_MAX_TOKENS
+    : DEFAULT_REPLY_MAX_TOKENS;
+
   const response = await createClaudeMessage({
     apiKey: resolvedKey,
     workspaceId: workspaceId || process.env.ANTHROPIC_WORKSPACE_ID,
@@ -191,10 +198,11 @@ async function getReply(
     fetchImpl: requestControl?.fetchImpl || global.fetch,
     body: {
       model: MODEL,
-      max_tokens: 1200,
+      max_tokens: maxTokens,
       system: buildSystemPrompt(options),
       messages: buildClaudeMessages(messages),
       output_config: {
+        effort: DEFAULT_REPLY_EFFORT,
         format: {
           type: "json_schema",
           schema: buildClaudeOutputSchema(options),
@@ -209,8 +217,11 @@ async function getReply(
     throw err;
   }
   if (response.stop_reason === "max_tokens") {
-    const err = new Error("Claude hit the output token limit before completing the structured reply.");
-    err.code = "INVALID_AI_RESPONSE";
+    const err = new Error(
+      `Claude hit the output token limit before completing the structured reply (max_tokens=${maxTokens}).`
+    );
+    err.code = "AI_OUTPUT_TRUNCATED";
+    err.maxTokens = maxTokens;
     throw err;
   }
 
@@ -229,6 +240,9 @@ async function getReply(
 module.exports = {
   ANTHROPIC_MESSAGES_URL,
   ANTHROPIC_VERSION,
+  DEFAULT_REPLY_EFFORT,
+  DEFAULT_REPLY_MAX_TOKENS,
+  TRUNCATION_RETRY_MAX_TOKENS,
   MODEL,
   buildClaudeMessages,
   buildClaudeOutputSchema,
