@@ -110,6 +110,8 @@ async function runCandidate(
         candidate.run(messages, options, {
           timeoutMs: attemptTimeoutMs,
           signal: controller.signal,
+          attempt,
+          previousFailureCode: lastError?.code || null,
         }),
         attemptTimeoutMs,
         attemptLabel,
@@ -292,10 +294,7 @@ function buildCandidates(env = process.env) {
   const claudeCandidates = env.ANTHROPIC_API_KEY
     ? (() => {
         const candidate = {
-          // Keep the persisted health label stable for compatibility, but make
-          // runtime logs reflect the actual provider order.
-          label: "Claude fallback",
-          logLabel: claudeIsPrimary ? "Claude primary" : "Claude fallback",
+          label: claudeIsPrimary ? "Claude primary" : "Claude fallback",
           provider: "claude",
           healthKey: `claude_${credentialFingerprint(env.ANTHROPIC_API_KEY)}`,
           run: (messages, options, requestControl = {}) => claude.getReply(
