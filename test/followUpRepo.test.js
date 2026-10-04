@@ -65,6 +65,7 @@ test("automated follow-up discovery excludes conversations already waiting for s
     assert.match(sql, /latest_lead\.is_closed = false/);
     assert.match(sql, /appointment_set.*visited/);
     assert.match(sql, /appointment_status.*set.*visited/);
+    assert.match(sql, /appointment_status.*reschedule.*cancelled/);
     assert.deepEqual(params, [
       [120],
       "all",
