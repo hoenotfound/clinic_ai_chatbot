@@ -260,6 +260,7 @@ async function resetBackfillCoverage(accountId, coverageStart, leaseToken, datab
      SET coverage_start_date = $2::date,
          coverage_end_date = NULL,
          backfill_next_date = $2::date,
+         last_backfill_completed_at = NULL,
          updated_at = now()
      WHERE account_id = $1 AND lease_token = $3
      RETURNING account_id`,
