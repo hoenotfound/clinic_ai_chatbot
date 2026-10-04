@@ -193,11 +193,13 @@ function storedPromoImageId(imageUrl) {
   if (!raw) return null;
 
   try {
-    // Settings-generated promotion/follow-up image URLs always point at this
-    // public route. Matching by pathname also keeps existing saved URLs working
-    // if the service hostname changes after a Render/domain migration.
-    const parsed = new URL(raw, "https://stored-promo.invalid");
-    const match = /^\/promo-images\/(\d+)\/?$/.exec(parsed.pathname);
+    // Settings-managed media may use the legacy public promotion path or the
+    // authenticated Before/After preview path. Matching by pathname keeps
+    // existing saved URLs working across Render/custom-domain migrations.
+    const parsed = new URL(raw, "https://stored-config.invalid");
+    const match = /^\/(?:promo-images|api\/config\/result-media\/image)\/(\d+)\/?$/.exec(
+      parsed.pathname
+    );
     if (!match) return null;
     const id = Number(match[1]);
     return Number.isSafeInteger(id) && id > 0 ? id : null;
@@ -317,6 +319,38 @@ async function sendText(contact, text, options = {}) {
 
 async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
   const channel = channelOf(contact);
+  const storedImageId = storedPromoImageId(imageUrl);
+
+  // Never ask WhatsApp or Instagram to fetch a permanent Settings image URL.
+  // Load our stored bytes server-side and use the provider upload path instead.
+  // Facebook already has a specialized stored-image path below that preserves
+  // its caption/image race handling.
+  if (storedImageId && channel !== "facebook") {
+    let image;
+    try {
+      image = await promoImagesRepo.getImage(storedImageId);
+    } catch (err) {
+      console.error(`Failed to load stored image ${storedImageId} for ${channel}:`, err);
+      return temporaryMediaFailure(channel, err);
+    }
+    if (!image?.data || !["image/jpeg", "image/png"].includes(image.mime_type)) {
+      return {
+        success: false,
+        wamid: null,
+        externalMessageId: null,
+        error: "The stored image is missing or invalid. Please upload it again.",
+      };
+    }
+    return sendImageBuffer(
+      contact,
+      Buffer.from(image.data, "base64"),
+      image.mime_type,
+      caption,
+      storedImageFilename(storedImageId, image.mime_type),
+      options
+    );
+  }
+
   const guard = await freeformGuard(contact, options.purpose);
   if (guard.blocked) return guard.blocked;
   const sendOptions = optionsForPolicy(options, guard.policy);
@@ -351,6 +385,9 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
   const guard = await freeformGuard(contact, options.purpose);
   if (guard.blocked) return guard.blocked;
   const sendOptions = optionsForPolicy(options, guard.policy);
+  const initialCancellation = await preSendCancelled(sendOptions);
+  if (initialCancellation) return initialCancellation;
+
   if (channel === "whatsapp") {
     const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename);
     if (!mediaId) {
@@ -360,6 +397,8 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
         error: "The image could not be uploaded to WhatsApp.",
       };
     }
+    const cancelled = await preSendCancelled(sendOptions);
+    if (cancelled) return cancelled;
     return whatsapp.sendImageById(
       contact.whatsapp_number,
       mediaId,
@@ -385,20 +424,36 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
     await notifyProviderMessageId(sendOptions, captionResult, channel);
   }
 
+  const lateCancellation = await preSendCancelled(sendOptions);
+  if (lateCancellation) {
+    if (!captionSent) return lateCancellation;
+    return {
+      success: false,
+      wamid: null,
+      externalMessageId: null,
+      cancelled: false,
+      partialCaptionSent: true,
+      captionProviderMessageId,
+      error: "Staff activity took over the conversation before the image could be sent.",
+    };
+  }
+
   // Live Instagram testing showed that this Page-linked Instagram setup can
   // upload a reusable attachment but rejects the later attachment_id POST.
   // The Send API supports media URLs, so expose only a disposable R2 copy via
   // a short-lived presigned URL. Facebook Messenger keeps its binary upload.
   if (channel === "instagram") {
-    const result = await withTemporaryMediaUrl(contact, buffer, mimeType, (mediaUrl) =>
-      metaAttachments.sendUrlAttachment(
+    const result = await withTemporaryMediaUrl(contact, buffer, mimeType, async (mediaUrl) => {
+      const cancelled = await preSendCancelled(sendOptions);
+      if (cancelled) return cancelled;
+      return metaAttachments.sendUrlAttachment(
         channel,
         recipientFor(contact),
         "image",
         mediaUrl,
         sendOptions
-      )
-    );
+      );
+    });
     const tracked = recordAcceptedSocialOutbound(channel, result);
     await notifyProviderMessageId(sendOptions, tracked, channel);
     if (!tracked.success && captionSent) {

@@ -281,6 +281,164 @@ async function wasPromoRecentlySent(
   );
 }
 
+function storedConfigMediaId(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const match = raw.match(
+    /\/(?:promo-images|api\/config\/result-media\/image)\/(\d+)(?:[/?#]|$)/
+  );
+  if (!match) return null;
+  const id = Number(match[1]);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+async function wasMediaRecentlySentWithExecutor(
+  executor,
+  contactId,
+  imageUrl,
+  withinHours = 168
+) {
+  const hours = Number(withinHours);
+  if (
+    !executor ||
+    typeof executor.query !== "function" ||
+    !imageUrl ||
+    !Number.isSafeInteger(hours) ||
+    hours < 1
+  ) {
+    return false;
+  }
+
+  const storedId = storedConfigMediaId(imageUrl);
+  const result = storedId
+    ? await executor.query(
+        `SELECT 1
+         FROM messages
+         WHERE contact_id = $1
+           AND role = 'assistant'
+           AND (
+             media_url = $2
+             OR split_part(split_part(media_url, '?', 1), '#', 1)
+                  LIKE '%/promo-images/' || $4::integer::text
+             OR split_part(split_part(media_url, '?', 1), '#', 1)
+                  LIKE '%/api/config/result-media/image/' || $4::integer::text
+           )
+           AND whatsapp_message_id IS NOT NULL
+           AND created_at >= NOW() - ($3::integer * INTERVAL '1 hour')
+           AND (
+             delivery_status IS NULL
+             OR delivery_status NOT IN ('failed', 'unknown')
+           )
+         LIMIT 1`,
+        [contactId, imageUrl, hours, storedId]
+      )
+    : await executor.query(
+        `SELECT 1
+         FROM messages
+         WHERE contact_id = $1
+           AND role = 'assistant'
+           AND media_url = $2
+           AND whatsapp_message_id IS NOT NULL
+           AND created_at >= NOW() - ($3::integer * INTERVAL '1 hour')
+           AND (
+             delivery_status IS NULL
+             OR delivery_status NOT IN ('failed', 'unknown')
+           )
+         LIMIT 1`,
+        [contactId, imageUrl, hours]
+      );
+  return result.rowCount > 0;
+}
+
+async function wasMediaRecentlySent(
+  contactId,
+  imageUrl,
+  withinHours = 168
+) {
+  return wasMediaRecentlySentWithExecutor(
+    pool,
+    contactId,
+    imageUrl,
+    withinHours
+  );
+}
+
+async function getMostRecentlySentMediaUrlWithExecutor(
+  executor,
+  contactId,
+  imageUrls
+) {
+  const urls = Array.isArray(imageUrls)
+    ? [...new Set(
+        imageUrls
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      )]
+    : [];
+  if (
+    !executor ||
+    typeof executor.query !== "function" ||
+    !contactId ||
+    urls.length === 0
+  ) {
+    return null;
+  }
+
+  const storedIds = [...new Set(
+    urls.map(storedConfigMediaId).filter((id) => id !== null)
+  )];
+  const result = storedIds.length > 0
+    ? await executor.query(
+        `SELECT media_url
+         FROM messages
+         WHERE contact_id = $1
+           AND role = 'assistant'
+           AND (
+             media_url = ANY($2::text[])
+             OR EXISTS (
+               SELECT 1
+               FROM unnest($3::int[]) AS ids(stored_id)
+               WHERE split_part(split_part(media_url, '?', 1), '#', 1)
+                       LIKE '%/promo-images/' || stored_id::text
+                  OR split_part(split_part(media_url, '?', 1), '#', 1)
+                       LIKE '%/api/config/result-media/image/' || stored_id::text
+             )
+           )
+           AND whatsapp_message_id IS NOT NULL
+           AND (
+             delivery_status IS NULL
+             OR delivery_status NOT IN ('failed', 'unknown')
+           )
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`,
+        [contactId, urls, storedIds]
+      )
+    : await executor.query(
+        `SELECT media_url
+         FROM messages
+         WHERE contact_id = $1
+           AND role = 'assistant'
+           AND media_url = ANY($2::text[])
+           AND whatsapp_message_id IS NOT NULL
+           AND (
+             delivery_status IS NULL
+             OR delivery_status NOT IN ('failed', 'unknown')
+           )
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`,
+        [contactId, urls]
+      );
+  return result.rows[0]?.media_url || null;
+}
+
+async function getMostRecentlySentMediaUrl(contactId, imageUrls) {
+  return getMostRecentlySentMediaUrlWithExecutor(
+    pool,
+    contactId,
+    imageUrls
+  );
+}
+
 /**
  * Lightweight portal page. Initial/before pages fetch one extra row so the
  * UI knows whether a "Load older messages" button is needed without a second
@@ -712,6 +870,10 @@ module.exports = {
   getMessagesForContact,
   wasPromoRecentlySent,
   wasPromoRecentlySentWithExecutor,
+  wasMediaRecentlySent,
+  wasMediaRecentlySentWithExecutor,
+  getMostRecentlySentMediaUrl,
+  getMostRecentlySentMediaUrlWithExecutor,
   getMessagePageForContact,
   getMessageMediaReferenceForContact,
   getMessageMediaForContact,

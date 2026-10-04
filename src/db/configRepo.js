@@ -14,6 +14,7 @@ const {
 const industrySetupRepo = require("./industrySetupRepo");
 const pipelineDefaultsRepo = require("./pipelineDefaultsRepo");
 const promoImagesRepo = require("./promoImagesRepo");
+const configImportHistoryRepo = require("./configImportHistoryRepo");
 const { DEFAULT_LEAD_DISTRIBUTION } = require("../utils/leadDistribution");
 const realtimeEvents = require("../utils/realtimeEvents");
 
@@ -32,6 +33,7 @@ const CONFIG_KEYS = [
   "leadScoring",
   "leadDistribution",
   "promotions",
+  "resultMedia",
   "services",
   "serviceAliases",
   "faqs",
@@ -56,8 +58,28 @@ function conflict(code, message) {
 
 function extractPromoImageId(url) {
   if (!url) return null;
-  const match = String(url).match(/\/promo-images\/(\d+)(?:[/?#]|$)/);
+  const match = String(url).match(
+    /\/(?:promo-images|api\/config\/result-media\/image)\/(\d+)(?:[/?#]|$)/
+  );
   return match ? Number(match[1]) : null;
+}
+
+function privateResultMediaUrl(url) {
+  const id = extractPromoImageId(url);
+  return id ? `/api/config/result-media/image/${id}` : url;
+}
+
+function normalizeResultMediaUrls(resultMedia) {
+  if (!Array.isArray(resultMedia)) return [];
+  return resultMedia.map((entry) => ({
+    ...entry,
+    items: Array.isArray(entry?.items)
+      ? entry.items.map((item) => ({
+          ...item,
+          imageUrl: privateResultMediaUrl(item?.imageUrl),
+        }))
+      : [],
+  }));
 }
 
 function hydrateStoredConfig(storedConfig = {}) {
@@ -80,6 +102,9 @@ function hydrateStoredConfig(storedConfig = {}) {
       ...DEFAULT_LEAD_DISTRIBUTION,
       ...(storedConfig.leadDistribution || {}),
     },
+    resultMedia: normalizeResultMediaUrls(
+      storedConfig.resultMedia ?? hydratedConfig.resultMedia
+    ),
   };
 }
 
@@ -94,7 +119,21 @@ async function pruneOrphanedPromoImages(force = false, now = Date.now()) {
 
   try {
     const promotionIds = (clinicConfig.promotions || [])
-      .map((p) => extractPromoImageId(p.imageUrl))
+      .flatMap((promotion) => [
+        promotion?.imageUrl,
+        ...(Array.isArray(promotion?.packages)
+          ? promotion.packages.map((item) => item?.imageUrl)
+          : []),
+      ])
+      .map(extractPromoImageId)
+      .filter((id) => id !== null);
+    const resultMediaIds = (clinicConfig.resultMedia || [])
+      .flatMap((entry) =>
+        Array.isArray(entry?.items)
+          ? entry.items.map((item) => item?.imageUrl)
+          : []
+      )
+      .map(extractPromoImageId)
       .filter((id) => id !== null);
     const followUpImageIds = [
       clinicConfig.automatedFollowUp?.imageUrl,
@@ -104,8 +143,15 @@ async function pruneOrphanedPromoImages(force = false, now = Date.now()) {
     ]
       .map(extractPromoImageId)
       .filter((id) => id !== null);
-    const referencedIds = [...promotionIds, ...followUpImageIds];
-    await promoImagesRepo.pruneUnreferenced(referencedIds);
+    const snapshotImageIds =
+      await configImportHistoryRepo.listReferencedPromoImageIds();
+    const referencedIds = [
+      ...promotionIds,
+      ...resultMediaIds,
+      ...followUpImageIds,
+      ...snapshotImageIds,
+    ];
+    await promoImagesRepo.pruneUnreferenced([...new Set(referencedIds)]);
     lastPromoImageBackstopPruneAt = now;
     return true;
   } catch (err) {
@@ -162,7 +208,10 @@ async function updateConfig(updates, database = pool) {
 
     for (const key of [...CONFIG_KEYS, ...INTERNAL_CONFIG_KEYS]) {
       if (Object.prototype.hasOwnProperty.call(updates, key)) {
-        nextConfig[key] = updates[key];
+        nextConfig[key] =
+          key === "resultMedia"
+            ? normalizeResultMediaUrls(updates[key])
+            : updates[key];
         changedKeys.push(key);
       }
     }
@@ -215,6 +264,18 @@ async function updateConfig(updates, database = pool) {
       }
     }
 
+    if (Object.prototype.hasOwnProperty.call(updates, "resultMedia")) {
+      const resultImageIds = (nextConfig.resultMedia || [])
+        .flatMap((entry) =>
+          Array.isArray(entry?.items)
+            ? entry.items.map((item) => item?.imageUrl)
+            : []
+        )
+        .map(extractPromoImageId)
+        .filter((id) => id !== null);
+      await promoImagesRepo.markResultMedia(resultImageIds, client);
+    }
+
     await client.query(
       "UPDATE clinic_config SET data = $1, updated_at = now() WHERE id = 1",
       [nextConfig]
@@ -232,6 +293,7 @@ async function updateConfig(updates, database = pool) {
 
   if (
     Object.prototype.hasOwnProperty.call(updates, "promotions") ||
+    Object.prototype.hasOwnProperty.call(updates, "resultMedia") ||
     Object.prototype.hasOwnProperty.call(updates, "automatedFollowUp")
   ) {
     await pruneOrphanedPromoImages(true);

@@ -82,10 +82,51 @@ async function getSnapshot(id) {
   return result.rows[0] || null;
 }
 
+
+function collectPromoImageIds(value, output = new Set()) {
+  if (typeof value === "string") {
+    const matches = value.matchAll(
+      /\/(?:promo-images|api\/config\/result-media\/image)\/(\d+)(?:[/?#]|$)/g
+    );
+    for (const match of matches) {
+      const id = Number(match[1]);
+      if (Number.isSafeInteger(id) && id > 0) output.add(id);
+    }
+    return output;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectPromoImageIds(item, output);
+    return output;
+  }
+  if (value && typeof value === "object") {
+    for (const nested of Object.values(value)) {
+      collectPromoImageIds(nested, output);
+    }
+  }
+  return output;
+}
+
+async function listReferencedPromoImageIds(database = pool) {
+  const result = await database.query(
+    `SELECT editable_config
+     FROM config_import_snapshots
+     ORDER BY created_at DESC, id DESC
+     LIMIT $1`,
+    [MAX_CONFIG_IMPORT_SNAPSHOTS]
+  );
+  const ids = new Set();
+  for (const row of result.rows || []) {
+    collectPromoImageIds(row.editable_config || {}, ids);
+  }
+  return [...ids];
+}
+
 module.exports = {
   MAX_CONFIG_IMPORT_SNAPSHOTS,
+  collectPromoImageIds,
   createSnapshot,
   getSnapshot,
+  listReferencedPromoImageIds,
   listSnapshots,
   pruneOldSnapshots,
 };

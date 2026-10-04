@@ -111,3 +111,38 @@ test("urgent safety handling bypasses model generation and first-message intro c
     /fallbackHandoffReply\([\s\S]*?\{ urgent: true \}/
   );
 });
+
+
+test("optional result media exceptions stay isolated from the main AI handoff path", () => {
+  const resultStart = serverSource.indexOf("// Result examples are optional social proof");
+  const localCatch = serverSource.indexOf("} catch (resultMediaErr)", resultStart);
+  const globalCatch = serverSource.indexOf("} catch (err)", localCatch);
+
+  assert.ok(resultStart >= 0, "optional result media block should exist");
+  assert.ok(localCatch > resultStart, "result media should have its own exception boundary");
+  assert.ok(globalCatch > localCatch, "local result-media catch must run before the main inbound catch");
+
+  const isolatedBlock = serverSource.slice(resultStart, globalCatch);
+  assert.match(isolatedBlock, /getMostRecentlySentMediaUrl/);
+  assert.match(isolatedBlock, /setDeliveryStatusById\([\s\S]*?"unknown"/);
+  assert.doesNotMatch(isolatedBlock, /pauseAiForHumanHandoff/);
+});
+
+
+test("post-price runtime keeps text then promo then result-media ordering", () => {
+  const textSendAt = serverSource.indexOf("const sendOutcome = await sendTrackedText(");
+  const promoResolveAt = serverSource.indexOf("resolvePricePromotionForReply({", textSendAt);
+  const resultResolveAt = serverSource.indexOf("resolveResultMediaForReply({", promoResolveAt);
+
+  assert.ok(textSendAt >= 0, "normal AI text send should exist");
+  assert.ok(promoResolveAt > textSendAt, "promotion resolution must happen after text");
+  assert.ok(resultResolveAt > promoResolveAt, "result media must resolve only after promotion flow");
+  assert.match(
+    serverSource.slice(promoResolveAt, resultResolveAt),
+    /automaticPromoMediaSent \+= 1/
+  );
+  assert.match(
+    serverSource.slice(resultResolveAt - 500, resultResolveAt),
+    /automaticPromoMediaSent <= 1/
+  );
+});

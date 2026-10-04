@@ -263,11 +263,12 @@ function createApp({
 
   app.get("/promo-images/:id", async (req, res) => {
     try {
-      const image = await promoImagesRepo.getImage(req.params.id);
+      const image = await promoImagesRepo.getPublicImage(req.params.id);
       if (!image) return res.status(404).send("Not found");
 
       res.set("Content-Type", image.mime_type);
       res.set("Cache-Control", "public, max-age=3600");
+      res.set("X-Content-Type-Options", "nosniff");
       res.send(Buffer.from(image.data, "base64"));
     } catch (err) {
       console.error("Failed to serve promo image:", err);

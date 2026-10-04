@@ -865,3 +865,193 @@ test("pre-send guard failures fail closed before provider delivery", async (t) =
   assert.equal(result.preSendCheckFailed, true);
   assert.match(result.error, /eligibility could not be verified/i);
 });
+
+
+test("WhatsApp stored result media uses private bytes upload instead of a public image URL", async (t) => {
+  const originalGetImage = promoImagesRepo.getImage;
+  const originalUpload = whatsapp.uploadMedia;
+  const originalSendById = whatsapp.sendImageById;
+  const originalSendByUrl = whatsapp.sendImage;
+  t.after(() => {
+    promoImagesRepo.getImage = originalGetImage;
+    whatsapp.uploadMedia = originalUpload;
+    whatsapp.sendImageById = originalSendById;
+    whatsapp.sendImage = originalSendByUrl;
+  });
+
+  promoImagesRepo.getImage = async (id) => {
+    assert.equal(id, 321);
+    return {
+      mime_type: "image/jpeg",
+      data: Buffer.from("private-result").toString("base64"),
+      purpose: "result_media",
+    };
+  };
+
+  const calls = [];
+  whatsapp.uploadMedia = async (buffer, mimeType, filename) => {
+    calls.push({
+      kind: "upload",
+      bytes: buffer.toString(),
+      mimeType,
+      filename,
+    });
+    return "wa-media-321";
+  };
+  whatsapp.sendImageById = async (to, mediaId, caption) => {
+    calls.push({ kind: "send-by-id", to, mediaId, caption });
+    return { success: true, wamid: "wamid-private-result" };
+  };
+  whatsapp.sendImage = async () => {
+    calls.push({ kind: "public-url-send" });
+    return { success: false, wamid: null };
+  };
+
+  let guardCalls = 0;
+  const result = await messaging.sendImageByUrl(
+    { id: 3210, channel: "whatsapp", whatsapp_number: "60123334444" },
+    "/api/config/result-media/image/321",
+    "Before & after reference",
+    {
+      preSendCheck: () => {
+        guardCalls += 1;
+        return true;
+      },
+    }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.wamid, "wamid-private-result");
+  assert.equal(guardCalls, 2);
+  assert.deepEqual(calls, [
+    {
+      kind: "upload",
+      bytes: "private-result",
+      mimeType: "image/jpeg",
+      filename: "promo-321.jpg",
+    },
+    {
+      kind: "send-by-id",
+      to: "60123334444",
+      mediaId: "wa-media-321",
+      caption: "Before & after reference",
+    },
+  ]);
+});
+
+test("Instagram stored result media uses only a short-lived signed R2 URL", async (t) => {
+  const originalGetImage = promoImagesRepo.getImage;
+  const originalMetaSend = meta.sendText;
+  const originalMetaImage = meta.sendImage;
+  const originalUploadTemporary = mediaStorage.uploadTemporaryMedia;
+  const originalScheduleDelete = mediaStorage.scheduleTemporaryMediaDelete;
+  const originalUrlAttachment = metaAttachments.sendUrlAttachment;
+  t.after(() => {
+    promoImagesRepo.getImage = originalGetImage;
+    meta.sendText = originalMetaSend;
+    meta.sendImage = originalMetaImage;
+    mediaStorage.uploadTemporaryMedia = originalUploadTemporary;
+    mediaStorage.scheduleTemporaryMediaDelete = originalScheduleDelete;
+    metaAttachments.sendUrlAttachment = originalUrlAttachment;
+  });
+
+  promoImagesRepo.getImage = async (id) => ({
+    mime_type: "image/png",
+    data: Buffer.from(`result-${id}`).toString("base64"),
+    purpose: "result_media",
+  });
+  meta.sendText = async () => ({
+    success: true,
+    externalMessageId: "ig-private-caption",
+  });
+  let permanentUrlCalls = 0;
+  meta.sendImage = async () => {
+    permanentUrlCalls += 1;
+    return { success: false, externalMessageId: null };
+  };
+
+  const events = [];
+  mediaStorage.uploadTemporaryMedia = async (buffer, mimeType, options) => {
+    events.push({
+      kind: "temp-upload",
+      bytes: buffer.toString(),
+      mimeType,
+      contactId: options.contactId,
+    });
+    return {
+      key: "meta-outbound/654/result.png",
+      url: "https://r2.example/result.png?signed=temporary",
+    };
+  };
+  mediaStorage.scheduleTemporaryMediaDelete = (key) => {
+    events.push({ kind: "cleanup", key });
+  };
+  metaAttachments.sendUrlAttachment = async (_channel, _to, _type, url) => {
+    events.push({ kind: "deliver", url });
+    return { success: true, externalMessageId: "ig-private-image" };
+  };
+
+  const result = await messaging.sendImageByUrl(
+    { id: 654, channel: "instagram", channel_user_id: "igsid-private" },
+    "/api/config/result-media/image/654",
+    "Private example",
+    { preSendCheck: () => true }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(permanentUrlCalls, 0);
+  assert.deepEqual(events, [
+    {
+      kind: "temp-upload",
+      bytes: "result-654",
+      mimeType: "image/png",
+      contactId: 654,
+    },
+    {
+      kind: "deliver",
+      url: "https://r2.example/result.png?signed=temporary",
+    },
+    { kind: "cleanup", key: "meta-outbound/654/result.png" },
+  ]);
+});
+
+test("WhatsApp stored image delivery rechecks automation ownership after upload", async (t) => {
+  const originalGetImage = promoImagesRepo.getImage;
+  const originalUpload = whatsapp.uploadMedia;
+  const originalSendById = whatsapp.sendImageById;
+  t.after(() => {
+    promoImagesRepo.getImage = originalGetImage;
+    whatsapp.uploadMedia = originalUpload;
+    whatsapp.sendImageById = originalSendById;
+  });
+
+  promoImagesRepo.getImage = async () => ({
+    mime_type: "image/jpeg",
+    data: Buffer.from("private-result").toString("base64"),
+    purpose: "result_media",
+  });
+  whatsapp.uploadMedia = async () => "uploaded-before-takeover";
+  let deliveries = 0;
+  whatsapp.sendImageById = async () => {
+    deliveries += 1;
+    return { success: true, wamid: "must-not-send" };
+  };
+
+  let guardCalls = 0;
+  const result = await messaging.sendImageByUrl(
+    { id: 777, channel: "whatsapp", whatsapp_number: "60127770000" },
+    "/api/config/result-media/image/777",
+    "Result",
+    {
+      preSendCheck: () => {
+        guardCalls += 1;
+        return guardCalls === 1;
+      },
+    }
+  );
+
+  assert.equal(guardCalls, 2);
+  assert.equal(deliveries, 0);
+  assert.equal(result.success, false);
+  assert.equal(result.cancelled, true);
+});

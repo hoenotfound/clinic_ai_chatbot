@@ -1,51 +1,84 @@
 const { pool } = require("./db");
 
+const IMAGE_PURPOSES = Object.freeze({
+  PUBLIC_CONFIG: "public_config",
+  RESULT_MEDIA: "result_media",
+});
+
+function normalizePurpose(value) {
+  return value === IMAGE_PURPOSES.RESULT_MEDIA
+    ? IMAGE_PURPOSES.RESULT_MEDIA
+    : IMAGE_PURPOSES.PUBLIC_CONFIG;
+}
+
 /**
- * Stores an uploaded promo graphic's raw bytes in Postgres (base64) and
- * returns its row id — used to build a public URL (see GET
- * /promo-images/:id in server.js) that WhatsApp's Cloud API can fetch when
- * sending a promotion image message by link (see services/whatsappService.js
- * sendImage(), which needs a real hosted URL, not a data URI or file upload).
+ * Stores a Settings-managed image. Marketing/follow-up graphics retain the
+ * historical public_config purpose. Before/After result media is tagged
+ * result_media immediately at upload time so the public legacy route can
+ * never serve it, even before the Settings form is saved.
  */
-async function saveImage(mimeType, base64Data) {
-  const result = await pool.query("INSERT INTO promo_images (mime_type, data) VALUES ($1, $2) RETURNING id", [
-    mimeType,
-    base64Data,
-  ]);
+async function saveImage(
+  mimeType,
+  base64Data,
+  { purpose = IMAGE_PURPOSES.PUBLIC_CONFIG } = {}
+) {
+  const normalizedPurpose = normalizePurpose(purpose);
+  const result = await pool.query(
+    "INSERT INTO promo_images (mime_type, data, purpose) VALUES ($1, $2, $3) RETURNING id",
+    [mimeType, base64Data, normalizedPurpose]
+  );
   return result.rows[0].id;
 }
 
-/** Returns { mime_type, data } for one uploaded promo image, or null if it doesn't exist. */
+/** Returns one stored Settings image, including its privacy purpose. */
 async function getImage(id) {
-  const result = await pool.query("SELECT mime_type, data FROM promo_images WHERE id = $1", [id]);
+  const result = await pool.query(
+    "SELECT mime_type, data, purpose FROM promo_images WHERE id = $1",
+    [id]
+  );
   return result.rows[0] || null;
 }
 
 /**
- * Deletes one uploaded promo image by id. Called whenever a promo image is
- * replaced or removed from Settings > Promotions (see routes/config.js
- * DELETE /promotions/image/:id) so old rows don't pile up in Postgres.
- * Idempotent — deleting an id that's already gone (or never existed) is not
- * an error, it just affects zero rows.
+ * Public legacy image route access is deliberately restricted to ordinary
+ * marketing/follow-up graphics. Result media is never returned here.
  */
+async function getPublicImage(id) {
+  const result = await pool.query(
+    `SELECT mime_type, data, purpose
+     FROM promo_images
+     WHERE id = $1
+       AND purpose = $2`,
+    [id, IMAGE_PURPOSES.PUBLIC_CONFIG]
+  );
+  return result.rows[0] || null;
+}
+
+async function markResultMedia(ids, queryable = pool) {
+  const safeIds = [...new Set((ids || [])
+    .map(Number)
+    .filter((id) => Number.isSafeInteger(id) && id > 0))];
+  if (!safeIds.length) return [];
+  const result = await queryable.query(
+    `UPDATE promo_images
+     SET purpose = $2
+     WHERE id = ANY($1::int[])
+       AND purpose IS DISTINCT FROM $2
+     RETURNING id`,
+    [safeIds, IMAGE_PURPOSES.RESULT_MEDIA]
+  );
+  return result.rows.map((row) => row.id);
+}
+
+/** Idempotently deletes one uploaded Settings image. */
 async function deleteImage(id) {
   await pool.query("DELETE FROM promo_images WHERE id = $1", [id]);
 }
 
 /**
- * Safety net for the case the explicit deleteImage() calls above can't
- * catch: staff upload a promo image (which writes a row immediately — see
- * saveImage() above) and then close the tab, switch away, or their browser
- * crashes before they hit Save on the Promotions tab. Nothing ever
- * references that row, and no client-side event fires to clean it up.
- *
- * Called from configRepo.js after every successful config save, and on a
- * timer from server.js, to delete any promo_images row that isn't
- * referenced by `referencedIds` or a saved Inbox message. Keeping message
- * references matters for history and failed-message retry. Unused uploads
- * are only removed once they are older than `olderThanMinutes`, so an image
- * uploaded seconds ago while staff are still editing is never swept away
- * before they get a chance to save.
+ * Deletes old unreferenced Settings images. Message references cover both the
+ * historical /promo-images/:id URLs and the authenticated result-media preview
+ * URLs so Inbox history and retry metadata remain intact.
  */
 async function pruneUnreferenced(referencedIds, olderThanMinutes = 60) {
   const result = await pool.query(
@@ -56,13 +89,25 @@ async function pruneUnreferenced(referencedIds, olderThanMinutes = 60) {
          SELECT 1
          FROM messages
          WHERE media_url IS NOT NULL
-           AND split_part(split_part(media_url, '?', 1), '#', 1)
+           AND (
+             split_part(split_part(media_url, '?', 1), '#', 1)
                LIKE '%/promo-images/' || promo_images.id::text
+             OR split_part(split_part(media_url, '?', 1), '#', 1)
+               LIKE '%/api/config/result-media/image/' || promo_images.id::text
+           )
        )
      RETURNING id`,
     [referencedIds, olderThanMinutes]
   );
-  return result.rows.map((r) => r.id);
+  return result.rows.map((row) => row.id);
 }
 
-module.exports = { saveImage, getImage, deleteImage, pruneUnreferenced };
+module.exports = {
+  IMAGE_PURPOSES,
+  deleteImage,
+  getImage,
+  getPublicImage,
+  markResultMedia,
+  pruneUnreferenced,
+  saveImage,
+};

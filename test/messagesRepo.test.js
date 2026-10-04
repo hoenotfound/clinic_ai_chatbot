@@ -274,3 +274,173 @@ test("promo duplicate lookup fails open for invalid lookup inputs without queryi
   );
   assert.equal(queried, false);
 });
+
+
+test("result media duplicate lookup matches accepted media by URL for seven-day suppression", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /contact_id = \$1/);
+    assert.match(sql, /media_url = \$2/);
+    assert.doesNotMatch(sql, /content = \$3/);
+    assert.match(sql, /whatsapp_message_id IS NOT NULL/);
+    assert.match(sql, /delivery_status NOT IN \('failed', 'unknown'\)/);
+    assert.match(sql, /\$3::integer \* INTERVAL '1 hour'/);
+    assert.deepEqual(params, [42, "https://example.test/result.jpg", 168]);
+    return { rowCount: 1, rows: [] };
+  };
+
+  assert.equal(
+    await messagesRepo.wasMediaRecentlySent(
+      42,
+      "https://example.test/result.jpg",
+      168
+    ),
+    true
+  );
+});
+
+test("result media duplicate lookup fails open for invalid inputs without querying Postgres", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  let queried = false;
+  pool.query = async () => {
+    queried = true;
+    return { rowCount: 0, rows: [] };
+  };
+
+  assert.equal(await messagesRepo.wasMediaRecentlySent(42, "", 168), false);
+  assert.equal(
+    await messagesRepo.wasMediaRecentlySent(
+      42,
+      "https://example.test/result.jpg",
+      0
+    ),
+    false
+  );
+  assert.equal(queried, false);
+});
+
+
+test("result media rotation history returns the most recently accepted configured URL", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /media_url = ANY\(\$2::text\[\]\)/);
+    assert.match(sql, /whatsapp_message_id IS NOT NULL/);
+    assert.match(sql, /delivery_status NOT IN \('failed', 'unknown'\)/);
+    assert.match(sql, /ORDER BY created_at DESC, id DESC/);
+    assert.deepEqual(params, [
+      42,
+      [
+        "https://example.test/result-1.jpg",
+        "https://example.test/result-2.jpg",
+      ],
+    ]);
+    return {
+      rows: [{ media_url: "https://example.test/result-2.jpg" }],
+    };
+  };
+
+  assert.equal(
+    await messagesRepo.getMostRecentlySentMediaUrl(
+      42,
+      [
+        "https://example.test/result-1.jpg",
+        "https://example.test/result-2.jpg",
+        "https://example.test/result-2.jpg",
+      ]
+    ),
+    "https://example.test/result-2.jpg"
+  );
+});
+
+test("result media rotation history fails closed without a contact or URLs", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  let queried = false;
+  pool.query = async () => {
+    queried = true;
+    return { rows: [] };
+  };
+
+  assert.equal(await messagesRepo.getMostRecentlySentMediaUrl(null, ["x"]), null);
+  assert.equal(await messagesRepo.getMostRecentlySentMediaUrl(42, []), null);
+  assert.equal(queried, false);
+});
+
+
+test("result media cooldown treats legacy public and private stored paths as the same image", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /promo-images/);
+    assert.match(sql, /api\/config\/result-media\/image/);
+    assert.deepEqual(params, [
+      42,
+      "/api/config/result-media/image/321",
+      168,
+      321,
+    ]);
+    return { rowCount: 1, rows: [] };
+  };
+
+  assert.equal(
+    await messagesRepo.wasMediaRecentlySent(
+      42,
+      "/api/config/result-media/image/321",
+      168
+    ),
+    true
+  );
+});
+
+test("result media rotation history can find a legacy public path for a private configured image", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /unnest\(\$3::int\[\]\)/);
+    assert.match(sql, /promo-images/);
+    assert.match(sql, /api\/config\/result-media\/image/);
+    assert.deepEqual(params, [
+      42,
+      [
+        "/api/config/result-media/image/321",
+        "/api/config/result-media/image/322",
+      ],
+      [321, 322],
+    ]);
+    return {
+      rows: [{ media_url: "https://old.example/promo-images/321" }],
+    };
+  };
+
+  assert.equal(
+    await messagesRepo.getMostRecentlySentMediaUrl(
+      42,
+      [
+        "/api/config/result-media/image/321",
+        "/api/config/result-media/image/322",
+      ]
+    ),
+    "https://old.example/promo-images/321"
+  );
+});

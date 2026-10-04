@@ -407,7 +407,14 @@ function RepeatableListEditor({ items, fields, onChange, emptyItem, addLabel, on
 const MAX_PROMO_IMAGE_BYTES = 5 * 1024 * 1024;
 const PROMO_IMAGE_TYPES = new Set(["image/jpeg", "image/png"]);
 
-function ImageFieldEditor({ value, onChange, onError }) {
+function ImageFieldEditor({
+  value,
+  onChange,
+  onError,
+  uploadImage = null,
+  alt = "Promotion graphic",
+  allowUrl = true,
+}) {
   const fileInputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
 
@@ -425,7 +432,9 @@ function ImageFieldEditor({ value, onChange, onError }) {
     }
     setUploading(true);
     try {
-      const { url } = await api.uploadPromoImage(file);
+      const { url } = uploadImage
+        ? await uploadImage(file)
+        : await api.uploadPromoImage(file);
       onChange(url);
     } catch (err) {
       onError(err.message || "Couldn't upload that image.");
@@ -439,7 +448,7 @@ function ImageFieldEditor({ value, onChange, onError }) {
       {value && (
         <img
           src={value}
-          alt="Promotion graphic"
+          alt={alt}
           className="mb-3 max-h-52 w-full rounded-xl border border-[var(--color-border)] object-cover"
         />
       )}
@@ -464,17 +473,19 @@ function ImageFieldEditor({ value, onChange, onError }) {
           </button>
         )}
       </div>
-      <details className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
-        <summary className="cursor-pointer text-[11px] font-semibold text-[var(--color-text-muted)]">
-          Advanced · use image URL
-        </summary>
-        <input
-          className={`${inputClass} mt-2 text-xs`}
-          value={value}
-          placeholder="https://..."
-          onChange={(e) => onChange(e.target.value)}
-        />
-      </details>
+      {allowUrl && (
+        <details className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
+          <summary className="cursor-pointer text-[11px] font-semibold text-[var(--color-text-muted)]">
+            Advanced · use image URL
+          </summary>
+          <input
+            className={`${inputClass} mt-2 text-xs`}
+            value={value}
+            placeholder="https://..."
+            onChange={(e) => onChange(e.target.value)}
+          />
+        </details>
+      )}
     </div>
   );
 }
@@ -1851,6 +1862,399 @@ function PromotionsTab({ config, onSaved, onError }) {
 
       <div className="mt-5">
         <SaveButton saving={saving} onClick={handleSave} />
+      </div>
+
+      <div className="mt-8 border-t border-[var(--color-border)] pt-7">
+        <ResultMediaSection config={config} onSaved={onSaved} onError={onError} />
+      </div>
+    </div>
+  );
+}
+
+function ResultMediaItemsEditor({ items, onChange, onError }) {
+  function updateItem(index, patch) {
+    const next = items.slice();
+    next[index] = { ...next[index], ...patch };
+    onChange(next);
+  }
+
+  function removeItem(index) {
+    onChange(items.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  function addItem() {
+    if (items.length >= 10) return;
+    onChange([...items, { imageUrl: "", caption: "" }]);
+  }
+
+  return (
+    <div className="space-y-3">
+      {items.map((item, index) => (
+        <div
+          key={index}
+          className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5"
+        >
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="text-xs font-bold">Example {index + 1}</p>
+            <button
+              type="button"
+              onClick={() => removeItem(index)}
+              className="h-9 rounded-lg px-2.5 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+            >
+              Remove
+            </button>
+          </div>
+
+          <div className="grid gap-4">
+            <div>
+              <label className={labelClass}>Before / After image</label>
+              <ImageFieldEditor
+                value={item.imageUrl || ""}
+                onChange={(imageUrl) => updateItem(index, { imageUrl })}
+                onError={onError}
+                uploadImage={api.uploadResultMediaImage}
+                alt="Before and after result example"
+                allowUrl={false}
+              />
+              <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+                Upload result photos here instead of using a public link. The stored image is private
+                to signed-in staff and is sent to Meta through a temporary/provider upload path.
+              </p>
+            </div>
+            <div>
+              <label className={labelClass}>Caption sent with this example</label>
+              <textarea
+                rows={3}
+                className={textareaClass}
+                value={item.caption || ""}
+                placeholder="Keep this factual and avoid guaranteed-result claims."
+                onChange={(event) => updateItem(index, { caption: event.target.value })}
+              />
+            </div>
+          </div>
+        </div>
+      ))}
+
+      <button
+        type="button"
+        onClick={addItem}
+        disabled={items.length >= 10}
+        className="h-11 w-full rounded-xl border border-dashed border-[var(--color-border)] px-3 text-sm font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] disabled:opacity-50"
+      >
+        + Add result example
+      </button>
+    </div>
+  );
+}
+
+function ResultMediaSection({ config, onSaved, onError }) {
+  const serviceNames = (config.services || []).map((service) => service.name).filter(Boolean);
+  const [sets, setSets] = useState(() =>
+    (config.resultMedia || []).map((entry) => ({
+      service: entry.service || "",
+      enabled: entry.enabled === true,
+      sendAfterPrice: entry.sendAfterPrice === true,
+      autoSendCount:
+        Number.isInteger(entry.autoSendCount) && entry.autoSendCount >= 1
+          ? Math.min(entry.autoSendCount, 2)
+          : 1,
+      items: Array.isArray(entry.items)
+        ? entry.items.map((item) => ({
+            imageUrl: item.imageUrl || "",
+            caption: item.caption || "",
+          }))
+        : [],
+    }))
+  );
+  const [openIndex, setOpenIndex] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  function updateSet(index, patch) {
+    const next = sets.slice();
+    next[index] = { ...next[index], ...patch };
+    setSets(next);
+  }
+
+  function addSet() {
+    const used = new Set(sets.map((entry) => entry.service).filter(Boolean));
+    const service = serviceNames.find((name) => !used.has(name)) || "";
+    const next = [
+      ...sets,
+      {
+        service,
+        enabled: true,
+        sendAfterPrice: true,
+        autoSendCount: 1,
+        items: [{ imageUrl: "", caption: "" }],
+      },
+    ];
+    setSets(next);
+    setOpenIndex(next.length - 1);
+  }
+
+  function removeSet(index) {
+    setSets(sets.filter((_, itemIndex) => itemIndex !== index));
+    setOpenIndex((current) => {
+      if (current === index) return null;
+      if (current != null && current > index) return current - 1;
+      return current;
+    });
+  }
+
+  async function handleSave() {
+    const cleaned = sets
+      .filter((entry) =>
+        String(entry.service || "").trim() ||
+        (Array.isArray(entry.items) &&
+          entry.items.some(
+            (item) =>
+              String(item?.imageUrl || "").trim() ||
+              String(item?.caption || "").trim()
+          ))
+      )
+      .map((entry) => {
+        const items = (Array.isArray(entry.items) ? entry.items : [])
+          .filter(
+            (item) =>
+              String(item?.imageUrl || "").trim() ||
+              String(item?.caption || "").trim()
+          )
+          .map((item) => ({
+            imageUrl: String(item.imageUrl || "").trim(),
+            caption: String(item.caption || "").trim(),
+          }));
+
+        return {
+          service: String(entry.service || "").trim(),
+          enabled: entry.enabled === true,
+          sendAfterPrice: entry.sendAfterPrice === true,
+          autoSendCount: Math.min(
+            Math.max(Number(entry.autoSendCount) || 1, 1),
+            2,
+            Math.max(items.length, 1)
+          ),
+          items,
+        };
+      });
+
+    const canonicalServices = new Set(serviceNames.map((name) => name.toLowerCase()));
+    const seenServices = new Set();
+    for (const entry of cleaned) {
+      const normalized = entry.service.toLowerCase();
+      if (!entry.service || !canonicalServices.has(normalized)) {
+        onError("Every result-media set must link to a configured service.");
+        return;
+      }
+      if (seenServices.has(normalized)) {
+        onError(`Only one result-media set can be used for ${entry.service}. Add more examples inside the same set.`);
+        return;
+      }
+      seenServices.add(normalized);
+
+      if (entry.items.length < 1) {
+        onError(`Add at least one result example for ${entry.service}.`);
+        return;
+      }
+      if (entry.items.some((item) => !item.imageUrl || !item.caption)) {
+        onError(`Every result example for ${entry.service} needs both an image and caption.`);
+        return;
+      }
+    }
+
+    setSaving(true);
+    try {
+      const updated = await api.updateConfig({ resultMedia: cleaned });
+      setSets(cleaned);
+      setOpenIndex(null);
+      onSaved(updated);
+    } catch (err) {
+      onError(err.message || "Couldn't save result examples.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const allServicesUsed =
+    serviceNames.length > 0 &&
+    serviceNames.every((name) => sets.some((entry) => entry.service === name));
+
+  return (
+    <div>
+      <div className="mb-5">
+        <h3 className="font-display text-base font-bold sm:text-lg">Before & After</h3>
+        <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)] sm:text-sm">
+          Add approved result examples by service. After a successful price reply,
+          the bot can send these after the promotion image. Automatic result media is suppressed
+          for 7 days after a send, then continues with the next configured example.
+        </p>
+      </div>
+
+      {serviceNames.length === 0 && (
+        <p className="mb-4 rounded-xl bg-[var(--color-accent-light)] p-3 text-xs">
+          Add at least one service before creating result examples.
+        </p>
+      )}
+
+      <div className="space-y-3">
+        {sets.map((entry, index) => {
+          const expanded = openIndex === index;
+          const usedByOthers = new Set(
+            sets
+              .filter((_, itemIndex) => itemIndex !== index)
+              .map((item) => item.service)
+              .filter(Boolean)
+          );
+
+          return (
+            <div
+              key={index}
+              className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]"
+            >
+              <div className="flex items-start gap-3 p-4">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="truncate text-sm font-bold sm:text-base">
+                      {entry.service || "New result set"}
+                    </p>
+                    <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
+                      {entry.items.length} example{entry.items.length === 1 ? "" : "s"}
+                    </span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                        entry.enabled && entry.sendAfterPrice
+                          ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                          : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"
+                      }`}
+                    >
+                      {entry.enabled && entry.sendAfterPrice ? "Auto-send on" : "Auto-send off"}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                    Sends {Math.min(entry.autoSendCount || 1, Math.max(entry.items.length, 1))} example
+                    {Math.min(entry.autoSendCount || 1, Math.max(entry.items.length, 1)) === 1 ? "" : "s"} per eligible price reply.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOpenIndex(expanded ? null : index)}
+                  className="h-10 shrink-0 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold"
+                >
+                  {expanded ? "Close" : "Edit"}
+                </button>
+              </div>
+
+              {expanded && (
+                <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+                  <div className="grid gap-5">
+                    <div>
+                      <label className={labelClass}>Service</label>
+                      <select
+                        className={inputClass}
+                        value={entry.service}
+                        onChange={(event) => updateSet(index, { service: event.target.value })}
+                      >
+                        <option value="">Choose the service</option>
+                        {serviceNames.map((service) => (
+                          <option
+                            key={service}
+                            value={service}
+                            disabled={usedByOthers.has(service)}
+                          >
+                            {service}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <label className="flex min-h-12 items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3 text-sm">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={entry.enabled === true}
+                        onChange={(event) => updateSet(index, { enabled: event.target.checked })}
+                      />
+                      <span>
+                        <span className="block font-semibold">Enable result examples</span>
+                        <span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-muted)]">
+                          Turn this off to keep the examples saved without sending them automatically.
+                        </span>
+                      </span>
+                    </label>
+
+                    <label className="flex min-h-12 items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3 text-sm">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={entry.sendAfterPrice === true}
+                        onChange={(event) => updateSet(index, { sendAfterPrice: event.target.checked })}
+                      />
+                      <span>
+                        <span className="block font-semibold">Send after price enquiries</span>
+                        <span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-muted)]">
+                          Sends only after the normal AI reply succeeds and the service is matched safely.
+                        </span>
+                      </span>
+                    </label>
+
+                    <div>
+                      <label className={labelClass}>Automatic examples per eligible reply</label>
+                      <select
+                        className={inputClass}
+                        value={entry.autoSendCount || 1}
+                        onChange={(event) =>
+                          updateSet(index, { autoSendCount: Number(event.target.value) })
+                        }
+                      >
+                        <option value={1}>1 example</option>
+                        <option value={2}>2 examples</option>
+                      </select>
+                      <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">
+                        One is recommended. Examples rotate in the order shown after each 7-day cooldown.
+                        If several package graphics were already sent in the same turn, the bot skips result media.
+                      </p>
+                    </div>
+
+                    <ResultMediaItemsEditor
+                      items={entry.items}
+                      onChange={(items) => updateSet(index, { items })}
+                      onError={onError}
+                    />
+
+                    <div className="flex flex-col-reverse gap-2 border-t border-[var(--color-border)] pt-3 sm:flex-row sm:items-center sm:justify-between">
+                      <button
+                        type="button"
+                        onClick={() => removeSet(index)}
+                        className="h-10 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+                      >
+                        Remove result set
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOpenIndex(null)}
+                        className="h-10 rounded-xl border border-[var(--color-border)] bg-white px-4 text-xs font-semibold"
+                      >
+                        Finish editing
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        <button
+          type="button"
+          onClick={addSet}
+          disabled={serviceNames.length === 0 || allServicesUsed}
+          className="h-11 w-full rounded-xl border border-dashed border-[var(--color-border)] px-3 text-sm font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-50"
+        >
+          + Add Before / After set
+        </button>
+      </div>
+
+      <div className="mt-5">
+        <SaveButton saving={saving} onClick={handleSave} label="Save result examples" />
       </div>
     </div>
   );

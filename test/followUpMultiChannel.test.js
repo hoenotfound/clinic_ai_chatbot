@@ -60,6 +60,11 @@ function enableTool({ imageUrl = "" } = {}) {
       zh: "您好，请问还需要帮助吗？",
     },
     imageUrl,
+    quietHours: {
+      enabled: false,
+      start: "00:00",
+      end: "07:00",
+    },
     activatedAt: "2026-08-27T00:00:00.000Z",
   };
 }

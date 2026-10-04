@@ -13,10 +13,13 @@ const {
   configFingerprint,
   tokenizeDiffText,
   editableConfigView,
+  restorableEditableConfigView,
   prepareAdvancedConfigPayload,
 } = require("../src/routes/advancedConfig");
 const {
   MAX_CONFIG_IMPORT_SNAPSHOTS,
+  collectPromoImageIds,
+  listReferencedPromoImageIds,
   pruneOldSnapshots,
 } = require("../src/db/configImportHistoryRepo");
 const { getIndustryProfile } = require("../src/config/industryProfiles");
@@ -41,6 +44,7 @@ function currentConfig() {
     branches: [{ name: "HQ", address: "KL", phone: "" }],
     serviceAreas: [],
     promotions: [],
+    resultMedia: [],
     services: [{ name: "Consultation", description: "", priceRange: "", duration: "" }],
     serviceAliases: [],
     faqs: [],
@@ -1151,6 +1155,79 @@ test("Advanced Config snapshot retention keeps at most 50 newest backups", async
   assert.match(repo, /await client\.query\("COMMIT"\)/);
 });
 
+
+
+test("config image cleanup includes retained snapshot image references", () => {
+  const configRepoSource = read("src/db/configRepo.js");
+  assert.match(
+    configRepoSource,
+    /configImportHistoryRepo\.listReferencedPromoImageIds\(\)/
+  );
+  assert.match(
+    configRepoSource,
+    /promoImagesRepo\.pruneUnreferenced\(\[\.\.\.new Set\(referencedIds\)\]\)/
+  );
+});
+
+test("retained Advanced Config snapshots protect their stored image URLs from cleanup", async () => {
+  const database = {
+    async query(sql, params) {
+      assert.match(sql, /SELECT editable_config/);
+      assert.match(sql, /FROM config_import_snapshots/);
+      assert.match(sql, /LIMIT \$1/);
+      assert.deepEqual(params, [MAX_CONFIG_IMPORT_SNAPSHOTS]);
+      return {
+        rows: [
+          {
+            editable_config: {
+              promotions: [{
+                imageUrl: "https://example.test/promo-images/101",
+                packages: [{
+                  imageUrl: "https://example.test/promo-images/102?cache=1",
+                }],
+              }],
+              resultMedia: [{
+                service: "Consultation",
+                items: [{
+                  imageUrl: "https://example.test/promo-images/103#result",
+                }],
+              }],
+            },
+          },
+          {
+            editable_config: {
+              automatedFollowUp: {
+                imageUrl: "https://example.test/promo-images/104/",
+              },
+              duplicateReference: "https://example.test/promo-images/101",
+              externalImage: "https://cdn.example.test/image.jpg",
+            },
+          },
+        ],
+      };
+    },
+  };
+
+  assert.deepEqual(
+    (await listReferencedPromoImageIds(database)).sort((a, b) => a - b),
+    [101, 102, 103, 104]
+  );
+});
+
+test("snapshot image reference extraction walks nested arrays and ignores invalid URLs", () => {
+  const ids = collectPromoImageIds({
+    one: "https://host.test/promo-images/12",
+    nested: [
+      "https://host.test/promo-images/13?x=1",
+      { value: "prefix /promo-images/14#fragment" },
+      "/promo-images/not-a-number",
+      null,
+    ],
+  });
+
+  assert.deepEqual([...ids].sort((a, b) => a - b), [12, 13, 14]);
+});
+
 test("Advanced Config is admin-only, snapshots imports, and rejects stale previews", () => {
   const route = read("src/routes/advancedConfig.js");
   const migration = read("src/db/migrations/026_config_import_snapshots.sql");
@@ -1195,4 +1272,130 @@ test("Advanced Config portal route stays admin-only and exposes validate, apply,
   assert.match(api, /previewAdvancedConfig/);
   assert.match(api, /applyAdvancedConfig/);
   assert.match(api, /restoreAdvancedConfig/);
+});
+
+
+test("result media config is editable, service-linked, complete and unique", () => {
+  const current = currentConfig();
+  const validSet = {
+    service: "Consultation",
+    enabled: true,
+    sendAfterPrice: true,
+    autoSendCount: 1,
+    items: [
+      {
+        imageUrl: "https://example.test/before-after.jpg",
+        caption: "Example result. Individual results vary.",
+      },
+    ],
+  };
+
+  const valid = prepareAdvancedConfigPayload(
+    { resultMedia: [validSet] },
+    current
+  );
+  assert.equal(valid.ok, true);
+  assert.deepEqual(valid.updates.resultMedia, [validSet]);
+  assert.equal(EDITABLE_KEYS.includes("resultMedia"), true);
+
+  const unknownService = prepareAdvancedConfigPayload(
+    {
+      resultMedia: [{
+        ...validSet,
+        service: "Missing Treatment",
+      }],
+    },
+    current
+  );
+  assert.equal(unknownService.ok, false);
+  assert.deepEqual(unknownService.invalidKeys, ["resultMedia"]);
+  assert.match(unknownService.error, /currently configured service/i);
+
+  const incomplete = prepareAdvancedConfigPayload(
+    {
+      resultMedia: [{
+        ...validSet,
+        items: [{ imageUrl: "https://example.test/result.jpg", caption: "" }],
+      }],
+    },
+    current
+  );
+  assert.equal(incomplete.ok, false);
+  assert.deepEqual(incomplete.invalidKeys, ["resultMedia"]);
+
+  const duplicateService = prepareAdvancedConfigPayload(
+    {
+      resultMedia: [
+        validSet,
+        {
+          ...validSet,
+          items: [{
+            imageUrl: "https://example.test/result-2.jpg",
+            caption: "Second example",
+          }],
+        },
+      ],
+    },
+    current
+  );
+  assert.equal(duplicateService.ok, false);
+  assert.deepEqual(duplicateService.invalidKeys, ["resultMedia"]);
+  assert.match(duplicateService.error, /only one result media set/i);
+});
+
+test("removing a service is blocked while result media still targets it", () => {
+  const current = currentConfig();
+  current.resultMedia = [{
+    service: "Consultation",
+    enabled: true,
+    sendAfterPrice: true,
+    autoSendCount: 1,
+    items: [{
+      imageUrl: "https://example.test/result.jpg",
+      caption: "Example result",
+    }],
+  }];
+
+  const renamedService = prepareConfigUpdatePayload(
+    {
+      services: [{
+        name: "Renamed Consultation",
+        description: "",
+        priceRange: "",
+        duration: "",
+      }],
+    },
+    current
+  );
+
+  assert.equal(renamedService.ok, false);
+  assert.deepEqual(renamedService.invalidKeys, ["resultMedia"]);
+  assert.match(renamedService.error, /currently configured service/i);
+});
+
+
+test("legacy Advanced Config snapshots restore result media to the old disabled state", () => {
+  const legacySnapshot = editableConfigView(currentConfig());
+  delete legacySnapshot.resultMedia;
+
+  const restored = restorableEditableConfigView(legacySnapshot);
+  assert.deepEqual(restored.resultMedia, []);
+
+  const modernSnapshot = {
+    ...legacySnapshot,
+    resultMedia: [{
+      service: "Consultation",
+      enabled: true,
+      sendAfterPrice: true,
+      autoSendCount: 1,
+      items: [{
+        imageUrl: "https://example.test/result.jpg",
+        caption: "Example result",
+      }],
+    }],
+  };
+  assert.deepEqual(
+    restorableEditableConfigView(modernSnapshot).resultMedia,
+    modernSnapshot.resultMedia
+  );
 });

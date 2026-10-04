@@ -26,6 +26,7 @@ const {
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
+const { resolveResultMediaForReply } = require("./utils/resultMediaTrigger");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const clinicConfig = require("./config/clinicConfig");
@@ -821,6 +822,7 @@ async function processIncomingMessage(
     // successful normal AI reply when the customer explicitly asked about the
     // price or available packages for one known configured service. Existing
     // safety/ownership gates remain unchanged.
+    let automaticPromoMediaSent = 0;
     {
       const promoBundle = await resolvePricePromotionForReply({
         priceQuery,
@@ -916,6 +918,180 @@ async function processIncomingMessage(
               `Delivery failed: ${publicDeliveryError(promoError)}`
             );
             return { wasFirstMessage, keywordReason };
+          }
+          automaticPromoMediaSent += 1;
+        }
+      }
+    }
+
+    // Result examples are optional social proof. Keep this isolated from the
+    // core AI reply path so a lookup/storage/provider exception here can never
+    // hand an otherwise healthy conversation to Staff mode.
+    if (automaticPromoMediaSent <= 1) {
+      let pendingResultMessage = null;
+      let pendingResultSend = null;
+      let pendingResultError = null;
+      try {
+        const resultBundle = await resolveResultMediaForReply({
+          priceQuery,
+          packageQuery,
+          treatment: details?.treatment,
+          flagged,
+          bookingReady,
+          keywordReason,
+          needsAttention: contact.needs_attention,
+          textSendSucceeded: sendOutcome.sendResult.success,
+          resultMedia: clinicConfig.resultMedia,
+          contactId: contact.id,
+          wasMediaRecentlySent: messagesRepo.wasMediaRecentlySent,
+          getMostRecentlySentMediaUrl: messagesRepo.getMostRecentlySentMediaUrl,
+        });
+
+        if (resultBundle) {
+          for (const resultItem of resultBundle.items) {
+            const resultContact = await getAiOwnedContact(contact, {
+              channel,
+              from,
+              reason: `automatic result media for ${resultBundle.service || "service"}`,
+            });
+            if (!resultContact || resultContact.needs_attention) {
+              return { wasFirstMessage, keywordReason };
+            }
+            contact = resultContact;
+
+            if (canSendAutomatedReply && canSendAutomatedReply() !== true) {
+              return { wasFirstMessage, keywordReason };
+            }
+
+            const guardedResult = typeof canSendAutomatedReply === "function";
+            const savedResult = await conversationStore.appendMessageForContact(
+              contact.id,
+              "assistant",
+              resultItem.caption,
+              null,
+              null,
+              resultItem.imageUrl,
+              null,
+              guardedResult ? { publish: false } : undefined
+            );
+            pendingResultMessage = savedResult;
+            const resultProviderRecorder = messagesRepo.socialProviderAliasRecorder(
+              savedResult.id,
+              contact.channel
+            );
+            const resultSend = await channelMessaging.sendImageByUrl(
+              contact,
+              resultItem.imageUrl,
+              resultItem.caption,
+              {
+                ...(guardedResult
+                  ? { preSendCheck: canSendAutomatedReply }
+                  : {}),
+                ...(resultProviderRecorder
+                  ? { onProviderMessageId: resultProviderRecorder }
+                  : {}),
+              }
+            );
+            pendingResultSend = resultSend;
+
+            if (resultSend.cancelled) {
+              await messagesRepo.deleteUnsentAssistantMessage(savedResult.id);
+              pendingResultMessage = null;
+              pendingResultSend = null;
+              return { wasFirstMessage, keywordReason };
+            }
+
+            if (guardedResult) {
+              realtimeEvents.publish("conversation_changed", {
+                contactId: savedResult.contact_id,
+                messageId: savedResult.id,
+                reason: "message",
+              });
+            }
+
+            const resultError = deliveryErrorForSend(
+              resultSend,
+              resultSend.error || channelMessaging.rejectedError(contact.channel)
+            );
+            pendingResultError = resultError;
+            await persistSendOutcome(
+              savedResult,
+              resultSend,
+              resultError,
+              contact.channel || "whatsapp"
+            );
+            pendingResultMessage = null;
+            pendingResultSend = null;
+            pendingResultError = null;
+
+            if (!resultSend.success) {
+              console.warn(
+                `Result media failed to send to ${channel}:${from}; stopping the remaining result sequence.`
+              );
+              await contactsRepo.setDeliveryAttention(
+                contact.id,
+                `Delivery failed: ${publicDeliveryError(resultError)}`
+              );
+              return { wasFirstMessage, keywordReason };
+            }
+          }
+        }
+      } catch (resultMediaErr) {
+        console.error(
+          `Optional result media failed for ${channel}:${from}; keeping AI ownership unchanged:`,
+          resultMediaErr
+        );
+
+        // If the provider returned an outcome but persisting it threw, retry
+        // that idempotent persistence first. This preserves a known provider ID
+        // instead of accidentally downgrading an accepted send to "unknown".
+        if (pendingResultMessage?.id && pendingResultSend) {
+          try {
+            await persistSendOutcome(
+              pendingResultMessage,
+              pendingResultSend,
+              pendingResultError ||
+                deliveryErrorForSend(
+                  pendingResultSend,
+                  pendingResultSend.error ||
+                    channelMessaging.rejectedError(contact.channel)
+                ),
+              contact.channel || "whatsapp"
+            );
+
+            if (!pendingResultSend.success) {
+              await contactsRepo.setDeliveryAttention(
+                contact.id,
+                `Delivery failed: ${publicDeliveryError(
+                  pendingResultError || pendingResultSend.error
+                )}`
+              );
+            }
+            pendingResultMessage = null;
+          } catch (recoveryErr) {
+            console.error(
+              `Failed to recover result media delivery state for message ${pendingResultMessage.id}:`,
+              recoveryErr
+            );
+          }
+        }
+
+        // If no provider outcome was available, or persistence is still
+        // unavailable, keep the row visible as unconfirmed. This changes only
+        // message delivery state and never changes the conversation owner.
+        if (pendingResultMessage?.id) {
+          try {
+            const unknown = await messagesRepo.setDeliveryStatusById(
+              pendingResultMessage.id,
+              "unknown",
+              "Result media delivery could not be confirmed."
+            );
+            publishDeliveryStatus(unknown);
+          } catch (cleanupErr) {
+            console.error(
+              `Failed to mark interrupted result media ${pendingResultMessage.id} as unconfirmed:`,
+              cleanupErr
+            );
           }
         }
       }

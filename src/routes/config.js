@@ -81,6 +81,8 @@ const VALIDATORS = {
           )
         )
     ),
+  resultMedia: (v) =>
+    Array.isArray(v) && v.every(isResultMediaSet),
   services: (v) =>
     Array.isArray(v) &&
     v.every(
@@ -124,6 +126,33 @@ function isPromotionPackage(value) {
     ) &&
     isString(value.imageUrl) &&
     isString(value.caption)
+  );
+}
+
+function isResultMediaItem(value) {
+  return (
+    isPlainObject(value) &&
+    isNonEmptyString(value.imageUrl) &&
+    isNonEmptyString(value.caption)
+  );
+}
+
+function isResultMediaSet(value) {
+  return (
+    isPlainObject(value) &&
+    isNonEmptyString(value.service) &&
+    typeof value.enabled === "boolean" &&
+    typeof value.sendAfterPrice === "boolean" &&
+    (
+      value.autoSendCount === undefined ||
+      (Number.isInteger(value.autoSendCount) &&
+        value.autoSendCount >= 1 &&
+        value.autoSendCount <= 2)
+    ) &&
+    Array.isArray(value.items) &&
+    value.items.length >= 1 &&
+    value.items.length <= 10 &&
+    value.items.every(isResultMediaItem)
   );
 }
 
@@ -576,6 +605,46 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
   }
 
   if (
+    Object.prototype.hasOwnProperty.call(updates, "resultMedia") ||
+    Object.prototype.hasOwnProperty.call(updates, "services")
+  ) {
+    const services = Object.prototype.hasOwnProperty.call(updates, "services")
+      ? updates.services
+      : currentConfig.services;
+    const resultMedia = Object.prototype.hasOwnProperty.call(updates, "resultMedia")
+      ? updates.resultMedia
+      : currentConfig.resultMedia;
+    const serviceNames = new Set(
+      (Array.isArray(services) ? services : [])
+        .map((service) => String(service?.name || "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+    const seenServices = new Set();
+
+    for (const entry of Array.isArray(resultMedia) ? resultMedia : []) {
+      const service = String(entry?.service || "").trim();
+      const normalized = service.toLowerCase();
+      if (!service || !serviceNames.has(normalized)) {
+        return {
+          ok: false,
+          status: 400,
+          error: `Result media must link to a currently configured service. Missing service: "${service || "Unknown"}".`,
+          invalidKeys: ["resultMedia"],
+        };
+      }
+      if (seenServices.has(normalized)) {
+        return {
+          ok: false,
+          status: 400,
+          error: `Only one result media set can be configured for "${service}". Add multiple images inside that set instead.`,
+          invalidKeys: ["resultMedia"],
+        };
+      }
+      seenServices.add(normalized);
+    }
+  }
+
+  if (
     Object.prototype.hasOwnProperty.call(updates, "promotions") ||
     Object.prototype.hasOwnProperty.call(updates, "services")
   ) {
@@ -767,23 +836,77 @@ router.post("/lead-distribution/recover-unassigned", async (req, res) => {
   }
 });
 
-async function saveUploadedImage(req, res) {
+async function saveUploadedImage(
+  req,
+  res,
+  {
+    purpose = promoImagesRepo.IMAGE_PURPOSES.PUBLIC_CONFIG,
+    privatePreview = false,
+  } = {}
+) {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "An image file is required." });
     }
 
-    const id = await promoImagesRepo.saveImage(req.file.mimetype, req.file.buffer.toString("base64"));
+    const id = await promoImagesRepo.saveImage(
+      req.file.mimetype,
+      req.file.buffer.toString("base64"),
+      { purpose }
+    );
+
+    if (privatePreview) {
+      // Same-origin authenticated preview. Do not return a permanent public URL
+      // for Before/After media because these images may identify a patient.
+      return res.status(201).json({
+        url: `/api/config/result-media/image/${id}`,
+      });
+    }
+
     const baseUrl = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
-    res.status(201).json({ url: `${baseUrl}/promo-images/${id}` });
+    return res.status(201).json({ url: `${baseUrl}/promo-images/${id}` });
   } catch (err) {
     console.error("Failed to upload config image:", err);
-    res.status(500).json({ error: "Something went wrong uploading this image." });
+    return res.status(500).json({ error: "Something went wrong uploading this image." });
   }
 }
 
-router.post("/promotions/image", handleImageUpload, saveUploadedImage);
-router.post("/automated-follow-up/image", handleImageUpload, saveUploadedImage);
+router.post("/promotions/image", handleImageUpload, (req, res) =>
+  saveUploadedImage(req, res)
+);
+router.post("/result-media/image", handleImageUpload, (req, res) =>
+  saveUploadedImage(req, res, {
+    purpose: promoImagesRepo.IMAGE_PURPOSES.RESULT_MEDIA,
+    privatePreview: true,
+  })
+);
+router.post("/automated-follow-up/image", handleImageUpload, (req, res) =>
+  saveUploadedImage(req, res)
+);
+
+router.get("/result-media/image/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(404).send("Not found");
+    }
+
+    const image = await promoImagesRepo.getImage(id);
+    if (
+      !image ||
+      image.purpose !== promoImagesRepo.IMAGE_PURPOSES.RESULT_MEDIA
+    ) {
+      return res.status(404).send("Not found");
+    }
+
+    res.set("Content-Type", image.mime_type);
+    res.set("Cache-Control", "private, no-store");
+    return res.send(Buffer.from(image.data, "base64"));
+  } catch (err) {
+    console.error("Failed to serve private result media:", err);
+    return res.status(500).send("Something went wrong.");
+  }
+});
 
 router.delete("/promotions/image/:id", async (req, res) => {
   try {
