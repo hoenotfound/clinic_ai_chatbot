@@ -1396,7 +1396,7 @@ function FollowUpTool({
                     </div>
                   </div>
                   <p className="mt-2 text-[10px] leading-4 text-[var(--color-text-muted)]">
-                    Due follow-ups wait until quiet hours end, then send only if the customer is still eligible and the channel reply window is still open.
+                    Due follow-ups wait until quiet hours end. If multiple steps become overdue, only the next step resumes; later steps keep their configured spacing and still require an open reply window.
                   </p>
                 </div>
               )}
