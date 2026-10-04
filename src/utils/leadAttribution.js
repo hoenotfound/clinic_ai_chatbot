@@ -78,7 +78,12 @@ function normalizeAttribution(channel, referral = null) {
   const sourceType = clean(referral.sourceType ?? referral.source_type);
   const referralSource = clean(referral.referralSource ?? referral.source);
   const explicitAdId = clean(
-    referral.adId ?? referral.ad_id ?? referral.adsContextData?.ad_id ?? referral.ads_context_data?.ad_id
+    referral.adId ??
+      referral.ad_id ??
+      referral.adsContextData?.adId ??
+      referral.adsContextData?.ad_id ??
+      referral.ads_context_data?.adId ??
+      referral.ads_context_data?.ad_id
   );
   const adId = explicitAdId || (sourceType?.toLowerCase() === "ad" ? sourceId : null);
   const referralType = clean(referral.referralType ?? referral.type);
