@@ -122,6 +122,12 @@ test(
         "utf8"
       )
     );
+    await client.query(
+      fs.readFileSync(
+        path.join(__dirname, "..", "src/db/migrations/028_meta_ads_analytics_read_indexes.sql"),
+        "utf8"
+      )
+    );
 
     await client.query(`
       INSERT INTO meta_ad_insights_daily (
@@ -129,13 +135,13 @@ test(
         campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name,
         spend, impressions, reach, clicks, ctr, cpc, cpm, frequency
       ) VALUES
-        ('123', 'Clinic Ads', 'MYR', '2026-10-02',
+        ('123', 'Clinic Ads Old', 'MYR', '2026-10-02',
          '100', 'Campaign A Renamed', '200', 'Set A', '300', 'Ad A',
          100, 1000, 800, 50, 5, 2, 100, 1.25),
-        ('123', 'Clinic Ads', 'MYR', '2026-10-03',
+        ('123', 'Clinic Ads Current', 'MYR', '2026-10-03',
          '100', 'Campaign A Renamed', '201', 'Set B', '301', 'Ad B',
          50, 500, 400, 20, 4, 2.5, 100, 1.25),
-        ('123', 'Clinic Ads', 'MYR', '2026-10-03',
+        ('123', 'Clinic Ads Current', 'MYR', '2026-10-03',
          '100', 'Campaign A Renamed', '202', 'Set C', '302', 'Ad C',
          25, 250, 200, 5, 2, 5, 100, 1.25)
     `);
@@ -186,6 +192,29 @@ test(
     assert.equal(campaign.rows[0].spend, 175);
     assert.equal(campaign.rows[0].crmLeads, 2);
     assert.equal(campaign.rows[0].costPerLead, 87.5);
+    assert.equal(campaign.accounts.length, 1);
+    assert.equal(campaign.accounts[0].accountId, "123");
+    assert.equal(campaign.accounts[0].accountName, "Clinic Ads Current");
+    assert.equal(campaign.accounts[0].currency, "MYR");
+    assert.equal(campaign.accounts[0].dataThrough, "2026-10-03");
+
+    const indexResult = await client.query(
+      `SELECT indexname
+       FROM pg_indexes
+       WHERE schemaname = current_schema()
+         AND indexname IN (
+           'idx_meta_ad_insights_daily_ad_latest',
+           'idx_meta_ad_insights_daily_account_latest'
+         )
+       ORDER BY indexname`
+    );
+    assert.deepEqual(
+      indexResult.rows.map((row) => row.indexname),
+      [
+        "idx_meta_ad_insights_daily_account_latest",
+        "idx_meta_ad_insights_daily_ad_latest",
+      ]
+    );
 
     const ads = await getMetaAdsAnalytics(
       { ...baseFilters, level: "ad" },
