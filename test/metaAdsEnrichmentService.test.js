@@ -61,6 +61,168 @@ test("successful enrichment persists Meta hierarchy and refreshes Pipeline", asy
   ]);
 });
 
+test("batch enrichment reuses hierarchy already stored by Insights sync", async () => {
+  let apiFetches = 0;
+  let hierarchyLookups = 0;
+  const successes = [];
+  const repo = {
+    async claimMetaEnrichmentBatch() {
+      return [
+        { id: 1, lead_id: 101, meta_ad_id: "120210000001234", enrichment_attempts: 1 },
+        { id: 2, lead_id: 102, meta_ad_id: "120210000001234", enrichment_attempts: 1 },
+      ];
+    },
+    async markMetaEnrichmentSuccess(id, details) {
+      successes.push([id, details]);
+      return { id, lead_id: id + 100, enrichment_status: "enriched" };
+    },
+    async markMetaEnrichmentDeferred() {
+      throw new Error("should not defer");
+    },
+  };
+  const hierarchyRepo = {
+    async getLatestHierarchyForAdIds(adIds) {
+      hierarchyLookups += 1;
+      assert.deepEqual(adIds, ["120210000001234"]);
+      return new Map([[
+        "120210000001234",
+        {
+          ad_id: "120210000001234",
+          ad_name: "Pelvis Creative",
+          account_id: "289145050863605",
+          adset_id: "120210000000002",
+          adset_name: "Women KL",
+          campaign_id: "120210000000001",
+          campaign_name: "Pelvis Campaign",
+        },
+      ]]);
+    },
+  };
+  const api = {
+    configured: () => true,
+    async fetchAdDetails() {
+      apiFetches += 1;
+      throw new Error("Meta API should not be called when cached hierarchy is complete");
+    },
+  };
+
+  const service = createMetaAdsEnrichmentService({
+    repo,
+    api,
+    hierarchyRepo,
+    events: { publish() {} },
+    logger: silentLogger(),
+  });
+  const result = await service.runSweep();
+
+  assert.equal(result.processed, 2);
+  assert.equal(hierarchyLookups, 1);
+  assert.equal(apiFetches, 0);
+  assert.equal(successes.length, 2);
+  assert.equal(successes[0][1].campaignName, "Pelvis Campaign");
+});
+
+test("duplicate ads in one enrichment batch call Meta only once on a cache miss", async () => {
+  let apiFetches = 0;
+  const repo = {
+    async claimMetaEnrichmentBatch() {
+      return [
+        { id: 1, lead_id: 101, meta_ad_id: "120210000009999", enrichment_attempts: 1 },
+        { id: 2, lead_id: 102, meta_ad_id: "120210000009999", enrichment_attempts: 1 },
+        { id: 3, lead_id: 103, meta_ad_id: "120210000009999", enrichment_attempts: 1 },
+      ];
+    },
+    async markMetaEnrichmentSuccess(id) {
+      return { id, lead_id: id + 100, enrichment_status: "enriched" };
+    },
+    async markMetaEnrichmentDeferred() {
+      throw new Error("should not defer");
+    },
+  };
+  const hierarchyRepo = {
+    async getLatestHierarchyForAdIds() {
+      return new Map();
+    },
+  };
+  const api = {
+    configured: () => true,
+    async fetchAdDetails(adId) {
+      apiFetches += 1;
+      return {
+        adId,
+        adName: "Fresh Creative",
+        accountId: "289145050863605",
+        adsetId: "120210000000012",
+        adsetName: "Fresh Ad Set",
+        campaignId: "120210000000011",
+        campaignName: "Fresh Campaign",
+      };
+    },
+  };
+
+  const service = createMetaAdsEnrichmentService({
+    repo,
+    api,
+    hierarchyRepo,
+    events: { publish() {} },
+    logger: silentLogger(),
+  });
+  const result = await service.runSweep();
+
+  assert.equal(result.processed, 3);
+  assert.equal(apiFetches, 1);
+});
+
+test("duplicate failed ad lookups are also deduplicated within a batch", async () => {
+  let apiFetches = 0;
+  const deferred = [];
+  const repo = {
+    async claimMetaEnrichmentBatch() {
+      return [
+        { id: 1, lead_id: 101, meta_ad_id: "120210000008888", enrichment_attempts: 1 },
+        { id: 2, lead_id: 102, meta_ad_id: "120210000008888", enrichment_attempts: 1 },
+      ];
+    },
+    async markMetaEnrichmentSuccess() {
+      throw new Error("should not succeed");
+    },
+    async markMetaEnrichmentDeferred(id, message, delayMs) {
+      deferred.push({ id, message, delayMs });
+      return { id };
+    },
+  };
+  const hierarchyRepo = {
+    async getLatestHierarchyForAdIds() {
+      return new Map();
+    },
+  };
+  const api = {
+    configured: () => true,
+    async fetchAdDetails() {
+      apiFetches += 1;
+      const err = new Error("Ad is no longer accessible");
+      err.code = 100;
+      err.retryable = false;
+      throw err;
+    },
+  };
+
+  const service = createMetaAdsEnrichmentService({
+    repo,
+    api,
+    hierarchyRepo,
+    events: { publish() {} },
+    logger: silentLogger(),
+  });
+  const result = await service.runSweep();
+
+  assert.equal(result.processed, 2);
+  assert.equal(apiFetches, 1);
+  assert.equal(deferred.length, 2);
+  assert.match(deferred[0].message, /Ad is no longer accessible/);
+  assert.match(deferred[1].message, /Ad is no longer accessible/);
+});
+
 test("API failures are deferred without throwing into the chatbot path", async () => {
   const deferred = [];
   const repo = {
