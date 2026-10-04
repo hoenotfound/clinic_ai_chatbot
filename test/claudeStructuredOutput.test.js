@@ -27,7 +27,7 @@ function validConversationReply() {
     priceQuery: false,
     packageQuery: false,
     promotionOption: null,
-    treatment: "3D 小颜术",
+    treatment: null,
     branch: null,
     appointmentPreference: null,
     projectLocation: null,
@@ -89,7 +89,7 @@ test("Claude customer replies use native structured outputs and the workspace he
   assert.equal(parsed.structured, true);
   assert.equal(parsed.outcome, "normal");
   assert.equal(parsed.text, structured.reply);
-  assert.equal(parsed.details.treatment, "3D 小颜术");
+  assert.equal(parsed.details.treatment, null);
 });
 
 test("Claude comment automation gets the comment-specific structured schema", () => {
