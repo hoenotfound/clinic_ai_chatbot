@@ -25,6 +25,7 @@ test("automated follow-up inserts take the conversation scoring lock and re-chec
       120,
       "all",
       "2026-08-28T00:00:00.000Z",
+      0,
     ]);
     assert.match(sql, /automated_follow_up_step/);
     assert.match(sql, /automated_follow_up_target_service/);
@@ -50,6 +51,48 @@ test("automated follow-up inserts take the conversation scoring lock and re-chec
   assert.equal(saved, null);
 });
 
+test("later follow-up claims preserve spacing from the actual previous send", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /previous_follow_up AS/);
+    assert.match(sql, /automated_follow_up_step = \$5 - 1/);
+    assert.match(
+      sql,
+      /previous_follow_up\.created_at \+ \(\(\$7::integer - \$10::integer\) \* interval '1 minute'\)/
+    );
+    assert.match(sql, /GREATEST\(/);
+    assert.deepEqual(params, [
+      7,
+      55,
+      "Second follow-up",
+      "",
+      2,
+      null,
+      480,
+      "all",
+      "2026-08-28T00:00:00.000Z",
+      120,
+    ]);
+    return { rows: [] };
+  };
+
+  await followUpRepo.saveIfStillEligible({
+    contactId: 7,
+    triggerMessageId: 55,
+    content: "Second follow-up",
+    mediaUrl: "",
+    stepIndex: 2,
+    delayMinutes: 480,
+    previousDelayMinutes: 120,
+    triggerMode: "all",
+    activatedAt: "2026-08-28T00:00:00.000Z",
+  });
+});
+
 test("automated follow-up discovery excludes conversations already waiting for staff", async (t) => {
   const originalQuery = pool.query;
   t.after(() => {
@@ -66,6 +109,9 @@ test("automated follow-up discovery excludes conversations already waiting for s
     assert.match(sql, /appointment_set.*visited/);
     assert.match(sql, /appointment_status.*set.*visited/);
     assert.match(sql, /appointment_status.*reschedule.*cancelled/);
+    assert.match(sql, /previous_follow_up_created_at/);
+    assert.match(sql, /next_follow_up_step - 1/);
+    assert.match(sql, /GREATEST\(/);
     assert.deepEqual(params, [
       [120],
       "all",
@@ -109,6 +155,9 @@ test("next follow-up due calculation excludes booked visited and closed latest l
   assert.match(capturedSql, /appointment_set.*visited/);
   assert.match(capturedSql, /appointment_status.*set.*visited/);
   assert.match(capturedSql, /appointment_status.*reschedule.*cancelled/);
+  assert.match(capturedSql, /previous_follow_up_created_at/);
+  assert.match(capturedSql, /next_follow_up_step - 1/);
+  assert.match(capturedSql, /GREATEST\(/);
 });
 
 
