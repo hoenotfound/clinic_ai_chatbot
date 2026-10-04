@@ -49,9 +49,21 @@ function matchingResultMediaSet(resultMedia, treatment) {
  * Once the cooldown expires, continue with the example after the most recently
  * accepted one so larger result libraries actually rotate.
  */
+function mediaIdentity(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const match = raw.match(
+    /\/(?:promo-images|api\/config\/result-media\/image)\/(\d+)(?:[/?#]|$)/
+  );
+  return match ? `stored:${match[1]}` : raw;
+}
+
 function rotateAfter(items, lastImageUrl) {
   if (!Array.isArray(items) || items.length === 0 || !lastImageUrl) return items;
-  const index = items.findIndex((item) => item.imageUrl === lastImageUrl);
+  const lastIdentity = mediaIdentity(lastImageUrl);
+  const index = items.findIndex(
+    (item) => mediaIdentity(item.imageUrl) === lastIdentity
+  );
   if (index < 0) return items;
   const start = (index + 1) % items.length;
   return [...items.slice(start), ...items.slice(0, start)];
@@ -119,6 +131,7 @@ async function resolveResultMediaForReply({
 module.exports = {
   DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS,
   matchingResultMediaSet,
+  mediaIdentity,
   rotateAfter,
   resolveResultMediaForReply,
 };
