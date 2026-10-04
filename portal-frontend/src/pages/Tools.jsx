@@ -468,7 +468,7 @@ export default function Tools() {
   }
 
   function followUpValidationError() {
-    const quietTimePattern = /^([01]\\d|2[0-3]):([0-5]\\d)$/;
+    const quietTimePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
     const quietStart = String(form.quietHours?.start || "").trim();
     const quietEnd = String(form.quietHours?.end || "").trim();
     if (
