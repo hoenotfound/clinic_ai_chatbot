@@ -15,6 +15,8 @@ const DEFAULT_FOLLOW_UP = {
     start: "00:00",
     end: "07:00",
   },
+  messageMode: "fixed",
+  aiInstruction: "",
   message: "Hi! Just checking in to see if you still need any help. Feel free to reply whenever you're ready 😊",
   translations: {
     en: "Hi! Just checking in to see if you still need any help. Feel free to reply whenever you're ready 😊",
@@ -99,6 +101,8 @@ function normalizeSequenceStep(value = {}) {
   const message = String(value.message || "").trim();
   return {
     delayMinutes: Number(value.delayMinutes) || 120,
+    messageMode: value.messageMode === "ai" ? "ai" : "fixed",
+    aiInstruction: String(value.aiInstruction || ""),
     message,
     translations: normalizeTranslations(value.translations, message),
     imageUrl: value.imageUrl || "",
@@ -117,6 +121,8 @@ function normalizeFollowUpSettings(value = {}) {
   const usesDefaultMessage = settings.message === DEFAULT_FOLLOW_UP.message;
   const firstStep = {
     delayMinutes: Number(settings.delayMinutes) || DEFAULT_FOLLOW_UP.delayMinutes,
+    messageMode: settings.messageMode === "ai" ? "ai" : "fixed",
+    aiInstruction: String(settings.aiInstruction || ""),
     message: settings.message || DEFAULT_FOLLOW_UP.message,
     translations: normalizeTranslations(
       value.translations,
@@ -148,6 +154,8 @@ function followUpFormFromSettings(value = {}) {
     triggerMode: settings.triggerMode === "staff" ? "staff" : "all",
     quietHours: settings.quietHours,
     delayMinutes: settings.delayMinutes,
+    messageMode: settings.messageMode,
+    aiInstruction: settings.aiInstruction,
     message: settings.message,
     translations: settings.translations,
     imageUrl: settings.imageUrl,
@@ -482,6 +490,8 @@ export default function Tools() {
     const steps = [
       {
         delayMinutes: form.delayMinutes,
+        messageMode: form.messageMode,
+        aiInstruction: form.aiInstruction,
         message: form.message,
         serviceOverrides: form.serviceOverrides,
       },
@@ -498,6 +508,8 @@ export default function Tools() {
     for (let index = 0; index < steps.length; index += 1) {
       const step = steps[index];
       const delayMinutes = Number(step.delayMinutes);
+      const messageMode = step.messageMode === "ai" ? "ai" : "fixed";
+      const aiInstruction = String(step.aiInstruction || "").trim();
       const message = String(step.message || "").trim();
       if (
         !Number.isInteger(delayMinutes) ||
@@ -509,7 +521,17 @@ export default function Tools() {
       if (index > 0 && delayMinutes <= previousDelay) {
         return `Follow-up ${index + 1} must be later than Follow-up ${index}.`;
       }
-      if (!message) return `Add a message for Follow-up ${index + 1}.`;
+      if (!["fixed", "ai"].includes(messageMode)) {
+        return `Choose a message type for Follow-up ${index + 1}.`;
+      }
+      if (aiInstruction.length > 1000) {
+        return `Keep the AI instruction for Follow-up ${index + 1} under 1,000 characters.`;
+      }
+      if (!message) {
+        return messageMode === "ai"
+          ? `Add a fallback message for Follow-up ${index + 1}.`
+          : `Add a message for Follow-up ${index + 1}.`;
+      }
       if (message.length > 1000) {
         return `Keep Follow-up ${index + 1} under 1,000 characters.`;
       }
@@ -612,6 +634,8 @@ export default function Tools() {
       );
       return {
         delayMinutes: Number(step.delayMinutes),
+        messageMode: step.messageMode === "ai" ? "ai" : "fixed",
+        aiInstruction: String(step.aiInstruction || "").trim(),
         message,
         translations,
         imageUrl: step.imageUrl || "",
@@ -668,6 +692,8 @@ export default function Tools() {
         automatedFollowUp: {
           enabled: form.enabled,
           delayMinutes,
+          messageMode: form.messageMode === "ai" ? "ai" : "fixed",
+          aiInstruction: String(form.aiInstruction || "").trim(),
           triggerMode: form.triggerMode,
           quietHours: {
             enabled: form.quietHours?.enabled !== false,
@@ -1632,6 +1658,8 @@ function FollowUpTool({
                     ...current.additionalSteps,
                     {
                       delayMinutes: suggestedNextDelay,
+                      messageMode: "fixed",
+                      aiInstruction: "",
                       message: "",
                       translations: { en: "", ms: "", zh: "" },
                       imageUrl: "",
