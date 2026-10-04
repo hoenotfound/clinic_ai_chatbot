@@ -10,6 +10,11 @@ const DEFAULT_FOLLOW_UP = {
   enabled: false,
   delayMinutes: 120,
   triggerMode: "all",
+  quietHours: {
+    enabled: true,
+    start: "00:00",
+    end: "07:00",
+  },
   message: "Hi! Just checking in to see if you still need any help. Feel free to reply whenever you're ready 😊",
   translations: {
     en: "Hi! Just checking in to see if you still need any help. Feel free to reply whenever you're ready 😊",
@@ -103,6 +108,12 @@ function normalizeSequenceStep(value = {}) {
 
 function normalizeFollowUpSettings(value = {}) {
   const settings = { ...DEFAULT_FOLLOW_UP, ...value };
+  const quietHours = {
+    ...DEFAULT_FOLLOW_UP.quietHours,
+    ...(value?.quietHours && typeof value.quietHours === "object"
+      ? value.quietHours
+      : {}),
+  };
   const usesDefaultMessage = settings.message === DEFAULT_FOLLOW_UP.message;
   const firstStep = {
     delayMinutes: Number(settings.delayMinutes) || DEFAULT_FOLLOW_UP.delayMinutes,
@@ -118,6 +129,11 @@ function normalizeFollowUpSettings(value = {}) {
 
   return {
     ...settings,
+    quietHours: {
+      enabled: quietHours.enabled !== false,
+      start: String(quietHours.start || DEFAULT_FOLLOW_UP.quietHours.start),
+      end: String(quietHours.end || DEFAULT_FOLLOW_UP.quietHours.end),
+    },
     ...firstStep,
     additionalSteps: Array.isArray(value.additionalSteps)
       ? value.additionalSteps.slice(0, 2).map(normalizeSequenceStep)
@@ -130,6 +146,7 @@ function followUpFormFromSettings(value = {}) {
   return {
     enabled: !!settings.enabled,
     triggerMode: settings.triggerMode === "staff" ? "staff" : "all",
+    quietHours: settings.quietHours,
     delayMinutes: settings.delayMinutes,
     message: settings.message,
     translations: settings.translations,
@@ -451,6 +468,17 @@ export default function Tools() {
   }
 
   function followUpValidationError() {
+    const quietTimePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
+    const quietStart = String(form.quietHours?.start || "").trim();
+    const quietEnd = String(form.quietHours?.end || "").trim();
+    if (
+      !quietTimePattern.test(quietStart) ||
+      !quietTimePattern.test(quietEnd) ||
+      quietStart === quietEnd
+    ) {
+      return "Choose two different valid times for follow-up quiet hours.";
+    }
+
     const steps = [
       {
         delayMinutes: form.delayMinutes,
@@ -641,6 +669,11 @@ export default function Tools() {
           enabled: form.enabled,
           delayMinutes,
           triggerMode: form.triggerMode,
+          quietHours: {
+            enabled: form.quietHours?.enabled !== false,
+            start: String(form.quietHours?.start || "00:00"),
+            end: String(form.quietHours?.end || "07:00"),
+          },
           message,
           translations,
           imageUrl: form.imageUrl,
@@ -1295,6 +1328,78 @@ function FollowUpTool({
                   />
                 </div>
               </fieldset>
+            </div>
+
+            <div className="mt-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">Quiet hours</p>
+                  <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                    Do not send automated follow-ups while customers are likely sleeping. Uses the clinic timezone.
+                  </p>
+                </div>
+                <Switch
+                  checked={form.quietHours?.enabled !== false}
+                  ariaLabel="Follow-up quiet hours"
+                  onChange={() =>
+                    setForm((current) => ({
+                      ...current,
+                      quietHours: {
+                        ...(current.quietHours || DEFAULT_FOLLOW_UP.quietHours),
+                        enabled: current.quietHours?.enabled === false,
+                      },
+                    }))
+                  }
+                />
+              </div>
+
+              {form.quietHours?.enabled !== false && (
+                <div className="mt-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label htmlFor="follow-up-quiet-start" className="text-xs font-semibold">Quiet from</label>
+                      <input
+                        id="follow-up-quiet-start"
+                        aria-label="Follow-up quiet hours start"
+                        type="time"
+                        value={form.quietHours?.start || "00:00"}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            quietHours: {
+                              ...(current.quietHours || DEFAULT_FOLLOW_UP.quietHours),
+                              start: event.target.value,
+                            },
+                          }))
+                        }
+                        className="mt-1.5 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="follow-up-quiet-end" className="text-xs font-semibold">Resume at</label>
+                      <input
+                        id="follow-up-quiet-end"
+                        aria-label="Follow-up quiet hours end"
+                        type="time"
+                        value={form.quietHours?.end || "07:00"}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            quietHours: {
+                              ...(current.quietHours || DEFAULT_FOLLOW_UP.quietHours),
+                              end: event.target.value,
+                            },
+                          }))
+                        }
+                        className="mt-1.5 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
+                      />
+                    </div>
+                  </div>
+                  <p className="mt-2 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                    Due follow-ups wait until quiet hours end. If multiple steps become overdue, only the next step resumes; later steps keep their configured spacing and still require an open reply window.
+                  </p>
+                </div>
+              )}
             </div>
           </Card>
 

@@ -8,6 +8,10 @@ const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
 const channelMessaging = require("./channelMessagingService");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
+const {
+  normalizeQuietHours,
+  quietHoursStatus,
+} = require("../utils/quietHours");
 
 // Retained as the failure-retry delay/export. Normal operation now sleeps until
 // the next actual follow-up is due instead of polling Postgres every minute.
@@ -115,6 +119,9 @@ function getActiveSettings() {
     return null;
   }
 
+  const quietHours = normalizeQuietHours(settings.quietHours);
+  if (!quietHours) return null;
+
   const rawAdditionalSteps =
     settings.additionalSteps === undefined ? [] : settings.additionalSteps;
   if (!Array.isArray(rawAdditionalSteps) || rawAdditionalSteps.length > 2) {
@@ -136,6 +143,7 @@ function getActiveSettings() {
   return {
     triggerMode: settings.triggerMode,
     activatedAt: settings.activatedAt,
+    quietHours,
     steps,
   };
 }
@@ -295,7 +303,9 @@ async function markContacted(contactId) {
   }
 }
 
-async function sendSocialImageCompanion(contact, contactId, imageUrl) {
+async function sendSocialImageCompanion(contact, contactId, imageUrl, quietHours) {
+  if (quietHoursStatus(new Date(), quietHours).active) return;
+
   let imageMessage;
   try {
     imageMessage = await followUpRepo.saveSocialImageCompanion({
@@ -333,6 +343,8 @@ async function sendSocialImageCompanion(contact, contactId, imageUrl) {
       undefined,
       {
         purpose: "marketing",
+        preSendCheck: async () =>
+          !quietHoursStatus(new Date(), quietHours).active,
         ...(imageProviderRecorder
           ? { onProviderMessageId: imageProviderRecorder }
           : {}),
@@ -341,6 +353,17 @@ async function sendSocialImageCompanion(contact, contactId, imageUrl) {
   } catch (err) {
     console.error("Optional social follow-up image send failed:", err);
     imageResult = { success: false, wamid: null, externalMessageId: null };
+  }
+
+  if (imageResult?.cancelled && !imageResult?.preSendCheckFailed) {
+    const discarded = await followUpRepo.discardUnsentSocialImageCompanion({
+      messageId: imageMessage.id,
+      contactId,
+    });
+    if (discarded) {
+      publishConversationChange(discarded, "message_cancelled");
+    }
+    return;
   }
 
   const imageError = imageResult?.policyBlocked && imageResult.error
@@ -382,6 +405,10 @@ async function sendCandidate(candidate) {
   const step = settings.steps[stepIndex - 1];
   if (!step) return;
 
+  // A sweep can begin just before quiet hours start. Re-check before claiming
+  // so we never create an outbound row that should simply wait until morning.
+  if (quietHoursStatus(new Date(), settings.quietHours).active) return;
+
   const language = detectConversationLanguage([
     ...(candidate.recent_inbound_messages || []),
     candidate.trigger_message_content,
@@ -406,6 +433,8 @@ async function sendCandidate(candidate) {
     stepIndex,
     targetedService,
     delayMinutes: step.delayMinutes,
+    previousDelayMinutes:
+      stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
     triggerMode: settings.triggerMode,
     activatedAt: settings.activatedAt,
   });
@@ -426,7 +455,8 @@ async function sendCandidate(candidate) {
       !liveStep ||
       liveSettings.activatedAt !== settings.activatedAt ||
       liveSettings.triggerMode !== settings.triggerMode ||
-      liveStep.delayMinutes !== step.delayMinutes
+      liveStep.delayMinutes !== step.delayMinutes ||
+      quietHoursStatus(new Date(), liveSettings.quietHours).active
     ) {
       return false;
     }
@@ -534,7 +564,8 @@ async function sendCandidate(candidate) {
     await sendSocialImageCompanion(
       contact,
       candidate.contact_id,
-      step.imageUrl
+      step.imageUrl,
+      settings.quietHours
     );
   }
 }
@@ -569,7 +600,7 @@ async function nextInterruptedRecoveryAt() {
   });
 }
 
-async function runAutomatedFollowUps() {
+async function runAutomatedFollowUps({ now = new Date() } = {}) {
   if (sweepRunning) {
     return {
       enabled: Boolean(getActiveSettings()),
@@ -594,6 +625,17 @@ async function runAutomatedFollowUps() {
         candidateCount: 0,
         recoveredCount,
         nextDueAt: null,
+        nextRecoveryAt: await nextInterruptedRecoveryAt(),
+      };
+    }
+
+    const quiet = quietHoursStatus(now, settings.quietHours);
+    if (quiet.active) {
+      return {
+        enabled: true,
+        candidateCount: 0,
+        recoveredCount,
+        nextDueAt: quiet.endsAt,
         nextRecoveryAt: await nextInterruptedRecoveryAt(),
       };
     }

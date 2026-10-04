@@ -24,6 +24,7 @@ test.beforeEach(() => {
   followUpRepo.getNextStaleClaimDueAt = async () => null;
   followUpRepo.isClaimStillEligible = async () => true;
   followUpRepo.discardUnsentClaim = async () => null;
+  followUpRepo.discardUnsentSocialImageCompanion = async () => null;
   pipelineRepo.markContactedForContact = async () => false;
   // These tests exercise follow-up timing/language/delivery behavior, not the
   // policy service's database lookup. Policy behavior has dedicated tests.
@@ -94,6 +95,58 @@ test("sends and records one claimed automated follow-up", async () => {
   assert.equal(published[0].payload.reason, "message");
   assert.equal(published[1].payload.deliveryStatus, "pending");
   assert.deepEqual(contacted, { contactId: 7, actor: "Automated follow-up" });
+});
+
+test("quiet hours defer due follow-ups until the configured clinic-local end time", async () => {
+  enableTool();
+  let candidateQueries = 0;
+  followUpRepo.findCandidates = async () => {
+    candidateQueries += 1;
+    return [];
+  };
+
+  const result = await runAutomatedFollowUps({
+    now: new Date("2026-10-04T17:00:00.000Z"),
+  });
+
+  assert.equal(candidateQueries, 0);
+  assert.equal(result.enabled, true);
+  assert.equal(result.candidateCount, 0);
+  assert.equal(result.nextDueAt, "2026-10-04T23:00:00.000Z");
+});
+
+test("follow-up discovery resumes exactly when quiet hours end", async () => {
+  enableTool();
+  let candidateQueries = 0;
+  followUpRepo.findCandidates = async () => {
+    candidateQueries += 1;
+    return [];
+  };
+
+  await runAutomatedFollowUps({
+    now: new Date("2026-10-04T23:00:00.000Z"),
+  });
+
+  assert.equal(candidateQueries, 1);
+});
+
+test("final pre-send guard rechecks quiet hours before provider delivery", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/services/followUpService.js"),
+    "utf8"
+  );
+  assert.match(
+    source,
+    /quietHoursStatus\(new Date\(\), liveSettings\.quietHours\)\.active/
+  );
+  assert.match(
+    source,
+    /sendSocialImageCompanion\([\s\S]*quietHoursStatus\(new Date\(\), quietHours\)\.active/
+  );
+  assert.match(
+    source,
+    /discardUnsentSocialImageCompanion/
+  );
 });
 
 test("uses the saved Bahasa Malaysia version for a Malay customer chat", async () => {
@@ -237,6 +290,7 @@ test("sends the matching service-specific message for a later sequence step", as
   assert.equal(claimInput.stepIndex, 2);
   assert.equal(claimInput.targetedService, "Pelvic Care");
   assert.equal(claimInput.delayMinutes, 480);
+  assert.equal(claimInput.previousDelayMinutes, 120);
   assert.equal(claimInput.content, "骨盆调理跟进");
   assert.deepEqual(sentMessage, {
     number: "60166666666",

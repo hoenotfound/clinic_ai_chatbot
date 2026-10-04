@@ -70,6 +70,7 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
          latest_inbound.created_at AS latest_inbound_created_at,
          COALESCE(progress.max_step, 0) + 1 AS next_follow_up_step,
          COALESCE(progress.has_blocking_claim, false) AS has_blocking_claim,
+         previous_follow_up.created_at AS previous_follow_up_created_at,
          latest_lead.treatment_interest,
          ARRAY(
            SELECT recent_inbound.content
@@ -130,6 +131,16 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
            AND follow_up.automated_follow_up_for_message_id = anchor.id
        ) progress ON true
        LEFT JOIN LATERAL (
+         SELECT follow_up.created_at
+         FROM messages follow_up
+         WHERE follow_up.contact_id = c.id
+           AND follow_up.is_automated_follow_up = true
+           AND follow_up.automated_follow_up_for_message_id = anchor.id
+           AND follow_up.automated_follow_up_step = progress.max_step
+         ORDER BY follow_up.created_at DESC, follow_up.id DESC
+         LIMIT 1
+       ) previous_follow_up ON true
+       LEFT JOIN LATERAL (
          SELECT
            l.id,
            l.treatment_interest,
@@ -181,14 +192,31 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
      FROM conversation_state
      WHERE next_follow_up_step <= cardinality($1::integer[])
        AND has_blocking_claim = false
-       AND trigger_created_at
-             + (($1::integer[])[next_follow_up_step] * interval '1 minute') <= now()
-       AND trigger_created_at
-             + (($1::integer[])[next_follow_up_step] * interval '1 minute')
-           <= latest_inbound_created_at + interval '23 hours 50 minutes'
+       AND GREATEST(
+             trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
+             COALESCE(
+               previous_follow_up_created_at
+                 + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+               trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+             )
+           ) <= now()
+       AND GREATEST(
+             trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
+             COALESCE(
+               previous_follow_up_created_at
+                 + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+               trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+             )
+           ) <= latest_inbound_created_at + interval '23 hours 50 minutes'
      ORDER BY
-       trigger_created_at
-         + (($1::integer[])[next_follow_up_step] * interval '1 minute') ASC,
+       GREATEST(
+             trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
+             COALESCE(
+               previous_follow_up_created_at
+                 + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+               trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+             )
+           ) ASC,
        contact_id ASC
      LIMIT $4`,
     [delays, triggerMode, activatedAt, limit]
@@ -210,7 +238,8 @@ async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt })
          anchor.created_at AS trigger_created_at,
          latest_inbound.created_at AS latest_inbound_created_at,
          COALESCE(progress.max_step, 0) + 1 AS next_follow_up_step,
-         COALESCE(progress.has_blocking_claim, false) AS has_blocking_claim
+         COALESCE(progress.has_blocking_claim, false) AS has_blocking_claim,
+         previous_follow_up.created_at AS previous_follow_up_created_at
        FROM contacts c
        JOIN LATERAL (
          SELECT id, created_at
@@ -246,6 +275,16 @@ async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt })
            AND follow_up.is_automated_follow_up = true
            AND follow_up.automated_follow_up_for_message_id = anchor.id
        ) progress ON true
+       LEFT JOIN LATERAL (
+         SELECT follow_up.created_at
+         FROM messages follow_up
+         WHERE follow_up.contact_id = c.id
+           AND follow_up.is_automated_follow_up = true
+           AND follow_up.automated_follow_up_for_message_id = anchor.id
+           AND follow_up.automated_follow_up_step = progress.max_step
+         ORDER BY follow_up.created_at DESC, follow_up.id DESC
+         LIMIT 1
+       ) previous_follow_up ON true
        LEFT JOIN LATERAL (
          SELECT
            l.id,
@@ -285,15 +324,26 @@ async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt })
          AND ($2 = 'all' OR anchor.sent_by_username IS NOT NULL)
      )
      SELECT MIN(
-       trigger_created_at
-         + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+       GREATEST(
+             trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
+             COALESCE(
+               previous_follow_up_created_at
+                 + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+               trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+             )
+           )
      ) AS due_at
      FROM conversation_state
      WHERE next_follow_up_step <= cardinality($1::integer[])
        AND has_blocking_claim = false
-       AND trigger_created_at
-             + (($1::integer[])[next_follow_up_step] * interval '1 minute')
-           <= latest_inbound_created_at + interval '23 hours 50 minutes'`,
+       AND GREATEST(
+             trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
+             COALESCE(
+               previous_follow_up_created_at
+                 + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+               trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+             )
+           ) <= latest_inbound_created_at + interval '23 hours 50 minutes'`,
     [delays, triggerMode, activatedAt]
   );
   return result.rows[0]?.due_at || null;
@@ -328,15 +378,22 @@ async function saveIfStillEligible({
   stepIndex = 1,
   targetedService = null,
   delayMinutes,
+  previousDelayMinutes = 0,
   triggerMode,
   activatedAt,
 }) {
   const numericDelay = Number(delayMinutes);
+  const numericPreviousDelay = Number(previousDelayMinutes);
   const numericStep = Number(stepIndex);
   if (
     !Number.isInteger(numericDelay) ||
     numericDelay < 5 ||
     numericDelay > 23 * 60 ||
+    !Number.isInteger(numericPreviousDelay) ||
+    numericPreviousDelay < 0 ||
+    numericPreviousDelay >= numericDelay ||
+    (numericStep === 1 && numericPreviousDelay !== 0) ||
+    (numericStep > 1 && numericPreviousDelay < 5) ||
     !Number.isInteger(numericStep) ||
     numericStep < 1 ||
     numericStep > MAX_FOLLOW_UP_STEPS
@@ -348,21 +405,25 @@ async function saveIfStillEligible({
     `WITH conversation_lock AS MATERIALIZED (
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
      ), latest_inbound AS (
-       SELECT id, created_at
-       FROM messages, conversation_lock
-       WHERE contact_id = $1
-         AND role = 'user'
-       ORDER BY created_at DESC, id DESC
+       SELECT inbound.id, inbound.created_at
+       FROM messages inbound, conversation_lock
+       WHERE inbound.contact_id = $1
+         AND inbound.role = 'user'
+       ORDER BY inbound.created_at DESC, inbound.id DESC
        LIMIT 1
      ), anchor AS (
-       SELECT id, sent_by_username, created_at, delivery_status
-       FROM messages, latest_inbound
-       WHERE contact_id = $1
-         AND role = 'assistant'
-         AND is_automated_follow_up = false
-         AND (created_at, id) >
+       SELECT
+         outbound.id,
+         outbound.sent_by_username,
+         outbound.created_at,
+         outbound.delivery_status
+       FROM messages outbound, latest_inbound
+       WHERE outbound.contact_id = $1
+         AND outbound.role = 'assistant'
+         AND outbound.is_automated_follow_up = false
+         AND (outbound.created_at, outbound.id) >
              (latest_inbound.created_at, latest_inbound.id)
-       ORDER BY created_at DESC, id DESC
+       ORDER BY outbound.created_at DESC, outbound.id DESC
        LIMIT 1
      ), progress AS (
        SELECT
@@ -378,6 +439,15 @@ async function saveIfStillEligible({
        WHERE follow_up.contact_id = $1
          AND follow_up.is_automated_follow_up = true
          AND follow_up.automated_follow_up_for_message_id = anchor.id
+     ), previous_follow_up AS (
+       SELECT follow_up.created_at
+       FROM messages follow_up, anchor
+       WHERE follow_up.contact_id = $1
+         AND follow_up.is_automated_follow_up = true
+         AND follow_up.automated_follow_up_for_message_id = anchor.id
+         AND follow_up.automated_follow_up_step = $5 - 1
+       ORDER BY follow_up.created_at DESC, follow_up.id DESC
+       LIMIT 1
      )
      INSERT INTO messages (
        contact_id,
@@ -393,6 +463,7 @@ async function saveIfStillEligible({
      )
      SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2, $5, $6, true
      FROM anchor, latest_inbound, progress, contacts c
+     LEFT JOIN previous_follow_up ON true
      LEFT JOIN LATERAL (
        SELECT
          l.id,
@@ -430,9 +501,20 @@ async function saveIfStillEligible({
          )
        )
        AND anchor.created_at >= $9::timestamptz
-       AND anchor.created_at <= now() - ($7::integer * interval '1 minute')
-       AND anchor.created_at + ($7::integer * interval '1 minute')
-           <= latest_inbound.created_at + interval '23 hours 50 minutes'
+       AND GREATEST(
+             anchor.created_at + ($7::integer * interval '1 minute'),
+             COALESCE(
+               previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
+               anchor.created_at + ($7::integer * interval '1 minute')
+             )
+           ) <= now()
+       AND GREATEST(
+             anchor.created_at + ($7::integer * interval '1 minute'),
+             COALESCE(
+               previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
+               anchor.created_at + ($7::integer * interval '1 minute')
+             )
+           ) <= latest_inbound.created_at + interval '23 hours 50 minutes'
        AND ($8 = 'all' OR anchor.sent_by_username IS NOT NULL)
        AND COALESCE(progress.max_step, 0) + 1 = $5
        AND COALESCE(progress.has_blocking_claim, false) = false
@@ -450,6 +532,7 @@ async function saveIfStillEligible({
       numericDelay,
       triggerMode,
       activatedAt,
+      numericPreviousDelay,
     ]
   );
   return result.rows[0] || null;
@@ -597,6 +680,40 @@ async function saveSocialImageCompanion({ contactId, imageUrl }) {
   return result.rows[0] || null;
 }
 
+async function discardUnsentSocialImageCompanion({ messageId, contactId }) {
+  const numericMessageId = Number(messageId);
+  const numericContactId = Number(contactId);
+  if (
+    !Number.isInteger(numericMessageId) ||
+    numericMessageId <= 0 ||
+    !Number.isInteger(numericContactId) ||
+    numericContactId <= 0
+  ) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     )
+     DELETE FROM messages
+     WHERE id = $2
+       AND contact_id = $1
+       AND role = 'assistant'
+       AND is_automated_follow_up = true
+       AND automated_follow_up_for_message_id IS NULL
+       AND content = ''
+       AND media_url IS NOT NULL
+       AND delivery_status IS NULL
+       AND whatsapp_message_id IS NULL
+       AND EXISTS (SELECT 1 FROM conversation_lock)
+     RETURNING ${FOLLOW_UP_MESSAGE_COLUMNS}`,
+    [numericContactId, numericMessageId]
+  );
+
+  return result.rows[0] || null;
+}
+
 /**
  * A process can stop after claiming a follow-up but before it records the
  * provider response. Surface those rows as unconfirmed instead of blindly
@@ -633,5 +750,6 @@ module.exports = {
   isClaimStillEligible,
   discardUnsentClaim,
   saveSocialImageCompanion,
+  discardUnsentSocialImageCompanion,
   markStaleClaimsUnconfirmed,
 };
