@@ -4,10 +4,13 @@ const assert = require("node:assert/strict");
 const {
   ANTHROPIC_MESSAGES_URL,
   ANTHROPIC_VERSION,
+  DEFAULT_REPLY_EFFORT,
+  DEFAULT_REPLY_MAX_TOKENS,
+  TRUNCATION_RETRY_MAX_TOKENS,
   buildClaudeOutputSchema,
   getReply,
 } = require("../src/services/claudeService");
-const { buildCandidates } = require("../src/services/aiService");
+const { buildCandidates, runCandidate } = require("../src/services/aiService");
 const { parseAiReplyResult } = require("../src/utils/aiReplyResult");
 
 function response(body, { ok = true, status = 200 } = {}) {
@@ -65,6 +68,8 @@ test("Claude customer replies use native structured outputs and the workspace he
   assert.equal(request.options.headers["anthropic-workspace-id"], "wrkspc_test_123");
 
   const body = JSON.parse(request.options.body);
+  assert.equal(body.max_tokens, DEFAULT_REPLY_MAX_TOKENS);
+  assert.equal(body.output_config.effort, DEFAULT_REPLY_EFFORT);
   assert.equal(body.output_config.format.type, "json_schema");
   assert.equal(body.output_config.format.schema.additionalProperties, false);
   assert.deepEqual(
@@ -104,6 +109,61 @@ test("Claude comment automation gets the comment-specific structured schema", ()
   assert.equal(Object.prototype.hasOwnProperty.call(schema.properties, "priceQuery"), false);
 });
 
+test("Claude truncation retry increases the token cap instead of repeating the same request", async () => {
+  const requestBodies = [];
+  let call = 0;
+  const candidate = {
+    label: "Claude primary",
+    provider: "claude",
+    async run(messages, options, requestControl) {
+      return getReply(
+        messages,
+        options,
+        "test-claude-key",
+        "wrkspc-test",
+        {
+          ...requestControl,
+          fetchImpl: async (_url, fetchOptions) => {
+            requestBodies.push(JSON.parse(fetchOptions.body));
+            call += 1;
+            if (call === 1) {
+              return response({
+                type: "message",
+                stop_reason: "max_tokens",
+                content: [],
+              });
+            }
+            return response({
+              type: "message",
+              stop_reason: "end_turn",
+              content: [{
+                type: "text",
+                text: JSON.stringify(validConversationReply()),
+              }],
+            });
+          },
+        }
+      );
+    },
+  };
+
+  const result = await runCandidate(
+    candidate,
+    [{ role: "user", content: "hello" }],
+    { channel: "whatsapp", isFirstMessage: false },
+    1000,
+    1,
+    { globalBudgetMs: 2000 }
+  );
+
+  assert.equal(parseAiReplyResult(result).structured, true);
+  assert.equal(requestBodies.length, 2);
+  assert.equal(requestBodies[0].max_tokens, DEFAULT_REPLY_MAX_TOKENS);
+  assert.equal(requestBodies[1].max_tokens, TRUNCATION_RETRY_MAX_TOKENS);
+  assert.equal(requestBodies[0].output_config.effort, DEFAULT_REPLY_EFFORT);
+  assert.equal(requestBodies[1].output_config.effort, DEFAULT_REPLY_EFFORT);
+});
+
 test("Claude API errors preserve workspace configuration failures for health classification", async () => {
   await assert.rejects(
     getReply(
@@ -134,7 +194,7 @@ test("Claude API errors preserve workspace configuration failures for health cla
   );
 });
 
-test("Claude logs itself as primary when AI_PROVIDER=claude without changing the persisted health label", () => {
+test("Claude exposes itself as primary when AI_PROVIDER=claude", () => {
   const candidates = buildCandidates({
     AI_PROVIDER: "claude",
     ANTHROPIC_API_KEY: "claude-key",
@@ -145,6 +205,5 @@ test("Claude logs itself as primary when AI_PROVIDER=claude without changing the
   });
 
   assert.equal(candidates[0].provider, "claude");
-  assert.equal(candidates[0].label, "Claude fallback");
-  assert.equal(candidates[0].logLabel, "Claude primary");
+  assert.equal(candidates[0].label, "Claude primary");
 });
