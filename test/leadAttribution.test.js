@@ -66,6 +66,53 @@ test("normalizes Facebook or Instagram ADS referrals with explicit ad id", () =>
   assert.equal(attribution.referralType, "OPEN_THREAD");
 });
 
+test("captures nested Instagram Ads creative title for AI reply context", () => {
+  const attribution = normalizeSocialReferral("instagram", {
+    source: "ADS",
+    type: "OPEN_THREAD",
+    ads_context_data: {
+      ad_id: "120299999900002",
+      ad_title: "骨盆调理｜改善体态",
+      ad_body: "中医师会先帮你做1对1体态评估+体验",
+    },
+  });
+
+  assert.equal(attribution.source, "meta_ads");
+  assert.equal(attribution.adId, "120299999900002");
+  assert.equal(attribution.headline, "骨盆调理｜改善体态");
+  assert.equal(attribution.body, "中医师会先帮你做1对1体态评估+体验");
+});
+
+test("captures camelCase Facebook Ads context without overriding top-level creative text", () => {
+  const nestedOnly = normalizeSocialReferral("facebook", {
+    source: "ADS",
+    type: "OPEN_THREAD",
+    adsContextData: {
+      adId: "120299999900003",
+      adTitle: "3D 小颜术｜大小脸",
+      adBody: "了解脸型与轮廓调理",
+    },
+  });
+
+  assert.equal(nestedOnly.adId, "120299999900003");
+  assert.equal(nestedOnly.headline, "3D 小颜术｜大小脸");
+  assert.equal(nestedOnly.body, "了解脸型与轮廓调理");
+
+  const topLevelWins = normalizeSocialReferral("facebook", {
+    source: "ADS",
+    ad_id: "120299999900004",
+    headline: "Top-level headline",
+    body: "Top-level body",
+    ads_context_data: {
+      ad_title: "Nested headline",
+      ad_body: "Nested body",
+    },
+  });
+
+  assert.equal(topLevelWins.headline, "Top-level headline");
+  assert.equal(topLevelWins.body, "Top-level body");
+});
+
 test("keeps organic Facebook and Instagram comment leads distinct from normal DMs", () => {
   const instagram = normalizeSocialReferral("instagram", {
     source: "COMMENT",
