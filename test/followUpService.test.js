@@ -11,6 +11,7 @@ const pipelineRepo = require("../src/db/pipelineRepo");
 const realtimeEvents = require("../src/utils/realtimeEvents");
 const whatsapp = require("../src/services/whatsappService");
 const whatsappPolicy = require("../src/services/whatsappPolicyService");
+const followUpAiService = require("../src/services/followUpAiService");
 const {
   STALE_CLAIM_GRACE_MINUTES,
   runAutomatedFollowUps,
@@ -25,6 +26,8 @@ test.beforeEach(() => {
   followUpRepo.isClaimStillEligible = async () => true;
   followUpRepo.discardUnsentClaim = async () => null;
   followUpRepo.discardUnsentSocialImageCompanion = async () => null;
+  followUpRepo.getAiFollowUpContext = async () => ({ messages: [], lead: null });
+  followUpRepo.recordAiDecisionIfStillEligible = async () => null;
   pipelineRepo.markContactedForContact = async () => false;
   // These tests exercise follow-up timing/language/delivery behavior, not the
   // policy service's database lookup. Policy behavior has dedicated tests.
@@ -847,4 +850,165 @@ test("follow-up worker wakes when pipeline eligibility changes", () => {
     source,
     /realtimeEvents\.subscribe\("pipeline_changed",[\s\S]*wakeAutomatedFollowUps\(0\)/
   );
+});
+
+
+test("AI mode sends the personalized message instead of the fixed fallback", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.messageMode = "ai";
+  clinicConfig.automatedFollowUp.aiInstruction = "Continue the unresolved concern naturally.";
+
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 31,
+    channel: "whatsapp",
+    whatsapp_number: "60111111111",
+    trigger_message_id: 301,
+    trigger_message_content: "First Trial is RM488.",
+    recent_inbound_messages: ["做一次就可以看到效果？"],
+    treatment_interest: "3D 小颜术",
+    next_follow_up_step: 1,
+  }];
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [
+      { role: "user", content: "做一次就可以看到效果？" },
+      { role: "assistant", content: "第一次可以先体验看看自己的变化。" },
+    ],
+    lead: { treatment_interest: "3D 小颜术", stage_name: "Warm" },
+  });
+  followUpAiService.generatePersonalizedFollowUp = async (input) => {
+    assert.equal(input.stepNumber, 1);
+    assert.equal(input.treatmentInterest, "3D 小颜术");
+    return {
+      action: "send",
+      message: "如果你想先看看自己的变化，可以先体验一次，再根据体验后的情况决定后续 😊",
+      reason: "The customer is interested but still considering.",
+      topic: "3D 小颜术",
+    };
+  };
+
+  let claimedContent = null;
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimedContent = input.content;
+    return { id: 302, contact_id: 31, delivery_status: null };
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 31,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  whatsapp.sendMessage = async (_number, message) => {
+    assert.equal(message, claimedContent);
+    return { success: true, wamid: "wamid-ai-302" };
+  };
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(
+    claimedContent,
+    "如果你想先看看自己的变化，可以先体验一次，再根据体验后的情况决定后续 😊"
+  );
+});
+
+test("AI skip is persisted without creating or sending a follow-up message", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.messageMode = "ai";
+
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 32,
+    channel: "whatsapp",
+    whatsapp_number: "60122222222",
+    trigger_message_id: 311,
+    trigger_message_content: "No problem, take care.",
+    recent_inbound_messages: ["不用了谢谢"],
+    next_follow_up_step: 1,
+  }];
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [
+      { role: "user", content: "不用了谢谢" },
+      { role: "assistant", content: "好的没问题，有需要再找我们就好 😊" },
+    ],
+    lead: null,
+  });
+  followUpAiService.generatePersonalizedFollowUp = async () => ({
+    action: "skip",
+    message: "",
+    reason: "Customer explicitly declined.",
+    topic: "",
+  });
+
+  let decision = null;
+  let saveCount = 0;
+  let sendCount = 0;
+  followUpRepo.recordAiDecisionIfStillEligible = async (input) => {
+    decision = input;
+    return { id: 1, ...input };
+  };
+  followUpRepo.saveIfStillEligible = async () => {
+    saveCount += 1;
+    return null;
+  };
+  whatsapp.sendMessage = async () => {
+    sendCount += 1;
+    return { success: true, wamid: "unexpected" };
+  };
+
+  await runAutomatedFollowUps();
+
+  assert.equal(decision.action, "skip");
+  assert.equal(decision.triggerMessageId, 311);
+  assert.equal(saveCount, 0);
+  assert.equal(sendCount, 0);
+});
+
+test("AI generation failure falls back to the reviewed fixed message", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.messageMode = "ai";
+  clinicConfig.automatedFollowUp.message = "Safe fallback";
+  clinicConfig.automatedFollowUp.translations = {
+    en: "Safe fallback",
+    ms: "Safe fallback",
+    zh: "Safe fallback",
+  };
+
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 33,
+    channel: "whatsapp",
+    whatsapp_number: "60133333333",
+    trigger_message_id: 321,
+    trigger_message_content: "Here are the details.",
+    recent_inbound_messages: ["Okay"],
+    next_follow_up_step: 1,
+  }];
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [{ role: "user", content: "Okay" }],
+    lead: null,
+  });
+  followUpAiService.generatePersonalizedFollowUp = async () => {
+    const err = new Error("Provider unavailable");
+    err.code = "ALL_AI_PROVIDERS_FAILED";
+    throw err;
+  };
+
+  let claimedContent = null;
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimedContent = input.content;
+    return { id: 322, contact_id: 33, delivery_status: null };
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 33,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  whatsapp.sendMessage = async (_number, message) => {
+    assert.equal(message, "Safe fallback");
+    return { success: true, wamid: "wamid-fallback-322" };
+  };
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(claimedContent, "Safe fallback");
 });
