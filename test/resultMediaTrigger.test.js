@@ -59,14 +59,13 @@ test("price enquiry resolves one approved service-level result example", async (
   ]);
 });
 
-test("package enquiry can also trigger result media for the matched service", async () => {
+test("package-only enquiry does not trigger result media without a price question", async () => {
   const selected = await resolveResultMediaForReply(base({
     priceQuery: false,
     packageQuery: true,
   }));
 
-  assert.equal(selected.service, "3D 小颜术");
-  assert.equal(selected.items.length, 1);
+  assert.equal(selected, null);
 });
 
 test("any recently accepted configured result image suppresses the whole automatic set", async () => {
