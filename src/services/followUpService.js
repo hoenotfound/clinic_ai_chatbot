@@ -433,6 +433,8 @@ async function sendCandidate(candidate) {
     stepIndex,
     targetedService,
     delayMinutes: step.delayMinutes,
+    previousDelayMinutes:
+      stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
     triggerMode: settings.triggerMode,
     activatedAt: settings.activatedAt,
   });
