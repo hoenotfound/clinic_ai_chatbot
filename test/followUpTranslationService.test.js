@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   GEMINI_MODEL,
+  parseTranslationBatch,
   parseTranslations,
 } = require("../src/services/followUpTranslationService");
 
@@ -23,5 +24,30 @@ test("rejects incomplete translated messages", () => {
   assert.throws(
     () => parseTranslations('{"en":"Hello","ms":"Hai"}'),
     /empty or too long/
+  );
+});
+
+
+test("parses batched follow-up translations in input order", () => {
+  assert.deepEqual(
+    parseTranslationBatch(
+      '{"items":[{"index":1,"en":"Second","ms":"Kedua","zh":"第二"},{"index":0,"en":"First","ms":"Pertama","zh":"第一"}]}',
+      2
+    ),
+    [
+      { en: "First", ms: "Pertama", zh: "第一" },
+      { en: "Second", ms: "Kedua", zh: "第二" },
+    ]
+  );
+});
+
+test("rejects incomplete follow-up translation batches", () => {
+  assert.throws(
+    () =>
+      parseTranslationBatch(
+        '{"items":[{"index":0,"en":"First","ms":"Pertama","zh":"第一"}]}',
+        2
+      ),
+    /incomplete/i
   );
 });
