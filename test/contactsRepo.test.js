@@ -193,6 +193,52 @@ test("clearing attention does not reopen the strict cooldown or send a new alert
   assert.equal(alertCalls, 0);
 });
 
+test("temporary AI outage attention clears only when that exact reason is still current", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /mode = 'ai'/);
+    assert.match(sql, /attention_reason = \$2/);
+    assert.deepEqual(params, [
+      12,
+      contactsRepo.TEMPORARY_AI_ATTENTION_REASON,
+    ]);
+    return {
+      rows: [{
+        id: 12,
+        mode: "ai",
+        needs_attention: false,
+        attention_reason: null,
+      }],
+    };
+  };
+
+  const updated = await contactsRepo.clearTemporaryAiAttention(12);
+  assert.equal(updated.needs_attention, false);
+});
+
+test("temporary AI outage attention does not clear a newer staff reason", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /attention_reason = \$2/);
+    assert.deepEqual(params, [
+      12,
+      contactsRepo.TEMPORARY_AI_ATTENTION_REASON,
+    ]);
+    return { rows: [] };
+  };
+
+  const updated = await contactsRepo.clearTemporaryAiAttention(12);
+  assert.equal(updated, null);
+});
+
 test("delivery failures alert Telegram even when a higher-priority attention reason prevents replacing the contact flag", async (t) => {
   const originalQuery = pool.query;
   const originalAlert = telegramImmediateAlerts.sendDeliveryFailureAlert;
