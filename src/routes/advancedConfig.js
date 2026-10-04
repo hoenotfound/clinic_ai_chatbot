@@ -16,6 +16,7 @@ const EDITABLE_KEYS = Object.freeze([
   "contact",
   "introMessage",
   "promotions",
+  "resultMedia",
   "services",
   "serviceAliases",
   "faqs",
@@ -35,6 +36,10 @@ const COLLECTION_DIFF_SPECS = Object.freeze({
   promotions: {
     identity: "name",
     fields: ["linkedService", "sendOnPriceQuery", "packages", "caption", "validFrom", "validUntil", "imageUrl"],
+  },
+  resultMedia: {
+    identity: "service",
+    fields: ["enabled", "sendAfterPrice", "autoSendCount", "items"],
   },
   services: {
     identity: "name",
