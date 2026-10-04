@@ -192,5 +192,8 @@ test("follow-up analytics exclude social image companions and expose step/target
   assert.match(source, /AS by_step/);
   assert.match(source, /AS by_targeting/);
   assert.match(source, /next_follow_up_at/);
+  assert.match(source, /history\.created_at < f\.next_follow_up_at/);
   assert.match(source, /replyRate72h/);
+  assert.match(source, /appointmentRate/);
+  assert.match(source, /winRate/);
 });
