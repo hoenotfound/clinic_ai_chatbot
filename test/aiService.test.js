@@ -324,6 +324,46 @@ test("recoverable AI reply failures stay eligible for a later automatic retry", 
   assert.equal(isRecoverableAiReplyFailure({ code: "AI_PROVIDER_NOT_CONFIGURED" }), false);
 });
 
+test("real all-key Gemini rate limiting remains recoverable after model wrapping", async () => {
+  resetGeminiKeyPoolState();
+  resetGeminiModelHealth();
+  const originalGetReply = geminiService.getReply;
+
+  geminiService.getReply = async () => {
+    const err = new Error("Rate limit exceeded for this project.");
+    err.status = 429;
+    throw err;
+  };
+
+  try {
+    await assert.rejects(
+      runGeminiReply(
+        [{ role: "user", content: "hello" }],
+        { channel: "whatsapp", isFirstMessage: false, privateSetupCheck: true },
+        {
+          GEMINI_API_KEYS: "key-a,key-b",
+          GEMINI_MODEL: "gemini-3.8-flash",
+          GEMINI_FALLBACK_MODEL: "",
+          GEMINI_REPLY_5XX_RETRY_COUNT: "0",
+          GEMINI_REPLY_GLOBAL_BUDGET_MS: "1000",
+          GEMINI_REPLY_MIN_KEY_WINDOW_MS: "1",
+        }
+      ),
+      (err) => {
+        assert.equal(err.code, "ALL_GEMINI_MODELS_FAILED");
+        assert.equal(err.failures[0].code, "ALL_GEMINI_KEYS_FAILED");
+        assert.equal(err.failures[0].failures.length, 2);
+        assert.equal(isRecoverableAiReplyFailure(err), true);
+        return true;
+      }
+    );
+  } finally {
+    geminiService.getReply = originalGetReply;
+    resetGeminiKeyPoolState();
+    resetGeminiModelHealth();
+  }
+});
+
 test("transient provider errors and invalid model output are retryable", () => {
   assert.equal(isRetryableAiError({ status: 429, message: "quota" }), true);
   assert.equal(isRetryableAiError({ code: "ETIMEDOUT" }), true);
