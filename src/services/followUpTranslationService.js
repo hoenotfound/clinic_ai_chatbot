@@ -8,6 +8,7 @@ const GEMINI_MODEL = process.env.FOLLOW_UP_TRANSLATION_GEMINI_MODEL || "gemini-3
 const CLAUDE_MODEL = "claude-sonnet-5";
 const LANGUAGE_KEYS = ["en", "ms", "zh"];
 const MAX_TRANSLATION_BATCH = 24;
+const PROVIDER_TRANSLATION_BATCH = 6;
 
 function translationRules() {
   return [
@@ -209,9 +210,25 @@ async function translateFollowUps(messages) {
   if (normalized.length === 1) {
     return [await translateFollowUp(normalized[0])];
   }
-  if (provider === "gemini") return translateBatchWithGemini(normalized);
-  if (provider === "claude") return translateBatchWithClaude(normalized);
-  throw new Error(`Unsupported AI provider: ${provider}`);
+
+  const translated = [];
+  for (
+    let start = 0;
+    start < normalized.length;
+    start += PROVIDER_TRANSLATION_BATCH
+  ) {
+    const chunk = normalized.slice(start, start + PROVIDER_TRANSLATION_BATCH);
+    if (provider === "gemini") {
+      translated.push(...(await translateBatchWithGemini(chunk)));
+      continue;
+    }
+    if (provider === "claude") {
+      translated.push(...(await translateBatchWithClaude(chunk)));
+      continue;
+    }
+    throw new Error(`Unsupported AI provider: ${provider}`);
+  }
+  return translated;
 }
 
 module.exports = {
