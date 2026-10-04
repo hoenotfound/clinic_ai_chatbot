@@ -775,6 +775,8 @@ export default function Tools() {
             onSourceMessageChange={handleSourceMessageChange}
             onTranslationChange={handleTranslationChange}
             onGenerateTranslations={handleGenerateTranslations}
+            onTranslateMessage={generateTranslationsForMessage}
+            onUploadImage={uploadFollowUpImage}
             onImagePicked={handleImagePicked}
             onSave={handleSave}
             toasts={toasts}
