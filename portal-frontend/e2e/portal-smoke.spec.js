@@ -739,6 +739,10 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
     .getByPlaceholder("Write the next follow-up message.")
     .fill("Still deciding? I can help with the details.");
 
+  await page.getByText(/Review translations · 0\/3 ready/).click();
+  await page.getByRole("button", { name: "中文" }).last().click();
+  await page.locator("details[open] textarea").last().fill("这是我手动调整的第二次跟进。");
+
   await page.getByRole("button", { name: "Manage" }).last().click();
   await page.getByRole("button", { name: "+ Add service message" }).last().click();
   await page
@@ -753,11 +757,6 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
     buffer: Buffer.from("fake-jpeg"),
   });
   await expect(page.getByRole("button", { name: "Replace" }).last()).toBeVisible();
-
-  await page.getByText(/Review translations · 0\/3 ready/).last().click();
-  const translationAreas = page.locator("textarea");
-  const chineseTranslation = translationAreas.last();
-  await chineseTranslation.fill("这是我手动调整的第二次跟进。");
 
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => savedPayload).not.toBeNull();
