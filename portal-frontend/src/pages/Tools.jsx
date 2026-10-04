@@ -1176,6 +1176,8 @@ function FollowUpTool({
   onSourceMessageChange,
   onTranslationChange,
   onGenerateTranslations,
+  onTranslateMessage,
+  onUploadImage,
   onImagePicked,
   onSave,
   toasts,
@@ -1353,6 +1355,8 @@ function FollowUpTool({
               overrides={form.serviceOverrides}
               services={services}
               stepLabel="Follow-up 1"
+              translating={translating}
+              onTranslateMessage={onTranslateMessage}
               onChange={(serviceOverrides) =>
                 setForm((current) => ({ ...current, serviceOverrides }))
               }
@@ -1432,20 +1436,43 @@ function FollowUpTool({
                           placeholder="Write the next follow-up message."
                           className="mt-1.5 w-full resize-y rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)]"
                         />
-                        <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">Language versions are generated when you save.</p>
+                        <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">Language versions are generated automatically when you save.</p>
+                        <TranslationDetails
+                          sourceMessage={step.message}
+                          translations={step.translations}
+                          translating={translating}
+                          onTranslate={onTranslateMessage}
+                          onReplace={(translations) =>
+                            updateAdditionalStep(index, { translations })
+                          }
+                          onChange={(languageKey, value) =>
+                            updateAdditionalStep(index, {
+                              translations: {
+                                ...step.translations,
+                                [languageKey]: value,
+                              },
+                            })
+                          }
+                        />
                       </div>
                     </div>
 
-                    {step.imageUrl && (
-                      <p className="mt-3 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2 text-[10px] text-[var(--color-text-muted)]">
-                        This step has a saved graphic from imported configuration. It will remain attached.
-                      </p>
-                    )}
+                    <StepImagePicker
+                      imageUrl={step.imageUrl}
+                      uploading={uploadingImage}
+                      onUpload={onUploadImage}
+                      onChange={(imageUrl) =>
+                        updateAdditionalStep(index, { imageUrl })
+                      }
+                      label={`Follow-up ${index + 2} graphic`}
+                    />
 
                     <ServiceOverridesEditor
                       overrides={step.serviceOverrides}
                       services={services}
                       stepLabel={`Follow-up ${index + 2}`}
+                      translating={translating}
+                      onTranslateMessage={onTranslateMessage}
                       onChange={(serviceOverrides) =>
                         updateAdditionalStep(index, { serviceOverrides })
                       }
