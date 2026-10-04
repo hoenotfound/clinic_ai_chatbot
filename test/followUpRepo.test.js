@@ -52,6 +52,9 @@ test("automated follow-up discovery excludes conversations already waiting for s
   pool.query = async (sql, params) => {
     assert.match(sql, /FROM contacts c/);
     assert.match(sql, /c\.needs_attention = false/);
+    assert.match(sql, /previous_outbound/);
+    assert.match(sql, /recent_inbound\.id <= latest_inbound\.id/);
+    assert.match(sql, /recent_inbound\.id > previous_outbound\.id/);
     assert.deepEqual(params, [
       [120],
       "all",
