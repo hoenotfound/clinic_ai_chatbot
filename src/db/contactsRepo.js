@@ -503,6 +503,32 @@ async function setAttention(id, needsAttention, reason = null) {
 // Delivery problems should not replace a more important reason that already
 // needs staff attention, such as an urgent keyword or an AI handoff. Repeated
 // delivery failures may update the existing delivery reason with newer detail.
+const TEMPORARY_AI_ATTENTION_REASON =
+  "AI temporarily unavailable. A staff reply may be needed.";
+
+async function setTemporaryAiAttention(id) {
+  return setAttention(id, true, TEMPORARY_AI_ATTENTION_REASON);
+}
+
+// Clear only the exact temporary provider-outage flag. This is intentionally
+// conditional so a newer booking, safety, delivery, or staff attention reason
+// cannot be erased by a later successful AI reply.
+async function clearTemporaryAiAttention(id) {
+  const result = await pool.query(
+    `UPDATE contacts
+     SET needs_attention = false, attention_reason = NULL, updated_at = now()
+     WHERE id = $1
+       AND mode = 'ai'
+       AND needs_attention = true
+       AND attention_reason = $2
+     RETURNING *`,
+    [id, TEMPORARY_AI_ATTENTION_REASON]
+  );
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id);
+  return updated;
+}
+
 async function setDeliveryAttention(id, reason) {
   const result = await pool.query(
     `UPDATE contacts
@@ -599,8 +625,11 @@ module.exports = {
   takeOver,
   returnToAi,
   setAttention,
+  setTemporaryAiAttention,
+  clearTemporaryAiAttention,
   setDeliveryAttention,
   clearDeliveryAttentionIfNoFailedMessages,
   setUnread,
   setFollowUp,
+  TEMPORARY_AI_ATTENTION_REASON,
 };
