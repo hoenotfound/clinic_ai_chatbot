@@ -811,9 +811,11 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
                             <button
                               type="button"
                               onClick={() => openConversation(lead)}
-                              className="h-9 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)]"
+                              disabled={lead.canOpenConversation === false}
+                              title={lead.canOpenConversation === false ? "This conversation is currently assigned to another staff member." : undefined}
+                              className="h-9 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:bg-[var(--color-border)] disabled:text-[var(--color-text-muted)]"
                             >
-                              Open chat
+                              {lead.canOpenConversation === false ? "Not assigned" : "Open chat"}
                             </button>
                           </div>
                         ))}
