@@ -28,6 +28,10 @@ test("automated follow-up inserts take the conversation scoring lock and re-chec
     ]);
     assert.match(sql, /automated_follow_up_step/);
     assert.match(sql, /automated_follow_up_target_service/);
+    assert.match(sql, /automated_follow_up_targeting_recorded/);
+    assert.match(sql, /latest_lead\.is_closed = false/);
+    assert.match(sql, /appointment_set.*visited/);
+    assert.match(sql, /appointment_status.*set.*visited/);
     assert.match(sql, /COALESCE\(progress\.max_step, 0\) \+ 1 = \$5/);
     return { rows: [] };
   };
@@ -57,6 +61,9 @@ test("automated follow-up discovery excludes conversations already waiting for s
     assert.match(sql, /previous_outbound/);
     assert.match(sql, /recent_inbound\.id <= latest_inbound\.id/);
     assert.match(sql, /recent_inbound\.id > previous_outbound\.id/);
+    assert.match(sql, /latest_lead\.is_closed = false/);
+    assert.match(sql, /appointment_set.*visited/);
+    assert.match(sql, /appointment_status.*set.*visited/);
     assert.deepEqual(params, [
       [120],
       "all",
@@ -74,4 +81,29 @@ test("automated follow-up discovery excludes conversations already waiting for s
   });
 
   assert.deepEqual(candidates, []);
+});
+
+
+test("next follow-up due calculation excludes booked visited and closed latest leads", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  let capturedSql = "";
+  pool.query = async (sql) => {
+    capturedSql = sql;
+    return { rows: [{ due_at: null }] };
+  };
+
+  await followUpRepo.getNextCandidateDueAt({
+    delayMinutes: [120, 480],
+    triggerMode: "all",
+    activatedAt: "2026-08-28T00:00:00.000Z",
+  });
+
+  assert.match(capturedSql, /latest_lead\.is_closed = false/);
+  assert.match(capturedSql, /COALESCE\(latest_lead\.stage_type, 'open'\) = 'open'/);
+  assert.match(capturedSql, /appointment_set.*visited/);
+  assert.match(capturedSql, /appointment_status.*set.*visited/);
 });
