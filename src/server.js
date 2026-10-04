@@ -763,6 +763,23 @@ async function processIncomingMessage(
       return { wasFirstMessage, keywordReason };
     }
 
+    // If this turn recovered from a temporary provider outage, clear only
+    // that exact attention flag after the customer-facing AI reply was
+    // accepted. Keep every newer or higher-priority attention reason intact.
+    if (!flagged && sendOutcome.sendResult.success) {
+      try {
+        const recoveredContact = await contactsRepo.clearTemporaryAiAttention(
+          contact.id
+        );
+        if (recoveredContact) contact = recoveredContact;
+      } catch (attentionErr) {
+        console.error(
+          `Failed to clear temporary AI attention for contact ${contact.id}:`,
+          attentionErr
+        );
+      }
+    }
+
     // Apply conversion-ready state only after this AI turn was not suppressed
     // by a staff phone reply. Provider rejection still keeps the existing
     // behavior of surfacing Booking Ready for staff follow-up.
@@ -932,11 +949,7 @@ async function processIncomingMessage(
         // bounded fallback, but keep AI ownership so the next customer message
         // can retry after Gemini/Claude recovers.
         if (ai.isRecoverableAiReplyFailure(err)) {
-          await contactsRepo.setAttention(
-            fallbackContact.id,
-            true,
-            "AI temporarily unavailable. A staff reply may be needed."
-          );
+          await contactsRepo.setTemporaryAiAttention(fallbackContact.id);
           if (!responseAttempted) {
             responseAttempted = true;
             await sendTrackedText(
