@@ -951,6 +951,7 @@ function StepImagePicker({
           ref={inputRef}
           type="file"
           accept="image/jpeg,image/png"
+          aria-label={`${label} upload`}
           className="hidden"
           onChange={handlePicked}
         />
