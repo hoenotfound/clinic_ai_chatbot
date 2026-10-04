@@ -166,7 +166,7 @@ function textContainsServiceTerm(text, term) {
   return normalizedText.includes(term);
 }
 
-function inferTargetedOverrideFromConversation(step, candidate) {
+function targetedOverridesMentionedInConversation(step, candidate) {
   const transcript = [
     ...(candidate.recent_inbound_messages || []),
     candidate.trigger_message_content,
@@ -174,24 +174,36 @@ function inferTargetedOverrideFromConversation(step, candidate) {
     .filter((value) => typeof value === "string" && value.trim())
     .join("\n");
 
-  if (!transcript) return null;
-  const matches = step.serviceOverrides.filter((item) =>
+  if (!transcript) return [];
+  return step.serviceOverrides.filter((item) =>
     serviceTerms(item.serviceName).some((term) =>
       textContainsServiceTerm(transcript, term)
     )
   );
-  return matches.length === 1 ? matches[0] : null;
 }
 
 function messageForCandidate(step, candidate, language) {
+  const conversationMatches = targetedOverridesMentionedInConversation(
+    step,
+    candidate
+  );
   const interest = normalizedServiceName(candidate.treatment_interest);
   const exactInterest = interest
     ? step.serviceOverrides.find(
         (item) => normalizedServiceName(item.serviceName) === interest
       )
     : null;
+
+  // The recent conversation is the freshest signal. One clear service wins;
+  // more than one means the customer is comparing/mixing interests, so use the
+  // default copy. Only fall back to the CRM interest when no service is named
+  // in the recent conversation.
   const targeted =
-    exactInterest || inferTargetedOverrideFromConversation(step, candidate);
+    conversationMatches.length === 1
+      ? conversationMatches[0]
+      : conversationMatches.length > 1
+        ? null
+        : exactInterest || null;
   const source = targeted || step;
   return {
     message: source.translations[language] || source.message,
