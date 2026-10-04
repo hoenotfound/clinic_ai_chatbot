@@ -32,6 +32,7 @@ const CONFIG_KEYS = [
   "leadScoring",
   "leadDistribution",
   "promotions",
+  "resultMedia",
   "services",
   "serviceAliases",
   "faqs",
@@ -94,7 +95,21 @@ async function pruneOrphanedPromoImages(force = false, now = Date.now()) {
 
   try {
     const promotionIds = (clinicConfig.promotions || [])
-      .map((p) => extractPromoImageId(p.imageUrl))
+      .flatMap((promotion) => [
+        promotion?.imageUrl,
+        ...(Array.isArray(promotion?.packages)
+          ? promotion.packages.map((item) => item?.imageUrl)
+          : []),
+      ])
+      .map(extractPromoImageId)
+      .filter((id) => id !== null);
+    const resultMediaIds = (clinicConfig.resultMedia || [])
+      .flatMap((entry) =>
+        Array.isArray(entry?.items)
+          ? entry.items.map((item) => item?.imageUrl)
+          : []
+      )
+      .map(extractPromoImageId)
       .filter((id) => id !== null);
     const followUpImageIds = [
       clinicConfig.automatedFollowUp?.imageUrl,
@@ -104,7 +119,11 @@ async function pruneOrphanedPromoImages(force = false, now = Date.now()) {
     ]
       .map(extractPromoImageId)
       .filter((id) => id !== null);
-    const referencedIds = [...promotionIds, ...followUpImageIds];
+    const referencedIds = [
+      ...promotionIds,
+      ...resultMediaIds,
+      ...followUpImageIds,
+    ];
     await promoImagesRepo.pruneUnreferenced(referencedIds);
     lastPromoImageBackstopPruneAt = now;
     return true;
@@ -232,6 +251,7 @@ async function updateConfig(updates, database = pool) {
 
   if (
     Object.prototype.hasOwnProperty.call(updates, "promotions") ||
+    Object.prototype.hasOwnProperty.call(updates, "resultMedia") ||
     Object.prototype.hasOwnProperty.call(updates, "automatedFollowUp")
   ) {
     await pruneOrphanedPromoImages(true);
