@@ -8,6 +8,10 @@ const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
 const channelMessaging = require("./channelMessagingService");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
+const {
+  normalizeQuietHours,
+  quietHoursStatus,
+} = require("../utils/quietHours");
 
 // Retained as the failure-retry delay/export. Normal operation now sleeps until
 // the next actual follow-up is due instead of polling Postgres every minute.
@@ -115,6 +119,9 @@ function getActiveSettings() {
     return null;
   }
 
+  const quietHours = normalizeQuietHours(settings.quietHours);
+  if (!quietHours) return null;
+
   const rawAdditionalSteps =
     settings.additionalSteps === undefined ? [] : settings.additionalSteps;
   if (!Array.isArray(rawAdditionalSteps) || rawAdditionalSteps.length > 2) {
@@ -136,6 +143,7 @@ function getActiveSettings() {
   return {
     triggerMode: settings.triggerMode,
     activatedAt: settings.activatedAt,
+    quietHours,
     steps,
   };
 }
@@ -382,6 +390,10 @@ async function sendCandidate(candidate) {
   const step = settings.steps[stepIndex - 1];
   if (!step) return;
 
+  // A sweep can begin just before quiet hours start. Re-check before claiming
+  // so we never create an outbound row that should simply wait until morning.
+  if (quietHoursStatus(new Date(), settings.quietHours).active) return;
+
   const language = detectConversationLanguage([
     ...(candidate.recent_inbound_messages || []),
     candidate.trigger_message_content,
@@ -426,7 +438,8 @@ async function sendCandidate(candidate) {
       !liveStep ||
       liveSettings.activatedAt !== settings.activatedAt ||
       liveSettings.triggerMode !== settings.triggerMode ||
-      liveStep.delayMinutes !== step.delayMinutes
+      liveStep.delayMinutes !== step.delayMinutes ||
+      quietHoursStatus(new Date(), liveSettings.quietHours).active
     ) {
       return false;
     }
@@ -569,7 +582,7 @@ async function nextInterruptedRecoveryAt() {
   });
 }
 
-async function runAutomatedFollowUps() {
+async function runAutomatedFollowUps({ now = new Date() } = {}) {
   if (sweepRunning) {
     return {
       enabled: Boolean(getActiveSettings()),
@@ -594,6 +607,17 @@ async function runAutomatedFollowUps() {
         candidateCount: 0,
         recoveredCount,
         nextDueAt: null,
+        nextRecoveryAt: await nextInterruptedRecoveryAt(),
+      };
+    }
+
+    const quiet = quietHoursStatus(now, settings.quietHours);
+    if (quiet.active) {
+      return {
+        enabled: true,
+        candidateCount: 0,
+        recoveredCount,
+        nextDueAt: quiet.endsAt,
         nextRecoveryAt: await nextInterruptedRecoveryAt(),
       };
     }
