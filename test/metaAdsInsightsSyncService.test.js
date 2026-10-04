@@ -20,6 +20,7 @@ function baseRepo(overrides = {}) {
     async releaseSyncLease() {
       return true;
     },
+    async resetBackfillCoverage() {},
     async getSyncState() {
       return null;
     },
@@ -113,6 +114,8 @@ test("a partial backfill resumes from the persisted next date", async () => {
       return {
         last_backfill_completed_at: null,
         backfill_next_date: "2026-09-05",
+        coverage_start_date: "2026-07-07",
+        coverage_end_date: "2026-09-04",
       };
     },
   });
@@ -140,7 +143,11 @@ test("completed accounts only refresh the recent three-day window", async () => 
   let range = null;
   const repo = baseRepo({
     async getSyncState() {
-      return { last_backfill_completed_at: "2026-09-01T00:00:00Z" };
+      return {
+        last_backfill_completed_at: "2026-09-01T00:00:00Z",
+        coverage_start_date: "2026-07-07",
+        coverage_end_date: "2026-10-04",
+      };
     },
   });
   const api = {
@@ -154,6 +161,44 @@ test("completed accounts only refresh the recent three-day window", async () => 
 
   assert.deepEqual(range, { since: "2026-10-02", until: "2026-10-04" });
   assert.equal(result.accounts[0].backfill, false);
+});
+
+test("an older completed sync without coverage metadata performs one repair backfill", async () => {
+  const fetched = [];
+  let resetCoverage = null;
+  const repo = baseRepo({
+    async getSyncState() {
+      return {
+        last_backfill_completed_at: "2026-09-01T00:00:00Z",
+        coverage_start_date: null,
+        coverage_end_date: null,
+      };
+    },
+    async resetBackfillCoverage(accountId, since) {
+      resetCoverage = [accountId, since];
+    },
+  });
+  const api = {
+    async fetchAdInsights(accountId, range) {
+      fetched.push(range);
+      return [{
+        accountId,
+        accountCurrency: "MYR",
+        date: range.until,
+        adId: "300",
+      }];
+    },
+  };
+
+  const result = await makeService({ repo, api }).runOnce();
+
+  assert.equal(result.accounts[0].backfill, true);
+  assert.deepEqual(resetCoverage, ["123", "2026-07-07"]);
+  assert.deepEqual(fetched, [
+    { since: "2026-07-07", until: "2026-08-05" },
+    { since: "2026-08-06", until: "2026-09-04" },
+    { since: "2026-09-05", until: "2026-10-04" },
+  ]);
 });
 
 test("an account locked by another Render instance is skipped without calling Meta", async () => {
