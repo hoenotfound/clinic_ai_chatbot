@@ -254,13 +254,19 @@ test(
       { ...baseFilters, level: "campaign" },
       analyticsProfile,
       database.query.bind(database),
-      { accessibleLeadIds: [1, 2], limit: 25 }
+      {
+        accessibleLeadIds: [1, 2],
+        accessibleContactIds: [2],
+        limit: 25,
+      }
     );
     assert.equal(restrictedPreview.total, 2);
     assert.equal(restrictedPreview.leads.length, 2);
     assert.equal(restrictedPreview.leads[0].name, "May");
     assert.equal(restrictedPreview.leads[0].campaignName, "Old Campaign Name");
+    assert.equal(restrictedPreview.leads[0].canOpenConversation, true);
     assert.equal(restrictedPreview.leads[1].name, "Alice");
+    assert.equal(restrictedPreview.leads[1].canOpenConversation, false);
     assert.equal(restrictedPreview.leads[1].lastMessage, "Interested in pelvis treatment");
     assert.notEqual(
       restrictedPreview.leads[1].lastMessage,
@@ -271,7 +277,7 @@ test(
       { ...baseFilters, level: "campaign" },
       analyticsProfile,
       database.query.bind(database),
-      { accessibleLeadIds: [], limit: 25 }
+      { accessibleLeadIds: [], accessibleContactIds: [], limit: 25 }
     );
     assert.equal(noLeadAccessPreview.total, 0);
     assert.deepEqual(noLeadAccessPreview.leads, []);
