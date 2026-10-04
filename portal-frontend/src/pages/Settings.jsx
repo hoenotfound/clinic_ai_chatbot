@@ -413,6 +413,7 @@ function ImageFieldEditor({
   onError,
   uploadImage = null,
   alt = "Promotion graphic",
+  allowUrl = true,
 }) {
   const fileInputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
@@ -472,17 +473,19 @@ function ImageFieldEditor({
           </button>
         )}
       </div>
-      <details className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
-        <summary className="cursor-pointer text-[11px] font-semibold text-[var(--color-text-muted)]">
-          Advanced · use image URL
-        </summary>
-        <input
-          className={`${inputClass} mt-2 text-xs`}
-          value={value}
-          placeholder="https://..."
-          onChange={(e) => onChange(e.target.value)}
-        />
-      </details>
+      {allowUrl && (
+        <details className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
+          <summary className="cursor-pointer text-[11px] font-semibold text-[var(--color-text-muted)]">
+            Advanced · use image URL
+          </summary>
+          <input
+            className={`${inputClass} mt-2 text-xs`}
+            value={value}
+            placeholder="https://..."
+            onChange={(e) => onChange(e.target.value)}
+          />
+        </details>
+      )}
     </div>
   );
 }
@@ -1911,7 +1914,12 @@ function ResultMediaItemsEditor({ items, onChange, onError }) {
                 onError={onError}
                 uploadImage={api.uploadResultMediaImage}
                 alt="Before and after result example"
+                allowUrl={false}
               />
+              <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+                Upload result photos here instead of using a public link. The stored image is private
+                to signed-in staff and is sent to Meta through a temporary/provider upload path.
+              </p>
             </div>
             <div>
               <label className={labelClass}>Caption sent with this example</label>
