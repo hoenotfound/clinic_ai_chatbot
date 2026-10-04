@@ -18,7 +18,8 @@ const FOLLOW_UP_MESSAGE_COLUMNS = `
   delivery_status,
   delivery_error,
   is_automated_follow_up,
-  automated_follow_up_step
+  automated_follow_up_step,
+  automated_follow_up_target_service
 `;
 
 function normalizeDelayMinutes(value) {
@@ -277,6 +278,7 @@ async function saveIfStillEligible({
   content,
   mediaUrl,
   stepIndex = 1,
+  targetedService = null,
   delayMinutes,
   triggerMode,
   activatedAt,
@@ -337,9 +339,10 @@ async function saveIfStillEligible({
        media_url,
        is_automated_follow_up,
        automated_follow_up_for_message_id,
-       automated_follow_up_step
+       automated_follow_up_step,
+       automated_follow_up_target_service
      )
-     SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2, $5
+     SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2, $5, $6
      FROM anchor, latest_inbound, progress, contacts c
      WHERE c.id = $1
        AND c.needs_attention = false
@@ -350,11 +353,11 @@ async function saveIfStillEligible({
        )
        AND anchor.id = $2
        AND anchor.delivery_status IS DISTINCT FROM 'failed'
-       AND anchor.created_at >= $8::timestamptz
-       AND anchor.created_at <= now() - ($6::integer * interval '1 minute')
-       AND anchor.created_at + ($6::integer * interval '1 minute')
+       AND anchor.created_at >= $9::timestamptz
+       AND anchor.created_at <= now() - ($7::integer * interval '1 minute')
+       AND anchor.created_at + ($7::integer * interval '1 minute')
            <= latest_inbound.created_at + interval '23 hours 50 minutes'
-       AND ($7 = 'all' OR anchor.sent_by_username IS NOT NULL)
+       AND ($8 = 'all' OR anchor.sent_by_username IS NOT NULL)
        AND COALESCE(progress.max_step, 0) + 1 = $5
        AND COALESCE(progress.has_blocking_claim, false) = false
      ON CONFLICT DO NOTHING
@@ -365,6 +368,9 @@ async function saveIfStillEligible({
       content,
       mediaUrl,
       numericStep,
+      typeof targetedService === "string" && targetedService.trim()
+        ? targetedService.trim()
+        : null,
       numericDelay,
       triggerMode,
       activatedAt,
