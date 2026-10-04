@@ -27,7 +27,7 @@ function testEnv() {
   };
 }
 
-test("a sustained 503 cools the primary model after one confirmation key so later replies skip wasted requests", async () => {
+test("a sustained 503 cools the primary model immediately so later replies skip wasted requests", async () => {
   resetGeminiKeyPoolState();
   resetGeminiModelHealth();
   const originalGetReply = geminiService.getReply;
@@ -55,7 +55,6 @@ test("a sustained 503 cools the primary model after one confirmation key so late
     await runGeminiReply([{ role: "user", content: "first" }], {}, env, deps);
     assert.deepEqual(calls.map((item) => item.model), [
       "gemini-2.5-flash",
-      "gemini-2.5-flash",
       "gemini-2.5-flash-lite",
     ]);
 
@@ -70,7 +69,6 @@ test("a sustained 503 cools the primary model after one confirmation key so late
     nowMs += 60_001;
     await runGeminiReply([{ role: "user", content: "third" }], {}, env, deps);
     assert.deepEqual(calls.map((item) => item.model), [
-      "gemini-2.5-flash",
       "gemini-2.5-flash",
       "gemini-2.5-flash-lite",
     ]);
@@ -105,8 +103,9 @@ test("when every Gemini model is cooling down no provider requests are spent unt
     await assert.rejects(
       runGeminiReply([{ role: "user", content: "first" }], {}, env, deps)
     );
-    // Each reply model gets the initial key plus one independent confirmation key.
-    assert.equal(calls.length, 4);
+    // The primary model switches immediately. The last fallback model still
+    // uses one confirmation key before it is cooled.
+    assert.equal(calls.length, 3);
 
     calls.length = 0;
     await assert.rejects(
