@@ -1,5 +1,6 @@
 const attributionRepo = require("../db/leadAttributionRepo");
 const metaAdsEnrichmentScheduleRepo = require("../db/metaAdsEnrichmentScheduleRepo");
+const metaAdsInsightsRepo = require("../db/metaAdsInsightsRepo");
 const metaAdsApi = require("./metaAdsApiService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
@@ -50,9 +51,38 @@ function delayUntilNextEnrichment(result) {
   return Math.max(1000, timestamp - Date.now());
 }
 
+function hierarchyToAdDetails(hierarchy, expectedAdId) {
+  if (!hierarchy) return null;
+  const expected = String(expectedAdId || "").trim();
+  const details = {
+    adId: String(hierarchy.ad_id || "").trim(),
+    adName: String(hierarchy.ad_name || "").trim(),
+    accountId: String(hierarchy.account_id || "").trim(),
+    adsetId: String(hierarchy.adset_id || "").trim(),
+    adsetName: String(hierarchy.adset_name || "").trim(),
+    campaignId: String(hierarchy.campaign_id || "").trim(),
+    campaignName: String(hierarchy.campaign_name || "").trim(),
+  };
+
+  if (
+    !expected
+    || details.adId !== expected
+    || !details.adName
+    || !details.accountId
+    || !details.adsetId
+    || !details.adsetName
+    || !details.campaignId
+    || !details.campaignName
+  ) {
+    return null;
+  }
+  return details;
+}
+
 function createMetaAdsEnrichmentService({
   repo = attributionRepo,
   api = metaAdsApi,
+  hierarchyRepo,
   events = realtimeEvents,
   setImmediateImpl = setImmediate,
   logger = console,
@@ -67,11 +97,66 @@ function createMetaAdsEnrichmentService({
     : repo === attributionRepo
       ? metaAdsEnrichmentScheduleRepo.getNextMetaEnrichmentDueAt
       : null;
+  const hierarchySource = hierarchyRepo !== undefined
+    ? hierarchyRepo
+    : repo === attributionRepo
+      ? metaAdsInsightsRepo
+      : null;
 
-  async function processClaimed(row) {
-    if (!row?.id || !row?.meta_ad_id) return { status: "skipped" };
+  async function preloadAdDetails(rows) {
+    if (typeof hierarchySource?.getLatestHierarchyForAdIds !== "function") {
+      return new Map();
+    }
+
+    const adIds = [...new Set(
+      (rows || [])
+        .map((row) => String(row?.meta_ad_id || "").trim())
+        .filter(Boolean)
+    )];
+    if (!adIds.length) return new Map();
+
     try {
-      const details = await api.fetchAdDetails(row.meta_ad_id);
+      const hierarchyByAd = await hierarchySource.getLatestHierarchyForAdIds(adIds);
+      const detailsByAd = new Map();
+      for (const adId of adIds) {
+        const details = hierarchyToAdDetails(hierarchyByAd?.get?.(adId), adId);
+        if (details) detailsByAd.set(adId, details);
+      }
+      return detailsByAd;
+    } catch (err) {
+      logger.warn?.(
+        `Meta Ads enrichment cache lookup failed; falling back to Meta API: ${safeErrorText(err)}`
+      );
+      return new Map();
+    }
+  }
+
+  async function processClaimed(
+    row,
+    { detailsCache = null, errorCache = null } = {}
+  ) {
+    if (!row?.id || !row?.meta_ad_id) return { status: "skipped" };
+    const adId = String(row.meta_ad_id);
+    try {
+      let cache = detailsCache;
+      if (!cache) {
+        cache = await preloadAdDetails([row]);
+      }
+
+      if (errorCache?.has(adId)) {
+        throw errorCache.get(adId);
+      }
+
+      let details = cache.get(adId);
+      if (!details) {
+        try {
+          details = await api.fetchAdDetails(adId);
+          cache.set(adId, details);
+        } catch (err) {
+          errorCache?.set(adId, err);
+          throw err;
+        }
+      }
       const updated = await repo.markMetaEnrichmentSuccess(row.id, details);
       if (updated) {
         events.publish("pipeline_changed", {
@@ -112,12 +197,14 @@ function createMetaAdsEnrichmentService({
     sweepRunning = true;
     try {
       const claimed = await repo.claimMetaEnrichmentBatch(batchSize());
+      const detailsCache = await preloadAdDetails(claimed);
+      const errorCache = new Map();
       let processed = 0;
       let configurationError = false;
 
       for (let index = 0; index < claimed.length; index += 1) {
         const row = claimed[index];
-        const result = await processClaimed(row);
+        const result = await processClaimed(row, { detailsCache, errorCache });
         processed += 1;
 
         // Token/permission failures are configuration-wide, not ad-specific.
@@ -209,6 +296,7 @@ module.exports = {
   batchSize,
   createMetaAdsEnrichmentService,
   delayUntilNextEnrichment,
+  hierarchyToAdDetails,
   retryDelayMs,
   safeErrorText,
   sweepIntervalMs,

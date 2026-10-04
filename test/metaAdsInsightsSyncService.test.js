@@ -2,7 +2,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  DEFAULT_SYNC_INTERVAL_MS,
   createMetaAdsInsightsSyncService,
+  syncIntervalMs,
 } = require("../src/services/metaAdsInsightsSyncService");
 
 function silentLogger() {
@@ -44,6 +46,15 @@ function makeService({ repo, api, accountIds = ["123"] }) {
     logger: silentLogger(),
   });
 }
+
+test("Insights sync defaults to hourly while preserving explicit overrides", () => {
+  assert.equal(DEFAULT_SYNC_INTERVAL_MS, 60 * 60 * 1000);
+  assert.equal(syncIntervalMs({}), 60 * 60 * 1000);
+  assert.equal(
+    syncIntervalMs({ META_AD_INSIGHTS_SYNC_MS: String(30 * 60 * 1000) }),
+    30 * 60 * 1000
+  );
+});
 
 test("first successful sync backfills 90 days in resumable 30-day chunks", async () => {
   const calls = [];
