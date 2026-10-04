@@ -472,12 +472,9 @@ export default function Tools() {
     const quietStart = String(form.quietHours?.start || "").trim();
     const quietEnd = String(form.quietHours?.end || "").trim();
     if (
-      form.quietHours?.enabled &&
-      (
-        !quietTimePattern.test(quietStart) ||
-        !quietTimePattern.test(quietEnd) ||
-        quietStart === quietEnd
-      )
+      !quietTimePattern.test(quietStart) ||
+      !quietTimePattern.test(quietEnd) ||
+      quietStart === quietEnd
     ) {
       return "Choose two different valid times for follow-up quiet hours.";
     }
