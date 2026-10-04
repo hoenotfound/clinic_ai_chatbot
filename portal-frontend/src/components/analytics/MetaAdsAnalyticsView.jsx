@@ -141,10 +141,20 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [leadsOpen, setLeadsOpen] = useState(false);
+  const [leadPreview, setLeadPreview] = useState({ total: 0, leads: [] });
+  const [leadLoading, setLeadLoading] = useState(false);
+  const [leadError, setLeadError] = useState("");
   const requestIdRef = useRef(0);
+  const leadRequestIdRef = useRef(0);
 
   useEffect(() => {
     const requestId = ++requestIdRef.current;
+    leadRequestIdRef.current += 1;
+    setLeadsOpen(false);
+    setLeadPreview({ total: 0, leads: [] });
+    setLeadLoading(false);
+    setLeadError("");
     setLoading(true);
     setError("");
 
@@ -251,6 +261,41 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
     navigate(`/inbox?contact=${lead.contactId}`);
   }
 
+  function toggleLeadPreview() {
+    if (leadsOpen) {
+      setLeadsOpen(false);
+      return;
+    }
+
+    const requestId = ++leadRequestIdRef.current;
+    setLeadsOpen(true);
+    setLeadLoading(true);
+    setLeadError("");
+
+    api.getMetaAdsAnalyticsLeads({
+      ...appliedRange,
+      level,
+      accountId,
+      campaignId,
+      adsetId,
+      adId,
+    })
+      .then((payload) => {
+        if (requestId === leadRequestIdRef.current) {
+          setLeadPreview(payload || { total: 0, leads: [] });
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load Meta-attributed chatbot leads:", err);
+        if (requestId === leadRequestIdRef.current) {
+          setLeadError(err.message || "Couldn't load chatbot leads.");
+        }
+      })
+      .finally(() => {
+        if (requestId === leadRequestIdRef.current) setLeadLoading(false);
+      });
+  }
+
   const rows = data?.rows || [];
   const accounts = data?.accounts || [];
   const summary = data?.summary || {};
@@ -258,7 +303,6 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
   const currency = money.currency;
   const coverage = data?.attributionCoverage || {};
   const spendCoverage = data?.spendCoverage || {};
-  const leadPreview = data?.leadPreview || {};
   const chatbotLeads = leadPreview.leads || [];
   const selectedAccount = accounts.find((account) => account.accountId === accountId)
     || (accounts.length === 1 ? accounts[0] : null);
@@ -684,75 +728,99 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
             </section>
 
             <section className="rounded-2xl border border-[var(--color-border)] bg-white">
-              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--color-border)] p-4">
+              <div className={`flex flex-wrap items-center justify-between gap-3 p-4 ${leadsOpen ? "border-b border-[var(--color-border)]" : ""}`}>
                 <div>
                   <h2 className="font-display text-base font-bold">Chatbot leads from selected ads</h2>
                   <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-                    The real people behind the Meta numbers. Open any conversation directly in Inbox.
+                    Load the real people behind these Meta results only when you need them.
                   </p>
                 </div>
-                <span className="rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-xs font-semibold text-[var(--color-text-muted)]">
-                  Showing {formatNumber(chatbotLeads.length)} of {formatNumber(leadPreview.total || 0)}
-                </span>
+                <button
+                  type="button"
+                  onClick={toggleLeadPreview}
+                  disabled={leadLoading}
+                  className="h-9 rounded-xl border border-[var(--color-border)] bg-white px-3 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] disabled:opacity-50"
+                >
+                  {leadLoading ? "Loading…" : leadsOpen ? "Hide leads" : "Show chatbot leads"}
+                </button>
               </div>
 
-              {chatbotLeads.length === 0 ? (
-                <div className="p-8 text-center">
-                  <p className="text-sm font-semibold">No chatbot leads in this view</p>
-                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-                    Drill into another campaign, ad set or ad, or widen the selected date range.
-                  </p>
-                </div>
-              ) : (
-                <div className="divide-y divide-[var(--color-border)]">
-                  {chatbotLeads.map((lead) => (
-                    <div key={lead.leadId} className="grid gap-3 p-4 md:grid-cols-[minmax(180px,1.2fr)_minmax(180px,1.4fr)_minmax(140px,0.9fr)_auto] md:items-center">
-                      <div className="min-w-0">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <p className="truncate text-sm font-semibold text-[var(--color-text)]">{lead.name || `Lead ${lead.leadId}`}</p>
-                          <LeadTemperature value={lead.temperature} />
-                        </div>
-                        <p className="mt-1 truncate text-[11px] text-[var(--color-text-muted)]">
-                          {lead.channel || "Unknown channel"}{lead.ownerUsername ? ` · ${lead.ownerUsername}` : ""}
-                        </p>
-                      </div>
-
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-semibold text-[var(--color-text)]" title={lead.adName || undefined}>
-                          {lead.adName || (lead.metaAdId ? `Ad ${lead.metaAdId}` : "Meta ad")}
-                        </p>
-                        <p className="mt-1 truncate text-[11px] text-[var(--color-text-muted)]" title={lead.campaignName || undefined}>
-                          {lead.campaignName || "Campaign pending"}{lead.treatmentInterest ? ` · ${lead.treatmentInterest}` : ""}
-                        </p>
-                      </div>
-
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap gap-1.5">
-                          {lead.reachedWon ? (
-                            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Won</span>
-                          ) : lead.reachedVisited ? (
-                            <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">Visited</span>
-                          ) : lead.reachedAppointment ? (
-                            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">Appointment</span>
-                          ) : (
-                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{lead.stageName || "Open"}</span>
-                          )}
-                        </div>
-                        <p className="mt-1 truncate text-[11px] text-[var(--color-text-muted)]" title={lead.lastMessage || undefined}>
-                          {lead.lastMessage || "No recent message"}
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => openConversation(lead)}
-                        className="h-9 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)]"
-                      >
-                        Open chat
-                      </button>
+              {leadsOpen && (
+                <>
+                  {leadError ? (
+                    <div className="p-6 text-center">
+                      <p className="text-sm font-semibold text-[var(--color-danger)]">Couldn't load chatbot leads</p>
+                      <p className="mt-1 text-xs text-[var(--color-text-muted)]">{leadError}</p>
                     </div>
-                  ))}
-                </div>
+                  ) : leadLoading ? (
+                    <div className="flex items-center justify-center gap-2 p-8 text-xs text-[var(--color-text-muted)]">
+                      <Spinner />
+                      Loading attributed leads…
+                    </div>
+                  ) : chatbotLeads.length === 0 ? (
+                    <div className="p-8 text-center">
+                      <p className="text-sm font-semibold">No accessible chatbot leads in this view</p>
+                      <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                        Try another campaign, ad set or ad, widen the date range, or check your lead access.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="border-b border-[var(--color-border)] px-4 py-2 text-[11px] font-semibold text-[var(--color-text-muted)]">
+                        Showing {formatNumber(chatbotLeads.length)} of {formatNumber(leadPreview.total || 0)}
+                      </div>
+                      <div className="divide-y divide-[var(--color-border)]">
+                        {chatbotLeads.map((lead) => (
+                          <div key={lead.leadId} className="grid gap-3 p-4 md:grid-cols-[minmax(180px,1.2fr)_minmax(180px,1.4fr)_minmax(140px,0.9fr)_auto] md:items-center">
+                            <div className="min-w-0">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <p className="truncate text-sm font-semibold text-[var(--color-text)]">{lead.name || `Lead ${lead.leadId}`}</p>
+                                <LeadTemperature value={lead.temperature} />
+                              </div>
+                              <p className="mt-1 truncate text-[11px] text-[var(--color-text-muted)]">
+                                {lead.channel || "Unknown channel"}{lead.ownerUsername ? ` · ${lead.ownerUsername}` : ""}
+                              </p>
+                            </div>
+
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-semibold text-[var(--color-text)]" title={lead.adName || undefined}>
+                                {lead.adName || (lead.metaAdId ? `Ad ${lead.metaAdId}` : "Meta ad")}
+                              </p>
+                              <p className="mt-1 truncate text-[11px] text-[var(--color-text-muted)]" title={lead.campaignName || undefined}>
+                                {lead.campaignName || "Campaign pending"}{lead.treatmentInterest ? ` · ${lead.treatmentInterest}` : ""}
+                              </p>
+                            </div>
+
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap gap-1.5">
+                                {lead.reachedWon ? (
+                                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Won</span>
+                                ) : lead.reachedVisited ? (
+                                  <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">Visited</span>
+                                ) : lead.reachedAppointment ? (
+                                  <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">Appointment</span>
+                                ) : (
+                                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{lead.stageName || "Open"}</span>
+                                )}
+                              </div>
+                              <p className="mt-1 truncate text-[11px] text-[var(--color-text-muted)]" title={lead.lastMessage || undefined}>
+                                {lead.lastMessage || "No recent message in this lead journey"}
+                              </p>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => openConversation(lead)}
+                              className="h-9 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)]"
+                            >
+                              Open chat
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </>
               )}
             </section>
 
