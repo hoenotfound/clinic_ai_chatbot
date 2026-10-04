@@ -131,7 +131,10 @@ function createMetaAdsEnrichmentService({
     }
   }
 
-  async function processClaimed(row, { detailsCache = null } = {}) {
+  async function processClaimed(
+    row,
+    { detailsCache = null, errorCache = null } = {}
+  ) {
     if (!row?.id || !row?.meta_ad_id) return { status: "skipped" };
     const adId = String(row.meta_ad_id);
     try {
@@ -140,10 +143,19 @@ function createMetaAdsEnrichmentService({
         cache = await preloadAdDetails([row]);
       }
 
+      if (errorCache?.has(adId)) {
+        throw errorCache.get(adId);
+      }
+
       let details = cache.get(adId);
       if (!details) {
-        details = await api.fetchAdDetails(adId);
-        cache.set(adId, details);
+        try {
+          details = await api.fetchAdDetails(adId);
+          cache.set(adId, details);
+        } catch (err) {
+          errorCache?.set(adId, err);
+          throw err;
+        }
       }
       const updated = await repo.markMetaEnrichmentSuccess(row.id, details);
       if (updated) {
@@ -186,12 +198,13 @@ function createMetaAdsEnrichmentService({
     try {
       const claimed = await repo.claimMetaEnrichmentBatch(batchSize());
       const detailsCache = await preloadAdDetails(claimed);
+      const errorCache = new Map();
       let processed = 0;
       let configurationError = false;
 
       for (let index = 0; index < claimed.length; index += 1) {
         const row = claimed[index];
-        const result = await processClaimed(row, { detailsCache });
+        const result = await processClaimed(row, { detailsCache, errorCache });
         processed += 1;
 
         // Token/permission failures are configuration-wide, not ad-specific.
