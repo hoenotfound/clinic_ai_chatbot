@@ -290,6 +290,7 @@ test("sends the matching service-specific message for a later sequence step", as
   assert.equal(claimInput.stepIndex, 2);
   assert.equal(claimInput.targetedService, "Pelvic Care");
   assert.equal(claimInput.delayMinutes, 480);
+  assert.equal(claimInput.previousDelayMinutes, 120);
   assert.equal(claimInput.content, "骨盆调理跟进");
   assert.deepEqual(sentMessage, {
     number: "60166666666",
