@@ -654,6 +654,23 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
 
 router.post("/automated-follow-up/translations", async (req, res) => {
   try {
+    if (Array.isArray(req.body?.messages)) {
+      const messages = req.body.messages.map((message) =>
+        typeof message === "string" ? message.trim() : ""
+      );
+      if (
+        messages.length < 1 ||
+        messages.length > followUpTranslationService.MAX_TRANSLATION_BATCH ||
+        messages.some((message) => !message || message.length > 1000)
+      ) {
+        return res.status(400).json({
+          error: `Send 1 to ${followUpTranslationService.MAX_TRANSLATION_BATCH} follow-up messages, each under 1,000 characters.`,
+        });
+      }
+      const translations = await followUpTranslationService.translateFollowUps(messages);
+      return res.json({ translations });
+    }
+
     const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
     if (!message || message.length > 1000) {
       return res.status(400).json({
