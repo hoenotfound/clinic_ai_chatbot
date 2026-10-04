@@ -924,102 +924,133 @@ async function processIncomingMessage(
       }
     }
 
-    // Result examples are service-level social proof, separate from the price
-    // promotion itself. Keep automatic sends restrained: after a normal price
-    // reply (and at most one promo image), send only the approved configured
-    // example(s). A multi-package media burst is already enough for one turn.
+    // Result examples are optional social proof. Keep this isolated from the
+    // core AI reply path so a lookup/storage/provider exception here can never
+    // hand an otherwise healthy conversation to Staff mode.
     if (automaticPromoMediaSent <= 1) {
-      const resultBundle = await resolveResultMediaForReply({
-        priceQuery,
-        packageQuery,
-        treatment: details?.treatment,
-        flagged,
-        bookingReady,
-        keywordReason,
-        needsAttention: contact.needs_attention,
-        textSendSucceeded: sendOutcome.sendResult.success,
-        resultMedia: clinicConfig.resultMedia,
-        contactId: contact.id,
-        wasMediaRecentlySent: messagesRepo.wasMediaRecentlySent,
-      });
+      let pendingResultMessage = null;
+      try {
+        const resultBundle = await resolveResultMediaForReply({
+          priceQuery,
+          packageQuery,
+          treatment: details?.treatment,
+          flagged,
+          bookingReady,
+          keywordReason,
+          needsAttention: contact.needs_attention,
+          textSendSucceeded: sendOutcome.sendResult.success,
+          resultMedia: clinicConfig.resultMedia,
+          contactId: contact.id,
+          wasMediaRecentlySent: messagesRepo.wasMediaRecentlySent,
+          getMostRecentlySentMediaUrl: messagesRepo.getMostRecentlySentMediaUrl,
+        });
 
-      if (resultBundle) {
-        for (const resultItem of resultBundle.items) {
-          const resultContact = await getAiOwnedContact(contact, {
-            channel,
-            from,
-            reason: `automatic result media for ${resultBundle.service || "service"}`,
-          });
-          if (!resultContact || resultContact.needs_attention) {
-            return { wasFirstMessage, keywordReason };
-          }
-          contact = resultContact;
-
-          if (canSendAutomatedReply && canSendAutomatedReply() !== true) {
-            return { wasFirstMessage, keywordReason };
-          }
-
-          const guardedResult = typeof canSendAutomatedReply === "function";
-          const savedResult = await conversationStore.appendMessageForContact(
-            contact.id,
-            "assistant",
-            resultItem.caption,
-            null,
-            null,
-            resultItem.imageUrl,
-            null,
-            guardedResult ? { publish: false } : undefined
-          );
-          const resultProviderRecorder = messagesRepo.socialProviderAliasRecorder(
-            savedResult.id,
-            contact.channel
-          );
-          const resultSend = await channelMessaging.sendImageByUrl(
-            contact,
-            resultItem.imageUrl,
-            resultItem.caption,
-            {
-              ...(guardedResult
-                ? { preSendCheck: canSendAutomatedReply }
-                : {}),
-              ...(resultProviderRecorder
-                ? { onProviderMessageId: resultProviderRecorder }
-                : {}),
-            }
-          );
-
-          if (resultSend.cancelled) {
-            await messagesRepo.deleteUnsentAssistantMessage(savedResult.id);
-            return { wasFirstMessage, keywordReason };
-          }
-
-          if (guardedResult) {
-            realtimeEvents.publish("conversation_changed", {
-              contactId: savedResult.contact_id,
-              messageId: savedResult.id,
-              reason: "message",
+        if (resultBundle) {
+          for (const resultItem of resultBundle.items) {
+            const resultContact = await getAiOwnedContact(contact, {
+              channel,
+              from,
+              reason: `automatic result media for ${resultBundle.service || "service"}`,
             });
-          }
+            if (!resultContact || resultContact.needs_attention) {
+              return { wasFirstMessage, keywordReason };
+            }
+            contact = resultContact;
 
-          const resultError = deliveryErrorForSend(
-            resultSend,
-            resultSend.error || channelMessaging.rejectedError(contact.channel)
-          );
-          await persistSendOutcome(
-            savedResult,
-            resultSend,
-            resultError,
-            contact.channel || "whatsapp"
-          );
-          if (!resultSend.success) {
-            console.warn(
-              `Result media failed to send to ${channel}:${from}; stopping the remaining result sequence.`
-            );
-            await contactsRepo.setDeliveryAttention(
+            if (canSendAutomatedReply && canSendAutomatedReply() !== true) {
+              return { wasFirstMessage, keywordReason };
+            }
+
+            const guardedResult = typeof canSendAutomatedReply === "function";
+            const savedResult = await conversationStore.appendMessageForContact(
               contact.id,
-              `Delivery failed: ${publicDeliveryError(resultError)}`
+              "assistant",
+              resultItem.caption,
+              null,
+              null,
+              resultItem.imageUrl,
+              null,
+              guardedResult ? { publish: false } : undefined
             );
-            return { wasFirstMessage, keywordReason };
+            pendingResultMessage = savedResult;
+            const resultProviderRecorder = messagesRepo.socialProviderAliasRecorder(
+              savedResult.id,
+              contact.channel
+            );
+            const resultSend = await channelMessaging.sendImageByUrl(
+              contact,
+              resultItem.imageUrl,
+              resultItem.caption,
+              {
+                ...(guardedResult
+                  ? { preSendCheck: canSendAutomatedReply }
+                  : {}),
+                ...(resultProviderRecorder
+                  ? { onProviderMessageId: resultProviderRecorder }
+                  : {}),
+              }
+            );
+
+            if (resultSend.cancelled) {
+              await messagesRepo.deleteUnsentAssistantMessage(savedResult.id);
+              pendingResultMessage = null;
+              return { wasFirstMessage, keywordReason };
+            }
+
+            if (guardedResult) {
+              realtimeEvents.publish("conversation_changed", {
+                contactId: savedResult.contact_id,
+                messageId: savedResult.id,
+                reason: "message",
+              });
+            }
+
+            const resultError = deliveryErrorForSend(
+              resultSend,
+              resultSend.error || channelMessaging.rejectedError(contact.channel)
+            );
+            await persistSendOutcome(
+              savedResult,
+              resultSend,
+              resultError,
+              contact.channel || "whatsapp"
+            );
+            pendingResultMessage = null;
+
+            if (!resultSend.success) {
+              console.warn(
+                `Result media failed to send to ${channel}:${from}; stopping the remaining result sequence.`
+              );
+              await contactsRepo.setDeliveryAttention(
+                contact.id,
+                `Delivery failed: ${publicDeliveryError(resultError)}`
+              );
+              return { wasFirstMessage, keywordReason };
+            }
+          }
+        }
+      } catch (resultMediaErr) {
+        console.error(
+          `Optional result media failed for ${channel}:${from}; keeping AI ownership unchanged:`,
+          resultMediaErr
+        );
+
+        // If the row was created but an exception interrupted the provider
+        // flow before a normal outcome was persisted, keep it visible as an
+        // unconfirmed send rather than leaving a healthy-looking ghost row.
+        if (pendingResultMessage?.id) {
+          try {
+            const unknown = await messagesRepo.setDeliveryStatusById(
+              pendingResultMessage.id,
+              "unknown",
+              "Result media delivery could not be confirmed."
+            );
+            publishDeliveryStatus(unknown);
+          } catch (cleanupErr) {
+            console.error(
+              `Failed to mark interrupted result media ${pendingResultMessage.id} as unconfirmed:`,
+              cleanupErr
+            );
           }
         }
       }
