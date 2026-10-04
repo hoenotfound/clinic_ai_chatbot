@@ -350,15 +350,17 @@ function prepareAutomatedFollowUpConfig(requested, current) {
   const scheduleUnchanged =
     currentDelays.length === requestedDelays.length &&
     currentDelays.every((delay, index) => delay === requestedDelays[index]);
+  const triggerModeUnchanged = current?.triggerMode === triggerMode;
 
-  // A timing/sequence change can make an old silent conversation immediately
-  // eligible for a newly-added or earlier step. Start a fresh activation window
-  // in that case so configuration changes never create surprise retroactive
+  // A timing/sequence change or trigger-mode change can make an old silent
+  // conversation immediately eligible. Start a fresh activation window in
+  // either case so configuration changes never create surprise retroactive
   // sends. Message/translation/targeting edits keep the current activation.
   const continuingCurrentActivation =
     enabled &&
     current?.enabled === true &&
     scheduleUnchanged &&
+    triggerModeUnchanged &&
     typeof current.activatedAt === "string" &&
     !Number.isNaN(Date.parse(current.activatedAt));
 
