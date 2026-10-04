@@ -18,19 +18,34 @@ function timeToMinutes(value) {
 }
 
 function normalizeQuietHours(value) {
-  const input = value && typeof value === "object" && !Array.isArray(value)
-    ? value
-    : {};
-  const enabled = input.enabled !== false;
-  const start = typeof input.start === "string"
-    ? input.start.trim()
-    : DEFAULT_QUIET_HOURS.start;
-  const end = typeof input.end === "string"
-    ? input.end.trim()
-    : DEFAULT_QUIET_HOURS.end;
+  if (
+    value !== undefined &&
+    value !== null &&
+    (typeof value !== "object" || Array.isArray(value))
+  ) {
+    return null;
+  }
+
+  const input = value || {};
+  const enabled =
+    input.enabled === undefined ? DEFAULT_QUIET_HOURS.enabled : input.enabled;
+  const start =
+    input.start === undefined
+      ? DEFAULT_QUIET_HOURS.start
+      : typeof input.start === "string"
+        ? input.start.trim()
+        : null;
+  const end =
+    input.end === undefined
+      ? DEFAULT_QUIET_HOURS.end
+      : typeof input.end === "string"
+        ? input.end.trim()
+        : null;
 
   if (
     typeof enabled !== "boolean" ||
+    start === null ||
+    end === null ||
     timeToMinutes(start) === null ||
     timeToMinutes(end) === null ||
     start === end
