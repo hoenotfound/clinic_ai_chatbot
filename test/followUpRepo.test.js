@@ -32,6 +32,7 @@ test("automated follow-up inserts take the conversation scoring lock and re-chec
     assert.match(sql, /latest_lead\.is_closed = false/);
     assert.match(sql, /appointment_set.*visited/);
     assert.match(sql, /appointment_status.*set.*visited/);
+    assert.match(sql, /appointment_status.*reschedule.*cancelled/);
     assert.match(sql, /COALESCE\(progress\.max_step, 0\) \+ 1 = \$5/);
     return { rows: [] };
   };
@@ -106,4 +107,5 @@ test("next follow-up due calculation excludes booked visited and closed latest l
   assert.match(capturedSql, /COALESCE\(latest_lead\.stage_type, 'open'\) = 'open'/);
   assert.match(capturedSql, /appointment_set.*visited/);
   assert.match(capturedSql, /appointment_status.*set.*visited/);
+  assert.match(capturedSql, /appointment_status.*reschedule.*cancelled/);
 });
