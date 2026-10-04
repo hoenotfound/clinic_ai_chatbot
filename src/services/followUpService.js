@@ -7,6 +7,7 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
 const channelMessaging = require("./channelMessagingService");
+const followUpAiService = require("./followUpAiService");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const {
   normalizeQuietHours,
@@ -99,6 +100,11 @@ function normalizeFollowUpStep(value) {
 
   return {
     delayMinutes,
+    messageMode: value?.messageMode === "ai" ? "ai" : "fixed",
+    aiInstruction:
+      typeof value?.aiInstruction === "string"
+        ? value.aiInstruction.trim().slice(0, 1000)
+        : "",
     message,
     translations,
     imageUrl: value.imageUrl?.trim() || "",
@@ -413,11 +419,84 @@ async function sendCandidate(candidate) {
     ...(candidate.recent_inbound_messages || []),
     candidate.trigger_message_content,
   ]);
-  const { message: followUpMessage, targetedService } = messageForCandidate(
+  const fallbackSelection = messageForCandidate(
     step,
     candidate,
     language
   );
+  let followUpMessage = fallbackSelection.message;
+  const targetedService = fallbackSelection.targetedService;
+
+  if (step.messageMode === "ai") {
+    try {
+      const conversation = await followUpRepo.getAiFollowUpContext({
+        contactId: candidate.contact_id,
+      });
+      const aiDecision = await followUpAiService.generatePersonalizedFollowUp({
+        conversation,
+        stepNumber: stepIndex,
+        treatmentInterest: candidate.treatment_interest,
+        stageName: candidate.stage_name,
+        branchName: candidate.branch_name,
+        appointmentStatus: candidate.appointment_status,
+        instruction: step.aiInstruction,
+        channel: candidate.channel || "whatsapp",
+      });
+
+      if (aiDecision.action !== "send") {
+        const recorded = await followUpRepo.recordAiDecisionIfStillEligible({
+          contactId: candidate.contact_id,
+          triggerMessageId: candidate.trigger_message_id,
+          stepIndex,
+          action: aiDecision.action,
+          reason: aiDecision.reason,
+          topic: aiDecision.topic,
+          delayMinutes: step.delayMinutes,
+          previousDelayMinutes:
+            stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
+          triggerMode: settings.triggerMode,
+          activatedAt: settings.activatedAt,
+        });
+
+        // A customer or staff reply may have arrived while the model was
+        // generating. In that case the old anchor is no longer eligible and
+        // the decision is discarded instead of affecting the new conversation.
+        if (!recorded) return;
+
+        if (aiDecision.action === "human_review") {
+          try {
+            await contactsRepo.setAttention(
+              candidate.contact_id,
+              true,
+              `AI follow-up requested human review: ${aiDecision.reason || "Staff should review this conversation before any follow-up."}`
+            );
+          } catch (err) {
+            console.error(
+              `Failed to flag AI follow-up human review for contact ${candidate.contact_id}:`,
+              err
+            );
+          }
+        }
+        return;
+      }
+
+      followUpMessage = aiDecision.message;
+    } catch (err) {
+      // AI generation is optional intelligence, never a dependency for the
+      // scheduler. Provider failures, invalid JSON, or repetitive generations
+      // fall back to the already-reviewed fixed message for this step.
+      console.error(
+        `AI follow-up generation failed for contact ${candidate.contact_id}; using fixed fallback:`,
+        err
+      );
+    }
+  }
+
+  // AI generation can take several seconds. If quiet hours began meanwhile,
+  // leave the conversation untouched so the normal worker wake can resume it
+  // after the quiet window instead of creating an unsent claim.
+  if (quietHoursStatus(new Date(), settings.quietHours).active) return;
+
   const contact = contactForCandidate(candidate);
   const channel = contact.channel || "whatsapp";
   const isSocial = channel === "facebook" || channel === "instagram";
