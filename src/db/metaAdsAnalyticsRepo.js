@@ -365,38 +365,36 @@ async function getMetaAdsAnalytics(filters, { database = pool, analyticsProfile 
   });
 
   const accountResult = await query(
-    `WITH account_meta AS (
-       SELECT DISTINCT ON (account_id)
-         account_id, account_name, account_currency, insight_date
-       FROM meta_ad_insights_daily
-       ORDER BY account_id, insight_date DESC, updated_at DESC
+    `WITH account_ids AS (
+       SELECT account_id FROM meta_ads_insights_sync_state
+       UNION
+       SELECT DISTINCT account_id FROM meta_ad_insights_daily
      )
      SELECT
-       COALESCE(am.account_id, ss.account_id) AS account_id,
-       am.account_name,
-       am.account_currency,
-       MAX(mi.insight_date)::text AS data_through,
+       ids.account_id,
+       latest.account_name,
+       latest.account_currency,
+       latest.insight_date::text AS data_through,
        ss.last_attempt_at,
        ss.last_success_at,
        ss.last_error,
        ss.last_backfill_completed_at,
        ss.backfill_next_date,
        ss.lease_until
-     FROM meta_ads_insights_sync_state ss
-     FULL OUTER JOIN account_meta am ON am.account_id = ss.account_id
-     LEFT JOIN meta_ad_insights_daily mi
-       ON mi.account_id = COALESCE(am.account_id, ss.account_id)
-     GROUP BY
-       COALESCE(am.account_id, ss.account_id),
-       am.account_name,
-       am.account_currency,
-       ss.last_attempt_at,
-       ss.last_success_at,
-       ss.last_error,
-       ss.last_backfill_completed_at,
-       ss.backfill_next_date,
-       ss.lease_until
-     ORDER BY am.account_name NULLS LAST, COALESCE(am.account_id, ss.account_id)`
+     FROM account_ids ids
+     LEFT JOIN meta_ads_insights_sync_state ss
+       ON ss.account_id = ids.account_id
+     LEFT JOIN LATERAL (
+       SELECT
+         mi.account_name,
+         mi.account_currency,
+         mi.insight_date
+       FROM meta_ad_insights_daily mi
+       WHERE mi.account_id = ids.account_id
+       ORDER BY mi.insight_date DESC, mi.updated_at DESC
+       LIMIT 1
+     ) latest ON true
+     ORDER BY latest.account_name NULLS LAST, ids.account_id`
   );
 
   const matchedLeads = number(raw.matched_leads);
