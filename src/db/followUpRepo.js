@@ -597,6 +597,40 @@ async function saveSocialImageCompanion({ contactId, imageUrl }) {
   return result.rows[0] || null;
 }
 
+async function discardUnsentSocialImageCompanion({ messageId, contactId }) {
+  const numericMessageId = Number(messageId);
+  const numericContactId = Number(contactId);
+  if (
+    !Number.isInteger(numericMessageId) ||
+    numericMessageId <= 0 ||
+    !Number.isInteger(numericContactId) ||
+    numericContactId <= 0
+  ) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     )
+     DELETE FROM messages
+     WHERE id = $2
+       AND contact_id = $1
+       AND role = 'assistant'
+       AND is_automated_follow_up = true
+       AND automated_follow_up_for_message_id IS NULL
+       AND content = ''
+       AND media_url IS NOT NULL
+       AND delivery_status IS NULL
+       AND whatsapp_message_id IS NULL
+       AND EXISTS (SELECT 1 FROM conversation_lock)
+     RETURNING ${FOLLOW_UP_MESSAGE_COLUMNS}`,
+    [numericContactId, numericMessageId]
+  );
+
+  return result.rows[0] || null;
+}
+
 /**
  * A process can stop after claiming a follow-up but before it records the
  * provider response. Surface those rows as unconfirmed instead of blindly
@@ -633,5 +667,6 @@ module.exports = {
   isClaimStillEligible,
   discardUnsentClaim,
   saveSocialImageCompanion,
+  discardUnsentSocialImageCompanion,
   markStaleClaimsUnconfirmed,
 };
