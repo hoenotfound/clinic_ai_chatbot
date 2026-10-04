@@ -536,6 +536,8 @@ async function sendCandidate(candidate) {
       liveSettings.activatedAt !== settings.activatedAt ||
       liveSettings.triggerMode !== settings.triggerMode ||
       liveStep.delayMinutes !== step.delayMinutes ||
+      liveStep.messageMode !== step.messageMode ||
+      liveStep.aiInstruction !== step.aiInstruction ||
       quietHoursStatus(new Date(), liveSettings.quietHours).active
     ) {
       return false;
