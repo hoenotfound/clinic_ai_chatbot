@@ -750,7 +750,7 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
     .last()
     .fill("For Pelvis 骨盆调理, I can help you understand which concern this suits.");
 
-  const stepImageInput = page.locator('input[type="file"]').last();
+  const stepImageInput = page.getByLabel("Follow-up 2 graphic upload");
   await stepImageInput.setInputFiles({
     name: "follow-up.jpg",
     mimeType: "image/jpeg",
