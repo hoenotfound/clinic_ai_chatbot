@@ -4,9 +4,6 @@ const FIELD_LIMITS = Object.freeze({
   adName: 240,
   headline: 500,
   body: 1200,
-  campaignName: 240,
-  adsetName: 240,
-  mediaType: 80,
 });
 
 function cleanContextText(value, maxLength) {
@@ -22,16 +19,25 @@ function cleanContextText(value, maxLength) {
 function normalizeMetaAdReplyContext(row) {
   if (!row || row.source !== "meta_ads") return null;
 
-  const context = {
-    adName: cleanContextText(row.ad_name, FIELD_LIMITS.adName),
-    headline: cleanContextText(row.headline, FIELD_LIMITS.headline),
-    body: cleanContextText(row.body, FIELD_LIMITS.body),
-    campaignName: cleanContextText(row.campaign_name, FIELD_LIMITS.campaignName),
-    adsetName: cleanContextText(row.adset_name, FIELD_LIMITS.adsetName),
-    mediaType: cleanContextText(row.media_type, FIELD_LIMITS.mediaType),
-  };
+  const headline = cleanContextText(row.headline, FIELD_LIMITS.headline);
+  const body = cleanContextText(row.body, FIELD_LIMITS.body);
 
-  return Object.values(context).some(Boolean) ? context : null;
+  // Creative copy is the strongest customer-intent signal. Internal hierarchy
+  // names (campaign/ad set) are analytics metadata and should never influence
+  // the sales reply. Ad name is only a fallback when Meta did not provide any
+  // useful creative text for the referral.
+  if (headline || body) {
+    return {
+      headline,
+      body,
+      adName: null,
+    };
+  }
+
+  const adName = cleanContextText(row.ad_name, FIELD_LIMITS.adName);
+  return adName
+    ? { headline: null, body: null, adName }
+    : null;
 }
 
 async function loadMetaAdReplyContext(
