@@ -462,10 +462,15 @@ export default function Tools() {
     for (const item of overrides) {
       const serviceName = item.serviceName.trim();
       const message = item.message.trim();
-      const translations = await requestTranslations(message, {
-        announce: false,
-      });
-      if (!translations) throw new Error("Couldn't generate targeted language versions.");
+      let translations = item.translations;
+      if (!hasCompleteTranslations(translations)) {
+        translations = await requestTranslations(message, {
+          announce: false,
+        });
+        if (!translations) {
+          throw new Error("Couldn't generate targeted language versions.");
+        }
+      }
       prepared.push({ serviceName, message, translations });
     }
     return prepared;
@@ -475,10 +480,15 @@ export default function Tools() {
     const prepared = [];
     for (const step of steps) {
       const message = step.message.trim();
-      const translations = await requestTranslations(message, {
-        announce: false,
-      });
-      if (!translations) throw new Error("Couldn't generate sequence language versions.");
+      let translations = step.translations;
+      if (!hasCompleteTranslations(translations)) {
+        translations = await requestTranslations(message, {
+          announce: false,
+        });
+        if (!translations) {
+          throw new Error("Couldn't generate sequence language versions.");
+        }
+      }
       prepared.push({
         delayMinutes: Number(step.delayMinutes),
         message,
