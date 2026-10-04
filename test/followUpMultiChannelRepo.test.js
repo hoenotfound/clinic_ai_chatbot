@@ -33,7 +33,7 @@ test("candidate discovery covers all supported messaging channels inside the saf
   assert.match(capturedSql, /latest\.is_automated_follow_up = false/);
   assert.match(capturedSql, /automated_follow_up_for_message_id = latest\.id/);
   assert.deepEqual(capturedParams, [
-    120,
+    [120],
     "all",
     "2026-08-28T00:00:00.000Z",
     25,
@@ -58,7 +58,7 @@ test("atomic follow-up claim rechecks that the contact still has a valid recipie
     activatedAt: "2026-08-28T00:00:00.000Z",
   });
 
-  assert.match(capturedSql, /FROM latest, latest_inbound, contacts c/);
+  assert.match(capturedSql, /FROM anchor, latest_inbound, progress, contacts c/);
   assert.match(capturedSql, /c\.id = \$1/);
   assert.match(capturedSql, /c\.channel IN \('whatsapp', 'facebook', 'instagram'\)/);
   assert.match(capturedSql, /c\.channel IN \('facebook', 'instagram'\) AND c\.channel_user_id IS NOT NULL/);
