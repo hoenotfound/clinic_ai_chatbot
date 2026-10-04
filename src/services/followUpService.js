@@ -146,7 +146,7 @@ function messageForCandidate(step, candidate, language) {
   };
 }
 
-function publishConversationChangefunction publishConversationChange(message, reason) {
+function publishConversationChange(message, reason) {
   if (!message) return;
   realtimeEvents.publish("conversation_changed", {
     contactId: message.contact_id,
