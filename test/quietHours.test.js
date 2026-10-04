@@ -65,4 +65,9 @@ test("disabled quiet hours never block and invalid equal times fail validation",
     normalizeQuietHours({ enabled: true, start: "07:00", end: "07:00" }),
     null
   );
+  assert.equal(normalizeQuietHours("00:00-07:00"), null);
+  assert.equal(
+    normalizeQuietHours({ enabled: "yes", start: "00:00", end: "07:00" }),
+    null
+  );
 });
