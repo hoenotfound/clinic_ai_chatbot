@@ -260,6 +260,36 @@ test("changing follow-up timing starts a fresh activation window", () => {
   );
 });
 
+test("changing follow-up trigger mode starts a fresh activation window", () => {
+  const current = currentConfig();
+  current.automatedFollowUp = {
+    ...current.automatedFollowUp,
+    enabled: true,
+    triggerMode: "staff",
+    activatedAt: "2026-10-01T00:00:00.000Z",
+  };
+
+  const changedMode = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        ...current.automatedFollowUp,
+        triggerMode: "all",
+      },
+    },
+    current
+  );
+
+  assert.equal(changedMode.ok, true);
+  assert.notEqual(
+    changedMode.updates.automatedFollowUp.activatedAt,
+    current.automatedFollowUp.activatedAt
+  );
+  assert.ok(
+    Date.parse(changedMode.updates.automatedFollowUp.activatedAt) >
+      Date.parse(current.automatedFollowUp.activatedAt)
+  );
+});
+
 test("Advanced Config exposes business and AI content only", () => {
   const current = currentConfig();
   const editable = editableConfigView(current);
