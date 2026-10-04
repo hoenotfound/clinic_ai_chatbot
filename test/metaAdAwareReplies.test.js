@@ -16,6 +16,8 @@ const {
 const {
   normalizeReplyOptions,
 } = require("../src/services/aiService");
+const geminiService = require("../src/services/geminiService");
+const claudeService = require("../src/services/claudeService");
 
 test("normalizes only Meta Ads attribution into bounded AI reply context", () => {
   const context = normalizeMetaAdReplyContext({
@@ -117,6 +119,69 @@ test("AI provider routing preserves Meta ad context for Gemini and Claude", () =
 
   assert.equal(options.metaAdContext, metaAdContext);
   assert.deepEqual(normalizeReplyOptions(false).metaAdContext, null);
+});
+
+test("both Gemini and Claude receive the Meta ad context in their system prompt", async () => {
+  const metaAdContext = {
+    adName: "骨盆 1",
+    headline: "骨盆调理",
+  };
+  const options = {
+    isFirstMessage: true,
+    channel: "whatsapp",
+    metaAdContext,
+  };
+  const messages = [{ role: "user", content: "想了解" }];
+
+  const geminiRequest = geminiService.buildGeminiRequest(
+    messages,
+    options,
+    "gemini-3.8-flash"
+  );
+  assert.match(
+    geminiRequest.request.config.systemInstruction,
+    /Ad name: 骨盆 1/
+  );
+
+  let claudeBody = null;
+  const fakeFetch = async (_url, request) => {
+    claudeBody = JSON.parse(request.body);
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({
+          stop_reason: "end_turn",
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              reply: "可以～",
+              outcome: "normal",
+              priceQuery: false,
+              packageQuery: false,
+              promotionOption: null,
+              treatment: null,
+              branch: null,
+              appointmentPreference: null,
+              projectLocation: null,
+              projectSummary: null,
+              nextStep: null,
+              staffSummary: null,
+            }),
+          }],
+        });
+      },
+    };
+  };
+
+  await claudeService.getReply(
+    messages,
+    options,
+    "test-key",
+    null,
+    { fetchImpl: fakeFetch }
+  );
+  assert.match(claudeBody.system, /Ad name: 骨盆 1/);
 });
 
 test("server feeds local Meta ad context to AI without calling Meta on the reply path", () => {
