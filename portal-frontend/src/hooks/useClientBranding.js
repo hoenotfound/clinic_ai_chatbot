@@ -95,29 +95,19 @@ export function useClientBranding() {
   }, []);
 
   useEffect(() => {
-    const faviconUrl =
-      clientBranding.clientAppIcon192Url ||
-      clientBranding.clientLogoUrl ||
-      "/app-icons/da-chatbot-192.png";
-    const faviconHasKnownPngSize =
-      Boolean(clientBranding.clientAppIcon192Url) ||
-      !clientBranding.clientLogoUrl;
+    const faviconUrl = "/api/auth/branding/favicon.png";
     const appleTouchIconUrl = "/api/auth/branding/apple-touch-icon.png";
 
     document.title = `${clientBranding.clientName} | AI Chatbot Portal`;
     setHeadLink("icon", faviconUrl, {
-      type: faviconHasKnownPngSize ? "image/png" : "",
-      sizes: faviconHasKnownPngSize ? "192x192" : "",
+      type: "image/png",
+      sizes: "192x192",
     });
     setHeadLink("apple-touch-icon", appleTouchIconUrl, {
       sizes: "180x180",
     });
     setNamedMeta("apple-mobile-web-app-title", clientBranding.clientName);
-  }, [
-    clientBranding.clientAppIcon192Url,
-    clientBranding.clientLogoUrl,
-    clientBranding.clientName,
-  ]);
+  }, [clientBranding.clientName]);
 
   return {
     ...clientBranding,

@@ -9,6 +9,7 @@ const {
   buildWebAppManifest,
   humanizeClientSlug,
   resolveAppleTouchIconUrl,
+  resolveFaviconUrl,
   safeLogoUrl,
 } = require("../src/services/clientBrandingService");
 const {
@@ -173,6 +174,26 @@ test("packaged DA fallback icons have the exact declared PNG dimensions", () => 
   assert.deepEqual(
     readPngDimensions(path.join(publicDir, "da-chatbot-512.png")),
     { width: 512, height: 512 }
+  );
+});
+
+
+test("favicon resolver uses the exact client 192px icon or packaged fallback", () => {
+  assert.equal(
+    resolveFaviconUrl({}, {
+      CLIENT_APP_ICON_192_URL: "https://cdn.example.com/client-192.png",
+    }),
+    "https://cdn.example.com/client-192.png"
+  );
+  assert.equal(
+    resolveFaviconUrl({}, {
+      CLIENT_APP_ICON_192_URL: "javascript:alert(1)",
+    }),
+    "/app-icons/da-chatbot-192.png"
+  );
+  assert.equal(
+    resolveFaviconUrl({}, {}),
+    "/app-icons/da-chatbot-192.png"
   );
 });
 

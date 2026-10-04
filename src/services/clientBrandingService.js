@@ -62,6 +62,11 @@ function resolveAppleTouchIconUrl(config = {}, env = process.env) {
   return branding.clientAppIcon180Url || DEFAULT_APP_ICON_180_URL;
 }
 
+function resolveFaviconUrl(config = {}, env = process.env) {
+  const branding = buildClientBranding(config, env);
+  return branding.clientAppIcon192Url || DEFAULT_APP_ICON_192_URL;
+}
+
 function buildWebAppManifest(config = {}, env = process.env) {
   const branding = buildClientBranding(config, env);
   return {
@@ -101,6 +106,7 @@ module.exports = {
   buildClientBranding,
   buildWebAppManifest,
   resolveAppleTouchIconUrl,
+  resolveFaviconUrl,
   configuredBusinessName,
   humanizeClientSlug,
   safeLogoUrl,
