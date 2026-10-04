@@ -27,10 +27,11 @@ const DEFAULT_AI_FALLBACK_PROVIDER_RESERVE_MS = 10 * 1000;
 const DEFAULT_RETRY_COUNT = 1;
 const DEFAULT_GEMINI_GLOBAL_BUDGET_MS = 25 * 1000;
 const DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS = 10 * 1000;
-const DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS = 8 * 1000;
+const DEFAULT_GEMINI_FALLBACK_TIMEOUT_MS = 12 * 1000;
 const DEFAULT_GEMINI_MIN_KEY_WINDOW_MS = 4 * 1000;
 const DEFAULT_GEMINI_5XX_RETRY_COUNT = 1;
-const DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS = 9 * 1000;
+const DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS = 12 * 1000;
+const DEFAULT_GEMINI_PRIMARY_MODEL_MIN_BUDGET_MS = 8 * 1000;
 const DEFAULT_GEMINI_MODEL_UNAVAILABLE_COOLDOWN_MS = 60 * 1000;
 const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 const DEFAULT_GEMINI_ALTERNATE_MODEL = "gemini-3.5-flash-lite";
@@ -282,7 +283,12 @@ function buildCandidates(env = process.env) {
           label: "Claude fallback",
           provider: "claude",
           healthKey: `claude_${credentialFingerprint(env.ANTHROPIC_API_KEY)}`,
-          run: (messages, options) => claude.getReply(messages, options, env.ANTHROPIC_API_KEY),
+          run: (messages, options) => claude.getReply(
+            messages,
+            options,
+            env.ANTHROPIC_API_KEY,
+            env.ANTHROPIC_WORKSPACE_ID
+          ),
         };
         candidate.reportOutcome = (outcome) => recordCandidateHealth(candidate, outcome, { env });
         return [candidate];
@@ -329,6 +335,11 @@ function getGeminiReplyPolicy(env = process.env) {
       DEFAULT_GEMINI_FALLBACK_MODEL_RESERVE_MS,
       30_000
     ),
+    primaryModelMinBudgetMs: positiveInt(
+      env.GEMINI_REPLY_PRIMARY_MODEL_MIN_BUDGET_MS,
+      DEFAULT_GEMINI_PRIMARY_MODEL_MIN_BUDGET_MS,
+      30_000
+    ),
     retryCount: positiveInt(
       env.GEMINI_REPLY_5XX_RETRY_COUNT,
       DEFAULT_GEMINI_5XX_RETRY_COUNT,
@@ -367,14 +378,23 @@ function geminiEnvForProviderBudget(env, providerBudgetMs) {
     1,
     Math.min(existing.globalBudgetMs, Math.max(1, providerBudgetMs))
   );
+  // Keep a useful primary-model window, but allow the fallback model to own
+  // more than half of a tight Gemini provider budget. This matters when Claude
+  // also has a reserved provider slice: a slow overloaded primary model should
+  // not leave Flash-Lite with only a few seconds.
+  const primaryFloorMs = Math.min(
+    existing.primaryModelMinBudgetMs,
+    Math.max(1, Math.floor(globalBudgetMs / 2))
+  );
   const fallbackModelReserveMs = Math.min(
     existing.fallbackModelReserveMs,
-    Math.max(0, Math.floor(globalBudgetMs / 2))
+    Math.max(0, globalBudgetMs - primaryFloorMs)
   );
   return {
     ...env,
     GEMINI_REPLY_GLOBAL_BUDGET_MS: String(globalBudgetMs),
     GEMINI_REPLY_FALLBACK_MODEL_RESERVE_MS: String(fallbackModelReserveMs),
+    GEMINI_REPLY_PRIMARY_MODEL_MIN_BUDGET_MS: String(primaryFloorMs),
   };
 }
 
@@ -489,6 +509,10 @@ async function runGeminiReply(
           fallbackTimeoutMs: policy.fallbackTimeoutMs,
           minRemainingKeyWindowMs: effectiveMinKeyWindowMs,
           smartRetry: true,
+          // A 503/high-demand response is already model-scoped. If another
+          // reply model is available, switch models immediately instead of
+          // spending its reserved time confirming the same outage on key 2.
+          confirmModelUnavailableAcrossKeys: !hasLaterModel,
           stopKeyRotationOnTimeout: hasLaterModel,
           smartRetryDelayMinMs: 500,
           smartRetryDelayMaxMs: 1000,
@@ -683,6 +707,38 @@ async function getReplyWithEnv(
   throw err;
 }
 
+function isRecoverableAiReplyFailure(err) {
+  const code = String(err?.code || "").toUpperCase();
+  if (new Set([
+    "ALL_AI_PROVIDERS_FAILED",
+    "AI_GLOBAL_BUDGET_EXCEEDED",
+    "ALL_GEMINI_MODELS_FAILED",
+    "ALL_GEMINI_MODELS_COOLING_DOWN",
+    "GEMINI_GLOBAL_BUDGET_EXCEEDED",
+    "ALL_GEMINI_KEYS_FAILED",
+    "ALL_GEMINI_KEYS_COOLING_DOWN",
+    "AI_CANDIDATE_COOLING_DOWN",
+    "AI_TIMEOUT",
+  ]).has(code)) {
+    return true;
+  }
+
+  const failures = Array.isArray(err?.failures) ? err.failures : [];
+  return failures.some((failure) => {
+    const failureCode = String(failure?.code || "").toUpperCase();
+    const message = String(failure?.message || "").toLowerCase();
+    return [
+      "ALL_GEMINI_MODELS_FAILED",
+      "GEMINI_GLOBAL_BUDGET_EXCEEDED",
+      "ALL_GEMINI_KEYS_FAILED",
+      "ALL_GEMINI_KEYS_COOLING_DOWN",
+      "AI_CANDIDATE_COOLING_DOWN",
+      "AI_TIMEOUT",
+    ].includes(failureCode)
+      || /timeout|timed out|temporar|unavailable|high demand|capacity|cooling|rate limit|quota/.test(message);
+  });
+}
+
 async function getReply(messages, optionsOrFirstMessage = false) {
   return getReplyWithEnv(messages, optionsOrFirstMessage, process.env);
 }
@@ -700,6 +756,7 @@ module.exports = {
   DEFAULT_GEMINI_MODEL,
   DEFAULT_GEMINI_MODEL_UNAVAILABLE_COOLDOWN_MS,
   DEFAULT_GEMINI_PREFERRED_TIMEOUT_MS,
+  DEFAULT_GEMINI_PRIMARY_MODEL_MIN_BUDGET_MS,
   buildCandidates,
   classifyCandidateHealthFailure,
   computeProviderBudgetMs,
@@ -720,6 +777,7 @@ module.exports = {
   getReply,
   getReplyWithEnv,
   isGeminiModelUnavailableError,
+  isRecoverableAiReplyFailure,
   isRetryableAiError,
   markGeminiModelUnavailable,
   resetGeminiModelHealth,
