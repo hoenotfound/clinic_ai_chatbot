@@ -183,3 +183,22 @@ test("ambiguous duplicate service sets fail closed", async () => {
 
   assert.equal(selected, null);
 });
+
+
+test("rotation treats the legacy public path and private preview path as the same stored image", () => {
+  const items = [
+    {
+      imageUrl: "/api/config/result-media/image/41",
+      caption: "one",
+    },
+    {
+      imageUrl: "/api/config/result-media/image/42",
+      caption: "two",
+    },
+  ];
+
+  assert.deepEqual(
+    rotateAfter(items, "https://legacy.example/promo-images/41"),
+    [items[1], items[0]]
+  );
+});
