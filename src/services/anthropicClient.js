@@ -7,6 +7,7 @@ function normalizeWorkspaceId(value) {
 function buildAnthropicClientOptions({
   apiKey = process.env.ANTHROPIC_API_KEY,
   workspaceId = process.env.ANTHROPIC_WORKSPACE_ID,
+  maxRetries = null,
 } = {}) {
   const resolvedKey = String(apiKey || "").trim();
   if (!resolvedKey) {
@@ -16,11 +17,8 @@ function buildAnthropicClientOptions({
   }
 
   const resolvedWorkspaceId = normalizeWorkspaceId(workspaceId);
-  return {
+  const clientOptions = {
     apiKey: resolvedKey,
-    // aiService already owns retry and timeout policy. Disable the SDK's
-    // hidden retries so one Claude attempt cannot silently exceed that budget.
-    maxRetries: 0,
     ...(resolvedWorkspaceId
       ? {
           defaultHeaders: {
@@ -29,6 +27,14 @@ function buildAnthropicClientOptions({
         }
       : {}),
   };
+
+  // Leave this unset for background jobs so the Anthropic SDK keeps its
+  // normal transient-retry behavior. Customer replies pass 0 explicitly
+  // because aiService owns that retry/time-budget policy itself.
+  if (Number.isInteger(maxRetries) && maxRetries >= 0) {
+    clientOptions.maxRetries = maxRetries;
+  }
+  return clientOptions;
 }
 
 function createAnthropicClient(options = {}) {
