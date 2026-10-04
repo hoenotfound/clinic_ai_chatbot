@@ -21,11 +21,13 @@ test("automated follow-up inserts take the conversation scoring lock and re-chec
       "Still interested?",
       "",
       1,
+      null,
       120,
       "all",
       "2026-08-28T00:00:00.000Z",
     ]);
     assert.match(sql, /automated_follow_up_step/);
+    assert.match(sql, /automated_follow_up_target_service/);
     assert.match(sql, /COALESCE\(progress\.max_step, 0\) \+ 1 = \$5/);
     return { rows: [] };
   };
