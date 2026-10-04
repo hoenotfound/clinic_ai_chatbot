@@ -90,6 +90,30 @@ function SummaryCard({ label, value, detail }) {
   );
 }
 
+function FunnelStep({ label, value, detail }) {
+  return (
+    <div className="min-w-0 rounded-xl bg-[var(--color-bg)] px-3 py-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">{label}</p>
+      <p className="mt-1 font-display text-xl font-bold text-[var(--color-text)]">{value}</p>
+      {detail && <p className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">{detail}</p>}
+    </div>
+  );
+}
+
+function LeadTemperature({ value }) {
+  const normalized = String(value || "").toLowerCase();
+  const styles = {
+    hot: "bg-rose-50 text-rose-700",
+    warm: "bg-amber-50 text-amber-700",
+    cold: "bg-slate-100 text-slate-600",
+  };
+  if (!normalized) return null;
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${styles[normalized] || styles.cold}`}>
+      {normalized.charAt(0).toUpperCase() + normalized.slice(1)}
+    </span>
+  );
+}
 function EntityName({ row, level }) {
   const label = row.name || `${level === "adset" ? "Ad Set" : level === "ad" ? "Ad" : "Campaign"} ${row.id}`;
   return (
@@ -222,6 +246,11 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
     navigate(`/pipeline?${params.toString()}`);
   }
 
+  function openConversation(lead) {
+    if (!lead?.contactId) return;
+    navigate(`/inbox?contact=${lead.contactId}`);
+  }
+
   const rows = data?.rows || [];
   const accounts = data?.accounts || [];
   const summary = data?.summary || {};
@@ -229,6 +258,8 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
   const currency = money.currency;
   const coverage = data?.attributionCoverage || {};
   const spendCoverage = data?.spendCoverage || {};
+  const leadPreview = data?.leadPreview || {};
+  const chatbotLeads = leadPreview.leads || [];
   const selectedAccount = accounts.find((account) => account.accountId === accountId)
     || (accounts.length === 1 ? accounts[0] : null);
   const hasHierarchyFilter = Boolean(campaignId || adsetId || adId);
@@ -428,6 +459,24 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
             </section>
 
             <section className="rounded-2xl border border-[var(--color-border)] bg-white p-4">
+              <div className="mb-3">
+                <h2 className="font-display text-base font-bold">Ads → conversations → sales</h2>
+                <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                  Meta delivery on the left, then the actual DA CHATBOT lead journey through your CRM.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+                <FunnelStep label="Spend" value={mixedCurrency ? "Mixed" : formatCurrency(summary.spend, currency, { compact: true })} />
+                <FunnelStep label="Clicks" value={formatNumber(summary.clicks)} />
+                <FunnelStep label="Chatbot leads" value={formatNumber(summary.crmLeads)} detail={summary.costPerLead == null ? null : `${formatCurrency(summary.costPerLead, currency)} / lead`} />
+                <FunnelStep label="Hot" value={formatNumber(summary.hotLeads)} detail={summary.costPerHotLead == null ? null : `${formatCurrency(summary.costPerHotLead, currency)} / hot lead`} />
+                <FunnelStep label="Appointments" value={formatNumber(summary.appointments)} detail={summary.costPerAppointment == null ? null : `${formatCurrency(summary.costPerAppointment, currency)} / appt`} />
+                <FunnelStep label="Visits" value={formatNumber(summary.visits)} detail={summary.costPerVisit == null ? null : `${formatCurrency(summary.costPerVisit, currency)} / visit`} />
+                <FunnelStep label="Won" value={formatNumber(summary.won)} detail={summary.costPerWon == null ? null : `${formatCurrency(summary.costPerWon, currency)} / won`} />
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-[var(--color-border)] bg-white p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold">Attribution coverage</p>
@@ -509,7 +558,7 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
               ) : (
                 <>
                   <div className="hidden overflow-x-auto md:block">
-                    <table className="min-w-[1120px] w-full text-left">
+                    <table className="min-w-[1320px] w-full text-left">
                       <thead className="bg-[var(--color-bg)] text-[10px] uppercase tracking-[0.06em] text-[var(--color-text-muted)]">
                         <tr>
                           <th className="px-4 py-3 font-semibold">{LEVELS.find(([value]) => value === level)?.[1]}</th>
@@ -519,7 +568,9 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
                           <th className="px-3 py-3 text-right font-semibold">CTR</th>
                           <th className="px-3 py-3 text-right font-semibold">CRM Leads</th>
                           <th className="px-3 py-3 text-right font-semibold">CPL</th>
+                          <th className="px-3 py-3 text-right font-semibold">Hot</th>
                           <th className="px-3 py-3 text-right font-semibold">Appts.</th>
+                          <th className="px-3 py-3 text-right font-semibold">Visits</th>
                           <th className="px-3 py-3 text-right font-semibold">Won</th>
                           <th className="px-3 py-3 text-right font-semibold">Est. ROAS</th>
                           <th className="px-4 py-3 text-right font-semibold">Action</th>
@@ -535,8 +586,19 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
                             <td className="px-3 py-3 text-right text-xs">{formatPercent(row.ctr)}</td>
                             <td className="px-3 py-3 text-right text-xs font-semibold">{row.crmLeads}</td>
                             <td className="px-3 py-3 text-right text-xs">{formatCurrency(row.costPerLead, row.currency)}</td>
-                            <td className="px-3 py-3 text-right text-xs">{row.appointments}</td>
-                            <td className="px-3 py-3 text-right text-xs">{row.won}</td>
+                            <td className="px-3 py-3 text-right text-xs">
+                              <div className="font-semibold">{row.hotLeads}</div>
+                              <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{formatCurrency(row.costPerHotLead, row.currency)}</div>
+                            </td>
+                            <td className="px-3 py-3 text-right text-xs">
+                              <div className="font-semibold">{row.appointments}</div>
+                              <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{formatCurrency(row.costPerAppointment, row.currency)}</div>
+                            </td>
+                            <td className="px-3 py-3 text-right text-xs">{row.visits}</td>
+                            <td className="px-3 py-3 text-right text-xs">
+                              <div className="font-semibold">{row.won}</div>
+                              <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{formatCurrency(row.costPerWon, row.currency)}</div>
+                            </td>
                             <td className="px-3 py-3 text-right text-xs">{row.estimatedRoas == null ? "—" : `${Number(row.estimatedRoas).toFixed(2)}×`}</td>
                             <td className="px-4 py-3 text-right">
                               <div className="flex justify-end gap-2">
@@ -560,7 +622,7 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
                     {rows.map((row) => (
                       <article key={`${row.accountId || "unknown"}-${row.id}`} className="p-4">
                         <EntityName row={row} level={level} />
-                        <div className="mt-3 grid grid-cols-3 gap-2">
+                        <div className="mt-3 grid grid-cols-4 gap-2">
                           <div>
                             <p className="text-[10px] uppercase text-[var(--color-text-muted)]">Spend</p>
                             <p className="mt-1 text-xs font-semibold">{formatCurrency(row.spend, row.currency)}</p>
@@ -570,16 +632,24 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
                             <p className="mt-1 text-xs font-semibold">{row.crmLeads}</p>
                           </div>
                           <div>
-                            <p className="text-[10px] uppercase text-[var(--color-text-muted)]">CPL</p>
-                            <p className="mt-1 text-xs font-semibold">{formatCurrency(row.costPerLead, row.currency)}</p>
+                            <p className="text-[10px] uppercase text-[var(--color-text-muted)]">Hot</p>
+                            <p className="mt-1 text-xs font-semibold">{row.hotLeads}</p>
                           </div>
                           <div>
-                            <p className="text-[10px] uppercase text-[var(--color-text-muted)]">Appointments</p>
+                            <p className="text-[10px] uppercase text-[var(--color-text-muted)]">Appts.</p>
                             <p className="mt-1 text-xs font-semibold">{row.appointments}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] uppercase text-[var(--color-text-muted)]">Visits</p>
+                            <p className="mt-1 text-xs font-semibold">{row.visits}</p>
                           </div>
                           <div>
                             <p className="text-[10px] uppercase text-[var(--color-text-muted)]">Won</p>
                             <p className="mt-1 text-xs font-semibold">{row.won}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] uppercase text-[var(--color-text-muted)]">CPL</p>
+                            <p className="mt-1 text-xs font-semibold">{formatCurrency(row.costPerLead, row.currency)}</p>
                           </div>
                           <div>
                             <p className="text-[10px] uppercase text-[var(--color-text-muted)]">ROAS</p>
@@ -610,6 +680,79 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
                     ))}
                   </div>
                 </>
+              )}
+            </section>
+
+            <section className="rounded-2xl border border-[var(--color-border)] bg-white">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--color-border)] p-4">
+                <div>
+                  <h2 className="font-display text-base font-bold">Chatbot leads from selected ads</h2>
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                    The real people behind the Meta numbers. Open any conversation directly in Inbox.
+                  </p>
+                </div>
+                <span className="rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-xs font-semibold text-[var(--color-text-muted)]">
+                  Showing {formatNumber(chatbotLeads.length)} of {formatNumber(leadPreview.total || 0)}
+                </span>
+              </div>
+
+              {chatbotLeads.length === 0 ? (
+                <div className="p-8 text-center">
+                  <p className="text-sm font-semibold">No chatbot leads in this view</p>
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                    Drill into another campaign, ad set or ad, or widen the selected date range.
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-[var(--color-border)]">
+                  {chatbotLeads.map((lead) => (
+                    <div key={lead.leadId} className="grid gap-3 p-4 md:grid-cols-[minmax(180px,1.2fr)_minmax(180px,1.4fr)_minmax(140px,0.9fr)_auto] md:items-center">
+                      <div className="min-w-0">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <p className="truncate text-sm font-semibold text-[var(--color-text)]">{lead.name || `Lead ${lead.leadId}`}</p>
+                          <LeadTemperature value={lead.temperature} />
+                        </div>
+                        <p className="mt-1 truncate text-[11px] text-[var(--color-text-muted)]">
+                          {lead.channel || "Unknown channel"}{lead.ownerUsername ? ` · ${lead.ownerUsername}` : ""}
+                        </p>
+                      </div>
+
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-semibold text-[var(--color-text)]" title={lead.adName || undefined}>
+                          {lead.adName || (lead.metaAdId ? `Ad ${lead.metaAdId}` : "Meta ad")}
+                        </p>
+                        <p className="mt-1 truncate text-[11px] text-[var(--color-text-muted)]" title={lead.campaignName || undefined}>
+                          {lead.campaignName || "Campaign pending"}{lead.treatmentInterest ? ` · ${lead.treatmentInterest}` : ""}
+                        </p>
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap gap-1.5">
+                          {lead.reachedWon ? (
+                            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Won</span>
+                          ) : lead.reachedVisited ? (
+                            <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">Visited</span>
+                          ) : lead.reachedAppointment ? (
+                            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">Appointment</span>
+                          ) : (
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{lead.stageName || "Open"}</span>
+                          )}
+                        </div>
+                        <p className="mt-1 truncate text-[11px] text-[var(--color-text-muted)]" title={lead.lastMessage || undefined}>
+                          {lead.lastMessage || "No recent message"}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => openConversation(lead)}
+                        className="h-9 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)]"
+                      >
+                        Open chat
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
             </section>
 
