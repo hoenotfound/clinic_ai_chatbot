@@ -193,6 +193,9 @@ function isFollowUpStep(value) {
     Number.isInteger(value.delayMinutes) &&
     value.delayMinutes >= 5 &&
     value.delayMinutes <= 23 * 60 &&
+    ["fixed", "ai"].includes(value.messageMode) &&
+    isString(value.aiInstruction) &&
+    value.aiInstruction.trim().length <= 1000 &&
     isNonEmptyString(value.message) &&
     value.message.trim().length <= 1000 &&
     isFollowUpTranslations(value.translations) &&
@@ -319,6 +322,11 @@ function prepareFollowUpStep(requested) {
   if (!isPlainObject(requested)) return null;
 
   const delayMinutes = Number(requested.delayMinutes);
+  const messageMode = requested.messageMode === "ai" ? "ai" : "fixed";
+  const aiInstruction =
+    typeof requested.aiInstruction === "string"
+      ? requested.aiInstruction.trim()
+      : "";
   const message =
     typeof requested.message === "string" ? requested.message.trim() : "";
   const translations = prepareFollowUpTranslations(
@@ -333,6 +341,8 @@ function prepareFollowUpStep(requested) {
 
   const prepared = {
     delayMinutes,
+    messageMode,
+    aiInstruction,
     message,
     translations,
     imageUrl,
