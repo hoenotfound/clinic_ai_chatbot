@@ -380,3 +380,67 @@ test("result media rotation history fails closed without a contact or URLs", asy
   assert.equal(await messagesRepo.getMostRecentlySentMediaUrl(42, []), null);
   assert.equal(queried, false);
 });
+
+
+test("result media cooldown treats legacy public and private stored paths as the same image", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /promo-images/);
+    assert.match(sql, /api\/config\/result-media\/image/);
+    assert.deepEqual(params, [
+      42,
+      "/api/config/result-media/image/321",
+      168,
+      321,
+    ]);
+    return { rowCount: 1, rows: [] };
+  };
+
+  assert.equal(
+    await messagesRepo.wasMediaRecentlySent(
+      42,
+      "/api/config/result-media/image/321",
+      168
+    ),
+    true
+  );
+});
+
+test("result media rotation history can find a legacy public path for a private configured image", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /unnest\(\$3::int\[\]\)/);
+    assert.match(sql, /promo-images/);
+    assert.match(sql, /api\/config\/result-media\/image/);
+    assert.deepEqual(params, [
+      42,
+      [
+        "/api/config/result-media/image/321",
+        "/api/config/result-media/image/322",
+      ],
+      [321, 322],
+    ]);
+    return {
+      rows: [{ media_url: "https://old.example/promo-images/321" }],
+    };
+  };
+
+  assert.equal(
+    await messagesRepo.getMostRecentlySentMediaUrl(
+      42,
+      [
+        "/api/config/result-media/image/321",
+        "/api/config/result-media/image/322",
+      ]
+    ),
+    "https://old.example/promo-images/321"
+  );
+});
