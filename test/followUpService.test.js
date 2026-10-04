@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const clinicConfig = require("../src/config/clinicConfig");
 const messagesRepo = require("../src/db/messagesRepo");
@@ -647,4 +649,16 @@ test("recovers an interrupted follow-up even while the tool is disabled", async 
   assert.equal(published.length, 1);
   assert.equal(published[0].payload.deliveryStatus, "unknown");
   assert.equal(published[0].payload.reason, "delivery_status");
+});
+
+
+test("follow-up worker wakes when pipeline eligibility changes", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/services/followUpService.js"),
+    "utf8"
+  );
+  assert.match(
+    source,
+    /realtimeEvents\.subscribe\("pipeline_changed",[\s\S]*wakeAutomatedFollowUps\(0\)/
+  );
 });
