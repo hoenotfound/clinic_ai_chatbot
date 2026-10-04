@@ -188,5 +188,35 @@ test(
       ),
       true
     );
+
+    await insightsRepo.resetBackfillCoverage(
+      accountId,
+      "2026-07-07",
+      "owner-b",
+      database
+    );
+    await insightsRepo.markBackfillProgress(
+      accountId,
+      "2026-07-07",
+      "2026-08-05",
+      "2026-08-06",
+      "owner-b",
+      database
+    );
+    let syncState = await insightsRepo.getSyncState(accountId, database);
+    assert.equal(syncState.coverage_start_date.toISOString().slice(0, 10), "2026-07-07");
+    assert.equal(syncState.coverage_end_date.toISOString().slice(0, 10), "2026-08-05");
+
+    await insightsRepo.markSyncSuccess(
+      accountId,
+      "2026-07-07",
+      "2026-10-04",
+      "owner-b",
+      { backfillCompleted: true },
+      database
+    );
+    syncState = await insightsRepo.getSyncState(accountId, database);
+    assert.equal(syncState.coverage_start_date.toISOString().slice(0, 10), "2026-07-07");
+    assert.equal(syncState.coverage_end_date.toISOString().slice(0, 10), "2026-10-04");
   }
 );
