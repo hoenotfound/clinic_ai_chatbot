@@ -8,7 +8,10 @@ const leadAttributionRepo = require("../db/leadAttributionRepo");
 const metaAdsInsightsRepo = require("../db/metaAdsInsightsRepo");
 const contactsRepo = require("../db/contactsRepo");
 const usersRepo = require("../db/usersRepo");
-const { getAccessibleLeadIds } = require("../utils/accessControl");
+const {
+  getAccessibleContactIds,
+  getAccessibleLeadIds,
+} = require("../utils/accessControl");
 const clinicConfig = require("../config/clinicConfig");
 const {
   PipelineValidationError,
@@ -168,12 +171,15 @@ router.get("/configured-branches", (req, res) => {
 router.get("/analytics/meta-ads/leads", async (req, res) => {
   try {
     const filters = normalizeMetaAdsAnalyticsQuery(req.query);
-    const accessibleLeadIds = await getAccessibleLeadIds(req.user);
+    const [accessibleLeadIds, accessibleContactIds] = await Promise.all([
+      getAccessibleLeadIds(req.user),
+      getAccessibleContactIds(req.user),
+    ]);
     const leadPreview = await metaAdsAnalyticsRepo.getMetaAdsLeadPreview(
       filters,
       getAnalyticsPipelineProfile(),
       undefined,
-      { accessibleLeadIds, limit: 25 }
+      { accessibleLeadIds, accessibleContactIds, limit: 25 }
     );
     res.json(leadPreview);
   } catch (err) {
