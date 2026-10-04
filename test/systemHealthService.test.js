@@ -156,6 +156,36 @@ test("a quiet configured client is healthy and the latest migration is current",
   }
 });
 
+test("AI health reports Claude as primary when Claude is the preferred provider", async () => {
+  const restore = patchHealthDependencies();
+  try {
+    aiService.getCandidateHealthDescriptors = () => [
+      { provider: "gemini", label: "Gemini key 1", healthKey: "private-fingerprint" },
+      { provider: "claude", label: "Claude primary", healthKey: "private-claude-fingerprint" },
+    ];
+    aiService.getRuntimeCandidateHealth = () => [
+      {
+        candidate_key: "private-claude-fingerprint",
+        provider: "claude",
+        last_status: "ready",
+        last_attempt_at: new Date("2026-09-05T00:04:00.000Z"),
+        last_success_at: new Date("2026-09-05T00:04:00.000Z"),
+      },
+    ];
+
+    const health = await getSystemHealth({
+      checks: REPLY_CHECKS,
+      aiUsage: { byModel: [] },
+      nowMs: Date.parse("2026-09-05T00:05:00.000Z"),
+    });
+
+    assert.equal(health.ai.claude.name, "Claude primary");
+    assert.equal(health.ai.claude.status, "healthy");
+  } finally {
+    restore();
+  }
+});
+
 test("all invalid Gemini keys make AI health urgent when no fallback provider is usable", async () => {
   const restore = patchHealthDependencies();
   try {
