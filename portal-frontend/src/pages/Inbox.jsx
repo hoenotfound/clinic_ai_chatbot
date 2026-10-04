@@ -473,6 +473,18 @@ export default function Inbox() {
       if (currentId == null) return;
       try {
         const payload = JSON.parse(event.data || "{}");
+        const targetsSelectedContact =
+          payload.contactId != null
+          && Number(payload.contactId) === Number(currentId);
+
+        // A newly-created journey has a new lead ID. The contact ID lets the
+        // selected Inbox thread refresh to that new current journey instead of
+        // keeping the previous journey's acquisition context.
+        if (targetsSelectedContact) {
+          refreshAcquisitionContext(currentId);
+          return;
+        }
+
         const currentLeadId = acquisitionContextRef.current?.lead?.id;
         if (
           payload.leadId != null
