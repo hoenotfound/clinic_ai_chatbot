@@ -189,6 +189,10 @@ test(
       true
     );
 
+    await client.query(
+      "UPDATE meta_ads_insights_sync_state SET last_backfill_completed_at = now() WHERE account_id = $1",
+      [accountId]
+    );
     await insightsRepo.resetBackfillCoverage(
       accountId,
       "2026-07-07",
@@ -204,6 +208,7 @@ test(
       database
     );
     let syncState = await insightsRepo.getSyncState(accountId, database);
+    assert.equal(syncState.last_backfill_completed_at, null);
     assert.equal(syncState.coverage_start_date.toISOString().slice(0, 10), "2026-07-07");
     assert.equal(syncState.coverage_end_date.toISOString().slice(0, 10), "2026-08-05");
 
