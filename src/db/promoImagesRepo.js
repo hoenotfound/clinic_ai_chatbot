@@ -54,12 +54,12 @@ async function getPublicImage(id) {
   return result.rows[0] || null;
 }
 
-async function markResultMedia(ids) {
+async function markResultMedia(ids, queryable = pool) {
   const safeIds = [...new Set((ids || [])
     .map(Number)
     .filter((id) => Number.isSafeInteger(id) && id > 0))];
   if (!safeIds.length) return [];
-  const result = await pool.query(
+  const result = await queryable.query(
     `UPDATE promo_images
      SET purpose = $2
      WHERE id = ANY($1::int[])
