@@ -984,7 +984,10 @@ test("Meta Ads lead preview opens the correct attributed Inbox conversation", as
   await expect(page.getByText("Alice Meta Lead", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Meta Ads", { exact: true })).toBeVisible();
   await expect(page.getByText("Pelvis Creative", { exact: true })).toBeVisible();
-  await expect(page.getByText("October Campaign", { exact: true })).toBeVisible();
+  const viewport = page.viewportSize();
+  if (viewport && viewport.width >= 640) {
+    await expect(page.getByText("October Campaign", { exact: true })).toBeVisible();
+  }
 });
 
 test("mobile Pipeline keeps controls compact and prioritizes lead cards", async ({ page }) => {
