@@ -154,9 +154,14 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
            latest_lead.id IS NULL
            OR (
              latest_lead.is_closed = false
-             AND COALESCE(latest_lead.stage_type, 'open') = 'open'
-             AND COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
-             AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+             AND (
+               COALESCE(latest_lead.appointment_status, 'none') IN ('reschedule', 'cancelled')
+               OR (
+                 COALESCE(latest_lead.stage_type, 'open') = 'open'
+                 AND COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
+                 AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+               )
+             )
            )
          )
          AND anchor.created_at >= $3::timestamptz
@@ -265,9 +270,14 @@ async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt })
            latest_lead.id IS NULL
            OR (
              latest_lead.is_closed = false
-             AND COALESCE(latest_lead.stage_type, 'open') = 'open'
-             AND COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
-             AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+             AND (
+               COALESCE(latest_lead.appointment_status, 'none') IN ('reschedule', 'cancelled')
+               OR (
+                 COALESCE(latest_lead.stage_type, 'open') = 'open'
+                 AND COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
+                 AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+               )
+             )
            )
          )
          AND anchor.created_at >= $3::timestamptz
@@ -409,9 +419,14 @@ async function saveIfStillEligible({
          latest_lead.id IS NULL
          OR (
            latest_lead.is_closed = false
-           AND COALESCE(latest_lead.stage_type, 'open') = 'open'
-           AND COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
-           AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+           AND (
+             COALESCE(latest_lead.appointment_status, 'none') IN ('reschedule', 'cancelled')
+             OR (
+               COALESCE(latest_lead.stage_type, 'open') = 'open'
+               AND COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
+               AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+             )
+           )
          )
        )
        AND anchor.created_at >= $9::timestamptz
