@@ -535,11 +535,32 @@ async function getFollowUps(filters, analyticsProfile) {
        SELECT j.* FROM journeys j WHERE ${FILTER_SQL}
      ),
      followups AS (
-       SELECT j.id AS lead_id, j.contact_id, m.id AS message_id, m.created_at
+       SELECT
+         j.id AS lead_id,
+         j.contact_id,
+         m.id AS message_id,
+         m.created_at,
+         COALESCE(m.automated_follow_up_step, 1)::int AS follow_up_step,
+         NULLIF(TRIM(m.automated_follow_up_target_service), '') AS target_service,
+         (
+           SELECT MIN(next_follow_up.created_at)
+           FROM messages next_follow_up
+           WHERE next_follow_up.contact_id = m.contact_id
+             AND next_follow_up.is_automated_follow_up = true
+             AND next_follow_up.automated_follow_up_for_message_id =
+                 m.automated_follow_up_for_message_id
+             AND COALESCE(next_follow_up.automated_follow_up_step, 1) >
+                 COALESCE(m.automated_follow_up_step, 1)
+             AND (
+               next_follow_up.delivery_status IS NULL
+               OR next_follow_up.delivery_status NOT IN ('failed', 'unknown')
+             )
+         ) AS next_follow_up_at
        FROM matching_journeys j
        JOIN messages m ON m.contact_id = j.contact_id
        WHERE m.role = 'assistant'
          AND m.is_automated_follow_up = true
+         AND m.automated_follow_up_for_message_id IS NOT NULL
          AND ${periodSql("m.created_at", "$1", "$2")}
          AND (
            m.delivery_status IS NULL
@@ -568,6 +589,10 @@ async function getFollowUps(filters, analyticsProfile) {
              AND customer_reply.role = 'user'
              AND customer_reply.id > f.message_id
              AND customer_reply.created_at <= f.created_at + interval '72 hours'
+             AND (
+               f.next_follow_up_at IS NULL
+               OR customer_reply.created_at < f.next_follow_up_at
+             )
              AND (
                (
                  reply_journey.next_started_message_id IS NOT NULL
@@ -601,19 +626,79 @@ async function getFollowUps(filters, analyticsProfile) {
              AND history.created_at <= f.created_at + (${FOLLOW_UP_OUTCOME_WINDOW_DAYS} * interval '1 day')
          ) AS won_after
        FROM followups f
+     ),
+     step_stats AS (
+       SELECT
+         follow_up_step,
+         COUNT(*)::int AS sent,
+         COUNT(DISTINCT lead_id)::int AS leads,
+         COUNT(DISTINCT lead_id) FILTER (WHERE replied_72h)::int AS replied
+       FROM outcomes
+       GROUP BY follow_up_step
+     ),
+     targeting_stats AS (
+       SELECT
+         CASE WHEN target_service IS NULL THEN 'general' ELSE 'targeted' END AS targeting,
+         COUNT(*)::int AS sent,
+         COUNT(DISTINCT lead_id)::int AS leads,
+         COUNT(DISTINCT lead_id) FILTER (WHERE replied_72h)::int AS replied
+       FROM outcomes
+       GROUP BY 1
      )
      SELECT
        COUNT(*)::int AS sent,
        COUNT(DISTINCT lead_id)::int AS leads_followed_up,
        COUNT(DISTINCT lead_id) FILTER (WHERE replied_72h)::int AS leads_replied_72h,
        COUNT(DISTINCT lead_id) FILTER (WHERE appointment_after)::int AS leads_with_appointment_after,
-       COUNT(DISTINCT lead_id) FILTER (WHERE won_after)::int AS leads_won_after
+       COUNT(DISTINCT lead_id) FILTER (WHERE won_after)::int AS leads_won_after,
+       COALESCE(
+         (
+           SELECT json_agg(
+             json_build_object(
+               'step', follow_up_step,
+               'sent', sent,
+               'leads', leads,
+               'replied', replied
+             )
+             ORDER BY follow_up_step
+           )
+           FROM step_stats
+         ),
+         '[]'::json
+       ) AS by_step,
+       COALESCE(
+         (
+           SELECT json_agg(
+             json_build_object(
+               'targeting', targeting,
+               'sent', sent,
+               'leads', leads,
+               'replied', replied
+             )
+             ORDER BY targeting
+           )
+           FROM targeting_stats
+         ),
+         '[]'::json
+       ) AS by_targeting
      FROM outcomes`,
     queryParams(filters)
   );
   const row = result.rows[0] || {};
   const leadsFollowedUp = number(row.leads_followed_up);
   const leadsReplied72h = number(row.leads_replied_72h);
+  const metricRows = (rows, key) =>
+    (Array.isArray(rows) ? rows : []).map((item) => {
+      const leads = number(item.leads);
+      const replied = number(item.replied);
+      return {
+        [key]: key === "step" ? number(item[key]) : String(item[key] || ""),
+        sent: number(item.sent),
+        leads,
+        replied,
+        replyRate72h: percent(replied, leads),
+      };
+    });
   return {
     sent: number(row.sent),
     leadsFollowedUp,
@@ -621,6 +706,8 @@ async function getFollowUps(filters, analyticsProfile) {
     replyRate72h: percent(leadsReplied72h, leadsFollowedUp),
     leadsWithAppointmentAfter: number(row.leads_with_appointment_after),
     leadsWonAfter: number(row.leads_won_after),
+    byStep: metricRows(row.by_step, "step"),
+    byTargeting: metricRows(row.by_targeting, "targeting"),
     outcomeWindowDays: FOLLOW_UP_OUTCOME_WINDOW_DAYS,
   };
 }
