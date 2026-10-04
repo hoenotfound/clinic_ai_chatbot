@@ -3,7 +3,7 @@ const repo = require("../db/metaAdsInsightsRepo");
 const api = require("./metaAdsInsightsApiService");
 const { marketingAccessToken } = require("./metaAdsApiService");
 
-const DEFAULT_SYNC_INTERVAL_MS = 30 * 60 * 1000;
+const DEFAULT_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 const MIN_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_SYNC_LEASE_MS = 30 * 60 * 1000;
