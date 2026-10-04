@@ -14,6 +14,7 @@ const {
 const industrySetupRepo = require("./industrySetupRepo");
 const pipelineDefaultsRepo = require("./pipelineDefaultsRepo");
 const promoImagesRepo = require("./promoImagesRepo");
+const configImportHistoryRepo = require("./configImportHistoryRepo");
 const { DEFAULT_LEAD_DISTRIBUTION } = require("../utils/leadDistribution");
 const realtimeEvents = require("../utils/realtimeEvents");
 
@@ -119,12 +120,15 @@ async function pruneOrphanedPromoImages(force = false, now = Date.now()) {
     ]
       .map(extractPromoImageId)
       .filter((id) => id !== null);
+    const snapshotImageIds =
+      await configImportHistoryRepo.listReferencedPromoImageIds();
     const referencedIds = [
       ...promotionIds,
       ...resultMediaIds,
       ...followUpImageIds,
+      ...snapshotImageIds,
     ];
-    await promoImagesRepo.pruneUnreferenced(referencedIds);
+    await promoImagesRepo.pruneUnreferenced([...new Set(referencedIds)]);
     lastPromoImageBackstopPruneAt = now;
     return true;
   } catch (err) {
