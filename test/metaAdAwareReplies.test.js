@@ -83,8 +83,11 @@ test("loads current lead attribution locally without requiring Meta API enrichme
   });
 
   assert.equal(requestedContactId, 42);
-  assert.equal(context.adName, "骨盆 1");
   assert.equal(context.headline, "想改善体态？");
+  assert.equal(context.body, null);
+  assert.equal(context.adName, null);
+  assert.equal("campaignName" in context, false);
+  assert.equal("adsetName" in context, false);
 });
 
 test("system prompt uses ad creative as soft intent rather than customer truth", () => {
