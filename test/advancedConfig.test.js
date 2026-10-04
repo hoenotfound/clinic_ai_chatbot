@@ -206,6 +206,60 @@ test("follow-up config accepts a targeted sequence and keeps legacy one-step pay
   assert.match(outOfOrder.error, /increasing delays/i);
 });
 
+test("changing follow-up timing starts a fresh activation window", () => {
+  const current = currentConfig();
+  current.automatedFollowUp = {
+    ...current.automatedFollowUp,
+    enabled: true,
+    activatedAt: "2026-10-01T00:00:00.000Z",
+  };
+
+  const sameSchedule = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        ...current.automatedFollowUp,
+      },
+    },
+    current
+  );
+  assert.equal(sameSchedule.ok, true);
+  assert.equal(
+    sameSchedule.updates.automatedFollowUp.activatedAt,
+    "2026-10-01T00:00:00.000Z"
+  );
+
+  const expandedSchedule = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        ...current.automatedFollowUp,
+        additionalSteps: [
+          {
+            delayMinutes: 480,
+            message: "Second follow-up",
+            translations: {
+              en: "Second follow-up",
+              ms: "Susulan kedua",
+              zh: "第二次跟进",
+            },
+            imageUrl: "",
+            serviceOverrides: [],
+          },
+        ],
+      },
+    },
+    current
+  );
+  assert.equal(expandedSchedule.ok, true);
+  assert.notEqual(
+    expandedSchedule.updates.automatedFollowUp.activatedAt,
+    current.automatedFollowUp.activatedAt
+  );
+  assert.ok(
+    Date.parse(expandedSchedule.updates.automatedFollowUp.activatedAt) >
+      Date.parse(current.automatedFollowUp.activatedAt)
+  );
+});
+
 test("Advanced Config exposes business and AI content only", () => {
   const current = currentConfig();
   const editable = editableConfigView(current);
