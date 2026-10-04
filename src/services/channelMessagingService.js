@@ -39,11 +39,12 @@ function staffModeChangedResult() {
   };
 }
 
-function preSendCancelled(options = {}) {
-  if (
-    typeof options.preSendCheck === "function" &&
-    options.preSendCheck() !== true
-  ) {
+async function preSendCancelled(options = {}) {
+  if (typeof options.preSendCheck !== "function") return null;
+
+  try {
+    const allowed = await options.preSendCheck();
+    if (allowed === true) return null;
     return {
       success: false,
       wamid: null,
@@ -51,8 +52,17 @@ function preSendCancelled(options = {}) {
       cancelled: true,
       error: null,
     };
+  } catch (err) {
+    console.error("Final pre-send eligibility check failed:", err);
+    return {
+      success: false,
+      wamid: null,
+      externalMessageId: null,
+      cancelled: true,
+      preSendCheckFailed: true,
+      error: "Message send cancelled because final eligibility could not be verified.",
+    };
   }
-  return null;
 }
 
 async function notifyProviderMessageId(options, result, channel) {
@@ -226,7 +236,7 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
   let captionSent = false;
   let captionProviderMessageId = null;
   if (caption?.trim() && options.skipCaption !== true) {
-    const cancelled = preSendCancelled(options);
+    const cancelled = await preSendCancelled(options);
     if (cancelled) return cancelled;
     // Messenger keeps caption text separate from the media attachment. This is
     // the same ordering as the URL path: preserve customer context even if the
@@ -247,7 +257,7 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
   // reject an otherwise valid Render-hosted image with (#100) Upload failed.
   // The exact JPG/PNG bytes are already in Postgres, so upload them directly to
   // Messenger's message_attachments endpoint and send the returned attachment.
-  const cancelled = preSendCancelled(options);
+  const cancelled = await preSendCancelled(options);
   if (cancelled) {
     if (!captionSent) return cancelled;
     return {
@@ -291,7 +301,7 @@ async function sendText(contact, text, options = {}) {
   if (guard.blocked) return guard.blocked;
   const sendOptions = optionsForPolicy(options, guard.policy);
 
-  const cancelled = preSendCancelled(sendOptions);
+  const cancelled = await preSendCancelled(sendOptions);
   if (cancelled) return cancelled;
 
   if (channel === "whatsapp") {
@@ -311,7 +321,7 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
   if (guard.blocked) return guard.blocked;
   const sendOptions = optionsForPolicy(options, guard.policy);
   if (channel === "whatsapp") {
-    const cancelled = preSendCancelled(sendOptions);
+    const cancelled = await preSendCancelled(sendOptions);
     if (cancelled) return cancelled;
     return whatsapp.sendImage(contact.whatsapp_number, imageUrl, caption);
   }
@@ -321,7 +331,7 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
     if (storedResult) return storedResult;
   }
 
-  const cancelled = preSendCancelled(sendOptions);
+  const cancelled = await preSendCancelled(sendOptions);
   if (cancelled) return cancelled;
   return trackSocialOutbound(
     channel,
