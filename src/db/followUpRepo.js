@@ -74,6 +74,11 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
            FROM messages recent_inbound
            WHERE recent_inbound.contact_id = c.id
              AND recent_inbound.role = 'user'
+             AND recent_inbound.id <= latest_inbound.id
+             AND (
+               previous_outbound.id IS NULL
+               OR recent_inbound.id > previous_outbound.id
+             )
            ORDER BY recent_inbound.created_at DESC, recent_inbound.id DESC
            LIMIT 5
          ) AS recent_inbound_messages
@@ -86,6 +91,16 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
          ORDER BY created_at DESC, id DESC
          LIMIT 1
        ) latest_inbound ON true
+       LEFT JOIN LATERAL (
+         SELECT id
+         FROM messages
+         WHERE contact_id = c.id
+           AND role = 'assistant'
+           AND (created_at, id) <
+               (latest_inbound.created_at, latest_inbound.id)
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1
+       ) previous_outbound ON true
        JOIN LATERAL (
          SELECT id, content, sent_by_username, created_at, delivery_status
          FROM messages
