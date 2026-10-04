@@ -43,6 +43,8 @@ function neutralAutomationDefaults() {
         zh: "嗨！想跟进一下，看看您是否还需要任何帮助。方便时回复我们就可以了 😊",
       },
       imageUrl: "",
+      serviceOverrides: [],
+      additionalSteps: [],
       activatedAt: null,
     },
     commentAutomation: {
