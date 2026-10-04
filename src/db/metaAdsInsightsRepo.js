@@ -223,6 +223,7 @@ async function getSyncState(accountId, database = pool) {
   const result = await database.query(
     `SELECT account_id, last_attempt_at, last_success_at, last_error,
             last_backfill_completed_at, backfill_next_date,
+            coverage_start_date, coverage_end_date,
             last_range_start, last_range_end,
             lease_token, lease_until, updated_at
      FROM meta_ads_insights_sync_state
@@ -252,6 +253,25 @@ async function markSyncStarted(accountId, since, until, leaseToken, database = p
   }
 }
 
+async function resetBackfillCoverage(accountId, coverageStart, leaseToken, database = pool) {
+  const token = requireLeaseToken(leaseToken);
+  const result = await database.query(
+    `UPDATE meta_ads_insights_sync_state
+     SET coverage_start_date = $2::date,
+         coverage_end_date = NULL,
+         backfill_next_date = $2::date,
+         updated_at = now()
+     WHERE account_id = $1 AND lease_token = $3
+     RETURNING account_id`,
+    [accountId, coverageStart, token]
+  );
+  if (!result.rows[0]) {
+    const err = new Error("Meta Ads Insights sync lease was lost before backfill coverage reset.");
+    err.code = "SYNC_LEASE_LOST";
+    throw err;
+  }
+}
+
 async function markBackfillProgress(accountId, since, until, nextDate, leaseToken, database = pool) {
   const token = requireLeaseToken(leaseToken);
   const result = await database.query(
@@ -259,6 +279,7 @@ async function markBackfillProgress(accountId, since, until, nextDate, leaseToke
      SET last_success_at = now(),
          last_error = NULL,
          backfill_next_date = $4::date,
+         coverage_end_date = $3::date,
          last_range_start = $2::date,
          last_range_end = $3::date,
          updated_at = now()
@@ -291,6 +312,17 @@ async function markSyncSuccess(
            ELSE last_backfill_completed_at
          END,
          backfill_next_date = CASE WHEN $5::boolean THEN NULL ELSE backfill_next_date END,
+         coverage_start_date = CASE
+           WHEN $5::boolean THEN $2::date
+           ELSE coverage_start_date
+         END,
+         coverage_end_date = CASE
+           WHEN $5::boolean THEN $3::date
+           WHEN coverage_end_date IS NOT NULL
+             AND $2::date <= coverage_end_date + 1
+             THEN GREATEST(coverage_end_date, $3::date)
+           ELSE coverage_end_date
+         END,
          last_range_start = $2::date,
          last_range_end = $3::date,
          lease_token = NULL,
@@ -342,6 +374,7 @@ module.exports = {
   markSyncSuccess,
   releaseSyncLease,
   renewSyncLease,
+  resetBackfillCoverage,
   replaceInsightsRange,
   tryAcquireSyncLease,
   validateRows,
