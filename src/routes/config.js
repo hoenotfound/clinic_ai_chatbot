@@ -81,6 +81,8 @@ const VALIDATORS = {
           )
         )
     ),
+  resultMedia: (v) =>
+    Array.isArray(v) && v.every(isResultMediaSet),
   services: (v) =>
     Array.isArray(v) &&
     v.every(
@@ -124,6 +126,33 @@ function isPromotionPackage(value) {
     ) &&
     isString(value.imageUrl) &&
     isString(value.caption)
+  );
+}
+
+function isResultMediaItem(value) {
+  return (
+    isPlainObject(value) &&
+    isNonEmptyString(value.imageUrl) &&
+    isNonEmptyString(value.caption)
+  );
+}
+
+function isResultMediaSet(value) {
+  return (
+    isPlainObject(value) &&
+    isNonEmptyString(value.service) &&
+    typeof value.enabled === "boolean" &&
+    typeof value.sendAfterPrice === "boolean" &&
+    (
+      value.autoSendCount === undefined ||
+      (Number.isInteger(value.autoSendCount) &&
+        value.autoSendCount >= 1 &&
+        value.autoSendCount <= 2)
+    ) &&
+    Array.isArray(value.items) &&
+    value.items.length >= 1 &&
+    value.items.length <= 10 &&
+    value.items.every(isResultMediaItem)
   );
 }
 
@@ -576,6 +605,46 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
   }
 
   if (
+    Object.prototype.hasOwnProperty.call(updates, "resultMedia") ||
+    Object.prototype.hasOwnProperty.call(updates, "services")
+  ) {
+    const services = Object.prototype.hasOwnProperty.call(updates, "services")
+      ? updates.services
+      : currentConfig.services;
+    const resultMedia = Object.prototype.hasOwnProperty.call(updates, "resultMedia")
+      ? updates.resultMedia
+      : currentConfig.resultMedia;
+    const serviceNames = new Set(
+      (Array.isArray(services) ? services : [])
+        .map((service) => String(service?.name || "").trim().toLowerCase())
+        .filter(Boolean)
+    );
+    const seenServices = new Set();
+
+    for (const entry of Array.isArray(resultMedia) ? resultMedia : []) {
+      const service = String(entry?.service || "").trim();
+      const normalized = service.toLowerCase();
+      if (!service || !serviceNames.has(normalized)) {
+        return {
+          ok: false,
+          status: 400,
+          error: `Result media must link to a currently configured service. Missing service: "${service || "Unknown"}".`,
+          invalidKeys: ["resultMedia"],
+        };
+      }
+      if (seenServices.has(normalized)) {
+        return {
+          ok: false,
+          status: 400,
+          error: `Only one result media set can be configured for "${service}". Add multiple images inside that set instead.`,
+          invalidKeys: ["resultMedia"],
+        };
+      }
+      seenServices.add(normalized);
+    }
+  }
+
+  if (
     Object.prototype.hasOwnProperty.call(updates, "promotions") ||
     Object.prototype.hasOwnProperty.call(updates, "services")
   ) {
@@ -783,6 +852,7 @@ async function saveUploadedImage(req, res) {
 }
 
 router.post("/promotions/image", handleImageUpload, saveUploadedImage);
+router.post("/result-media/image", handleImageUpload, saveUploadedImage);
 router.post("/automated-follow-up/image", handleImageUpload, saveUploadedImage);
 
 router.delete("/promotions/image/:id", async (req, res) => {
