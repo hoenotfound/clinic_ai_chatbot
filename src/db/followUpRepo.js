@@ -18,7 +18,9 @@ const FOLLOW_UP_MESSAGE_COLUMNS = `
   delivery_status,
   delivery_error,
   is_automated_follow_up,
-  automated_follow_up_step
+  automated_follow_up_step,
+  automated_follow_up_target_service,
+  automated_follow_up_targeting_recorded
 `;
 
 function normalizeDelayMinutes(value) {
@@ -68,7 +70,7 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
          latest_inbound.created_at AS latest_inbound_created_at,
          COALESCE(progress.max_step, 0) + 1 AS next_follow_up_step,
          COALESCE(progress.has_blocking_claim, false) AS has_blocking_claim,
-         open_lead.treatment_interest,
+         latest_lead.treatment_interest,
          ARRAY(
            SELECT recent_inbound.content
            FROM messages recent_inbound
@@ -128,13 +130,19 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
            AND follow_up.automated_follow_up_for_message_id = anchor.id
        ) progress ON true
        LEFT JOIN LATERAL (
-         SELECT treatment_interest
-         FROM leads
-         WHERE contact_id = c.id
-           AND is_closed = false
-         ORDER BY created_at DESC, id DESC
+         SELECT
+           l.id,
+           l.treatment_interest,
+           l.is_closed,
+           l.appointment_status,
+           s.stage_type,
+           s.system_key
+         FROM leads l
+         LEFT JOIN pipeline_stages s ON s.id = l.stage_id
+         WHERE l.contact_id = c.id
+         ORDER BY l.created_at DESC, l.id DESC
          LIMIT 1
-       ) open_lead ON true
+       ) latest_lead ON true
        WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
          AND c.needs_attention = false
          AND (
@@ -142,6 +150,20 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
            OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
          )
          AND anchor.delivery_status IS DISTINCT FROM 'failed'
+         AND (
+           latest_lead.id IS NULL
+           OR (
+             latest_lead.is_closed = false
+             AND COALESCE(latest_lead.stage_type, 'open') = 'open'
+             AND (
+               COALESCE(latest_lead.appointment_status, 'none') IN ('reschedule', 'cancelled')
+               OR (
+                 COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
+                 AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+               )
+             )
+           )
+         )
          AND anchor.created_at >= $3::timestamptz
          AND latest_inbound.created_at > now() - interval '23 hours 50 minutes'
          AND ($2 = 'all' OR anchor.sent_by_username IS NOT NULL)
@@ -224,6 +246,19 @@ async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt })
            AND follow_up.is_automated_follow_up = true
            AND follow_up.automated_follow_up_for_message_id = anchor.id
        ) progress ON true
+       LEFT JOIN LATERAL (
+         SELECT
+           l.id,
+           l.is_closed,
+           l.appointment_status,
+           s.stage_type,
+           s.system_key
+         FROM leads l
+         LEFT JOIN pipeline_stages s ON s.id = l.stage_id
+         WHERE l.contact_id = c.id
+         ORDER BY l.created_at DESC, l.id DESC
+         LIMIT 1
+       ) latest_lead ON true
        WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
          AND c.needs_attention = false
          AND (
@@ -231,6 +266,20 @@ async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt })
            OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
          )
          AND anchor.delivery_status IS DISTINCT FROM 'failed'
+         AND (
+           latest_lead.id IS NULL
+           OR (
+             latest_lead.is_closed = false
+             AND COALESCE(latest_lead.stage_type, 'open') = 'open'
+             AND (
+               COALESCE(latest_lead.appointment_status, 'none') IN ('reschedule', 'cancelled')
+               OR (
+                 COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
+                 AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+               )
+             )
+           )
+         )
          AND anchor.created_at >= $3::timestamptz
          AND latest_inbound.created_at > now() - interval '23 hours 50 minutes'
          AND ($2 = 'all' OR anchor.sent_by_username IS NOT NULL)
@@ -277,6 +326,7 @@ async function saveIfStillEligible({
   content,
   mediaUrl,
   stepIndex = 1,
+  targetedService = null,
   delayMinutes,
   triggerMode,
   activatedAt,
@@ -337,10 +387,25 @@ async function saveIfStillEligible({
        media_url,
        is_automated_follow_up,
        automated_follow_up_for_message_id,
-       automated_follow_up_step
+       automated_follow_up_step,
+       automated_follow_up_target_service,
+       automated_follow_up_targeting_recorded
      )
-     SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2, $5
+     SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2, $5, $6, true
      FROM anchor, latest_inbound, progress, contacts c
+     LEFT JOIN LATERAL (
+       SELECT
+         l.id,
+         l.is_closed,
+         l.appointment_status,
+         s.stage_type,
+         s.system_key
+       FROM leads l
+       LEFT JOIN pipeline_stages s ON s.id = l.stage_id
+       WHERE l.contact_id = c.id
+       ORDER BY l.created_at DESC, l.id DESC
+       LIMIT 1
+     ) latest_lead ON true
      WHERE c.id = $1
        AND c.needs_attention = false
        AND c.channel IN ('whatsapp', 'facebook', 'instagram')
@@ -350,11 +415,25 @@ async function saveIfStillEligible({
        )
        AND anchor.id = $2
        AND anchor.delivery_status IS DISTINCT FROM 'failed'
-       AND anchor.created_at >= $8::timestamptz
-       AND anchor.created_at <= now() - ($6::integer * interval '1 minute')
-       AND anchor.created_at + ($6::integer * interval '1 minute')
+       AND (
+         latest_lead.id IS NULL
+         OR (
+           latest_lead.is_closed = false
+           AND COALESCE(latest_lead.stage_type, 'open') = 'open'
+           AND (
+             COALESCE(latest_lead.appointment_status, 'none') IN ('reschedule', 'cancelled')
+             OR (
+               COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
+               AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+             )
+           )
+         )
+       )
+       AND anchor.created_at >= $9::timestamptz
+       AND anchor.created_at <= now() - ($7::integer * interval '1 minute')
+       AND anchor.created_at + ($7::integer * interval '1 minute')
            <= latest_inbound.created_at + interval '23 hours 50 minutes'
-       AND ($7 = 'all' OR anchor.sent_by_username IS NOT NULL)
+       AND ($8 = 'all' OR anchor.sent_by_username IS NOT NULL)
        AND COALESCE(progress.max_step, 0) + 1 = $5
        AND COALESCE(progress.has_blocking_claim, false) = false
      ON CONFLICT DO NOTHING
@@ -365,11 +444,130 @@ async function saveIfStillEligible({
       content,
       mediaUrl,
       numericStep,
+      typeof targetedService === "string" && targetedService.trim()
+        ? targetedService.trim()
+        : null,
       numericDelay,
       triggerMode,
       activatedAt,
     ]
   );
+  return result.rows[0] || null;
+}
+
+async function isClaimStillEligible({ messageId, contactId }) {
+  const numericMessageId = Number(messageId);
+  const numericContactId = Number(contactId);
+  if (
+    !Number.isInteger(numericMessageId) ||
+    numericMessageId <= 0 ||
+    !Number.isInteger(numericContactId) ||
+    numericContactId <= 0
+  ) {
+    return false;
+  }
+
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     ), claim AS (
+       SELECT
+         m.id,
+         m.contact_id,
+         m.created_at,
+         m.delivery_status,
+         m.whatsapp_message_id
+       FROM messages m, conversation_lock
+       WHERE m.id = $2
+         AND m.contact_id = $1
+         AND m.role = 'assistant'
+         AND m.is_automated_follow_up = true
+         AND m.automated_follow_up_for_message_id IS NOT NULL
+       LIMIT 1
+     )
+     SELECT EXISTS (
+       SELECT 1
+       FROM claim
+       JOIN contacts c ON c.id = claim.contact_id
+       LEFT JOIN LATERAL (
+         SELECT
+           l.id,
+           l.is_closed,
+           l.appointment_status,
+           s.stage_type,
+           s.system_key
+         FROM leads l
+         LEFT JOIN pipeline_stages s ON s.id = l.stage_id
+         WHERE l.contact_id = c.id
+         ORDER BY l.created_at DESC, l.id DESC
+         LIMIT 1
+       ) latest_lead ON true
+       WHERE c.needs_attention = false
+         AND claim.delivery_status IS NULL
+         AND claim.whatsapp_message_id IS NULL
+         AND (
+           latest_lead.id IS NULL
+           OR (
+             latest_lead.is_closed = false
+             AND COALESCE(latest_lead.stage_type, 'open') = 'open'
+             AND (
+               COALESCE(latest_lead.appointment_status, 'none') IN ('reschedule', 'cancelled')
+               OR (
+                 COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
+                 AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+               )
+             )
+           )
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM messages newer
+           WHERE newer.contact_id = claim.contact_id
+             AND (newer.created_at, newer.id) > (claim.created_at, claim.id)
+             AND (
+               newer.role = 'user'
+               OR (
+                 newer.role = 'assistant'
+                 AND newer.is_automated_follow_up = false
+               )
+             )
+         )
+     ) AS eligible`,
+    [numericContactId, numericMessageId]
+  );
+
+  return result.rows[0]?.eligible === true;
+}
+
+async function discardUnsentClaim({ messageId, contactId }) {
+  const numericMessageId = Number(messageId);
+  const numericContactId = Number(contactId);
+  if (
+    !Number.isInteger(numericMessageId) ||
+    numericMessageId <= 0 ||
+    !Number.isInteger(numericContactId) ||
+    numericContactId <= 0
+  ) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     )
+     DELETE FROM messages
+     WHERE id = $2
+       AND contact_id = $1
+       AND role = 'assistant'
+       AND is_automated_follow_up = true
+       AND automated_follow_up_for_message_id IS NOT NULL
+       AND delivery_status IS NULL
+       AND whatsapp_message_id IS NULL
+       AND EXISTS (SELECT 1 FROM conversation_lock)
+     RETURNING ${FOLLOW_UP_MESSAGE_COLUMNS}`,
+    [numericContactId, numericMessageId]
+  );
+
   return result.rows[0] || null;
 }
 
@@ -432,6 +630,8 @@ module.exports = {
   getNextCandidateDueAt,
   getNextStaleClaimDueAt,
   saveIfStillEligible,
+  isClaimStillEligible,
+  discardUnsentClaim,
   saveSocialImageCompanion,
   markStaleClaimsUnconfirmed,
 };

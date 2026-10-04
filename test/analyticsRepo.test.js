@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   ANALYTICS_QUERY_CONCURRENCY,
   buildComparison,
@@ -176,4 +178,28 @@ test("analytics concurrency limiter releases capacity after a failed query", asy
   );
 
   assert.equal(await run(async () => "next query"), "next query");
+});
+
+
+test("follow-up analytics exclude social image companions and expose step/targeting breakdowns", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/db/analyticsRepo.js"),
+    "utf8"
+  );
+
+  assert.match(source, /automated_follow_up_for_message_id IS NOT NULL/);
+  assert.match(source, /automated_follow_up_target_service/);
+  assert.match(source, /automated_follow_up_targeting_recorded/);
+  assert.match(source, /legacy_unknown/);
+  assert.match(source, /AS by_step/);
+  assert.match(source, /AS by_targeting/);
+  assert.match(source, /next_follow_up_at/);
+  assert.match(source, /history\.created_at < f\.next_follow_up_at/);
+  assert.match(source, /replyRate72h/);
+  assert.match(source, /appointmentStatusFallback/);
+  assert.match(source, /lead_activities activity/);
+  assert.match(source, /appointmentStatus.*set.*visited/);
+  assert.match(source, /Appointment status changed to set/);
+  assert.match(source, /appointmentRate/);
+  assert.match(source, /winRate/);
 });

@@ -36,6 +36,15 @@ function normalizeServiceOverrides(value) {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > 50) return null;
 
+  const configuredServices = new Set(
+    (Array.isArray(clinicConfig.services) ? clinicConfig.services : [])
+      .map((service) =>
+        typeof service?.name === "string"
+          ? service.name.trim().toLocaleLowerCase()
+          : ""
+      )
+      .filter(Boolean)
+  );
   const seen = new Set();
   const normalized = [];
   for (const item of value) {
@@ -47,6 +56,11 @@ function normalizeServiceOverrides(value) {
     const key = serviceName.toLocaleLowerCase();
     if (seen.has(key)) return null;
     seen.add(key);
+
+    // Fail safe at runtime for legacy/stale configs. A renamed or removed
+    // service must fall back to the step's general message rather than keep
+    // sending copy for a service that no longer exists.
+    if (!configuredServices.has(key)) continue;
 
     const translations = normalizeFollowUpTranslations(
       item.translations,
@@ -166,7 +180,7 @@ function textContainsServiceTerm(text, term) {
   return normalizedText.includes(term);
 }
 
-function targetedOverridesMentionedInConversation(step, candidate) {
+function configuredServicesMentionedInConversation(candidate) {
   const transcript = [
     ...(candidate.recent_inbound_messages || []),
     candidate.trigger_message_content,
@@ -175,18 +189,37 @@ function targetedOverridesMentionedInConversation(step, candidate) {
     .join("\n");
 
   if (!transcript) return [];
-  return step.serviceOverrides.filter((item) =>
-    serviceTerms(item.serviceName).some((term) =>
-      textContainsServiceTerm(transcript, term)
-    )
-  );
+
+  const matched = new Map();
+  for (const service of Array.isArray(clinicConfig.services)
+    ? clinicConfig.services
+    : []) {
+    const serviceName =
+      typeof service?.name === "string" ? service.name.trim() : "";
+    const normalized = normalizedServiceName(serviceName);
+    if (!normalized || matched.has(normalized)) continue;
+
+    if (
+      serviceTerms(serviceName).some((term) =>
+        textContainsServiceTerm(transcript, term)
+      )
+    ) {
+      matched.set(normalized, serviceName);
+    }
+  }
+  return [...matched.values()];
 }
 
 function messageForCandidate(step, candidate, language) {
-  const conversationMatches = targetedOverridesMentionedInConversation(
-    step,
-    candidate
-  );
+  const conversationServices =
+    configuredServicesMentionedInConversation(candidate);
+  const overrideForService = (serviceName) =>
+    step.serviceOverrides.find(
+      (item) =>
+        normalizedServiceName(item.serviceName) ===
+        normalizedServiceName(serviceName)
+    ) || null;
+
   const interest = normalizedServiceName(candidate.treatment_interest);
   const exactInterest = interest
     ? step.serviceOverrides.find(
@@ -194,14 +227,16 @@ function messageForCandidate(step, candidate, language) {
       )
     : null;
 
-  // The recent conversation is the freshest signal. One clear service wins;
-  // more than one means the customer is comparing/mixing interests, so use the
-  // default copy. Only fall back to the CRM interest when no service is named
-  // in the recent conversation.
+  // The current exchange is authoritative across ALL configured services, not
+  // just services that happen to have a custom message on this step.
+  // - one current service + override -> targeted copy
+  // - one current service without override -> general copy
+  // - multiple current services -> general copy
+  // - no current service -> CRM interest may supply an exact override
   const targeted =
-    conversationMatches.length === 1
-      ? conversationMatches[0]
-      : conversationMatches.length > 1
+    conversationServices.length === 1
+      ? overrideForService(conversationServices[0])
+      : conversationServices.length > 1
         ? null
         : exactInterest || null;
   const source = targeted || step;
@@ -238,9 +273,10 @@ function rejectedFollowUpError(channel) {
 }
 
 function deliveryErrorFor(channel, sendResult, rejectedError) {
-  // Policy blocks contain a useful reason staff need to see. Other provider
-  // failures keep the existing channel-specific wording.
-  return sendResult?.policyBlocked && sendResult?.error
+  // Policy/final-eligibility failures contain a useful reason staff need to
+  // see. Other provider failures keep the existing channel-specific wording.
+  return sendResult?.error &&
+    (sendResult?.policyBlocked || sendResult?.preSendCheckFailed)
     ? sendResult.error
     : rejectedError;
 }
@@ -350,7 +386,7 @@ async function sendCandidate(candidate) {
     ...(candidate.recent_inbound_messages || []),
     candidate.trigger_message_content,
   ]);
-  const { message: followUpMessage } = messageForCandidate(
+  const { message: followUpMessage, targetedService } = messageForCandidate(
     step,
     candidate,
     language
@@ -368,6 +404,7 @@ async function sendCandidate(candidate) {
     content: followUpMessage,
     mediaUrl: !isSocial && step.imageUrl ? step.imageUrl : null,
     stepIndex,
+    targetedService,
     delayMinutes: step.delayMinutes,
     triggerMode: settings.triggerMode,
     activatedAt: settings.activatedAt,
@@ -380,6 +417,25 @@ async function sendCandidate(candidate) {
   publishConversationChange(saved, "message");
 
   const rejectedError = rejectedFollowUpError(channel);
+
+  const finalPreSendCheck = async () => {
+    const liveSettings = getActiveSettings();
+    const liveStep = liveSettings?.steps?.[stepIndex - 1];
+    if (
+      !liveSettings ||
+      !liveStep ||
+      liveSettings.activatedAt !== settings.activatedAt ||
+      liveSettings.triggerMode !== settings.triggerMode ||
+      liveStep.delayMinutes !== step.delayMinutes
+    ) {
+      return false;
+    }
+
+    return followUpRepo.isClaimStillEligible({
+      messageId: saved.id,
+      contactId: candidate.contact_id,
+    });
+  };
 
   let sendResult;
   try {
@@ -395,13 +451,17 @@ async function sendCandidate(candidate) {
         followUpMessage,
         {
           purpose: "marketing",
+          preSendCheck: finalPreSendCheck,
           ...(textProviderRecorder
             ? { onProviderMessageId: textProviderRecorder }
             : {}),
         }
       );
     } else {
-      const policyOptions = { purpose: "marketing" };
+      const policyOptions = {
+        purpose: "marketing",
+        preSendCheck: finalPreSendCheck,
+      };
       sendResult = step.imageUrl
         ? await channelMessaging.sendImageByUrl(
             contact,
@@ -418,6 +478,17 @@ async function sendCandidate(candidate) {
   } catch (err) {
     console.error("Automated follow-up send failed:", err);
     sendResult = { success: false, wamid: null, externalMessageId: null };
+  }
+
+  if (sendResult?.cancelled && !sendResult?.preSendCheckFailed) {
+    const discarded = await followUpRepo.discardUnsentClaim({
+      messageId: saved.id,
+      contactId: candidate.contact_id,
+    });
+    if (discarded) {
+      publishConversationChange(discarded, "message_cancelled");
+    }
+    return;
   }
 
   const deliveryError = deliveryErrorFor(channel, sendResult, rejectedError);
@@ -615,6 +686,13 @@ function startAutomatedFollowUps() {
 // an existing candidate ineligible. Recalculate while the database is already
 // active; once the chat becomes quiet the worker sleeps until the exact due time.
 realtimeEvents.subscribe("conversation_changed", () => {
+  wakeAutomatedFollowUps(0);
+});
+
+// Pipeline changes can make a previously booked lead eligible again
+// (cancelled/reschedule) or make a pending follow-up ineligible (booked/visited).
+// Recalculate immediately instead of waiting for an unrelated chat event.
+realtimeEvents.subscribe("pipeline_changed", () => {
   wakeAutomatedFollowUps(0);
 });
 

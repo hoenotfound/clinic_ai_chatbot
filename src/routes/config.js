@@ -310,6 +310,21 @@ function prepareFollowUpStep(requested) {
   return serviceOverrides && isFollowUpStep(prepared) ? prepared : null;
 }
 
+function followUpTargetedServiceNames(value) {
+  if (!isPlainObject(value)) return [];
+  const steps = [
+    value,
+    ...(Array.isArray(value.additionalSteps) ? value.additionalSteps : []),
+  ];
+  return steps.flatMap((step) =>
+    Array.isArray(step?.serviceOverrides)
+      ? step.serviceOverrides
+          .map((item) => String(item?.serviceName || "").trim())
+          .filter(Boolean)
+      : []
+  );
+}
+
 function prepareAutomatedFollowUpConfig(requested, current) {
   if (!isPlainObject(requested)) return null;
 
@@ -527,6 +542,35 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
   }
 
   if (
+    Object.prototype.hasOwnProperty.call(updates, "services") ||
+    Object.prototype.hasOwnProperty.call(updates, "automatedFollowUp")
+  ) {
+    const services = Object.prototype.hasOwnProperty.call(updates, "services")
+      ? updates.services
+      : currentConfig.services;
+    const followUp = Object.prototype.hasOwnProperty.call(updates, "automatedFollowUp")
+      ? updates.automatedFollowUp
+      : currentConfig.automatedFollowUp;
+    const configuredServiceNames = new Set(
+      (Array.isArray(services) ? services : [])
+        .map((service) => String(service?.name || "").trim().toLocaleLowerCase())
+        .filter(Boolean)
+    );
+    const staleTarget = followUpTargetedServiceNames(followUp).find(
+      (serviceName) => !configuredServiceNames.has(serviceName.toLocaleLowerCase())
+    );
+    if (staleTarget) {
+      return {
+        ok: false,
+        status: 400,
+        error:
+          `Follow-up targeting still references "${staleTarget}", which is not a configured service. Remap or remove that targeted follow-up before saving the service change.`,
+        invalidKeys: ["automatedFollowUp"],
+      };
+    }
+  }
+
+  if (
     Object.prototype.hasOwnProperty.call(updates, "promotions") ||
     Object.prototype.hasOwnProperty.call(updates, "services")
   ) {
@@ -610,6 +654,23 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
 
 router.post("/automated-follow-up/translations", async (req, res) => {
   try {
+    if (Array.isArray(req.body?.messages)) {
+      const messages = req.body.messages.map((message) =>
+        typeof message === "string" ? message.trim() : ""
+      );
+      if (
+        messages.length < 1 ||
+        messages.length > followUpTranslationService.MAX_TRANSLATION_BATCH ||
+        messages.some((message) => !message || message.length > 1000)
+      ) {
+        return res.status(400).json({
+          error: `Send 1 to ${followUpTranslationService.MAX_TRANSLATION_BATCH} follow-up messages, each under 1,000 characters.`,
+        });
+      }
+      const translations = await followUpTranslationService.translateFollowUps(messages);
+      return res.json({ translations });
+    }
+
     const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
     if (!message || message.length > 1000) {
       return res.status(400).json({

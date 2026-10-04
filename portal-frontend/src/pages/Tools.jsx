@@ -350,6 +350,36 @@ export default function Tools() {
     }
   }
 
+  async function requestTranslationBatch(messages) {
+    const uniqueMessages = [
+      ...new Set(
+        messages
+          .map((message) => String(message || "").trim())
+          .filter(Boolean)
+      ),
+    ];
+    if (!uniqueMessages.length) return new Map();
+
+    setTranslating(true);
+    try {
+      const generatedByMessage = new Map();
+      const chunkSize = 20;
+      for (let start = 0; start < uniqueMessages.length; start += chunkSize) {
+        const chunk = uniqueMessages.slice(start, start + chunkSize);
+        const { translations } = await api.translateFollowUps(chunk);
+        if (!Array.isArray(translations) || translations.length !== chunk.length) {
+          throw new Error("The translation batch was incomplete.");
+        }
+        chunk.forEach((message, index) => {
+          generatedByMessage.set(message, translations[index]);
+        });
+      }
+      return generatedByMessage;
+    } finally {
+      setTranslating(false);
+    }
+  }
+
   async function handleGenerateTranslations() {
     const message = form.message.trim();
     if (!message) {
@@ -361,6 +391,15 @@ export default function Tools() {
     setForm((current) => ({ ...current, translations }));
     setTranslationsSource(message);
     setManualTranslationEdits([]);
+  }
+
+  async function generateTranslationsForMessage(message) {
+    const source = String(message || "").trim();
+    if (!source) {
+      showToast("Add the message first.", "error");
+      return null;
+    }
+    return requestTranslations(source, { announce: false });
   }
 
   function handleSourceMessageChange(value) {
@@ -381,28 +420,34 @@ export default function Tools() {
     );
   }
 
-  async function handleImagePicked(event) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
+  async function uploadFollowUpImage(file) {
+    if (!file) return null;
     if (!FOLLOW_UP_IMAGE_TYPES.has(file.type)) {
       showToast("Please choose a JPG or PNG image.", "error");
-      return;
+      return null;
     }
     if (file.size > MAX_FOLLOW_UP_IMAGE_BYTES) {
       showToast("That image is larger than 5MB. Please choose a smaller file.", "error");
-      return;
+      return null;
     }
 
     setUploadingImage(true);
     try {
       const { url } = await api.uploadFollowUpImage(file);
-      setForm((current) => ({ ...current, imageUrl: url }));
+      return url;
     } catch (err) {
       showToast(err.message || "Couldn't upload that image.", "error");
+      return null;
     } finally {
       setUploadingImage(false);
     }
+  }
+
+  async function handleImagePicked(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    const url = await uploadFollowUpImage(file);
+    if (url) setForm((current) => ({ ...current, imageUrl: url }));
   }
 
   function followUpValidationError() {
@@ -416,6 +461,11 @@ export default function Tools() {
     ];
     if (steps.length > 3) return "You can configure up to 3 follow-ups.";
 
+    const configuredServices = new Set(
+      (config?.services || [])
+        .map((service) => String(service?.name || "").trim().toLocaleLowerCase())
+        .filter(Boolean)
+    );
     let previousDelay = 0;
     for (let index = 0; index < steps.length; index += 1) {
       const step = steps[index];
@@ -443,6 +493,9 @@ export default function Tools() {
         if (!serviceName || !targetedMessage) {
           return `Complete every targeted service message in Follow-up ${index + 1}.`;
         }
+        if (!configuredServices.has(serviceName.toLocaleLowerCase())) {
+          return `${serviceName} is no longer in Services. Remap or remove that targeted follow-up.`;
+        }
         if (targetedMessage.length > 1000) {
           return `Keep targeted messages in Follow-up ${index + 1} under 1,000 characters.`;
         }
@@ -457,49 +510,89 @@ export default function Tools() {
     return "";
   }
 
-  async function prepareServiceOverridesForSave(overrides = []) {
-    const prepared = [];
-    for (const item of overrides) {
-      const serviceName = item.serviceName.trim();
-      const message = item.message.trim();
-      let translations = item.translations;
-      if (!hasCompleteTranslations(translations)) {
-        translations = await requestTranslations(message, {
-          announce: false,
-        });
-        if (!translations) {
-          throw new Error("Couldn't generate targeted language versions.");
-        }
-      }
-      prepared.push({ serviceName, message, translations });
-    }
-    return prepared;
+  function trimmedTranslations(value = {}) {
+    return Object.fromEntries(
+      FOLLOW_UP_LANGUAGES.map(({ key }) => [
+        key,
+        String(value?.[key] || "").trim(),
+      ])
+    );
   }
 
-  async function prepareAdditionalStepsForSave(steps = []) {
-    const prepared = [];
-    for (const step of steps) {
-      const message = step.message.trim();
-      let translations = step.translations;
-      if (!hasCompleteTranslations(translations)) {
-        translations = await requestTranslations(message, {
-          announce: false,
-        });
-        if (!translations) {
-          throw new Error("Couldn't generate sequence language versions.");
+  function missingTranslationMessages() {
+    const messages = [];
+    const firstMessage = form.message.trim();
+    if (translationsNeedRefresh) messages.push(firstMessage);
+
+    const collectOverrides = (overrides = []) => {
+      for (const item of overrides) {
+        if (!hasCompleteTranslations(item.translations)) {
+          messages.push(String(item.message || "").trim());
         }
       }
-      prepared.push({
+    };
+
+    collectOverrides(form.serviceOverrides);
+    for (const step of form.additionalSteps || []) {
+      if (!hasCompleteTranslations(step.translations)) {
+        messages.push(String(step.message || "").trim());
+      }
+      collectOverrides(step.serviceOverrides);
+    }
+    return messages.filter(Boolean);
+  }
+
+  function preparedServiceOverrides(overrides, generatedByMessage) {
+    return (overrides || []).map((item) => {
+      const message = item.message.trim();
+      const existingTranslations = trimmedTranslations(item.translations);
+      const generated = hasCompleteTranslations(item.translations)
+        ? null
+        : generatedByMessage.get(message);
+      if (!hasCompleteTranslations(item.translations) && !generated) {
+        throw new Error("Couldn't generate targeted language versions.");
+      }
+      const translations = Object.fromEntries(
+        FOLLOW_UP_LANGUAGES.map(({ key }) => [
+          key,
+          existingTranslations[key] || generated?.[key] || "",
+        ])
+      );
+      return {
+        serviceName: item.serviceName.trim(),
+        message,
+        translations,
+      };
+    });
+  }
+
+  function preparedAdditionalSteps(steps, generatedByMessage) {
+    return (steps || []).map((step) => {
+      const message = step.message.trim();
+      const existingTranslations = trimmedTranslations(step.translations);
+      const generated = hasCompleteTranslations(step.translations)
+        ? null
+        : generatedByMessage.get(message);
+      if (!hasCompleteTranslations(step.translations) && !generated) {
+        throw new Error("Couldn't generate sequence language versions.");
+      }
+      const translations = Object.fromEntries(
+        FOLLOW_UP_LANGUAGES.map(({ key }) => [
+          key,
+          existingTranslations[key] || generated?.[key] || "",
+        ])
+      );
+      return {
         delayMinutes: Number(step.delayMinutes),
         message,
         translations,
         imageUrl: step.imageUrl || "",
-        serviceOverrides: await prepareServiceOverridesForSave(
-          step.serviceOverrides || []
+        serviceOverrides: preparedServiceOverrides(
+          step.serviceOverrides,
+          generatedByMessage
         ),
-      });
-    }
-    return prepared;
+      };
+    });
   }
 
   async function handleSave() {
@@ -514,17 +607,16 @@ export default function Tools() {
 
     setSaving(true);
     try {
-      let translations = Object.fromEntries(
-        FOLLOW_UP_LANGUAGES.map(({ key }) => [
-          key,
-          form.translations[key]?.trim() || "",
-        ])
+      const generatedByMessage = await requestTranslationBatch(
+        missingTranslationMessages()
       );
 
+      let translations = trimmedTranslations(form.translations);
       if (translationsNeedRefresh) {
-        const generated = await requestTranslations(message, { announce: false });
-        if (!generated) return;
-
+        const generated = generatedByMessage.get(message);
+        if (!generated) {
+          throw new Error("Couldn't generate the main follow-up language versions.");
+        }
         translations = Object.fromEntries(
           FOLLOW_UP_LANGUAGES.map(({ key }) => {
             const manualValue = form.translations[key]?.trim() || "";
@@ -535,11 +627,13 @@ export default function Tools() {
         );
       }
 
-      const serviceOverrides = await prepareServiceOverridesForSave(
-        form.serviceOverrides || []
+      const serviceOverrides = preparedServiceOverrides(
+        form.serviceOverrides,
+        generatedByMessage
       );
-      const additionalSteps = await prepareAdditionalStepsForSave(
-        form.additionalSteps || []
+      const additionalSteps = preparedAdditionalSteps(
+        form.additionalSteps,
+        generatedByMessage
       );
 
       const updated = await api.updateConfig({
@@ -701,6 +795,8 @@ export default function Tools() {
             onSourceMessageChange={handleSourceMessageChange}
             onTranslationChange={handleTranslationChange}
             onGenerateTranslations={handleGenerateTranslations}
+            onTranslateMessage={generateTranslationsForMessage}
+            onUploadImage={uploadFollowUpImage}
             onImagePicked={handleImagePicked}
             onSave={handleSave}
             toasts={toasts}
@@ -759,20 +855,161 @@ function nextSequenceDelay(previousDelay) {
   return previous < 1380 ? Math.min(1380, previous + 5) : null;
 }
 
+function TranslationDetails({
+  sourceMessage,
+  translations = {},
+  onChange,
+  onReplace,
+  onTranslate,
+  translating,
+}) {
+  const [languageKey, setLanguageKey] = useState("en");
+  const language = FOLLOW_UP_LANGUAGES.find((item) => item.key === languageKey);
+  const readyCount = FOLLOW_UP_LANGUAGES.filter(
+    ({ key }) => String(translations?.[key] || "").trim()
+  ).length;
+
+  async function regenerate() {
+    const generated = await onTranslate(sourceMessage);
+    if (generated) onReplace(generated);
+  }
+
+  return (
+    <details className="mt-3 rounded-xl border border-[var(--color-border)] bg-white">
+      <summary className="cursor-pointer list-none px-3.5 py-3 text-xs font-semibold text-[var(--color-primary)]">
+        Review translations · {readyCount}/3 ready
+      </summary>
+      <div className="border-t border-[var(--color-border)] p-3.5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[10px] leading-4 text-[var(--color-text-muted)]">
+            English, BM and Chinese are selected automatically for each customer. You can fine-tune any version here.
+          </p>
+          <button
+            type="button"
+            onClick={regenerate}
+            disabled={translating || !String(sourceMessage || "").trim()}
+            className="shrink-0 rounded-lg border border-[var(--color-primary)]/25 px-2.5 py-1.5 text-[10px] font-semibold text-[var(--color-primary)] disabled:opacity-50"
+          >
+            {translating ? "Generating…" : "Regenerate"}
+          </button>
+        </div>
+        <div className="mt-3 flex gap-1 overflow-x-auto border-b border-[var(--color-border)]">
+          {FOLLOW_UP_LANGUAGES.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setLanguageKey(item.key)}
+              className={`shrink-0 border-b-2 px-2.5 py-2 text-[10px] font-semibold ${languageKey === item.key ? "border-[var(--color-primary)] text-[var(--color-primary)]" : "border-transparent text-[var(--color-text-muted)]"}`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <label className="text-[10px] font-semibold">{language?.label} message</label>
+          <span className="text-[10px] text-[var(--color-text-muted)]">
+            {String(translations?.[languageKey] || "").length}/1000
+          </span>
+        </div>
+        <textarea
+          rows="3"
+          maxLength="1000"
+          value={translations?.[languageKey] || ""}
+          onChange={(event) => onChange(languageKey, event.target.value)}
+          className="mt-1.5 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2.5 text-xs leading-5 outline-none focus:border-[var(--color-primary)]"
+        />
+      </div>
+    </details>
+  );
+}
+
+function StepImagePicker({
+  imageUrl,
+  uploading,
+  onUpload,
+  onChange,
+  label = "Optional graphic",
+}) {
+  const inputRef = useRef(null);
+
+  async function handlePicked(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const url = await onUpload(file);
+    if (url) onChange(url);
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-white p-3.5">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold">{label}</p>
+          <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">JPG or PNG, up to 5MB.</p>
+        </div>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/jpeg,image/png"
+          aria-label={`${label} upload`}
+          className="hidden"
+          onChange={handlePicked}
+        />
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={uploading}
+          className="rounded-lg border border-[var(--color-primary)]/25 px-2.5 py-1.5 text-[10px] font-semibold text-[var(--color-primary)] disabled:opacity-50"
+        >
+          {uploading ? "Uploading…" : imageUrl ? "Replace" : "Add image"}
+        </button>
+      </div>
+      {imageUrl && (
+        <div className="mt-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]">
+          <img src={imageUrl} alt="" className="max-h-48 w-full object-contain" />
+          <div className="flex justify-end border-t border-[var(--color-border)] bg-white px-3 py-2">
+            <button
+              type="button"
+              onClick={() => onChange("")}
+              disabled={uploading}
+              className="text-[10px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)] disabled:opacity-50"
+            >
+              Remove image
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ServiceOverridesEditor({
   overrides = [],
   services = [],
   onChange,
   stepLabel,
+  translating,
+  onTranslateMessage,
 }) {
+  const [expanded, setExpanded] = useState(false);
   const serviceNames = services
     .map((service) => String(service?.name || "").trim())
     .filter(Boolean);
-  const selected = new Set(overrides.map((item) => item.serviceName));
-  const available = serviceNames.filter((name) => !selected.has(name));
+  const normalizedServices = new Set(
+    serviceNames.map((name) => name.toLocaleLowerCase())
+  );
+  const selected = new Set(
+    overrides.map((item) =>
+      String(item?.serviceName || "").trim().toLocaleLowerCase()
+    )
+  );
+  const available = serviceNames.filter(
+    (name) => !selected.has(name.toLocaleLowerCase())
+  );
 
   function addOverride() {
     if (!available.length) return;
+    setExpanded(true);
     onChange([
       ...overrides,
       {
@@ -784,103 +1021,163 @@ function ServiceOverridesEditor({
   }
 
   return (
-    <div className="mt-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <div className="mt-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]">
+      <button
+        type="button"
+        onClick={() => setExpanded((current) => !current)}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left"
+        aria-expanded={expanded}
+      >
         <div>
-          <p className="text-sm font-semibold">Target by service <span className="font-normal text-[var(--color-text-muted)]">Optional</span></p>
+          <p className="text-sm font-semibold">
+            Target by service
+            <span className="ml-2 font-normal text-[var(--color-text-muted)]">
+              Optional · {overrides.length} configured
+            </span>
+          </p>
           <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-            When the lead has one matching service interest, use this message instead of the default {stepLabel}.
+            Use a more relevant message when exactly one service interest is clear.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={addOverride}
-          disabled={!available.length}
-          className="shrink-0 rounded-xl border border-[var(--color-primary)]/25 bg-white px-3 py-2 text-xs font-semibold text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          + Add service message
-        </button>
-      </div>
+        <span className="shrink-0 text-xs font-semibold text-[var(--color-primary)]">
+          {expanded ? "Hide" : "Manage"}
+        </span>
+      </button>
 
-      {!serviceNames.length && (
-        <p className="mt-3 rounded-xl border border-dashed border-[var(--color-border)] bg-white px-3 py-2.5 text-xs text-[var(--color-text-muted)]">
-          Add services in Settings first. The default follow-up will still work for every lead.
-        </p>
-      )}
+      {expanded && (
+        <div className="border-t border-[var(--color-border)] p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs leading-5 text-[var(--color-text-muted)]">
+              If interest is unclear or multiple services are being compared, the default {stepLabel} is used.
+            </p>
+            <button
+              type="button"
+              onClick={addOverride}
+              disabled={!available.length}
+              className="shrink-0 rounded-xl border border-[var(--color-primary)]/25 bg-white px-3 py-2 text-xs font-semibold text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              + Add service message
+            </button>
+          </div>
 
-      {overrides.length > 0 && (
-        <div className="mt-4 space-y-3">
-          {overrides.map((item, index) => {
-            const usedByOthers = new Set(
-              overrides
-                .filter((_, otherIndex) => otherIndex !== index)
-                .map((override) => override.serviceName)
-            );
-            const choices = [
-              item.serviceName,
-              ...serviceNames.filter((name) => name !== item.serviceName),
-            ].filter((name, choiceIndex, all) => name && all.indexOf(name) === choiceIndex);
+          {!serviceNames.length && (
+            <p className="mt-3 rounded-xl border border-dashed border-[var(--color-border)] bg-white px-3 py-2.5 text-xs text-[var(--color-text-muted)]">
+              Add services in Settings first. The default follow-up will still work for every lead.
+            </p>
+          )}
 
-            return (
-              <div key={`${item.serviceName || "service"}-${index}`} className="rounded-xl border border-[var(--color-border)] bg-white p-3.5">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <select
-                    value={item.serviceName}
-                    onChange={(event) => {
-                      const next = overrides.map((override, overrideIndex) =>
-                        overrideIndex === index
-                          ? { ...override, serviceName: event.target.value }
-                          : override
-                      );
-                      onChange(next);
-                    }}
-                    className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
-                  >
-                    {choices.map((name) => (
-                      <option key={name} value={name} disabled={usedByOthers.has(name)}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onChange(overrides.filter((_, overrideIndex) => overrideIndex !== index))
-                    }
-                    className="self-start px-1 py-2 text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)] sm:self-auto"
-                  >
-                    Remove
-                  </button>
-                </div>
-                <div className="mt-3 flex items-center justify-between gap-3">
-                  <label className="text-xs font-semibold">Targeted message</label>
-                  <span className="text-[10px] text-[var(--color-text-muted)]">{item.message.length}/1000</span>
-                </div>
-                <textarea
-                  rows="3"
-                  maxLength="1000"
-                  value={item.message}
-                  onChange={(event) => {
-                    const next = overrides.map((override, overrideIndex) =>
-                      overrideIndex === index
-                        ? {
-                            ...override,
-                            message: event.target.value,
-                            translations: { en: "", ms: "", zh: "" },
-                          }
-                        : override
-                    );
-                    onChange(next);
-                  }}
-                  placeholder="Write a more relevant follow-up for customers interested in this service."
-                  className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
-                />
-                <p className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
-                  English, BM and Chinese versions are generated automatically when you save.
-                </p>
-              </div>
-            );
-          })}
+          {overrides.length > 0 && (
+            <div className="mt-4 space-y-3">
+              {overrides.map((item, index) => {
+                const usedByOthers = new Set(
+                  overrides
+                    .filter((_, otherIndex) => otherIndex !== index)
+                    .map((override) =>
+                      String(override?.serviceName || "").trim().toLocaleLowerCase()
+                    )
+                );
+                const choices = [
+                  item.serviceName,
+                  ...serviceNames.filter((name) => name !== item.serviceName),
+                ].filter((name, choiceIndex, all) => name && all.indexOf(name) === choiceIndex);
+                const stale = !normalizedServices.has(
+                  String(item.serviceName || "").trim().toLocaleLowerCase()
+                );
+
+                return (
+                  <div key={`${item.serviceName || "service"}-${index}`} className="rounded-xl border border-[var(--color-border)] bg-white p-3.5">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <select
+                        value={item.serviceName}
+                        onChange={(event) => {
+                          const next = overrides.map((override, overrideIndex) =>
+                            overrideIndex === index
+                              ? { ...override, serviceName: event.target.value }
+                              : override
+                          );
+                          onChange(next);
+                        }}
+                        className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
+                      >
+                        {choices.map((name) => (
+                          <option key={name} value={name} disabled={usedByOthers.has(name.toLocaleLowerCase())}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onChange(overrides.filter((_, overrideIndex) => overrideIndex !== index))
+                        }
+                        className="self-start px-1 py-2 text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)] sm:self-auto"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    {stale && (
+                      <p className="mt-2 text-[10px] font-semibold text-[var(--color-danger)]">
+                        This service no longer exists. Choose a current service or remove this targeted message.
+                      </p>
+                    )}
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <label className="text-xs font-semibold">Targeted message</label>
+                      <span className="text-[10px] text-[var(--color-text-muted)]">{item.message.length}/1000</span>
+                    </div>
+                    <textarea
+                      rows="3"
+                      maxLength="1000"
+                      value={item.message}
+                      onChange={(event) => {
+                        const next = overrides.map((override, overrideIndex) =>
+                          overrideIndex === index
+                            ? {
+                                ...override,
+                                message: event.target.value,
+                                translations: { en: "", ms: "", zh: "" },
+                              }
+                            : override
+                        );
+                        onChange(next);
+                      }}
+                      placeholder="Write a more relevant follow-up for customers interested in this service."
+                      className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+                    />
+                    <TranslationDetails
+                      sourceMessage={item.message}
+                      translations={item.translations}
+                      translating={translating}
+                      onTranslate={onTranslateMessage}
+                      onReplace={(translations) =>
+                        onChange(
+                          overrides.map((override, overrideIndex) =>
+                            overrideIndex === index
+                              ? { ...override, translations }
+                              : override
+                          )
+                        )
+                      }
+                      onChange={(languageKey, value) =>
+                        onChange(
+                          overrides.map((override, overrideIndex) =>
+                            overrideIndex === index
+                              ? {
+                                  ...override,
+                                  translations: {
+                                    ...override.translations,
+                                    [languageKey]: value,
+                                  },
+                                }
+                              : override
+                          )
+                        )
+                      }
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -908,6 +1205,8 @@ function FollowUpTool({
   onSourceMessageChange,
   onTranslationChange,
   onGenerateTranslations,
+  onTranslateMessage,
+  onUploadImage,
   onImagePicked,
   onSave,
   toasts,
@@ -1085,6 +1384,8 @@ function FollowUpTool({
               overrides={form.serviceOverrides}
               services={services}
               stepLabel="Follow-up 1"
+              translating={translating}
+              onTranslateMessage={onTranslateMessage}
               onChange={(serviceOverrides) =>
                 setForm((current) => ({ ...current, serviceOverrides }))
               }
@@ -1164,20 +1465,43 @@ function FollowUpTool({
                           placeholder="Write the next follow-up message."
                           className="mt-1.5 w-full resize-y rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)]"
                         />
-                        <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">Language versions are generated when you save.</p>
+                        <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">Language versions are generated automatically when you save.</p>
+                        <TranslationDetails
+                          sourceMessage={step.message}
+                          translations={step.translations}
+                          translating={translating}
+                          onTranslate={onTranslateMessage}
+                          onReplace={(translations) =>
+                            updateAdditionalStep(index, { translations })
+                          }
+                          onChange={(languageKey, value) =>
+                            updateAdditionalStep(index, {
+                              translations: {
+                                ...step.translations,
+                                [languageKey]: value,
+                              },
+                            })
+                          }
+                        />
                       </div>
                     </div>
 
-                    {step.imageUrl && (
-                      <p className="mt-3 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2 text-[10px] text-[var(--color-text-muted)]">
-                        This step has a saved graphic from imported configuration. It will remain attached.
-                      </p>
-                    )}
+                    <StepImagePicker
+                      imageUrl={step.imageUrl}
+                      uploading={uploadingImage}
+                      onUpload={onUploadImage}
+                      onChange={(imageUrl) =>
+                        updateAdditionalStep(index, { imageUrl })
+                      }
+                      label={`Follow-up ${index + 2} graphic`}
+                    />
 
                     <ServiceOverridesEditor
                       overrides={step.serviceOverrides}
                       services={services}
                       stepLabel={`Follow-up ${index + 2}`}
+                      translating={translating}
+                      onTranslateMessage={onTranslateMessage}
                       onChange={(serviceOverrides) =>
                         updateAdditionalStep(index, { serviceOverrides })
                       }

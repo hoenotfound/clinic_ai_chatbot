@@ -206,6 +206,65 @@ test("follow-up config accepts a targeted sequence and keeps legacy one-step pay
   assert.match(outOfOrder.error, /increasing delays/i);
 });
 
+test("follow-up service targeting cannot reference removed or unknown services", () => {
+  const current = currentConfig();
+  current.automatedFollowUp = {
+    ...current.automatedFollowUp,
+    serviceOverrides: [
+      {
+        serviceName: "Consultation",
+        message: "Consultation follow-up",
+        translations: {
+          en: "Consultation follow-up",
+          ms: "Susulan konsultasi",
+          zh: "咨询跟进",
+        },
+      },
+    ],
+    additionalSteps: [],
+  };
+
+  const renameBreaksTargeting = prepareConfigUpdatePayload(
+    {
+      services: [
+        {
+          name: "Renamed Consultation",
+          description: "",
+          priceRange: "",
+          duration: "",
+        },
+      ],
+    },
+    current
+  );
+  assert.equal(renameBreaksTargeting.ok, false);
+  assert.deepEqual(renameBreaksTargeting.invalidKeys, ["automatedFollowUp"]);
+  assert.match(renameBreaksTargeting.error, /Consultation/);
+  assert.match(renameBreaksTargeting.error, /remap or remove/i);
+
+  const unknownTarget = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        ...current.automatedFollowUp,
+        serviceOverrides: [
+          {
+            serviceName: "Missing Service",
+            message: "Missing service follow-up",
+            translations: {
+              en: "Missing service follow-up",
+              ms: "Susulan servis",
+              zh: "服务跟进",
+            },
+          },
+        ],
+      },
+    },
+    current
+  );
+  assert.equal(unknownTarget.ok, false);
+  assert.deepEqual(unknownTarget.invalidKeys, ["automatedFollowUp"]);
+});
+
 test("changing follow-up timing starts a fresh activation window", () => {
   const current = currentConfig();
   current.automatedFollowUp = {

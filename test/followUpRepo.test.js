@@ -21,11 +21,18 @@ test("automated follow-up inserts take the conversation scoring lock and re-chec
       "Still interested?",
       "",
       1,
+      null,
       120,
       "all",
       "2026-08-28T00:00:00.000Z",
     ]);
     assert.match(sql, /automated_follow_up_step/);
+    assert.match(sql, /automated_follow_up_target_service/);
+    assert.match(sql, /automated_follow_up_targeting_recorded/);
+    assert.match(sql, /latest_lead\.is_closed = false/);
+    assert.match(sql, /appointment_set.*visited/);
+    assert.match(sql, /appointment_status.*set.*visited/);
+    assert.match(sql, /appointment_status.*reschedule.*cancelled/);
     assert.match(sql, /COALESCE\(progress\.max_step, 0\) \+ 1 = \$5/);
     return { rows: [] };
   };
@@ -55,6 +62,10 @@ test("automated follow-up discovery excludes conversations already waiting for s
     assert.match(sql, /previous_outbound/);
     assert.match(sql, /recent_inbound\.id <= latest_inbound\.id/);
     assert.match(sql, /recent_inbound\.id > previous_outbound\.id/);
+    assert.match(sql, /latest_lead\.is_closed = false/);
+    assert.match(sql, /appointment_set.*visited/);
+    assert.match(sql, /appointment_status.*set.*visited/);
+    assert.match(sql, /appointment_status.*reschedule.*cancelled/);
     assert.deepEqual(params, [
       [120],
       "all",
@@ -72,4 +83,97 @@ test("automated follow-up discovery excludes conversations already waiting for s
   });
 
   assert.deepEqual(candidates, []);
+});
+
+
+test("next follow-up due calculation excludes booked visited and closed latest leads", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  let capturedSql = "";
+  pool.query = async (sql) => {
+    capturedSql = sql;
+    return { rows: [{ due_at: null }] };
+  };
+
+  await followUpRepo.getNextCandidateDueAt({
+    delayMinutes: [120, 480],
+    triggerMode: "all",
+    activatedAt: "2026-08-28T00:00:00.000Z",
+  });
+
+  assert.match(capturedSql, /latest_lead\.is_closed = false/);
+  assert.match(capturedSql, /COALESCE\(latest_lead\.stage_type, 'open'\) = 'open'/);
+  assert.match(capturedSql, /appointment_set.*visited/);
+  assert.match(capturedSql, /appointment_status.*set.*visited/);
+  assert.match(capturedSql, /appointment_status.*reschedule.*cancelled/);
+});
+
+
+test("final claim eligibility rechecks newer messages and lead completion under the conversation lock", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(
+      sql,
+      new RegExp(`pg_advisory_xact_lock\\(${CONVERSATION_LOCK_NAMESPACE}`)
+    );
+    assert.match(sql, /m\.automated_follow_up_for_message_id IS NOT NULL/);
+    assert.match(sql, /newer\.role = 'user'/);
+    assert.match(sql, /newer\.is_automated_follow_up = false/);
+    assert.match(sql, /latest_lead\.is_closed = false/);
+    assert.match(sql, /appointment_set.*visited/);
+    assert.deepEqual(params, [22, 120]);
+    return { rows: [{ eligible: true }] };
+  };
+
+  const eligible = await followUpRepo.isClaimStillEligible({
+    contactId: 22,
+    messageId: 120,
+  });
+
+  assert.equal(eligible, true);
+});
+
+test("discarding an unsent final claim only removes a still-unaccepted automated follow-up", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(
+      sql,
+      new RegExp(`pg_advisory_xact_lock\\(${CONVERSATION_LOCK_NAMESPACE}`)
+    );
+    assert.match(sql, /DELETE FROM messages/);
+    assert.match(sql, /is_automated_follow_up = true/);
+    assert.match(sql, /automated_follow_up_for_message_id IS NOT NULL/);
+    assert.match(sql, /delivery_status IS NULL/);
+    assert.match(sql, /whatsapp_message_id IS NULL/);
+    assert.deepEqual(params, [22, 120]);
+    return {
+      rows: [
+        {
+          id: 120,
+          contact_id: 22,
+          delivery_status: null,
+          whatsapp_message_id: null,
+        },
+      ],
+    };
+  };
+
+  const discarded = await followUpRepo.discardUnsentClaim({
+    contactId: 22,
+    messageId: 120,
+  });
+
+  assert.equal(discarded.id, 120);
+  assert.equal(discarded.contact_id, 22);
 });
