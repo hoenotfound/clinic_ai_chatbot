@@ -208,13 +208,18 @@ function aiModelHealth({ checks = [], aiUsage = null } = {}) {
 
   const claudeDescriptor = descriptors.find((item) => item.provider === "claude");
   const claudeRuntime = claudeDescriptor ? runtimeCandidates.get(claudeDescriptor.healthKey) : null;
-  const claudePersisted = persistedByLabel.get("claude:Claude fallback");
+  const claudePersisted = claudeDescriptor
+    ? persistedByLabel.get(`claude:${claudeDescriptor.label}`)
+      || persistedByLabel.get("claude:Claude fallback")
+      || persistedByLabel.get("claude:Claude primary")
+    : null;
   const claudeSource = claudeRuntime || claudePersisted || {};
   const claudeConfigured = Boolean(claudeDescriptor);
   const claudeLastStatus = claudeSource.last_status || claudeSource.status || "not_checked";
   const claudeBad = ["invalid", "failed"].includes(claudeLastStatus);
   const claudeWarning = ["unavailable", "rate_limited"].includes(claudeLastStatus);
   const claude = {
+    name: claudeDescriptor?.label || "Claude",
     configured: claudeConfigured,
     status: !claudeConfigured ? "not_configured" : claudeBad ? "error" : claudeWarning ? "warning" : "healthy",
     label: !claudeConfigured ? "Not configured" : claudeBad ? "Needs attention" : claudeWarning ? "Temporarily unavailable" : "Ready",
