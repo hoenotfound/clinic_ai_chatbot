@@ -24,6 +24,7 @@ test.beforeEach(() => {
   followUpRepo.getNextStaleClaimDueAt = async () => null;
   followUpRepo.isClaimStillEligible = async () => true;
   followUpRepo.discardUnsentClaim = async () => null;
+  followUpRepo.discardUnsentSocialImageCompanion = async () => null;
   pipelineRepo.markContactedForContact = async () => false;
   // These tests exercise follow-up timing/language/delivery behavior, not the
   // policy service's database lookup. Policy behavior has dedicated tests.
@@ -137,6 +138,14 @@ test("final pre-send guard rechecks quiet hours before provider delivery", () =>
   assert.match(
     source,
     /quietHoursStatus\(new Date\(\), liveSettings\.quietHours\)\.active/
+  );
+  assert.match(
+    source,
+    /sendSocialImageCompanion\([\s\S]*quietHoursStatus\(new Date\(\), quietHours\)\.active/
+  );
+  assert.match(
+    source,
+    /discardUnsentSocialImageCompanion/
   );
 });
 
