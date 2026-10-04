@@ -363,6 +363,25 @@ test("a cooled Claude fallback does not steal provider reserve from healthy Gemi
   }
 });
 
+test("provider timeout passes a bounded request timeout and abort signal to Claude", async () => {
+  let requestControl = null;
+  const candidate = {
+    label: "Claude fallback",
+    async run(_messages, _options, control) {
+      requestControl = control;
+      return new Promise(() => {});
+    },
+  };
+
+  await assert.rejects(
+    runCandidate(candidate, [], {}, 40, 0, { globalBudgetMs: 40 }),
+    (err) => err.code === "AI_TIMEOUT"
+  );
+
+  assert.equal(requestControl.timeoutMs, 40);
+  assert.equal(requestControl.signal.aborted, true);
+});
+
 test("fallback-provider retries cannot extend beyond their assigned provider budget", async () => {
   let calls = 0;
   const candidate = {
