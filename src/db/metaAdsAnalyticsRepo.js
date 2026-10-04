@@ -319,7 +319,7 @@ async function getMetaAdsLeadPreview(
   filters,
   profile = getAnalyticsPipelineProfile(),
   query = analyticsQuery,
-  { accessibleLeadIds = null, limit = 25 } = {}
+  { accessibleLeadIds = null, accessibleContactIds = null, limit = 25 } = {}
 ) {
   const result = await query(
     `${JOURNEY_BASE_CTE}
@@ -369,7 +369,8 @@ async function getMetaAdsLeadPreview(
       COALESCE(la.ad_name, ah.ad_name) AS ad_name,
       latest_message.content AS last_message,
       latest_message.role AS last_message_role,
-      latest_message.created_at AS last_message_at
+      latest_message.created_at AS last_message_at,
+      ($9::int[] IS NULL OR j.contact_id = ANY($9::int[])) AS can_open_conversation
     FROM journeys_with_milestones j
     JOIN contacts c ON c.id = j.contact_id
     JOIN lead_attributions la ON la.lead_id = j.id
@@ -411,6 +412,7 @@ async function getMetaAdsLeadPreview(
       filters.adId || null,
       accessibleLeadIds === null ? null : accessibleLeadIds,
       Math.max(1, Math.min(Number(limit) || 25, 100)),
+      accessibleContactIds === null ? null : accessibleContactIds,
     ]
   );
 
@@ -445,6 +447,7 @@ async function getMetaAdsLeadPreview(
       lastMessage: row.last_message || null,
       lastMessageRole: row.last_message_role || null,
       lastMessageAt: row.last_message_at || null,
+      canOpenConversation: Boolean(row.can_open_conversation),
     })),
   };
 }
