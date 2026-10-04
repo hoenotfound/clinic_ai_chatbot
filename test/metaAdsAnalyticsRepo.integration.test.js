@@ -4,7 +4,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { Client } = require("pg");
 
-const { getMetaAdsAnalytics } = require("../src/db/metaAdsAnalyticsRepo");
+const {
+  getMetaAdsAnalytics,
+  getMetaAdsLeadPreview,
+} = require("../src/db/metaAdsAnalyticsRepo");
 const { getAnalyticsPipelineProfile } = require("../src/db/analyticsPipelineProfile");
 
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
@@ -105,7 +108,9 @@ test(
       INSERT INTO messages (id, contact_id, role, content, created_at) VALUES
         (101, 1, 'user', 'Interested in pelvis treatment', '2026-10-02T02:00:00Z'),
         (102, 2, 'user', 'How much is the package?', '2026-10-03T02:00:00Z'),
-        (103, 3, 'user', 'Can I book?', '2026-10-03T03:00:00Z');
+        (103, 3, 'user', 'Can I book?', '2026-10-03T03:00:00Z'),
+        (104, 1, 'user', 'A later journey starts here', '2026-10-05T02:00:00Z'),
+        (105, 1, 'assistant', 'This belongs to the later journey', '2026-10-05T02:05:00Z');
 
       INSERT INTO leads (
         id, contact_id, stage_id, temperature, estimated_value,
@@ -114,7 +119,8 @@ test(
       ) VALUES
         (1, 1, 4, 'hot', 500, 'visited', 'Pelvis', 'caden', 'PJ', '2026-10-02T02:00:00Z', 101),
         (2, 2, 1, 'warm', 800, NULL, 'Pelvis', NULL, 'PJ', '2026-10-03T02:00:00Z', 102),
-        (3, 3, 4, 'warm', 300, NULL, '3D', 'staff', 'PJ', '2026-10-03T03:00:00Z', 103);
+        (3, 3, 4, 'warm', 300, NULL, '3D', 'staff', 'PJ', '2026-10-03T03:00:00Z', 103),
+        (4, 1, 1, 'warm', NULL, NULL, '3D', 'caden', 'PJ', '2026-10-05T02:00:00Z', 104);
 
       INSERT INTO lead_stage_history (lead_id, to_stage_id, created_at) VALUES
         (1, 2, '2026-10-02T04:00:00Z'),
@@ -241,13 +247,34 @@ test(
     assert.equal(campaign.accounts[0].dataThrough, "2026-10-03");
     assert.equal(campaign.accounts[0].coverageFrom, "2026-10-01");
     assert.equal(campaign.accounts[0].coverageThrough, "2026-10-04");
-    assert.equal(campaign.leadPreview.total, 3);
-    assert.equal(campaign.leadPreview.leads.length, 3);
-    assert.equal(campaign.leadPreview.leads[0].name, "Jess");
-    assert.equal(campaign.leadPreview.leads[0].lastMessage, "Can I book?");
-    assert.equal(campaign.leadPreview.leads[0].campaignName, null);
-    assert.equal(campaign.leadPreview.leads[1].name, "May");
-    assert.equal(campaign.leadPreview.leads[1].campaignName, "Old Campaign Name");
+
+    assert.equal(campaign.leadPreview, undefined);
+
+    const restrictedPreview = await getMetaAdsLeadPreview(
+      { ...baseFilters, level: "campaign" },
+      analyticsProfile,
+      database.query.bind(database),
+      { accessibleLeadIds: [1, 2], limit: 25 }
+    );
+    assert.equal(restrictedPreview.total, 2);
+    assert.equal(restrictedPreview.leads.length, 2);
+    assert.equal(restrictedPreview.leads[0].name, "May");
+    assert.equal(restrictedPreview.leads[0].campaignName, "Old Campaign Name");
+    assert.equal(restrictedPreview.leads[1].name, "Alice");
+    assert.equal(restrictedPreview.leads[1].lastMessage, "Interested in pelvis treatment");
+    assert.notEqual(
+      restrictedPreview.leads[1].lastMessage,
+      "This belongs to the later journey"
+    );
+
+    const noLeadAccessPreview = await getMetaAdsLeadPreview(
+      { ...baseFilters, level: "campaign" },
+      analyticsProfile,
+      database.query.bind(database),
+      { accessibleLeadIds: [], limit: 25 }
+    );
+    assert.equal(noLeadAccessPreview.total, 0);
+    assert.deepEqual(noLeadAccessPreview.leads, []);
 
     const indexResult = await client.query(
       `SELECT indexname
