@@ -189,6 +189,8 @@ test("follow-up analytics exclude social image companions and expose step/target
 
   assert.match(source, /automated_follow_up_for_message_id IS NOT NULL/);
   assert.match(source, /automated_follow_up_target_service/);
+  assert.match(source, /automated_follow_up_targeting_recorded/);
+  assert.match(source, /legacy_unknown/);
   assert.match(source, /AS by_step/);
   assert.match(source, /AS by_targeting/);
   assert.match(source, /next_follow_up_at/);
