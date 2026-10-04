@@ -339,9 +339,26 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     }
   }
 
+  const requestedDelays = allSteps.map((step) => step.delayMinutes);
+  const currentAdditionalSteps = Array.isArray(current?.additionalSteps)
+    ? current.additionalSteps
+    : [];
+  const currentDelays = [
+    Number(current?.delayMinutes),
+    ...currentAdditionalSteps.map((step) => Number(step?.delayMinutes)),
+  ];
+  const scheduleUnchanged =
+    currentDelays.length === requestedDelays.length &&
+    currentDelays.every((delay, index) => delay === requestedDelays[index]);
+
+  // A timing/sequence change can make an old silent conversation immediately
+  // eligible for a newly-added or earlier step. Start a fresh activation window
+  // in that case so configuration changes never create surprise retroactive
+  // sends. Message/translation/targeting edits keep the current activation.
   const continuingCurrentActivation =
     enabled &&
     current?.enabled === true &&
+    scheduleUnchanged &&
     typeof current.activatedAt === "string" &&
     !Number.isNaN(Date.parse(current.activatedAt));
 
