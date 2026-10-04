@@ -631,8 +631,8 @@ test("client branding updates browser and dimensioned home-screen identity", asy
 
   await expect(page).toHaveTitle("Neutro Sense TCM | AI Chatbot Portal");
   await expect.poll(() =>
-    page.evaluate(() => document.querySelector('link[rel="icon"]')?.href)
-  ).toBe(clientAppIcon192Url);
+    page.evaluate(() => document.querySelector('link[rel="icon"]')?.getAttribute("href"))
+  ).toBe("/api/auth/branding/favicon.png");
   await expect.poll(() =>
     page.evaluate(() => document.querySelector('link[rel="apple-touch-icon"]')?.getAttribute("href"))
   ).toBe("/api/auth/branding/apple-touch-icon.png");
@@ -660,7 +660,7 @@ test("home-screen metadata falls back to packaged DA icons without client instal
     favicon: document.querySelector('link[rel="icon"]')?.getAttribute("href"),
     apple: document.querySelector('link[rel="apple-touch-icon"]')?.getAttribute("href"),
   }));
-  expect(metadata.favicon).toBe("/app-icons/da-chatbot-192.png");
+  expect(metadata.favicon).toBe("/api/auth/branding/favicon.png");
   expect(metadata.apple).toBe("/api/auth/branding/apple-touch-icon.png");
 });
 
