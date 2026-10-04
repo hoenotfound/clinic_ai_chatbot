@@ -529,6 +529,25 @@ async function getResponseTimes(filters) {
 }
 
 async function getFollowUps(filters, analyticsProfile) {
+  const appointmentStatusFallbackSql = analyticsProfile.appointmentStatusFallback
+    ? `
+         OR EXISTS (
+           SELECT 1
+           FROM lead_activities activity
+           WHERE activity.lead_id = f.lead_id
+             AND activity.created_at > f.created_at
+             AND activity.created_at <= f.created_at + (${FOLLOW_UP_OUTCOME_WINDOW_DAYS} * interval '1 day')
+             AND (
+               f.next_follow_up_at IS NULL
+               OR activity.created_at < f.next_follow_up_at
+             )
+             AND (
+               activity.metadata->>'appointmentStatus' IN ('set', 'visited')
+               OR activity.description LIKE '%Appointment status changed to set.%'
+               OR activity.description LIKE '%Appointment status changed to visited.%'
+             )
+         )`
+    : "";
   const result = await analyticsQuery(
     `${JOURNEY_BASE_CTE},
      matching_journeys AS (
@@ -608,18 +627,21 @@ async function getFollowUps(filters, analyticsProfile) {
                )
              )
          ) AS replied_72h,
-         EXISTS (
-           SELECT 1
-           FROM lead_stage_history history
-           JOIN pipeline_stages stage ON stage.id = history.to_stage_id
-           WHERE history.lead_id = f.lead_id
-             AND stage.system_key = '${analyticsProfile.primarySystemKey}'
-             AND history.created_at > f.created_at
-             AND history.created_at <= f.created_at + (${FOLLOW_UP_OUTCOME_WINDOW_DAYS} * interval '1 day')
-             AND (
-               f.next_follow_up_at IS NULL
-               OR history.created_at < f.next_follow_up_at
-             )
+         (
+           EXISTS (
+             SELECT 1
+             FROM lead_stage_history history
+             JOIN pipeline_stages stage ON stage.id = history.to_stage_id
+             WHERE history.lead_id = f.lead_id
+               AND stage.system_key = '${analyticsProfile.primarySystemKey}'
+               AND history.created_at > f.created_at
+               AND history.created_at <= f.created_at + (${FOLLOW_UP_OUTCOME_WINDOW_DAYS} * interval '1 day')
+               AND (
+                 f.next_follow_up_at IS NULL
+                 OR history.created_at < f.next_follow_up_at
+               )
+           )
+           ${appointmentStatusFallbackSql}
          ) AS appointment_after,
          EXISTS (
            SELECT 1
