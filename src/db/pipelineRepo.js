@@ -572,7 +572,21 @@ async function updateLead(id, patch, actor) {
     }
 
     const description = describeChanges(current, changes);
-    if (description) await addActivity(client, id, "updated", description, actor);
+    if (description) {
+      await addActivity(
+        client,
+        id,
+        "updated",
+        description,
+        actor,
+        Object.hasOwn(changes, "appointmentStatus")
+          ? {
+              appointmentStatus: changes.appointmentStatus,
+              previousAppointmentStatus: current.appointment_status,
+            }
+          : {}
+      );
+    }
     return result.rows[0];
   });
 
