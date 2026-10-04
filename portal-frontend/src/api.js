@@ -204,6 +204,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ message }),
     }),
+  translateFollowUps: (messages) =>
+    request("/config/automated-follow-up/translations", {
+      method: "POST",
+      body: JSON.stringify({ messages }),
+    }),
   listContacts: (search) => request(`/contacts${search ? `?search=${encodeURIComponent(search)}` : ""}`),
   downloadCustomerExport: ({ preset = "customer", scope = "current", search = "", assignment = "all" } = {}) => {
     const params = new URLSearchParams({ preset, scope });
