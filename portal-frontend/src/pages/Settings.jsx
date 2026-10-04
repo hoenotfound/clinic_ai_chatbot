@@ -411,7 +411,7 @@ function ImageFieldEditor({
   value,
   onChange,
   onError,
-  uploadImage = api.uploadPromoImage,
+  uploadImage = null,
   alt = "Promotion graphic",
 }) {
   const fileInputRef = useRef(null);
@@ -431,7 +431,9 @@ function ImageFieldEditor({
     }
     setUploading(true);
     try {
-      const { url } = await uploadImage(file);
+      const { url } = uploadImage
+        ? await uploadImage(file)
+        : await api.uploadPromoImage(file);
       onChange(url);
     } catch (err) {
       onError(err.message || "Couldn't upload that image.");
