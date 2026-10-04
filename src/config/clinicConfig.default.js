@@ -113,6 +113,11 @@ module.exports = {
     },
   ],
 
+  // Approved service-level result examples are configured from Settings.
+  // Keep this empty by default so no Before/After media is ever sent unless a
+  // clinic explicitly uploads and enables it.
+  resultMedia: [],
+
   // Keep this list short and accurate — the AI will only quote what's here.
   // Beleco offers 20+ treatments on their site; these are the most commonly
   // asked-about ones. Add more from belecoclinic.com/services/ as needed —
