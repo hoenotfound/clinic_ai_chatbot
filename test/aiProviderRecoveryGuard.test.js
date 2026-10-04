@@ -16,7 +16,23 @@ test("temporary AI provider outages do not force Staff mode", () => {
   assert.ok(pauseIndex > recoveryIndex, "provider recovery guard should run before handoff");
 
   const recoveryBlock = server.slice(recoveryIndex, pauseIndex);
-  assert.match(recoveryBlock, /contactsRepo\.setAttention/);
+  assert.match(recoveryBlock, /contactsRepo\.setTemporaryAiAttention/);
   assert.match(recoveryBlock, /sendTrackedText/);
   assert.doesNotMatch(recoveryBlock, /pauseAiForHumanHandoff/);
+});
+
+test("a successful AI reply clears only temporary provider-outage attention", () => {
+  const sendIndex = server.indexOf('const sendOutcome = await sendTrackedText(');
+  const clearIndex = server.indexOf(
+    "contactsRepo.clearTemporaryAiAttention",
+    sendIndex
+  );
+  const promoIndex = server.indexOf(
+    "resolvePricePromotionForReply",
+    sendIndex
+  );
+
+  assert.ok(sendIndex >= 0, "normal AI send should exist");
+  assert.ok(clearIndex > sendIndex, "temporary attention should clear after the send");
+  assert.ok(promoIndex > clearIndex, "attention should clear before promo eligibility is checked");
 });
