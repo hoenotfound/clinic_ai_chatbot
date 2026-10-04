@@ -690,6 +690,7 @@ async function getReplyWithEnv(
         provider: candidateProvider,
         code: err?.code || null,
         message: String(err?.message || err).slice(0, 300),
+        recoverable: isRecoverableAiReplyFailure(err),
       });
     }
   }
@@ -709,34 +710,36 @@ async function getReplyWithEnv(
 
 function isRecoverableAiReplyFailure(err) {
   const code = String(err?.code || "").toUpperCase();
-  if (new Set([
-    "ALL_AI_PROVIDERS_FAILED",
+  const directlyRecoverable = new Set([
     "AI_GLOBAL_BUDGET_EXCEEDED",
-    "ALL_GEMINI_MODELS_FAILED",
-    "ALL_GEMINI_MODELS_COOLING_DOWN",
     "GEMINI_GLOBAL_BUDGET_EXCEEDED",
-    "ALL_GEMINI_KEYS_FAILED",
+    "ALL_GEMINI_MODELS_COOLING_DOWN",
     "ALL_GEMINI_KEYS_COOLING_DOWN",
     "AI_CANDIDATE_COOLING_DOWN",
+    "GEMINI_MODEL_UNAVAILABLE",
     "AI_TIMEOUT",
-  ]).has(code)) {
-    return true;
-  }
+  ]);
+  if (directlyRecoverable.has(code)) return true;
 
   const failures = Array.isArray(err?.failures) ? err.failures : [];
-  return failures.some((failure) => {
-    const failureCode = String(failure?.code || "").toUpperCase();
-    const message = String(failure?.message || "").toLowerCase();
-    return [
-      "ALL_GEMINI_MODELS_FAILED",
-      "GEMINI_GLOBAL_BUDGET_EXCEEDED",
-      "ALL_GEMINI_KEYS_FAILED",
-      "ALL_GEMINI_KEYS_COOLING_DOWN",
-      "AI_CANDIDATE_COOLING_DOWN",
-      "AI_TIMEOUT",
-    ].includes(failureCode)
-      || /timeout|timed out|temporar|unavailable|high demand|capacity|cooling|rate limit|quota/.test(message);
-  });
+  if ([
+    "ALL_AI_PROVIDERS_FAILED",
+    "ALL_GEMINI_MODELS_FAILED",
+    "ALL_GEMINI_KEYS_FAILED",
+  ].includes(code)) {
+    return failures.some((failure) => (
+      failure?.recoverable === true
+      || isRecoverableAiReplyFailure({
+        code: failure?.code,
+        message: failure?.message,
+        failures: failure?.failures,
+      })
+    ));
+  }
+
+  const message = String(err?.message || "").toLowerCase();
+  return /timeout|timed out|temporar|unavailable|high demand|capacity|cooling|rate limit|quota/.test(message)
+    && !/unauthorized|permission denied|invalid.*api.?key|not scoped to a workspace|anthropic-workspace-id/.test(message);
 }
 
 async function getReply(messages, optionsOrFirstMessage = false) {
