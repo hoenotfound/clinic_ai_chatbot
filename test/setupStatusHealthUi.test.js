@@ -16,7 +16,7 @@ test("Setup Status leads with understandable live health signals", () => {
   assert.match(page, /Restart recoveries \(24h\)/);
   assert.match(page, /Final AI failures \(24h\)/);
   assert.match(page, /Gemini 2\.5 Flash-Lite/);
-  assert.match(page, /Claude fallback/);
+  assert.match(page, /health\?\.claude\?\.name/);
   assert.match(page, /Last successful outbound/);
   assert.match(page, /No recent inbound is not an error/);
 });
