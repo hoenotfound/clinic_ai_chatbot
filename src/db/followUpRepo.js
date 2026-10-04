@@ -71,7 +71,11 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
          COALESCE(progress.max_step, 0) + 1 AS next_follow_up_step,
          COALESCE(progress.has_blocking_claim, false) AS has_blocking_claim,
          previous_follow_up.created_at AS previous_follow_up_created_at,
+         latest_lead.id AS lead_id,
          latest_lead.treatment_interest,
+         latest_lead.branch_name,
+         latest_lead.appointment_status,
+         latest_lead.stage_name,
          ARRAY(
            SELECT recent_inbound.content
            FROM messages recent_inbound
@@ -144,8 +148,10 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
          SELECT
            l.id,
            l.treatment_interest,
+           l.branch_name,
            l.is_closed,
            l.appointment_status,
+           s.name AS stage_name,
            s.stage_type,
            s.system_key
          FROM leads l
@@ -175,6 +181,13 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
              )
            )
          )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM follow_up_ai_decisions decision
+           WHERE decision.contact_id = c.id
+             AND decision.trigger_message_id = anchor.id
+             AND decision.action IN ('skip', 'human_review')
+         )
          AND anchor.created_at >= $3::timestamptz
          AND latest_inbound.created_at > now() - interval '23 hours 50 minutes'
          AND ($2 = 'all' OR anchor.sent_by_username IS NOT NULL)
@@ -187,7 +200,11 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
        trigger_message_id,
        trigger_message_content,
        recent_inbound_messages,
+       lead_id,
        treatment_interest,
+       branch_name,
+       appointment_status,
+       stage_name,
        next_follow_up_step
      FROM conversation_state
      WHERE next_follow_up_step <= cardinality($1::integer[])
@@ -318,6 +335,13 @@ async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt })
                )
              )
            )
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM follow_up_ai_decisions decision
+           WHERE decision.contact_id = c.id
+             AND decision.trigger_message_id = anchor.id
+             AND decision.action IN ('skip', 'human_review')
          )
          AND anchor.created_at >= $3::timestamptz
          AND latest_inbound.created_at > now() - interval '23 hours 50 minutes'
@@ -499,6 +523,13 @@ async function saveIfStillEligible({
              )
            )
          )
+       )
+       AND NOT EXISTS (
+         SELECT 1
+         FROM follow_up_ai_decisions decision
+         WHERE decision.contact_id = c.id
+           AND decision.trigger_message_id = anchor.id
+           AND decision.action IN ('skip', 'human_review')
        )
        AND anchor.created_at >= $9::timestamptz
        AND GREATEST(
