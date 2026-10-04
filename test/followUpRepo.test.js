@@ -177,3 +177,43 @@ test("discarding an unsent final claim only removes a still-unaccepted automated
   assert.equal(discarded.id, 120);
   assert.equal(discarded.contact_id, 22);
 });
+
+
+test("discarding an unsent social follow-up image only removes an unaccepted companion", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(
+      sql,
+      new RegExp(`pg_advisory_xact_lock\\(${CONVERSATION_LOCK_NAMESPACE}`)
+    );
+    assert.match(sql, /DELETE FROM messages/);
+    assert.match(sql, /automated_follow_up_for_message_id IS NULL/);
+    assert.match(sql, /content = ''/);
+    assert.match(sql, /media_url IS NOT NULL/);
+    assert.match(sql, /delivery_status IS NULL/);
+    assert.match(sql, /whatsapp_message_id IS NULL/);
+    assert.deepEqual(params, [23, 130]);
+    return {
+      rows: [
+        {
+          id: 130,
+          contact_id: 23,
+          delivery_status: null,
+          whatsapp_message_id: null,
+        },
+      ],
+    };
+  };
+
+  const discarded = await followUpRepo.discardUnsentSocialImageCompanion({
+    contactId: 23,
+    messageId: 130,
+  });
+
+  assert.equal(discarded.id, 130);
+  assert.equal(discarded.contact_id, 23);
+});
