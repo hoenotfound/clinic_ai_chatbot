@@ -1157,6 +1157,18 @@ test("Advanced Config snapshot retention keeps at most 50 newest backups", async
 
 
 
+test("config image cleanup includes retained snapshot image references", () => {
+  const configRepoSource = read("src/db/configRepo.js");
+  assert.match(
+    configRepoSource,
+    /configImportHistoryRepo\.listReferencedPromoImageIds\(\)/
+  );
+  assert.match(
+    configRepoSource,
+    /promoImagesRepo\.pruneUnreferenced\(\[\.\.\.new Set\(referencedIds\)\]\)/
+  );
+});
+
 test("retained Advanced Config snapshots protect their stored image URLs from cleanup", async () => {
   const database = {
     async query(sql, params) {
