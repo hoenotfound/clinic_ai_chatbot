@@ -836,24 +836,77 @@ router.post("/lead-distribution/recover-unassigned", async (req, res) => {
   }
 });
 
-async function saveUploadedImage(req, res) {
+async function saveUploadedImage(
+  req,
+  res,
+  {
+    purpose = promoImagesRepo.IMAGE_PURPOSES.PUBLIC_CONFIG,
+    privatePreview = false,
+  } = {}
+) {
   try {
     if (!req.file) {
       return res.status(400).json({ error: "An image file is required." });
     }
 
-    const id = await promoImagesRepo.saveImage(req.file.mimetype, req.file.buffer.toString("base64"));
+    const id = await promoImagesRepo.saveImage(
+      req.file.mimetype,
+      req.file.buffer.toString("base64"),
+      { purpose }
+    );
+
+    if (privatePreview) {
+      // Same-origin authenticated preview. Do not return a permanent public URL
+      // for Before/After media because these images may identify a patient.
+      return res.status(201).json({
+        url: `/api/config/result-media/image/${id}`,
+      });
+    }
+
     const baseUrl = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
-    res.status(201).json({ url: `${baseUrl}/promo-images/${id}` });
+    return res.status(201).json({ url: `${baseUrl}/promo-images/${id}` });
   } catch (err) {
     console.error("Failed to upload config image:", err);
-    res.status(500).json({ error: "Something went wrong uploading this image." });
+    return res.status(500).json({ error: "Something went wrong uploading this image." });
   }
 }
 
-router.post("/promotions/image", handleImageUpload, saveUploadedImage);
-router.post("/result-media/image", handleImageUpload, saveUploadedImage);
-router.post("/automated-follow-up/image", handleImageUpload, saveUploadedImage);
+router.post("/promotions/image", handleImageUpload, (req, res) =>
+  saveUploadedImage(req, res)
+);
+router.post("/result-media/image", handleImageUpload, (req, res) =>
+  saveUploadedImage(req, res, {
+    purpose: promoImagesRepo.IMAGE_PURPOSES.RESULT_MEDIA,
+    privatePreview: true,
+  })
+);
+router.post("/automated-follow-up/image", handleImageUpload, (req, res) =>
+  saveUploadedImage(req, res)
+);
+
+router.get("/result-media/image/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(404).send("Not found");
+    }
+
+    const image = await promoImagesRepo.getImage(id);
+    if (
+      !image ||
+      image.purpose !== promoImagesRepo.IMAGE_PURPOSES.RESULT_MEDIA
+    ) {
+      return res.status(404).send("Not found");
+    }
+
+    res.set("Content-Type", image.mime_type);
+    res.set("Cache-Control", "private, no-store");
+    return res.send(Buffer.from(image.data, "base64"));
+  } catch (err) {
+    console.error("Failed to serve private result media:", err);
+    return res.status(500).send("Something went wrong.");
+  }
+});
 
 router.delete("/promotions/image/:id", async (req, res) => {
   try {
