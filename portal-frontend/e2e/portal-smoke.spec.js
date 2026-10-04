@@ -353,16 +353,38 @@ async function mockPortalApi(
       path === "/api/config/automated-follow-up/translations" &&
       method === "POST"
     ) {
-      const { message = "" } = request.postDataJSON() || {};
+      const payload = request.postDataJSON() || {};
+      const makeTranslations = (message) => ({
+        en: message,
+        ms: `BM: ${message}`,
+        zh: `中文：${message}`,
+      });
+      if (Array.isArray(payload.messages)) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            translations: payload.messages.map(makeTranslations),
+          }),
+        });
+      }
+      const message = payload.message || "";
       return route.fulfill({
         status: 200,
         contentType: "application/json",
+        body: JSON.stringify({ translations: makeTranslations(message) }),
+      });
+    }
+
+    if (
+      path === "/api/config/automated-follow-up/image" &&
+      method === "POST"
+    ) {
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
         body: JSON.stringify({
-          translations: {
-            en: message,
-            ms: `BM: ${message}`,
-            zh: `中文：${message}`,
-          },
+          url: "https://cdn.example.test/follow-up-step.jpg",
         }),
       });
     }
@@ -717,11 +739,25 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
     .getByPlaceholder("Write the next follow-up message.")
     .fill("Still deciding? I can help with the details.");
 
+  await page.getByRole("button", { name: "Manage" }).last().click();
   await page.getByRole("button", { name: "+ Add service message" }).last().click();
   await page
     .getByPlaceholder("Write a more relevant follow-up for customers interested in this service.")
     .last()
     .fill("For Pelvis 骨盆调理, I can help you understand which concern this suits.");
+
+  const stepImageInput = page.locator('input[type="file"]').last();
+  await stepImageInput.setInputFiles({
+    name: "follow-up.jpg",
+    mimeType: "image/jpeg",
+    buffer: Buffer.from("fake-jpeg"),
+  });
+  await expect(page.getByRole("button", { name: "Replace" }).last()).toBeVisible();
+
+  await page.getByText(/Review translations · 0\/3 ready/).last().click();
+  const translationAreas = page.locator("textarea");
+  const chineseTranslation = translationAreas.last();
+  await chineseTranslation.fill("这是我手动调整的第二次跟进。");
 
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => savedPayload).not.toBeNull();
@@ -730,6 +766,7 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
   expect(savedPayload.automatedFollowUp.additionalSteps[0]).toMatchObject({
     delayMinutes: 480,
     message: "Still deciding? I can help with the details.",
+    imageUrl: "https://cdn.example.test/follow-up-step.jpg",
     serviceOverrides: [
       {
         serviceName: "Pelvis 骨盆调理",
@@ -741,6 +778,9 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
     savedPayload.automatedFollowUp.additionalSteps[0].serviceOverrides[0]
       .translations.zh
   ).toContain("For Pelvis 骨盆调理");
+  expect(
+    savedPayload.automatedFollowUp.additionalSteps[0].translations.zh
+  ).toBe("这是我手动调整的第二次跟进。");
 
   await expectNoHorizontalPageOverflow(page);
 });
