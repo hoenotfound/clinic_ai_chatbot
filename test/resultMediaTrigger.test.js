@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS,
+  rotateAfter,
   resolveResultMediaForReply,
 } = require("../src/utils/resultMediaTrigger");
 
