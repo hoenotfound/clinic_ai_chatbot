@@ -307,6 +307,20 @@ test("recoverable AI reply failures stay eligible for a later automatic retry", 
     }),
     false
   );
+  assert.equal(
+    isRecoverableAiReplyFailure({
+      code: "ALL_GEMINI_MODELS_FAILED",
+      failures: [{
+        code: "ALL_GEMINI_KEYS_FAILED",
+        message: "All available Gemini keys failed.",
+        failures: [
+          { code: null, message: "Rate limit exceeded for this project." },
+          { code: null, message: "Quota temporarily exhausted." },
+        ],
+      }],
+    }),
+    true
+  );
   assert.equal(isRecoverableAiReplyFailure({ code: "AI_PROVIDER_NOT_CONFIGURED" }), false);
 });
 
