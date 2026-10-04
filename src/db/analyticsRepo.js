@@ -615,6 +615,10 @@ async function getFollowUps(filters, analyticsProfile) {
              AND stage.system_key = '${analyticsProfile.primarySystemKey}'
              AND history.created_at > f.created_at
              AND history.created_at <= f.created_at + (${FOLLOW_UP_OUTCOME_WINDOW_DAYS} * interval '1 day')
+             AND (
+               f.next_follow_up_at IS NULL
+               OR history.created_at < f.next_follow_up_at
+             )
          ) AS appointment_after,
          EXISTS (
            SELECT 1
@@ -624,6 +628,10 @@ async function getFollowUps(filters, analyticsProfile) {
              AND stage.stage_type = 'won'
              AND history.created_at > f.created_at
              AND history.created_at <= f.created_at + (${FOLLOW_UP_OUTCOME_WINDOW_DAYS} * interval '1 day')
+             AND (
+               f.next_follow_up_at IS NULL
+               OR history.created_at < f.next_follow_up_at
+             )
          ) AS won_after
        FROM followups f
      ),
@@ -632,7 +640,9 @@ async function getFollowUps(filters, analyticsProfile) {
          follow_up_step,
          COUNT(*)::int AS sent,
          COUNT(DISTINCT lead_id)::int AS leads,
-         COUNT(DISTINCT lead_id) FILTER (WHERE replied_72h)::int AS replied
+         COUNT(DISTINCT lead_id) FILTER (WHERE replied_72h)::int AS replied,
+         COUNT(DISTINCT lead_id) FILTER (WHERE appointment_after)::int AS appointments,
+         COUNT(DISTINCT lead_id) FILTER (WHERE won_after)::int AS won
        FROM outcomes
        GROUP BY follow_up_step
      ),
@@ -641,7 +651,9 @@ async function getFollowUps(filters, analyticsProfile) {
          CASE WHEN target_service IS NULL THEN 'general' ELSE 'targeted' END AS targeting,
          COUNT(*)::int AS sent,
          COUNT(DISTINCT lead_id)::int AS leads,
-         COUNT(DISTINCT lead_id) FILTER (WHERE replied_72h)::int AS replied
+         COUNT(DISTINCT lead_id) FILTER (WHERE replied_72h)::int AS replied,
+         COUNT(DISTINCT lead_id) FILTER (WHERE appointment_after)::int AS appointments,
+         COUNT(DISTINCT lead_id) FILTER (WHERE won_after)::int AS won
        FROM outcomes
        GROUP BY 1
      )
@@ -658,7 +670,9 @@ async function getFollowUps(filters, analyticsProfile) {
                'step', follow_up_step,
                'sent', sent,
                'leads', leads,
-               'replied', replied
+               'replied', replied,
+               'appointments', appointments,
+               'won', won
              )
              ORDER BY follow_up_step
            )
@@ -673,7 +687,9 @@ async function getFollowUps(filters, analyticsProfile) {
                'targeting', targeting,
                'sent', sent,
                'leads', leads,
-               'replied', replied
+               'replied', replied,
+               'appointments', appointments,
+               'won', won
              )
              ORDER BY targeting
            )
@@ -691,12 +707,18 @@ async function getFollowUps(filters, analyticsProfile) {
     (Array.isArray(rows) ? rows : []).map((item) => {
       const leads = number(item.leads);
       const replied = number(item.replied);
+      const appointments = number(item.appointments);
+      const won = number(item.won);
       return {
         [key]: key === "step" ? number(item[key]) : String(item[key] || ""),
         sent: number(item.sent),
         leads,
         replied,
+        appointments,
+        won,
         replyRate72h: percent(replied, leads),
+        appointmentRate: percent(appointments, leads),
+        winRate: percent(won, leads),
       };
     });
   return {
