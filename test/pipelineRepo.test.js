@@ -533,3 +533,58 @@ test("repository rejects a rule result that is not Hot or Cold", async (t) => {
     evidence: "How much is it?",
   }), null);
 });
+
+
+test("staff appointment status changes record structured activity metadata", async (t) => {
+  const originalConnect = pool.connect;
+  const originalPublish = realtimeEvents.publish;
+  t.after(() => {
+    pool.connect = originalConnect;
+    realtimeEvents.publish = originalPublish;
+  });
+
+  const activities = [];
+  const current = {
+    id: 90,
+    stage_id: 1,
+    stage_name: "Contacted",
+    stage_type: "open",
+    system_key: "contacted",
+    appointment_status: "none",
+    is_closed: false,
+  };
+
+  pool.connect = async () => ({
+    query: async (sql, params) => {
+      if (/^BEGIN$|^COMMIT$|^ROLLBACK$/.test(sql)) return { rows: [] };
+      if (/SELECT l\.\*, s\.name AS stage_name/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return { rows: [current] };
+      }
+      if (/UPDATE leads SET/.test(sql)) {
+        return {
+          rows: [{ ...current, appointment_status: "set" }],
+        };
+      }
+      if (/INSERT INTO lead_activities/.test(sql)) {
+        activities.push({ sql, params });
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  });
+  realtimeEvents.publish = () => {};
+
+  await pipelineRepo.updateLead(
+    90,
+    { appointmentStatus: "set" },
+    "staff@example.com"
+  );
+
+  assert.equal(activities.length, 1);
+  assert.match(activities[0].params[2], /Appointment status changed to set/);
+  assert.deepEqual(activities[0].params[4], {
+    appointmentStatus: "set",
+    previousAppointmentStatus: "none",
+  });
+});
