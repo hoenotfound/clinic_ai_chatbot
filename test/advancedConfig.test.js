@@ -41,6 +41,7 @@ function currentConfig() {
     branches: [{ name: "HQ", address: "KL", phone: "" }],
     serviceAreas: [],
     promotions: [],
+    resultMedia: [],
     services: [{ name: "Consultation", description: "", priceRange: "", duration: "" }],
     serviceAliases: [],
     faqs: [],
@@ -1195,4 +1196,103 @@ test("Advanced Config portal route stays admin-only and exposes validate, apply,
   assert.match(api, /previewAdvancedConfig/);
   assert.match(api, /applyAdvancedConfig/);
   assert.match(api, /restoreAdvancedConfig/);
+});
+
+
+test("result media config is editable, service-linked, complete and unique", () => {
+  const current = currentConfig();
+  const validSet = {
+    service: "Consultation",
+    enabled: true,
+    sendAfterPrice: true,
+    autoSendCount: 1,
+    items: [
+      {
+        imageUrl: "https://example.test/before-after.jpg",
+        caption: "Example result. Individual results vary.",
+      },
+    ],
+  };
+
+  const valid = prepareAdvancedConfigPayload(
+    { resultMedia: [validSet] },
+    current
+  );
+  assert.equal(valid.ok, true);
+  assert.deepEqual(valid.updates.resultMedia, [validSet]);
+  assert.equal(EDITABLE_KEYS.includes("resultMedia"), true);
+
+  const unknownService = prepareAdvancedConfigPayload(
+    {
+      resultMedia: [{
+        ...validSet,
+        service: "Missing Treatment",
+      }],
+    },
+    current
+  );
+  assert.equal(unknownService.ok, false);
+  assert.deepEqual(unknownService.invalidKeys, ["resultMedia"]);
+  assert.match(unknownService.error, /currently configured service/i);
+
+  const incomplete = prepareAdvancedConfigPayload(
+    {
+      resultMedia: [{
+        ...validSet,
+        items: [{ imageUrl: "https://example.test/result.jpg", caption: "" }],
+      }],
+    },
+    current
+  );
+  assert.equal(incomplete.ok, false);
+  assert.deepEqual(incomplete.invalidKeys, ["resultMedia"]);
+
+  const duplicateService = prepareAdvancedConfigPayload(
+    {
+      resultMedia: [
+        validSet,
+        {
+          ...validSet,
+          items: [{
+            imageUrl: "https://example.test/result-2.jpg",
+            caption: "Second example",
+          }],
+        },
+      ],
+    },
+    current
+  );
+  assert.equal(duplicateService.ok, false);
+  assert.deepEqual(duplicateService.invalidKeys, ["resultMedia"]);
+  assert.match(duplicateService.error, /only one result media set/i);
+});
+
+test("removing a service is blocked while result media still targets it", () => {
+  const current = currentConfig();
+  current.resultMedia = [{
+    service: "Consultation",
+    enabled: true,
+    sendAfterPrice: true,
+    autoSendCount: 1,
+    items: [{
+      imageUrl: "https://example.test/result.jpg",
+      caption: "Example result",
+    }],
+  }];
+
+  const renamedService = prepareConfigUpdatePayload(
+    {
+      services: [{
+        name: "Renamed Consultation",
+        description: "",
+        priceRange: "",
+        duration: "",
+      }],
+    },
+    current
+  );
+
+  assert.equal(renamedService.ok, false);
+  assert.deepEqual(renamedService.invalidKeys, ["resultMedia"]);
+  assert.match(renamedService.error, /currently configured service/i);
 });
