@@ -327,6 +327,15 @@ test("falls back to the step default when service interest is not an exact match
             zh: "骨盆调理跟进",
           },
         },
+        {
+          serviceName: "Uterus Care",
+          message: "Uterus care follow-up",
+          translations: {
+            en: "Uterus care follow-up",
+            ms: "Susulan penjagaan rahim",
+            zh: "子宫调理跟进",
+          },
+        },
       ],
     },
   ];
@@ -338,8 +347,8 @@ test("falls back to the step default when service interest is not an exact match
       whatsapp_number: "60177777777",
       trigger_message_id: 92,
       next_follow_up_step: 2,
-      treatment_interest: "Pelvic Care / Uterus Care",
-      recent_inbound_messages: ["Can you tell me more?"],
+      treatment_interest: "Pelvic Care",
+      recent_inbound_messages: ["I'm comparing Pelvic Care and Uterus Care."],
     },
   ];
   followUpRepo.saveIfStillEligible = async (input) => ({
