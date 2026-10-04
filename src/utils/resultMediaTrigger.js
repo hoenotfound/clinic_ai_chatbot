@@ -43,10 +43,20 @@ function matchingResultMediaSet(resultMedia, treatment) {
 }
 
 /**
- * Chooses approved service-level result media after a successful price reply. Automatic proof is deliberately conservative: if any configured
- * result image for this service was already accepted for this contact inside
- * the duplicate window, do not send another automatic result example.
+ * Chooses approved service-level result media after a successful price reply.
+ * Automatic proof is deliberately conservative: if any configured result image
+ * for this service was accepted inside the duplicate window, do not send more.
+ * Once the cooldown expires, continue with the example after the most recently
+ * accepted one so larger result libraries actually rotate.
  */
+function rotateAfter(items, lastImageUrl) {
+  if (!Array.isArray(items) || items.length === 0 || !lastImageUrl) return items;
+  const index = items.findIndex((item) => item.imageUrl === lastImageUrl);
+  if (index < 0) return items;
+  const start = (index + 1) % items.length;
+  return [...items.slice(start), ...items.slice(0, start)];
+}
+
 async function resolveResultMediaForReply({
   priceQuery,
   packageQuery,
@@ -59,6 +69,7 @@ async function resolveResultMediaForReply({
   resultMedia,
   contactId,
   wasMediaRecentlySent,
+  getMostRecentlySentMediaUrl,
   duplicateWindowHours = DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS,
 }) {
   if (
@@ -76,7 +87,11 @@ async function resolveResultMediaForReply({
   const resultSet = matchingResultMediaSet(resultMedia, treatment);
   if (!resultSet) return null;
 
-  if (typeof wasMediaRecentlySent !== "function" || !contactId) {
+  if (
+    typeof wasMediaRecentlySent !== "function" ||
+    typeof getMostRecentlySentMediaUrl !== "function" ||
+    !contactId
+  ) {
     return null;
   }
 
@@ -89,14 +104,21 @@ async function resolveResultMediaForReply({
     if (recentlySent) return null;
   }
 
+  const lastImageUrl = await getMostRecentlySentMediaUrl(
+    contactId,
+    resultSet.items.map((item) => item.imageUrl)
+  );
+  const rotatedItems = rotateAfter(resultSet.items, lastImageUrl);
+
   return {
     service: resultSet.service,
-    items: resultSet.items.slice(0, resultSet.autoSendCount),
+    items: rotatedItems.slice(0, resultSet.autoSendCount),
   };
 }
 
 module.exports = {
   DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS,
   matchingResultMediaSet,
+  rotateAfter,
   resolveResultMediaForReply,
 };
