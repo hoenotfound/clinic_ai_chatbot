@@ -273,9 +273,10 @@ function rejectedFollowUpError(channel) {
 }
 
 function deliveryErrorFor(channel, sendResult, rejectedError) {
-  // Policy blocks contain a useful reason staff need to see. Other provider
-  // failures keep the existing channel-specific wording.
-  return sendResult?.policyBlocked && sendResult?.error
+  // Policy/final-eligibility failures contain a useful reason staff need to
+  // see. Other provider failures keep the existing channel-specific wording.
+  return sendResult?.error &&
+    (sendResult?.policyBlocked || sendResult?.preSendCheckFailed)
     ? sendResult.error
     : rejectedError;
 }
@@ -417,6 +418,25 @@ async function sendCandidate(candidate) {
 
   const rejectedError = rejectedFollowUpError(channel);
 
+  const finalPreSendCheck = async () => {
+    const liveSettings = getActiveSettings();
+    const liveStep = liveSettings?.steps?.[stepIndex - 1];
+    if (
+      !liveSettings ||
+      !liveStep ||
+      liveSettings.activatedAt !== settings.activatedAt ||
+      liveSettings.triggerMode !== settings.triggerMode ||
+      liveStep.delayMinutes !== step.delayMinutes
+    ) {
+      return false;
+    }
+
+    return followUpRepo.isClaimStillEligible({
+      messageId: saved.id,
+      contactId: candidate.contact_id,
+    });
+  };
+
   let sendResult;
   try {
     if (isSocial) {
@@ -431,13 +451,17 @@ async function sendCandidate(candidate) {
         followUpMessage,
         {
           purpose: "marketing",
+          preSendCheck: finalPreSendCheck,
           ...(textProviderRecorder
             ? { onProviderMessageId: textProviderRecorder }
             : {}),
         }
       );
     } else {
-      const policyOptions = { purpose: "marketing" };
+      const policyOptions = {
+        purpose: "marketing",
+        preSendCheck: finalPreSendCheck,
+      };
       sendResult = step.imageUrl
         ? await channelMessaging.sendImageByUrl(
             contact,
@@ -454,6 +478,17 @@ async function sendCandidate(candidate) {
   } catch (err) {
     console.error("Automated follow-up send failed:", err);
     sendResult = { success: false, wamid: null, externalMessageId: null };
+  }
+
+  if (sendResult?.cancelled && !sendResult?.preSendCheckFailed) {
+    const discarded = await followUpRepo.discardUnsentClaim({
+      messageId: saved.id,
+      contactId: candidate.contact_id,
+    });
+    if (discarded) {
+      publishConversationChange(discarded, "message_cancelled");
+    }
+    return;
   }
 
   const deliveryError = deliveryErrorFor(channel, sendResult, rejectedError);
