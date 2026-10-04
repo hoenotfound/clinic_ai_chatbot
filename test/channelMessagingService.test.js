@@ -804,3 +804,64 @@ test("manual social sends propagate Human Agent only when policy requires it", a
   assert.equal(requestedPurpose, "human_agent");
   assert.equal(providerOptions.humanAgent, true);
 });
+
+
+test("async pre-send guard is awaited before WhatsApp delivery", async (t) => {
+  const originalWhatsappSend = whatsapp.sendMessage;
+  t.after(() => {
+    whatsapp.sendMessage = originalWhatsappSend;
+  });
+
+  let providerCalls = 0;
+  whatsapp.sendMessage = async () => {
+    providerCalls += 1;
+    return { success: true, wamid: "must-not-send-async" };
+  };
+
+  let guardResolved = false;
+  const result = await messaging.sendText(
+    { id: 501, channel: "whatsapp", whatsapp_number: "60125010000" },
+    "Guarded follow-up",
+    {
+      preSendCheck: async () => {
+        await Promise.resolve();
+        guardResolved = true;
+        return false;
+      },
+    }
+  );
+
+  assert.equal(guardResolved, true);
+  assert.equal(providerCalls, 0);
+  assert.equal(result.success, false);
+  assert.equal(result.cancelled, true);
+});
+
+test("pre-send guard failures fail closed before provider delivery", async (t) => {
+  const originalMetaSend = meta.sendText;
+  t.after(() => {
+    meta.sendText = originalMetaSend;
+  });
+
+  let providerCalls = 0;
+  meta.sendText = async () => {
+    providerCalls += 1;
+    return { success: true, externalMessageId: "must-not-send-error" };
+  };
+
+  const result = await messaging.sendText(
+    { id: 502, channel: "facebook", channel_user_id: "psid-async-error" },
+    "Guarded follow-up",
+    {
+      preSendCheck: async () => {
+        throw new Error("database unavailable");
+      },
+    }
+  );
+
+  assert.equal(providerCalls, 0);
+  assert.equal(result.success, false);
+  assert.equal(result.cancelled, true);
+  assert.equal(result.preSendCheckFailed, true);
+  assert.match(result.error, /eligibility could not be verified/i);
+});
