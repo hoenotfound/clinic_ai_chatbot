@@ -173,6 +173,56 @@ test("duplicate ads in one enrichment batch call Meta only once on a cache miss"
   assert.equal(apiFetches, 1);
 });
 
+test("duplicate failed ad lookups are also deduplicated within a batch", async () => {
+  let apiFetches = 0;
+  const deferred = [];
+  const repo = {
+    async claimMetaEnrichmentBatch() {
+      return [
+        { id: 1, lead_id: 101, meta_ad_id: "120210000008888", enrichment_attempts: 1 },
+        { id: 2, lead_id: 102, meta_ad_id: "120210000008888", enrichment_attempts: 1 },
+      ];
+    },
+    async markMetaEnrichmentSuccess() {
+      throw new Error("should not succeed");
+    },
+    async markMetaEnrichmentDeferred(id, message, delayMs) {
+      deferred.push({ id, message, delayMs });
+      return { id };
+    },
+  };
+  const hierarchyRepo = {
+    async getLatestHierarchyForAdIds() {
+      return new Map();
+    },
+  };
+  const api = {
+    configured: () => true,
+    async fetchAdDetails() {
+      apiFetches += 1;
+      const err = new Error("Ad is no longer accessible");
+      err.code = 100;
+      err.retryable = false;
+      throw err;
+    },
+  };
+
+  const service = createMetaAdsEnrichmentService({
+    repo,
+    api,
+    hierarchyRepo,
+    events: { publish() {} },
+    logger: silentLogger(),
+  });
+  const result = await service.runSweep();
+
+  assert.equal(result.processed, 2);
+  assert.equal(apiFetches, 1);
+  assert.equal(deferred.length, 2);
+  assert.match(deferred[0].message, /Ad is no longer accessible/);
+  assert.match(deferred[1].message, /Ad is no longer accessible/);
+});
+
 test("API failures are deferred without throwing into the chatbot path", async () => {
   const deferred = [];
   const repo = {
