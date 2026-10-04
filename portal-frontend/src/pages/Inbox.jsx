@@ -157,11 +157,13 @@ export default function Inbox() {
   const [acquisitionContext, setAcquisitionContext] = useState(null);
   const [acquisitionLoading, setAcquisitionLoading] = useState(false);
   const selectedIdRef = useRef(selectedId);
+  const acquisitionContextRef = useRef(acquisitionContext);
   const messagesRef = useRef(messages);
   const latestMessageIdRef = useRef(null);
   const threadRequestVersionRef = useRef(0);
 
   selectedIdRef.current = selectedId;
+  acquisitionContextRef.current = acquisitionContext;
   messagesRef.current = messages;
   latestMessageIdRef.current = newestPersistedMessageId(messages);
 
@@ -466,9 +468,24 @@ export default function Inbox() {
       }
     }
 
-    function handlePipelineChanged() {
+    function handlePipelineChanged(event) {
       const currentId = selectedIdRef.current;
-      if (currentId != null) refreshAcquisitionContext(currentId);
+      if (currentId == null) return;
+      try {
+        const payload = JSON.parse(event.data || "{}");
+        const currentLeadId = acquisitionContextRef.current?.lead?.id;
+        if (
+          payload.leadId != null
+          && currentLeadId != null
+          && Number(payload.leadId) !== Number(currentLeadId)
+        ) {
+          return;
+        }
+      } catch {
+        // If an event payload is malformed, a single lightweight refresh is safer
+        // than leaving the visible attribution stale.
+      }
+      refreshAcquisitionContext(currentId);
     }
 
     source.addEventListener("conversation_changed", handleConversationChanged);
