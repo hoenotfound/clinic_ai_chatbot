@@ -149,25 +149,7 @@ function serviceTerms(serviceName) {
 }
 
 function escapeRegex(value) {
-  return value.replace(/[.*+?^$(){}|[\]\\]/g, "\\function normalizedServiceName(value) {
-  return typeof value === "string"
-    ? value.trim().replace(/\s+/g, " ").toLocaleLowerCase()
-    : "";
-}
-
-function messageForCandidate(step, candidate, language) {
-  const interest = normalizedServiceName(candidate.treatment_interest);
-  const targeted = interest
-    ? step.serviceOverrides.find(
-        (item) => normalizedServiceName(item.serviceName) === interest
-      )
-    : null;
-  const source = targeted || step;
-  return {
-    message: source.translations[language] || source.message,
-    targetedService: targeted?.serviceName || null,
-  };
-}");
+  return value.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
 }
 
 function textContainsServiceTerm(text, term) {
