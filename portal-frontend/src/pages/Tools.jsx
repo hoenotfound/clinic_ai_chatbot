@@ -835,6 +835,133 @@ function nextSequenceDelay(previousDelay) {
   return previous < 1380 ? Math.min(1380, previous + 5) : null;
 }
 
+function TranslationDetails({
+  sourceMessage,
+  translations = {},
+  onChange,
+  onReplace,
+  onTranslate,
+  translating,
+}) {
+  const [languageKey, setLanguageKey] = useState("en");
+  const language = FOLLOW_UP_LANGUAGES.find((item) => item.key === languageKey);
+  const readyCount = FOLLOW_UP_LANGUAGES.filter(
+    ({ key }) => String(translations?.[key] || "").trim()
+  ).length;
+
+  async function regenerate() {
+    const generated = await onTranslate(sourceMessage);
+    if (generated) onReplace(generated);
+  }
+
+  return (
+    <details className="mt-3 rounded-xl border border-[var(--color-border)] bg-white">
+      <summary className="cursor-pointer list-none px-3.5 py-3 text-xs font-semibold text-[var(--color-primary)]">
+        Review translations · {readyCount}/3 ready
+      </summary>
+      <div className="border-t border-[var(--color-border)] p-3.5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[10px] leading-4 text-[var(--color-text-muted)]">
+            English, BM and Chinese are selected automatically for each customer. You can fine-tune any version here.
+          </p>
+          <button
+            type="button"
+            onClick={regenerate}
+            disabled={translating || !String(sourceMessage || "").trim()}
+            className="shrink-0 rounded-lg border border-[var(--color-primary)]/25 px-2.5 py-1.5 text-[10px] font-semibold text-[var(--color-primary)] disabled:opacity-50"
+          >
+            {translating ? "Generating…" : "Regenerate"}
+          </button>
+        </div>
+        <div className="mt-3 flex gap-1 overflow-x-auto border-b border-[var(--color-border)]">
+          {FOLLOW_UP_LANGUAGES.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setLanguageKey(item.key)}
+              className={`shrink-0 border-b-2 px-2.5 py-2 text-[10px] font-semibold ${languageKey === item.key ? "border-[var(--color-primary)] text-[var(--color-primary)]" : "border-transparent text-[var(--color-text-muted)]"}`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <label className="text-[10px] font-semibold">{language?.label} message</label>
+          <span className="text-[10px] text-[var(--color-text-muted)]">
+            {String(translations?.[languageKey] || "").length}/1000
+          </span>
+        </div>
+        <textarea
+          rows="3"
+          maxLength="1000"
+          value={translations?.[languageKey] || ""}
+          onChange={(event) => onChange(languageKey, event.target.value)}
+          className="mt-1.5 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2.5 text-xs leading-5 outline-none focus:border-[var(--color-primary)]"
+        />
+      </div>
+    </details>
+  );
+}
+
+function StepImagePicker({
+  imageUrl,
+  uploading,
+  onUpload,
+  onChange,
+  label = "Optional graphic",
+}) {
+  const inputRef = useRef(null);
+
+  async function handlePicked(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const url = await onUpload(file);
+    if (url) onChange(url);
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-white p-3.5">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold">{label}</p>
+          <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">JPG or PNG, up to 5MB.</p>
+        </div>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/jpeg,image/png"
+          className="hidden"
+          onChange={handlePicked}
+        />
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={uploading}
+          className="rounded-lg border border-[var(--color-primary)]/25 px-2.5 py-1.5 text-[10px] font-semibold text-[var(--color-primary)] disabled:opacity-50"
+        >
+          {uploading ? "Uploading…" : imageUrl ? "Replace" : "Add image"}
+        </button>
+      </div>
+      {imageUrl && (
+        <div className="mt-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]">
+          <img src={imageUrl} alt="" className="max-h-48 w-full object-contain" />
+          <div className="flex justify-end border-t border-[var(--color-border)] bg-white px-3 py-2">
+            <button
+              type="button"
+              onClick={() => onChange("")}
+              disabled={uploading}
+              className="text-[10px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)] disabled:opacity-50"
+            >
+              Remove image
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ServiceOverridesEditor({
   overrides = [],
   services = [],
