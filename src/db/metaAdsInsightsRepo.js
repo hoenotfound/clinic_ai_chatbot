@@ -149,6 +149,26 @@ async function replaceInsightsRange(accountId, since, until, rows = [], database
   }
 }
 
+async function getLatestHierarchyForAdIds(adIds, database = pool) {
+  const ids = [...new Set(
+    (adIds || [])
+      .map((value) => String(value || "").trim())
+      .filter((value) => /^\d+$/.test(value))
+  )];
+  if (!ids.length) return new Map();
+
+  const result = await database.query(
+    `SELECT DISTINCT ON (ad_id)
+       ad_id, account_id, account_name, account_currency,
+       campaign_id, campaign_name, adset_id, adset_name, ad_name
+     FROM meta_ad_insights_daily
+     WHERE ad_id = ANY($1::text[])
+     ORDER BY ad_id, insight_date DESC, updated_at DESC`,
+    [ids]
+  );
+  return new Map(result.rows.map((row) => [String(row.ad_id), row]));
+}
+
 async function tryAcquireSyncLease(accountId, leaseToken, leaseMs, database = pool) {
   const token = requireLeaseToken(leaseToken);
   const durationMs = normalizeLeaseMs(leaseMs);
@@ -203,6 +223,7 @@ async function getSyncState(accountId, database = pool) {
   const result = await database.query(
     `SELECT account_id, last_attempt_at, last_success_at, last_error,
             last_backfill_completed_at, backfill_next_date,
+            coverage_start_date, coverage_end_date,
             last_range_start, last_range_end,
             lease_token, lease_until, updated_at
      FROM meta_ads_insights_sync_state
@@ -232,6 +253,26 @@ async function markSyncStarted(accountId, since, until, leaseToken, database = p
   }
 }
 
+async function resetBackfillCoverage(accountId, coverageStart, leaseToken, database = pool) {
+  const token = requireLeaseToken(leaseToken);
+  const result = await database.query(
+    `UPDATE meta_ads_insights_sync_state
+     SET coverage_start_date = $2::date,
+         coverage_end_date = NULL,
+         backfill_next_date = $2::date,
+         last_backfill_completed_at = NULL,
+         updated_at = now()
+     WHERE account_id = $1 AND lease_token = $3
+     RETURNING account_id`,
+    [accountId, coverageStart, token]
+  );
+  if (!result.rows[0]) {
+    const err = new Error("Meta Ads Insights sync lease was lost before backfill coverage reset.");
+    err.code = "SYNC_LEASE_LOST";
+    throw err;
+  }
+}
+
 async function markBackfillProgress(accountId, since, until, nextDate, leaseToken, database = pool) {
   const token = requireLeaseToken(leaseToken);
   const result = await database.query(
@@ -239,6 +280,7 @@ async function markBackfillProgress(accountId, since, until, nextDate, leaseToke
      SET last_success_at = now(),
          last_error = NULL,
          backfill_next_date = $4::date,
+         coverage_end_date = $3::date,
          last_range_start = $2::date,
          last_range_end = $3::date,
          updated_at = now()
@@ -271,6 +313,17 @@ async function markSyncSuccess(
            ELSE last_backfill_completed_at
          END,
          backfill_next_date = CASE WHEN $5::boolean THEN NULL ELSE backfill_next_date END,
+         coverage_start_date = CASE
+           WHEN $5::boolean THEN $2::date
+           ELSE coverage_start_date
+         END,
+         coverage_end_date = CASE
+           WHEN $5::boolean THEN $3::date
+           WHEN coverage_end_date IS NOT NULL
+             AND $2::date <= coverage_end_date + 1
+             THEN GREATEST(coverage_end_date, $3::date)
+           ELSE coverage_end_date
+         END,
          last_range_start = $2::date,
          last_range_end = $3::date,
          lease_token = NULL,
@@ -314,6 +367,7 @@ async function markSyncFailure(accountId, since, until, errorText, leaseToken, d
 module.exports = {
   MAX_LEASE_MS,
   UPSERT_CHUNK_SIZE,
+  getLatestHierarchyForAdIds,
   getSyncState,
   markBackfillProgress,
   markSyncFailure,
@@ -321,6 +375,7 @@ module.exports = {
   markSyncSuccess,
   releaseSyncLease,
   renewSyncLease,
+  resetBackfillCoverage,
   replaceInsightsRange,
   tryAcquireSyncLease,
   validateRows,

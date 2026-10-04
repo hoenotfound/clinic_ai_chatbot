@@ -67,6 +67,18 @@ test(
         "utf8"
       )
     );
+    await client.query(
+      fs.readFileSync(
+        path.join(__dirname, "..", "src/db/migrations/028_meta_ads_analytics_read_indexes.sql"),
+        "utf8"
+      )
+    );
+    await client.query(
+      fs.readFileSync(
+        path.join(__dirname, "..", "src/db/migrations/029_meta_ads_spend_coverage.sql"),
+        "utf8"
+      )
+    );
 
     const database = {
       query(text, params) {
@@ -135,6 +147,16 @@ test(
       },
     ]);
 
+    const hierarchy = await insightsRepo.getLatestHierarchyForAdIds(
+      ["303", "not-an-id"],
+      database
+    );
+    assert.equal(hierarchy.size, 1);
+    assert.equal(hierarchy.get("303")?.account_id, accountId);
+    assert.equal(hierarchy.get("303")?.campaign_id, "100");
+    assert.equal(hierarchy.get("303")?.adset_id, "200");
+    assert.equal(hierarchy.get("303")?.ad_name, "Ad 303");
+
     assert.equal(
       await insightsRepo.tryAcquireSyncLease(
         accountId,
@@ -166,5 +188,40 @@ test(
       ),
       true
     );
+
+    await client.query(
+      "UPDATE meta_ads_insights_sync_state SET last_backfill_completed_at = now() WHERE account_id = $1",
+      [accountId]
+    );
+    await insightsRepo.resetBackfillCoverage(
+      accountId,
+      "2026-07-07",
+      "owner-b",
+      database
+    );
+    await insightsRepo.markBackfillProgress(
+      accountId,
+      "2026-07-07",
+      "2026-08-05",
+      "2026-08-06",
+      "owner-b",
+      database
+    );
+    let syncState = await insightsRepo.getSyncState(accountId, database);
+    assert.equal(syncState.last_backfill_completed_at, null);
+    assert.equal(syncState.coverage_start_date.toISOString().slice(0, 10), "2026-07-07");
+    assert.equal(syncState.coverage_end_date.toISOString().slice(0, 10), "2026-08-05");
+
+    await insightsRepo.markSyncSuccess(
+      accountId,
+      "2026-07-07",
+      "2026-10-04",
+      "owner-b",
+      { backfillCompleted: true },
+      database
+    );
+    syncState = await insightsRepo.getSyncState(accountId, database);
+    assert.equal(syncState.coverage_start_date.toISOString().slice(0, 10), "2026-07-07");
+    assert.equal(syncState.coverage_end_date.toISOString().slice(0, 10), "2026-10-04");
   }
 );

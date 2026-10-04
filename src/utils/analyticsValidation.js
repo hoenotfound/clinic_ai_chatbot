@@ -68,6 +68,35 @@ function cleanFilter(value, fieldName, maxLength = 160) {
   return text;
 }
 
+function cleanNumericId(value, fieldName) {
+  const text = cleanFilter(value, fieldName, 64);
+  if (!text) return null;
+  if (!/^\d+$/.test(text)) {
+    throw new AnalyticsValidationError(`${fieldName} must be a numeric Meta ID.`);
+  }
+  return text;
+}
+
+function normalizeMetaAdsAnalyticsQuery(query = {}, now = new Date()) {
+  const base = normalizeAnalyticsQuery({
+    from: query.from,
+    to: query.to,
+  }, now);
+  const level = cleanFilter(query.level, "level", 16) || "campaign";
+  if (!["campaign", "adset", "ad"].includes(level)) {
+    throw new AnalyticsValidationError("level must be campaign, adset, or ad.");
+  }
+
+  return {
+    ...base,
+    level,
+    accountId: cleanNumericId(query.accountId, "accountId"),
+    campaignId: cleanNumericId(query.campaignId, "campaignId"),
+    adsetId: cleanNumericId(query.adsetId, "adsetId"),
+    adId: cleanNumericId(query.adId, "adId"),
+  };
+}
+
 function normalizeAnalyticsQuery(query = {}, now = new Date()) {
   const today = formatDateInTimeZone(now);
   const to = query.to ? String(query.to) : today;
@@ -114,5 +143,6 @@ module.exports = {
   formatDateInTimeZone,
   inclusiveDayCount,
   normalizeAnalyticsQuery,
+  normalizeMetaAdsAnalyticsQuery,
   shiftDate,
 };
