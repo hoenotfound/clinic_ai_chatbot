@@ -927,6 +927,28 @@ async function processIncomingMessage(
           return { wasFirstMessage, keywordReason };
         }
 
+        // Temporary AI-provider outages should not permanently hand the
+        // conversation to Staff mode. Flag the chat for attention and send the
+        // bounded fallback, but keep AI ownership so the next customer message
+        // can retry after Gemini/Claude recovers.
+        if (ai.isRecoverableAiReplyFailure(err)) {
+          await contactsRepo.setAttention(
+            fallbackContact.id,
+            true,
+            "AI temporarily unavailable. A staff reply may be needed."
+          );
+          if (!responseAttempted) {
+            responseAttempted = true;
+            await sendTrackedText(
+              fallbackContact,
+              "Sorry, something went wrong on our end — a team member will follow up with you shortly!",
+              "system_fallback",
+              { canSend: canSendAutomatedReply, processingJobId }
+            );
+          }
+          return { wasFirstMessage, keywordReason };
+        }
+
         const pausedContact = await pauseAiForHumanHandoff(
           fallbackContact.id,
           "Message processing failed. A staff reply is needed."
