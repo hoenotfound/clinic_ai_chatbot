@@ -7,6 +7,7 @@ const {
   buildClientBranding,
   buildWebAppManifest,
   resolveAppleTouchIconUrl,
+  resolveFaviconUrl,
 } = require("../services/clientBrandingService");
 const { loginRateLimit, recordFailedAttempt, clearAttempts } = require("../middleware/loginRateLimit");
 const { verifyLoginCredentials } = require("../services/authCredentialService");
@@ -52,6 +53,10 @@ router.get("/branding/manifest.webmanifest", (req, res) => {
 
 router.get("/branding/apple-touch-icon.png", (req, res) => {
   res.redirect(302, resolveAppleTouchIconUrl(clinicConfig, process.env));
+});
+
+router.get("/branding/favicon.png", (req, res) => {
+  res.redirect(302, resolveFaviconUrl(clinicConfig, process.env));
 });
 
 function validateDisplayName(value) {
