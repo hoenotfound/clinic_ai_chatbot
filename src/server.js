@@ -26,6 +26,7 @@ const {
 const { markBookingReadyForContact } = require("./services/bookingReadyOutcomeService");
 const conversationStore = require("./utils/conversationStore");
 const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger");
+const { resolveResultMediaForReply } = require("./utils/resultMediaTrigger");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
 const clinicConfig = require("./config/clinicConfig");
@@ -821,6 +822,7 @@ async function processIncomingMessage(
     // successful normal AI reply when the customer explicitly asked about the
     // price or available packages for one known configured service. Existing
     // safety/ownership gates remain unchanged.
+    let automaticPromoMediaSent = 0;
     {
       const promoBundle = await resolvePricePromotionForReply({
         priceQuery,
@@ -914,6 +916,108 @@ async function processIncomingMessage(
             await contactsRepo.setDeliveryAttention(
               contact.id,
               `Delivery failed: ${publicDeliveryError(promoError)}`
+            );
+            return { wasFirstMessage, keywordReason };
+          }
+          automaticPromoMediaSent += 1;
+        }
+      }
+    }
+
+    // Result examples are service-level social proof, separate from the price
+    // promotion itself. Keep automatic sends restrained: after a normal price
+    // reply (and at most one promo image), send only the approved configured
+    // example(s). A multi-package media burst is already enough for one turn.
+    if (automaticPromoMediaSent <= 1) {
+      const resultBundle = await resolveResultMediaForReply({
+        priceQuery,
+        packageQuery,
+        treatment: details?.treatment,
+        flagged,
+        bookingReady,
+        keywordReason,
+        needsAttention: contact.needs_attention,
+        textSendSucceeded: sendOutcome.sendResult.success,
+        resultMedia: clinicConfig.resultMedia,
+        contactId: contact.id,
+        wasMediaRecentlySent: messagesRepo.wasMediaRecentlySent,
+      });
+
+      if (resultBundle) {
+        for (const resultItem of resultBundle.items) {
+          const resultContact = await getAiOwnedContact(contact, {
+            channel,
+            from,
+            reason: `automatic result media for ${resultBundle.service || "service"}`,
+          });
+          if (!resultContact || resultContact.needs_attention) {
+            return { wasFirstMessage, keywordReason };
+          }
+          contact = resultContact;
+
+          if (canSendAutomatedReply && canSendAutomatedReply() !== true) {
+            return { wasFirstMessage, keywordReason };
+          }
+
+          const guardedResult = typeof canSendAutomatedReply === "function";
+          const savedResult = await conversationStore.appendMessageForContact(
+            contact.id,
+            "assistant",
+            resultItem.caption,
+            null,
+            null,
+            resultItem.imageUrl,
+            null,
+            guardedResult ? { publish: false } : undefined
+          );
+          const resultProviderRecorder = messagesRepo.socialProviderAliasRecorder(
+            savedResult.id,
+            contact.channel
+          );
+          const resultSend = await channelMessaging.sendImageByUrl(
+            contact,
+            resultItem.imageUrl,
+            resultItem.caption,
+            {
+              ...(guardedResult
+                ? { preSendCheck: canSendAutomatedReply }
+                : {}),
+              ...(resultProviderRecorder
+                ? { onProviderMessageId: resultProviderRecorder }
+                : {}),
+            }
+          );
+
+          if (resultSend.cancelled) {
+            await messagesRepo.deleteUnsentAssistantMessage(savedResult.id);
+            return { wasFirstMessage, keywordReason };
+          }
+
+          if (guardedResult) {
+            realtimeEvents.publish("conversation_changed", {
+              contactId: savedResult.contact_id,
+              messageId: savedResult.id,
+              reason: "message",
+            });
+          }
+
+          const resultError = deliveryErrorForSend(
+            resultSend,
+            resultSend.error || channelMessaging.rejectedError(contact.channel)
+          );
+          await persistSendOutcome(
+            savedResult,
+            resultSend,
+            resultError,
+            contact.channel || "whatsapp"
+          );
+          if (!resultSend.success) {
+            console.warn(
+              `Result media failed to send to ${channel}:${from}; stopping the remaining result sequence.`
+            );
+            await contactsRepo.setDeliveryAttention(
+              contact.id,
+              `Delivery failed: ${publicDeliveryError(resultError)}`
             );
             return { wasFirstMessage, keywordReason };
           }
