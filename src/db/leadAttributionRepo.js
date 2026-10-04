@@ -189,6 +189,64 @@ async function createFirstTouch({ leadId, firstMessageId, attribution }) {
   }
 }
 
+async function getForContactCurrentLead(contactId) {
+  const id = Number(contactId);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+
+  const result = await pool.query(
+    `SELECT
+       l.id AS lead_id,
+       l.contact_id,
+       l.temperature,
+       l.treatment_interest,
+       l.appointment_status,
+       l.estimated_value,
+       l.owner_username,
+       l.branch_name,
+       s.name AS stage_name,
+       s.stage_type,
+       la.source,
+       la.channel AS attribution_channel,
+       la.platform,
+       la.meta_ad_id,
+       COALESCE(la.meta_account_id, ah.account_id) AS meta_account_id,
+       COALESCE(la.campaign_id, ah.campaign_id) AS campaign_id,
+       COALESCE(la.campaign_name, ah.campaign_name) AS campaign_name,
+       COALESCE(la.adset_id, ah.adset_id) AS adset_id,
+       COALESCE(la.adset_name, ah.adset_name) AS adset_name,
+       COALESCE(la.ad_name, ah.ad_name) AS ad_name,
+       la.ctwa_clid,
+       la.headline,
+       la.body,
+       la.media_type,
+       la.media_url,
+       la.enrichment_status,
+       la.enriched_at,
+       la.attributed_at
+     FROM leads l
+     JOIN pipeline_stages s ON s.id = l.stage_id
+     LEFT JOIN lead_attributions la ON la.lead_id = l.id
+     LEFT JOIN LATERAL (
+       SELECT
+         mi.account_id,
+         mi.campaign_id,
+         mi.campaign_name,
+         mi.adset_id,
+         mi.adset_name,
+         mi.ad_name
+       FROM meta_ad_insights_daily mi
+       WHERE mi.ad_id = la.meta_ad_id
+       ORDER BY mi.insight_date DESC, mi.updated_at DESC
+       LIMIT 1
+     ) ah ON true
+     WHERE l.contact_id = $1
+     ORDER BY l.is_closed ASC, l.created_at DESC, l.id DESC
+     LIMIT 1`,
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
 async function getForLeadWithClient(client, leadId) {
   const result = await client.query(
     `SELECT * FROM lead_attributions WHERE lead_id = $1`,
@@ -369,6 +427,7 @@ module.exports = {
   cleanupExpiredPending,
   getForLead,
   getForLeadIds,
+  getForContactCurrentLead,
   getById,
   createFirstTouch,
   claimMetaEnrichmentById,
