@@ -43,8 +43,7 @@ function matchingResultMediaSet(resultMedia, treatment) {
 }
 
 /**
- * Chooses approved service-level result media after a successful price/package
- * reply. Automatic proof is deliberately conservative: if any configured
+ * Chooses approved service-level result media after a successful price reply. Automatic proof is deliberately conservative: if any configured
  * result image for this service was already accepted for this contact inside
  * the duplicate window, do not send another automatic result example.
  */
@@ -63,7 +62,7 @@ async function resolveResultMediaForReply({
   duplicateWindowHours = DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS,
 }) {
   if (
-    (priceQuery !== true && packageQuery !== true) ||
+    priceQuery !== true ||
     !treatment ||
     flagged ||
     bookingReady ||
