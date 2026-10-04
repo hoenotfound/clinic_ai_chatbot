@@ -88,7 +88,7 @@ test("captures camelCase Facebook Ads context without overriding top-level creat
     source: "ADS",
     type: "OPEN_THREAD",
     adsContextData: {
-      ad_id: "120299999900003",
+      adId: "120299999900003",
       adTitle: "3D 小颜术｜大小脸",
       adBody: "了解脸型与轮廓调理",
     },
