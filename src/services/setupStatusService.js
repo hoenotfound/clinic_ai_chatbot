@@ -517,8 +517,11 @@ function createSetupStatusService({
     }
 
     // The normal Gemini-preferred setup path uses metadata-only Gemini checks.
-    // If Claude is configured as fallback, validate it independently so a bad
-    // workspace/key cannot hide behind a healthy Gemini primary.
+    // Validate Claude independently whenever it is configured so a bad
+    // workspace/key cannot hide behind another healthy provider.
+    const claudeRole = definition.meta?.aiProvider === "claude"
+      ? "preferred Claude provider"
+      : "configured Claude fallback";
     if (text(env.ANTHROPIC_API_KEY) && typeof ai.runClaudeReply === "function") {
       try {
         await ai.runClaudeReply(
@@ -537,7 +540,7 @@ function createSetupStatusService({
         return result(
           "ai",
           "warning",
-          `The main AI reply path is available, but the configured Claude fallback failed its private check. ${privateError(err, "Claude fallback check failed.")}`,
+          `The main AI reply path is available, but the ${claudeRole} failed its private check. ${privateError(err, "Claude provider check failed.")}`,
           checkedAt,
           { reason: "claude_fallback_failed" }
         );
@@ -548,7 +551,7 @@ function createSetupStatusService({
       "ai",
       "ready",
       text(env.ANTHROPIC_API_KEY) && typeof ai.runClaudeReply === "function"
-        ? "The AI reply engine and configured Claude fallback completed private test requests."
+        ? `The AI reply engine and ${claudeRole} completed private test requests.`
         : "The AI reply engine completed a private test request.",
       checkedAt
     );
