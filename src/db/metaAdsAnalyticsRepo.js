@@ -331,45 +331,6 @@ async function getMetaAdsAnalytics(filters, { database = pool, analyticsProfile 
   const mixedCurrency = currencies.length > 1;
   const currency = currencies.length === 1 ? currencies[0] : null;
   const allowMoneyMetrics = !mixedCurrency && Boolean(currency);
-  const allowValueRoas = allowMoneyMetrics && currency === CRM_VALUE_CURRENCY;
-
-  const summary = enrichPerformance({
-    spend: raw.spend,
-    impressions: raw.impressions,
-    clicks: raw.clicks,
-    crmLeads: raw.crm_leads,
-    hotLeads: raw.hot_leads,
-    appointments: raw.appointments,
-    visits: raw.visits,
-    won: raw.won,
-    estimatedWonValue: raw.estimated_won_value,
-  }, { allowValueRoas });
-
-  if (!allowMoneyMetrics) {
-    summary.spend = null;
-    summary.costPerLead = null;
-    summary.costPerAppointment = null;
-    summary.costPerVisit = null;
-    summary.costPerWon = null;
-    summary.cpc = null;
-    summary.cpm = null;
-  }
-
-  const rows = (Array.isArray(raw.rows) ? raw.rows : []).map((entry) => {
-    const rowCurrency = entry.currency || null;
-    const enriched = enrichPerformance(entry, {
-      allowValueRoas: rowCurrency === CRM_VALUE_CURRENCY,
-    });
-    if (!rowCurrency) {
-      enriched.cpc = null;
-      enriched.cpm = null;
-      enriched.costPerLead = null;
-      enriched.costPerAppointment = null;
-      enriched.costPerVisit = null;
-      enriched.costPerWon = null;
-    }
-    return enriched;
-  });
 
   const accountResult = await query(
     `WITH account_ids AS (
@@ -406,8 +367,120 @@ async function getMetaAdsAnalytics(filters, { database = pool, analyticsProfile 
      ORDER BY latest.account_name NULLS LAST, ids.account_id`
   );
 
+  const accounts = accountResult.rows.map((row) => ({
+    accountId: row.account_id,
+    accountName: row.account_name || null,
+    currency: row.account_currency || null,
+    dataThrough: row.data_through || null,
+    coverageFrom: row.coverage_start_date || null,
+    coverageThrough: row.coverage_end_date || null,
+    lastAttemptAt: row.last_attempt_at || null,
+    lastSuccessAt: row.last_success_at || null,
+    lastError: row.last_error || null,
+    backfillCompletedAt: row.last_backfill_completed_at || null,
+    backfillNextDate: row.backfill_next_date || null,
+    syncing: Boolean(row.lease_until && new Date(row.lease_until).getTime() > Date.now()),
+  }));
+  const accountById = new Map(accounts.map((account) => [String(account.accountId), account]));
+  const rawRows = Array.isArray(raw.rows) ? raw.rows : [];
+
+  const rowAccountIds = rawRows
+    .map((row) => row.accountId)
+    .filter(Boolean)
+    .map(String);
+  const relevantAccountIds = [...new Set(
+    filters.accountId
+      ? [String(filters.accountId)]
+      : rowAccountIds.length
+        ? rowAccountIds
+        : accounts.map((account) => String(account.accountId))
+  )];
+
+  const accountCoversRange = (accountId) => {
+    const account = accountById.get(String(accountId));
+    return Boolean(
+      account?.coverageFrom
+      && account?.coverageThrough
+      && account.coverageFrom <= filters.from
+      && account.coverageThrough >= filters.to
+    );
+  };
+  const uncoveredAccountIds = relevantAccountIds.filter(
+    (accountId) => !accountCoversRange(accountId)
+  );
+  const historyComplete = uncoveredAccountIds.length === 0;
+  const coverageStarts = relevantAccountIds
+    .map((accountId) => accountById.get(accountId)?.coverageFrom)
+    .filter(Boolean);
+  const coverageEnds = relevantAccountIds
+    .map((accountId) => accountById.get(accountId)?.coverageThrough)
+    .filter(Boolean);
+  const commonCoverageFrom = coverageStarts.length
+    ? [...coverageStarts].sort().at(-1)
+    : null;
+  const commonCoverageThrough = coverageEnds.length
+    ? [...coverageEnds].sort()[0]
+    : null;
+
   const matchedLeads = number(raw.matched_leads);
-  const crmLeads = summary.crmLeads;
+  const crmLeads = number(raw.crm_leads);
+  const attributionComplete = matchedLeads === crmLeads;
+  const spendCoverageComplete = historyComplete && attributionComplete;
+  const allowValueRoas = (
+    allowMoneyMetrics
+    && currency === CRM_VALUE_CURRENCY
+    && spendCoverageComplete
+  );
+
+  const summary = enrichPerformance({
+    spend: raw.spend,
+    impressions: raw.impressions,
+    clicks: raw.clicks,
+    crmLeads,
+    hotLeads: raw.hot_leads,
+    appointments: raw.appointments,
+    visits: raw.visits,
+    won: raw.won,
+    estimatedWonValue: raw.estimated_won_value,
+  }, { allowValueRoas });
+
+  if (!allowMoneyMetrics) {
+    summary.spend = null;
+    summary.cpc = null;
+    summary.cpm = null;
+  }
+  if (!allowMoneyMetrics || !spendCoverageComplete) {
+    summary.costPerLead = null;
+    summary.costPerAppointment = null;
+    summary.costPerVisit = null;
+    summary.costPerWon = null;
+    summary.estimatedRoas = null;
+  }
+
+  const rows = rawRows.map((entry) => {
+    const rowCurrency = entry.currency || null;
+    const rowCrmLeads = number(entry.crmLeads);
+    const rowMatchedLeads = number(entry.matchedLeads);
+    const rowAttributionComplete = rowMatchedLeads === rowCrmLeads;
+    const rowHistoryComplete = Boolean(entry.accountId && accountCoversRange(entry.accountId));
+    const rowCoverageComplete = rowHistoryComplete && rowAttributionComplete;
+    const enriched = enrichPerformance(entry, {
+      allowValueRoas: rowCurrency === CRM_VALUE_CURRENCY && rowCoverageComplete,
+    });
+    enriched.spendCoverageComplete = rowCoverageComplete;
+    if (!rowCurrency) {
+      enriched.cpc = null;
+      enriched.cpm = null;
+    }
+    if (!rowCurrency || !rowCoverageComplete) {
+      enriched.costPerLead = null;
+      enriched.costPerAppointment = null;
+      enriched.costPerVisit = null;
+      enriched.costPerWon = null;
+      enriched.estimatedRoas = null;
+    }
+    return enriched;
+  });
 
   return {
     range: {
@@ -437,19 +510,17 @@ async function getMetaAdsAnalytics(filters, { database = pool, analyticsProfile 
       unmatchedToSyncedAds: Math.max(0, crmLeads - matchedLeads),
       matchedRate: percent(matchedLeads, crmLeads),
     },
+    spendCoverage: {
+      complete: spendCoverageComplete,
+      historyComplete,
+      attributionComplete,
+      relevantAccountIds,
+      uncoveredAccountIds,
+      coverageFrom: commonCoverageFrom,
+      coverageThrough: commonCoverageThrough,
+    },
     rows,
-    accounts: accountResult.rows.map((row) => ({
-      accountId: row.account_id,
-      accountName: row.account_name || null,
-      currency: row.account_currency || null,
-      dataThrough: row.data_through || null,
-      lastAttemptAt: row.last_attempt_at || null,
-      lastSuccessAt: row.last_success_at || null,
-      lastError: row.last_error || null,
-      backfillCompletedAt: row.last_backfill_completed_at || null,
-      backfillNextDate: row.backfill_next_date || null,
-      syncing: Boolean(row.lease_until && new Date(row.lease_until).getTime() > Date.now()),
-    })),
+    accounts,
   };
 }
 
