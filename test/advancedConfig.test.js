@@ -13,6 +13,7 @@ const {
   configFingerprint,
   tokenizeDiffText,
   editableConfigView,
+  restorableEditableConfigView,
   prepareAdvancedConfigPayload,
 } = require("../src/routes/advancedConfig");
 const {
@@ -1295,4 +1296,31 @@ test("removing a service is blocked while result media still targets it", () => 
   assert.equal(renamedService.ok, false);
   assert.deepEqual(renamedService.invalidKeys, ["resultMedia"]);
   assert.match(renamedService.error, /currently configured service/i);
+});
+
+
+test("legacy Advanced Config snapshots restore result media to the old disabled state", () => {
+  const legacySnapshot = editableConfigView(currentConfig());
+  delete legacySnapshot.resultMedia;
+
+  const restored = restorableEditableConfigView(legacySnapshot);
+  assert.deepEqual(restored.resultMedia, []);
+
+  const modernSnapshot = {
+    ...legacySnapshot,
+    resultMedia: [{
+      service: "Consultation",
+      enabled: true,
+      sendAfterPrice: true,
+      autoSendCount: 1,
+      items: [{
+        imageUrl: "https://example.test/result.jpg",
+        caption: "Example result",
+      }],
+    }],
+  };
+  assert.deepEqual(
+    restorableEditableConfigView(modernSnapshot).resultMedia,
+    modernSnapshot.resultMedia
+  );
 });
