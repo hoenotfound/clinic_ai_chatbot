@@ -38,24 +38,65 @@ function base(overrides = {}) {
     resultMedia,
     contactId: 42,
     wasMediaRecentlySent: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
     ...overrides,
   };
 }
 
 test("price enquiry resolves one approved service-level result example", async () => {
-  const calls = [];
+  const recentCalls = [];
+  const historyCalls = [];
   const selected = await resolveResultMediaForReply(base({
     wasMediaRecentlySent: async (...args) => {
-      calls.push(args);
+      recentCalls.push(args);
       return false;
+    },
+    getMostRecentlySentMediaUrl: async (...args) => {
+      historyCalls.push(args);
+      return null;
     },
   }));
 
   assert.equal(selected.service, "3D 小颜术");
   assert.deepEqual(selected.items, [resultMedia[0].items[0]]);
-  assert.deepEqual(calls, [
+  assert.deepEqual(recentCalls, [
     [42, "https://example.test/3d-1.jpg", DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS],
     [42, "https://example.test/3d-2.jpg", DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS],
+  ]);
+  assert.deepEqual(historyCalls, [[
+    42,
+    [
+      "https://example.test/3d-1.jpg",
+      "https://example.test/3d-2.jpg",
+    ],
+  ]]);
+});
+
+test("after the cooldown expires, automatic result media rotates after the last accepted example", async () => {
+  const selected = await resolveResultMediaForReply(base({
+    getMostRecentlySentMediaUrl: async () => "https://example.test/3d-1.jpg",
+  }));
+
+  assert.deepEqual(selected.items, [resultMedia[0].items[1]]);
+});
+
+test("rotation wraps and preserves configured multi-example send order", async () => {
+  const third = {
+    imageUrl: "https://example.test/3d-3.jpg",
+    caption: "3D example 3",
+  };
+  const selected = await resolveResultMediaForReply(base({
+    resultMedia: [{
+      ...resultMedia[0],
+      autoSendCount: 2,
+      items: [...resultMedia[0].items, third],
+    }],
+    getMostRecentlySentMediaUrl: async () => third.imageUrl,
+  }));
+
+  assert.deepEqual(selected.items, [
+    resultMedia[0].items[0],
+    resultMedia[0].items[1],
   ]);
 });
 
