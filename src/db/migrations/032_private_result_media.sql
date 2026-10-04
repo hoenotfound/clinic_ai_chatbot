@@ -21,14 +21,14 @@ WITH result_media_urls AS (
         THEN c.data->'resultMedia'
       ELSE '[]'::jsonb
     END
-  ) AS result_set
+  ) AS rs(result_set)
   CROSS JOIN LATERAL jsonb_array_elements(
     CASE
       WHEN jsonb_typeof(result_set->'items') = 'array'
         THEN result_set->'items'
       ELSE '[]'::jsonb
     END
-  ) AS item
+  ) AS it(item)
 ),
 result_media_ids AS (
   SELECT DISTINCT
