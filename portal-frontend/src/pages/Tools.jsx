@@ -997,8 +997,14 @@ function ServiceOverridesEditor({
   const normalizedServices = new Set(
     serviceNames.map((name) => name.toLocaleLowerCase())
   );
-  const selected = new Set(overrides.map((item) => item.serviceName));
-  const available = serviceNames.filter((name) => !selected.has(name));
+  const selected = new Set(
+    overrides.map((item) =>
+      String(item?.serviceName || "").trim().toLocaleLowerCase()
+    )
+  );
+  const available = serviceNames.filter(
+    (name) => !selected.has(name.toLocaleLowerCase())
+  );
 
   function addOverride() {
     if (!available.length) return;
@@ -1065,7 +1071,9 @@ function ServiceOverridesEditor({
                 const usedByOthers = new Set(
                   overrides
                     .filter((_, otherIndex) => otherIndex !== index)
-                    .map((override) => override.serviceName)
+                    .map((override) =>
+                      String(override?.serviceName || "").trim().toLocaleLowerCase()
+                    )
                 );
                 const choices = [
                   item.serviceName,
@@ -1091,7 +1099,7 @@ function ServiceOverridesEditor({
                         className="min-w-0 flex-1 rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
                       >
                         {choices.map((name) => (
-                          <option key={name} value={name} disabled={usedByOthers.has(name)}>
+                          <option key={name} value={name} disabled={usedByOthers.has(name.toLocaleLowerCase())}>
                             {name}
                           </option>
                         ))}
