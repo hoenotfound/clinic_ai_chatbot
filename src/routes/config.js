@@ -137,28 +137,62 @@ function decorateConfig(config) {
   };
 }
 
-function isAutomatedFollowUpConfig(value) {
-  return (
-    isPlainObject(value) &&
-    typeof value.enabled === "boolean" &&
-    Number.isInteger(value.delayMinutes) &&
-    value.delayMinutes >= 5 &&
-    value.delayMinutes <= 23 * 60 &&
-    ["all", "staff"].includes(value.triggerMode) &&
-    isNonEmptyString(value.message) &&
-    value.message.length <= 1000 &&
-    isFollowUpTranslations(value.translations) &&
-    isString(value.imageUrl) &&
-    (value.activatedAt === null || !Number.isNaN(Date.parse(value.activatedAt)))
-  );
-}
-
 function isFollowUpTranslations(value) {
   return (
     isPlainObject(value) &&
     ["en", "ms", "zh"].every(
       (key) => isNonEmptyString(value[key]) && value[key].trim().length <= 1000
     )
+  );
+}
+
+function isFollowUpServiceOverride(value) {
+  return (
+    isPlainObject(value) &&
+    isNonEmptyString(value.serviceName) &&
+    value.serviceName.trim().length <= 200 &&
+    isNonEmptyString(value.message) &&
+    value.message.trim().length <= 1000 &&
+    isFollowUpTranslations(value.translations)
+  );
+}
+
+function isFollowUpStep(value) {
+  return (
+    isPlainObject(value) &&
+    Number.isInteger(value.delayMinutes) &&
+    value.delayMinutes >= 5 &&
+    value.delayMinutes <= 23 * 60 &&
+    isNonEmptyString(value.message) &&
+    value.message.trim().length <= 1000 &&
+    isFollowUpTranslations(value.translations) &&
+    isString(value.imageUrl) &&
+    Array.isArray(value.serviceOverrides) &&
+    value.serviceOverrides.length <= 50 &&
+    value.serviceOverrides.every(isFollowUpServiceOverride)
+  );
+}
+
+function isAutomatedFollowUpConfig(value) {
+  if (
+    !isPlainObject(value) ||
+    typeof value.enabled !== "boolean" ||
+    !["all", "staff"].includes(value.triggerMode) ||
+    !isFollowUpStep(value) ||
+    !Array.isArray(value.additionalSteps) ||
+    value.additionalSteps.length > 2 ||
+    !value.additionalSteps.every(isFollowUpStep) ||
+    !(value.activatedAt === null || !Number.isNaN(Date.parse(value.activatedAt)))
+  ) {
+    return false;
+  }
+
+  const delays = [
+    value.delayMinutes,
+    ...value.additionalSteps.map((step) => step.delayMinutes),
+  ];
+  return delays.every(
+    (delay, index) => index === 0 || delay > delays[index - 1]
   );
 }
 
@@ -216,27 +250,93 @@ function prepareFollowUpTranslations(requested, fallbackMessage) {
   );
 }
 
+function prepareFollowUpServiceOverrides(requested) {
+  if (requested === undefined) return [];
+  if (!Array.isArray(requested) || requested.length > 50) return null;
+
+  const seen = new Set();
+  const prepared = [];
+  for (const item of requested) {
+    if (!isPlainObject(item)) return null;
+    const serviceName =
+      typeof item.serviceName === "string" ? item.serviceName.trim() : "";
+    const message =
+      typeof item.message === "string" ? item.message.trim() : "";
+    const translations = prepareFollowUpTranslations(
+      item.translations,
+      message
+    );
+    const normalizedService = serviceName.toLocaleLowerCase();
+
+    if (
+      !serviceName ||
+      serviceName.length > 200 ||
+      !message ||
+      message.length > 1000 ||
+      !isFollowUpTranslations(translations) ||
+      seen.has(normalizedService)
+    ) {
+      return null;
+    }
+    seen.add(normalizedService);
+    prepared.push({ serviceName, message, translations });
+  }
+  return prepared;
+}
+
+function prepareFollowUpStep(requested) {
+  if (!isPlainObject(requested)) return null;
+
+  const delayMinutes = Number(requested.delayMinutes);
+  const message =
+    typeof requested.message === "string" ? requested.message.trim() : "";
+  const translations = prepareFollowUpTranslations(
+    requested.translations,
+    message
+  );
+  const imageUrl =
+    typeof requested.imageUrl === "string" ? requested.imageUrl.trim() : "";
+  const serviceOverrides = prepareFollowUpServiceOverrides(
+    requested.serviceOverrides
+  );
+
+  const prepared = {
+    delayMinutes,
+    message,
+    translations,
+    imageUrl,
+    serviceOverrides,
+  };
+  return serviceOverrides && isFollowUpStep(prepared) ? prepared : null;
+}
+
 function prepareAutomatedFollowUpConfig(requested, current) {
   if (!isPlainObject(requested)) return null;
 
   const enabled = requested.enabled;
-  const delayMinutes = Number(requested.delayMinutes);
   const triggerMode = requested.triggerMode;
-  const message = typeof requested.message === "string" ? requested.message.trim() : "";
-  const translations = prepareFollowUpTranslations(requested.translations, message);
-  const imageUrl = typeof requested.imageUrl === "string" ? requested.imageUrl.trim() : "";
+  const firstStep = prepareFollowUpStep(requested);
+  const additionalInput =
+    requested.additionalSteps === undefined ? [] : requested.additionalSteps;
 
   if (
     typeof enabled !== "boolean" ||
-    !Number.isInteger(delayMinutes) ||
-    delayMinutes < 5 ||
-    delayMinutes > 23 * 60 ||
     !["all", "staff"].includes(triggerMode) ||
-    !message ||
-    message.length > 1000 ||
-    !isFollowUpTranslations(translations)
+    !firstStep ||
+    !Array.isArray(additionalInput) ||
+    additionalInput.length > 2
   ) {
     return null;
+  }
+
+  const additionalSteps = additionalInput.map(prepareFollowUpStep);
+  if (additionalSteps.some((step) => !step)) return null;
+
+  const allSteps = [firstStep, ...additionalSteps];
+  for (let index = 1; index < allSteps.length; index += 1) {
+    if (allSteps[index].delayMinutes <= allSteps[index - 1].delayMinutes) {
+      return null;
+    }
   }
 
   const continuingCurrentActivation =
@@ -247,11 +347,9 @@ function prepareAutomatedFollowUpConfig(requested, current) {
 
   return {
     enabled,
-    delayMinutes,
     triggerMode,
-    message,
-    translations,
-    imageUrl,
+    ...firstStep,
+    additionalSteps,
     activatedAt: enabled
       ? continuingCurrentActivation
         ? current.activatedAt
@@ -351,7 +449,7 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
       return {
         ok: false,
         status: 400,
-        error: "Invalid automated follow-up settings. Use a delay between 5 minutes and 23 hours.",
+        error: "Invalid automated follow-up settings. Use 1 to 3 steps with increasing delays between 5 minutes and 23 hours.",
       };
     }
     updates.automatedFollowUp = prepared;
