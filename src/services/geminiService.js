@@ -51,7 +51,7 @@ function buildThinkingConfig(model = MODEL, env = process.env) {
 function buildGeminiRequest(messages, options, resolvedModel) {
   const thinkingConfig = buildThinkingConfig(resolvedModel);
   return {
-    purpose: "customer_reply",
+    purpose: options.surface === "follow_up" ? "follow_up_generation" : "customer_reply",
     request: {
       model: resolvedModel,
       contents: buildContents(messages),
