@@ -242,6 +242,72 @@ test("sends the matching service-specific message for a later sequence step", as
   });
 });
 
+test("current configured service without an override beats stale CRM interest", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.additionalSteps = [
+    {
+      delayMinutes: 480,
+      message: "General second follow-up",
+      translations: {
+        en: "General second follow-up",
+        ms: "Susulan umum kedua",
+        zh: "第二次一般跟进",
+      },
+      imageUrl: "",
+      serviceOverrides: [
+        {
+          serviceName: "Pelvic Care",
+          message: "Pelvic care follow-up",
+          translations: {
+            en: "Pelvic care follow-up",
+            ms: "Susulan penjagaan pelvis",
+            zh: "骨盆调理跟进",
+          },
+        },
+      ],
+    },
+  ];
+
+  let claimInput = null;
+  let sentMessage = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 20,
+      whatsapp_number: "60120000000",
+      trigger_message_id: 100,
+      next_follow_up_step: 2,
+      treatment_interest: "Pelvic Care",
+      recent_inbound_messages: ["I want to know more about Uterus Care."],
+      trigger_message_content: "Sure, I can explain Uterus Care.",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 101, contact_id: 20, delivery_status: null };
+  };
+  followUpRepo.isClaimStillEligible = async () => true;
+  whatsapp.sendMessage = async (number, message) => {
+    sentMessage = { number, message };
+    return { success: true, wamid: "wamid-101" };
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 20,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(claimInput.targetedService, null);
+  assert.equal(claimInput.content, "General second follow-up");
+  assert.deepEqual(sentMessage, {
+    number: "60120000000",
+    message: "General second follow-up",
+  });
+});
+
 test("can infer one targeted service from a configured alias in recent conversation", async (t) => {
   enableTool();
   const originalAliases = clinicConfig.serviceAliases;
@@ -440,6 +506,63 @@ test("stale service overrides fail safe to the general message", async () => {
 
   assert.equal(claimInput.content, "General second follow-up");
   assert.equal(claimInput.targetedService, null);
+});
+
+test("cancels and removes a claimed follow-up when final pre-send eligibility changes", async () => {
+  enableTool();
+  let providerCalls = 0;
+  let finalCheck = null;
+  let discarded = null;
+  let attentionCalls = 0;
+
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 21,
+      whatsapp_number: "60121111111",
+      trigger_message_id: 110,
+      recent_inbound_messages: ["Still considering"],
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async () => ({
+    id: 111,
+    contact_id: 21,
+    delivery_status: null,
+    whatsapp_message_id: null,
+  });
+  followUpRepo.isClaimStillEligible = async (input) => {
+    finalCheck = input;
+    return false;
+  };
+  followUpRepo.discardUnsentClaim = async (input) => {
+    discarded = input;
+    return {
+      id: 111,
+      contact_id: 21,
+      delivery_status: null,
+      whatsapp_message_id: null,
+    };
+  };
+  whatsapp.sendMessage = async () => {
+    providerCalls += 1;
+    return { success: true, wamid: "must-not-send" };
+  };
+  contactsRepo.setDeliveryAttention = async () => {
+    attentionCalls += 1;
+  };
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.deepEqual(finalCheck, {
+    messageId: 111,
+    contactId: 21,
+  });
+  assert.deepEqual(discarded, {
+    messageId: 111,
+    contactId: 21,
+  });
+  assert.equal(providerCalls, 0);
+  assert.equal(attentionCalls, 0);
 });
 
 test("does not send when the database no longer considers the trigger eligible", async () => {
