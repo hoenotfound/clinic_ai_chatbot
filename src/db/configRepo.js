@@ -264,6 +264,18 @@ async function updateConfig(updates, database = pool) {
       }
     }
 
+    if (Object.prototype.hasOwnProperty.call(updates, "resultMedia")) {
+      const resultImageIds = (nextConfig.resultMedia || [])
+        .flatMap((entry) =>
+          Array.isArray(entry?.items)
+            ? entry.items.map((item) => item?.imageUrl)
+            : []
+        )
+        .map(extractPromoImageId)
+        .filter((id) => id !== null);
+      await promoImagesRepo.markResultMedia(resultImageIds, client);
+    }
+
     await client.query(
       "UPDATE clinic_config SET data = $1, updated_at = now() WHERE id = 1",
       [nextConfig]
@@ -278,18 +290,6 @@ async function updateConfig(updates, database = pool) {
   }
 
   industrySetupRepo.replaceLiveConfig(nextConfig);
-
-  if (Object.prototype.hasOwnProperty.call(updates, "resultMedia")) {
-    const resultImageIds = (nextConfig.resultMedia || [])
-      .flatMap((entry) =>
-        Array.isArray(entry?.items)
-          ? entry.items.map((item) => item?.imageUrl)
-          : []
-      )
-      .map(extractPromoImageId)
-      .filter((id) => id !== null);
-    await promoImagesRepo.markResultMedia(resultImageIds);
-  }
 
   if (
     Object.prototype.hasOwnProperty.call(updates, "promotions") ||
