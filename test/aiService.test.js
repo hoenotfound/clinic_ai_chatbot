@@ -286,14 +286,26 @@ test("primary-model quota cooldown does not block the fallback reply model", asy
 });
 
 test("recoverable AI reply failures stay eligible for a later automatic retry", () => {
-  assert.equal(isRecoverableAiReplyFailure({ code: "ALL_AI_PROVIDERS_FAILED" }), true);
   assert.equal(isRecoverableAiReplyFailure({ code: "AI_GLOBAL_BUDGET_EXCEEDED" }), true);
   assert.equal(
     isRecoverableAiReplyFailure({
-      code: "SOMETHING_ELSE",
-      failures: [{ code: "AI_TIMEOUT", message: "provider timed out" }],
+      code: "ALL_AI_PROVIDERS_FAILED",
+      failures: [
+        { code: "ALL_GEMINI_MODELS_FAILED", recoverable: true, message: "Gemini timed out" },
+        { code: null, recoverable: false, message: "Claude bad configuration" },
+      ],
     }),
     true
+  );
+  assert.equal(
+    isRecoverableAiReplyFailure({
+      code: "ALL_AI_PROVIDERS_FAILED",
+      failures: [
+        { code: null, recoverable: false, message: "Unauthorized" },
+        { code: null, recoverable: false, message: "anthropic-workspace-id is required" },
+      ],
+    }),
+    false
   );
   assert.equal(isRecoverableAiReplyFailure({ code: "AI_PROVIDER_NOT_CONFIGURED" }), false);
 });
