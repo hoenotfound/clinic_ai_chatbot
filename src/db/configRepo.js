@@ -58,7 +58,9 @@ function conflict(code, message) {
 
 function extractPromoImageId(url) {
   if (!url) return null;
-  const match = String(url).match(/\/promo-images\/(\d+)(?:[/?#]|$)/);
+  const match = String(url).match(
+    /\/(?:promo-images|api\/config\/result-media\/image)\/(\d+)(?:[/?#]|$)/
+  );
   return match ? Number(match[1]) : null;
 }
 
@@ -252,6 +254,18 @@ async function updateConfig(updates, database = pool) {
   }
 
   industrySetupRepo.replaceLiveConfig(nextConfig);
+
+  if (Object.prototype.hasOwnProperty.call(updates, "resultMedia")) {
+    const resultImageIds = (nextConfig.resultMedia || [])
+      .flatMap((entry) =>
+        Array.isArray(entry?.items)
+          ? entry.items.map((item) => item?.imageUrl)
+          : []
+      )
+      .map(extractPromoImageId)
+      .filter((id) => id !== null);
+    await promoImagesRepo.markResultMedia(resultImageIds);
+  }
 
   if (
     Object.prototype.hasOwnProperty.call(updates, "promotions") ||
