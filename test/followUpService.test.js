@@ -52,6 +52,11 @@ function enableTool() {
       zh: "您好，请问还需要帮助吗？",
     },
     imageUrl: "",
+    quietHours: {
+      enabled: false,
+      start: "00:00",
+      end: "07:00",
+    },
     activatedAt: "2026-08-27T00:00:00.000Z",
   };
 }
@@ -99,6 +104,7 @@ test("sends and records one claimed automated follow-up", async () => {
 
 test("quiet hours defer due follow-ups until the configured clinic-local end time", async () => {
   enableTool();
+  clinicConfig.automatedFollowUp.quietHours.enabled = true;
   let candidateQueries = 0;
   followUpRepo.findCandidates = async () => {
     candidateQueries += 1;
@@ -117,6 +123,7 @@ test("quiet hours defer due follow-ups until the configured clinic-local end tim
 
 test("follow-up discovery resumes exactly when quiet hours end", async () => {
   enableTool();
+  clinicConfig.automatedFollowUp.quietHours.enabled = true;
   let candidateQueries = 0;
   followUpRepo.findCandidates = async () => {
     candidateQueries += 1;
