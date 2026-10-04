@@ -734,6 +734,10 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
   await page.goto("/tools");
   await expect(page.getByRole("heading", { name: "Automated follow-up" })).toBeVisible();
 
+  await expect(page.getByRole("switch", { name: "Follow-up quiet hours" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByLabel("Follow-up quiet hours start")).toHaveValue("00:00");
+  await expect(page.getByLabel("Follow-up quiet hours end")).toHaveValue("07:00");
+
   await page.getByRole("button", { name: "+ Add follow-up" }).click();
   await page
     .getByPlaceholder("Write the next follow-up message.")
@@ -761,6 +765,11 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => savedPayload).not.toBeNull();
 
+  expect(savedPayload.automatedFollowUp.quietHours).toEqual({
+    enabled: true,
+    start: "00:00",
+    end: "07:00",
+  });
   expect(savedPayload.automatedFollowUp.additionalSteps).toHaveLength(1);
   expect(savedPayload.automatedFollowUp.additionalSteps[0]).toMatchObject({
     delayMinutes: 480,
