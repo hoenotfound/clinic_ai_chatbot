@@ -447,7 +447,48 @@ export default function Analytics() {
                 <SmallStat label={`${analyticsUi.followUpPrimaryLabel} Within ${data.followUps.outcomeWindowDays}d`} value={data.followUps.leadsWithAppointmentAfter} />
                 <SmallStat label={`Wins Within ${data.followUps.outcomeWindowDays}d`} value={data.followUps.leadsWonAfter} />
               </div>
-              <p className="mt-3 text-xs leading-5 text-[var(--color-text-muted)]">{analyticsUi.followUpOutcomeNoun} and win outcomes are counted only when they happen in the same journey within {data.followUps.outcomeWindowDays} days after a follow-up. This shows association, not guaranteed causation.</p>
+
+              {(data.followUps.byStep?.length > 0 || data.followUps.byTargeting?.length > 0) && (
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                    <p className="text-xs font-bold">By sequence step</p>
+                    <div className="mt-2 space-y-2">
+                      {(data.followUps.byStep || []).map((row) => (
+                        <div key={row.step} className="flex items-center justify-between gap-3 text-xs">
+                          <span className="font-semibold">Follow-up {row.step}</span>
+                          <span className="text-right text-[var(--color-text-muted)]">
+                            {row.replied}/{row.leads} replied · <strong className="text-[var(--color-text)]">{row.replyRate72h.toFixed(1)}%</strong>
+                          </span>
+                        </div>
+                      ))}
+                      {!data.followUps.byStep?.length && (
+                        <p className="text-xs text-[var(--color-text-muted)]">No step-level data yet.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+                    <p className="text-xs font-bold">Message targeting</p>
+                    <div className="mt-2 space-y-2">
+                      {(data.followUps.byTargeting || []).map((row) => (
+                        <div key={row.targeting} className="flex items-center justify-between gap-3 text-xs">
+                          <span className="font-semibold">{row.targeting === "targeted" ? "Service-targeted" : "General"}</span>
+                          <span className="text-right text-[var(--color-text-muted)]">
+                            {row.replied}/{row.leads} replied · <strong className="text-[var(--color-text)]">{row.replyRate72h.toFixed(1)}%</strong>
+                          </span>
+                        </div>
+                      ))}
+                      {!data.followUps.byTargeting?.length && (
+                        <p className="text-xs text-[var(--color-text-muted)]">No targeting data yet.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <p className="mt-3 text-xs leading-5 text-[var(--color-text-muted)]">
+                Reply rates are attributed to the latest follow-up step sent before the customer replied, so later steps do not inflate earlier-step reply rates. {analyticsUi.followUpOutcomeNoun} and win outcomes are counted only when they happen in the same journey within {data.followUps.outcomeWindowDays} days after a follow-up. This shows association, not guaranteed causation.
+              </p>
             </Panel>
             <Panel title="Lost Reasons" subtitle="Why leads in this cohort were closed as lost.">
               <LostReasons rows={data.lostReasons} />
