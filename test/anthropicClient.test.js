@@ -11,7 +11,6 @@ test("Anthropic client adds workspace header only when configured", () => {
     buildAnthropicClientOptions({ apiKey: "key-a", workspaceId: "ws_123" }),
     {
       apiKey: "key-a",
-      maxRetries: 0,
       defaultHeaders: {
         "anthropic-workspace-id": "ws_123",
       },
@@ -22,8 +21,18 @@ test("Anthropic client adds workspace header only when configured", () => {
     buildAnthropicClientOptions({ apiKey: "key-a", workspaceId: "   " }),
     {
       apiKey: "key-a",
-      maxRetries: 0,
     }
+  );
+});
+
+test("Anthropic retries are disabled only when explicitly requested", () => {
+  assert.deepEqual(
+    buildAnthropicClientOptions({ apiKey: "key-a", maxRetries: 0 }),
+    { apiKey: "key-a", maxRetries: 0 }
+  );
+  assert.deepEqual(
+    buildAnthropicClientOptions({ apiKey: "key-a" }),
+    { apiKey: "key-a" }
   );
 });
 
