@@ -941,7 +941,7 @@ async function processIncomingMessage(
             responseAttempted = true;
             await sendTrackedText(
               fallbackContact,
-              "Sorry, something went wrong on our end — a team member will follow up with you shortly!",
+              "Sorry, something went wrong on our end. A team member has been alerted — please try again shortly.",
               "system_fallback",
               { canSend: canSendAutomatedReply, processingJobId }
             );
