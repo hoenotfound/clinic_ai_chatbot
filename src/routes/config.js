@@ -488,7 +488,7 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
       return {
         ok: false,
         status: 400,
-        error: "Invalid automated follow-up settings. Use 1 to 3 steps with increasing delays between 5 minutes and 23 hours.",
+        error: "Invalid automated follow-up settings. Check quiet hours and use 1 to 3 steps with increasing delays between 5 minutes and 23 hours.",
       };
     }
     updates.automatedFollowUp = prepared;
