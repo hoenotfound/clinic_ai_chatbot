@@ -128,6 +128,29 @@ function getActiveSettings() {
 
 function normalizedServiceName(value) {
   return typeof value === "string"
+    ? value.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase()
+    : "";
+}
+
+function serviceTerms(serviceName) {
+  const normalizedTarget = normalizedServiceName(serviceName);
+  const aliases = Array.isArray(clinicConfig.serviceAliases)
+    ? clinicConfig.serviceAliases
+        .filter(
+          (item) =>
+            normalizedServiceName(item?.officialService) === normalizedTarget
+        )
+        .map((item) => String(item?.alias || "").trim())
+        .filter(Boolean)
+    : [];
+  return [serviceName, ...aliases]
+    .map(normalizedServiceName)
+    .filter(Boolean);
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^$(){}|[\]\\]/g, "\\function normalizedServiceName(value) {
+  return typeof value === "string"
     ? value.trim().replace(/\s+/g, " ").toLocaleLowerCase()
     : "";
 }
@@ -139,6 +162,54 @@ function messageForCandidate(step, candidate, language) {
         (item) => normalizedServiceName(item.serviceName) === interest
       )
     : null;
+  const source = targeted || step;
+  return {
+    message: source.translations[language] || source.message,
+    targetedService: targeted?.serviceName || null,
+  };
+}");
+}
+
+function textContainsServiceTerm(text, term) {
+  const normalizedText = normalizedServiceName(text);
+  if (!normalizedText || !term) return false;
+
+  // Short Latin service aliases such as "3D" need token boundaries so they
+  // do not match inside unrelated words. Chinese/mixed-language names can use
+  // a normal substring match because word boundaries are not reliable there.
+  if (/^[a-z0-9][a-z0-9 .+\-_/]{0,3}$/i.test(term)) {
+    return new RegExp(`(^|[^a-z0-9])${escapeRegex(term)}([^a-z0-9]|$)`, "i")
+      .test(normalizedText);
+  }
+  return normalizedText.includes(term);
+}
+
+function inferTargetedOverrideFromConversation(step, candidate) {
+  const transcript = [
+    ...(candidate.recent_inbound_messages || []),
+    candidate.trigger_message_content,
+  ]
+    .filter((value) => typeof value === "string" && value.trim())
+    .join("\n");
+
+  if (!transcript) return null;
+  const matches = step.serviceOverrides.filter((item) =>
+    serviceTerms(item.serviceName).some((term) =>
+      textContainsServiceTerm(transcript, term)
+    )
+  );
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function messageForCandidate(step, candidate, language) {
+  const interest = normalizedServiceName(candidate.treatment_interest);
+  const exactInterest = interest
+    ? step.serviceOverrides.find(
+        (item) => normalizedServiceName(item.serviceName) === interest
+      )
+    : null;
+  const targeted =
+    exactInterest || inferTargetedOverrideFromConversation(step, candidate);
   const source = targeted || step;
   return {
     message: source.translations[language] || source.message,
