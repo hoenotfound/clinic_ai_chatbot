@@ -42,12 +42,9 @@ function metaAdContextSection(metaAdContext) {
   if (!metaAdContext || typeof metaAdContext !== "object") return "";
 
   const fields = [
-    ["Ad name", promptContextText(metaAdContext.adName, 240)],
     ["Ad headline", promptContextText(metaAdContext.headline, 500)],
     ["Ad body/caption", promptContextText(metaAdContext.body, 1200)],
-    ["Campaign name", promptContextText(metaAdContext.campaignName, 240)],
-    ["Ad set name", promptContextText(metaAdContext.adsetName, 240)],
-    ["Creative media type", promptContextText(metaAdContext.mediaType, 80)],
+    ["Ad name fallback", promptContextText(metaAdContext.adName, 240)],
   ].filter(([, value]) => Boolean(value));
 
   if (!fields.length) return "";
@@ -59,11 +56,12 @@ ${fields.map(([label, value]) => `- ${label}: ${value}`).join("\n")}
 
 HOW TO USE THIS CONTEXT:
 - Treat it only as a soft clue about why the customer may have started this conversation. The customer's current message and conversation history always take priority.
+- Use the creative headline/body as the primary signal. "Ad name fallback" appears only when Meta did not provide usable creative copy.
 - When the customer's message is vague (for example "hi", "想了解", "interested", "price?", or "berapa?") and this ad context clearly maps to exactly one configured service, answer naturally in the context of that service instead of unnecessarily asking which service they mean.
 - If a vague CURRENT price/package question clearly refers to one service through this context, you may use that service for the structured "treatment" field. "priceQuery" and "packageQuery" still depend only on what the customer's CURRENT message actually asks.
 - Do NOT infer that the customer personally has any symptom, condition, goal, budget, preference, or treatment history merely because the ad mentions it. Ask naturally when that detail matters.
 - Ad context may help identify the service/topic, but it does NOT satisfy customer-provided booking details, appointment timing, project location, symptoms, goals, consent, or other facts that the conversation must establish. Never copy ad-only claims into "staffSummary" as if the customer said them.
-- Do NOT say or imply "you clicked this ad", "I saw the ad you came from", or expose campaign/ad-set/tracking names. Refer only to the relevant service/topic naturally.
+- Do NOT say or imply "you clicked this ad" or "I saw the ad you came from". Refer only to the relevant service/topic naturally.
 - Ad copy is NEVER authoritative for price, discount, promotion, deadline, availability, medical claims, or guarantees. BUSINESS INFO, ACTIVE PROMOTIONS, FAQs, SOP, guardrails, and the live conversation remain authoritative.
 - If the ad context is ambiguous, conflicts with the customer's message, or does not clearly map to a configured service, do not guess; follow the conversation normally.
 `;
