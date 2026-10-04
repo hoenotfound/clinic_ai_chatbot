@@ -36,6 +36,15 @@ function normalizeServiceOverrides(value) {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > 50) return null;
 
+  const configuredServices = new Set(
+    (Array.isArray(clinicConfig.services) ? clinicConfig.services : [])
+      .map((service) =>
+        typeof service?.name === "string"
+          ? service.name.trim().toLocaleLowerCase()
+          : ""
+      )
+      .filter(Boolean)
+  );
   const seen = new Set();
   const normalized = [];
   for (const item of value) {
@@ -47,6 +56,11 @@ function normalizeServiceOverrides(value) {
     const key = serviceName.toLocaleLowerCase();
     if (seen.has(key)) return null;
     seen.add(key);
+
+    // Fail safe at runtime for legacy/stale configs. A renamed or removed
+    // service must fall back to the step's general message rather than keep
+    // sending copy for a service that no longer exists.
+    if (!configuredServices.has(key)) continue;
 
     const translations = normalizeFollowUpTranslations(
       item.translations,
