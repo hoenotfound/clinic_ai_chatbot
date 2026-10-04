@@ -362,13 +362,19 @@ export default function Tools() {
 
     setTranslating(true);
     try {
-      const { translations } = await api.translateFollowUps(uniqueMessages);
-      if (!Array.isArray(translations) || translations.length !== uniqueMessages.length) {
-        throw new Error("The translation batch was incomplete.");
+      const generatedByMessage = new Map();
+      const chunkSize = 20;
+      for (let start = 0; start < uniqueMessages.length; start += chunkSize) {
+        const chunk = uniqueMessages.slice(start, start + chunkSize);
+        const { translations } = await api.translateFollowUps(chunk);
+        if (!Array.isArray(translations) || translations.length !== chunk.length) {
+          throw new Error("The translation batch was incomplete.");
+        }
+        chunk.forEach((message, index) => {
+          generatedByMessage.set(message, translations[index]);
+        });
       }
-      return new Map(
-        uniqueMessages.map((message, index) => [message, translations[index]])
-      );
+      return generatedByMessage;
     } finally {
       setTranslating(false);
     }
