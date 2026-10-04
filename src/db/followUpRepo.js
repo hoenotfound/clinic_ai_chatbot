@@ -405,21 +405,25 @@ async function saveIfStillEligible({
     `WITH conversation_lock AS MATERIALIZED (
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
      ), latest_inbound AS (
-       SELECT id, created_at
-       FROM messages, conversation_lock
-       WHERE contact_id = $1
-         AND role = 'user'
-       ORDER BY created_at DESC, id DESC
+       SELECT inbound.id, inbound.created_at
+       FROM messages inbound, conversation_lock
+       WHERE inbound.contact_id = $1
+         AND inbound.role = 'user'
+       ORDER BY inbound.created_at DESC, inbound.id DESC
        LIMIT 1
      ), anchor AS (
-       SELECT id, sent_by_username, created_at, delivery_status
-       FROM messages, latest_inbound
-       WHERE contact_id = $1
-         AND role = 'assistant'
-         AND is_automated_follow_up = false
-         AND (created_at, id) >
+       SELECT
+         outbound.id,
+         outbound.sent_by_username,
+         outbound.created_at,
+         outbound.delivery_status
+       FROM messages outbound, latest_inbound
+       WHERE outbound.contact_id = $1
+         AND outbound.role = 'assistant'
+         AND outbound.is_automated_follow_up = false
+         AND (outbound.created_at, outbound.id) >
              (latest_inbound.created_at, latest_inbound.id)
-       ORDER BY created_at DESC, id DESC
+       ORDER BY outbound.created_at DESC, outbound.id DESC
        LIMIT 1
      ), progress AS (
        SELECT
