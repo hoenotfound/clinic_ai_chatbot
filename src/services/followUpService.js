@@ -180,7 +180,7 @@ function textContainsServiceTerm(text, term) {
   return normalizedText.includes(term);
 }
 
-function targetedOverridesMentionedInConversation(step, candidate) {
+function configuredServicesMentionedInConversation(candidate) {
   const transcript = [
     ...(candidate.recent_inbound_messages || []),
     candidate.trigger_message_content,
@@ -189,18 +189,37 @@ function targetedOverridesMentionedInConversation(step, candidate) {
     .join("\n");
 
   if (!transcript) return [];
-  return step.serviceOverrides.filter((item) =>
-    serviceTerms(item.serviceName).some((term) =>
-      textContainsServiceTerm(transcript, term)
-    )
-  );
+
+  const matched = new Map();
+  for (const service of Array.isArray(clinicConfig.services)
+    ? clinicConfig.services
+    : []) {
+    const serviceName =
+      typeof service?.name === "string" ? service.name.trim() : "";
+    const normalized = normalizedServiceName(serviceName);
+    if (!normalized || matched.has(normalized)) continue;
+
+    if (
+      serviceTerms(serviceName).some((term) =>
+        textContainsServiceTerm(transcript, term)
+      )
+    ) {
+      matched.set(normalized, serviceName);
+    }
+  }
+  return [...matched.values()];
 }
 
 function messageForCandidate(step, candidate, language) {
-  const conversationMatches = targetedOverridesMentionedInConversation(
-    step,
-    candidate
-  );
+  const conversationServices =
+    configuredServicesMentionedInConversation(candidate);
+  const overrideForService = (serviceName) =>
+    step.serviceOverrides.find(
+      (item) =>
+        normalizedServiceName(item.serviceName) ===
+        normalizedServiceName(serviceName)
+    ) || null;
+
   const interest = normalizedServiceName(candidate.treatment_interest);
   const exactInterest = interest
     ? step.serviceOverrides.find(
@@ -208,14 +227,16 @@ function messageForCandidate(step, candidate, language) {
       )
     : null;
 
-  // The recent conversation is the freshest signal. One clear service wins;
-  // more than one means the customer is comparing/mixing interests, so use the
-  // default copy. Only fall back to the CRM interest when no service is named
-  // in the recent conversation.
+  // The current exchange is authoritative across ALL configured services, not
+  // just services that happen to have a custom message on this step.
+  // - one current service + override -> targeted copy
+  // - one current service without override -> general copy
+  // - multiple current services -> general copy
+  // - no current service -> CRM interest may supply an exact override
   const targeted =
-    conversationMatches.length === 1
-      ? conversationMatches[0]
-      : conversationMatches.length > 1
+    conversationServices.length === 1
+      ? overrideForService(conversationServices[0])
+      : conversationServices.length > 1
         ? null
         : exactInterest || null;
   const source = targeted || step;
