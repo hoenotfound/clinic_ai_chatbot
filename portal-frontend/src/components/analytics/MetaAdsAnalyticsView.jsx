@@ -228,6 +228,7 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
   const money = data?.money || {};
   const currency = money.currency;
   const coverage = data?.attributionCoverage || {};
+  const spendCoverage = data?.spendCoverage || {};
   const selectedAccount = accounts.find((account) => account.accountId === accountId)
     || (accounts.length === 1 ? accounts[0] : null);
   const hasHierarchyFilter = Boolean(campaignId || adsetId || adId);
@@ -357,6 +358,27 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
           </div>
         )}
 
+        {spendCoverage.complete === false && !mixedCurrency && (
+          <div className="rounded-2xl border border-[var(--color-accent)]/30 bg-white p-4">
+            <p className="text-sm font-semibold text-[var(--color-text)]">
+              Spend-to-CRM metrics are temporarily hidden
+            </p>
+            {!spendCoverage.historyComplete && (
+              <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                The selected dates extend beyond verified Meta spend history
+                {spendCoverage.coverageFrom && spendCoverage.coverageThrough
+                  ? ` (${spendCoverage.coverageFrom} to ${spendCoverage.coverageThrough})`
+                  : ""}. Choose a covered range or increase the Meta backfill window.
+              </p>
+            )}
+            {!spendCoverage.attributionComplete && (
+              <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                Some Meta-attributed leads do not have a matching synced Insight row inside this reporting period. CRM totals remain visible, but CPL, conversion costs and Estimated ROAS are hidden to avoid understating cost.
+              </p>
+            )}
+          </div>
+        )}
+
         {noDataConfigured ? (
           <div className="rounded-3xl border border-[var(--color-border)] bg-white p-6 text-center sm:p-8">
             <h2 className="font-display text-lg font-bold">Meta Ads data isn't available yet</h2>
@@ -380,7 +402,7 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
               <SummaryCard
                 label="Cost / Lead"
                 value={formatCurrency(summary.costPerLead, currency)}
-                detail="Meta spend ÷ CRM leads"
+                detail={spendCoverage.complete === false ? "Hidden until spend coverage is complete" : "Meta spend ÷ CRM leads"}
               />
               <SummaryCard
                 label="Appointments"
@@ -395,7 +417,13 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
               <SummaryCard
                 label="Est. ROAS"
                 value={summary.estimatedRoas == null ? "—" : `${Number(summary.estimatedRoas).toFixed(2)}×`}
-                detail={money.estimatedRoasAvailable ? "Estimated won value ÷ spend" : "Available when ad spend is in MYR"}
+                detail={
+                  money.estimatedRoasAvailable
+                    ? "Estimated won value ÷ spend"
+                    : spendCoverage.complete === false
+                      ? "Hidden until spend coverage is complete"
+                      : "Available when ad spend is in MYR"
+                }
               />
             </section>
 
@@ -404,7 +432,7 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
                 <div>
                   <p className="text-sm font-semibold">Attribution coverage</p>
                   <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-                    {formatNumber(coverage.matchedToSyncedAds)} of {formatNumber(coverage.metaAttributedLeads)} Meta-attributed leads match a synced Ad ID.
+                    {formatNumber(coverage.matchedToSyncedAds)} of {formatNumber(coverage.metaAttributedLeads)} Meta-attributed leads match a synced Ad ID inside this reporting period.
                   </p>
                 </div>
                 <span className="rounded-full bg-[var(--color-bg)] px-2.5 py-1 text-xs font-bold">
@@ -419,7 +447,7 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
               </div>
               {Number(coverage.unmatchedToSyncedAds) > 0 && (
                 <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
-                  {coverage.unmatchedToSyncedAds} lead(s) have a captured Meta Ad ID but no matching locally synced insight row yet. They remain in CRM totals instead of being silently dropped.
+                  {coverage.unmatchedToSyncedAds} lead(s) have a captured Meta Ad ID but no matching locally synced Insight row inside the selected dates. They remain in CRM totals instead of being silently dropped.
                 </p>
               )}
             </section>
@@ -588,7 +616,11 @@ export default function MetaAdsAnalyticsView({ onSwitchToCrm }) {
             <section className="rounded-2xl border border-[var(--color-border)] bg-white p-4 text-xs leading-5 text-[var(--color-text-muted)]">
               <div className="flex flex-wrap justify-between gap-2">
                 <span>
-                  Data through: <strong className="text-[var(--color-text)]">{selectedAccount?.dataThrough || "No synced rows"}</strong>
+                  Verified spend coverage: <strong className="text-[var(--color-text)]">
+                    {selectedAccount?.coverageFrom && selectedAccount?.coverageThrough
+                      ? `${selectedAccount.coverageFrom} → ${selectedAccount.coverageThrough}`
+                      : "Not established yet"}
+                  </strong>
                 </span>
                 <span>
                   Last sync: <strong className="text-[var(--color-text)]">{formatDateTime(selectedAccount?.lastSuccessAt)}</strong>
