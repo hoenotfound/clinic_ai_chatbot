@@ -68,6 +68,18 @@ test(
           UNIQUE (automated_follow_up_for_message_id, automated_follow_up_step)
         );
 
+        CREATE TABLE follow_up_ai_decisions (
+          id BIGSERIAL PRIMARY KEY,
+          contact_id INTEGER NOT NULL REFERENCES contacts(id),
+          trigger_message_id INTEGER,
+          follow_up_step INTEGER NOT NULL,
+          action TEXT NOT NULL,
+          reason TEXT,
+          topic TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          UNIQUE (trigger_message_id, follow_up_step)
+        );
+
         INSERT INTO contacts (
           id, channel, whatsapp_number, needs_attention
         ) VALUES (
