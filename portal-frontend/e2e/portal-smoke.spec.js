@@ -195,9 +195,18 @@ async function mockPortalApi(
           },
           attributionCoverage: {
             metaAttributedLeads: 20,
-            matchedToSyncedAds: 18,
-            unmatchedToSyncedAds: 2,
-            matchedRate: 90,
+            matchedToSyncedAds: 20,
+            unmatchedToSyncedAds: 0,
+            matchedRate: 100,
+          },
+          spendCoverage: {
+            complete: true,
+            historyComplete: true,
+            attributionComplete: true,
+            relevantAccountIds: ["123"],
+            uncoveredAccountIds: [],
+            coverageFrom: "2026-09-05",
+            coverageThrough: "2026-10-04",
           },
           rows: [{
             accountId: "123",
@@ -224,12 +233,16 @@ async function mockPortalApi(
             costPerVisit: 100,
             costPerWon: 166.67,
             estimatedRoas: 4.8,
+            matchedLeads: 20,
+            spendCoverageComplete: true,
           }],
           accounts: [{
             accountId: "123",
             accountName: "Test Clinic Ads",
             currency: "MYR",
             dataThrough: "2026-10-04",
+            coverageFrom: "2026-09-05",
+            coverageThrough: "2026-10-04",
             lastSuccessAt: "2026-10-04T00:30:00.000Z",
             lastError: null,
             backfillCompletedAt: "2026-10-03T00:00:00.000Z",
@@ -676,7 +689,7 @@ test("Meta Ads analytics renders spend-to-CRM metrics without horizontal page ov
   await expect.poll(async () => campaignNames.evaluateAll((nodes) =>
     nodes.filter((node) => node.getClientRects().length > 0).length
   )).toBe(1);
-  await expect(page.getByText("90.0%", { exact: true })).toBeVisible();
+  await expect(page.getByText("100.0%", { exact: true })).toBeVisible();
   await expect(page.getByText("4.80×", { exact: true }).first()).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
   await expectNoHorizontalElementOverflow(page, "meta-ads-analytics");
