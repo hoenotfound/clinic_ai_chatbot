@@ -96,6 +96,50 @@ test("sends and records one claimed automated follow-up", async () => {
   assert.deepEqual(contacted, { contactId: 7, actor: "Automated follow-up" });
 });
 
+test("quiet hours defer due follow-ups until the configured clinic-local end time", async () => {
+  enableTool();
+  let candidateQueries = 0;
+  followUpRepo.findCandidates = async () => {
+    candidateQueries += 1;
+    return [];
+  };
+
+  const result = await runAutomatedFollowUps({
+    now: new Date("2026-10-04T17:00:00.000Z"),
+  });
+
+  assert.equal(candidateQueries, 0);
+  assert.equal(result.enabled, true);
+  assert.equal(result.candidateCount, 0);
+  assert.equal(result.nextDueAt, "2026-10-04T23:00:00.000Z");
+});
+
+test("follow-up discovery resumes exactly when quiet hours end", async () => {
+  enableTool();
+  let candidateQueries = 0;
+  followUpRepo.findCandidates = async () => {
+    candidateQueries += 1;
+    return [];
+  };
+
+  await runAutomatedFollowUps({
+    now: new Date("2026-10-04T23:00:00.000Z"),
+  });
+
+  assert.equal(candidateQueries, 1);
+});
+
+test("final pre-send guard rechecks quiet hours before provider delivery", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/services/followUpService.js"),
+    "utf8"
+  );
+  assert.match(
+    source,
+    /quietHoursStatus\(new Date\(\), liveSettings\.quietHours\)\.active/
+  );
+});
+
 test("uses the saved Bahasa Malaysia version for a Malay customer chat", async () => {
   enableTool();
   let claimedContent = null;
