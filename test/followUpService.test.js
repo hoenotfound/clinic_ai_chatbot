@@ -31,6 +31,11 @@ test.after(() => {
 });
 
 function enableTool() {
+  clinicConfig.services = [
+    { name: "Pelvic Care" },
+    { name: "Uterus Care" },
+    { name: "3D 小颜术" },
+  ];
   clinicConfig.automatedFollowUp = {
     enabled: true,
     delayMinutes: 120,
@@ -226,6 +231,7 @@ test("sends the matching service-specific message for a later sequence step", as
 
   assert.deepEqual(discoveryInput.delayMinutes, [120, 480]);
   assert.equal(claimInput.stepIndex, 2);
+  assert.equal(claimInput.targetedService, "Pelvic Care");
   assert.equal(claimInput.delayMinutes, 480);
   assert.equal(claimInput.content, "骨盆调理跟进");
   assert.deepEqual(sentMessage, {
@@ -375,6 +381,63 @@ test("falls back to the step default when service interest is not an exact match
     number: "60177777777",
     message: "Second follow-up",
   });
+});
+
+test("stale service overrides fail safe to the general message", async () => {
+  enableTool();
+  clinicConfig.services = [{ name: "Current Service" }];
+  clinicConfig.automatedFollowUp.additionalSteps = [
+    {
+      delayMinutes: 480,
+      message: "General second follow-up",
+      translations: {
+        en: "General second follow-up",
+        ms: "Susulan umum kedua",
+        zh: "第二次一般跟进",
+      },
+      imageUrl: "",
+      serviceOverrides: [
+        {
+          serviceName: "Removed Service",
+          message: "Stale targeted message",
+          translations: {
+            en: "Stale targeted message",
+            ms: "Mesej lama",
+            zh: "旧的针对信息",
+          },
+        },
+      ],
+    },
+  ];
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 19,
+      whatsapp_number: "60199999999",
+      trigger_message_id: 96,
+      next_follow_up_step: 2,
+      treatment_interest: "Removed Service",
+      recent_inbound_messages: ["Removed Service"],
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 97, contact_id: 19, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-97" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 19,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(claimInput.content, "General second follow-up");
+  assert.equal(claimInput.targetedService, null);
 });
 
 test("does not send when the database no longer considers the trigger eligible", async () => {
