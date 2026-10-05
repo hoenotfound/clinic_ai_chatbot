@@ -234,12 +234,13 @@ test("service-enquiry mode sends for a direct customer service enquiry", async (
 });
 
 
-test("service-enquiry mode accepts ad and conversation intent", async () => {
+test("service-enquiry mode accepts verified ad and conversation intent", async () => {
   for (const source of ["meta_ad", "conversation"]) {
     const selected = await resolveResultMediaForReply(base({
       priceQuery: false,
       serviceQuery: true,
       serviceQuerySource: source,
+      metaAdCreativeAvailable: source === "meta_ad",
       resultMedia: [{
         ...resultMedia[0],
         triggerMode: "service_enquiry",
@@ -264,23 +265,30 @@ test("service-enquiry mode fails closed for an invalid serviceQuery source", asy
   assert.equal(selected, null);
 });
 
-test("service-enquiry mode accepts explicit price or package enquiries", async () => {
+test("service-enquiry mode requires trusted one-service intent even for price or package enquiries", async () => {
   const configured = [{
     ...resultMedia[0],
     triggerMode: "service_enquiry",
     sendAfterPrice: undefined,
   }];
 
-  assert.ok(await resolveResultMediaForReply(base({
+  assert.equal(await resolveResultMediaForReply(base({
     serviceQuery: false,
     serviceQuerySource: null,
+    priceQuery: true,
+    resultMedia: configured,
+  })), null);
+
+  assert.ok(await resolveResultMediaForReply(base({
+    serviceQuery: true,
+    serviceQuerySource: "customer_message",
     priceQuery: true,
     resultMedia: configured,
   })));
 
   assert.ok(await resolveResultMediaForReply(base({
-    serviceQuery: false,
-    serviceQuerySource: null,
+    serviceQuery: true,
+    serviceQuerySource: "conversation",
     priceQuery: false,
     packageQuery: true,
     resultMedia: configured,
@@ -298,4 +306,33 @@ test("off trigger mode never auto-sends result media", async () => {
     }],
   }));
   assert.equal(selected, null);
+});
+
+
+test("meta_ad service intent is rejected when backend did not load usable creative copy", async () => {
+  const selected = await resolveResultMediaForReply(base({
+    serviceQuery: true,
+    serviceQuerySource: "meta_ad",
+    metaAdCreativeAvailable: false,
+    priceQuery: false,
+    resultMedia: [{
+      ...resultMedia[0],
+      triggerMode: "service_enquiry",
+      sendAfterPrice: undefined,
+    }],
+  }));
+
+  assert.equal(selected, null);
+});
+
+test("legacy price-only mode does not depend on the new serviceQuery metadata", async () => {
+  const selected = await resolveResultMediaForReply(base({
+    serviceQuery: false,
+    serviceQuerySource: null,
+    priceQuery: true,
+    resultMedia,
+  }));
+
+  assert.equal(selected?.triggerMode, "price_only");
+  assert.equal(selected?.serviceQuerySource, null);
 });
