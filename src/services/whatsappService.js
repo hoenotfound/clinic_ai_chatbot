@@ -330,6 +330,17 @@ function parseIncomingMessages(body) {
               mediaType: "image",
               unsupportedType: null,
             });
+          } else if (message.type === "sticker") {
+            // Stickers are genuine customer messages, but they are not treated
+            // as photos for AI vision. The media is downloaded later for Inbox
+            // display while the turn itself remains a neutral customer event.
+            parsed.push({
+              ...base,
+              text: null,
+              mediaId: message.sticker?.id || null,
+              mediaType: "sticker",
+              unsupportedType: null,
+            });
           } else if (message.type === "button") {
             const buttonText = String(
               message.button?.text || message.button?.payload || ""
