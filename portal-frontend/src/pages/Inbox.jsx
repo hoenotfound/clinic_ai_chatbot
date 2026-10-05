@@ -205,34 +205,71 @@ function canvasHasTransparency(context, width, height) {
 }
 
 function optimizedImageFileName(name, outputType) {
-  if (outputType !== "image/jpeg") return name;
-  return /\.(?:png|jpe?g)$/i.test(name)
-    ? name.replace(/\.(?:png|jpe?g)$/i, ".jpg")
-    : `${name || "image"}.jpg`;
+  const fallbackName = name || "image";
+  if (outputType === "image/jpeg") {
+    return /\.(?:png|jpe?g)$/i.test(fallbackName)
+      ? fallbackName.replace(/\.(?:png|jpe?g)$/i, ".jpg")
+      : `${fallbackName}.jpg`;
+  }
+  if (outputType === "image/png") {
+    return /\.(?:png|jpe?g)$/i.test(fallbackName)
+      ? fallbackName.replace(/\.(?:png|jpe?g)$/i, ".png")
+      : `${fallbackName}.png`;
+  }
+  return fallbackName;
+}
+
+async function decodeImageForCanvas(file) {
+  if (typeof createImageBitmap === "function") {
+    const bitmap = await createImageBitmap(file);
+    return {
+      source: bitmap,
+      width: bitmap.width,
+      height: bitmap.height,
+      cleanup: () => bitmap.close?.(),
+    };
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = "async";
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(new Error("Browser could not decode the selected image."));
+      image.src = objectUrl;
+    });
+    return {
+      source: image,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      cleanup: () => URL.revokeObjectURL(objectUrl),
+    };
+  } catch (err) {
+    URL.revokeObjectURL(objectUrl);
+    throw err;
+  }
 }
 
 async function optimizeImageUpload(file, { normalizeProgressiveJpeg = false } = {}) {
-  if (
-    (!shouldOptimizeImageUpload(file) && !normalizeProgressiveJpeg) ||
-    typeof createImageBitmap !== "function"
-  ) {
+  if (!shouldOptimizeImageUpload(file) && !normalizeProgressiveJpeg) {
     return file;
   }
 
-  let bitmap = null;
+  let decoded = null;
   try {
-    bitmap = await createImageBitmap(file);
-    const largestSide = Math.max(bitmap.width, bitmap.height);
+    decoded = await decodeImageForCanvas(file);
+    const largestSide = Math.max(decoded.width, decoded.height);
     const scale = Math.min(1, IMAGE_OPTIMIZE_MAX_DIMENSION / largestSide);
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const width = Math.max(1, Math.round(decoded.width * scale));
+    const height = Math.max(1, Math.round(decoded.height * scale));
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext("2d", { alpha: true });
     if (!context) return file;
 
-    context.drawImage(bitmap, 0, 0, width, height);
+    context.drawImage(decoded.source, 0, 0, width, height);
 
     const inputType = String(file.type || "").toLowerCase();
     let outputType = "image/jpeg";
@@ -284,7 +321,7 @@ async function optimizeImageUpload(file, { normalizeProgressiveJpeg = false } = 
     console.warn("Image optimization skipped:", err);
     return file;
   } finally {
-    bitmap?.close?.();
+    decoded?.cleanup?.();
   }
 }
 
