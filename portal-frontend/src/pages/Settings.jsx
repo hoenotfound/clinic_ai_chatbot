@@ -626,7 +626,7 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
   function addPackage() {
     const next = [
       ...items,
-      { name: "", title: "", aliases: [], imageUrl: "", caption: "", followUpMessage: "", followUpTranslations: {} },
+      { name: "", title: "", aliases: [], imageUrl: "", caption: "", followUpMessage: "", followUpImageUrl: "", followUpTranslations: {} },
     ];
     onChange(next);
     setOpenIndex(next.length - 1);
@@ -722,6 +722,17 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
                     />
                     <p className="mt-1.5 text-[11px] leading-5 text-[var(--color-text-muted)]">
                       Kept out of the normal AI reply. If this package is clearly identified, this exact text can be used for the first follow-up.
+                    </p>
+                  </div>
+                  <div>
+                    <label className={labelClass}>First follow-up graphic <span className="font-normal">(optional)</span></label>
+                    <ImageFieldEditor
+                      value={item.followUpImageUrl || ""}
+                      onChange={(value) => updatePackage(index, "followUpImageUrl", value)}
+                      onError={onError}
+                    />
+                    <p className="mt-1.5 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                      Sent only together with this package&apos;s First follow-up offer. It does not replace the promotion image sent on the original price enquiry.
                     </p>
                   </div>
                   <PromotionFollowUpTranslationsEditor
@@ -1547,12 +1558,14 @@ function PromotionsTab({ config, onSaved, onError }) {
             imageUrl: item.imageUrl || "",
             caption: item.caption || "",
             followUpMessage: item.followUpMessage || "",
+            followUpImageUrl: item.followUpImageUrl || "",
             followUpTranslations: { ...(item.followUpTranslations || {}) },
           }))
         : [],
       imageUrl: p.imageUrl || "",
       caption: p.caption || "",
       followUpMessage: p.followUpMessage || "",
+      followUpImageUrl: p.followUpImageUrl || "",
       followUpTranslations: { ...(p.followUpTranslations || {}) },
       validFrom: p.validFrom || "",
       validUntil: p.validUntil || "",
@@ -1580,6 +1593,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         imageUrl: "",
         caption: "",
         followUpMessage: "",
+        followUpImageUrl: "",
         followUpTranslations: {},
         validFrom: "",
         validUntil: "",
@@ -1614,6 +1628,7 @@ function PromotionsTab({ config, onSaved, onError }) {
       String(item?.imageUrl || "").trim() ||
       String(item?.caption || "").trim() ||
       String(item?.followUpMessage || "").trim() ||
+      String(item?.followUpImageUrl || "").trim() ||
       hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
       (Array.isArray(item?.aliases) && item.aliases.some((alias) => String(alias || "").trim()))
     );
@@ -1624,6 +1639,7 @@ function PromotionsTab({ config, onSaved, onError }) {
       String(promotion?.imageUrl || "").trim() ||
       String(promotion?.caption || "").trim() ||
       String(promotion?.followUpMessage || "").trim() ||
+      String(promotion?.followUpImageUrl || "").trim() ||
       hasPromotionFollowUpTranslation(promotion?.followUpTranslations)
     );
   }
@@ -1640,12 +1656,13 @@ function PromotionsTab({ config, onSaved, onError }) {
         String(item?.imageUrl || "").trim() ||
         String(item?.caption || "").trim() ||
         String(item?.followUpMessage || "").trim() ||
+        String(item?.followUpImageUrl || "").trim() ||
         hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
         (Array.isArray(item?.aliases) && item.aliases.some((alias) => String(alias || "").trim()))
       ).length;
       warning = `Changing to Single offer will remove ${packageCount} package option${packageCount === 1 ? "" : "s"} when you save. Continue?`;
     } else if (nextType === "packages" && hasSingleOfferContent(current)) {
-      warning = "Changing to Multiple packages will remove the current single-offer image, caption, and first follow-up offer when you save. Continue?";
+      warning = "Changing to Multiple packages will remove the current single-offer image, caption, first follow-up offer, and first follow-up graphic when you save. Continue?";
     }
 
     if (warning && !window.confirm(warning)) return;
@@ -1670,6 +1687,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         p.imageUrl.trim() ||
         p.caption.trim() ||
         String(p.followUpMessage || "").trim() ||
+        String(p.followUpImageUrl || "").trim() ||
         hasPromotionFollowUpTranslation(p.followUpTranslations) ||
         (Array.isArray(p.packages) && p.packages.length > 0) ||
         p.validFrom ||
@@ -1689,6 +1707,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                   String(item?.imageUrl || "").trim() ||
                   String(item?.caption || "").trim() ||
                   String(item?.followUpMessage || "").trim() ||
+                  String(item?.followUpImageUrl || "").trim() ||
                   hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
                   (Array.isArray(item?.aliases) && item.aliases.some((alias) => String(alias || "").trim()))
                 )
@@ -1701,6 +1720,9 @@ function PromotionsTab({ config, onSaved, onError }) {
                   ...(String(item.followUpMessage || "").trim()
                     ? { followUpMessage: String(item.followUpMessage || "").trim() }
                     : {}),
+                  ...(String(item.followUpImageUrl || "").trim()
+                    ? { followUpImageUrl: String(item.followUpImageUrl || "").trim() }
+                    : {}),
                   ...(Object.keys(cleanPromotionFollowUpTranslations(item.followUpTranslations)).length
                     ? { followUpTranslations: cleanPromotionFollowUpTranslations(item.followUpTranslations) }
                     : {}),
@@ -1710,6 +1732,9 @@ function PromotionsTab({ config, onSaved, onError }) {
           caption: packageMode ? "" : p.caption.trim(),
           ...(!packageMode && String(p.followUpMessage || "").trim()
             ? { followUpMessage: String(p.followUpMessage || "").trim() }
+            : {}),
+          ...(!packageMode && String(p.followUpImageUrl || "").trim()
+            ? { followUpImageUrl: String(p.followUpImageUrl || "").trim() }
             : {}),
           ...(!packageMode && Object.keys(cleanPromotionFollowUpTranslations(p.followUpTranslations)).length
             ? { followUpTranslations: cleanPromotionFollowUpTranslations(p.followUpTranslations) }
@@ -1726,6 +1751,17 @@ function PromotionsTab({ config, onSaved, onError }) {
 
     const canonicalServices = new Set(serviceNames.map((name) => name.toLowerCase()));
     for (const promotion of cleaned) {
+      const followUpItems = [promotion, ...(promotion.packages || [])];
+      const orphanFollowUpGraphic = followUpItems.find(
+        (item) =>
+          String(item?.followUpImageUrl || "").trim() &&
+          !String(item?.followUpMessage || "").trim() &&
+          !hasPromotionFollowUpTranslation(item?.followUpTranslations)
+      );
+      if (orphanFollowUpGraphic) {
+        onError("Add a First follow-up offer before attaching a First follow-up graphic.");
+        return;
+      }
       if (promotion.sendOnPriceQuery) {
         if (!promotion.linkedService || !canonicalServices.has(promotion.linkedService.toLowerCase())) {
           onError("Automatic promotions must link to a configured service.");
@@ -1925,6 +1961,17 @@ function PromotionsTab({ config, onSaved, onError }) {
                           />
                           <p className="mt-1.5 text-[11px] leading-5 text-[var(--color-text-muted)]">
                             This stays hidden from the normal AI reply and is only eligible for the first automated follow-up while the promotion is active.
+                          </p>
+                        </div>
+                        <div>
+                          <label className={labelClass}>First follow-up graphic <span className="font-normal">(optional)</span></label>
+                          <ImageFieldEditor
+                            value={item.followUpImageUrl || ""}
+                            onChange={(followUpImageUrl) => updateItem(index, { followUpImageUrl })}
+                            onError={onError}
+                          />
+                          <p className="mt-1.5 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                            Sent only with the First follow-up offer. Leave blank if you want this follow-up to be text-only.
                           </p>
                         </div>
                         <PromotionFollowUpTranslationsEditor

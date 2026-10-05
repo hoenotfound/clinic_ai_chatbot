@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   parseIncomingMessages,
+  parseReactionEvents,
   parseStatusUpdates,
 } = require("../src/services/whatsappService");
 const whatsappPolicy = require("../src/services/whatsappPolicyService");
@@ -185,3 +186,113 @@ test("template opt-out quick reply reaches the existing WhatsApp opt-out classif
   assert.equal(whatsappPolicy.isOptOutText(incoming.text), true);
 });
 
+
+
+test("parses WhatsApp reactions separately from conversational inbound messages", () => {
+  const body = {
+    entry: [
+      {
+        changes: [
+          {
+            value: {
+              contacts: [{ wa_id: "6017", profile: { name: "Reaction Customer" } }],
+              messages: [
+                {
+                  id: "reaction-1",
+                  from: "6017",
+                  timestamp: "1791196800",
+                  type: "reaction",
+                  reaction: {
+                    message_id: "wamid-target-1",
+                    emoji: "❤️",
+                  },
+                },
+                {
+                  id: "message-text-after-reaction",
+                  from: "6017",
+                  type: "text",
+                  text: { body: "Still interested" },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  const incoming = parseIncomingMessages(body);
+  const reactions = parseReactionEvents(body);
+
+  assert.deepEqual(incoming.map((message) => message.id), [
+    "message-text-after-reaction",
+  ]);
+  assert.deepEqual(reactions, [
+    {
+      id: "reaction-1",
+      from: "6017",
+      targetMessageId: "wamid-target-1",
+      emoji: "❤️",
+      timestamp: "1791196800",
+    },
+  ]);
+});
+
+test("parses WhatsApp reaction removal when Meta omits the emoji field", () => {
+  const reactions = parseReactionEvents({
+    entry: [
+      {
+        changes: [
+          {
+            value: {
+              messages: [
+                {
+                  id: "reaction-remove-1",
+                  from: "6018",
+                  type: "reaction",
+                  reaction: {
+                    message_id: "wamid-target-2",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(reactions.length, 1);
+  assert.equal(reactions[0].targetMessageId, "wamid-target-2");
+  assert.equal(reactions[0].emoji, "");
+});
+
+test("also accepts an explicit empty WhatsApp reaction emoji as removal", () => {
+  const reactions = parseReactionEvents({
+    entry: [
+      {
+        changes: [
+          {
+            value: {
+              messages: [
+                {
+                  id: "reaction-remove-2",
+                  from: "6018",
+                  type: "reaction",
+                  reaction: {
+                    message_id: "wamid-target-3",
+                    emoji: "",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(reactions.length, 1);
+  assert.equal(reactions[0].targetMessageId, "wamid-target-3");
+  assert.equal(reactions[0].emoji, "");
+});

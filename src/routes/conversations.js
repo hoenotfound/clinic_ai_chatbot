@@ -141,37 +141,73 @@ async function requireFreeformPolicy(contact, res, purpose = "service") {
 }
 
 async function prepareStaffSend(contact, username) {
-  // A manual Inbox reply is a one-turn Staff Assist by default. It invalidates
-  // any in-flight AI reply for this customer turn but does not permanently
-  // change AI-owned conversations into Staff mode.
+  // Cancel immediately from the route snapshot, then refresh ownership before
+  // making any durable Staff Assist decision. The route-level contact can be
+  // stale after policy checks or media preparation.
   aiReplyCancellation.cancelForContact(contact);
 
-  let preparedContact = contact;
+  let preparedContact = await contactsRepo.getContactById(contact.id);
+  if (!preparedContact) {
+    throw new Error("Contact disappeared before the staff send could be prepared.");
+  }
+  aiReplyCancellation.cancelForContact(preparedContact);
 
-  // A synthetic AI handoff is different: the bot intentionally paused because
-  // a real person is required. The first staff reply claims that ownership and
-  // durably cancels the old AI follow-up anchor before attention is cleared.
   if (
-    contact.mode === "human" &&
-    contact.takeover_by === AI_HANDOFF_OWNER
+    preparedContact.mode === "human" &&
+    preparedContact.takeover_by === AI_HANDOFF_OWNER
   ) {
-    const claimed = await claimAiHandoffOwnership(contact.id, username);
-    if (!claimed) {
-      throw new Error("AI handoff ownership could not be claimed safely.");
+    const claimed = await claimAiHandoffOwnership(
+      preparedContact.id,
+      username
+    );
+    if (claimed) {
+      preparedContact = claimed;
+    } else {
+      // Ownership may have changed while the claim was waiting on its DB lock.
+      // Re-read once and only fail if the synthetic handoff still exists.
+      const latest = await contactsRepo.getContactById(preparedContact.id);
+      if (
+        latest?.mode === "human" &&
+        latest?.takeover_by === AI_HANDOFF_OWNER
+      ) {
+        throw new Error("AI handoff ownership could not be claimed safely.");
+      }
+      if (!latest) {
+        throw new Error("Contact disappeared while claiming the AI handoff.");
+      }
+      preparedContact = latest;
     }
-    preparedContact = claimed;
-  }
-
-  if (preparedContact.needs_attention) {
-    preparedContact =
-      await contactsRepo.setAttention(preparedContact.id, false) || preparedContact;
-  }
-  if (preparedContact.is_unread) {
-    preparedContact =
-      await contactsRepo.setUnread(preparedContact.id, false) || preparedContact;
   }
 
   return preparedContact;
+}
+
+async function finalizeStaffSendState(contactId, username) {
+  let latest = await contactsRepo.getContactById(contactId);
+  if (!latest) return null;
+
+  // Catch a synthetic handoff that began after prepareStaffSend() but before
+  // the staff-authored row was persisted.
+  if (
+    latest.mode === "human" &&
+    latest.takeover_by === AI_HANDOFF_OWNER
+  ) {
+    const claimed = await claimAiHandoffOwnership(latest.id, username);
+    if (claimed) latest = claimed;
+    else {
+      latest = await contactsRepo.getContactById(contactId);
+      if (!latest) return null;
+    }
+  }
+
+  if (!latest.needs_attention && !latest.is_unread) return latest;
+
+  const cleared = await contactsRepo.clearStaffAssistStateIfUnchanged(latest);
+  if (cleared) return cleared;
+
+  // A newer inbound message, safety handoff, or attention reason won the race.
+  // Return the current state without clearing it.
+  return await contactsRepo.getContactById(contactId) || latest;
 }
 
 async function persistSendOutcome(
@@ -876,7 +912,9 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
             publish: false,
           }
         );
-        return { preparedContact, saved };
+        const finalContact =
+          await finalizeStaffSendState(preparedContact.id, req.session.username);
+        return { preparedContact: finalContact || preparedContact, saved };
       }
     );
 
@@ -898,7 +936,6 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
     );
 
     if (sendResult.success) {
-      await contactsRepo.setUnread(preparedContact.id, false).catch(() => {});
       await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(preparedContact.id).catch(() => {});
       await markLeadContacted(preparedContact.id, req.session.username, sendResult);
     } else {
@@ -954,7 +991,12 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       });
     }
 
-    let sendResult;
+    const isManualStaffRetry =
+      Boolean(message.sent_by_username) &&
+      message.is_automated_follow_up !== true &&
+      message.is_scheduled_message !== true;
+    let performRetrySend = null;
+
     if (message.whatsapp_template) {
       if ((contact.channel || "whatsapp") !== "whatsapp") {
         return res.status(409).json({
@@ -1069,16 +1111,17 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
         }
       }
 
-      sendResult = await whatsappTemplate.sendApprovedTemplate(contact, {
-        templateName: message.whatsapp_template.name,
-        languageCode: message.whatsapp_template.language,
-        components: rebuiltTemplate.components,
-        expectedOptInAt:
-          currentTemplate.template.category === "MARKETING"
-            ? message.whatsapp_template.consentOptInAt
-            : null,
-        templateCategory: currentTemplate.template.category,
-      });
+      performRetrySend = (activeContact) =>
+        whatsappTemplate.sendApprovedTemplate(activeContact, {
+          templateName: message.whatsapp_template.name,
+          languageCode: message.whatsapp_template.language,
+          components: rebuiltTemplate.components,
+          expectedOptInAt:
+            currentTemplate.template.category === "MARKETING"
+              ? message.whatsapp_template.consentOptInAt
+              : null,
+          templateCategory: currentTemplate.template.category,
+        });
     } else {
       const retryPurpose =
         message.sent_by_username &&
@@ -1088,28 +1131,90 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
           : "service";
       if (!(await requireFreeformPolicy(contact, res, retryPurpose))) return;
 
-      sendResult = await sendStoredMessage(contact, message, {
-        purpose: retryPurpose,
-      });
+      performRetrySend = (activeContact) =>
+        sendStoredMessage(activeContact, message, {
+          purpose: retryPurpose,
+          ...(isManualStaffRetry
+            ? { requireStaffMode: activeContact.mode === "human" }
+            : {}),
+        });
     }
+
+    let sendResult;
+    let updated;
+    let sendContact = contact;
+
+    const executeRetry = async (activeContact) => {
+      const result = await performRetrySend(activeContact);
+      const errorText = deliveryErrorForSend(
+        result,
+        result.error || rejectedErrorFor(activeContact),
+        message.delivery_error
+      );
+      const persisted = await persistSendOutcome(
+        message,
+        result,
+        errorText,
+        activeContact.channel || "whatsapp"
+      );
+      return { result, errorText, persisted };
+    };
+
+    if (isManualStaffRetry) {
+      const retried = await telegramImmediateAlertRepo.withContactAlertLock(
+        contact.id,
+        async () => {
+          const preparedContact = await prepareStaffSend(
+            contact,
+            req.session.username
+          );
+
+          // A failed row is intentionally ignored by the durable Staff Assist
+          // guard. Mark this retry unconfirmed before contacting the provider
+          // so concurrent/restarted AI work sees that staff is actively handling
+          // this turn. If the request is interrupted, "unknown" is also the
+          // safest delivery state because blindly retrying could duplicate it.
+          const retryPending = await messagesRepo.setDeliveryStatusById(
+            message.id,
+            "unknown",
+            "Retry started; delivery has not been confirmed yet."
+          );
+          publishDeliveryStatus(retryPending);
+
+          const outcome = await executeRetry(preparedContact);
+          let finalContact = preparedContact;
+          if (outcome.result.success) {
+            finalContact =
+              await finalizeStaffSendState(
+                preparedContact.id,
+                req.session.username
+              ) || preparedContact;
+          }
+          return { ...outcome, sendContact: finalContact };
+        }
+      );
+
+      sendResult = retried.result;
+      updated = retried.persisted;
+      sendContact = retried.sendContact;
+    } else {
+      const retried = await executeRetry(contact);
+      sendResult = retried.result;
+      updated = retried.persisted;
+    }
+
     const errorText = deliveryErrorForSend(
       sendResult,
-      sendResult.error || rejectedErrorFor(contact),
+      sendResult.error || rejectedErrorFor(sendContact),
       message.delivery_error
-    );
-    const updated = await persistSendOutcome(
-      message,
-      sendResult,
-      errorText,
-      contact.channel || "whatsapp"
     );
 
     if (sendResult.success) {
-      await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(contact.id);
-      await markLeadContacted(contact.id, req.session.username, sendResult);
+      await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(sendContact.id);
+      await markLeadContacted(sendContact.id, req.session.username, sendResult);
     } else {
       await contactsRepo.setDeliveryAttention(
-        contact.id,
+        sendContact.id,
         `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
       );
     }
@@ -1144,47 +1249,51 @@ router.post("/:contactId/messages", async (req, res) => {
     }
     if (!(await requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)))) return;
 
-    const saved = await telegramImmediateAlertRepo.withContactAlertLock(
+    const prepared = await telegramImmediateAlertRepo.withContactAlertLock(
       contact.id,
       async () => {
-        // Serialize Staff Waiting validation/delivery with both the latest
-        // staff-ownership preparation and persistence of the actual staff reply.
-        // prepareStaffSend() also safely claims synthetic AI-handoff ownership
-        // before it clears Needs Attention, so keep that newer main behavior.
-        await prepareStaffSend(contact, req.session.username);
-
-        return conversationStore.appendMessageForContact(
-          contact.id,
+        const preparedContact = await prepareStaffSend(
+          contact,
+          req.session.username
+        );
+        const saved = await conversationStore.appendMessageForContact(
+          preparedContact.id,
           "assistant",
           text.trim(),
           null,
           req.session.username
         );
+        const finalContact =
+          await finalizeStaffSendState(preparedContact.id, req.session.username);
+        return { preparedContact: finalContact || preparedContact, saved };
       }
     );
 
+    const { preparedContact, saved } = prepared;
     const sendResult = await channelMessaging.sendText(
-      contact,
+      preparedContact,
       text.trim(),
-      socialProviderSendOptions(saved, contact, { purpose: whatsappPolicy.manualStaffPurpose(contact) })
+      socialProviderSendOptions(saved, preparedContact, {
+        purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+      })
     );
     const errorText = deliveryErrorForSend(
       sendResult,
-      sendResult.error || rejectedErrorFor(contact)
+      sendResult.error || rejectedErrorFor(preparedContact)
     );
     const finalMessage = await persistSendOutcome(
       saved,
       sendResult,
       errorText,
-      contact.channel || "whatsapp"
+      preparedContact.channel || "whatsapp"
     );
     if (!sendResult.success) {
       await contactsRepo.setDeliveryAttention(
-        contact.id,
+        preparedContact.id,
         `Delivery failed: ${publicDeliveryError(errorText)}`
       );
     } else {
-      await markLeadContacted(contact.id, req.session.username, sendResult);
+      await markLeadContacted(preparedContact.id, req.session.username, sendResult);
     }
 
     res.status(201).json({
@@ -1236,13 +1345,15 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     // consistent even when Meta accepts the upload but later rejects delivery.
     // R2 persistence happens before the message row exists, so keep the same
     // Telegram per-contact lock across staff preparation and media persistence.
-    const saved = await telegramImmediateAlertRepo.withContactAlertLock(
+    const prepared = await telegramImmediateAlertRepo.withContactAlertLock(
       contact.id,
       async () => {
-        await prepareStaffSend(contact, req.session.username);
-
-        return conversationStore.appendMessageForContact(
-          contact.id,
+        const preparedContact = await prepareStaffSend(
+          contact,
+          req.session.username
+        );
+        const saved = await conversationStore.appendMessageForContact(
+          preparedContact.id,
           "assistant",
           caption,
           null,
@@ -1250,34 +1361,40 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
           null,
           { mimeType: req.file.mimetype, buffer: req.file.buffer }
         );
+        const finalContact =
+          await finalizeStaffSendState(preparedContact.id, req.session.username);
+        return { preparedContact: finalContact || preparedContact, saved };
       }
     );
 
+    const { preparedContact, saved } = prepared;
     const sendResult = await channelMessaging.sendImageBuffer(
-      contact,
+      preparedContact,
       req.file.buffer,
       req.file.mimetype,
       caption || undefined,
       req.file.originalname || "image",
-      socialProviderSendOptions(saved, contact, { purpose: whatsappPolicy.manualStaffPurpose(contact) })
+      socialProviderSendOptions(saved, preparedContact, {
+        purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+      })
     );
     const errorText = deliveryErrorForSend(
       sendResult,
-      sendResult.error || rejectedErrorFor(contact)
+      sendResult.error || rejectedErrorFor(preparedContact)
     );
     const finalMessage = await persistSendOutcome(
       saved,
       sendResult,
       errorText,
-      contact.channel || "whatsapp"
+      preparedContact.channel || "whatsapp"
     );
     if (!sendResult.success) {
       await contactsRepo.setDeliveryAttention(
-        contact.id,
+        preparedContact.id,
         `Delivery failed: ${publicDeliveryError(errorText)}`
       );
     } else {
-      await markLeadContacted(contact.id, req.session.username, sendResult);
+      await markLeadContacted(preparedContact.id, req.session.username, sendResult);
     }
 
     res.status(201).json({
@@ -1347,12 +1464,14 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
             buffer: converted.playback.buffer,
           }
         );
+        const finalContact =
+          await finalizeStaffSendState(preparedContact.id, req.session.username);
 
         return {
           status: "ready",
           converted,
           transcript,
-          currentContact: preparedContact,
+          currentContact: finalContact || preparedContact,
           saved,
         };
       }
@@ -1397,7 +1516,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
     );
     try {
       if (sendResult.success) {
-        await contactsRepo.setAttention(currentContact.id, false);
+        await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(currentContact.id);
         await markLeadContacted(currentContact.id, req.session.username, sendResult);
       } else {
         await contactsRepo.setDeliveryAttention(

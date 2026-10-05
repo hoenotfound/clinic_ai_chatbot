@@ -673,6 +673,20 @@ export default function Inbox() {
             )
           );
         }
+        if (
+          payload.contactId != null &&
+          Number(payload.contactId) === Number(selectedIdRef.current) &&
+          payload.messageId != null &&
+          Array.isArray(payload.reactions)
+        ) {
+          setMessages((current) =>
+            current.map((message) =>
+              Number(message.id) === Number(payload.messageId)
+                ? mergeMessageState(message, { reactions: payload.reactions })
+                : message
+            )
+          );
+        }
         scheduleRefresh(payload.contactId ?? null);
       } catch (err) {
         console.error("Failed to parse realtime Inbox event:", err);
@@ -2422,9 +2436,14 @@ function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
     : null;
   const imageSrc = message.previewUrl || message.media_url || (!isAudio ? storedMediaSrc : null);
   const hasImage = !!imageSrc;
+  const reactionEmojis = Array.isArray(message.reactions)
+    ? message.reactions
+        .map((reaction) => reaction?.emoji)
+        .filter((emoji) => typeof emoji === "string" && emoji.length > 0)
+    : [];
 
   return (
-    <div className={`flex ${isPatient ? "justify-start" : "justify-end"}`}>
+    <div className={`flex ${isPatient ? "justify-start" : "justify-end"} ${reactionEmojis.length ? "mb-2" : ""}`}>
       <div className={`relative max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryNeedsAction ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}>
         {!isPatient && <p className="mb-1 text-[10px] font-semibold text-white/65">{senderLabel}</p>}
         {isWhatsAppTemplate && (
@@ -2450,6 +2469,17 @@ function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
             <DeliveryIndicator status={message.delivery_status} />
           )}
         </div>
+        {reactionEmojis.length > 0 && (
+          <div
+            className={`absolute -bottom-3 ${isPatient ? "left-3" : "right-3"} inline-flex min-h-6 items-center gap-0.5 rounded-full border border-[var(--color-border)] bg-white px-1.5 py-0.5 text-sm leading-none shadow-sm`}
+            title="Customer reaction"
+            aria-label={`Customer reacted ${reactionEmojis.join(" ")}`}
+          >
+            {reactionEmojis.map((emoji, index) => (
+              <span key={`${emoji}-${index}`} aria-hidden="true">{emoji}</span>
+            ))}
+          </div>
+        )}
         {deliveryNeedsAction && (
           <div className="mt-2 rounded-lg bg-white px-2.5 py-2 text-[var(--color-danger)]">
             <div className="flex items-center justify-between gap-3">

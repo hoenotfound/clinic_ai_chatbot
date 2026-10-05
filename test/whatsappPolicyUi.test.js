@@ -168,11 +168,11 @@ test("staff send routes check channel policy before Staff Assist", () => {
   assert.doesNotMatch(helper, /contactsRepo\.takeOver/);
   assert.match(
     textRoute,
-    /telegramImmediateAlertRepo\.withContactAlertLock\(\s*contact\.id,[\s\S]*prepareStaffSend\(contact, req\.session\.username\)[\s\S]*appendMessageForContact/
+    /telegramImmediateAlertRepo\.withContactAlertLock\(\s*contact\.id,[\s\S]*prepareStaffSend\(\s*contact,\s*req\.session\.username\s*\)[\s\S]*appendMessageForContact/
   );
   assert.match(
     imageRoute,
-    /telegramImmediateAlertRepo\.withContactAlertLock\(\s*contact\.id,[\s\S]*prepareStaffSend\(contact, req\.session\.username\)[\s\S]*appendMessageForContact/
+    /telegramImmediateAlertRepo\.withContactAlertLock\(\s*contact\.id,[\s\S]*prepareStaffSend\(\s*contact,\s*req\.session\.username\s*\)[\s\S]*appendMessageForContact/
   );
   assert.match(
     textRoute,
@@ -235,6 +235,37 @@ test("manual WhatsApp templates use Staff Assist without automatic takeover", ()
     templateRoute,
     /whatsappTemplate\.sendApprovedTemplate\(preparedContact/
   );
+});
+
+test("manual failed-message retry participates in Staff Assist race protection", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/routes/conversations.js"),
+    "utf8"
+  );
+  const retryRoute = source.slice(
+    source.indexOf('router.post("/:contactId/messages/:messageId/retry",'),
+    source.indexOf('router.post("/:contactId/messages",')
+  );
+
+  assert.match(retryRoute, /isManualStaffRetry/);
+  assert.match(
+    retryRoute,
+    /telegramImmediateAlertRepo\.withContactAlertLock\([\s\S]*prepareStaffSend\([\s\S]*setDeliveryStatusById\([\s\S]*"unknown"/
+  );
+  assert.match(retryRoute, /finalizeStaffSendState/);
+  assert.match(retryRoute, /requireStaffMode: activeContact\.mode === "human"/);
+  assert.match(retryRoute, /markLeadContacted\(sendContact\.id/);
+});
+
+test("Staff Assist cancellation epochs are bounded in memory", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/services/aiReplyCancellationService.js"),
+    "utf8"
+  );
+  assert.match(source, /EPOCH_TTL_MS/);
+  assert.match(source, /MAX_EPOCH_KEYS/);
+  assert.match(source, /function pruneEpochs/);
+  assert.match(source, /!pendingEchoes\.has\(key\)/);
 });
 
 test("messaging-policy surfaces keep responsive mobile affordances", () => {
