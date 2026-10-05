@@ -6,6 +6,7 @@ const path = require("node:path");
 const clinicConfig = require("../src/config/clinicConfig");
 const messagesRepo = require("../src/db/messagesRepo");
 const followUpRepo = require("../src/db/followUpRepo");
+const followUpAiLeaseRepo = require("../src/db/followUpAiLeaseRepo");
 const contactsRepo = require("../src/db/contactsRepo");
 const pipelineRepo = require("../src/db/pipelineRepo");
 const realtimeEvents = require("../src/utils/realtimeEvents");
@@ -28,6 +29,8 @@ test.beforeEach(() => {
   followUpRepo.discardUnsentSocialImageCompanion = async () => null;
   followUpRepo.getAiFollowUpContext = async () => ({ messages: [], lead: null });
   followUpRepo.recordAiDecisionIfStillEligible = async () => null;
+  followUpAiLeaseRepo.claimIfStillEligible = async (input) => ({ id: 1, ...input });
+  followUpAiLeaseRepo.release = async () => ({ id: 1 });
   pipelineRepo.markContactedForContact = async () => false;
   // These tests exercise follow-up timing/language/delivery behavior, not the
   // policy service's database lookup. Policy behavior has dedicated tests.
@@ -886,9 +889,9 @@ test("AI mode sends the personalized message instead of the fixed fallback", asy
     };
   };
 
-  let claimedContent = null;
+  let claimedInput = null;
   followUpRepo.saveIfStillEligible = async (input) => {
-    claimedContent = input.content;
+    claimedInput = input;
     return { id: 302, contact_id: 31, delivery_status: null };
   };
   messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
@@ -898,7 +901,7 @@ test("AI mode sends the personalized message instead of the fixed fallback", asy
     delivery_status: "pending",
   });
   whatsapp.sendMessage = async (_number, message) => {
-    assert.equal(message, claimedContent);
+    assert.equal(message, claimedInput.content);
     return { success: true, wamid: "wamid-ai-302" };
   };
   realtimeEvents.publish = () => {};
@@ -906,9 +909,11 @@ test("AI mode sends the personalized message instead of the fixed fallback", asy
   await runAutomatedFollowUps();
 
   assert.equal(
-    claimedContent,
+    claimedInput.content,
     "如果你想先看看自己的变化，可以先体验一次，再根据体验后的情况决定后续 😊"
   );
+  assert.equal(claimedInput.messageMode, "ai_personalized");
+  assert.equal(claimedInput.targetedService, null);
 });
 
 test("AI skip is persisted without creating or sending a follow-up message", async () => {
@@ -991,9 +996,9 @@ test("AI generation failure falls back to the reviewed fixed message", async () 
     throw err;
   };
 
-  let claimedContent = null;
+  let claimedInput = null;
   followUpRepo.saveIfStillEligible = async (input) => {
-    claimedContent = input.content;
+    claimedInput = input;
     return { id: 322, contact_id: 33, delivery_status: null };
   };
   messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
@@ -1010,5 +1015,39 @@ test("AI generation failure falls back to the reviewed fixed message", async () 
 
   await runAutomatedFollowUps();
 
-  assert.equal(claimedContent, "Safe fallback");
+  assert.equal(claimedInput.content, "Safe fallback");
+  assert.equal(claimedInput.messageMode, "ai_fallback");
+});
+
+
+test("AI mode does not generate when another worker owns the generation lease", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.messageMode = "ai";
+
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 34,
+    channel: "whatsapp",
+    whatsapp_number: "60144444444",
+    trigger_message_id: 331,
+    trigger_message_content: "Here are the details.",
+    recent_inbound_messages: ["Okay"],
+    next_follow_up_step: 1,
+  }];
+  followUpAiLeaseRepo.claimIfStillEligible = async () => null;
+
+  let generationCount = 0;
+  let saveCount = 0;
+  followUpAiService.generatePersonalizedFollowUp = async () => {
+    generationCount += 1;
+    return { action: "send", message: "Should not happen", reason: "", topic: "" };
+  };
+  followUpRepo.saveIfStillEligible = async () => {
+    saveCount += 1;
+    return null;
+  };
+
+  await runAutomatedFollowUps();
+
+  assert.equal(generationCount, 0);
+  assert.equal(saveCount, 0);
 });
