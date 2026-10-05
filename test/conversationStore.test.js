@@ -93,3 +93,61 @@ test("publishes an updated inbound row so the Inbox does not need a refresh", as
     },
   ]);
 });
+
+
+test("does not send WhatsApp sticker artwork into AI vision context", async (t) => {
+  const originalGetPage = messagesRepo.getMessagePageForContact;
+  const originalGetMedia = messagesRepo.getMessageMediaForContact;
+  const mediaReads = [];
+
+  t.after(() => {
+    messagesRepo.getMessagePageForContact = originalGetPage;
+    messagesRepo.getMessageMediaForContact = originalGetMedia;
+  });
+
+  messagesRepo.getMessagePageForContact = async () => ({
+    rows: [
+      {
+        id: 70,
+        contact_id: 7,
+        role: "user",
+        content: "🙂 [Customer sent a sticker]",
+        has_media_attachment: true,
+        media_mime_type: "image/webp",
+        delivery_status: null,
+      },
+      {
+        id: 71,
+        contact_id: 7,
+        role: "user",
+        content: "Can I know the price?",
+        has_media_attachment: false,
+        media_mime_type: null,
+        delivery_status: null,
+      },
+    ],
+    hasMore: false,
+  });
+
+  messagesRepo.getMessageMediaForContact = async (...args) => {
+    mediaReads.push(args);
+    return {
+      media_mime_type: "image/webp",
+      media_base64: "sticker-bytes",
+    };
+  };
+
+  const history = await conversationStore.getHistoryForContact(7, {
+    throughMessageId: 71,
+  });
+
+  assert.deepEqual(history, [
+    { role: "user", content: "🙂 [Customer sent a sticker]" },
+    { role: "user", content: "Can I know the price?" },
+  ]);
+  assert.deepEqual(
+    mediaReads,
+    [],
+    "sticker artwork must not be loaded into the AI vision prompt"
+  );
+});
