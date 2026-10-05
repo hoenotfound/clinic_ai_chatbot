@@ -1,4 +1,5 @@
 const contactsRepo = require("../db/contactsRepo");
+const messagesRepo = require("../db/messagesRepo");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 
 /**
@@ -10,7 +11,12 @@ const { automatedRepliesEnabled } = require("./automaticReplyControl");
  */
 async function getAiOwnedContact(
   contact,
-  { channel = "whatsapp", from = null, reason = "automated reply" } = {}
+  {
+    channel = "whatsapp",
+    from = null,
+    reason = "automated reply",
+    inboundMessageId = null,
+  } = {}
 ) {
   if (!contact?.id) {
     throw new Error("Cannot verify automatic-reply ownership without a contact id.");
@@ -30,6 +36,17 @@ async function getAiOwnedContact(
   if (latest.mode === "human") {
     const target = from ? `${channel}:${from}` : `${channel}:contact-${contact.id}`;
     console.log(`Skipping ${reason} for ${target} — conversation is in human mode.`);
+    return null;
+  }
+
+  if (
+    inboundMessageId &&
+    await messagesRepo.hasStaffReplyAfter(latest.id, inboundMessageId)
+  ) {
+    const target = from ? `${channel}:${from}` : `${channel}:contact-${contact.id}`;
+    console.log(
+      `Skipping ${reason} for ${target} — staff already answered this customer turn.`
+    );
     return null;
   }
 
