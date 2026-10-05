@@ -6,8 +6,10 @@ const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
+const { randomUUID } = require("node:crypto");
 const channelMessaging = require("./channelMessagingService");
 const followUpAiService = require("./followUpAiService");
+const followUpAiLeaseRepo = require("../db/followUpAiLeaseRepo");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const {
   normalizeQuietHours,
@@ -427,13 +429,31 @@ async function sendCandidate(candidate) {
   let followUpMessage = fallbackSelection.message;
   const targetedService = fallbackSelection.targetedService;
 
+  let followUpMessageMode = "fixed";
+  let aiLeaseToken = null;
+
   if (step.messageMode === "ai") {
+    aiLeaseToken = randomUUID();
+    const lease = await followUpAiLeaseRepo.claimIfStillEligible({
+      contactId: candidate.contact_id,
+      triggerMessageId: candidate.trigger_message_id,
+      stepIndex,
+      leaseToken: aiLeaseToken,
+      delayMinutes: step.delayMinutes,
+      previousDelayMinutes:
+        stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
+      triggerMode: settings.triggerMode,
+      activatedAt: settings.activatedAt,
+    });
+    if (!lease) return;
+
     try {
       const aiContext = await followUpRepo.getAiFollowUpContext({
         contactId: candidate.contact_id,
       });
       const aiDecision = await followUpAiService.generatePersonalizedFollowUp({
         conversation: aiContext.messages,
+        triggerMessageId: candidate.trigger_message_id,
         stepNumber: stepIndex,
         treatmentInterest:
           aiContext.lead?.treatment_interest || candidate.treatment_interest,
@@ -445,19 +465,30 @@ async function sendCandidate(candidate) {
       });
 
       if (aiDecision.action !== "send") {
-        const recorded = await followUpRepo.recordAiDecisionIfStillEligible({
-          contactId: candidate.contact_id,
-          triggerMessageId: candidate.trigger_message_id,
-          stepIndex,
-          action: aiDecision.action,
-          reason: aiDecision.reason,
-          topic: aiDecision.topic,
-          delayMinutes: step.delayMinutes,
-          previousDelayMinutes:
-            stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
-          triggerMode: settings.triggerMode,
-          activatedAt: settings.activatedAt,
-        });
+        let recorded = null;
+        try {
+          recorded = await followUpRepo.recordAiDecisionIfStillEligible({
+            contactId: candidate.contact_id,
+            triggerMessageId: candidate.trigger_message_id,
+            stepIndex,
+            action: aiDecision.action,
+            reason: aiDecision.reason,
+            topic: aiDecision.topic,
+            delayMinutes: step.delayMinutes,
+            previousDelayMinutes:
+              stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
+            triggerMode: settings.triggerMode,
+            activatedAt: settings.activatedAt,
+          });
+        } finally {
+          await followUpAiLeaseRepo.release({
+            contactId: candidate.contact_id,
+            triggerMessageId: candidate.trigger_message_id,
+            stepIndex,
+            leaseToken: aiLeaseToken,
+          });
+          aiLeaseToken = null;
+        }
 
         // A customer or staff reply may have arrived while the model was
         // generating. In that case the old anchor is no longer eligible and
@@ -465,6 +496,9 @@ async function sendCandidate(candidate) {
         if (!recorded) return;
 
         if (aiDecision.action === "human_review") {
+          // The decision insert already sets needs_attention atomically. Calling
+          // setAttention again is intentional: it publishes the contact update
+          // and queues the existing Telegram human-intervention notification.
           try {
             await contactsRepo.setAttention(
               candidate.contact_id,
@@ -473,7 +507,7 @@ async function sendCandidate(candidate) {
             );
           } catch (err) {
             console.error(
-              `Failed to flag AI follow-up human review for contact ${candidate.contact_id}:`,
+              `Failed to publish AI follow-up human review for contact ${candidate.contact_id}:`,
               err
             );
           }
@@ -482,10 +516,12 @@ async function sendCandidate(candidate) {
       }
 
       followUpMessage = aiDecision.message;
+      followUpMessageMode = "ai_personalized";
     } catch (err) {
       // AI generation is optional intelligence, never a dependency for the
       // scheduler. Provider failures, invalid JSON, or repetitive generations
       // fall back to the already-reviewed fixed message for this step.
+      followUpMessageMode = "ai_fallback";
       console.error(
         `AI follow-up generation failed for contact ${candidate.contact_id}; using fixed fallback:`,
         err
@@ -496,7 +532,17 @@ async function sendCandidate(candidate) {
   // AI generation can take several seconds. If quiet hours began meanwhile,
   // leave the conversation untouched so the normal worker wake can resume it
   // after the quiet window instead of creating an unsent claim.
-  if (quietHoursStatus(new Date(), settings.quietHours).active) return;
+  if (quietHoursStatus(new Date(), settings.quietHours).active) {
+    if (aiLeaseToken) {
+      await followUpAiLeaseRepo.release({
+        contactId: candidate.contact_id,
+        triggerMessageId: candidate.trigger_message_id,
+        stepIndex,
+        leaseToken: aiLeaseToken,
+      });
+    }
+    return;
+  }
 
   const contact = contactForCandidate(candidate);
   const channel = contact.channel || "whatsapp";
@@ -505,19 +551,33 @@ async function sendCandidate(candidate) {
   // WhatsApp can send its image + caption as one tracked message. Messenger
   // and Instagram require separate text/image API messages, so the atomic
   // follow-up claim represents only the durable text message on those channels.
-  const saved = await followUpRepo.saveIfStillEligible({
-    contactId: candidate.contact_id,
-    triggerMessageId: candidate.trigger_message_id,
-    content: followUpMessage,
-    mediaUrl: !isSocial && step.imageUrl ? step.imageUrl : null,
-    stepIndex,
-    targetedService,
-    delayMinutes: step.delayMinutes,
-    previousDelayMinutes:
-      stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
-    triggerMode: settings.triggerMode,
-    activatedAt: settings.activatedAt,
-  });
+  let saved;
+  try {
+    saved = await followUpRepo.saveIfStillEligible({
+      contactId: candidate.contact_id,
+      triggerMessageId: candidate.trigger_message_id,
+      content: followUpMessage,
+      mediaUrl: !isSocial && step.imageUrl ? step.imageUrl : null,
+      stepIndex,
+      targetedService: followUpMessageMode === "ai_personalized" ? null : targetedService,
+      messageMode: followUpMessageMode,
+      delayMinutes: step.delayMinutes,
+      previousDelayMinutes:
+        stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
+      triggerMode: settings.triggerMode,
+      activatedAt: settings.activatedAt,
+    });
+  } finally {
+    if (aiLeaseToken) {
+      await followUpAiLeaseRepo.release({
+        contactId: candidate.contact_id,
+        triggerMessageId: candidate.trigger_message_id,
+        stepIndex,
+        leaseToken: aiLeaseToken,
+      });
+      aiLeaseToken = null;
+    }
+  }
 
   // The customer may have replied since the candidate query, or another
   // server instance may already have claimed this exact trigger.
