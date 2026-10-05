@@ -1045,6 +1045,76 @@ test("compound 9D + 3D service wins over its component services for the delayed 
   assert.equal(claimInput.targetedService, "3D + 9D 组合");
 });
 
+test("final pre-send check cancels a package follow-up if that exact package offer changed after claim", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "Pelvic packages",
+      linkedService: "Pelvic Care",
+      sendOnPriceQuery: false,
+      caption: "",
+      imageUrl: "",
+      packages: [
+        {
+          name: "Package A",
+          title: "Premium package",
+          aliases: ["A配套"],
+          imageUrl: "",
+          caption: "A",
+          followUpMessage: "Package A hidden offer",
+        },
+        {
+          name: "Package B",
+          title: "Women's package",
+          aliases: ["B配套"],
+          imageUrl: "",
+          caption: "B",
+          followUpMessage: "Package B hidden offer",
+        },
+      ],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 760,
+      whatsapp_number: "60133333344",
+      trigger_message_id: 759,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["Pelvic Care Package A price?"],
+      treatment_interest: "Pelvic Care",
+      trigger_message_content: "Package A current price",
+    },
+  ];
+
+  let discarded = false;
+  followUpRepo.saveIfStillEligible = async () => {
+    // Simulate staff editing Package A after the DB claim but before the
+    // provider-level final pre-send check.
+    clinicConfig.promotions[0].packages[0].followUpMessage =
+      "Package A updated offer";
+    return { id: 761, contact_id: 760, delivery_status: null };
+  };
+  followUpRepo.discardUnsentClaim = async () => {
+    discarded = true;
+    return { id: 761, contact_id: 760, delivery_status: "cancelled" };
+  };
+
+  let sendCalls = 0;
+  whatsapp.sendMessage = async () => {
+    sendCalls += 1;
+    return { success: true, wamid: "should-not-send" };
+  };
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(sendCalls, 0);
+  assert.equal(discarded, true);
+});
+
 test("quiet hours defer due follow-ups until the configured clinic-local end time", async () => {
   enableTool();
   clinicConfig.automatedFollowUp.quietHours.enabled = true;
