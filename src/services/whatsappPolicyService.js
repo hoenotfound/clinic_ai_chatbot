@@ -66,11 +66,11 @@ async function getPolicyState(contactId) {
        c.whatsapp_marketing_opt_out_at,
        c.whatsapp_marketing_opt_out_source,
        (
-         SELECT COALESCE(m.source_created_at, m.created_at)
+         SELECT m.created_at
          FROM messages m
          WHERE m.contact_id = c.id
            AND m.role = 'user'
-         ORDER BY COALESCE(m.source_created_at, m.created_at) DESC, m.id DESC
+         ORDER BY m.created_at DESC, m.id DESC
          LIMIT 1
        ) AS latest_inbound_at
      FROM contacts c
