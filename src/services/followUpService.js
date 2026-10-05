@@ -311,15 +311,19 @@ function promotionFollowUpForCandidate(candidate) {
   if (!serviceName && customerService.mentioned) return null;
 
   if (!serviceName) {
+    serviceName = configuredServiceByName(candidate.treatment_interest);
+  }
+
+  // The latest lead treatment interest is populated from the structured reply
+  // path and is safer than parsing package/media captions. Only consult the
+  // outbound anchor when neither the customer nor the current CRM state names
+  // a configured service.
+  if (!serviceName) {
     const outboundService = mostSpecificConfiguredServiceInText(
       candidate.trigger_message_content
     );
     serviceName = outboundService.serviceName;
     if (!serviceName && outboundService.mentioned) return null;
-  }
-
-  if (!serviceName) {
-    serviceName = configuredServiceByName(candidate.treatment_interest);
   }
   if (!serviceName) return null;
 
@@ -367,6 +371,7 @@ function promotionFollowUpForCandidate(candidate) {
             message: deterministicPackage.followUpMessage,
             targetedService: serviceName,
             promotionFollowUp: true,
+            promotionPackageName: deterministicPackage.name,
           }
         : null;
     }
@@ -405,9 +410,14 @@ function promotionFollowUpForCandidate(candidate) {
     : null;
 }
 
-function activePromotionFollowUpStillConfigured(serviceName, message) {
+function activePromotionFollowUpStillConfigured(
+  serviceName,
+  message,
+  packageName = null
+) {
   const serviceKey = normalizedServiceName(serviceName);
   const expectedMessage = String(message || "").trim();
+  const expectedPackage = normalizedServiceName(packageName);
   if (!serviceKey || !expectedMessage) return false;
 
   const matches = getActivePromotions(clinicConfig.promotions || []).filter(
@@ -422,9 +432,17 @@ function activePromotionFollowUpStillConfigured(serviceName, message) {
 
   if (configuredPackages.length > 0) {
     if (findAmbiguousPromotionPackageTerm(promotion)) return false;
-    return promotionPackages(promotion).some(
-      (item) => item.followUpMessage === expectedMessage
-    );
+    const packages = promotionPackages(promotion);
+    if (expectedPackage) {
+      const matches = packages.filter(
+        (item) => normalizedServiceName(item.name) === expectedPackage
+      );
+      return (
+        matches.length === 1 &&
+        matches[0].followUpMessage === expectedMessage
+      );
+    }
+    return packages.some((item) => item.followUpMessage === expectedMessage);
   }
 
   return String(promotion.followUpMessage || "").trim() === expectedMessage;
@@ -638,14 +656,26 @@ async function releaseAiGenerationLease({
   }
 }
 
-function currentSessionHasPromotionEnquiry(messages, triggerMessageId) {
+function currentSessionHasPromotionEnquiry(
+  messages,
+  triggerMessageId,
+  serviceName
+) {
+  const target = normalizedServiceName(serviceName);
+  if (!target) return false;
+
   return followUpAiService
     .scopePackageSelectionConversation(messages, triggerMessageId)
-    .some(
-      (message) =>
-        message?.role === "user" &&
-        looksLikePromotionEnquiry(message?.content)
-    );
+    .some((message) => {
+      if (message?.role !== "user" || !looksLikePromotionEnquiry(message?.content)) {
+        return false;
+      }
+      const service = mostSpecificConfiguredServiceInText(message.content);
+      return (
+        service.serviceName &&
+        normalizedServiceName(service.serviceName) === target
+      );
+    });
 }
 
 async function sendCandidate(candidate) {
@@ -675,6 +705,7 @@ async function sendCandidate(candidate) {
   let followUpMessage = fallbackSelection.message;
   let targetedService = fallbackSelection.targetedService;
   let promotionFollowUp = fallbackSelection.promotionFollowUp === true;
+  let promotionPackageName = fallbackSelection.promotionPackageName || null;
   const promotionPackageSelection =
     fallbackSelection.promotionPackageSelection || null;
 
@@ -718,7 +749,8 @@ async function sendCandidate(candidate) {
         promotionPackageSelection.requiresRecentPromotionEnquiry !== true ||
         currentSessionHasPromotionEnquiry(
           aiContext.messages,
-          candidate.trigger_message_id
+          candidate.trigger_message_id,
+          promotionPackageSelection.serviceName
         )
       );
 
@@ -746,6 +778,7 @@ async function sendCandidate(candidate) {
             // always copied verbatim from trusted config and is never generated.
             followUpMessage = selectedPackage.followUpMessage;
             targetedService = promotionPackageSelection.serviceName;
+            promotionPackageName = selectedPackage.name;
             promotionFollowUp = true;
           }
         }
@@ -914,7 +947,8 @@ async function sendCandidate(candidate) {
       (promotionFollowUp &&
         !activePromotionFollowUpStillConfigured(
           targetedService,
-          followUpMessage
+          followUpMessage,
+          promotionPackageName
         ))
     ) {
       return false;
