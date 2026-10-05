@@ -419,8 +419,8 @@ function parseBusinessAppEchoes(body) {
 
 /**
  * Pulls out customer reactions to WhatsApp messages. A reaction is an update to
- * an existing message, not a new customer turn. Meta uses an empty emoji string
- * to represent removing the customer's current reaction.
+ * an existing message, not a new customer turn. Meta removes the emoji field
+ * when a customer removes a reaction, so normalize a missing emoji to "".
  */
 function parseReactionEvents(body) {
   try {
@@ -433,17 +433,21 @@ function parseReactionEvents(body) {
             !message?.id ||
             !message?.from ||
             message.type !== "reaction" ||
-            !message.reaction?.message_id ||
-            typeof message.reaction?.emoji !== "string"
+            !message.reaction?.message_id
           ) {
             continue;
           }
+
+          const emoji =
+            typeof message.reaction.emoji === "string"
+              ? message.reaction.emoji
+              : "";
 
           parsed.push({
             id: message.id,
             from: message.from,
             targetMessageId: message.reaction.message_id,
-            emoji: message.reaction.emoji,
+            emoji,
             timestamp: message.timestamp || null,
           });
         }
