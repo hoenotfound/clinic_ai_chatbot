@@ -141,37 +141,73 @@ async function requireFreeformPolicy(contact, res, purpose = "service") {
 }
 
 async function prepareStaffSend(contact, username) {
-  // A manual Inbox reply is a one-turn Staff Assist by default. It invalidates
-  // any in-flight AI reply for this customer turn but does not permanently
-  // change AI-owned conversations into Staff mode.
+  // Cancel immediately from the route snapshot, then refresh ownership before
+  // making any durable Staff Assist decision. The route-level contact can be
+  // stale after policy checks or media preparation.
   aiReplyCancellation.cancelForContact(contact);
 
-  let preparedContact = contact;
+  let preparedContact = await contactsRepo.getContactById(contact.id);
+  if (!preparedContact) {
+    throw new Error("Contact disappeared before the staff send could be prepared.");
+  }
+  aiReplyCancellation.cancelForContact(preparedContact);
 
-  // A synthetic AI handoff is different: the bot intentionally paused because
-  // a real person is required. The first staff reply claims that ownership and
-  // durably cancels the old AI follow-up anchor before attention is cleared.
   if (
-    contact.mode === "human" &&
-    contact.takeover_by === AI_HANDOFF_OWNER
+    preparedContact.mode === "human" &&
+    preparedContact.takeover_by === AI_HANDOFF_OWNER
   ) {
-    const claimed = await claimAiHandoffOwnership(contact.id, username);
-    if (!claimed) {
-      throw new Error("AI handoff ownership could not be claimed safely.");
+    const claimed = await claimAiHandoffOwnership(
+      preparedContact.id,
+      username
+    );
+    if (claimed) {
+      preparedContact = claimed;
+    } else {
+      // Ownership may have changed while the claim was waiting on its DB lock.
+      // Re-read once and only fail if the synthetic handoff still exists.
+      const latest = await contactsRepo.getContactById(preparedContact.id);
+      if (
+        latest?.mode === "human" &&
+        latest?.takeover_by === AI_HANDOFF_OWNER
+      ) {
+        throw new Error("AI handoff ownership could not be claimed safely.");
+      }
+      if (!latest) {
+        throw new Error("Contact disappeared while claiming the AI handoff.");
+      }
+      preparedContact = latest;
     }
-    preparedContact = claimed;
-  }
-
-  if (preparedContact.needs_attention) {
-    preparedContact =
-      await contactsRepo.setAttention(preparedContact.id, false) || preparedContact;
-  }
-  if (preparedContact.is_unread) {
-    preparedContact =
-      await contactsRepo.setUnread(preparedContact.id, false) || preparedContact;
   }
 
   return preparedContact;
+}
+
+async function finalizeStaffSendState(contactId, username) {
+  let latest = await contactsRepo.getContactById(contactId);
+  if (!latest) return null;
+
+  // Catch a synthetic handoff that began after prepareStaffSend() but before
+  // the staff-authored row was persisted.
+  if (
+    latest.mode === "human" &&
+    latest.takeover_by === AI_HANDOFF_OWNER
+  ) {
+    const claimed = await claimAiHandoffOwnership(latest.id, username);
+    if (claimed) latest = claimed;
+    else {
+      latest = await contactsRepo.getContactById(contactId);
+      if (!latest) return null;
+    }
+  }
+
+  if (!latest.needs_attention && !latest.is_unread) return latest;
+
+  const cleared = await contactsRepo.clearStaffAssistStateIfUnchanged(latest);
+  if (cleared) return cleared;
+
+  // A newer inbound message, safety handoff, or attention reason won the race.
+  // Return the current state without clearing it.
+  return await contactsRepo.getContactById(contactId) || latest;
 }
 
 async function persistSendOutcome(
