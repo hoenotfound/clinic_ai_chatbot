@@ -798,7 +798,7 @@ test("Messenger conversation stays manually replyable in the Human Agent window"
   await openInboxConversation(page);
 
   await expect(page.getByText(/Staff reply only/)).toBeVisible();
-  const composer = page.getByPlaceholder("Message to take over from AI…");
+  const composer = page.getByPlaceholder("Reply manually — AI stays on…");
   await expect(composer).toBeEnabled();
 
   await composer.fill("Manual Human Agent reply");
