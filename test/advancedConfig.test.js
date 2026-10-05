@@ -468,6 +468,93 @@ test("Advanced Config exposes business and AI content only", () => {
   }
 });
 
+test("promotion follow-up translations are validated and remain backward compatible", () => {
+  const current = currentConfig();
+
+  const localized = prepareConfigUpdatePayload(
+    {
+      promotions: [{
+        name: "Localized promo",
+        linkedService: "Consultation",
+        sendOnPriceQuery: false,
+        imageUrl: "",
+        caption: "",
+        followUpMessage: "Default follow-up",
+        followUpTranslations: {
+          en: "English follow-up",
+          ms: "Susulan BM",
+          zh: "中文跟进",
+        },
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(localized.ok, true);
+
+  const localizedPackage = prepareConfigUpdatePayload(
+    {
+      promotions: [{
+        name: "Localized packages",
+        linkedService: "Consultation",
+        sendOnPriceQuery: false,
+        imageUrl: "",
+        caption: "",
+        packages: [{
+          name: "Package A",
+          title: "A",
+          aliases: [],
+          imageUrl: "",
+          caption: "",
+          followUpMessage: "Default A",
+          followUpTranslations: { zh: "A配套中文跟进" },
+        }],
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(localizedPackage.ok, true);
+
+  const invalidTranslation = prepareConfigUpdatePayload(
+    {
+      promotions: [{
+        name: "Bad localized promo",
+        linkedService: "Consultation",
+        sendOnPriceQuery: false,
+        imageUrl: "",
+        caption: "",
+        followUpMessage: "Default",
+        followUpTranslations: { zh: 123 },
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(invalidTranslation.ok, false);
+  assert.deepEqual(invalidTranslation.invalidKeys, ["promotions"]);
+
+  const legacy = prepareConfigUpdatePayload(
+    {
+      promotions: [{
+        name: "Legacy promo",
+        linkedService: "Consultation",
+        sendOnPriceQuery: false,
+        imageUrl: "",
+        caption: "",
+        followUpMessage: "Still works without translations",
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(legacy.ok, true);
+});
+
 test("Advanced Config enforces handoff rules and protected industry guardrails", () => {
   const current = currentConfig();
   current.businessType = "generic";

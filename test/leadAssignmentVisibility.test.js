@@ -112,7 +112,7 @@ test("Inbox keeps normal states quiet and emphasizes actionable exceptions", () 
   assert.doesNotMatch(inbox, /Enter to send · Shift \+ Enter for a new line/);
   assert.doesNotMatch(styles, /radial-gradient\(/);
 
-  assert.match(inbox, /<StatusBadge tone="accent">Follow-up<\/StatusBadge>/);
+  assert.match(inbox, /<StatusBadge tone="accent">Needs follow-up<\/StatusBadge>/);
   assert.match(inbox, /<StatusBadge tone="danger">Attention<\/StatusBadge>/);
   assert.match(inbox, /contact\.needs_attention && \(/);
 });

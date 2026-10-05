@@ -124,6 +124,50 @@ test("Tools UX keeps advanced details out of the main setup flow", () => {
   assert.doesNotMatch(tools, /function OverviewItem/);
 });
 
+test("manual staff sends cancel synthetic AI handoff before clearing Needs Attention", () => {
+  const route = read("src/routes/conversations.js");
+
+  const helperStart = route.indexOf("async function prepareStaffSend");
+  const helperEnd = route.indexOf("async function persistSendOutcome", helperStart);
+  const helper = route.slice(helperStart, helperEnd);
+
+  const claimIndex = helper.indexOf("claimAiHandoffOwnership");
+  const clearIndex = helper.indexOf("contactsRepo.setAttention(contact.id, false)");
+  assert.ok(claimIndex >= 0 && clearIndex > claimIndex);
+  assert.match(helper, /contact\.takeover_by === AI_HANDOFF_OWNER/);
+  assert.match(helper, /AI handoff ownership could not be claimed safely/);
+
+  const textRouteStart = route.indexOf('router.post("/:contactId/messages"');
+  const imageRouteStart = route.indexOf('router.post("/:contactId/media"');
+  const voiceRouteStart = route.indexOf('router.post("/:contactId/voice"');
+  const textRoute = route.slice(textRouteStart, imageRouteStart);
+  const imageRoute = route.slice(imageRouteStart, voiceRouteStart);
+
+  assert.ok(
+    textRoute.indexOf("prepareStaffSend") <
+      textRoute.indexOf("conversationStore.appendMessageForContact")
+  );
+  assert.ok(
+    imageRoute.indexOf("prepareStaffSend") <
+      imageRoute.indexOf("conversationStore.appendMessageForContact")
+  );
+});
+
+test("Follow-up UI explains promotion overrides, sequence stops, and manual follow-up naming", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+  const settings = read("portal-frontend/src/pages/Settings.jsx");
+  const inbox = read("portal-frontend/src/pages/Inbox.jsx");
+
+  assert.match(tools, /Promotion override is available/);
+  assert.match(tools, /If AI decides to skip or request human review/);
+  assert.match(tools, /A real staff takeover cancels an older AI-started sequence/);
+  assert.match(tools, /Sent scheduled staff messages count as staff replies/);
+  assert.match(settings, /Requires Tools → Automated follow-up to be on/);
+  assert.match(settings, /Language-specific follow-up copy/);
+  assert.match(settings, /image, caption, and first follow-up offer/);
+  assert.match(inbox, /Needs follow-up/);
+});
+
 test("leaving a dirty tool discards its local draft consistently", () => {
   const tools = read("portal-frontend/src/pages/Tools.jsx");
 

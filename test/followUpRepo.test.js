@@ -1,9 +1,22 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const { pool } = require("../src/db/db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("../src/db/conversationLock");
 const followUpRepo = require("../src/db/followUpRepo");
+
+test("AI generation lease respects durable sequence cancellation decisions", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "src/db/followUpAiLeaseRepo.js"),
+    "utf8"
+  );
+
+  assert.match(source, /follow_up_ai_decisions decision/);
+  assert.match(source, /decision\.trigger_message_id = anchor\.id/);
+  assert.match(source, /decision\.action IN \('skip', 'human_review'\)/);
+});
 
 test("automated follow-up inserts take the conversation scoring lock and re-check staff attention", async (t) => {
   const originalQuery = pool.query;
@@ -177,6 +190,9 @@ test("final claim eligibility rechecks newer messages and lead completion under 
       new RegExp(`pg_advisory_xact_lock\\(${CONVERSATION_LOCK_NAMESPACE}`)
     );
     assert.match(sql, /m\.automated_follow_up_for_message_id IS NOT NULL/);
+    assert.match(sql, /JOIN messages anchor/);
+    assert.match(sql, /follow_up_ai_decisions decision/);
+    assert.match(sql, /decision\.trigger_message_id = anchor\.id/);
     assert.match(sql, /newer\.role = 'user'/);
     assert.match(sql, /newer\.is_automated_follow_up = false/);
     assert.match(sql, /latest_lead\.is_closed = false/);

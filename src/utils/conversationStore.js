@@ -6,7 +6,7 @@
 
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
-const { claimAiHandoffOwnership } = require("../services/staffOwnershipService");
+const staffOwnershipService = require("../services/staffOwnershipService");
 const realtimeEvents = require("./realtimeEvents");
 
 const MAX_MESSAGES_FOR_AI_CONTEXT = 20; // bounds prompt size/cost, not what's shown in the portal
@@ -96,6 +96,22 @@ async function appendMessageForContact(
   mediaAttachment = null,
   options = {}
 ) {
+  // Claim a synthetic AI handoff before the staff-authored row is
+  // inserted. The ownership claim also writes the durable cancellation for the
+  // previous AI anchor under the same conversation advisory lock used by the
+  // follow-up worker. Keeping this before save prevents the new staff row from
+  // replacing the AI anchor before it can be cancelled.
+  //
+  // Ownership bookkeeping remains best-effort: a transient failure must not
+  // prevent staff from sending the message itself.
+  if (sentByUsername) {
+    try {
+      await staffOwnershipService.claimAiHandoffOwnership(contactId, sentByUsername);
+    } catch (err) {
+      console.error(`Failed to claim AI handoff for contact ${contactId}:`, err);
+    }
+  }
+
   const saved = await messagesRepo.saveMessage(
     contactId,
     role,
@@ -111,19 +127,6 @@ async function appendMessageForContact(
       initialDeliveryError: options.initialDeliveryError || null,
     }
   );
-
-  // AI-triggered handoff puts the thread in Staff mode immediately. The first
-  // real staff-authored message should then replace the synthetic "AI handoff"
-  // owner with the username that actually picked the conversation up. This is
-  // bookkeeping only and must never turn a successfully saved staff message
-  // into a failed send if the ownership update has a transient DB problem.
-  if (sentByUsername) {
-    try {
-      await claimAiHandoffOwnership(contactId, sentByUsername);
-    } catch (err) {
-      console.error(`Failed to claim AI handoff for contact ${contactId}:`, err);
-    }
-  }
 
   if (options.publish !== false) {
     publishMessageChange(contactId, saved.id);

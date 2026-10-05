@@ -1684,7 +1684,7 @@ test("Promotions confirms before switching a populated Single offer to Multiple 
   const clickPromise = page.getByRole("button", { name: "Multiple packages" }).click();
   const dialog = await dialogPromise;
   expect(dialog.message()).toContain(
-    "Changing to Multiple packages will remove the current single-offer image and caption when you save."
+    "Changing to Multiple packages will remove the current single-offer image, caption, and first follow-up offer when you save."
   );
   await dialog.dismiss();
   await clickPromise;

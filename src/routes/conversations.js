@@ -14,6 +14,8 @@ const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const { transcribeStaffAudio } = require("../services/transcriptionService");
 const whatsappPolicy = require("../services/whatsappPolicyService");
 const whatsappTemplate = require("../services/whatsappTemplateService");
+const { AI_HANDOFF_OWNER } = require("../services/aiHandoffService");
+const { claimAiHandoffOwnership } = require("../services/staffOwnershipService");
 const {
   hasPartialCaptionMarker,
   deliveryErrorForSend,
@@ -134,6 +136,27 @@ async function requireFreeformPolicy(contact, res, purpose = "service") {
     });
     return false;
   }
+}
+
+async function prepareStaffSend(contact, username) {
+  if (contact.mode !== "human") {
+    return contactsRepo.takeOver(contact.id, username);
+  }
+
+  // AI handoff uses Staff mode as a safety pause before a real staff member
+  // owns the thread. Cancel that AI-started follow-up sequence while
+  // Needs Attention is still raised, and under the same conversation lock as
+  // the follow-up worker, before making the thread eligible for anything else.
+  if (contact.takeover_by === AI_HANDOFF_OWNER) {
+    const claimed = await claimAiHandoffOwnership(contact.id, username);
+    if (!claimed) {
+      throw new Error("AI handoff ownership could not be claimed safely.");
+    }
+  }
+
+  await contactsRepo.setAttention(contact.id, false);
+  await contactsRepo.setUnread(contact.id, false);
+  return null;
 }
 
 async function persistSendOutcome(
@@ -1095,12 +1118,7 @@ router.post("/:contactId/messages", async (req, res) => {
     }
     if (!(await requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)))) return;
 
-    if (contact.mode !== "human") {
-      await contactsRepo.takeOver(contact.id, req.session.username);
-    } else {
-      await contactsRepo.setAttention(contact.id, false);
-      await contactsRepo.setUnread(contact.id, false);
-    }
+    await prepareStaffSend(contact, req.session.username);
 
     const saved = await conversationStore.appendMessageForContact(
       contact.id,
@@ -1179,12 +1197,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
 
     const caption = (req.body?.caption || "").trim();
 
-    if (contact.mode !== "human") {
-      await contactsRepo.takeOver(contact.id, req.session.username);
-    } else {
-      await contactsRepo.setAttention(contact.id, false);
-      await contactsRepo.setUnread(contact.id, false);
-    }
+    await prepareStaffSend(contact, req.session.username);
 
     // Persist the exact image bytes first. This keeps the Inbox and retry path
     // consistent even when Meta accepts the upload but later rejects delivery.

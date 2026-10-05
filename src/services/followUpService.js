@@ -9,6 +9,8 @@ const { detectConversationLanguage } = require("../utils/chatLanguage");
 const {
   getActivePromotions,
   promotionPackages,
+  promotionFollowUpTexts,
+  promotionHasFollowUpMessage,
   findAmbiguousPromotionPackageTerm,
   findMentionedPromotionPackages,
 } = require("../utils/activePromotion");
@@ -289,7 +291,17 @@ function mostRecentConfiguredServiceInMessages(messages) {
   return { serviceName: null, mentioned: false };
 }
 
-function promotionFollowUpForCandidate(candidate) {
+function localizedPromotionFollowUp(value, language) {
+  const fallback = String(value?.followUpMessage || "").trim();
+  const localized = value?.followUpTranslations
+    && typeof value.followUpTranslations === "object"
+    && !Array.isArray(value.followUpTranslations)
+    ? String(value.followUpTranslations[language] || "").trim()
+    : "";
+  return localized || fallback;
+}
+
+function promotionFollowUpForCandidate(candidate, language = "en") {
   const recentInbound = Array.isArray(candidate.recent_inbound_messages)
     ? candidate.recent_inbound_messages.filter(
         (value) => typeof value === "string" && value.trim()
@@ -329,7 +341,9 @@ function promotionFollowUpForCandidate(candidate) {
 
   const serviceKey = normalizedServiceName(serviceName);
   const matches = activePromotions.filter(
-    (item) => normalizedServiceName(item?.linkedService) === serviceKey
+    (item) =>
+      normalizedServiceName(item?.linkedService) === serviceKey &&
+      promotionHasFollowUpMessage(item)
   );
   if (matches.length !== 1) return null;
   const [promotion] = matches;
@@ -366,9 +380,10 @@ function promotionFollowUpForCandidate(candidate) {
           : null;
 
     if (deterministicPackage) {
-      return deterministicPackage.followUpMessage
+      const message = localizedPromotionFollowUp(deterministicPackage, language);
+      return message
         ? {
-            message: deterministicPackage.followUpMessage,
+            message,
             targetedService: serviceName,
             promotionFollowUp: true,
             promotionPackageName: deterministicPackage.name,
@@ -397,10 +412,7 @@ function promotionFollowUpForCandidate(candidate) {
 
   if (!latestIsPromotionEnquiry) return null;
 
-  const message =
-    typeof promotion.followUpMessage === "string"
-      ? promotion.followUpMessage.trim()
-      : "";
+  const message = localizedPromotionFollowUp(promotion, language);
   return message
     ? {
         message,
@@ -421,7 +433,9 @@ function activePromotionFollowUpStillConfigured(
   if (!serviceKey || !expectedMessage) return false;
 
   const matches = getActivePromotions(clinicConfig.promotions || []).filter(
-    (item) => normalizedServiceName(item?.linkedService) === serviceKey
+    (item) =>
+      normalizedServiceName(item?.linkedService) === serviceKey &&
+      promotionHasFollowUpMessage(item)
   );
   if (matches.length !== 1) return false;
 
@@ -439,19 +453,21 @@ function activePromotionFollowUpStillConfigured(
       );
       return (
         matches.length === 1 &&
-        matches[0].followUpMessage === expectedMessage
+        promotionFollowUpTexts(matches[0]).includes(expectedMessage)
       );
     }
-    return packages.some((item) => item.followUpMessage === expectedMessage);
+    return packages.some((item) =>
+      promotionFollowUpTexts(item).includes(expectedMessage)
+    );
   }
 
-  return String(promotion.followUpMessage || "").trim() === expectedMessage;
+  return promotionFollowUpTexts(promotion).includes(expectedMessage);
 }
 
 function messageForCandidate(step, candidate, language, stepIndex = 1) {
   let promotionPackageSelection = null;
   if (stepIndex === 1) {
-    const promotionFollowUp = promotionFollowUpForCandidate(candidate);
+    const promotionFollowUp = promotionFollowUpForCandidate(candidate, language);
     if (promotionFollowUp?.promotionFollowUp) return promotionFollowUp;
     promotionPackageSelection = promotionFollowUp?.packageSelection || null;
   }
@@ -818,10 +834,14 @@ async function sendCandidate(candidate) {
           const selectedPackage =
             selectedPackages.length === 1 ? selectedPackages[0] : null;
 
-          if (selectedPackage?.followUpMessage) {
+          const selectedFollowUp = localizedPromotionFollowUp(
+            selectedPackage,
+            language
+          );
+          if (selectedFollowUp) {
             // AI chooses only the package key. Customer-facing promo wording is
             // always copied verbatim from trusted config and is never generated.
-            followUpMessage = selectedPackage.followUpMessage;
+            followUpMessage = selectedFollowUp;
             targetedService = promotionPackageSelection.serviceName;
             promotionPackageName = selectedPackage.name;
             promotionFollowUp = true;

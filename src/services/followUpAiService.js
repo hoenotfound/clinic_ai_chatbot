@@ -99,9 +99,13 @@ function previousFollowUps(messages, triggerMessageId) {
     .map((message) => message.content);
 }
 
-function recentAssistantMessages(messages) {
+function recentNormalAssistantMessages(messages) {
   return messages
-    .filter((message) => message.role === "assistant")
+    .filter(
+      (message) =>
+        message.role === "assistant" &&
+        message.is_automated_follow_up !== true
+    )
     .slice(-3)
     .map((message) => message.content);
 }
@@ -247,7 +251,7 @@ async function generatePersonalizedFollowUp({
   }
 
   const priorFollowUps = previousFollowUps(trimmed, triggerMessageId);
-  const recentAssistant = recentAssistantMessages(trimmed);
+  const recentNormalAssistant = recentNormalAssistantMessages(trimmed);
   let avoidMessage = "";
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -275,7 +279,7 @@ async function generatePersonalizedFollowUp({
 
     const comparisonMessages = [
       ...priorFollowUps,
-      ...(priorFollowUps.length ? [] : recentAssistant.slice(-1)),
+      ...recentNormalAssistant.slice(-1),
     ];
     if (!isSubstantiallySimilar(result.message, comparisonMessages)) {
       return result;

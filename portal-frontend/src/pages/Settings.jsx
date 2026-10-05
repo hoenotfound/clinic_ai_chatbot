@@ -549,6 +549,62 @@ function PromotionAliasChips({ items, onChange }) {
   );
 }
 
+function cleanPromotionFollowUpTranslations(value = {}) {
+  return Object.fromEntries(
+    [
+      ["en", "English"],
+      ["ms", "Bahasa Malaysia"],
+      ["zh", "中文"],
+    ]
+      .map(([key]) => [key, String(value?.[key] || "").trim()])
+      .filter(([, message]) => message)
+  );
+}
+
+function hasPromotionFollowUpTranslation(value = {}) {
+  return Object.values(value || {}).some((message) => String(message || "").trim());
+}
+
+function PromotionFollowUpTranslationsEditor({ value = {}, onChange }) {
+  const languages = [
+    ["en", "English"],
+    ["ms", "Bahasa Malaysia"],
+    ["zh", "中文"],
+  ];
+  return (
+    <details className="rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3">
+      <summary className="cursor-pointer text-xs font-semibold text-[var(--color-primary)]">
+        Language-specific follow-up copy
+      </summary>
+      <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
+        Optional. The matching customer language is used when available; otherwise the default first follow-up offer above is used.
+      </p>
+      <div className="mt-3 grid gap-3">
+        {languages.map(([key, label]) => (
+          <div key={key}>
+            <div className="flex items-center justify-between gap-3">
+              <label className="text-[11px] font-semibold">{label}</label>
+              <span className="text-[10px] text-[var(--color-text-muted)]">
+                {String(value?.[key] || "").length}/1000
+              </span>
+            </div>
+            <textarea
+              rows={2}
+              maxLength={1000}
+              className={textareaClass}
+              value={value?.[key] || ""}
+              onChange={(event) => onChange({
+                ...(value || {}),
+                [key]: event.target.value,
+              })}
+            />
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function PromotionPackagesEditor({ items, onChange, onError }) {
   const [openIndex, setOpenIndex] = useState(null);
 
@@ -570,7 +626,7 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
   function addPackage() {
     const next = [
       ...items,
-      { name: "", title: "", aliases: [], imageUrl: "", caption: "", followUpMessage: "" },
+      { name: "", title: "", aliases: [], imageUrl: "", caption: "", followUpMessage: "", followUpTranslations: {} },
     ];
     onChange(next);
     setOpenIndex(next.length - 1);
@@ -668,6 +724,10 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
                       Kept out of the normal AI reply. If this package is clearly identified, this exact text can be used for the first follow-up.
                     </p>
                   </div>
+                  <PromotionFollowUpTranslationsEditor
+                    value={item.followUpTranslations || {}}
+                    onChange={(value) => updatePackage(index, "followUpTranslations", value)}
+                  />
                   <div className="flex flex-col-reverse gap-2 border-t border-[var(--color-border)] pt-3 sm:flex-row sm:items-center sm:justify-between">
                     <button
                       type="button"
@@ -1487,11 +1547,13 @@ function PromotionsTab({ config, onSaved, onError }) {
             imageUrl: item.imageUrl || "",
             caption: item.caption || "",
             followUpMessage: item.followUpMessage || "",
+            followUpTranslations: { ...(item.followUpTranslations || {}) },
           }))
         : [],
       imageUrl: p.imageUrl || "",
       caption: p.caption || "",
       followUpMessage: p.followUpMessage || "",
+      followUpTranslations: { ...(p.followUpTranslations || {}) },
       validFrom: p.validFrom || "",
       validUntil: p.validUntil || "",
     }))
@@ -1518,6 +1580,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         imageUrl: "",
         caption: "",
         followUpMessage: "",
+        followUpTranslations: {},
         validFrom: "",
         validUntil: "",
       },
@@ -1551,6 +1614,7 @@ function PromotionsTab({ config, onSaved, onError }) {
       String(item?.imageUrl || "").trim() ||
       String(item?.caption || "").trim() ||
       String(item?.followUpMessage || "").trim() ||
+      hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
       (Array.isArray(item?.aliases) && item.aliases.some((alias) => String(alias || "").trim()))
     );
   }
@@ -1559,7 +1623,8 @@ function PromotionsTab({ config, onSaved, onError }) {
     return Boolean(
       String(promotion?.imageUrl || "").trim() ||
       String(promotion?.caption || "").trim() ||
-      String(promotion?.followUpMessage || "").trim()
+      String(promotion?.followUpMessage || "").trim() ||
+      hasPromotionFollowUpTranslation(promotion?.followUpTranslations)
     );
   }
 
@@ -1575,11 +1640,12 @@ function PromotionsTab({ config, onSaved, onError }) {
         String(item?.imageUrl || "").trim() ||
         String(item?.caption || "").trim() ||
         String(item?.followUpMessage || "").trim() ||
+        hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
         (Array.isArray(item?.aliases) && item.aliases.some((alias) => String(alias || "").trim()))
       ).length;
       warning = `Changing to Single offer will remove ${packageCount} package option${packageCount === 1 ? "" : "s"} when you save. Continue?`;
     } else if (nextType === "packages" && hasSingleOfferContent(current)) {
-      warning = "Changing to Multiple packages will remove the current single-offer image and caption when you save. Continue?";
+      warning = "Changing to Multiple packages will remove the current single-offer image, caption, and first follow-up offer when you save. Continue?";
     }
 
     if (warning && !window.confirm(warning)) return;
@@ -1604,6 +1670,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         p.imageUrl.trim() ||
         p.caption.trim() ||
         String(p.followUpMessage || "").trim() ||
+        hasPromotionFollowUpTranslation(p.followUpTranslations) ||
         (Array.isArray(p.packages) && p.packages.length > 0) ||
         p.validFrom ||
         p.validUntil
@@ -1622,6 +1689,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                   String(item?.imageUrl || "").trim() ||
                   String(item?.caption || "").trim() ||
                   String(item?.followUpMessage || "").trim() ||
+                  hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
                   (Array.isArray(item?.aliases) && item.aliases.some((alias) => String(alias || "").trim()))
                 )
                 .map((item) => ({
@@ -1633,12 +1701,18 @@ function PromotionsTab({ config, onSaved, onError }) {
                   ...(String(item.followUpMessage || "").trim()
                     ? { followUpMessage: String(item.followUpMessage || "").trim() }
                     : {}),
+                  ...(Object.keys(cleanPromotionFollowUpTranslations(item.followUpTranslations)).length
+                    ? { followUpTranslations: cleanPromotionFollowUpTranslations(item.followUpTranslations) }
+                    : {}),
                 }))
             : [],
           imageUrl: packageMode ? "" : p.imageUrl.trim(),
           caption: packageMode ? "" : p.caption.trim(),
           ...(!packageMode && String(p.followUpMessage || "").trim()
             ? { followUpMessage: String(p.followUpMessage || "").trim() }
+            : {}),
+          ...(!packageMode && Object.keys(cleanPromotionFollowUpTranslations(p.followUpTranslations)).length
+            ? { followUpTranslations: cleanPromotionFollowUpTranslations(p.followUpTranslations) }
             : {}),
           validFrom: p.validFrom.trim() || null,
           validUntil: p.validUntil.trim() || null,
@@ -1817,6 +1891,9 @@ function PromotionsTab({ config, onSaved, onError }) {
                           onChange={(packages) => updateItem(index, { packages })}
                           onError={onError}
                         />
+                        <p className="mt-3 rounded-xl bg-[var(--color-primary-light)]/45 px-3 py-2.5 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                          Package first follow-up offers require Tools → Automated follow-up to be on. They use the Follow-up 1 timing, and only one safely matched package offer can replace the normal Follow-up 1 message.
+                        </p>
                       </div>
                     ) : (
                       <div className="grid gap-4">
@@ -1850,6 +1927,13 @@ function PromotionsTab({ config, onSaved, onError }) {
                             This stays hidden from the normal AI reply and is only eligible for the first automated follow-up while the promotion is active.
                           </p>
                         </div>
+                        <PromotionFollowUpTranslationsEditor
+                          value={item.followUpTranslations || {}}
+                          onChange={(followUpTranslations) => updateItem(index, { followUpTranslations })}
+                        />
+                        <p className="rounded-xl bg-[var(--color-primary-light)]/45 px-3 py-2.5 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                          Requires Tools → Automated follow-up to be on. This uses the Follow-up 1 timing and can replace its normal message only for an eligible recent price/package enquiry.
+                        </p>
                       </div>
                     )}
 

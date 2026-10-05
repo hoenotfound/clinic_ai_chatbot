@@ -840,7 +840,8 @@ async function isClaimStillEligible({ messageId, contactId }) {
          m.contact_id,
          m.created_at,
          m.delivery_status,
-         m.whatsapp_message_id
+         m.whatsapp_message_id,
+         m.automated_follow_up_for_message_id AS trigger_message_id
        FROM messages m, conversation_lock
        WHERE m.id = $2
          AND m.contact_id = $1
@@ -853,6 +854,9 @@ async function isClaimStillEligible({ messageId, contactId }) {
        SELECT 1
        FROM claim
        JOIN contacts c ON c.id = claim.contact_id
+       JOIN messages anchor
+         ON anchor.id = claim.trigger_message_id
+        AND anchor.contact_id = claim.contact_id
        LEFT JOIN LATERAL (
          SELECT
            l.id,
@@ -867,6 +871,13 @@ async function isClaimStillEligible({ messageId, contactId }) {
          LIMIT 1
        ) latest_lead ON true
        WHERE c.needs_attention = false
+         AND NOT EXISTS (
+           SELECT 1
+           FROM follow_up_ai_decisions decision
+           WHERE decision.contact_id = c.id
+             AND decision.trigger_message_id = anchor.id
+             AND decision.action IN ('skip', 'human_review')
+         )
          AND claim.delivery_status IS NULL
          AND claim.whatsapp_message_id IS NULL
          AND (

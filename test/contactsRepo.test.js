@@ -144,7 +144,12 @@ test("staff takeover keeps the existing human-intervention Telegram cooldown", a
   });
 
   pool.query = async (sql, params) => {
+    assert.match(sql, /pg_advisory_xact_lock/);
+    assert.match(sql, /current_contact AS MATERIALIZED/);
     assert.match(sql, /SET mode = 'human'/);
+    assert.match(sql, /INSERT INTO follow_up_ai_decisions/);
+    assert.match(sql, /anchor\.sent_by_username IS NULL/);
+    assert.match(sql, /Cancelled because clinic staff took over this conversation/);
     assert.deepEqual(params, ["staff1", 12]);
     return { rows: [{ id: 12, mode: "human", updated_at: UPDATED_AT }] };
   };

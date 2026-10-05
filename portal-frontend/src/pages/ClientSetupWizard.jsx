@@ -116,6 +116,9 @@ function cleanPromotions(items) {
     const imageUrl = packageMode ? "" : text(item?.imageUrl).trim();
     const caption = packageMode ? "" : text(item?.caption).trim();
     const followUpMessage = packageMode ? "" : text(item?.followUpMessage).trim();
+    const followUpTranslations = packageMode
+      ? {}
+      : cleanPromotionFollowUpTranslations(item?.followUpTranslations);
     const validFrom = text(item?.validFrom).trim();
     const validUntil = text(item?.validUntil).trim();
     const packages = packageMode
@@ -126,7 +129,10 @@ function cleanPromotions(items) {
           const packageImageUrl = text(packageOption?.imageUrl).trim();
           const packageCaption = text(packageOption?.caption).trim();
           const packageFollowUpMessage = text(packageOption?.followUpMessage).trim();
-          if (!packageName && !title && !aliases.length && !packageImageUrl && !packageCaption && !packageFollowUpMessage) return null;
+          const packageFollowUpTranslations = cleanPromotionFollowUpTranslations(
+            packageOption?.followUpTranslations
+          );
+          if (!packageName && !title && !aliases.length && !packageImageUrl && !packageCaption && !packageFollowUpMessage && !Object.keys(packageFollowUpTranslations).length) return null;
           return {
             name: packageName,
             title,
@@ -134,10 +140,13 @@ function cleanPromotions(items) {
             imageUrl: packageImageUrl,
             caption: packageCaption,
             ...(packageFollowUpMessage ? { followUpMessage: packageFollowUpMessage } : {}),
+            ...(Object.keys(packageFollowUpTranslations).length
+              ? { followUpTranslations: packageFollowUpTranslations }
+              : {}),
           };
         })
       : [];
-    if (!name && !linkedService && !imageUrl && !caption && !followUpMessage && !packages.length && !validFrom && !validUntil) return null;
+    if (!name && !linkedService && !imageUrl && !caption && !followUpMessage && !Object.keys(followUpTranslations).length && !packages.length && !validFrom && !validUntil) return null;
     return {
       name,
       linkedService,
@@ -146,10 +155,25 @@ function cleanPromotions(items) {
       imageUrl,
       caption,
       ...(followUpMessage ? { followUpMessage } : {}),
+      ...(Object.keys(followUpTranslations).length
+        ? { followUpTranslations }
+        : {}),
       validFrom: validFrom || null,
       validUntil: validUntil || null,
     };
   });
+}
+
+function cleanPromotionFollowUpTranslations(value = {}) {
+  return Object.fromEntries(
+    ["en", "ms", "zh"]
+      .map((key) => [key, text(value?.[key]).trim()])
+      .filter(([, message]) => message)
+  );
+}
+
+function hasPromotionFollowUpTranslation(value = {}) {
+  return Object.values(value || {}).some((message) => text(message).trim());
 }
 
 function cleanStrings(items) {
@@ -935,11 +959,13 @@ function PromotionsStep({ draft, setDraft, onError }) {
           imageUrl: packageOption.imageUrl || "",
           caption: packageOption.caption || "",
           followUpMessage: packageOption.followUpMessage || "",
+          followUpTranslations: { ...(packageOption.followUpTranslations || {}) },
         }))
       : [],
     imageUrl: item.imageUrl || "",
     caption: item.caption || "",
     followUpMessage: item.followUpMessage || "",
+    followUpTranslations: { ...(item.followUpTranslations || {}) },
     validFrom: item.validFrom || "",
     validUntil: item.validUntil || "",
   }));
@@ -962,6 +988,7 @@ function PromotionsStep({ draft, setDraft, onError }) {
       text(item?.imageUrl).trim() ||
       text(item?.caption).trim() ||
       text(item?.followUpMessage).trim() ||
+      hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
       cleanStrings(item?.aliases || []).length
     );
   }
@@ -970,7 +997,8 @@ function PromotionsStep({ draft, setDraft, onError }) {
     return Boolean(
       text(promotion?.imageUrl).trim() ||
       text(promotion?.caption).trim() ||
-      text(promotion?.followUpMessage).trim()
+      text(promotion?.followUpMessage).trim() ||
+      hasPromotionFollowUpTranslation(promotion?.followUpTranslations)
     );
   }
 
@@ -986,11 +1014,12 @@ function PromotionsStep({ draft, setDraft, onError }) {
         text(item?.imageUrl).trim() ||
         text(item?.caption).trim() ||
         text(item?.followUpMessage).trim() ||
+        hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
         cleanStrings(item?.aliases || []).length
       ).length;
       warning = `Changing to Single offer will remove ${packageCount} package option${packageCount === 1 ? "" : "s"} when you save. Continue?`;
     } else if (nextType === "packages" && hasSingleOfferContent(current)) {
-      warning = "Changing to Multiple packages will remove the current single-offer image and caption when you save. Continue?";
+      warning = "Changing to Multiple packages will remove the current single-offer image, caption, and first follow-up offer when you save. Continue?";
     }
 
     if (warning && !window.confirm(warning)) return;
@@ -1008,6 +1037,7 @@ function PromotionsStep({ draft, setDraft, onError }) {
       imageUrl: "",
       caption: "",
       followUpMessage: "",
+      followUpTranslations: {},
       validFrom: "",
       validUntil: "",
     }];
