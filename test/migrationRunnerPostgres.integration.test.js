@@ -221,3 +221,104 @@ test(
     });
   }
 );
+
+
+test(
+  "reaction cleanup survives a lead temperature pointer to the legacy placeholder",
+  { skip: !connectionString },
+  async () => {
+    await withIsolatedSchema("migrations_reaction_pointer", async ({ admin, pool }) => {
+      const migrations = loadMigrations();
+      const through035 = migrations.filter((migration) => migration.version <= 35);
+
+      await runMigrations(pool, {
+        quiet: true,
+        migrations: through035,
+      });
+
+      const contact = await admin.query(
+        `INSERT INTO contacts (whatsapp_number, name, channel)
+         VALUES ('601122334455', 'Reaction Migration Patient', 'whatsapp')
+         RETURNING id`
+      );
+
+      const placeholder = await admin.query(
+        `INSERT INTO messages (contact_id, role, content)
+         VALUES (
+           $1,
+           'user',
+           '📎 [Customer sent an unsupported reaction message]'
+         )
+         RETURNING id`,
+        [contact.rows[0].id]
+      );
+
+      const stage = await admin.query(
+        `SELECT id
+         FROM pipeline_stages
+         WHERE stage_type = 'open'
+         ORDER BY sort_order ASC, id ASC
+         LIMIT 1`
+      );
+
+      const lead = await admin.query(
+        `INSERT INTO leads (
+           contact_id,
+           stage_id,
+           last_temperature_scored_message_id,
+           created_by
+         )
+         VALUES ($1, $2, $3, 'Migration test')
+         RETURNING id`,
+        [contact.rows[0].id, stage.rows[0].id, placeholder.rows[0].id]
+      );
+
+      const result = await runMigrations(pool, {
+        quiet: true,
+        migrations,
+      });
+
+      assert.equal(result.currentVersion, migrations.length);
+
+      const removedPlaceholder = await admin.query(
+        "SELECT id FROM messages WHERE id = $1",
+        [placeholder.rows[0].id]
+      );
+      assert.equal(removedPlaceholder.rowCount, 0);
+
+      const repairedLead = await admin.query(
+        `SELECT last_temperature_scored_message_id
+         FROM leads
+         WHERE id = $1`,
+        [lead.rows[0].id]
+      );
+      assert.equal(repairedLead.rows[0].last_temperature_scored_message_id, null);
+
+      const ordinaryMessage = await admin.query(
+        `INSERT INTO messages (contact_id, role, content)
+         VALUES ($1, 'user', 'Normal customer message')
+         RETURNING id`,
+        [contact.rows[0].id]
+      );
+
+      await admin.query(
+        `UPDATE leads
+         SET last_temperature_scored_message_id = $2
+         WHERE id = $1`,
+        [lead.rows[0].id, ordinaryMessage.rows[0].id]
+      );
+
+      await admin.query("DELETE FROM messages WHERE id = $1", [
+        ordinaryMessage.rows[0].id,
+      ]);
+
+      const deleteSafeLead = await admin.query(
+        `SELECT last_temperature_scored_message_id
+         FROM leads
+         WHERE id = $1`,
+        [lead.rows[0].id]
+      );
+      assert.equal(deleteSafeLead.rows[0].last_temperature_scored_message_id, null);
+    });
+  }
+);
