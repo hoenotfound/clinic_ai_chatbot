@@ -853,24 +853,35 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
           : null,
       consentOptInAt,
     };
-    const saved = await conversationStore.appendMessageForContact(
+    const prepared = await telegramImmediateAlertRepo.withContactAlertLock(
       contact.id,
-      "assistant",
-      preview,
-      null,
-      req.session.username,
-      null,
-      null,
-      {
-        whatsappTemplate: metadata,
-        initialDeliveryStatus: "unknown",
-        initialDeliveryError:
-          "Template send started, but delivery has not been confirmed. Check WhatsApp before retrying.",
-        publish: false,
+      async () => {
+        const preparedContact = await prepareStaffSend(
+          contact,
+          req.session.username
+        );
+        const saved = await conversationStore.appendMessageForContact(
+          preparedContact.id,
+          "assistant",
+          preview,
+          null,
+          req.session.username,
+          null,
+          null,
+          {
+            whatsappTemplate: metadata,
+            initialDeliveryStatus: "unknown",
+            initialDeliveryError:
+              "Template send started, but delivery has not been confirmed. Check WhatsApp before retrying.",
+            publish: false,
+          }
+        );
+        return { preparedContact, saved };
       }
     );
 
-    const sendResult = await whatsappTemplate.sendApprovedTemplate(contact, {
+    const { preparedContact, saved } = prepared;
+    const sendResult = await whatsappTemplate.sendApprovedTemplate(preparedContact, {
       templateName: metadata.name,
       languageCode: metadata.language,
       components: metadata.components,
@@ -887,12 +898,12 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
     );
 
     if (sendResult.success) {
-      await contactsRepo.setUnread(contact.id, false).catch(() => {});
-      await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(contact.id).catch(() => {});
-      await markLeadContacted(contact.id, req.session.username, sendResult);
+      await contactsRepo.setUnread(preparedContact.id, false).catch(() => {});
+      await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(preparedContact.id).catch(() => {});
+      await markLeadContacted(preparedContact.id, req.session.username, sendResult);
     } else {
       await contactsRepo.setDeliveryAttention(
-        contact.id,
+        preparedContact.id,
         `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
       );
     }
@@ -1374,7 +1385,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       outboundAudio.filename,
       socialProviderSendOptions(saved, currentContact, {
         purpose: whatsappPolicy.manualStaffPurpose(currentContact),
-        requireStaffMode: false,
+        requireStaffMode: currentContact.mode === "human",
       })
     );
     const errorText = sendResult.error || rejectedErrorFor(currentContact);
