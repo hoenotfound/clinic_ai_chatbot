@@ -5,9 +5,9 @@ const path = require("node:path");
 
 const {
   cleanContextText,
-  hasMetaAdCreativeContext,
   loadMetaAdReplyContext,
   normalizeMetaAdReplyContext,
+  resolveMetaAdCreativeService,
 } = require("../src/services/metaAdReplyContextService");
 const {
   buildSystemPrompt,
@@ -34,13 +34,12 @@ test("uses headline/body for Meta reply context and keeps hierarchy metadata out
   assert.deepEqual(context, {
     headline: "小腹凸 产后体态",
     body: "了解骨盆调理 以及体态评估",
-    adName: null,
   });
   assert.equal("campaignName" in context, false);
   assert.equal("adsetName" in context, false);
   assert.equal("mediaType" in context, false);
 
-  assert.deepEqual(
+  assert.equal(
     normalizeMetaAdReplyContext({
       source: "meta_ads",
       ad_name: "  3D 小颜术 - 大小脸  ",
@@ -49,11 +48,7 @@ test("uses headline/body for Meta reply context and keeps hierarchy metadata out
       campaign_name: "Internal Campaign",
       adset_name: "Internal Ad Set",
     }),
-    {
-      headline: null,
-      body: null,
-      adName: "3D 小颜术 - 大小脸",
-    }
+    null
   );
 
   assert.equal(
@@ -61,16 +56,6 @@ test("uses headline/body for Meta reply context and keeps hierarchy metadata out
     null
   );
   assert.equal(cleanContextText("x".repeat(300), 20).length, 20);
-  assert.equal(hasMetaAdCreativeContext(context), true);
-  assert.equal(
-    hasMetaAdCreativeContext({
-      headline: null,
-      body: null,
-      adName: "3D 小颜术 - 大小脸",
-    }),
-    false
-  );
-  assert.equal(hasMetaAdCreativeContext(null), false);
 });
 
 test("loads current lead attribution locally without requiring Meta API enrichment", async () => {
@@ -96,7 +81,7 @@ test("loads current lead attribution locally without requiring Meta API enrichme
   assert.equal(requestedContactId, 42);
   assert.equal(context.headline, "想改善体态？");
   assert.equal(context.body, null);
-  assert.equal(context.adName, null);
+  assert.equal("adName" in context, false);
   assert.equal("campaignName" in context, false);
   assert.equal("adsetName" in context, false);
 });
@@ -129,7 +114,7 @@ test("system prompt uses ad creative as soft intent rather than customer truth",
   assert.match(section, /current message and conversation history always take priority/);
   assert.match(section, /priceQuery.*CURRENT message/s);
   assert.match(section, /serviceQuery.*meta_ad/s);
-  assert.match(section, /Ad name fallback.*never sufficient.*serviceQuery/i);
+  assert.match(section, /Internal ad names, campaign names, and ad-set names are intentionally excluded/i);
   assert.match(section, /greeting alone.*NOT a serviceQuery/i);
   assert.match(section, /Do NOT infer that the customer personally has any symptom/);
   assert.match(section, /Never copy ad-only claims into "staffSummary"/);
@@ -141,26 +126,25 @@ test("system prompt uses ad creative as soft intent rather than customer truth",
   assert.match(prompt, /answer naturally in the context of that service/);
 });
 
-test("uses ad name in the prompt only when creative copy is unavailable", () => {
+test("ad names never enter the AI reply prompt, even when creative copy is unavailable", () => {
   const withCreative = metaAdContextSection({
     headline: "骨盆调理",
     body: "了解体态评估",
-    adName: "骨盆 1",
+    adName: "骨盆 1 SHOULD BE IGNORED",
   });
   assert.match(withCreative, /Ad headline: 骨盆调理/);
-  assert.doesNotMatch(withCreative, /Ad name fallback:/);
+  assert.doesNotMatch(withCreative, /骨盆 1 SHOULD BE IGNORED/);
 
   const fallbackOnly = metaAdContextSection({
     headline: null,
     body: null,
     adName: "3D 小颜术 - 大小脸",
   });
-  assert.match(fallbackOnly, /Ad name fallback: 3D 小颜术 - 大小脸/);
+  assert.equal(fallbackOnly, "");
 });
 
 test("AI provider routing preserves Meta ad context for Gemini and Claude", () => {
   const metaAdContext = {
-    adName: null,
     headline: "骨盆调理",
     body: "体态评估+体验",
   };
@@ -177,7 +161,6 @@ test("AI provider routing preserves Meta ad context for Gemini and Claude", () =
 
 test("both Gemini and Claude receive the Meta ad context in their system prompt", async () => {
   const metaAdContext = {
-    adName: null,
     headline: "骨盆调理",
     body: "体态评估+体验",
   };
@@ -250,14 +233,14 @@ test("server verifies creative Meta context before it can drive result media", (
 
   const loadAt = serverSource.indexOf("metaAdContext = await loadMetaAdReplyContext(contact.id)");
   const verifyAt = serverSource.indexOf(
-    "metaAdCreativeAvailable = hasMetaAdCreativeContext(metaAdContext)",
+    "metaAdCreativeService = resolveMetaAdCreativeService(",
     loadAt
   );
   const replyAt = serverSource.indexOf("const rawAiReply = await ai.getReply(history", verifyAt);
   const resultAt = serverSource.indexOf("resolveResultMediaForReply({", replyAt);
 
   assert.ok(loadAt >= 0, "server should load Meta ad reply context");
-  assert.ok(verifyAt > loadAt, "server should independently verify creative headline/body");
+  assert.ok(verifyAt > loadAt, "server should independently resolve creative headline/body to one service");
   assert.ok(replyAt > verifyAt, "verified context should be established before generation");
   assert.ok(resultAt > replyAt, "result media should resolve after the AI reply");
   assert.match(
@@ -266,10 +249,52 @@ test("server verifies creative Meta context before it can drive result media", (
   );
   assert.match(
     serverSource.slice(resultAt, resultAt + 700),
-    /metaAdCreativeAvailable,/
+    /metaAdCreativeService,/
   );
   assert.doesNotMatch(
     serverSource.slice(loadAt, replyAt),
     /fetchAdDetails|graph\.facebook|Meta Marketing API/
   );
+});
+
+
+test("Meta creative resolves only when exactly one configured service is mentioned", () => {
+  const services = [
+    { name: "3D 小颜术" },
+    { name: "9D 逆龄抗衰" },
+    { name: "骨盆调理" },
+  ];
+  const aliases = [
+    { alias: "大小脸 / 小颜", officialService: "3D 小颜术" },
+    { alias: "pelvis / 骨盆", officialService: "骨盆调理" },
+  ];
+
+  assert.equal(
+    resolveMetaAdCreativeService(
+      { headline: "3D小颜术", body: "改善大小脸与脸型轮廓" },
+      services,
+      aliases
+    ),
+    "3D 小颜术"
+  );
+
+  assert.equal(
+    resolveMetaAdCreativeService(
+      { headline: "产后骨盆调理", body: "1对1体态评估+体验" },
+      services,
+      aliases
+    ),
+    "骨盆调理"
+  );
+
+  assert.equal(
+    resolveMetaAdCreativeService(
+      { headline: "3D 小颜术 + 9D 逆龄抗衰", body: "脸型与紧致方案" },
+      services,
+      aliases
+    ),
+    null
+  );
+
+  assert.equal(resolveMetaAdCreativeService(null, services, aliases), null);
 });
