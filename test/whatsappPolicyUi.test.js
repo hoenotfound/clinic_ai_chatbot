@@ -163,6 +163,14 @@ test("staff send routes check channel policy before automatic takeover", () => {
   assert.ok(imageRoute.indexOf("requireFreeformPolicy") < imageRoute.indexOf("prepareStaffSend"));
   assert.match(
     textRoute,
+    /telegramImmediateAlertRepo\.withContactAlertLock\(\s*contact\.id,[\s\S]*prepareStaffSend\(contact, req\.session\.username\)[\s\S]*appendMessageForContact/
+  );
+  assert.match(
+    imageRoute,
+    /telegramImmediateAlertRepo\.withContactAlertLock\(\s*contact\.id,[\s\S]*prepareStaffSend\(contact, req\.session\.username\)[\s\S]*appendMessageForContact/
+  );
+  assert.match(
+    textRoute,
     /requireFreeformPolicy\(contact, res, whatsappPolicy\.manualStaffPurpose\(contact\)\)/
   );
   assert.match(
@@ -179,7 +187,6 @@ test("staff send routes check channel policy before automatic takeover", () => {
   assert.match(source, /channelMessaging\.sendText/);
   assert.match(source, /channelMessaging\.sendImageBuffer/);
 });
-
 test("messaging-policy surfaces keep responsive mobile affordances", () => {
   const root = path.join(__dirname, "..");
   const inbox = fs.readFileSync(path.join(root, "portal-frontend/src/pages/Inbox.jsx"), "utf8");

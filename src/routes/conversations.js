@@ -5,6 +5,7 @@ const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const leadAttributionRepo = require("../db/leadAttributionRepo");
+const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
 const conversationStore = require("../utils/conversationStore");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
@@ -1118,14 +1119,23 @@ router.post("/:contactId/messages", async (req, res) => {
     }
     if (!(await requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)))) return;
 
-    await prepareStaffSend(contact, req.session.username);
-
-    const saved = await conversationStore.appendMessageForContact(
+    const saved = await telegramImmediateAlertRepo.withContactAlertLock(
       contact.id,
-      "assistant",
-      text.trim(),
-      null,
-      req.session.username
+      async () => {
+        // Serialize Staff Waiting validation/delivery with both the latest
+        // staff-ownership preparation and persistence of the actual staff reply.
+        // prepareStaffSend() also safely claims synthetic AI-handoff ownership
+        // before it clears Needs Attention, so keep that newer main behavior.
+        await prepareStaffSend(contact, req.session.username);
+
+        return conversationStore.appendMessageForContact(
+          contact.id,
+          "assistant",
+          text.trim(),
+          null,
+          req.session.username
+        );
+      }
     );
 
     const sendResult = await channelMessaging.sendText(
@@ -1197,18 +1207,25 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
 
     const caption = (req.body?.caption || "").trim();
 
-    await prepareStaffSend(contact, req.session.username);
-
     // Persist the exact image bytes first. This keeps the Inbox and retry path
     // consistent even when Meta accepts the upload but later rejects delivery.
-    const saved = await conversationStore.appendMessageForContact(
+    // R2 persistence happens before the message row exists, so keep the same
+    // Telegram per-contact lock across staff preparation and media persistence.
+    const saved = await telegramImmediateAlertRepo.withContactAlertLock(
       contact.id,
-      "assistant",
-      caption,
-      null,
-      req.session.username,
-      null,
-      { mimeType: req.file.mimetype, buffer: req.file.buffer }
+      async () => {
+        await prepareStaffSend(contact, req.session.username);
+
+        return conversationStore.appendMessageForContact(
+          contact.id,
+          "assistant",
+          caption,
+          null,
+          req.session.username,
+          null,
+          { mimeType: req.file.mimetype, buffer: req.file.buffer }
+        );
+      }
     );
 
     const sendResult = await channelMessaging.sendImageBuffer(
