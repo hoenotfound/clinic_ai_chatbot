@@ -633,6 +633,8 @@ async function recordAiDecisionIfStillEligible({
   const numericDelay = Number(delayMinutes);
   const numericPreviousDelay = Number(previousDelayMinutes);
   const normalizedAction = String(action || "").trim().toLowerCase();
+  const normalizedReason = String(reason || "").slice(0, 1000);
+  const normalizedTopic = String(topic || "").slice(0, 500);
 
   if (
     !Number.isSafeInteger(numericContactId) ||
@@ -717,77 +719,97 @@ async function recordAiDecisionIfStillEligible({
        WHERE l.contact_id = $1
        ORDER BY l.created_at DESC, l.id DESC
        LIMIT 1
-     )
-     INSERT INTO follow_up_ai_decisions (
-       contact_id,
-       trigger_message_id,
-       follow_up_step,
-       action,
-       reason,
-       topic
-     )
-     SELECT
-       $1,
-       $2,
-       $3,
-       $4,
-       NULLIF(BTRIM($5), ''),
-       NULLIF(BTRIM($6), '')
-     FROM contacts c, latest_inbound, anchor, progress
-     LEFT JOIN previous_follow_up ON true
-     LEFT JOIN latest_lead ON true
-     WHERE c.id = $1
-       AND c.needs_attention = false
-       AND anchor.id = $2
-       AND anchor.delivery_status IS DISTINCT FROM 'failed'
-       AND (
-         latest_lead.id IS NULL
-         OR (
-           latest_lead.is_closed = false
-           AND COALESCE(latest_lead.stage_type, 'open') = 'open'
-           AND (
-             COALESCE(latest_lead.appointment_status, 'none') IN ('reschedule', 'cancelled')
-             OR (
-               COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
-               AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+     ), inserted_decision AS (
+       INSERT INTO follow_up_ai_decisions (
+         contact_id,
+         trigger_message_id,
+         follow_up_step,
+         action,
+         reason,
+         topic
+       )
+       SELECT
+         $1,
+         $2,
+         $3,
+         $4,
+         NULLIF(BTRIM($5), ''),
+         NULLIF(BTRIM($6), '')
+       FROM contacts c, latest_inbound, anchor, progress
+       LEFT JOIN previous_follow_up ON true
+       LEFT JOIN latest_lead ON true
+       WHERE c.id = $1
+         AND c.needs_attention = false
+         AND anchor.id = $2
+         AND anchor.delivery_status IS DISTINCT FROM 'failed'
+         AND (
+           latest_lead.id IS NULL
+           OR (
+             latest_lead.is_closed = false
+             AND COALESCE(latest_lead.stage_type, 'open') = 'open'
+             AND (
+               COALESCE(latest_lead.appointment_status, 'none') IN ('reschedule', 'cancelled')
+               OR (
+                 COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
+                 AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+               )
              )
            )
          )
-       )
-       AND NOT EXISTS (
-         SELECT 1
-         FROM follow_up_ai_decisions existing
-         WHERE existing.contact_id = c.id
-           AND existing.trigger_message_id = anchor.id
-           AND existing.action IN ('skip', 'human_review')
-       )
-       AND anchor.created_at >= $9::timestamptz
-       AND GREATEST(
-             anchor.created_at + ($7::integer * interval '1 minute'),
+         AND NOT EXISTS (
+           SELECT 1
+           FROM follow_up_ai_decisions existing
+           WHERE existing.contact_id = c.id
+             AND existing.trigger_message_id = anchor.id
+             AND existing.action IN ('skip', 'human_review')
+         )
+         AND anchor.created_at >= $9::timestamptz
+         AND GREATEST(
+               anchor.created_at + ($7::integer * interval '1 minute'),
+               COALESCE(
+                 previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
+                 anchor.created_at + ($7::integer * interval '1 minute')
+               )
+             ) <= now()
+         AND GREATEST(
+               anchor.created_at + ($7::integer * interval '1 minute'),
+               COALESCE(
+                 previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
+                 anchor.created_at + ($7::integer * interval '1 minute')
+               )
+             ) <= latest_inbound.created_at + interval '23 hours 50 minutes'
+         AND ($8 = 'all' OR anchor.sent_by_username IS NOT NULL)
+         AND COALESCE(progress.max_step, 0) + 1 = $3
+         AND COALESCE(progress.has_blocking_claim, false) = false
+       ON CONFLICT (trigger_message_id, follow_up_step) DO NOTHING
+       RETURNING *
+     ), attention_update AS (
+       UPDATE contacts c
+       SET needs_attention = true,
+           attention_reason = LEFT(
+             'AI follow-up requested human review: ' ||
              COALESCE(
-               previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
-               anchor.created_at + ($7::integer * interval '1 minute')
-             )
-           ) <= now()
-       AND GREATEST(
-             anchor.created_at + ($7::integer * interval '1 minute'),
-             COALESCE(
-               previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
-               anchor.created_at + ($7::integer * interval '1 minute')
-             )
-           ) <= latest_inbound.created_at + interval '23 hours 50 minutes'
-       AND ($8 = 'all' OR anchor.sent_by_username IS NOT NULL)
-       AND COALESCE(progress.max_step, 0) + 1 = $3
-       AND COALESCE(progress.has_blocking_claim, false) = false
-     ON CONFLICT (trigger_message_id, follow_up_step) DO NOTHING
-     RETURNING *`,
+               NULLIF(BTRIM(inserted_decision.reason), ''),
+               'Staff should review this conversation before any follow-up.'
+             ),
+             1000
+           ),
+           updated_at = now()
+       FROM inserted_decision
+       WHERE inserted_decision.action = 'human_review'
+         AND c.id = inserted_decision.contact_id
+       RETURNING c.id
+     )
+     SELECT inserted_decision.*
+     FROM inserted_decision
+     LEFT JOIN attention_update ON true`,
     [
       numericContactId,
       numericTriggerMessageId,
       numericStep,
       normalizedAction,
-      String(reason || "").slice(0, 1000),
-      String(topic || "").slice(0, 500),
+      normalizedReason,
+      normalizedTopic,
       numericDelay,
       triggerMode,
       activatedAt,
