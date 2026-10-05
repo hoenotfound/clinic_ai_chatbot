@@ -240,7 +240,7 @@ test("service-enquiry mode accepts verified ad and conversation intent", async (
       priceQuery: false,
       serviceQuery: true,
       serviceQuerySource: source,
-      metaAdCreativeAvailable: source === "meta_ad",
+      metaAdCreativeService: source === "meta_ad" ? "3D 小颜术" : null,
       resultMedia: [{
         ...resultMedia[0],
         triggerMode: "service_enquiry",
@@ -313,7 +313,7 @@ test("meta_ad service intent is rejected when backend did not load usable creati
   const selected = await resolveResultMediaForReply(base({
     serviceQuery: true,
     serviceQuerySource: "meta_ad",
-    metaAdCreativeAvailable: false,
+    metaAdCreativeService: null,
     priceQuery: false,
     resultMedia: [{
       ...resultMedia[0],
@@ -335,4 +335,36 @@ test("legacy price-only mode does not depend on the new serviceQuery metadata", 
 
   assert.equal(selected?.triggerMode, "price_only");
   assert.equal(selected?.serviceQuerySource, null);
+});
+
+
+test("meta_ad result media is rejected when creative resolves to a different service", async () => {
+  const configured = [{
+    ...resultMedia[0],
+    triggerMode: "service_enquiry",
+    sendAfterPrice: undefined,
+  }];
+
+  assert.equal(
+    await resolveResultMediaForReply(base({
+      serviceQuery: true,
+      serviceQuerySource: "meta_ad",
+      metaAdCreativeService: "骨盆调理",
+      priceQuery: false,
+      resultMedia: configured,
+    })),
+    null
+  );
+
+  // The same trust boundary applies to legacy price-only sets.
+  assert.equal(
+    await resolveResultMediaForReply(base({
+      serviceQuery: true,
+      serviceQuerySource: "meta_ad",
+      metaAdCreativeService: "骨盆调理",
+      priceQuery: true,
+      resultMedia,
+    })),
+    null
+  );
 });
