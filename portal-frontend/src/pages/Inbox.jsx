@@ -2664,9 +2664,9 @@ function DeliveryStatusGlyph({ status }) {
 
 function DeliveryIndicator({ status }) {
   const indicators = {
-    pending: { label: "Queued", className: "text-white/65" },
+    pending: { label: "Queued", className: "text-white/70" },
     sent: { label: "Sent", className: "text-white/70" },
-    delivered: { label: "Delivered", className: "text-white/85" },
+    delivered: { label: "Delivered", className: "text-white/80" },
     read: { label: "Read", className: "text-sky-300" },
   };
   const indicator = indicators[status];
