@@ -193,3 +193,40 @@ test("R2 presigned GET URL clamps expiry to S3 maximum", (t) => {
   );
   assert.equal(url.searchParams.get("X-Amz-Expires"), "604800");
 });
+
+
+test("temporary media cleanup targets only the current client namespace", () => {
+  assert.equal(
+    mediaStorage.temporaryMediaPrefix({ CLIENT_SLUG: "Neutro Sense TCM" }),
+    "clients/neutro-sense-tcm/meta-outbound/"
+  );
+  assert.equal(
+    mediaStorage.temporaryMediaPrefix({}),
+    "meta-outbound/"
+  );
+});
+
+test("temporary media cleanup only considers objects older than the safety window", () => {
+  const now = new Date("2026-10-06T00:00:00.000Z").getTime();
+  assert.equal(
+    mediaStorage.isStaleTemporaryObject(
+      { Key: "clients/acme/meta-outbound/1/old.jpg", LastModified: new Date("2026-10-04T23:59:59.000Z") },
+      { now, olderThanMs: 24 * 60 * 60 * 1000 }
+    ),
+    true
+  );
+  assert.equal(
+    mediaStorage.isStaleTemporaryObject(
+      { Key: "clients/acme/meta-outbound/1/recent.jpg", LastModified: new Date("2026-10-05T12:00:00.000Z") },
+      { now, olderThanMs: 24 * 60 * 60 * 1000 }
+    ),
+    false
+  );
+  assert.equal(
+    mediaStorage.isStaleTemporaryObject(
+      { Key: null, LastModified: new Date("2026-10-01T00:00:00.000Z") },
+      { now, olderThanMs: 24 * 60 * 60 * 1000 }
+    ),
+    false
+  );
+});
