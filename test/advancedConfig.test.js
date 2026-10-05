@@ -480,6 +480,7 @@ test("promotion follow-up translations are validated and remain backward compati
         imageUrl: "",
         caption: "",
         followUpMessage: "Default follow-up",
+        followUpImageUrl: "https://example.com/follow-up.jpg",
         followUpTranslations: {
           en: "English follow-up",
           ms: "Susulan BM",
@@ -492,6 +493,10 @@ test("promotion follow-up translations are validated and remain backward compati
     current
   );
   assert.equal(localized.ok, true);
+  assert.equal(
+    localized.updates.promotions[0].followUpImageUrl,
+    "https://example.com/follow-up.jpg"
+  );
 
   const localizedPackage = prepareConfigUpdatePayload(
     {
@@ -508,6 +513,7 @@ test("promotion follow-up translations are validated and remain backward compati
           imageUrl: "",
           caption: "",
           followUpMessage: "Default A",
+          followUpImageUrl: "https://example.com/package-a-follow-up.jpg",
           followUpTranslations: { zh: "A配套中文跟进" },
         }],
         validFrom: null,
@@ -517,6 +523,29 @@ test("promotion follow-up translations are validated and remain backward compati
     current
   );
   assert.equal(localizedPackage.ok, true);
+  assert.equal(
+    localizedPackage.updates.promotions[0].packages[0].followUpImageUrl,
+    "https://example.com/package-a-follow-up.jpg"
+  );
+
+  const orphanGraphic = prepareConfigUpdatePayload(
+    {
+      promotions: [{
+        name: "Orphan follow-up graphic",
+        linkedService: "Consultation",
+        sendOnPriceQuery: false,
+        imageUrl: "",
+        caption: "",
+        followUpImageUrl: "https://example.com/orphan.jpg",
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(orphanGraphic.ok, false);
+  assert.deepEqual(orphanGraphic.invalidKeys, ["promotions"]);
+  assert.match(orphanGraphic.error, /requires first follow-up offer text/i);
 
   const invalidTranslation = prepareConfigUpdatePayload(
     {
@@ -1208,6 +1237,7 @@ test("Advanced Config review shows promotion follow-up copy changes", () => {
     imageUrl: "",
     caption: "RM88",
     followUpMessage: "Old follow-up",
+    followUpImageUrl: "https://example.com/old-follow-up.jpg",
     validFrom: "2026-10-01",
     validUntil: "2026-10-31",
   }];
@@ -1216,6 +1246,7 @@ test("Advanced Config review shows promotion follow-up copy changes", () => {
     promotions: [{
       ...current.promotions[0],
       followUpMessage: "New follow-up",
+      followUpImageUrl: "https://example.com/new-follow-up.jpg",
     }],
   });
 
@@ -1223,7 +1254,7 @@ test("Advanced Config review shows promotion follow-up copy changes", () => {
   assert.equal(promotionChange.details.kind, "collection");
   assert.deepEqual(
     promotionChange.details.updated[0].changes.map((change) => change.field),
-    ["followUpMessage"]
+    ["followUpMessage", "followUpImageUrl"]
   );
   assert.equal(
     promotionChange.details.updated[0].changes[0].textDiff.kind,

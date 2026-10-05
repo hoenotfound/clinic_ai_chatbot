@@ -116,6 +116,7 @@ function cleanPromotions(items) {
     const imageUrl = packageMode ? "" : text(item?.imageUrl).trim();
     const caption = packageMode ? "" : text(item?.caption).trim();
     const followUpMessage = packageMode ? "" : text(item?.followUpMessage).trim();
+    const followUpImageUrl = packageMode ? "" : text(item?.followUpImageUrl).trim();
     const followUpTranslations = packageMode
       ? {}
       : cleanPromotionFollowUpTranslations(item?.followUpTranslations);
@@ -129,10 +130,11 @@ function cleanPromotions(items) {
           const packageImageUrl = text(packageOption?.imageUrl).trim();
           const packageCaption = text(packageOption?.caption).trim();
           const packageFollowUpMessage = text(packageOption?.followUpMessage).trim();
+          const packageFollowUpImageUrl = text(packageOption?.followUpImageUrl).trim();
           const packageFollowUpTranslations = cleanPromotionFollowUpTranslations(
             packageOption?.followUpTranslations
           );
-          if (!packageName && !title && !aliases.length && !packageImageUrl && !packageCaption && !packageFollowUpMessage && !Object.keys(packageFollowUpTranslations).length) return null;
+          if (!packageName && !title && !aliases.length && !packageImageUrl && !packageCaption && !packageFollowUpMessage && !packageFollowUpImageUrl && !Object.keys(packageFollowUpTranslations).length) return null;
           return {
             name: packageName,
             title,
@@ -140,13 +142,14 @@ function cleanPromotions(items) {
             imageUrl: packageImageUrl,
             caption: packageCaption,
             ...(packageFollowUpMessage ? { followUpMessage: packageFollowUpMessage } : {}),
+            ...(packageFollowUpImageUrl ? { followUpImageUrl: packageFollowUpImageUrl } : {}),
             ...(Object.keys(packageFollowUpTranslations).length
               ? { followUpTranslations: packageFollowUpTranslations }
               : {}),
           };
         })
       : [];
-    if (!name && !linkedService && !imageUrl && !caption && !followUpMessage && !Object.keys(followUpTranslations).length && !packages.length && !validFrom && !validUntil) return null;
+    if (!name && !linkedService && !imageUrl && !caption && !followUpMessage && !followUpImageUrl && !Object.keys(followUpTranslations).length && !packages.length && !validFrom && !validUntil) return null;
     return {
       name,
       linkedService,
@@ -155,6 +158,7 @@ function cleanPromotions(items) {
       imageUrl,
       caption,
       ...(followUpMessage ? { followUpMessage } : {}),
+      ...(followUpImageUrl ? { followUpImageUrl } : {}),
       ...(Object.keys(followUpTranslations).length
         ? { followUpTranslations }
         : {}),
@@ -437,6 +441,17 @@ export default function ClientSetupWizard() {
       cleanServices(draft.services).map((item) => item.name.toLowerCase())
     );
     for (const promotion of promotions) {
+      const followUpItems = [promotion, ...(promotion.packages || [])];
+      const orphanFollowUpGraphic = followUpItems.find(
+        (item) =>
+          text(item?.followUpImageUrl).trim() &&
+          !text(item?.followUpMessage).trim() &&
+          !hasPromotionFollowUpTranslation(item?.followUpTranslations)
+      );
+      if (orphanFollowUpGraphic) {
+        return "Add a First follow-up offer before attaching a First follow-up graphic.";
+      }
+
       if (promotion.sendOnPriceQuery) {
         if (!promotion.linkedService || !serviceNames.has(promotion.linkedService.toLowerCase())) {
           return "Price-triggered promotions must link to a service currently configured.";
@@ -959,12 +974,14 @@ function PromotionsStep({ draft, setDraft, onError }) {
           imageUrl: packageOption.imageUrl || "",
           caption: packageOption.caption || "",
           followUpMessage: packageOption.followUpMessage || "",
+          followUpImageUrl: packageOption.followUpImageUrl || "",
           followUpTranslations: { ...(packageOption.followUpTranslations || {}) },
         }))
       : [],
     imageUrl: item.imageUrl || "",
     caption: item.caption || "",
     followUpMessage: item.followUpMessage || "",
+    followUpImageUrl: item.followUpImageUrl || "",
     followUpTranslations: { ...(item.followUpTranslations || {}) },
     validFrom: item.validFrom || "",
     validUntil: item.validUntil || "",
@@ -988,6 +1005,7 @@ function PromotionsStep({ draft, setDraft, onError }) {
       text(item?.imageUrl).trim() ||
       text(item?.caption).trim() ||
       text(item?.followUpMessage).trim() ||
+      text(item?.followUpImageUrl).trim() ||
       hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
       cleanStrings(item?.aliases || []).length
     );
@@ -998,6 +1016,7 @@ function PromotionsStep({ draft, setDraft, onError }) {
       text(promotion?.imageUrl).trim() ||
       text(promotion?.caption).trim() ||
       text(promotion?.followUpMessage).trim() ||
+      text(promotion?.followUpImageUrl).trim() ||
       hasPromotionFollowUpTranslation(promotion?.followUpTranslations)
     );
   }
@@ -1014,12 +1033,13 @@ function PromotionsStep({ draft, setDraft, onError }) {
         text(item?.imageUrl).trim() ||
         text(item?.caption).trim() ||
         text(item?.followUpMessage).trim() ||
+        text(item?.followUpImageUrl).trim() ||
         hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
         cleanStrings(item?.aliases || []).length
       ).length;
       warning = `Changing to Single offer will remove ${packageCount} package option${packageCount === 1 ? "" : "s"} when you save. Continue?`;
     } else if (nextType === "packages" && hasSingleOfferContent(current)) {
-      warning = "Changing to Multiple packages will remove the current single-offer image, caption, and first follow-up offer when you save. Continue?";
+      warning = "Changing to Multiple packages will remove the current single-offer image, caption, first follow-up offer, and first follow-up graphic when you save. Continue?";
     }
 
     if (warning && !window.confirm(warning)) return;
@@ -1037,6 +1057,7 @@ function PromotionsStep({ draft, setDraft, onError }) {
       imageUrl: "",
       caption: "",
       followUpMessage: "",
+      followUpImageUrl: "",
       followUpTranslations: {},
       validFrom: "",
       validUntil: "",
@@ -1136,6 +1157,7 @@ function PromotionsStep({ draft, setDraft, onError }) {
                       <Field label="Promotion image"><PromoImageField value={item.imageUrl} onChange={(imageUrl) => updatePromotion(index, { imageUrl })} onError={onError} /></Field>
                       <Field label="Caption sent with the image"><textarea rows={3} className={TEXTAREA_CLASS} value={item.caption} onChange={(event) => updatePromotion(index, { caption: event.target.value })} /></Field>
                       <Field label="First follow-up offer" hint="Optional. Kept out of the normal AI reply and eligible only for the first automated follow-up while this promotion is active."><textarea rows={2} className={TEXTAREA_CLASS} value={item.followUpMessage || ""} onChange={(event) => updatePromotion(index, { followUpMessage: event.target.value })} /></Field>
+                      <Field label="First follow-up graphic" hint="Optional. Sent only together with this First follow-up offer."><PromoImageField value={item.followUpImageUrl || ""} onChange={(followUpImageUrl) => updatePromotion(index, { followUpImageUrl })} onError={onError} /></Field>
                     </>
                   )}
 
@@ -1406,7 +1428,7 @@ function PromotionPackagesField({ items, setItems, onError }) {
   }
 
   function addPackage() {
-    const next = [...items, { name: "", title: "", aliases: [], imageUrl: "", caption: "", followUpMessage: "" }];
+    const next = [...items, { name: "", title: "", aliases: [], imageUrl: "", caption: "", followUpMessage: "", followUpImageUrl: "" }];
     setItems(next);
     setOpenIndex(next.length - 1);
   }
@@ -1443,6 +1465,7 @@ function PromotionPackagesField({ items, setItems, onError }) {
                 <Field label="Promotion image"><PromoImageField value={item.imageUrl || ""} onChange={(value) => change(index, "imageUrl", value)} onError={onError} /></Field>
                 <Field label="Caption sent with the image"><textarea rows={3} className={TEXTAREA_CLASS} value={item.caption || ""} onChange={(event) => change(index, "caption", event.target.value)} /></Field>
                 <Field label="First follow-up offer" hint="Optional. Used only when this exact package is identified in a price/package enquiry."><textarea rows={2} className={TEXTAREA_CLASS} value={item.followUpMessage || ""} onChange={(event) => change(index, "followUpMessage", event.target.value)} /></Field>
+                <Field label="First follow-up graphic" hint="Optional. Sent only together with this package's First follow-up offer."><PromoImageField value={item.followUpImageUrl || ""} onChange={(value) => change(index, "followUpImageUrl", value)} onError={onError} /></Field>
                 <div className="flex flex-col-reverse gap-2 border-t border-[var(--color-border)] pt-3 sm:flex-row sm:justify-between">
                   <button type="button" onClick={() => removePackage(index)} className="h-10 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)]">Remove package</button>
                   <button type="button" onClick={() => setOpenIndex(null)} className="h-10 rounded-xl bg-[var(--color-primary)] px-4 text-xs font-semibold text-white">Done</button>

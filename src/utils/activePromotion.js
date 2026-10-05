@@ -137,6 +137,7 @@ function promotionPackages(promotion) {
       imageUrl: String(item.imageUrl || "").trim(),
       caption: String(item.caption || "").trim(),
       followUpMessage: String(item.followUpMessage || "").trim(),
+      followUpImageUrl: String(item.followUpImageUrl || "").trim(),
       followUpTranslations: normalizedFollowUpTranslations(item.followUpTranslations),
     }));
   }
@@ -154,6 +155,7 @@ function promotionPackages(promotion) {
     imageUrl,
     caption,
     followUpMessage: String(promotion?.followUpMessage || "").trim(),
+    followUpImageUrl: String(promotion?.followUpImageUrl || "").trim(),
     followUpTranslations: normalizedFollowUpTranslations(promotion?.followUpTranslations),
     legacy: true,
   }];

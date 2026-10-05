@@ -163,6 +163,7 @@ test("manual staff sends cancel synthetic AI handoff before clearing Needs Atten
 test("Follow-up UI explains promotion overrides, sequence stops, and manual follow-up naming", () => {
   const tools = read("portal-frontend/src/pages/Tools.jsx");
   const settings = read("portal-frontend/src/pages/Settings.jsx");
+  const setup = read("portal-frontend/src/pages/ClientSetupWizard.jsx");
   const inbox = read("portal-frontend/src/pages/Inbox.jsx");
 
   assert.match(tools, /Promotion override is available/);
@@ -171,7 +172,9 @@ test("Follow-up UI explains promotion overrides, sequence stops, and manual foll
   assert.match(tools, /Sent scheduled staff messages count as staff replies/);
   assert.match(settings, /Requires Tools → Automated follow-up to be on/);
   assert.match(settings, /Language-specific follow-up copy/);
-  assert.match(settings, /image, caption, and first follow-up offer/);
+  assert.match(settings, /image, caption, first follow-up offer, and first follow-up graphic/);
+  assert.match(settings, /First follow-up graphic/);
+  assert.match(setup, /First follow-up graphic/);
   assert.match(inbox, /Needs follow-up/);
 });
 
