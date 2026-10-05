@@ -1098,7 +1098,9 @@ router.post("/:contactId/messages", async (req, res) => {
     if (contact.mode !== "human") {
       await contactsRepo.takeOver(contact.id, req.session.username);
     } else {
-      await contactsRepo.setAttention(contact.id, false);
+      // Do not clear Needs Attention before the staff row is persisted. During
+      // an AI handoff that flag is a hard follow-up stop; clearing it first
+      // creates a gap where the old AI anchor can become eligible again.
       await contactsRepo.setUnread(contact.id, false);
     }
 
@@ -1109,6 +1111,9 @@ router.post("/:contactId/messages", async (req, res) => {
       null,
       req.session.username
     );
+    if (contact.mode === "human") {
+      await contactsRepo.setAttention(contact.id, false);
+    }
 
     const sendResult = await channelMessaging.sendText(
       contact,
@@ -1182,7 +1187,8 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     if (contact.mode !== "human") {
       await contactsRepo.takeOver(contact.id, req.session.username);
     } else {
-      await contactsRepo.setAttention(contact.id, false);
+      // Keep Needs Attention raised until the durable staff message exists, for
+      // the same reason as the text-send path above.
       await contactsRepo.setUnread(contact.id, false);
     }
 
@@ -1197,6 +1203,9 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       null,
       { mimeType: req.file.mimetype, buffer: req.file.buffer }
     );
+    if (contact.mode === "human") {
+      await contactsRepo.setAttention(contact.id, false);
+    }
 
     const sendResult = await channelMessaging.sendImageBuffer(
       contact,
