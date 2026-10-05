@@ -163,7 +163,12 @@ async function recoverStaleProcessing({
        WHERE q.id = stale.id
        RETURNING q.*
      )
-     SELECT recovered.*, m.content AS message_content
+     SELECT
+       recovered.*,
+       m.content AS message_content,
+       m.whatsapp_message_id,
+       m.delivery_status,
+       m.delivery_error
      FROM recovered
      JOIN messages m ON m.id = recovered.message_id`,
     [safeStale, safeLimit, reason]
