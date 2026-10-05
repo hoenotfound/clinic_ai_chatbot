@@ -3,7 +3,6 @@ const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 
 const MAX_FOLLOW_UP_STEPS = 3;
 const REPLY_WINDOW_BUFFER = "23 hours 50 minutes";
-const AI_GENERATION_LEASE_STALE_SECONDS = 120;
 const FOLLOW_UP_MESSAGE_MODES = new Set(["fixed", "ai_personalized", "ai_fallback"]);
 
 const FOLLOW_UP_MESSAGE_COLUMNS = `
