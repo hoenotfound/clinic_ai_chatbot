@@ -6,6 +6,17 @@ const MAX_CONTEXT_CHARS = 14_000;
 const MAX_PREVIOUS_FOLLOW_UPS = 3;
 const PACKAGE_SELECTION_CONTEXT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+const STAFF_PROMOTION_ANCHOR_PATTERN =
+  /(\bvoucher\b|\bcoupon\b|\bpromo(?:tion|si)?\b|\bdiscount\b|\boffer\b|\bdeal\b|\bbaucar\b|\bdiskaun\b|\btawaran\b|优惠券|优惠|折扣|促销|限时|免费|赠送|\bfree\b|\b%\s*off\b)/iu;
+const PROMOTION_REASON_PATTERN =
+  /(\bvoucher\b|\bcoupon\b|\bpromo(?:tion|si|tional)?\b|\bdiscount\b|\boffer\b|\bdeal\b|\bbaucar\b|\bdiskaun\b|\btawaran\b|优惠券|优惠|折扣|促销|活动)/iu;
+const MISSING_PROMOTION_CONFIG_PATTERN =
+  /(unconfigured|not configured|not found in (?:current )?active promotions?|absent from (?:current )?active promotions?|not (?:present|listed) in (?:current )?active promotions?|missing from (?:current )?active promotions?|unsupported by (?:current )?active promotions?|cannot be verified from (?:current )?active promotions?|未配置|未在.*(?:优惠|促销|活动)|不在.*(?:优惠|促销|活动)|未找到.*(?:优惠|促销|活动)|无法从.*(?:优惠|促销|活动).*确认|tidak dikonfigurasi|tiada dalam promosi aktif|tidak ditemui dalam promosi aktif)/iu;
+const GENUINE_HUMAN_REVIEW_REASON_PATTERN =
+  /(medical|safety|suitab|pregnan|contraindicat|side effect|symptom|diagnos|complaint|refund|angry|upset|human request|requested (?:a )?(?:human|staff|agent|person)|wants? (?:a )?(?:human|staff|agent|person)|conflict(?:s|ing)? with (?:current )?(?:business information|active promotions?)|contradict|inconsisten|医疗|安全|适合|怀孕|副作用|症状|诊断|投诉|退款|要求人工|要求真人|转人工|冲突|矛盾|keselamatan|hamil|aduan|bayaran balik|minta (?:staf|manusia|ejen))/iu;
+const CUSTOMER_PROMO_CONFIRMATION_PATTERN =
+  /((customer|client|patient|pelanggan|客户|顾客|客人).{0,60}(ask|asks|asked|request|requests|requested|wants? to (?:know|confirm|check)|confirm|verify|询问|问|确认|核实|tanya|sahkan).{0,80}(voucher|coupon|promo|promotion|offer|discount|优惠券|优惠|促销|活动|baucar|promosi|tawaran|diskaun)|(still valid|validity|valid through|expire|expiry|eligible|eligibility).{0,50}(voucher|coupon|promo|promotion|offer|discount|优惠券|优惠|促销|baucar|promosi))/iu;
+
 function cleanContent(value) {
   return String(value || "")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
@@ -114,6 +125,57 @@ function isSubstantiallySimilar(message, previousMessages) {
   return (previousMessages || []).some((previous) =>
     similarity(message, previous) >= 0.72
   );
+}
+
+function shouldSuppressStaffPromotionHumanReview({
+  conversation,
+  triggerMessageId,
+  decision,
+} = {}) {
+  if (String(decision?.action || "").trim().toLowerCase() !== "human_review") {
+    return false;
+  }
+
+  const numericTriggerMessageId = Number(triggerMessageId);
+  if (!Number.isSafeInteger(numericTriggerMessageId) || numericTriggerMessageId < 1) {
+    return false;
+  }
+
+  const trigger = (Array.isArray(conversation) ? conversation : []).find(
+    (message) => Number(message?.id) === numericTriggerMessageId
+  );
+  if (
+    !trigger ||
+    trigger.role !== "assistant" ||
+    trigger.is_automated_follow_up === true ||
+    !cleanContent(trigger.sent_by_username)
+  ) {
+    return false;
+  }
+
+  const staffMessage = cleanContent(trigger.content);
+  const reason = cleanContent(decision?.reason);
+  if (
+    !staffMessage ||
+    !reason ||
+    !STAFF_PROMOTION_ANCHOR_PATTERN.test(staffMessage) ||
+    !PROMOTION_REASON_PATTERN.test(reason) ||
+    !MISSING_PROMOTION_CONFIG_PATTERN.test(reason)
+  ) {
+    return false;
+  }
+
+  // Never suppress genuine escalation categories. The guard only handles the
+  // narrow false-positive where the model objects to staff's own ad-hoc offer
+  // solely because it is not duplicated in Promotions configuration.
+  if (
+    GENUINE_HUMAN_REVIEW_REASON_PATTERN.test(reason) ||
+    CUSTOMER_PROMO_CONFIRMATION_PATTERN.test(reason)
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 function internalRequest(conversationText) {
@@ -302,6 +364,7 @@ module.exports = {
   renderConversation,
   scopePackageSelectionConversation,
   selectPromotionPackageForFollowUp,
+  shouldSuppressStaffPromotionHumanReview,
   similarity,
   trimConversation,
 };
