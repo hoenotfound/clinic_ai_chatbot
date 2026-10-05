@@ -149,6 +149,7 @@ test("post-reply runtime keeps text then promo then result-media ordering and fo
   const resultCall = serverSource.slice(resultResolveAt, resultResolveAt + 900);
   assert.match(resultCall, /serviceQuery,/);
   assert.match(resultCall, /serviceQuerySource,/);
+  assert.match(resultCall, /metaAdCreativeAvailable,/);
   assert.match(resultCall, /priceQuery,/);
   assert.match(resultCall, /packageQuery,/);
 });
