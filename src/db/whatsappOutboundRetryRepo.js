@@ -139,6 +139,7 @@ async function recoverStaleProcessing({
   const safeLimit = Math.max(1, Math.min(100, Number(limit) || 25));
   const reason =
     "Delivery could not be confirmed because the server restarted during an automatic WhatsApp retry.";
+  const leaseToken = crypto.randomUUID();
 
   const result = await database.query(
     `WITH stale AS (
@@ -154,10 +155,9 @@ async function recoverStaleProcessing({
        LIMIT $2
      ), recovered AS (
        UPDATE whatsapp_outbound_retries q
-       SET status = 'failed',
+       SET claimed_at = NOW(),
+           lease_token = $4,
            last_error = $3,
-           lease_token = NULL,
-           completed_at = COALESCE(completed_at, NOW()),
            updated_at = NOW()
        FROM stale
        WHERE q.id = stale.id
@@ -171,7 +171,7 @@ async function recoverStaleProcessing({
        m.delivery_error
      FROM recovered
      JOIN messages m ON m.id = recovered.message_id`,
-    [safeStale, safeLimit, reason]
+    [safeStale, safeLimit, reason, leaseToken]
   );
   return result.rows;
 }
@@ -260,11 +260,24 @@ async function markCancelled(id, leaseToken, reason, database = pool) {
   return result.rows[0] || null;
 }
 
-async function findNextDueAt(database = pool) {
+async function findNextDueAt({
+  staleAfterSeconds = 180,
+} = {}, database = pool) {
+  const safeStale = Math.max(30, Math.min(3600, Number(staleAfterSeconds) || 180));
   const result = await database.query(
-    `SELECT MIN(next_attempt_at) AS next_due_at
-     FROM whatsapp_outbound_retries
-     WHERE status = 'scheduled'`
+    `SELECT LEAST(
+       (
+         SELECT MIN(next_attempt_at)
+         FROM whatsapp_outbound_retries
+         WHERE status = 'scheduled'
+       ),
+       (
+         SELECT MIN(COALESCE(claimed_at, NOW()) + ($1::int * interval '1 second'))
+         FROM whatsapp_outbound_retries
+         WHERE status = 'processing'
+       )
+     ) AS next_due_at`,
+    [safeStale]
   );
   return result.rows[0]?.next_due_at || null;
 }
