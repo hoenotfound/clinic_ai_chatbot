@@ -124,23 +124,33 @@ test("Tools UX keeps advanced details out of the main setup flow", () => {
   assert.doesNotMatch(tools, /function OverviewItem/);
 });
 
-test("manual staff text and image replies keep Needs Attention until the staff row is durable", () => {
+test("manual staff sends cancel synthetic AI handoff before clearing Needs Attention", () => {
   const route = read("src/routes/conversations.js");
+
+  const helperStart = route.indexOf("async function prepareStaffSend");
+  const helperEnd = route.indexOf("async function persistSendOutcome", helperStart);
+  const helper = route.slice(helperStart, helperEnd);
+
+  const claimIndex = helper.indexOf("claimAiHandoffOwnership");
+  const clearIndex = helper.indexOf("contactsRepo.setAttention(contact.id, false)");
+  assert.ok(claimIndex >= 0 && clearIndex > claimIndex);
+  assert.match(helper, /contact\.takeover_by === AI_HANDOFF_OWNER/);
+  assert.match(helper, /AI handoff ownership could not be claimed safely/);
 
   const textRouteStart = route.indexOf('router.post("/:contactId/messages"');
   const imageRouteStart = route.indexOf('router.post("/:contactId/media"');
   const voiceRouteStart = route.indexOf('router.post("/:contactId/voice"');
-
   const textRoute = route.slice(textRouteStart, imageRouteStart);
   const imageRoute = route.slice(imageRouteStart, voiceRouteStart);
 
-  const textSave = textRoute.indexOf("conversationStore.appendMessageForContact");
-  const textClear = textRoute.indexOf("contactsRepo.setAttention(contact.id, false)");
-  assert.ok(textSave >= 0 && textClear > textSave);
-
-  const imageSave = imageRoute.indexOf("conversationStore.appendMessageForContact");
-  const imageClear = imageRoute.indexOf("contactsRepo.setAttention(contact.id, false)");
-  assert.ok(imageSave >= 0 && imageClear > imageSave);
+  assert.ok(
+    textRoute.indexOf("prepareStaffSend") <
+      textRoute.indexOf("conversationStore.appendMessageForContact")
+  );
+  assert.ok(
+    imageRoute.indexOf("prepareStaffSend") <
+      imageRoute.indexOf("conversationStore.appendMessageForContact")
+  );
 });
 
 test("Follow-up UI explains promotion overrides, sequence stops, and manual follow-up naming", () => {
