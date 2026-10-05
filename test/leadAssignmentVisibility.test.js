@@ -158,6 +158,7 @@ test("Inbox returns to a safe list state when a selected restricted lead is reas
   assert.match(inbox, /setMobileThreadOpen\(false\)/);
   assert.match(inbox, /setSearchParams\(\{\}, \{ replace: true \}\)/);
   assert.match(inbox, /const requestedContactParam = searchParams\.get\("contact"\)/);
+  assert.match(inbox, /if \(conversations\.length === 0\)/);
   assert.match(inbox, /else if \(requestedContactParam\)/);
 });
 
