@@ -239,6 +239,34 @@ function resolvePromotionPackage(packages, requestedOption) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+function promotionHasFollowUpMessage(promotion) {
+  if (String(promotion?.followUpMessage || "").trim()) return true;
+  return (Array.isArray(promotion?.packages) ? promotion.packages : []).some(
+    (item) => String(item?.followUpMessage || "").trim()
+  );
+}
+
+function findOverlappingPromotionFollowUpPair(promotions) {
+  const enabled = (Array.isArray(promotions) ? promotions : []).filter(
+    (promotion) =>
+      Boolean(normalizeServiceName(promotion?.linkedService)) &&
+      promotionHasFollowUpMessage(promotion)
+  );
+
+  for (let i = 0; i < enabled.length; i += 1) {
+    for (let j = i + 1; j < enabled.length; j += 1) {
+      if (
+        normalizeServiceName(enabled[i].linkedService) ===
+          normalizeServiceName(enabled[j].linkedService) &&
+        promotionWindowsOverlap(enabled[i], enabled[j])
+      ) {
+        return [enabled[i], enabled[j]];
+      }
+    }
+  }
+  return null;
+}
+
 function findOverlappingPricePromotionPair(promotions) {
   const enabled = (Array.isArray(promotions) ? promotions : []).filter(
     (promotion) =>
@@ -342,6 +370,7 @@ module.exports = {
   promotionPackages,
   findAmbiguousPromotionPackageTerm,
   findMentionedPromotionPackages,
+  findOverlappingPromotionFollowUpPair,
   findOverlappingPricePromotionPair,
   isPromotionActive,
   localDateString,

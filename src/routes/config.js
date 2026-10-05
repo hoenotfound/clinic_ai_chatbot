@@ -13,6 +13,7 @@ const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution")
 const { normalizeQuietHours } = require("../utils/quietHours");
 const {
   findAmbiguousPromotionPackageTerm,
+  findOverlappingPromotionFollowUpPair,
   findOverlappingPricePromotionPair,
 } = require("../utils/activePromotion");
 
@@ -684,8 +685,46 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
     );
 
     for (const promotion of Array.isArray(promotions) ? promotions : []) {
-      if (promotion?.sendOnPriceQuery !== true) continue;
+      const packages = Array.isArray(promotion?.packages)
+        ? promotion.packages
+        : [];
+
+      // Package names/titles/aliases are also used by delayed promotion
+      // follow-up routing, even when immediate price-media auto-send is off.
+      // Reject ambiguous wording for every package promotion at save/import
+      // time instead of silently falling back at runtime.
+      if (packages.length > 0) {
+        const ambiguousTerm = findAmbiguousPromotionPackageTerm(promotion);
+        if (ambiguousTerm) {
+          return {
+            ok: false,
+            status: 400,
+            error:
+              `Package wording "${ambiguousTerm.term}" is ambiguous between "${ambiguousTerm.firstPackage}" and "${ambiguousTerm.secondPackage}". Use unique package names/titles/aliases.`,
+            invalidKeys: ["promotions"],
+          };
+        }
+      }
+
       const linkedService = String(promotion?.linkedService || "").trim();
+      const hasFollowUpMessage =
+        Boolean(String(promotion?.followUpMessage || "").trim()) ||
+        packages.some((item) => Boolean(String(item?.followUpMessage || "").trim()));
+      if (
+        hasFollowUpMessage &&
+        (!linkedService || !serviceNames.has(linkedService.toLowerCase()))
+      ) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Promotion follow-up copy must link to a currently configured service.",
+          invalidKeys: ["promotions"],
+        };
+      }
+
+      if (promotion?.sendOnPriceQuery !== true) continue;
+
+
       if (!linkedService || !serviceNames.has(linkedService.toLowerCase())) {
         return {
           ok: false,
@@ -694,9 +733,6 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
           invalidKeys: ["promotions"],
         };
       }
-      const packages = Array.isArray(promotion?.packages)
-        ? promotion.packages
-        : [];
       if (packages.length > 0) {
         const incompletePackage = packages.find(
           (item) =>
@@ -712,16 +748,6 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
             invalidKeys: ["promotions"],
           };
         }
-        const ambiguousTerm = findAmbiguousPromotionPackageTerm(promotion);
-        if (ambiguousTerm) {
-          return {
-            ok: false,
-            status: 400,
-            error:
-              `Package wording "${ambiguousTerm.term}" is ambiguous between "${ambiguousTerm.firstPackage}" and "${ambiguousTerm.secondPackage}". Use unique package names/titles/aliases.`,
-            invalidKeys: ["promotions"],
-          };
-        }
       } else if (!String(promotion?.imageUrl || "").trim() || !String(promotion?.caption || "").trim()) {
         return {
           ok: false,
@@ -730,6 +756,19 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
           invalidKeys: ["promotions"],
         };
       }
+    }
+
+    const followUpOverlap = findOverlappingPromotionFollowUpPair(promotions);
+    if (followUpOverlap) {
+      const [first, second] = followUpOverlap;
+      return {
+        ok: false,
+        status: 400,
+        error:
+          `Only one promotion follow-up can be active for ${String(first.linkedService).trim()} at a time. ` +
+          `"${first.name}" overlaps with "${second.name}". Adjust the dates or remove one delayed follow-up offer.`,
+        invalidKeys: ["promotions"],
+      };
     }
 
     const overlap = findOverlappingPricePromotionPair(promotions);

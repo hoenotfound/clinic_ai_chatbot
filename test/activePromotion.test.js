@@ -7,6 +7,7 @@ const {
   getPricePromotion,
   getPricePromotionBundle,
   findAmbiguousPromotionPackageTerm,
+  findOverlappingPromotionFollowUpPair,
   findOverlappingPricePromotionPair,
   isPromotionActive,
   localDateString,
@@ -265,4 +266,54 @@ test("duplicate package names are treated as ambiguous configuration", () => {
   const ambiguous = findAmbiguousPromotionPackageTerm(duplicateNames);
   assert.equal(ambiguous.firstPackage, "Package A");
   assert.equal(ambiguous.secondPackage, "Package A");
+});
+
+
+test("overlapping delayed follow-up promotions for one service are detected even when immediate auto-send is off", () => {
+  const first = {
+    ...promo,
+    name: "HIFU follow-up A",
+    sendOnPriceQuery: false,
+    imageUrl: "",
+    caption: "",
+    followUpMessage: "Offer A",
+    validFrom: "2026-10-01",
+    validUntil: "2026-10-20",
+  };
+  const second = {
+    ...promo,
+    name: "HIFU follow-up B",
+    sendOnPriceQuery: false,
+    imageUrl: "",
+    caption: "",
+    followUpMessage: "Offer B",
+    validFrom: "2026-10-15",
+    validUntil: "2026-10-31",
+  };
+
+  assert.deepEqual(
+    findOverlappingPromotionFollowUpPair([first, second]).map((item) => item.name),
+    ["HIFU follow-up A", "HIFU follow-up B"]
+  );
+});
+
+test("non-overlapping delayed follow-up promotion windows are allowed", () => {
+  const first = {
+    ...promo,
+    name: "HIFU follow-up October",
+    sendOnPriceQuery: false,
+    followUpMessage: "October offer",
+    validFrom: "2026-10-01",
+    validUntil: "2026-10-31",
+  };
+  const second = {
+    ...promo,
+    name: "HIFU follow-up November",
+    sendOnPriceQuery: false,
+    followUpMessage: "November offer",
+    validFrom: "2026-11-01",
+    validUntil: "2026-11-30",
+  };
+
+  assert.equal(findOverlappingPromotionFollowUpPair([first, second]), null);
 });

@@ -279,12 +279,80 @@ RETURN ONLY ONE VALID JSON OBJECT:
 }`;
 }
 
+function buildPromotionPackageSelectionPrompt(context, options, selection) {
+  const serviceName = promptContextText(selection?.serviceName, 240) || "the current service";
+  const packages = (Array.isArray(selection?.packages) ? selection.packages : [])
+    .map((item) => ({
+      name: promptContextText(item?.name, 160),
+      title: promptContextText(item?.title, 240),
+      aliases: (Array.isArray(item?.aliases) ? item.aliases : [])
+        .map((alias) => promptContextText(alias, 120))
+        .filter(Boolean)
+        .slice(0, 12),
+      caption: promptContextText(item?.caption, 1200),
+    }))
+    .filter((item) => item.name)
+    .slice(0, 12);
+
+  const packageLines = packages.length
+    ? packages.map((item) => {
+        const details = [
+          item.title ? `title: ${item.title}` : null,
+          item.aliases.length ? `aliases: ${item.aliases.join(", ")}` : null,
+          item.caption ? `configured package details: ${item.caption}` : null,
+        ].filter(Boolean).join(" | ");
+        return `- ${item.name}${details ? ` | ${details}` : ""}`;
+      }).join("\n")
+    : "- No selectable packages.";
+
+  return `You are making an INTERNAL package-routing decision for ${context.businessName} on ${channelLabel(options.channel)}.
+
+This pass does NOT write a customer-facing follow-up and must never invent or rewrite an offer. The application will supply CUSTOMER messages only. Choose a package only when the customer's own words clearly favor exactly one configured package.
+
+CURRENT SERVICE:
+- ${serviceName}
+
+ALLOWED PACKAGE OPTIONS:
+${packageLines}
+
+SELECTION RULES:
+- Customer statements are the only evidence of preference.
+- Prefer an explicit package name/title/alias when exactly one package is clearly chosen.
+- You may infer a package from a customer's stated goal or requested inclusion only when the configured package details make exactly one option clearly better matched.
+- A generic service enquiry, generic price/package question, equal interest in multiple packages, comparison without a preference, or weak/uncertain inference is NOT enough. Use "skip".
+- Never choose from price similarity alone.
+- Never choose because an earlier assistant/staff message happened to mention one option last.
+- Never use an unlisted package name.
+- Do not expose, calculate, rewrite, or add any promotion, discount, gift, urgency, or price.
+- This is routing only. When uncertain, fail closed with "skip".
+- Do not use "human_review" for this routing pass.
+
+RETURN ONLY ONE VALID JSON OBJECT:
+{
+  "action": "send | skip",
+  "message": "when action is send, the exact canonical package name from ALLOWED PACKAGE OPTIONS; otherwise empty string",
+  "reason": "short internal reason for the selection or uncertainty",
+  "topic": "when action is send, the same exact canonical package name; otherwise empty string"
+}
+
+The application will discard message/topic as customer-facing text and use the canonical package name only as an internal routing key.`;
+}
+
 function buildFollowUpPrompt(options = {}) {
   const context = getBusinessContext();
   const { terminology: terms } = context;
   const followUp = options.followUpContext && typeof options.followUpContext === "object"
     ? options.followUpContext
     : {};
+
+  if (followUp.packageSelection && typeof followUp.packageSelection === "object") {
+    return buildPromotionPackageSelectionPrompt(
+      context,
+      options,
+      followUp.packageSelection
+    );
+  }
+
   const stepNumber = Math.max(1, Math.min(3, Number(followUp.stepNumber) || 1));
   const stepGoal = stepNumber === 1
     ? "Continue the unresolved conversation naturally and helpfully. Use the most relevant open point instead of sending a generic reminder."
