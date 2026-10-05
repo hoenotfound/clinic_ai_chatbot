@@ -27,6 +27,12 @@ function safeDelaySeconds(value) {
     : 0;
 }
 
+function nullableInteger(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
 async function enqueueTextRetry({
   messageId,
   contactId,
@@ -66,8 +72,8 @@ async function enqueueTextRetry({
       String(origin || "").trim(),
       safeDelaySeconds(delaySeconds),
       errorText ? String(errorText).slice(0, 1000) : null,
-      Number.isInteger(Number(providerStatus)) ? Number(providerStatus) : null,
-      Number.isInteger(Number(providerErrorCode)) ? Number(providerErrorCode) : null,
+      nullableInteger(providerStatus),
+      nullableInteger(providerErrorCode),
     ]
   );
   return result.rows[0] || null;
@@ -217,8 +223,8 @@ async function reschedule(id, leaseToken, {
       String(leaseToken || ""),
       safeDelaySeconds(delaySeconds),
       errorText ? String(errorText).slice(0, 1000) : null,
-      Number.isInteger(Number(providerStatus)) ? Number(providerStatus) : null,
-      Number.isInteger(Number(providerErrorCode)) ? Number(providerErrorCode) : null,
+      nullableInteger(providerStatus),
+      nullableInteger(providerErrorCode),
     ]
   );
   return result.rows[0] || null;
@@ -284,6 +290,7 @@ async function findNextDueAt({
 
 module.exports = {
   claimDue,
+  nullableInteger,
   enqueueTextRetry,
   findNextDueAt,
   markCancelled,
