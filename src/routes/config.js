@@ -13,6 +13,7 @@ const { normalizeLeadDistributionConfig } = require("../utils/leadDistribution")
 const { normalizeQuietHours } = require("../utils/quietHours");
 const {
   findAmbiguousPromotionPackageTerm,
+  findOverlappingPromotionFollowUpPair,
   findOverlappingPricePromotionPair,
 } = require("../utils/activePromotion");
 
@@ -755,6 +756,19 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
           invalidKeys: ["promotions"],
         };
       }
+    }
+
+    const followUpOverlap = findOverlappingPromotionFollowUpPair(promotions);
+    if (followUpOverlap) {
+      const [first, second] = followUpOverlap;
+      return {
+        ok: false,
+        status: 400,
+        error:
+          `Only one promotion follow-up can be active for ${String(first.linkedService).trim()} at a time. ` +
+          `"${first.name}" overlaps with "${second.name}". Adjust the dates or remove one delayed follow-up offer.`,
+        invalidKeys: ["promotions"],
+      };
     }
 
     const overlap = findOverlappingPricePromotionPair(promotions);
