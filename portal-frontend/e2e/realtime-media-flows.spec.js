@@ -416,11 +416,13 @@ async function installApi(page, {
     const mediaMatch = path.match(/^\/api\/conversations\/(\d+)\/media$/);
     if (mediaMatch && method === "POST") {
       const contactId = Number(mediaMatch[1]);
-      const raw = request.postDataBuffer()?.toString("latin1") || "";
+      const bodyBuffer = request.postDataBuffer() || Buffer.alloc(0);
+      const raw = bodyBuffer.toString("latin1");
       mediaRequests.push({
         contactId,
         contentType: request.headers()["content-type"] || "",
         raw,
+        bodyBuffer,
       });
 
       if (imageSendFailure) {
@@ -583,22 +585,25 @@ function jpegFrameEncoding(buffer) {
   return null;
 }
 
-function multipartFileBytes(raw, contentType) {
+function multipartFileBytes(bodyBuffer, contentType) {
+  if (!Buffer.isBuffer(bodyBuffer)) return null;
   const boundaryMatch = String(contentType || "").match(/boundary=([^;]+)/i);
   if (!boundaryMatch) return null;
   const boundary = boundaryMatch[1].trim().replace(/^"|"$/g, "");
 
-  const filenameIndex = raw.indexOf('filename="');
+  const filenameIndex = bodyBuffer.indexOf(Buffer.from('filename="', "ascii"));
   if (filenameIndex < 0) return null;
-  const bodyStart = raw.indexOf("\r\n\r\n", filenameIndex);
+
+  const headerEndMarker = Buffer.from("\r\n\r\n", "ascii");
+  const bodyStart = bodyBuffer.indexOf(headerEndMarker, filenameIndex);
   if (bodyStart < 0) return null;
 
-  const dataStart = bodyStart + 4;
-  const closingBoundary = `\r\n--${boundary}`;
-  const dataEnd = raw.indexOf(closingBoundary, dataStart);
+  const dataStart = bodyStart + headerEndMarker.length;
+  const closingBoundary = Buffer.from(`\r\n--${boundary}`, "ascii");
+  const dataEnd = bodyBuffer.indexOf(closingBoundary, dataStart);
   if (dataEnd < 0) return null;
 
-  return Buffer.from(raw.slice(dataStart, dataEnd), "latin1");
+  return bodyBuffer.subarray(dataStart, dataEnd);
 }
 
 function expectNoUnexpectedApi(apiState) {
@@ -760,7 +765,7 @@ test("progressive JPEG is normalized before upload", async ({ page }) => {
 
   expect(apiState.mediaRequests).toHaveLength(1);
   const mediaRequest = apiState.mediaRequests[0];
-  const uploaded = multipartFileBytes(mediaRequest.raw, mediaRequest.contentType);
+  const uploaded = multipartFileBytes(mediaRequest.bodyBuffer, mediaRequest.contentType);
   expect(uploaded).not.toBeNull();
 
   const multipart = mediaRequest.raw;
