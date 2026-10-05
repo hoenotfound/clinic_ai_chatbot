@@ -22,6 +22,7 @@ function baseRow(overrides = {}) {
     contact_mode: "ai",
     contact_channel: "whatsapp",
     current_recipient: "60123456789",
+    contact_needs_attention: false,
     has_newer_customer_message: false,
     has_newer_staff_message: false,
     ...overrides,
@@ -314,4 +315,99 @@ test("provider acceptance without durable WAMID persistence fails closed", async
   assert.equal(calls[0][2], "unknown");
   assert.equal(calls[1][0], "attention");
   assert.equal(calls[2][0], "failed");
+});
+
+
+test("retry is cancelled when global automated replies are disabled", async () => {
+  const calls = [];
+  const repository = {
+    async recoverStaleProcessing() { return []; },
+    async claimDue() { return [baseRow()]; },
+    async markCancelled(id, lease, reason) {
+      calls.push(["cancelled", id, lease, reason]);
+    },
+    async findNextDueAt() { return null; },
+  };
+  const contacts = {
+    async setDeliveryAttention(id, reason) {
+      calls.push(["attention", id, reason]);
+    },
+  };
+
+  await runWhatsappOutboundRetryQueue({
+    repository,
+    messages: {},
+    contacts,
+    isAutomationEnabled() { return false; },
+    async sendMessage() {
+      throw new Error("Meta must not be called when automation is disabled");
+    },
+  });
+
+  assert.equal(calls[0][0], "cancelled");
+  assert.match(calls[0][3], /automated replies are disabled/i);
+  assert.equal(calls[1][0], "attention");
+});
+
+test("concurrent accepted WAMID wins over an ambiguity update", async () => {
+  const calls = [];
+  const repository = {
+    async recoverStaleProcessing() { return []; },
+    async claimDue() { return [baseRow()]; },
+    async markSent(id, lease) {
+      calls.push(["sent", id, lease]);
+    },
+    async markFailed() {
+      throw new Error("accepted delivery must not be marked failed");
+    },
+    async findNextDueAt() { return null; },
+  };
+  const messages = {
+    async markDeliveryUnknownIfUnconfirmed() {
+      return {
+        marked: false,
+        accepted: true,
+        message: {
+          id: 10,
+          contact_id: 20,
+          whatsapp_message_id: "wamid.concurrent",
+          delivery_status: "pending",
+        },
+      };
+    },
+  };
+  const contacts = {
+    async clearDeliveryAttentionIfNoFailedMessages(id) {
+      calls.push(["clear", id]);
+    },
+    async setDeliveryAttention() {
+      throw new Error("accepted delivery must not raise attention");
+    },
+  };
+
+  await runWhatsappOutboundRetryQueue({
+    repository,
+    messages,
+    contacts,
+    evidence: {
+      async recordOutcome(input) {
+        calls.push(["evidence", input.providerMessageId]);
+      },
+    },
+    async sendMessage() {
+      return {
+        success: false,
+        wamid: null,
+        ambiguous: true,
+        retryable: false,
+        error: "network timeout",
+      };
+    },
+  });
+
+  assert.deepEqual(calls, [
+    ["sent", 1, "lease-1"],
+    ["evidence", "wamid.concurrent"],
+    ["clear", 20],
+  ]);
 });
