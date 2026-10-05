@@ -1,4 +1,13 @@
 const DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS = 7 * 24;
+const RESULT_MEDIA_TRIGGER_MODES = new Set(["off", "price_only", "service_enquiry"]);
+const SERVICE_QUERY_SOURCES = new Set(["customer_message", "conversation", "meta_ad"]);
+
+function normalizeResultMediaTriggerMode(entry) {
+  const configured = String(entry?.triggerMode || "").trim();
+  if (RESULT_MEDIA_TRIGGER_MODES.has(configured)) return configured;
+  // Backward compatibility for configs/snapshots created before triggerMode.
+  return entry?.sendAfterPrice === true ? "price_only" : "off";
+}
 
 function normalizeServiceName(value) {
   return String(value || "").trim().toLocaleLowerCase();
@@ -12,7 +21,7 @@ function matchingResultMediaSet(resultMedia, treatment) {
     (entry) =>
       entry &&
       entry.enabled === true &&
-      entry.sendAfterPrice === true &&
+      normalizeResultMediaTriggerMode(entry) !== "off" &&
       normalizeServiceName(entry.service) === target
   );
   if (matches.length !== 1) return null;
@@ -37,13 +46,14 @@ function matchingResultMediaSet(resultMedia, treatment) {
   return {
     ...entry,
     service: String(entry.service || "").trim(),
+    triggerMode: normalizeResultMediaTriggerMode(entry),
     autoSendCount,
     items,
   };
 }
 
 /**
- * Chooses approved service-level result media after a successful price reply.
+ * Chooses approved service-level result media after a successful AI reply.
  * Automatic proof is deliberately conservative: if any configured result image
  * for this service was accepted inside the duplicate window, do not send more.
  * Once the cooldown expires, continue with the example after the most recently
@@ -70,6 +80,9 @@ function rotateAfter(items, lastImageUrl) {
 }
 
 async function resolveResultMediaForReply({
+  serviceQuery,
+  serviceQuerySource,
+  metaAdCreativeService = null,
   priceQuery,
   packageQuery,
   treatment,
@@ -85,7 +98,6 @@ async function resolveResultMediaForReply({
   duplicateWindowHours = DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS,
 }) {
   if (
-    priceQuery !== true ||
     !treatment ||
     flagged ||
     bookingReady ||
@@ -98,6 +110,31 @@ async function resolveResultMediaForReply({
 
   const resultSet = matchingResultMediaSet(resultMedia, treatment);
   if (!resultSet) return null;
+
+  const sourceIsTrusted = SERVICE_QUERY_SOURCES.has(serviceQuerySource);
+  const metaAdSourceVerified =
+    serviceQuerySource !== "meta_ad" ||
+    (
+      normalizeServiceName(metaAdCreativeService) &&
+      normalizeServiceName(metaAdCreativeService) === normalizeServiceName(treatment)
+    );
+  const trustedServiceQuery =
+    serviceQuery === true && sourceIsTrusted && metaAdSourceVerified;
+
+  // If the model says this turn's service came from Meta, the deterministic
+  // creative mapping must agree with treatment for every automatic result-media
+  // mode, including legacy price_only sets.
+  if (serviceQuerySource === "meta_ad" && !metaAdSourceVerified) return null;
+
+  // service_enquiry mode is deliberately fail-closed: even a price/package
+  // question must carry the structured one-service intent signal. For meta_ad
+  // intent, the backend-resolved headline/body service must equal treatment;
+  // model-only guesses or ambiguous creative can never unlock result media.
+  const intentEligible =
+    resultSet.triggerMode === "service_enquiry"
+      ? trustedServiceQuery
+      : priceQuery === true;
+  if (!intentEligible) return null;
 
   if (
     typeof wasMediaRecentlySent !== "function" ||
@@ -124,12 +161,17 @@ async function resolveResultMediaForReply({
 
   return {
     service: resultSet.service,
+    triggerMode: resultSet.triggerMode,
+    serviceQuerySource: trustedServiceQuery ? serviceQuerySource : null,
     items: rotatedItems.slice(0, resultSet.autoSendCount),
   };
 }
 
 module.exports = {
   DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS,
+  RESULT_MEDIA_TRIGGER_MODES,
+  SERVICE_QUERY_SOURCES,
+  normalizeResultMediaTriggerMode,
   matchingResultMediaSet,
   mediaIdentity,
   rotateAfter,

@@ -34,6 +34,10 @@ function buildConversationOutputSchema() {
         type: "string",
         enum: ["normal", "needs_human", "booking_ready"],
       },
+      serviceQuery: { type: "boolean" },
+      serviceQuerySource: {
+        enum: ["customer_message", "conversation", "meta_ad", null],
+      },
       priceQuery: { type: "boolean" },
       packageQuery: { type: "boolean" },
       promotionOption: nullableString(),
@@ -50,6 +54,8 @@ function buildConversationOutputSchema() {
     required: [
       "reply",
       "outcome",
+      "serviceQuery",
+      "serviceQuerySource",
       "priceQuery",
       "packageQuery",
       "promotionOption",

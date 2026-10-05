@@ -27,6 +27,8 @@ function validConversationReply() {
   return {
     reply: "可以的，你想先了解3D小颜术哪一方面呢？",
     outcome: "normal",
+    serviceQuery: false,
+    serviceQuerySource: null,
     priceQuery: false,
     packageQuery: false,
     promotionOption: null,
@@ -77,6 +79,8 @@ test("Claude customer replies use native structured outputs and the workspace he
     [
       "reply",
       "outcome",
+      "serviceQuery",
+      "serviceQuerySource",
       "priceQuery",
       "packageQuery",
       "promotionOption",
@@ -106,6 +110,7 @@ test("Claude comment automation gets the comment-specific structured schema", ()
   assert.ok(schema.required.includes("publicReply"));
   assert.ok(schema.required.includes("privateReply"));
   assert.ok(schema.required.includes("shouldRespond"));
+  assert.equal(Object.prototype.hasOwnProperty.call(schema.properties, "serviceQuery"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(schema.properties, "priceQuery"), false);
 });
 

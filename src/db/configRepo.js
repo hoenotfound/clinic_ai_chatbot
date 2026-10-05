@@ -71,15 +71,25 @@ function privateResultMediaUrl(url) {
 
 function normalizeResultMediaUrls(resultMedia) {
   if (!Array.isArray(resultMedia)) return [];
-  return resultMedia.map((entry) => ({
-    ...entry,
-    items: Array.isArray(entry?.items)
-      ? entry.items.map((item) => ({
-          ...item,
-          imageUrl: privateResultMediaUrl(item?.imageUrl),
-        }))
-      : [],
-  }));
+  return resultMedia.map((entry) => {
+    const configuredMode = String(entry?.triggerMode || "").trim();
+    const triggerMode = ["off", "price_only", "service_enquiry"].includes(configuredMode)
+      ? configuredMode
+      : entry?.sendAfterPrice === true
+        ? "price_only"
+        : "off";
+    const { sendAfterPrice: _legacySendAfterPrice, ...rest } = entry || {};
+    return {
+      ...rest,
+      triggerMode,
+      items: Array.isArray(entry?.items)
+        ? entry.items.map((item) => ({
+            ...item,
+            imageUrl: privateResultMediaUrl(item?.imageUrl),
+          }))
+        : [],
+    };
+  });
 }
 
 function hydrateStoredConfig(storedConfig = {}) {

@@ -334,3 +334,62 @@ test("structured replies expose an explicit packageQuery signal independently of
   assert.equal(result.packageQuery, true);
   assert.equal(result.promotionOption, null);
 });
+
+
+test("structured replies expose a canonical service enquiry and source", () => {
+  const result = parseAiReplyResult(JSON.stringify({
+    reply: "HIFU主要是做提拉和紧致，你可以先了解看看。",
+    outcome: "normal",
+    serviceQuery: true,
+    serviceQuerySource: "meta_ad",
+    priceQuery: false,
+    packageQuery: false,
+    promotionOption: null,
+    treatment: "HIFU Non-Surgical Facelift",
+    branch: null,
+    appointmentPreference: null,
+  }));
+
+  assert.equal(result.serviceQuery, true);
+  assert.equal(result.serviceQuerySource, "meta_ad");
+  assert.equal(result.details.treatment, "HIFU Non-Surgical Facelift");
+});
+
+test("service enquiry fails closed without a valid source or canonical service", () => {
+  const badSource = parseAiReplyResult(JSON.stringify({
+    reply: "HIFU可以先了解看看。",
+    outcome: "normal",
+    serviceQuery: true,
+    serviceQuerySource: "campaign_name",
+    priceQuery: false,
+    packageQuery: false,
+    promotionOption: null,
+    treatment: "HIFU Non-Surgical Facelift",
+    branch: null,
+    appointmentPreference: null,
+  }));
+  assert.equal(badSource.serviceQuery, false);
+  assert.equal(badSource.serviceQuerySource, null);
+
+  const unknownService = parseAiReplyResult(JSON.stringify({
+    reply: "这个项目可以先了解看看。",
+    outcome: "normal",
+    serviceQuery: true,
+    serviceQuerySource: "customer_message",
+    priceQuery: false,
+    packageQuery: false,
+    promotionOption: null,
+    treatment: "Made Up Service",
+    branch: null,
+    appointmentPreference: null,
+  }));
+  assert.equal(unknownService.serviceQuery, false);
+  assert.equal(unknownService.serviceQuerySource, null);
+  assert.equal(unknownService.details.treatment, null);
+});
+
+test("legacy replies never claim a service enquiry", () => {
+  const result = parseAiReplyResult("[[NEEDS_HUMAN]] our team will help");
+  assert.equal(result.serviceQuery, false);
+  assert.equal(result.serviceQuerySource, null);
+});

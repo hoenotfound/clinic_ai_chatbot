@@ -39,7 +39,7 @@ const COLLECTION_DIFF_SPECS = Object.freeze({
   },
   resultMedia: {
     identity: "service",
-    fields: ["enabled", "sendAfterPrice", "autoSendCount", "items"],
+    fields: ["enabled", "triggerMode", "sendAfterPrice", "autoSendCount", "items"],
   },
   services: {
     identity: "name",
