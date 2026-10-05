@@ -1,7 +1,7 @@
 const GRAPH_API_VERSION = "v26.0";
 const { normalizeWhatsAppReferral } = require("../utils/leadAttribution");
 
-const TRANSIENT_SEND_HTTP_STATUSES = new Set([429, 500, 502, 503, 504]);
+const TRANSIENT_SEND_HTTP_STATUSES = new Set([429]);
 const TRANSIENT_SEND_ERROR_CODES = new Set([131000, 131016]);
 
 function parseWhatsappApiError(rawBody) {
@@ -22,7 +22,6 @@ function classifyWhatsappSendFailure(httpStatus, rawBody) {
   const normalizedStatus = Number(httpStatus);
   const retryable =
     TRANSIENT_SEND_HTTP_STATUSES.has(normalizedStatus) ||
-    (normalizedStatus >= 500 && normalizedStatus <= 599) ||
     (normalizedCode !== null && TRANSIENT_SEND_ERROR_CODES.has(normalizedCode));
   const error = String(
     providerError?.error_data?.details ||
