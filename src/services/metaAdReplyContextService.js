@@ -40,6 +40,14 @@ function normalizeMetaAdReplyContext(row) {
     : null;
 }
 
+function hasMetaAdCreativeContext(context) {
+  if (!context || typeof context !== "object") return false;
+  return Boolean(
+    cleanContextText(context.headline, FIELD_LIMITS.headline)
+    || cleanContextText(context.body, FIELD_LIMITS.body)
+  );
+}
+
 async function loadMetaAdReplyContext(
   contactId,
   { repo = leadAttributionRepo } = {}
@@ -54,6 +62,7 @@ async function loadMetaAdReplyContext(
 module.exports = {
   FIELD_LIMITS,
   cleanContextText,
+  hasMetaAdCreativeContext,
   normalizeMetaAdReplyContext,
   loadMetaAdReplyContext,
 };
