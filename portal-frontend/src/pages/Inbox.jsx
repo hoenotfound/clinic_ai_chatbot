@@ -1729,6 +1729,12 @@ function ThreadView({
     canReplyToLeads &&
     messagingPolicy.channel === "whatsapp" &&
     !messagingPolicy.freeformAllowed;
+  const whatsappTemplateOptInRecorded = Boolean(
+    (contact?.whatsapp_opt_in_at || contact?.whatsappOptInAt) &&
+    (contact?.whatsapp_opt_in_source || contact?.whatsappOptInSource)
+  );
+  const whatsappTemplateNeedsOptIn =
+    whatsappTemplateAvailable && !whatsappTemplateOptInRecorded;
   const replyWindowCompactLabel = quietReplyAvailable
     ? String(messagingPolicy.label || "")
         .replace(/^Reply available\s*·\s*/i, "")
@@ -2289,13 +2295,22 @@ function ThreadView({
                       : " Automated follow-ups remain blocked."}
                   </p>
                 )}
+                {whatsappTemplateNeedsOptIn && (
+                  <p className="mt-1 text-[10px] font-medium leading-4">
+                    {messagingPolicy.code === "opted_out"
+                      ? "This customer opted out. Record a new explicit WhatsApp opt-in before sending any template."
+                      : "WhatsApp opt-in is not recorded. Record confirmed consent in the template window before sending."}
+                  </p>
+                )}
                 {whatsappTemplateAvailable && (
                   <button
                     type="button"
                     onClick={onOpenWhatsAppTemplates}
                     className="mt-2 inline-flex touch-manipulation items-center rounded-lg bg-amber-900 px-3 py-1.5 text-[10px] font-semibold text-white transition hover:bg-amber-950"
                   >
-                    Send WhatsApp template
+                    {whatsappTemplateNeedsOptIn
+                      ? "Record opt-in & choose template"
+                      : "Send WhatsApp template"}
                   </button>
                 )}
               </div>
