@@ -96,6 +96,11 @@ test("successful retry attaches the new WAMID to the original message", async ()
     repository,
     messages,
     contacts,
+    evidence: {
+      async recordOutcome(input) {
+        calls.push(["evidence", input.messageId, input.accepted, input.providerMessageId]);
+      },
+    },
     async sendMessage() {
       return { success: true, wamid: "wamid.retry-success" };
     },
@@ -103,7 +108,8 @@ test("successful retry attaches the new WAMID to the original message", async ()
 
   assert.deepEqual(calls[0], ["wamid", 10, "wamid.retry-success"]);
   assert.deepEqual(calls[1], ["sent", 1, "lease-1"]);
-  assert.deepEqual(calls[2], ["clear", 20]);
+  assert.deepEqual(calls[2], ["evidence", 10, true, "wamid.retry-success"]);
+  assert.deepEqual(calls[3], ["clear", 20]);
 });
 
 test("ambiguous retry never resends automatically", async () => {
@@ -251,6 +257,11 @@ test("stale retry with a durable WAMID is completed without resending", async ()
     repository,
     messages: {},
     contacts,
+    evidence: {
+      async recordOutcome(input) {
+        calls.push(["evidence", input.messageId, input.providerMessageId]);
+      },
+    },
     async sendMessage() {
       throw new Error("durably accepted retry must never be resent");
     },
@@ -258,6 +269,7 @@ test("stale retry with a durable WAMID is completed without resending", async ()
 
   assert.deepEqual(calls, [
     ["sent", 1, "recovered-accepted-lease"],
+    ["evidence", 10, "wamid.already-accepted"],
     ["clear", 20],
   ]);
 });
