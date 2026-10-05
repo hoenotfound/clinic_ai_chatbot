@@ -1,6 +1,7 @@
 const messagesRepo = require("../db/messagesRepo");
 const repository = require("../db/whatsappDeliveryStatusRepo");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
+const whatsappOutboundRetry = require("./whatsappOutboundRetryService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 
@@ -52,6 +53,7 @@ function createWhatsAppDeliveryStatusService({
   publish = defaultPublish,
   publishContact = defaultPublishContact,
   sendDeliveryFailureAlert = telegramImmediateAlerts.sendDeliveryFailureAlert,
+  queueTransientFailureRetry = whatsappOutboundRetry.queueDeliveryFailureRetry,
   logger = console,
 } = {}) {
   let recoveryRunning = false;
@@ -126,7 +128,30 @@ function createWhatsAppDeliveryStatusService({
       }
     }
 
-    const failure = await restoreFailureAttention(job, updatedMessage);
+    let transientRetryQueued = false;
+    if (
+      job.delivery_status === "failed" &&
+      updatedMessage.delivery_status === "failed" &&
+      typeof queueTransientFailureRetry === "function"
+    ) {
+      const queued = await queueTransientFailureRetry({
+        messageId: updatedMessage.id,
+        contactId: updatedMessage.contact_id,
+        errorText: deliveryFailureReason(job),
+        providerErrorCode: job.error_code,
+      });
+      transientRetryQueued = Boolean(queued);
+      if (transientRetryQueued) {
+        logger.warn(
+          `Queued transient WhatsApp delivery failure for message ${updatedMessage.id} ` +
+          `(provider code ${job.error_code || "unknown"}) for automatic retry.`
+        );
+      }
+    }
+
+    const failure = transientRetryQueued
+      ? null
+      : await restoreFailureAttention(job, updatedMessage);
     if (failure) {
       logger.error(
         `Delivery failed for message ${job.wamid}${job.error_code ? ` (code ${job.error_code})` : ""}:`,

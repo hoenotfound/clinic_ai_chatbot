@@ -889,3 +889,46 @@ test("recovery completes a durable cancelled outbound attempt without replaying 
   assert.equal(handled, true);
   assert.deepEqual(calls, [["completed", job.id]]);
 });
+
+
+test("recovered rejected outbound with active WhatsApp retry completes without delivery attention", async () => {
+  const calls = [];
+  const job = {
+    id: 9991,
+    contact_id: 77,
+    message_id: 19991,
+    status: "processing",
+    attempts: 2,
+  };
+  const repository = {
+    async getOutboundAttempt(jobId) {
+      assert.equal(jobId, job.id);
+      return {
+        outcome: "rejected",
+        assistant_message_id: 29991,
+        provider_message_id: null,
+        whatsapp_message_id: null,
+        delivery_status: "failed",
+        error_text: "Meta 131000",
+        whatsapp_retry_status: "scheduled",
+      };
+    },
+    async markCompleted(jobId) {
+      calls.push(["completed", jobId]);
+      return { id: jobId, status: "completed" };
+    },
+  };
+  const contacts = {
+    async setDeliveryAttention() {
+      throw new Error("active retry must own delivery recovery");
+    },
+    async setAttention() {
+      throw new Error("active retry must not create generic attention");
+    },
+  };
+
+  const handled = await reconcileRecoveredOutbound(job, { repository, contacts });
+
+  assert.equal(handled, true);
+  assert.deepEqual(calls, [["completed", job.id]]);
+});

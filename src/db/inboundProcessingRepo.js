@@ -378,7 +378,30 @@ async function getOutboundAttempt(processingJobId, database = pool) {
      WHERE a.processing_job_id = $1`,
     [safeJobId]
   );
-  return result.rows[0] || null;
+  const attempt = result.rows[0] || null;
+  if (!attempt?.assistant_message_id) return attempt;
+
+  // Keep the inbound-processing repository usable in isolated tests and during
+  // startup/migration boundaries where migration 039 may not exist yet. Retry
+  // ownership is additive recovery metadata, not a prerequisite for reading
+  // the durable outbound attempt itself.
+  try {
+    const retryResult = await database.query(
+      `SELECT status, processing_kind
+       FROM whatsapp_outbound_retries
+       WHERE message_id = $1`,
+      [attempt.assistant_message_id]
+    );
+    const retry = retryResult.rows[0] || null;
+    attempt.whatsapp_retry_status = retry?.status || null;
+    attempt.whatsapp_retry_processing_kind = retry?.processing_kind || null;
+  } catch (err) {
+    if (err?.code !== "42P01") throw err;
+    attempt.whatsapp_retry_status = null;
+    attempt.whatsapp_retry_processing_kind = null;
+  }
+
+  return attempt;
 }
 
 async function finalizeOutboundAttempt(
@@ -408,6 +431,41 @@ async function finalizeOutboundAttempt(
                started_at, finalized_at`,
     [
       safeJobId,
+      safeOutcome,
+      providerMessageId ? String(providerMessageId) : null,
+      errorText ? String(errorText).slice(0, 1000) : null,
+    ]
+  );
+  return result.rows[0] || null;
+}
+
+async function finalizeOutboundAttemptByAssistantMessageId(
+  assistantMessageId,
+  { outcome, providerMessageId = null, errorText = null } = {},
+  database = pool
+) {
+  const safeMessageId = Number(assistantMessageId);
+  const safeOutcome = String(outcome || "").trim();
+  if (!Number.isSafeInteger(safeMessageId) || safeMessageId < 1) {
+    throw new TypeError("assistantMessageId must be a positive integer.");
+  }
+  if (!["accepted", "rejected", "cancelled", "ambiguous"].includes(safeOutcome)) {
+    throw new TypeError("outcome must be accepted, rejected, cancelled or ambiguous.");
+  }
+
+  const result = await database.query(
+    `UPDATE inbound_outbound_attempts
+     SET outcome = $2,
+         provider_message_id = $3,
+         error_text = $4,
+         finalized_at = NOW(),
+         updated_at = NOW()
+     WHERE assistant_message_id = $1
+     RETURNING processing_job_id, inbound_message_id, assistant_message_id,
+               contact_id, origin, outcome, provider_message_id, error_text,
+               started_at, finalized_at`,
+    [
+      safeMessageId,
       safeOutcome,
       providerMessageId ? String(providerMessageId) : null,
       errorText ? String(errorText).slice(0, 1000) : null,
@@ -1011,6 +1069,7 @@ module.exports = {
   cancelOutboundAttempt,
   getOutboundAttempt,
   finalizeOutboundAttempt,
+  finalizeOutboundAttemptByAssistantMessageId,
   markOutboundAttemptAmbiguous,
   storeMetaResolutionClaim,
 };

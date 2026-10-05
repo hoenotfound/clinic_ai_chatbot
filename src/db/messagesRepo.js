@@ -919,6 +919,49 @@ async function setDeliveryStatusById(messageId, status, errorText = null) {
   return result.rows[0] || null;
 }
 
+async function markDeliveryUnknownIfUnconfirmed(messageId, errorText = null) {
+  const updated = await pool.query(
+    `UPDATE messages
+     SET whatsapp_message_id = NULL,
+         delivery_status = 'unknown',
+         delivery_error = $2
+     WHERE id = $1
+       AND role = 'assistant'
+       AND (
+         delivery_status IS NULL
+         OR delivery_status IN ('failed', 'unknown')
+       )
+     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
+    [messageId, errorText]
+  );
+  if (updated.rows[0]) {
+    return {
+      marked: true,
+      accepted: false,
+      message: updated.rows[0],
+    };
+  }
+
+  const current = await pool.query(
+    `SELECT ${LIGHTWEIGHT_MESSAGE_COLUMNS}
+     FROM messages
+     WHERE id = $1`,
+    [messageId]
+  );
+  const message = current.rows[0] || null;
+  const status = String(message?.delivery_status || "").toLowerCase();
+  return {
+    marked: false,
+    accepted:
+      ["pending", "sent", "delivered", "read"].includes(status) ||
+      (
+        Boolean(message?.whatsapp_message_id) &&
+        !["failed", "unknown"].includes(status)
+      ),
+    message,
+  };
+}
+
 async function hasStaffReplyAfter(contactId, inboundMessageId, query = pool.query.bind(pool)) {
   const safeContactId = Number(contactId);
   const safeInboundMessageId = Number(inboundMessageId);
@@ -1453,5 +1496,6 @@ module.exports = {
   setWhatsappMessageId,
   setSocialProviderMessageId,
   setDeliveryStatusById,
+  markDeliveryUnknownIfUnconfirmed,
   updateDeliveryStatusByWamid,
 };

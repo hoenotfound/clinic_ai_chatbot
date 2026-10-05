@@ -14,6 +14,9 @@ const {
 const {
   startWhatsAppDeliveryStatusRecovery,
 } = require("./whatsappDeliveryStatusService");
+const {
+  startWhatsappOutboundRetryWorker,
+} = require("./whatsappOutboundRetryService");
 const metaCommentAutomation = require("./metaCommentAutomationService");
 const { start: startMetaAdsInsightsSync } = require("./metaAdsInsightsSyncService");
 const {
@@ -76,6 +79,7 @@ async function startApplication({
 
     startInboundProcessingRecovery({ processBatch: processIncomingBatch });
     startWhatsAppDeliveryStatusRecovery();
+    startWhatsappOutboundRetryWorker();
     startTelegramImmediateAlertRecovery();
     startScheduledMessageWorker();
     startAutomatedFollowUps();
