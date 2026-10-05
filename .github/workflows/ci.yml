@@ -27,6 +27,18 @@ jobs:
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/clinic_ai_test
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Reject edits to applied migration files
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          changed="$(git diff --name-only --diff-filter=MDR "${{ github.event.pull_request.base.sha }}" HEAD -- 'src/db/migrations/*.sql')"
+          if [ -n "$changed" ]; then
+            echo "Existing migration files are immutable once merged. Add a new numbered migration instead."
+            echo "$changed"
+            exit 1
+          fi
       - uses: actions/setup-node@v7
         with:
           node-version: 22

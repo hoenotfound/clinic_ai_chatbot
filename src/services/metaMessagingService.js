@@ -547,9 +547,11 @@ async function fetchLatestConversationMessage(channel) {
   const url =
     `${config.baseUrl}/${GRAPH_API_VERSION}/${config.senderId}/conversations` +
     `?fields=${encodeURIComponent("messages.limit(1){message,from,created_time}")}` +
-    `${platformParam}&access_token=${encodeURIComponent(config.token)}`;
+    platformParam;
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${config.token}` },
+    });
     const data = await response.json();
     if (!response.ok) {
       console.error(
@@ -571,9 +573,11 @@ async function fetchMessageById(channel, mid) {
   const config = getChannelConfig(channel);
   if (!config.token || !mid) return null;
 
-  const url = `${config.baseUrl}/${GRAPH_API_VERSION}/${encodeURIComponent(mid)}?fields=from,message&access_token=${encodeURIComponent(config.token)}`;
+  const url = `${config.baseUrl}/${GRAPH_API_VERSION}/${encodeURIComponent(mid)}?fields=from,message`;
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${config.token}` },
+    });
     const data = await response.json();
     if (!response.ok) {
       console.error(

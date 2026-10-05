@@ -72,7 +72,12 @@ async function persistStaffEchoIfNew(
          FROM contacts
          WHERE id = $1
            AND mode = 'human'
-           AND takeover_by = $4
+           AND takeover_by = $3
+       ), current_echo AS (
+         SELECT id, created_at
+         FROM messages
+         WHERE id = $2
+           AND contact_id = $1
        ), latest_inbound AS (
          SELECT inbound.id, inbound.created_at
          FROM messages inbound, eligible_contact
@@ -82,14 +87,14 @@ async function persistStaffEchoIfNew(
          LIMIT 1
        ), anchor AS (
          SELECT outbound.id, outbound.sent_by_username
-         FROM messages outbound, eligible_contact, latest_inbound
+         FROM messages outbound, eligible_contact, latest_inbound, current_echo
          WHERE outbound.contact_id = eligible_contact.id
            AND outbound.role = 'assistant'
            AND outbound.is_automated_follow_up = false
            AND (outbound.created_at, outbound.id) >
                (latest_inbound.created_at, latest_inbound.id)
            AND (outbound.created_at, outbound.id) <
-               ($2::timestamptz, $3::bigint)
+               (current_echo.created_at, current_echo.id)
          ORDER BY outbound.created_at DESC, outbound.id DESC
          LIMIT 1
        )
@@ -113,7 +118,6 @@ async function persistStaffEchoIfNew(
        ON CONFLICT (trigger_message_id, follow_up_step) DO NOTHING`,
       [
         contactId,
-        message.created_at,
         message.id,
         syntheticHandoffOwner || null,
       ]
