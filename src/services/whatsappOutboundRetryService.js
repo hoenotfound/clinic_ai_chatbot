@@ -452,6 +452,7 @@ async function runWhatsappOutboundRetryQueue({
   for (const row of retries) {
     const leaseToken = row.lease_token;
     let acceptedPersisted = false;
+    let providerAcceptedUnpersisted = false;
     let providerCallStarted = false;
     let providerResultResolved = false;
 
@@ -540,6 +541,7 @@ async function runWhatsappOutboundRetryQueue({
       }
 
       if (result?.success && result?.wamid) {
+        providerAcceptedUnpersisted = true;
         const updated = await messages.setWhatsappMessageId(
           row.message_id,
           result.wamid
@@ -553,6 +555,7 @@ async function runWhatsappOutboundRetryQueue({
         }
 
         acceptedPersisted = true;
+        providerAcceptedUnpersisted = false;
         publishDeliveryStatus(updated);
         await repository.markSent(row.id, leaseToken);
         await recordAcceptedEvidence(row, result.wamid, evidence);
@@ -620,7 +623,10 @@ async function runWhatsappOutboundRetryQueue({
         continue;
       }
 
-      if (!providerCallStarted || providerResultResolved) {
+      if (
+        !providerAcceptedUnpersisted &&
+        (!providerCallStarted || providerResultResolved)
+      ) {
         // No ambiguous provider call exists in this branch. Preserve a durable
         // attention-only retry instead of converting a known rejection or a
         // pre-send failure into an "unknown delivery" state.
