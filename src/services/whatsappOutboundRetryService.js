@@ -95,15 +95,40 @@ async function failClosedAmbiguous(row, reason, {
   repository = retryRepo,
   messages = messagesRepo,
   contacts = contactsRepo,
+  evidence = outboundMessageEvidenceRepo,
   leaseToken = row.lease_token,
 } = {}) {
   const errorText = String(reason || "WhatsApp delivery could not be confirmed.");
-  const updated = await messages.setDeliveryStatusById(
-    row.message_id,
-    "unknown",
-    errorText
-  );
-  publishDeliveryStatus(updated);
+  let state;
+
+  if (typeof messages.markDeliveryUnknownIfUnconfirmed === "function") {
+    state = await messages.markDeliveryUnknownIfUnconfirmed(
+      row.message_id,
+      errorText
+    );
+  } else {
+    const updated = await messages.setDeliveryStatusById(
+      row.message_id,
+      "unknown",
+      errorText
+    );
+    state = { marked: Boolean(updated), accepted: false, message: updated };
+  }
+
+  if (state?.accepted) {
+    if (leaseToken) {
+      await repository.markSent(row.id, leaseToken);
+    }
+    await recordAcceptedEvidence(
+      row,
+      state.message?.whatsapp_message_id,
+      evidence
+    );
+    await contacts.clearDeliveryAttentionIfNoFailedMessages(row.contact_id);
+    return { accepted: true, message: state.message || null };
+  }
+
+  publishDeliveryStatus(state?.message || null);
   await contacts.setDeliveryAttention(
     row.contact_id,
     `Delivery unconfirmed: ${errorText}`
@@ -111,6 +136,7 @@ async function failClosedAmbiguous(row, reason, {
   if (leaseToken) {
     await repository.markFailed(row.id, leaseToken, errorText);
   }
+  return { accepted: false, message: state?.message || null };
 }
 
 async function runWhatsappOutboundRetryQueue({
@@ -141,6 +167,7 @@ async function runWhatsappOutboundRetryQueue({
       repository,
       messages,
       contacts,
+      evidence,
       leaseToken: row.lease_token,
     }).catch((err) => {
       console.error(
@@ -218,6 +245,7 @@ async function runWhatsappOutboundRetryQueue({
           repository,
           messages,
           contacts,
+          evidence,
           leaseToken,
         });
         continue;
@@ -267,7 +295,7 @@ async function runWhatsappOutboundRetryQueue({
       await failClosedAmbiguous(
         row,
         "WhatsApp retry was interrupted and delivery could not be confirmed. Check the customer chat before replying.",
-        { repository, messages, contacts, leaseToken }
+        { repository, messages, contacts, evidence, leaseToken }
       ).catch((surfaceErr) => {
         console.error(
           `Failed to surface interrupted WhatsApp retry ${row.id}:`,
