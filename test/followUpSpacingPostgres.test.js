@@ -34,6 +34,7 @@ test(
           channel_user_id TEXT,
           needs_attention BOOLEAN NOT NULL DEFAULT false,
           attention_reason TEXT,
+          is_unread BOOLEAN NOT NULL DEFAULT false,
           mode TEXT NOT NULL DEFAULT 'ai',
           takeover_by TEXT,
           takeover_at TIMESTAMPTZ,
