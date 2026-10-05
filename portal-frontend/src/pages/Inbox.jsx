@@ -1454,7 +1454,6 @@ function ThreadView({
   const actionsMenuRef = useRef(null);
   const mountedRef = useRef(true);
   const activeContactIdRef = useRef(contact?.contact_id);
-  const activeContactModeRef = useRef(contact?.mode);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [imageFile, setImageFile] = useState(null);
@@ -1471,7 +1470,6 @@ function ThreadView({
   const [policyNow, setPolicyNow] = useState(Date.now());
 
   activeContactIdRef.current = contact?.contact_id;
-  activeContactModeRef.current = contact?.mode;
   const messagingPolicy = messagingPolicyStatus(contact, policyNow);
   const policyBlocksComposer = messagingPolicy.applies && !messagingPolicy.manualReplyAllowed;
   const quietReplyAvailable =
@@ -1494,14 +1492,6 @@ function ThreadView({
       requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ block: "end" }));
     }
   }, [messages, loading]);
-
-  useEffect(() => {
-    if (contact && contact.mode !== "human") {
-      cancelRecording();
-      clearVoice();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contact?.mode]);
 
   useEffect(() => {
     if (!policyBlocksComposer) return;
