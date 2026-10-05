@@ -1233,13 +1233,15 @@ async function applyWhatsappReaction(reaction) {
     await client.query("BEGIN");
     transactionStarted = true;
 
-    const target = await findWhatsappReactionTarget(
+    let target = await findWhatsappReactionTarget(
       client,
       targetWhatsappMessageId
     );
+    let currentWasQueued = false;
+    let queuedChanged = false;
 
     if (!target) {
-      const changed = await queuePendingWhatsappReaction(client, {
+      queuedChanged = await queuePendingWhatsappReaction(client, {
         targetWhatsappMessageId,
         reactorWhatsappId,
         reactorKey,
@@ -1248,18 +1250,32 @@ async function applyWhatsappReaction(reaction) {
         providerTimestamp,
         receivedAt,
       });
-      await pruneExpiredPendingWhatsappReactions(client);
-      await client.query("COMMIT");
-      transactionStarted = false;
+      currentWasQueued = true;
 
-      console.warn(
-        `[WhatsApp reaction] Target ${targetWhatsappMessageId} is not available locally yet; queued reaction for reconciliation.`
+      // Close the narrow race where setWhatsappMessageId() commits after our
+      // first lookup but before this pending row becomes visible to its
+      // reconciliation pass. PostgreSQL READ COMMITTED gives this second query
+      // a fresh snapshot; if the WAMID appeared meanwhile, consume the pending
+      // row ourselves before acknowledging Meta.
+      target = await findWhatsappReactionTarget(
+        client,
+        targetWhatsappMessageId
       );
-      return {
-        pending: true,
-        targetMessageId: targetWhatsappMessageId,
-        changed,
-      };
+
+      if (!target) {
+        await pruneExpiredPendingWhatsappReactions(client);
+        await client.query("COMMIT");
+        transactionStarted = false;
+
+        console.warn(
+          `[WhatsApp reaction] Target ${targetWhatsappMessageId} is not available locally yet; queued reaction for reconciliation.`
+        );
+        return {
+          pending: true,
+          targetMessageId: targetWhatsappMessageId,
+          changed: queuedChanged,
+        };
+      }
     }
 
     await client.query(
@@ -1273,22 +1289,24 @@ async function applyWhatsappReaction(reaction) {
       contactId: target.contact_id,
     });
 
-    const currentChanged = await upsertWhatsappReactionState(client, {
-      targetMessageId: target.id,
-      contactId: target.contact_id,
-      reactorKey,
-      emoji,
-      providerReactionMessageId,
-      providerTimestamp,
-      receivedAt,
-    });
+    const currentChanged = currentWasQueued
+      ? false
+      : await upsertWhatsappReactionState(client, {
+          targetMessageId: target.id,
+          contactId: target.contact_id,
+          reactorKey,
+          emoji,
+          providerReactionMessageId,
+          providerTimestamp,
+          receivedAt,
+        });
 
     const reactions = await readActiveWhatsappReactions(client, target.id);
     await pruneExpiredPendingWhatsappReactions(client);
     await client.query("COMMIT");
     transactionStarted = false;
 
-    const changed = pending.changed || currentChanged;
+    const changed = pending.changed || currentChanged || queuedChanged;
     console.log(
       `[WhatsApp reaction] ${changed ? "Applied" : "Ignored stale/duplicate"} reaction for local message ${target.id}.`
     );
