@@ -783,6 +783,11 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
     .getByPlaceholder("Write the next follow-up message.")
     .fill("Still deciding? I can help with the details.");
 
+  await page.getByRole("radio", { name: /AI personalized/ }).last().click();
+  await page
+    .getByPlaceholder(/Gently guide interested customers/)
+    .fill("Continue from the unresolved concern and keep the follow-up low pressure.");
+
   await page.getByText(/Review translations · 0\/3 ready/).click();
   await page.getByRole("button", { name: "中文" }).last().click();
   await page.locator("details[open] textarea").last().fill("这是我手动调整的第二次跟进。");
@@ -813,6 +818,8 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
   expect(savedPayload.automatedFollowUp.additionalSteps).toHaveLength(1);
   expect(savedPayload.automatedFollowUp.additionalSteps[0]).toMatchObject({
     delayMinutes: 480,
+    messageMode: "ai",
+    aiInstruction: "Continue from the unresolved concern and keep the follow-up low pressure.",
     message: "Still deciding? I can help with the details.",
     imageUrl: "https://cdn.example.test/follow-up-step.jpg",
     serviceOverrides: [
