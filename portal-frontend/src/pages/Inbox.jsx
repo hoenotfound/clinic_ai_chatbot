@@ -2605,19 +2605,81 @@ function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
   );
 }
 
+function DeliveryStatusGlyph({ status }) {
+  if (status === "pending") {
+    return (
+      <svg
+        viewBox="0 0 12 12"
+        className="h-3 w-3 shrink-0"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <circle cx="6" cy="6" r="4.6" />
+        <path d="M6 3.4V6l1.8 1.2" />
+      </svg>
+    );
+  }
+
+  if (status === "sent") {
+    return (
+      <svg
+        viewBox="0 0 11 10"
+        className="h-[11px] w-[12px] shrink-0 overflow-visible"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.55"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M1 5.2 3.5 7.6 9.5 1.7" />
+      </svg>
+    );
+  }
+
+  if (status === "delivered" || status === "read") {
+    return (
+      <svg
+        viewBox="0 0 14 10"
+        className="h-[11px] w-[15px] shrink-0 overflow-visible"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M1 5.2 3.4 7.6 8.8 2" />
+        <path d="M5 5.2 7.4 7.6 12.8 2" />
+      </svg>
+    );
+  }
+
+  return null;
+}
+
 function DeliveryIndicator({ status }) {
   const indicators = {
-    pending: { icon: "◷", label: "Queued", className: "text-white/70" },
-    sent: { icon: "✓", label: "Sent", className: "text-white/70" },
-    delivered: { icon: "✓✓", label: "Delivered", className: "text-white/80" },
-    read: { icon: "✓✓", label: "Read", className: "text-cyan-100" },
+    pending: { label: "Queued", className: "text-white/70" },
+    sent: { label: "Sent", className: "text-white/70" },
+    delivered: { label: "Delivered", className: "text-white/80" },
+    read: { label: "Read", className: "text-sky-300" },
   };
   const indicator = indicators[status];
   if (!indicator) return null;
 
   return (
-    <span className={`font-medium ${indicator.className}`} title={indicator.label} aria-label={indicator.label}>
-      {indicator.icon}
+    <span
+      className={`inline-flex h-4 min-w-4 items-center justify-center ${indicator.className}`}
+      title={indicator.label}
+      aria-label={indicator.label}
+      data-delivery-status={status}
+    >
+      <DeliveryStatusGlyph status={status} />
     </span>
   );
 }
