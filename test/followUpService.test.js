@@ -195,6 +195,69 @@ test("first follow-up uses hidden active-promotion copy and does not let AI rewr
   });
 });
 
+test("promotion follow-up without its own graphic does not reuse the generic follow-up image", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "3D text-only delayed offer",
+      linkedService: "3D 小颜术",
+      sendOnPriceQuery: false,
+      caption: "",
+      followUpMessage: "Text-only promotion follow-up",
+      followUpImageUrl: "",
+      imageUrl: "",
+      packages: [],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+  clinicConfig.automatedFollowUp.imageUrl =
+    "https://example.com/generic-follow-up.jpg";
+
+  let claimInput = null;
+  let imageCalls = 0;
+  let sentText = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 703,
+      whatsapp_number: "60111111113",
+      trigger_message_id: 702,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["3D 小颜术多少钱？"],
+      trigger_message_content: "3D 小颜术 First Trial RM488",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 704, contact_id: 703, delivery_status: null };
+  };
+  whatsapp.sendImage = async () => {
+    imageCalls += 1;
+    return { success: true, wamid: "unexpected-image" };
+  };
+  whatsapp.sendMessage = async (number, message) => {
+    sentText = { number, message };
+    return { success: true, wamid: "wamid-704" };
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 703,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(claimInput.content, "Text-only promotion follow-up");
+  assert.equal(claimInput.mediaUrl, null);
+  assert.equal(imageCalls, 0);
+  assert.deepEqual(sentText, {
+    number: "60111111113",
+    message: "Text-only promotion follow-up",
+  });
+});
+
 test("promotion follow-up ignores overlapping active promos that have no delayed follow-up copy", async () => {
   enableTool();
   clinicConfig.promotions = [
@@ -398,6 +461,7 @@ test("generic package price enquiry uses one AI-selected configured offer", asyn
           imageUrl: "",
           caption: "Includes 经络穴位按摩",
           followUpMessage: "Package A｜10月限时优惠价 RM388",
+          followUpImageUrl: "https://example.com/package-a-ai-selected.jpg",
         },
         {
           name: "Package B",
@@ -406,6 +470,7 @@ test("generic package price enquiry uses one AI-selected configured offer", asyn
           imageUrl: "",
           caption: "Includes 子宫护理",
           followUpMessage: "Package B｜10月限时优惠价 RM288",
+          followUpImageUrl: "https://example.com/package-b-ai-selected.jpg",
         },
       ],
       validFrom: null,
@@ -429,6 +494,7 @@ test("generic package price enquiry uses one AI-selected configured offer", asyn
   };
 
   let claimInput = null;
+  let sentSelectedPackageImage = null;
   followUpRepo.findCandidates = async () => [
     {
       contact_id: 721,
@@ -444,6 +510,10 @@ test("generic package price enquiry uses one AI-selected configured offer", asyn
   followUpRepo.saveIfStillEligible = async (input) => {
     claimInput = input;
     return { id: 722, contact_id: 721, delivery_status: null };
+  };
+  whatsapp.sendImage = async (number, imageUrl, caption) => {
+    sentSelectedPackageImage = { number, imageUrl, caption };
+    return { success: true, wamid: "wamid-722" };
   };
   whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-722" });
   messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
@@ -461,6 +531,15 @@ test("generic package price enquiry uses one AI-selected configured offer", asyn
   assert.equal(claimInput.content, "Package A｜10月限时优惠价 RM388");
   assert.equal(claimInput.targetedService, "Pelvic Care");
   assert.equal(claimInput.messageMode, "fixed");
+  assert.equal(
+    claimInput.mediaUrl,
+    "https://example.com/package-a-ai-selected.jpg"
+  );
+  assert.deepEqual(sentSelectedPackageImage, {
+    number: "60133333334",
+    imageUrl: "https://example.com/package-a-ai-selected.jpg",
+    caption: "Package A｜10月限时优惠价 RM388",
+  });
 });
 
 test("generic package price enquiry falls back to the normal first follow-up when AI cannot identify one package", async () => {
