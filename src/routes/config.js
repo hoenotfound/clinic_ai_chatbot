@@ -705,9 +705,25 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
         }
       }
 
+      const linkedService = String(promotion?.linkedService || "").trim();
+      const hasFollowUpMessage =
+        Boolean(String(promotion?.followUpMessage || "").trim()) ||
+        packages.some((item) => Boolean(String(item?.followUpMessage || "").trim()));
+      if (
+        hasFollowUpMessage &&
+        (!linkedService || !serviceNames.has(linkedService.toLowerCase()))
+      ) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Promotion follow-up copy must link to a currently configured service.",
+          invalidKeys: ["promotions"],
+        };
+      }
+
       if (promotion?.sendOnPriceQuery !== true) continue;
 
-      const linkedService = String(promotion?.linkedService || "").trim();
+
       if (!linkedService || !serviceNames.has(linkedService.toLowerCase())) {
         return {
           ok: false,
