@@ -130,6 +130,7 @@ test("first follow-up uses hidden active-promotion copy and does not let AI rewr
       sendOnPriceQuery: false,
       caption: "✨ 3D 小颜术 First Trial: RM488（Normal Price RM888）",
       followUpMessage: "🎁 Free 1-hour 全身通淋巴按摩 + 脸部提升刮痧",
+      followUpImageUrl: "https://example.com/3d-follow-up.jpg",
       imageUrl: "",
       packages: [],
       validFrom: null,
@@ -142,9 +143,11 @@ test("first follow-up uses hidden active-promotion copy and does not let AI rewr
 
   let aiCalls = 0;
   let imageCalls = 0;
-  whatsapp.sendImage = async () => {
+  let sentPromotionImage = null;
+  whatsapp.sendImage = async (number, imageUrl, caption) => {
     imageCalls += 1;
-    return { success: true, wamid: "unexpected-image" };
+    sentPromotionImage = { number, imageUrl, caption };
+    return { success: true, wamid: "wamid-702" };
   };
   let claimInput = null;
   followUpAiService.generatePersonalizedFollowUp = async () => {
@@ -183,8 +186,13 @@ test("first follow-up uses hidden active-promotion copy and does not let AI rewr
   );
   assert.equal(claimInput.targetedService, "3D 小颜术");
   assert.equal(claimInput.messageMode, "fixed");
-  assert.equal(claimInput.mediaUrl, null);
-  assert.equal(imageCalls, 0);
+  assert.equal(claimInput.mediaUrl, "https://example.com/3d-follow-up.jpg");
+  assert.equal(imageCalls, 1);
+  assert.deepEqual(sentPromotionImage, {
+    number: "60111111111",
+    imageUrl: "https://example.com/3d-follow-up.jpg",
+    caption: "🎁 Free 1-hour 全身通淋巴按摩 + 脸部提升刮痧",
+  });
 });
 
 test("promotion follow-up ignores overlapping active promos that have no delayed follow-up copy", async () => {
@@ -310,6 +318,7 @@ test("first follow-up selects the exact configured package offer", async () => {
           imageUrl: "",
           caption: "优惠价 RM488",
           followUpMessage: "10月限时优惠价 RM388",
+          followUpImageUrl: "https://example.com/package-a-follow-up.jpg",
         },
         {
           name: "Package B",
@@ -326,6 +335,7 @@ test("first follow-up selects the exact configured package offer", async () => {
   ];
 
   let claimInput = null;
+  let sentPackageImage = null;
   let selectorCalls = 0;
   followUpAiService.selectPromotionPackageForFollowUp = async () => {
     selectorCalls += 1;
@@ -345,6 +355,10 @@ test("first follow-up selects the exact configured package offer", async () => {
     claimInput = input;
     return { id: 712, contact_id: 711, delivery_status: null };
   };
+  whatsapp.sendImage = async (number, imageUrl, caption) => {
+    sentPackageImage = { number, imageUrl, caption };
+    return { success: true, wamid: "wamid-712" };
+  };
   whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-712" });
   messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
     id,
@@ -358,7 +372,13 @@ test("first follow-up selects the exact configured package offer", async () => {
 
   assert.equal(claimInput.content, "10月限时优惠价 RM388");
   assert.equal(claimInput.targetedService, "Pelvic Care");
+  assert.equal(claimInput.mediaUrl, "https://example.com/package-a-follow-up.jpg");
   assert.equal(selectorCalls, 0);
+  assert.deepEqual(sentPackageImage, {
+    number: "60122222222",
+    imageUrl: "https://example.com/package-a-follow-up.jpg",
+    caption: "10月限时优惠价 RM388",
+  });
 });
 
 test("generic package price enquiry uses one AI-selected configured offer", async () => {
