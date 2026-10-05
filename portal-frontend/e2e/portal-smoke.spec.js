@@ -997,6 +997,22 @@ test("Meta Ads lead preview opens the correct attributed Inbox conversation", as
   if (viewport && viewport.width >= 640) {
     await expect(page.getByText("October Campaign", { exact: true })).toBeVisible();
   }
+
+  const sidebar = page.getByTestId("app-sidebar");
+  await expect(page.getByPlaceholder("Reply…")).toBeVisible();
+  if (viewport && viewport.width < 1024) {
+    await expect(sidebar).not.toBeVisible();
+    const threadBox = await conversationThread.boundingBox();
+    expect(threadBox).not.toBeNull();
+    expect(Math.round(threadBox.x)).toBe(0);
+
+    await page.getByRole("button", { name: "Back to conversations" }).click();
+    await expect(page).toHaveURL(/\/inbox$/);
+    await expect(sidebar).toBeVisible();
+    await expect(page.getByLabel("Conversation inbox")).toBeVisible();
+  } else {
+    await expect(sidebar).toBeVisible();
+  }
 });
 
 test("mobile Pipeline keeps controls compact and prioritizes lead cards", async ({ page }) => {
