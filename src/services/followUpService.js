@@ -281,6 +281,14 @@ function mostSpecificConfiguredServiceInText(value) {
   };
 }
 
+function mostRecentConfiguredServiceInMessages(messages) {
+  for (const value of Array.isArray(messages) ? messages : []) {
+    const match = mostSpecificConfiguredServiceInText(value);
+    if (match.mentioned) return match;
+  }
+  return { serviceName: null, mentioned: false };
+}
+
 function promotionFollowUpForCandidate(candidate) {
   const recentInbound = Array.isArray(candidate.recent_inbound_messages)
     ? candidate.recent_inbound_messages.filter(
@@ -291,22 +299,25 @@ function promotionFollowUpForCandidate(candidate) {
   if (!looksLikePromotionEnquiry(latestInbound)) return null;
 
   const customerTranscript = recentInbound.join("\n");
-  const fullTranscript = [
-    ...recentInbound,
-    candidate.trigger_message_content,
-  ]
-    .filter((value) => typeof value === "string" && value.trim())
-    .join("\n");
-
   const activePromotions = getActivePromotions(clinicConfig.promotions || []);
-  const conversationService = mostSpecificConfiguredServiceInText(fullTranscript);
-  let serviceName = conversationService.serviceName;
 
-  // If the current exchange mentions multiple equally-specific services, do
-  // not let an older CRM interest choose one arbitrary promotion. When the
-  // current exchange contains no configured service at all, CRM interest can
-  // still provide context for a short "price?" follow-up.
-  if (!serviceName && conversationService.mentioned) return null;
+  // Customer wording is authoritative. Walk newest -> oldest and stop at the
+  // first customer message that mentions any configured service. Only when the
+  // customer never named a service do we consult the outbound anchor/CRM.
+  // This prevents package captions such as "子宫护理" from hijacking a current
+  // "骨盆调理多少钱？" enquiry.
+  const customerService = mostRecentConfiguredServiceInMessages(recentInbound);
+  let serviceName = customerService.serviceName;
+  if (!serviceName && customerService.mentioned) return null;
+
+  if (!serviceName) {
+    const outboundService = mostSpecificConfiguredServiceInText(
+      candidate.trigger_message_content
+    );
+    serviceName = outboundService.serviceName;
+    if (!serviceName && outboundService.mentioned) return null;
+  }
+
   if (!serviceName) {
     serviceName = configuredServiceByName(candidate.treatment_interest);
   }
