@@ -267,7 +267,7 @@ async function runPreMigrationRepairs(client, migration) {
         "JOIN contacts c ON c.id = m.contact_id " +
         "WHERE c.channel = 'whatsapp' " +
           "AND m.role = 'user' " +
-          "AND m.content ~ '^📎 \\\\[[^]]+ sent an unsupported reaction message\\\\]$'" +
+          "AND m.content LIKE '📎 [% sent an unsupported reaction message]'" +
       ")"
   );
 }
