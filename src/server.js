@@ -9,8 +9,8 @@ const { convertToMp3 } = require("./services/audioConvertService");
 const { getAiOwnedContact } = require("./services/automaticReplyGuard");
 const { automatedRepliesEnabled } = require("./services/automaticReplyControl");
 const {
-  hasMetaAdCreativeContext,
   loadMetaAdReplyContext,
+  resolveMetaAdCreativeService,
 } = require("./services/metaAdReplyContextService");
 const {
   getPendingAiHandoffContact,
@@ -648,7 +648,7 @@ async function processIncomingMessage(
     let serviceQuery = false;
     let serviceQuerySource = null;
     let metaAdContext = null;
-    let metaAdCreativeAvailable = false;
+    let metaAdCreativeService = null;
     let priceQuery = false;
     let packageQuery = false;
     let details = null;
@@ -667,7 +667,11 @@ async function processIncomingMessage(
         // customer reply. If referral creative text or cached hierarchy is
         // already available, the AI can use it immediately as soft intent.
         metaAdContext = await loadMetaAdReplyContext(contact.id);
-        metaAdCreativeAvailable = hasMetaAdCreativeContext(metaAdContext);
+        metaAdCreativeService = resolveMetaAdCreativeService(
+          metaAdContext,
+          clinicConfig.services,
+          clinicConfig.serviceAliases
+        );
       } catch (contextErr) {
         console.error(
           `Failed to load Meta ad reply context for contact ${contact.id}:`,
@@ -942,7 +946,7 @@ async function processIncomingMessage(
         const resultBundle = await resolveResultMediaForReply({
           serviceQuery,
           serviceQuerySource,
-          metaAdCreativeAvailable,
+          metaAdCreativeService,
           priceQuery,
           packageQuery,
           treatment: details?.treatment,
