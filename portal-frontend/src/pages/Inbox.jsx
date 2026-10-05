@@ -1577,7 +1577,7 @@ function StatusBadge({ tone, children }) {
 function AcquisitionContextBar({ context, loading }) {
   if (loading) {
     return (
-      <div className="border-t border-[var(--color-border)] bg-white px-4 py-2 sm:px-5">
+      <div className="border-t border-[var(--color-border)] bg-white px-3 py-1.5 sm:px-5 sm:py-2">
         <div className="h-3 w-52 animate-pulse rounded bg-[var(--color-border)]/60" />
       </div>
     );
@@ -2108,7 +2108,7 @@ function ThreadView({
   return (
     <section className={`${mobileThreadOpen ? "flex" : "hidden lg:flex"} min-w-0 flex-1 flex-col h-full bg-[var(--color-bg)]`} aria-label={`Conversation with ${displayName(contact)}`}>
       <header className="relative z-10 shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="flex items-center justify-between gap-3 px-3 py-2.5 sm:px-5">
+        <div className="flex items-center justify-between gap-3 px-3 py-2 sm:px-5 sm:py-2.5">
           <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
             <button
               type="button"
@@ -2148,6 +2148,7 @@ function ThreadView({
                   <span
                     className="inline-flex shrink-0 items-center gap-1 text-[9px] font-medium text-[var(--color-text-muted)] sm:text-[10px]"
                     title={messagingPolicy.label || undefined}
+                    aria-label={messagingPolicy.label || undefined}
                   >
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
                     <span>{replyWindowCompactLabel} left</span>
@@ -2176,7 +2177,7 @@ function ThreadView({
                 disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
                 title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice recording first" : "Return control to AI"}
                 aria-label="Return control to AI"
-                className="inline-flex h-11 shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-white px-2.5 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50 lg:h-auto lg:gap-2 lg:px-3 lg:py-2"
+                className="inline-flex h-11 min-w-11 shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-white px-2.5 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50 lg:h-auto lg:gap-2 lg:px-3 lg:py-2"
               >
                 {actionPending ? <Spinner /> : <BotIcon className="h-4 w-4" />}
                 <span className="hidden min-[430px]:inline">Return to AI</span>
@@ -2190,7 +2191,7 @@ function ThreadView({
                 }}
                 disabled={actionPending}
                 aria-label="Take over conversation"
-                className="inline-flex h-11 shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl bg-[var(--color-primary)] px-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50 lg:h-auto lg:gap-2 lg:px-3 lg:py-2"
+                className="inline-flex h-11 min-w-11 shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl bg-[var(--color-primary)] px-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50 lg:h-auto lg:gap-2 lg:px-3 lg:py-2"
               >
                 {actionPending ? <Spinner /> : <UserIcon className="h-4 w-4" />}
                 <span className="hidden min-[430px]:inline">Take over</span>
