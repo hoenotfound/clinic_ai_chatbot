@@ -845,6 +845,52 @@ test("Advanced Config enforces alias, FAQ, and promotion integrity across partia
   assert.deepEqual(ambiguousPackageAliases.invalidKeys, ["promotions"]);
   assert.match(ambiguousPackageAliases.error, /ambiguous/i);
 
+  const followUpMissingService = prepareAdvancedConfigPayload(
+    {
+      promotions: [{
+        name: "Manual Follow-up Promo",
+        linkedService: "",
+        sendOnPriceQuery: false,
+        imageUrl: "",
+        caption: "",
+        followUpMessage: "Delayed offer",
+        packages: [],
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(followUpMissingService.ok, false);
+  assert.deepEqual(followUpMissingService.invalidKeys, ["promotions"]);
+  assert.match(followUpMissingService.error, /follow-up copy must link/i);
+
+  const packageFollowUpMissingService = prepareAdvancedConfigPayload(
+    {
+      promotions: [{
+        name: "Manual Package Follow-up Promo",
+        linkedService: "",
+        sendOnPriceQuery: false,
+        imageUrl: "",
+        caption: "",
+        packages: [{
+          name: "Package A",
+          title: "Basic",
+          aliases: ["A"],
+          imageUrl: "",
+          caption: "A",
+          followUpMessage: "Delayed package offer",
+        }],
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(packageFollowUpMissingService.ok, false);
+  assert.deepEqual(packageFollowUpMissingService.invalidKeys, ["promotions"]);
+  assert.match(packageFollowUpMissingService.error, /follow-up copy must link/i);
+
   const ambiguousManualPackageAliases = prepareAdvancedConfigPayload(
     {
       promotions: [{
