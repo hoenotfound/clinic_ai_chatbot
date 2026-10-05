@@ -244,6 +244,34 @@ function validateAppliedMigrations(appliedRows, migrations) {
   });
 }
 
+
+async function runPreMigrationRepairs(client, migration) {
+  // Migration files are immutable once any client database has applied them.
+  // 036 can fail on older production data when a legacy reaction placeholder is
+  // still referenced by leads.last_temperature_scored_message_id. Repair that
+  // reference in the same transaction before 036 runs, without changing 036's
+  // checksum for databases that already applied it.
+  if (
+    migration.version !== 36 ||
+    migration.name !== "whatsapp_reaction_reliability"
+  ) {
+    return;
+  }
+
+  await client.query(
+    "UPDATE leads l " +
+      "SET last_temperature_scored_message_id = NULL " +
+      "WHERE l.last_temperature_scored_message_id IN (" +
+        "SELECT m.id " +
+        "FROM messages m " +
+        "JOIN contacts c ON c.id = m.contact_id " +
+        "WHERE c.channel = 'whatsapp' " +
+          "AND m.role = 'user' " +
+          "AND m.content LIKE '📎 [% sent an unsupported reaction message]'" +
+      ")"
+  );
+}
+
 async function runMigrations(poolLike, options = {}) {
   if (!poolLike || typeof poolLike.connect !== "function") {
     throw new Error("runMigrations requires a PostgreSQL pool-like object with connect().");
@@ -307,6 +335,7 @@ async function runMigrations(poolLike, options = {}) {
           break;
         }
 
+        await runPreMigrationRepairs(client, activeMigration);
         await client.query(activeMigration.sql);
         await client.query(
           `INSERT INTO schema_migrations (version, name, checksum)
