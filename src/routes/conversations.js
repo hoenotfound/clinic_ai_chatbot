@@ -15,6 +15,7 @@ const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const { transcribeStaffAudio } = require("../services/transcriptionService");
 const whatsappPolicy = require("../services/whatsappPolicyService");
 const whatsappTemplate = require("../services/whatsappTemplateService");
+const aiReplyCancellation = require("../services/aiReplyCancellationService");
 const { AI_HANDOFF_OWNER } = require("../services/aiHandoffService");
 const { claimAiHandoffOwnership } = require("../services/staffOwnershipService");
 const {
@@ -140,24 +141,37 @@ async function requireFreeformPolicy(contact, res, purpose = "service") {
 }
 
 async function prepareStaffSend(contact, username) {
-  if (contact.mode !== "human") {
-    return contactsRepo.takeOver(contact.id, username);
-  }
+  // A manual Inbox reply is a one-turn Staff Assist by default. It invalidates
+  // any in-flight AI reply for this customer turn but does not permanently
+  // change AI-owned conversations into Staff mode.
+  aiReplyCancellation.cancelForContact(contact);
 
-  // AI handoff uses Staff mode as a safety pause before a real staff member
-  // owns the thread. Cancel that AI-started follow-up sequence while
-  // Needs Attention is still raised, and under the same conversation lock as
-  // the follow-up worker, before making the thread eligible for anything else.
-  if (contact.takeover_by === AI_HANDOFF_OWNER) {
+  let preparedContact = contact;
+
+  // A synthetic AI handoff is different: the bot intentionally paused because
+  // a real person is required. The first staff reply claims that ownership and
+  // durably cancels the old AI follow-up anchor before attention is cleared.
+  if (
+    contact.mode === "human" &&
+    contact.takeover_by === AI_HANDOFF_OWNER
+  ) {
     const claimed = await claimAiHandoffOwnership(contact.id, username);
     if (!claimed) {
       throw new Error("AI handoff ownership could not be claimed safely.");
     }
+    preparedContact = claimed;
   }
 
-  await contactsRepo.setAttention(contact.id, false);
-  await contactsRepo.setUnread(contact.id, false);
-  return null;
+  if (preparedContact.needs_attention) {
+    preparedContact =
+      await contactsRepo.setAttention(preparedContact.id, false) || preparedContact;
+  }
+  if (preparedContact.is_unread) {
+    preparedContact =
+      await contactsRepo.setUnread(preparedContact.id, false) || preparedContact;
+  }
+
+  return preparedContact;
 }
 
 async function persistSendOutcome(
@@ -839,24 +853,35 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
           : null,
       consentOptInAt,
     };
-    const saved = await conversationStore.appendMessageForContact(
+    const prepared = await telegramImmediateAlertRepo.withContactAlertLock(
       contact.id,
-      "assistant",
-      preview,
-      null,
-      req.session.username,
-      null,
-      null,
-      {
-        whatsappTemplate: metadata,
-        initialDeliveryStatus: "unknown",
-        initialDeliveryError:
-          "Template send started, but delivery has not been confirmed. Check WhatsApp before retrying.",
-        publish: false,
+      async () => {
+        const preparedContact = await prepareStaffSend(
+          contact,
+          req.session.username
+        );
+        const saved = await conversationStore.appendMessageForContact(
+          preparedContact.id,
+          "assistant",
+          preview,
+          null,
+          req.session.username,
+          null,
+          null,
+          {
+            whatsappTemplate: metadata,
+            initialDeliveryStatus: "unknown",
+            initialDeliveryError:
+              "Template send started, but delivery has not been confirmed. Check WhatsApp before retrying.",
+            publish: false,
+          }
+        );
+        return { preparedContact, saved };
       }
     );
 
-    const sendResult = await whatsappTemplate.sendApprovedTemplate(contact, {
+    const { preparedContact, saved } = prepared;
+    const sendResult = await whatsappTemplate.sendApprovedTemplate(preparedContact, {
       templateName: metadata.name,
       languageCode: metadata.language,
       components: metadata.components,
@@ -873,12 +898,12 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
     );
 
     if (sendResult.success) {
-      await contactsRepo.setUnread(contact.id, false).catch(() => {});
-      await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(contact.id).catch(() => {});
-      await markLeadContacted(contact.id, req.session.username, sendResult);
+      await contactsRepo.setUnread(preparedContact.id, false).catch(() => {});
+      await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(preparedContact.id).catch(() => {});
+      await markLeadContacted(preparedContact.id, req.session.username, sendResult);
     } else {
       await contactsRepo.setDeliveryAttention(
-        contact.id,
+        preparedContact.id,
         `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
       );
     }
@@ -1272,13 +1297,14 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
     if (!contact) return res.status(404).json({ error: "Contact not found." });
     if (!(await requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)))) return;
 
-    if (contact.mode !== "human") {
-      return res.status(409).json({ error: "Take over this conversation before sending a voice message." });
-    }
-
     if (!req.file) {
       return res.status(400).json({ error: "A voice recording is required." });
     }
+
+    // Stop an in-flight AI reply immediately; conversion/transcription below
+    // can take several seconds. Ownership/attention state is changed only after
+    // the recording is valid.
+    aiReplyCancellation.cancelForContact(contact);
 
     const voicePreparation = await telegramImmediateAlertRepo.withContactAlertLock(
       contact.id,
@@ -1297,18 +1323,20 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
         );
 
         const currentContact = await contactsRepo.getContactById(contact.id);
-        if (!currentContact || currentContact.mode !== "human") {
-          return { status: "not_human" };
+        if (!currentContact) {
+          return { status: "contact_missing" };
         }
 
-        // Match text/image sends: claim a synthetic AI handoff before clearing
-        // attention/unread state, then persist the real staff reply under the
-        // same Telegram alert lock.
-        await prepareStaffSend(currentContact, req.session.username);
+        // Match text/image sends: ordinary AI-owned chats remain AI-owned,
+        // while a synthetic AI handoff is claimed as real Staff ownership.
+        const preparedContact = await prepareStaffSend(
+          currentContact,
+          req.session.username
+        );
 
         const content = transcript ? `🎤 ${transcript}` : "🎤 Staff sent a voice message";
         const saved = await conversationStore.appendMessageForContact(
-          currentContact.id,
+          preparedContact.id,
           "assistant",
           content,
           null,
@@ -1324,7 +1352,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
           status: "ready",
           converted,
           transcript,
-          currentContact,
+          currentContact: preparedContact,
           saved,
         };
       }
@@ -1333,8 +1361,8 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
     if (voicePreparation.status === "conversion_failed") {
       return res.status(422).json({ error: "Couldn't process that recording. Please record it again." });
     }
-    if (voicePreparation.status === "not_human") {
-      return res.status(409).json({ error: "This conversation is no longer in Staff mode." });
+    if (voicePreparation.status === "contact_missing") {
+      return res.status(404).json({ error: "Contact not found." });
     }
 
     const {
@@ -1357,6 +1385,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       outboundAudio.filename,
       socialProviderSendOptions(saved, currentContact, {
         purpose: whatsappPolicy.manualStaffPurpose(currentContact),
+        requireStaffMode: currentContact.mode === "human",
       })
     );
     const errorText = sendResult.error || rejectedErrorFor(currentContact);

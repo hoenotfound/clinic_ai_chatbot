@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const contactsRepo = require("../src/db/contactsRepo");
+const messagesRepo = require("../src/db/messagesRepo");
 const { getAiOwnedContact } = require("../src/services/automaticReplyGuard");
 
 test("automatic replies are blocked when the latest contact is in Staff mode", async (t) => {
@@ -44,6 +45,52 @@ test("automatic replies continue when the latest contact remains AI-owned", asyn
   );
 
   assert.equal(result, latest);
+});
+
+test("Staff Assist blocks only the answered inbound turn while contact remains AI-owned", async (t) => {
+  const originalGetContact = contactsRepo.getContactById;
+  const originalHasStaffReplyAfter = messagesRepo.hasStaffReplyAfter;
+  t.after(() => {
+    contactsRepo.getContactById = originalGetContact;
+    messagesRepo.hasStaffReplyAfter = originalHasStaffReplyAfter;
+  });
+
+  const latest = {
+    id: 46,
+    mode: "ai",
+    channel: "whatsapp",
+    whatsapp_number: "60129990000",
+  };
+  contactsRepo.getContactById = async () => latest;
+
+  let checked = null;
+  messagesRepo.hasStaffReplyAfter = async (contactId, inboundMessageId) => {
+    checked = { contactId, inboundMessageId };
+    return inboundMessageId === 501;
+  };
+
+  const answeredTurn = await getAiOwnedContact(
+    latest,
+    {
+      channel: "whatsapp",
+      from: "60129990000",
+      reason: "AI provider send",
+      inboundMessageId: 501,
+    }
+  );
+  assert.equal(answeredTurn, null);
+  assert.deepEqual(checked, { contactId: 46, inboundMessageId: 501 });
+
+  const nextTurn = await getAiOwnedContact(
+    latest,
+    {
+      channel: "whatsapp",
+      from: "60129990000",
+      reason: "AI provider send",
+      inboundMessageId: 502,
+    }
+  );
+  assert.equal(nextTurn, latest);
 });
 
 test("automatic reply ownership fails closed when the contact disappears", async (t) => {

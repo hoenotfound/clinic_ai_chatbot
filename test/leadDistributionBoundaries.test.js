@@ -132,10 +132,12 @@ test("manual staff sends cancel synthetic AI handoff before clearing Needs Atten
   const helper = route.slice(helperStart, helperEnd);
 
   const claimIndex = helper.indexOf("claimAiHandoffOwnership");
-  const clearIndex = helper.indexOf("contactsRepo.setAttention(contact.id, false)");
+  const clearIndex = helper.indexOf("contactsRepo.setAttention(preparedContact.id, false)");
   assert.ok(claimIndex >= 0 && clearIndex > claimIndex);
   assert.match(helper, /contact\.takeover_by === AI_HANDOFF_OWNER/);
   assert.match(helper, /AI handoff ownership could not be claimed safely/);
+  assert.match(helper, /aiReplyCancellation\.cancelForContact\(contact\)/);
+  assert.doesNotMatch(helper, /contactsRepo\.takeOver/);
 
   const textRouteStart = route.indexOf('router.post("/:contactId/messages"');
   const imageRouteStart = route.indexOf('router.post("/:contactId/media"');

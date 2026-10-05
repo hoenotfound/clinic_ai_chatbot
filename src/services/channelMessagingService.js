@@ -491,10 +491,15 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
 
 async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3", options = {}) {
   const channel = channelOf(contact);
+  const requireStaffMode = options.requireStaffMode !== false;
+
   // Check policy before conversion or upload work on every supported channel.
   const guard = await freeformGuard(contact, options.purpose);
   if (guard.blocked) return guard.blocked;
   const sendOptions = optionsForPolicy(options, guard.policy);
+  const initialCancellation = await preSendCancelled(sendOptions);
+  if (initialCancellation) return initialCancellation;
+
   if (channel === "whatsapp") {
     const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename);
     if (!mediaId) {
@@ -505,9 +510,11 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
       };
     }
 
-    if (!(await stillInStaffMode(contact))) {
+    if (requireStaffMode && !(await stillInStaffMode(contact))) {
       return staffModeChangedResult();
     }
+    const cancelled = await preSendCancelled(sendOptions);
+    if (cancelled) return cancelled;
 
     return whatsapp.sendVoiceById(contact.whatsapp_number, mediaId);
   }
@@ -528,11 +535,13 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
       instagramAudio.buffer,
       instagramAudio.mimeType,
       async (mediaUrl) => {
-        // Keep the race-condition protection added for PR #54: conversion and
-        // upload can both take time, so re-check immediately before delivery.
-        if (!(await stillInStaffMode(contact))) {
+        // Existing Staff-owned sends keep the ownership re-check; live Staff
+        // Assist sends deliberately remain valid while the conversation is AI-owned.
+        if (requireStaffMode && !(await stillInStaffMode(contact))) {
           return staffModeChangedResult();
         }
+        const cancelled = await preSendCancelled(sendOptions);
+        if (cancelled) return cancelled;
         return metaAttachments.sendUrlAttachment(
           channel,
           recipientFor(contact),
@@ -547,11 +556,12 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
     return tracked;
   }
 
-  // Facebook Messenger keeps the attachment upload path. Active Staff sends
-  // split upload from delivery so we can re-check ownership after the slow
-  // upload finishes; retries/tests without an active takeover keep the simple
-  // generic path.
-  if (contact?.mode !== "human" || !contact?.id) {
+  // Facebook Messenger keeps the attachment upload path. AI-owned Staff Assist
+  // sends can use the simple path; active Staff ownership keeps the late
+  // ownership re-check after upload.
+  if (!requireStaffMode || contact?.mode !== "human" || !contact?.id) {
+    const cancelled = await preSendCancelled(sendOptions);
+    if (cancelled) return cancelled;
     const result = await trackSocialOutbound(
       channel,
       metaAttachments.sendBuffer(
@@ -587,6 +597,8 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
   if (!(await stillInStaffMode(contact))) {
     return staffModeChangedResult();
   }
+  const cancelled = await preSendCancelled(sendOptions);
+  if (cancelled) return cancelled;
 
   const result = await trackSocialOutbound(
     channel,

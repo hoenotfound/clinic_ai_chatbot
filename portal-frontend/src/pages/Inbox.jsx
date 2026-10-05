@@ -1454,7 +1454,6 @@ function ThreadView({
   const actionsMenuRef = useRef(null);
   const mountedRef = useRef(true);
   const activeContactIdRef = useRef(contact?.contact_id);
-  const activeContactModeRef = useRef(contact?.mode);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [imageFile, setImageFile] = useState(null);
@@ -1471,7 +1470,6 @@ function ThreadView({
   const [policyNow, setPolicyNow] = useState(Date.now());
 
   activeContactIdRef.current = contact?.contact_id;
-  activeContactModeRef.current = contact?.mode;
   const messagingPolicy = messagingPolicyStatus(contact, policyNow);
   const policyBlocksComposer = messagingPolicy.applies && !messagingPolicy.manualReplyAllowed;
   const quietReplyAvailable =
@@ -1494,14 +1492,6 @@ function ThreadView({
       requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ block: "end" }));
     }
   }, [messages, loading]);
-
-  useEffect(() => {
-    if (contact && contact.mode !== "human") {
-      cancelRecording();
-      clearVoice();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contact?.mode]);
 
   useEffect(() => {
     if (!policyBlocksComposer) return;
@@ -1634,10 +1624,6 @@ function ThreadView({
       onToast(messagingPolicy.explanation, "warning");
       return;
     }
-    if (contact.mode !== "human") {
-      onToast("Take over this conversation before recording a voice message.", "warning");
-      return;
-    }
     if (imageFile) {
       onToast("Remove the selected image before recording a voice message.", "warning");
       return;
@@ -1662,8 +1648,7 @@ function ThreadView({
       if (
         !mountedRef.current ||
         recordingRequestIdRef.current !== requestId ||
-        activeContactIdRef.current !== recordingContactId ||
-        activeContactModeRef.current !== "human"
+        activeContactIdRef.current !== recordingContactId
       ) {
         stream.getTracks().forEach((track) => track.stop());
         return;
@@ -2085,9 +2070,7 @@ function ThreadView({
           <div className="flex items-end gap-1.5 rounded-2xl border border-[var(--color-border)] bg-white p-1.5 transition focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)] sm:gap-2">
             <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFilePicked} className="hidden" />
             <button type="button" onClick={() => fileInputRef.current?.click()} disabled={sending || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Attach an image"} aria-label="Attach an image" className="flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><ImageIcon className="h-[18px] w-[18px]" /></button>
-            {contact.mode === "human" && (
-              <button type="button" onClick={startRecording} disabled={sending || isStartingRecording || isRecording || !!voiceBlob || !!imageFile || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Record a voice message"} aria-label="Record a voice message" className="flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><MicrophoneIcon className="h-[18px] w-[18px]" /></button>
-            )}
+            <button type="button" onClick={startRecording} disabled={sending || isStartingRecording || isRecording || !!voiceBlob || !!imageFile || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Record a voice message"} aria-label="Record a voice message" className="flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><MicrophoneIcon className="h-[18px] w-[18px]" /></button>
             <textarea
               ref={textareaRef}
               value={draft}
@@ -2099,7 +2082,7 @@ function ThreadView({
                   handleSubmit(e);
                 }
               }}
-              placeholder={policyBlocksComposer ? `${messagingPolicy.channelLabel} reply unavailable` : imageFile ? "Add a caption…" : contact.mode === "human" ? `Message this ${customerSingular}…` : "Message to take over from AI…"}
+              placeholder={policyBlocksComposer ? `${messagingPolicy.channelLabel} reply unavailable` : imageFile ? "Add a caption…" : contact.mode === "human" ? `Message this ${customerSingular}…` : "Reply manually — AI stays on…"}
               rows={1}
               className="max-h-32 min-h-10 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2.5 text-sm leading-relaxed outline-none disabled:opacity-50 sm:px-2.5"
             />

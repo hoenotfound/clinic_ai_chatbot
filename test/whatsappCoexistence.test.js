@@ -138,7 +138,7 @@ test("in-flight AI settle guard suppresses send when a Business App echo arrives
   }
 });
 
-test("non-coexistence clients keep the existing reply path without settle delay", async () => {
+test("non-coexistence Inbox Staff Assist still cancels an in-flight WhatsApp reply", async () => {
   const previous = process.env.WHATSAPP_COEXISTENCE_ENABLED;
   delete process.env.WHATSAPP_COEXISTENCE_ENABLED;
   try {
@@ -150,7 +150,7 @@ test("non-coexistence clients keep the existing reply path without settle delay"
         delayMs: 1000,
         pendingWaitMs: 1000,
       }),
-      true
+      false
     );
   } finally {
     if (previous == null) delete process.env.WHATSAPP_COEXISTENCE_ENABLED;

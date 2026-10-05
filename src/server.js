@@ -407,7 +407,7 @@ async function processIncomingMessage(
   } = incoming;
   const channel = incoming.channel || "whatsapp";
   const aiCancellationKey =
-    channel === "whatsapp" && aiReplyCancellation.enabled()
+    channel === "whatsapp"
       ? aiReplyCancellation.keyForWhatsAppNumber(from)
       : (channel === "facebook" || channel === "instagram")
         ? aiReplyCancellation.keyForChannelContact(channel, from)
@@ -453,6 +453,7 @@ async function processIncomingMessage(
           channel,
           from,
           reason: "unsupported-message fallback",
+          inboundMessageId: savedInbound.id,
         });
         if (autoReplyContact) {
           contact = autoReplyContact;
@@ -507,6 +508,7 @@ async function processIncomingMessage(
             channel,
             from,
             reason: "voice-transcription fallback",
+            inboundMessageId: savedInbound.id,
           });
           if (autoReplyContact) {
             contact = autoReplyContact;
@@ -545,6 +547,7 @@ async function processIncomingMessage(
             channel,
             from,
             reason: "photo-download fallback",
+            inboundMessageId: savedInbound.id,
           });
           if (autoReplyContact) {
             contact = autoReplyContact;
@@ -611,6 +614,24 @@ async function processIncomingMessage(
         keywordReason || "New message — conversation is staff-owned."
       );
       console.log(`Skipping AI reply for ${channel}:${from} — conversation is in human mode.`);
+      return { wasFirstMessage, keywordReason };
+    }
+
+    const staffAlreadyReplied = await messagesRepo.hasStaffReplyAfter(
+      contact.id,
+      savedInbound.id
+    );
+    if (staffAlreadyReplied) {
+      // A live staff assist answers this turn without permanently taking over.
+      // Deterministic safety/human-request triggers still pause AI ownership so
+      // an escalation cannot be accidentally cleared by an ordinary staff reply.
+      if (keywordReason) {
+        const pausedContact = await pauseAiForHumanHandoff(contact.id, keywordReason);
+        if (pausedContact) contact = pausedContact;
+      }
+      console.log(
+        `Skipping AI reply for ${channel}:${from} — staff already answered this customer turn.`
+      );
       return { wasFirstMessage, keywordReason };
     }
 
@@ -723,7 +744,7 @@ async function processIncomingMessage(
       ))
     ) {
       console.log(
-        `Skipping AI reply for ${channel}:${from} — WhatsApp Business App staff replied.`
+        `Skipping AI reply for ${channel}:${from} — staff replied before the AI send.`
       );
       return { wasFirstMessage, keywordReason };
     }
@@ -735,6 +756,7 @@ async function processIncomingMessage(
       channel,
       from,
       reason: "AI reply",
+      inboundMessageId: savedInbound.id,
     });
     if (!aiReplyContact) return { wasFirstMessage, keywordReason };
     contact = aiReplyContact;
@@ -764,12 +786,13 @@ async function processIncomingMessage(
           channel,
           from,
           reason: "AI provider send",
+          inboundMessageId: savedInbound.id,
         });
     if (!finalSendContact) return { wasFirstMessage, keywordReason };
     contact = finalSendContact;
 
     // Run this after the final ownership read, as close as possible to the
-    // tracked provider send. A Business App webhook marks its echo pending
+    // tracked provider send. A native/inbox staff action marks its cancellation state
     // synchronously before any DB work, so a slow echo transaction also blocks
     // the AI instead of allowing a competing reply.
     if (
@@ -777,7 +800,7 @@ async function processIncomingMessage(
       !aiReplyCancellation.safeToSend(aiCancellationKey, aiCancellationToken)
     ) {
       console.log(
-        `Skipping AI reply for ${channel}:${from} — WhatsApp Business App staff activity is pending or confirmed.`
+        `Skipping AI reply for ${channel}:${from} — staff activity is pending or confirmed.`
       );
       return { wasFirstMessage, keywordReason };
     }
@@ -791,7 +814,7 @@ async function processIncomingMessage(
     );
     if (sendOutcome.sendResult.cancelled) {
       console.log(
-        `Skipping AI reply for ${channel}:${from} — WhatsApp Business App staff activity reached the final send boundary.`
+        `Skipping AI reply for ${channel}:${from} — staff activity reached the final send boundary.`
       );
       return { wasFirstMessage, keywordReason };
     }
@@ -856,6 +879,7 @@ async function processIncomingMessage(
             channel,
             from,
             reason: `automatic promo package ${promoPackage.name || "image"}`,
+            inboundMessageId: savedInbound.id,
           });
           // Re-check ownership and attention before every package so a staff
           // takeover between Package A and B stops the remaining automation.
@@ -970,6 +994,7 @@ async function processIncomingMessage(
               channel,
               from,
               reason: `automatic result media for ${resultBundle.service || "service"}`,
+              inboundMessageId: savedInbound.id,
             });
             if (!resultContact || resultContact.needs_attention) {
               return { wasFirstMessage, keywordReason };
@@ -1147,6 +1172,7 @@ async function processIncomingMessage(
           channel,
           from,
           reason: "processing-error fallback",
+          inboundMessageId: savedInbound.id,
         });
 
         if (!fallbackContact) {

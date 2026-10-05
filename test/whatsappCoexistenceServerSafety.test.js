@@ -59,7 +59,7 @@ test("final coexistence guard runs after final ownership lookup and before track
 });
 
 
-test("coexistence guard is opt-in and ordinary WhatsApp keeps the legacy send path", () => {
+test("all WhatsApp AI turns carry a cancellation token for Inbox Staff Assist", () => {
   const keyStart = serverSource.indexOf("const aiCancellationKey =");
   const keyBlock = serverSource.slice(
     keyStart,
@@ -67,8 +67,11 @@ test("coexistence guard is opt-in and ordinary WhatsApp keeps the legacy send pa
   );
   assert.match(
     keyBlock,
-    /channel === "whatsapp" && aiReplyCancellation\.enabled\(\)/
+    /channel === "whatsapp"[\s\S]*aiReplyCancellation\.keyForWhatsAppNumber\(from\)/
   );
+  assert.doesNotMatch(keyBlock, /aiReplyCancellation\.enabled\(\)/);
+  assert.match(serverSource, /hasStaffReplyAfter\([\s\S]*savedInbound\.id/);
+  assert.match(serverSource, /inboundMessageId: savedInbound\.id/);
 });
 
 test("existing synthetic AI handoff acknowledgement remains sendable", () => {
