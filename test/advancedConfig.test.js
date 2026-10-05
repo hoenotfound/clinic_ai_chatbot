@@ -1418,3 +1418,38 @@ test("legacy Advanced Config snapshots restore result media to the old disabled 
     modernSnapshot.resultMedia
   );
 });
+
+
+test("result media accepts new trigger modes while preserving legacy snapshots", () => {
+  const current = currentConfig();
+  const baseSet = {
+    service: "Consultation",
+    enabled: true,
+    autoSendCount: 1,
+    items: [{
+      imageUrl: "https://example.test/result.jpg",
+      caption: "Example result",
+    }],
+  };
+
+  for (const triggerMode of ["service_enquiry", "price_only", "off"]) {
+    const prepared = prepareAdvancedConfigPayload(
+      { resultMedia: [{ ...baseSet, triggerMode }] },
+      current
+    );
+    assert.equal(prepared.ok, true, triggerMode);
+  }
+
+  const legacy = prepareAdvancedConfigPayload(
+    { resultMedia: [{ ...baseSet, sendAfterPrice: true }] },
+    current
+  );
+  assert.equal(legacy.ok, true);
+
+  const invalid = prepareAdvancedConfigPayload(
+    { resultMedia: [{ ...baseSet, triggerMode: "always" }] },
+    current
+  );
+  assert.equal(invalid.ok, false);
+  assert.deepEqual(invalid.invalidKeys, ["resultMedia"]);
+});
