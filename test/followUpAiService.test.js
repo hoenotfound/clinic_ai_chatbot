@@ -7,6 +7,7 @@ const {
   previousFollowUps,
   scopePackageSelectionConversation,
   selectPromotionPackageForFollowUp,
+  shouldSuppressStaffPromotionHumanReview,
   similarity,
   trimConversation,
 } = require("../src/services/followUpAiService");
@@ -117,6 +118,80 @@ test("later AI follow-ups also reject repetition of the original normal reply", 
   assert.equal(
     result.message,
     "Would you like me to explain what happens during the assessment first?"
+  );
+});
+
+test("deterministic guard suppresses only promotion-config-only review after a staff promo", () => {
+  const conversation = [
+    { id: 30, role: "user", content: "骨盆调理多少钱？" },
+    {
+      id: 31,
+      role: "assistant",
+      content: "本月限时优惠 - 骨盆护理 🔥 RM100 优惠券限时领取（只限100位）",
+      sent_by_username: "admin",
+      is_automated_follow_up: false,
+    },
+  ];
+
+  assert.equal(
+    shouldSuppressStaffPromotionHumanReview({
+      conversation,
+      triggerMessageId: 31,
+      decision: {
+        action: "human_review",
+        reason:
+          "Staff sent an unconfigured promotional voucher (RM100 优惠券) not found in active promotions, requiring staff review.",
+      },
+    }),
+    true
+  );
+
+  assert.equal(
+    shouldSuppressStaffPromotionHumanReview({
+      conversation,
+      triggerMessageId: 31,
+      decision: {
+        action: "human_review",
+        reason:
+          "Customer asked whether the RM100 voucher is still valid, but it is not configured in active promotions.",
+      },
+    }),
+    false
+  );
+
+  assert.equal(
+    shouldSuppressStaffPromotionHumanReview({
+      conversation,
+      triggerMessageId: 31,
+      decision: {
+        action: "human_review",
+        reason:
+          "Customer mentioned pregnancy and treatment suitability requires medical review.",
+      },
+    }),
+    false
+  );
+
+  assert.equal(
+    shouldSuppressStaffPromotionHumanReview({
+      conversation: [
+        { id: 30, role: "user", content: "骨盆调理多少钱？" },
+        {
+          id: 31,
+          role: "assistant",
+          content: "RM100 优惠券限时领取",
+          sent_by_username: null,
+          is_automated_follow_up: false,
+        },
+      ],
+      triggerMessageId: 31,
+      decision: {
+        action: "human_review",
+        reason:
+          "Unconfigured voucher is not found in active promotions.",
+      },
+    }),
+    false
   );
 });
 

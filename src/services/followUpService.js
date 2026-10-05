@@ -897,55 +897,74 @@ async function sendCandidate(candidate) {
           });
 
           if (aiDecision.action !== "send") {
-            let recorded = null;
-            try {
-              recorded = await followUpRepo.recordAiDecisionIfStillEligible({
-                contactId: candidate.contact_id,
+            const suppressStaffPromotionReview =
+              aiDecision.action === "human_review" &&
+              followUpAiService.shouldSuppressStaffPromotionHumanReview({
+                conversation: aiContext.messages,
                 triggerMessageId: candidate.trigger_message_id,
-                stepIndex,
-                action: aiDecision.action,
-                reason: aiDecision.reason,
-                topic: aiDecision.topic,
-                delayMinutes: step.delayMinutes,
-                previousDelayMinutes:
-                  stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
-                triggerMode: settings.triggerMode,
-                activatedAt: settings.activatedAt,
+                decision: aiDecision,
               });
-            } finally {
-              await releaseAiGenerationLease({
-                contactId: candidate.contact_id,
-                triggerMessageId: candidate.trigger_message_id,
-                stepIndex,
-                leaseToken: aiLeaseToken,
-              });
-              aiLeaseToken = null;
-            }
 
-            // A customer or staff reply may have arrived while the model was
-            // generating. In that case the old anchor is no longer eligible and
-            // the decision is discarded instead of affecting the new conversation.
-            if (!recorded) return;
-
-            if (aiDecision.action === "human_review") {
+            if (suppressStaffPromotionReview) {
+              // Staff already chose to send this ad-hoc offer. Do not persist a
+              // false human-review decision just because the same offer was not
+              // duplicated into Promotions. Fall back to the reviewed fixed
+              // follow-up instead of trusting the model's empty review result.
+              console.warn(
+                `Suppressed promotion-config-only AI human review for staff-authored follow-up anchor ${candidate.trigger_message_id}.`
+              );
+              followUpMessageMode = "ai_fallback";
+            } else {
+              let recorded = null;
               try {
-                await contactsRepo.setAttention(
-                  candidate.contact_id,
-                  true,
-                  `AI follow-up requested human review: ${aiDecision.reason || "Staff should review this conversation before any follow-up."}`
-                );
-              } catch (err) {
-                console.error(
-                  `Failed to publish AI follow-up human review for contact ${candidate.contact_id}:`,
-                  err
-                );
+                recorded = await followUpRepo.recordAiDecisionIfStillEligible({
+                  contactId: candidate.contact_id,
+                  triggerMessageId: candidate.trigger_message_id,
+                  stepIndex,
+                  action: aiDecision.action,
+                  reason: aiDecision.reason,
+                  topic: aiDecision.topic,
+                  delayMinutes: step.delayMinutes,
+                  previousDelayMinutes:
+                    stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
+                  triggerMode: settings.triggerMode,
+                  activatedAt: settings.activatedAt,
+                });
+              } finally {
+                await releaseAiGenerationLease({
+                  contactId: candidate.contact_id,
+                  triggerMessageId: candidate.trigger_message_id,
+                  stepIndex,
+                  leaseToken: aiLeaseToken,
+                });
+                aiLeaseToken = null;
               }
-            }
-            return;
-          }
 
-          followUpMessage = aiDecision.message;
-          followUpMessageMode = "ai_personalized";
+              // A customer or staff reply may have arrived while the model was
+              // generating. In that case the old anchor is no longer eligible and
+              // the decision is discarded instead of affecting the new conversation.
+              if (!recorded) return;
+
+              if (aiDecision.action === "human_review") {
+                try {
+                  await contactsRepo.setAttention(
+                    candidate.contact_id,
+                    true,
+                    `AI follow-up requested human review: ${aiDecision.reason || "Staff should review this conversation before any follow-up."}`
+                  );
+                } catch (err) {
+                  console.error(
+                    `Failed to publish AI follow-up human review for contact ${candidate.contact_id}:`,
+                    err
+                  );
+                }
+              }
+              return;
+            }
+          } else {
+            followUpMessage = aiDecision.message;
+            followUpMessageMode = "ai_personalized";
+          }
         } catch (err) {
           followUpMessageMode = "ai_fallback";
           console.error(
