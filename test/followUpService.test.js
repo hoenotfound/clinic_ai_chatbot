@@ -413,6 +413,192 @@ test("generic package price enquiry falls back to the normal first follow-up whe
   assert.equal(claimInput.targetedService, null);
 });
 
+test("package preference after an earlier price enquiry can still receive one relevant hidden offer", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "Pelvic packages",
+      linkedService: "Pelvic Care",
+      sendOnPriceQuery: false,
+      caption: "",
+      imageUrl: "",
+      packages: [
+        {
+          name: "Package A",
+          title: "Premium package",
+          aliases: ["A配套"],
+          imageUrl: "",
+          caption: "Includes 经络穴位按摩",
+          followUpMessage: "Package A｜10月限时优惠价 RM388",
+        },
+        {
+          name: "Package B",
+          title: "Women's package",
+          aliases: ["B配套"],
+          imageUrl: "",
+          caption: "Includes 子宫护理",
+          followUpMessage: "Package B｜10月限时优惠价 RM288",
+        },
+      ],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [
+      {
+        id: 800,
+        role: "user",
+        content: "Pelvic Care price?",
+        created_at: "2026-10-05T01:00:00.000Z",
+      },
+      {
+        id: 801,
+        role: "assistant",
+        content: "Package A and Package B",
+        created_at: "2026-10-05T01:01:00.000Z",
+      },
+      {
+        id: 802,
+        role: "user",
+        content: "我比较想要有经络按摩的",
+        created_at: "2026-10-05T01:05:00.000Z",
+      },
+      {
+        id: 803,
+        role: "assistant",
+        content: "Pelvic Care 的两个配套可以按你的需要比较。",
+        created_at: "2026-10-05T01:06:00.000Z",
+      },
+    ],
+    lead: { treatment_interest: "Pelvic Care" },
+  });
+
+  let selectorCalls = 0;
+  followUpAiService.selectPromotionPackageForFollowUp = async () => {
+    selectorCalls += 1;
+    return "Package A";
+  };
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 803,
+      whatsapp_number: "60133333340",
+      trigger_message_id: 803,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["我比较想要有经络按摩的"],
+      trigger_message_content: "Pelvic Care 的两个配套可以按你的需要比较。",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 804, contact_id: 803, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-804" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 803,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(selectorCalls, 1);
+  assert.equal(claimInput.content, "Package A｜10月限时优惠价 RM388");
+  assert.equal(claimInput.targetedService, "Pelvic Care");
+});
+
+test("ordinary multi-package service chat without recent price or package intent does not unlock a hidden offer", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "Pelvic packages",
+      linkedService: "Pelvic Care",
+      sendOnPriceQuery: false,
+      caption: "",
+      imageUrl: "",
+      packages: [
+        {
+          name: "Package A",
+          title: "Premium package",
+          aliases: ["A配套"],
+          imageUrl: "",
+          caption: "Includes 经络穴位按摩",
+          followUpMessage: "Package A｜10月限时优惠价 RM388",
+        },
+        {
+          name: "Package B",
+          title: "Women's package",
+          aliases: ["B配套"],
+          imageUrl: "",
+          caption: "Includes 子宫护理",
+          followUpMessage: "Package B｜10月限时优惠价 RM288",
+        },
+      ],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [
+      {
+        id: 810,
+        role: "user",
+        content: "Pelvic Care 会痛吗？",
+        created_at: "2026-10-05T01:00:00.000Z",
+      },
+      {
+        id: 811,
+        role: "assistant",
+        content: "Pelvic Care 会先由中医师评估。",
+        created_at: "2026-10-05T01:01:00.000Z",
+      },
+    ],
+    lead: { treatment_interest: "Pelvic Care" },
+  });
+
+  let selectorCalls = 0;
+  followUpAiService.selectPromotionPackageForFollowUp = async () => {
+    selectorCalls += 1;
+    return "Package A";
+  };
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 811,
+      whatsapp_number: "60133333341",
+      trigger_message_id: 811,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["Pelvic Care 会痛吗？"],
+      trigger_message_content: "Pelvic Care 会先由中医师评估。",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 812, contact_id: 811, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-812" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 811,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(selectorCalls, 0);
+  assert.equal(claimInput.content, "您好，请问还需要帮助吗？");
+  assert.doesNotMatch(claimInput.content, /RM388|RM288/);
+});
+
 test("a comparison naming multiple packages does not send both hidden discounts", async () => {
   enableTool();
   clinicConfig.promotions = [
