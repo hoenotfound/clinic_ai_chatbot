@@ -9,6 +9,7 @@ const { detectConversationLanguage } = require("../utils/chatLanguage");
 const {
   getActivePromotions,
   promotionPackages,
+  findAmbiguousPromotionPackageTerm,
   findMentionedPromotionPackages,
 } = require("../utils/activePromotion");
 const { randomUUID } = require("node:crypto");
@@ -323,27 +324,51 @@ function promotionFollowUpForCandidate(candidate) {
     : [];
 
   if (configuredPackages.length > 0) {
+    // Advanced Config blocks ambiguous package terms, but legacy/stale runtime
+    // config must still fail closed instead of guessing a package.
+    if (findAmbiguousPromotionPackageTerm(promotion)) return null;
+
     const packages = promotionPackages(promotion);
     const mentionedByCustomer = findMentionedPromotionPackages(
       packages,
       customerTranscript
     );
-    const selectedPackages =
-      mentionedByCustomer.length > 0 ? mentionedByCustomer : packages;
-    if (
-      selectedPackages.length === 0 ||
-      selectedPackages.some((item) => !item.followUpMessage)
-    ) {
-      return null;
+
+    // A single explicit package mention is authoritative and does not need AI.
+    // A service with only one configured package is also unambiguous.
+    const deterministicPackage =
+      mentionedByCustomer.length === 1
+        ? mentionedByCustomer[0]
+        : mentionedByCustomer.length === 0 && packages.length === 1
+          ? packages[0]
+          : null;
+
+    if (deterministicPackage) {
+      return deterministicPackage.followUpMessage
+        ? {
+            message: deterministicPackage.followUpMessage,
+            targetedService: serviceName,
+            promotionFollowUp: true,
+          }
+        : null;
     }
 
-    return {
-      message: selectedPackages
-        .map((item) => item.followUpMessage)
-        .join("\n\n"),
-      targetedService: serviceName,
-      promotionFollowUp: true,
-    };
+    // Generic package enquiries and comparisons no longer send every hidden
+    // discount. A small internal AI routing pass may choose exactly one package
+    // from the customer's own history. If it cannot, the normal step message
+    // remains the safe fallback.
+    if (packages.length > 1) {
+      return {
+        message: null,
+        targetedService: serviceName,
+        promotionFollowUp: false,
+        packageSelection: {
+          serviceName,
+          packages,
+        },
+      };
+    }
+    return null;
   }
 
   const message =
@@ -359,10 +384,37 @@ function promotionFollowUpForCandidate(candidate) {
     : null;
 }
 
+function activePromotionFollowUpStillConfigured(serviceName, message) {
+  const serviceKey = normalizedServiceName(serviceName);
+  const expectedMessage = String(message || "").trim();
+  if (!serviceKey || !expectedMessage) return false;
+
+  const matches = getActivePromotions(clinicConfig.promotions || []).filter(
+    (item) => normalizedServiceName(item?.linkedService) === serviceKey
+  );
+  if (matches.length !== 1) return false;
+
+  const [promotion] = matches;
+  const configuredPackages = Array.isArray(promotion.packages)
+    ? promotion.packages.filter((item) => item && typeof item === "object")
+    : [];
+
+  if (configuredPackages.length > 0) {
+    if (findAmbiguousPromotionPackageTerm(promotion)) return false;
+    return promotionPackages(promotion).some(
+      (item) => item.followUpMessage === expectedMessage
+    );
+  }
+
+  return String(promotion.followUpMessage || "").trim() === expectedMessage;
+}
+
 function messageForCandidate(step, candidate, language, stepIndex = 1) {
+  let promotionPackageSelection = null;
   if (stepIndex === 1) {
     const promotionFollowUp = promotionFollowUpForCandidate(candidate);
-    if (promotionFollowUp) return promotionFollowUp;
+    if (promotionFollowUp?.promotionFollowUp) return promotionFollowUp;
+    promotionPackageSelection = promotionFollowUp?.packageSelection || null;
   }
 
   const conversationServices =
@@ -398,6 +450,7 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
     message: source.translations[language] || source.message,
     targetedService: targeted?.serviceName || null,
     promotionFollowUp: false,
+    promotionPackageSelection,
   };
 }
 
@@ -589,17 +642,18 @@ async function sendCandidate(candidate) {
     stepIndex
   );
   let followUpMessage = fallbackSelection.message;
-  const targetedService = fallbackSelection.targetedService;
-  const promotionFollowUp = fallbackSelection.promotionFollowUp === true;
+  let targetedService = fallbackSelection.targetedService;
+  let promotionFollowUp = fallbackSelection.promotionFollowUp === true;
+  const promotionPackageSelection =
+    fallbackSelection.promotionPackageSelection || null;
 
   let followUpMessageMode = "fixed";
   let aiLeaseToken = null;
+  const needsAiWork =
+    Boolean(promotionPackageSelection) ||
+    (step.messageMode === "ai" && !promotionFollowUp);
 
-  // Configured promotion follow-up copy is exact business-approved text.
-  // It takes priority over AI-personalized follow-up generation so the model
-  // cannot reveal a different offer, rewrite the price, or choose the wrong
-  // package after the customer has gone quiet.
-  if (step.messageMode === "ai" && !promotionFollowUp) {
+  if (needsAiWork) {
     aiLeaseToken = randomUUID();
     const lease = await followUpAiLeaseRepo.claimIfStillEligible({
       contactId: candidate.contact_id,
@@ -614,85 +668,132 @@ async function sendCandidate(candidate) {
     });
     if (!lease) return;
 
+    let aiContext = null;
     try {
-      const aiContext = await followUpRepo.getAiFollowUpContext({
+      aiContext = await followUpRepo.getAiFollowUpContext({
         contactId: candidate.contact_id,
       });
-      const aiDecision = await followUpAiService.generatePersonalizedFollowUp({
-        conversation: aiContext.messages,
-        triggerMessageId: candidate.trigger_message_id,
-        stepNumber: stepIndex,
-        treatmentInterest:
-          aiContext.lead?.treatment_interest || candidate.treatment_interest,
-        stageName: aiContext.lead?.stage_name,
-        branchName: aiContext.lead?.branch_name,
-        appointmentStatus: aiContext.lead?.appointment_status,
-        instruction: step.aiInstruction,
-        channel: candidate.channel || "whatsapp",
-      });
-
-      if (aiDecision.action !== "send") {
-        let recorded = null;
-        try {
-          recorded = await followUpRepo.recordAiDecisionIfStillEligible({
-            contactId: candidate.contact_id,
-            triggerMessageId: candidate.trigger_message_id,
-            stepIndex,
-            action: aiDecision.action,
-            reason: aiDecision.reason,
-            topic: aiDecision.topic,
-            delayMinutes: step.delayMinutes,
-            previousDelayMinutes:
-              stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
-            triggerMode: settings.triggerMode,
-            activatedAt: settings.activatedAt,
-          });
-        } finally {
-          await releaseAiGenerationLease({
-            contactId: candidate.contact_id,
-            triggerMessageId: candidate.trigger_message_id,
-            stepIndex,
-            leaseToken: aiLeaseToken,
-          });
-          aiLeaseToken = null;
-        }
-
-        // A customer or staff reply may have arrived while the model was
-        // generating. In that case the old anchor is no longer eligible and
-        // the decision is discarded instead of affecting the new conversation.
-        if (!recorded) return;
-
-        if (aiDecision.action === "human_review") {
-          // The decision insert already sets needs_attention atomically. Calling
-          // setAttention again is intentional: it publishes the contact update
-          // and queues the existing Telegram human-intervention notification.
-          try {
-            await contactsRepo.setAttention(
-              candidate.contact_id,
-              true,
-              `AI follow-up requested human review: ${aiDecision.reason || "Staff should review this conversation before any follow-up."}`
-            );
-          } catch (err) {
-            console.error(
-              `Failed to publish AI follow-up human review for contact ${candidate.contact_id}:`,
-              err
-            );
-          }
-        }
-        return;
-      }
-
-      followUpMessage = aiDecision.message;
-      followUpMessageMode = "ai_personalized";
     } catch (err) {
-      // AI generation is optional intelligence, never a dependency for the
-      // scheduler. Provider failures, invalid JSON, or repetitive generations
-      // fall back to the already-reviewed fixed message for this step.
-      followUpMessageMode = "ai_fallback";
       console.error(
-        `AI follow-up generation failed for contact ${candidate.contact_id}; using fixed fallback:`,
+        `AI follow-up context load failed for contact ${candidate.contact_id}; using reviewed fallback:`,
         err
       );
+    }
+
+    if (promotionPackageSelection && aiContext) {
+      try {
+        const selectedPackageName =
+          await followUpAiService.selectPromotionPackageForFollowUp({
+            conversation: aiContext.messages,
+            serviceName: promotionPackageSelection.serviceName,
+            packages: promotionPackageSelection.packages,
+            channel: candidate.channel || "whatsapp",
+          });
+
+        if (selectedPackageName) {
+          const selectedKey = normalizedServiceName(selectedPackageName);
+          const selectedPackages = promotionPackageSelection.packages.filter(
+            (item) => normalizedServiceName(item?.name) === selectedKey
+          );
+          const selectedPackage =
+            selectedPackages.length === 1 ? selectedPackages[0] : null;
+
+          if (selectedPackage?.followUpMessage) {
+            // AI chooses only the package key. Customer-facing promo wording is
+            // always copied verbatim from trusted config and is never generated.
+            followUpMessage = selectedPackage.followUpMessage;
+            targetedService = promotionPackageSelection.serviceName;
+            promotionFollowUp = true;
+          }
+        }
+      } catch (err) {
+        // Package selection is optional intelligence. Any provider/JSON failure
+        // falls back to the normal step rather than sending multiple offers.
+        console.error(
+          `AI package selection failed for contact ${candidate.contact_id}; using normal follow-up fallback:`,
+          err
+        );
+      }
+    }
+
+    // Configured promotion copy remains exact. AI personalization is used only
+    // when no single promotion package was safely selected.
+    if (step.messageMode === "ai" && !promotionFollowUp) {
+      if (!aiContext) {
+        followUpMessageMode = "ai_fallback";
+      } else {
+        try {
+          const aiDecision = await followUpAiService.generatePersonalizedFollowUp({
+            conversation: aiContext.messages,
+            triggerMessageId: candidate.trigger_message_id,
+            stepNumber: stepIndex,
+            treatmentInterest:
+              aiContext.lead?.treatment_interest || candidate.treatment_interest,
+            stageName: aiContext.lead?.stage_name,
+            branchName: aiContext.lead?.branch_name,
+            appointmentStatus: aiContext.lead?.appointment_status,
+            instruction: step.aiInstruction,
+            channel: candidate.channel || "whatsapp",
+          });
+
+          if (aiDecision.action !== "send") {
+            let recorded = null;
+            try {
+              recorded = await followUpRepo.recordAiDecisionIfStillEligible({
+                contactId: candidate.contact_id,
+                triggerMessageId: candidate.trigger_message_id,
+                stepIndex,
+                action: aiDecision.action,
+                reason: aiDecision.reason,
+                topic: aiDecision.topic,
+                delayMinutes: step.delayMinutes,
+                previousDelayMinutes:
+                  stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
+                triggerMode: settings.triggerMode,
+                activatedAt: settings.activatedAt,
+              });
+            } finally {
+              await releaseAiGenerationLease({
+                contactId: candidate.contact_id,
+                triggerMessageId: candidate.trigger_message_id,
+                stepIndex,
+                leaseToken: aiLeaseToken,
+              });
+              aiLeaseToken = null;
+            }
+
+            // A customer or staff reply may have arrived while the model was
+            // generating. In that case the old anchor is no longer eligible and
+            // the decision is discarded instead of affecting the new conversation.
+            if (!recorded) return;
+
+            if (aiDecision.action === "human_review") {
+              try {
+                await contactsRepo.setAttention(
+                  candidate.contact_id,
+                  true,
+                  `AI follow-up requested human review: ${aiDecision.reason || "Staff should review this conversation before any follow-up."}`
+                );
+              } catch (err) {
+                console.error(
+                  `Failed to publish AI follow-up human review for contact ${candidate.contact_id}:`,
+                  err
+                );
+              }
+            }
+            return;
+          }
+
+          followUpMessage = aiDecision.message;
+          followUpMessageMode = "ai_personalized";
+        } catch (err) {
+          followUpMessageMode = "ai_fallback";
+          console.error(
+            `AI follow-up generation failed for contact ${candidate.contact_id}; using fixed fallback:`,
+            err
+          );
+        }
+      }
     }
   }
 
@@ -714,6 +815,9 @@ async function sendCandidate(candidate) {
   const contact = contactForCandidate(candidate);
   const channel = contact.channel || "whatsapp";
   const isSocial = channel === "facebook" || channel === "instagram";
+  // A promotion override replaces the normal step content, so do not attach a
+  // generic follow-up graphic that may be unrelated to the selected offer.
+  const effectiveImageUrl = promotionFollowUp ? "" : step.imageUrl;
 
   // WhatsApp can send its image + caption as one tracked message. Messenger
   // and Instagram require separate text/image API messages, so the atomic
@@ -724,7 +828,7 @@ async function sendCandidate(candidate) {
       contactId: candidate.contact_id,
       triggerMessageId: candidate.trigger_message_id,
       content: followUpMessage,
-      mediaUrl: !isSocial && step.imageUrl ? step.imageUrl : null,
+      mediaUrl: !isSocial && effectiveImageUrl ? effectiveImageUrl : null,
       stepIndex,
       targetedService: followUpMessageMode === "ai_personalized" ? null : targetedService,
       messageMode: followUpMessageMode,
@@ -762,10 +866,13 @@ async function sendCandidate(candidate) {
       !liveStep ||
       liveSettings.activatedAt !== settings.activatedAt ||
       liveSettings.triggerMode !== settings.triggerMode ||
-      liveStep.delayMinutes !== step.delayMinutes ||
-      liveStep.messageMode !== step.messageMode ||
-      liveStep.aiInstruction !== step.aiInstruction ||
-      quietHoursStatus(new Date(), liveSettings.quietHours).active
+      JSON.stringify(liveStep) !== JSON.stringify(step) ||
+      quietHoursStatus(new Date(), liveSettings.quietHours).active ||
+      (promotionFollowUp &&
+        !activePromotionFollowUpStillConfigured(
+          targetedService,
+          followUpMessage
+        ))
     ) {
       return false;
     }
@@ -801,10 +908,10 @@ async function sendCandidate(candidate) {
         purpose: "marketing",
         preSendCheck: finalPreSendCheck,
       };
-      sendResult = step.imageUrl
+      sendResult = effectiveImageUrl
         ? await channelMessaging.sendImageByUrl(
             contact,
-            step.imageUrl,
+            effectiveImageUrl,
             followUpMessage,
             policyOptions
           )
@@ -869,11 +976,11 @@ async function sendCandidate(candidate) {
   // Contacted. Optional social image delivery is tracked independently below.
   await markContacted(candidate.contact_id);
 
-  if (isSocial && step.imageUrl) {
+  if (isSocial && effectiveImageUrl) {
     await sendSocialImageCompanion(
       contact,
       candidate.contact_id,
-      step.imageUrl,
+      effectiveImageUrl,
       settings.quietHours
     );
   }
