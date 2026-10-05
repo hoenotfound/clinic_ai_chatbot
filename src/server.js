@@ -547,6 +547,7 @@ async function processIncomingMessage(
             channel,
             from,
             reason: "photo-download fallback",
+            inboundMessageId: savedInbound.id,
           });
           if (autoReplyContact) {
             contact = autoReplyContact;
@@ -791,7 +792,7 @@ async function processIncomingMessage(
     contact = finalSendContact;
 
     // Run this after the final ownership read, as close as possible to the
-    // tracked provider send. A Business App webhook marks its echo pending
+    // tracked provider send. A native/inbox staff action marks its cancellation state
     // synchronously before any DB work, so a slow echo transaction also blocks
     // the AI instead of allowing a competing reply.
     if (
@@ -878,6 +879,7 @@ async function processIncomingMessage(
             channel,
             from,
             reason: `automatic promo package ${promoPackage.name || "image"}`,
+            inboundMessageId: savedInbound.id,
           });
           // Re-check ownership and attention before every package so a staff
           // takeover between Package A and B stops the remaining automation.
@@ -992,6 +994,7 @@ async function processIncomingMessage(
               channel,
               from,
               reason: `automatic result media for ${resultBundle.service || "service"}`,
+              inboundMessageId: savedInbound.id,
             });
             if (!resultContact || resultContact.needs_attention) {
               return { wasFirstMessage, keywordReason };
@@ -1169,6 +1172,7 @@ async function processIncomingMessage(
           channel,
           from,
           reason: "processing-error fallback",
+          inboundMessageId: savedInbound.id,
         });
 
         if (!fallbackContact) {
