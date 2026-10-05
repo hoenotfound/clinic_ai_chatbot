@@ -93,3 +93,85 @@ test("publishes an updated inbound row so the Inbox does not need a refresh", as
     },
   ]);
 });
+
+
+test("excludes WhatsApp sticker turns entirely from AI history and vision context", async (t) => {
+  const originalGetPage = messagesRepo.getMessagePageForContact;
+  const originalGetMedia = messagesRepo.getMessageMediaForContact;
+  const mediaReads = [];
+
+  t.after(() => {
+    messagesRepo.getMessagePageForContact = originalGetPage;
+    messagesRepo.getMessageMediaForContact = originalGetMedia;
+  });
+
+  messagesRepo.getMessagePageForContact = async () => ({
+    rows: [
+      {
+        id: 70,
+        contact_id: 7,
+        role: "user",
+        content: "🙂 [Customer sent a sticker]",
+        has_media_attachment: true,
+        media_mime_type: "image/webp",
+        delivery_status: null,
+      },
+      {
+        id: 71,
+        contact_id: 7,
+        role: "user",
+        content: "Can I know the price?",
+        has_media_attachment: false,
+        media_mime_type: null,
+        delivery_status: null,
+      },
+    ],
+    hasMore: false,
+  });
+
+  messagesRepo.getMessageMediaForContact = async (...args) => {
+    mediaReads.push(args);
+    return {
+      media_mime_type: "image/webp",
+      media_base64: "sticker-bytes",
+    };
+  };
+
+  const history = await conversationStore.getHistoryForContact(7, {
+    throughMessageId: 71,
+  });
+
+  assert.deepEqual(history, [
+    { role: "user", content: "Can I know the price?" },
+  ]);
+  assert.equal(
+    history.length,
+    1,
+    "a prior sticker must not make the first real customer question look like a later AI turn"
+  );
+  assert.deepEqual(
+    mediaReads,
+    [],
+    "sticker artwork must not be loaded into the AI vision prompt"
+  );
+});
+
+
+test("aiVisibleRows removes sticker placeholders while retaining real customer text", () => {
+  const rows = conversationStore.aiVisibleRows([
+    {
+      id: 80,
+      role: "user",
+      content: "🙂 [Customer sent a sticker]",
+      delivery_status: null,
+    },
+    {
+      id: 81,
+      role: "user",
+      content: "3D多少钱？",
+      delivery_status: null,
+    },
+  ]);
+
+  assert.deepEqual(rows.map((row) => row.id), [81]);
+});
