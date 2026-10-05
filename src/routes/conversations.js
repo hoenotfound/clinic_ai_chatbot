@@ -1289,7 +1289,7 @@ router.post("/:contactId/messages", async (req, res) => {
         `Delivery failed: ${publicDeliveryError(errorText)}`
       );
     } else {
-      await markLeadContacted(contact.id, req.session.username, sendResult);
+      await markLeadContacted(preparedContact.id, req.session.username, sendResult);
     }
 
     res.status(201).json({
