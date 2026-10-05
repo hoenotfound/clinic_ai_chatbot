@@ -23,6 +23,9 @@ test("first staff reply claims a synthetic AI handoff without changing Staff mod
   assert.equal(result.takeover_by, "caden");
   assert.match(calls[0].sql, /mode = 'human'/);
   assert.match(calls[0].sql, /takeover_by = \$3/);
+  assert.match(calls[0].sql, /INSERT INTO follow_up_ai_decisions/);
+  assert.match(calls[0].sql, /anchor\.sent_by_username IS NULL/);
+  assert.match(calls[0].sql, /Cancelled because clinic staff claimed this AI handoff/);
   assert.deepEqual(calls[0].params, ["caden", 42, AI_HANDOFF_OWNER]);
   assert.equal(published[0].payload.reason, "staff_claimed_ai_handoff");
 });
