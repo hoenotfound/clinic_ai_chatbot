@@ -131,17 +131,28 @@ test(
       // A synthetic AI handoff is not a real staff owner. The first Business
       // App reply must claim that conversation as real human ownership and
       // durably cancel the previous AI follow-up anchor.
+      // Keep these rows inside one millisecond but at distinct PostgreSQL
+      // microseconds. node-postgres returns timestamptz as a JS Date, which
+      // only has millisecond precision. The handoff cancellation query must
+      // therefore compare against the persisted echo row inside PostgreSQL
+      // instead of round-tripping its timestamp through JavaScript.
       const handoffInbound = await client.query(
-        `INSERT INTO messages (contact_id, role, content)
-         VALUES ($1, 'user', 'I need a person')
+        `INSERT INTO messages (contact_id, role, content, created_at)
+         VALUES ($1, 'user', 'I need a person',
+                 '2026-10-06T00:00:00.123100Z'::timestamptz)
          RETURNING id`,
         [contactId]
       );
       const handoffAnchor = await client.query(
-        `INSERT INTO messages (contact_id, role, content)
-         VALUES ($1, 'assistant', 'A staff member will help you shortly.')
+        `INSERT INTO messages (contact_id, role, content, created_at)
+         VALUES ($1, 'assistant', 'A staff member will help you shortly.',
+                 '2026-10-06T00:00:00.123500Z'::timestamptz)
          RETURNING id`,
         [contactId]
+      );
+      await client.query(
+        `ALTER TABLE messages ALTER COLUMN created_at
+         SET DEFAULT '2026-10-06T00:00:00.123900Z'::timestamptz`
       );
       await client.query(
         `UPDATE contacts
