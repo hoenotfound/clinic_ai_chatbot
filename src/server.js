@@ -305,18 +305,34 @@ function dedupeIncomingBatch(items) {
   return result;
 }
 
+function canGenerateAutomatedReplyForIncoming(item) {
+  const incoming = unwrapIncoming(item);
+  // A sticker is a real customer turn for unread/follow-up semantics, but the
+  // bot must not invent meaning from the artwork. If a sticker lands at the end
+  // of a typing burst, reply to the last text/voice/photo turn instead of
+  // suppressing that useful reply just because the sticker was last.
+  return incoming?.mediaType !== "sticker";
+}
+
 async function processIncomingBatch(items) {
   const batch = dedupeIncomingBatch(items);
   if (!batch.length) return;
 
   let firstMessageWasSuppressed = false;
   let inheritedKeywordReason = null;
+  let replyTargetIndex = -1;
+  for (let index = batch.length - 1; index >= 0; index -= 1) {
+    if (canGenerateAutomatedReplyForIncoming(batch[index])) {
+      replyTargetIndex = index;
+      break;
+    }
+  }
 
   for (let index = 0; index < batch.length; index += 1) {
-    const isLast = index === batch.length - 1;
+    const isReplyTarget = index === replyTargetIndex;
     const result = await processIncomingMessage(batch[index], {
-      suppressAutoReply: !isLast,
-      forceFirstMessage: isLast && firstMessageWasSuppressed,
+      suppressAutoReply: !isReplyTarget,
+      forceFirstMessage: isReplyTarget && firstMessageWasSuppressed,
       inheritedKeywordReason,
     });
 
@@ -576,10 +592,43 @@ async function processIncomingMessage(
       );
     }
 
-    // Photos without captions and failed/unsupported media contain no text
-    // that can safely support a sales-temperature decision.
+    if (mediaType === "sticker") {
+      const media = await channelMessaging.downloadIncomingMedia(incoming);
+      text = `🙂 [${customerLabel} sent a sticker]`;
+
+      if (media) {
+        const downloadedMime = String(media.mimeType || "")
+          .split(";")[0]
+          .trim()
+          .toLowerCase();
+        mediaAttachment = {
+          // WhatsApp stickers are WebP media. Keep a defensive image fallback
+          // so a missing/odd provider MIME does not make the Inbox download
+          // render as an arbitrary binary attachment.
+          mimeType: downloadedMime.startsWith("image/")
+            ? downloadedMime
+            : "image/webp",
+          buffer: media.buffer,
+        };
+      } else {
+        console.warn(
+          `Could not download WhatsApp sticker ${incoming.mediaId || id || "without media id"} for ${from}; keeping the customer turn as a text placeholder.`
+        );
+      }
+
+      await conversationStore.updateInboundMessage(
+        contact.id,
+        savedInbound.id,
+        text,
+        mediaAttachment
+      );
+    }
+
+    // Photos without captions and stickers contain no textual intent that can
+    // safely support a sales-temperature decision.
     const temperatureReviewEligible = Boolean(text.trim()) && !(
-      mediaType === "image" && !incoming.text
+      (mediaType === "image" && !incoming.text) ||
+      mediaType === "sticker"
     );
 
     if (temperatureReviewEligible) {
@@ -594,9 +643,11 @@ async function processIncomingMessage(
       }
     }
 
-    const currentKeywordReason = checkKeywordTriggers(text);
+    const currentKeywordReason =
+      mediaType === "sticker" ? null : checkKeywordTriggers(text);
     const urgentSafety =
-      isUrgentSafetyMessage(text) || inheritedKeywordReason === URGENT_SAFETY_REASON;
+      mediaType !== "sticker" &&
+      (isUrgentSafetyMessage(text) || inheritedKeywordReason === URGENT_SAFETY_REASON);
     keywordReason = urgentSafety
       ? URGENT_SAFETY_REASON
       : (keywordReason || currentKeywordReason);
@@ -614,6 +665,16 @@ async function processIncomingMessage(
         keywordReason || "New message — conversation is staff-owned."
       );
       console.log(`Skipping AI reply for ${channel}:${from} — conversation is in human mode.`);
+      return { wasFirstMessage, keywordReason };
+    }
+
+    if (mediaType === "sticker") {
+      // Stickers deliberately stop here. They remain genuine inbound customer
+      // turns (unread + follow-up boundary), but no AI interpretation or
+      // customer-facing fallback is generated from the artwork.
+      console.log(
+        `Stored WhatsApp sticker for ${channel}:${from} without generating an AI reply.`
+      );
       return { wasFirstMessage, keywordReason };
     }
 
