@@ -684,6 +684,9 @@ test("attaching a WAMID and consuming a pending reaction share one serialized tr
           ],
         };
       }
+      if (/SELECT 1\s+FROM pending_whatsapp_reactions/.test(text)) {
+        return { rows: [{ present: 1 }] };
+      }
       if (/SELECT id, reactor_key, reactor_whatsapp_id/.test(text)) {
         return {
           rows: [
@@ -755,6 +758,9 @@ test("reconciles a pending WhatsApp reaction after the target message receives i
       queries.push({ sql: text, params });
       if (/FROM messages\s+WHERE id = \$1\s+AND whatsapp_message_id = \$2/.test(text)) {
         return { rows: [{ id: 93, contact_id: 9 }] };
+      }
+      if (/SELECT 1\s+FROM pending_whatsapp_reactions/.test(text)) {
+        return { rows: [{ present: 1 }] };
       }
       if (/SELECT id, reactor_key, reactor_whatsapp_id/.test(text)) {
         return {
