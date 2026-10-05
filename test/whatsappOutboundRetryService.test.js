@@ -6,6 +6,12 @@ const {
   runWhatsappOutboundRetryQueue,
 } = require("../src/services/whatsappOutboundRetryService");
 
+const noOpInbound = {
+  async finalizeOutboundAttemptByAssistantMessageId() {
+    return null;
+  },
+};
+
 function baseRow(overrides = {}) {
   return {
     id: 1,
@@ -53,6 +59,7 @@ test("transient WhatsApp retry is rescheduled without alerting staff", async () 
 
   await runWhatsappOutboundRetryQueue({
     repository,
+    inbound: noOpInbound,
     messages,
     contacts,
     async sendMessage() {
@@ -95,6 +102,7 @@ test("successful retry attaches the new WAMID to the original message", async ()
 
   await runWhatsappOutboundRetryQueue({
     repository,
+    inbound: noOpInbound,
     messages,
     contacts,
     evidence: {
@@ -135,6 +143,7 @@ test("ambiguous retry never resends automatically", async () => {
 
   await runWhatsappOutboundRetryQueue({
     repository,
+    inbound: noOpInbound,
     messages,
     contacts,
     async sendMessage() {
@@ -176,6 +185,7 @@ test("retry exhaustion alerts staff instead of scheduling attempt four", async (
 
   await runWhatsappOutboundRetryQueue({
     repository,
+    inbound: noOpInbound,
     messages,
     contacts,
     async sendMessage() {
@@ -223,6 +233,7 @@ test("stale retry with no provider evidence is surfaced as unconfirmed exactly o
 
   await runWhatsappOutboundRetryQueue({
     repository,
+    inbound: noOpInbound,
     messages,
     contacts,
     async sendMessage() {
@@ -256,6 +267,7 @@ test("stale retry with a durable WAMID is completed without resending", async ()
 
   await runWhatsappOutboundRetryQueue({
     repository,
+    inbound: noOpInbound,
     messages: {},
     contacts,
     evidence: {
@@ -304,6 +316,7 @@ test("provider acceptance without durable WAMID persistence fails closed", async
 
   await runWhatsappOutboundRetryQueue({
     repository,
+    inbound: noOpInbound,
     messages,
     contacts,
     async sendMessage() {
@@ -336,6 +349,7 @@ test("retry is cancelled when global automated replies are disabled", async () =
 
   await runWhatsappOutboundRetryQueue({
     repository,
+    inbound: noOpInbound,
     messages: {},
     contacts,
     isAutomationEnabled() { return false; },
@@ -387,6 +401,7 @@ test("concurrent accepted WAMID wins over an ambiguity update", async () => {
 
   await runWhatsappOutboundRetryQueue({
     repository,
+    inbound: noOpInbound,
     messages,
     contacts,
     evidence: {
