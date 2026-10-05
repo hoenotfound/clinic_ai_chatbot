@@ -126,7 +126,7 @@ test("Inbox thread header stays compact while keeping owner and channel context"
   assert.match(inbox, /if \(channel === "instagram"\) return "Instagram"/);
   assert.match(inbox, /ownerUsername=\{contact\.lead_owner_username\}/);
   assert.match(inbox, /ownerDisplayName=\{contact\.lead_owner_display_name\}/);
-  assert.match(inbox, /`Message this \$\{customerSingular\}…`/);
+  assert.match(inbox, /`Message this \$\{customerSingular\}`/);
   assert.match(inbox, /"Reply…"/);
   assert.match(inbox, /"Reply manually while AI stays on"/);
   assert.doesNotMatch(inbox, /Type a WhatsApp message to this patient/);
