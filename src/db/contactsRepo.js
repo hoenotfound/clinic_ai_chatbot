@@ -318,7 +318,7 @@ async function listContacts(search) {
       COALESCE(lead_owner.display_name, current_lead.owner_username) AS lead_owner_display_name,
       COUNT(m.id)::int AS message_count,
       MAX(m.created_at) AS last_message_at,
-      MAX(COALESCE(m.source_created_at, m.created_at)) FILTER (WHERE m.role = 'user') AS latest_inbound_at
+      MAX(m.created_at) FILTER (WHERE m.role = 'user') AS latest_inbound_at
     FROM contacts c
     LEFT JOIN LATERAL (
       SELECT l.id, l.owner_username
@@ -423,10 +423,10 @@ async function listConversations() {
       LIMIT 1
     ) m ON true
     LEFT JOIN LATERAL (
-      SELECT COALESCE(source_created_at, created_at) AS created_at
+      SELECT created_at
       FROM messages
       WHERE contact_id = c.id AND role = 'user'
-      ORDER BY COALESCE(source_created_at, created_at) DESC, id DESC
+      ORDER BY created_at DESC, id DESC
       LIMIT 1
     ) latest_customer ON true
     WHERE m.created_at IS NOT NULL OR c.channel = 'whatsapp'
