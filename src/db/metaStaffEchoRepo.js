@@ -22,7 +22,7 @@ async function persistStaffEchoIfNew(
     // bubble (for example Instagram caption + image). The outbound path records
     // every MID in social_provider_message_ids under this same conversation
     // lock. If this echo belongs to one of those MIDs, it is our own send and
-    // must not create a duplicate or take the conversation into Staff mode.
+    // must not create a duplicate or alter conversation ownership.
     const knownOutbound = await client.query(
       `SELECT m.id, m.contact_id, m.role, m.content, m.whatsapp_message_id,
               m.sent_by_username, m.media_url,
@@ -89,22 +89,79 @@ async function persistStaffEchoIfNew(
       return prior && contact ? { contact, message: prior, isNew: false } : null;
     }
 
+    // If this staff reply is claiming a synthetic AI handoff, cancel the old
+    // AI-started follow-up anchor before this new staff row can become the
+    // effective outbound anchor after Return to AI.
+    await client.query(
+      `WITH eligible_contact AS (
+         SELECT id
+         FROM contacts
+         WHERE id = $1
+           AND mode = 'human'
+           AND takeover_by = $4
+       ), latest_inbound AS (
+         SELECT inbound.id, inbound.created_at
+         FROM messages inbound, eligible_contact
+         WHERE inbound.contact_id = eligible_contact.id
+           AND inbound.role = 'user'
+         ORDER BY inbound.created_at DESC, inbound.id DESC
+         LIMIT 1
+       ), anchor AS (
+         SELECT outbound.id, outbound.sent_by_username
+         FROM messages outbound, eligible_contact, latest_inbound
+         WHERE outbound.contact_id = eligible_contact.id
+           AND outbound.role = 'assistant'
+           AND outbound.is_automated_follow_up = false
+           AND (outbound.created_at, outbound.id) >
+               (latest_inbound.created_at, latest_inbound.id)
+           AND (outbound.created_at, outbound.id) <
+               ($2::timestamptz, $3::bigint)
+         ORDER BY outbound.created_at DESC, outbound.id DESC
+         LIMIT 1
+       )
+       INSERT INTO follow_up_ai_decisions (
+         contact_id,
+         trigger_message_id,
+         follow_up_step,
+         action,
+         reason,
+         topic
+       )
+       SELECT
+         eligible_contact.id,
+         anchor.id,
+         1,
+         'skip',
+         'Cancelled because clinic staff claimed this AI handoff.',
+         NULL
+       FROM eligible_contact, anchor
+       WHERE anchor.sent_by_username IS NULL
+       ON CONFLICT (trigger_message_id, follow_up_step) DO NOTHING`,
+      [
+        contactId,
+        message.created_at,
+        message.id,
+        syntheticHandoffOwner || null,
+      ]
+    );
+
     const updated = await client.query(
       `UPDATE contacts
-       SET mode = 'human',
-           takeover_by = CASE
+       SET takeover_by = CASE
              WHEN mode = 'human'
-              AND takeover_by IS NOT NULL
-              AND takeover_by IS DISTINCT FROM $3
+              AND (takeover_by IS NULL OR takeover_by = $3)
+             THEN $1
+             WHEN mode = 'human'
              THEN takeover_by
-             ELSE $1
+             ELSE NULL
            END,
            takeover_at = CASE
              WHEN mode = 'human'
-              AND takeover_by IS NOT NULL
-              AND takeover_by IS DISTINCT FROM $3
+              AND (takeover_by IS NULL OR takeover_by = $3)
+             THEN now()
+             WHEN mode = 'human'
              THEN takeover_at
-             ELSE now()
+             ELSE NULL
            END,
            needs_attention = false,
            attention_reason = NULL,
