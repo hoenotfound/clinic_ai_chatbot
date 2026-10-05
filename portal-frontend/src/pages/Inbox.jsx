@@ -41,6 +41,7 @@ const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 const IMAGE_OPTIMIZE_THRESHOLD_BYTES = 1.5 * 1024 * 1024;
 const IMAGE_OPTIMIZE_MAX_DIMENSION = 1920;
 const IMAGE_JPEG_QUALITY = 0.82;
+const IMAGE_PNG_TO_JPEG_QUALITY = 0.9;
 const MAX_VOICE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_SECONDS = 120;
 const VOICE_MIME_TYPES = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"];
@@ -123,6 +124,21 @@ function shouldOptimizeImageUpload(file) {
   return type === "image/jpeg" || type === "image/jpg" || type === "image/png";
 }
 
+function canvasHasTransparency(context, width, height) {
+  const pixels = context.getImageData(0, 0, width, height).data;
+  for (let index = 3; index < pixels.length; index += 4) {
+    if (pixels[index] !== 255) return true;
+  }
+  return false;
+}
+
+function optimizedImageFileName(name, outputType) {
+  if (outputType !== "image/jpeg") return name;
+  return /\.(?:png|jpe?g)$/i.test(name)
+    ? name.replace(/\.(?:png|jpe?g)$/i, ".jpg")
+    : `${name || "image"}.jpg`;
+}
+
 async function optimizeImageUpload(file) {
   if (!shouldOptimizeImageUpload(file) || typeof createImageBitmap !== "function") {
     return file;
@@ -133,35 +149,35 @@ async function optimizeImageUpload(file) {
     bitmap = await createImageBitmap(file);
     const largestSide = Math.max(bitmap.width, bitmap.height);
     const scale = Math.min(1, IMAGE_OPTIMIZE_MAX_DIMENSION / largestSide);
-
-    // Large PNG artwork is only resized so text/transparency stay lossless.
-    // JPEG photos are also recompressed because phone camera files are often
-    // several megabytes even after their dimensions are reduced.
-    if (String(file.type).toLowerCase() === "image/png" && scale === 1) {
-      return file;
-    }
-
     const width = Math.max(1, Math.round(bitmap.width * scale));
     const height = Math.max(1, Math.round(bitmap.height * scale));
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
-    const context = canvas.getContext("2d");
+    const context = canvas.getContext("2d", { alpha: true });
     if (!context) return file;
 
     context.drawImage(bitmap, 0, 0, width, height);
-    const outputType =
-      String(file.type).toLowerCase() === "image/png" ? "image/png" : "image/jpeg";
+
+    const inputType = String(file.type || "").toLowerCase();
+    let outputType = "image/jpeg";
+    let quality = IMAGE_JPEG_QUALITY;
+
+    if (inputType === "image/png") {
+      // Most promo graphics and screenshots are opaque PNGs. Sending those as
+      // high-quality JPEG dramatically reduces mobile upload time while keeping
+      // transparent artwork as PNG so logos/cut-outs are not damaged.
+      const hasTransparency = canvasHasTransparency(context, width, height);
+      outputType = hasTransparency ? "image/png" : "image/jpeg";
+      quality = hasTransparency ? undefined : IMAGE_PNG_TO_JPEG_QUALITY;
+    }
+
     const blob = await new Promise((resolve) => {
-      canvas.toBlob(
-        resolve,
-        outputType,
-        outputType === "image/jpeg" ? IMAGE_JPEG_QUALITY : undefined
-      );
+      canvas.toBlob(resolve, outputType, quality);
     });
 
     if (!blob || !blob.size || blob.size >= file.size) return file;
-    return new File([blob], file.name, {
+    return new File([blob], optimizedImageFileName(file.name, outputType), {
       type: outputType,
       lastModified: file.lastModified,
     });
