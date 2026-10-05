@@ -15,6 +15,8 @@ const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const { transcribeStaffAudio } = require("../services/transcriptionService");
 const whatsappPolicy = require("../services/whatsappPolicyService");
 const whatsappTemplate = require("../services/whatsappTemplateService");
+const { AI_HANDOFF_OWNER } = require("../services/aiHandoffService");
+const { claimAiHandoffOwnership } = require("../services/staffOwnershipService");
 const {
   hasPartialCaptionMarker,
   deliveryErrorForSend,
@@ -135,6 +137,27 @@ async function requireFreeformPolicy(contact, res, purpose = "service") {
     });
     return false;
   }
+}
+
+async function prepareStaffSend(contact, username) {
+  if (contact.mode !== "human") {
+    return contactsRepo.takeOver(contact.id, username);
+  }
+
+  // AI handoff uses Staff mode as a safety pause before a real staff member
+  // owns the thread. Cancel that AI-started follow-up sequence while
+  // Needs Attention is still raised, and under the same conversation lock as
+  // the follow-up worker, before making the thread eligible for anything else.
+  if (contact.takeover_by === AI_HANDOFF_OWNER) {
+    const claimed = await claimAiHandoffOwnership(contact.id, username);
+    if (!claimed) {
+      throw new Error("AI handoff ownership could not be claimed safely.");
+    }
+  }
+
+  await contactsRepo.setAttention(contact.id, false);
+  await contactsRepo.setUnread(contact.id, false);
+  return null;
 }
 
 async function persistSendOutcome(
@@ -1099,16 +1122,11 @@ router.post("/:contactId/messages", async (req, res) => {
     const saved = await telegramImmediateAlertRepo.withContactAlertLock(
       contact.id,
       async () => {
-        // The Telegram immediate-alert worker uses this same per-contact lock
-        // for Staff Waiting queue/send decisions. Keep ownership changes and the
-        // staff-authored message persistence inside one lock window so Telegram
-        // can never validate the brief "Staff mode, no reply row yet" state.
-        if (contact.mode !== "human") {
-          await contactsRepo.takeOver(contact.id, req.session.username);
-        } else {
-          await contactsRepo.setAttention(contact.id, false);
-          await contactsRepo.setUnread(contact.id, false);
-        }
+        // Serialize Staff Waiting validation/delivery with both the latest
+        // staff-ownership preparation and persistence of the actual staff reply.
+        // prepareStaffSend() also safely claims synthetic AI-handoff ownership
+        // before it clears Needs Attention, so keep that newer main behavior.
+        await prepareStaffSend(contact, req.session.username);
 
         return conversationStore.appendMessageForContact(
           contact.id,
@@ -1191,17 +1209,12 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
 
     // Persist the exact image bytes first. This keeps the Inbox and retry path
     // consistent even when Meta accepts the upload but later rejects delivery.
-    // Hold the Telegram per-contact alert lock across both takeover and media
-    // persistence because R2 upload happens before the message row is inserted.
+    // R2 persistence happens before the message row exists, so keep the same
+    // Telegram per-contact lock across staff preparation and media persistence.
     const saved = await telegramImmediateAlertRepo.withContactAlertLock(
       contact.id,
       async () => {
-        if (contact.mode !== "human") {
-          await contactsRepo.takeOver(contact.id, req.session.username);
-        } else {
-          await contactsRepo.setAttention(contact.id, false);
-          await contactsRepo.setUnread(contact.id, false);
-        }
+        await prepareStaffSend(contact, req.session.username);
 
         return conversationStore.appendMessageForContact(
           contact.id,
