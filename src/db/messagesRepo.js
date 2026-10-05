@@ -821,7 +821,6 @@ async function setWhatsappMessageId(messageId, whatsappMessageId) {
         },
         targetWhatsappMessageId
       );
-      await pruneExpiredPendingWhatsappReactions(client);
       await client.query("RELEASE SAVEPOINT whatsapp_reaction_reconcile");
     } catch (err) {
       await client.query("ROLLBACK TO SAVEPOINT whatsapp_reaction_reconcile");
@@ -1119,6 +1118,20 @@ async function queuePendingWhatsappReaction(
   return Boolean(result.rows[0]);
 }
 
+async function hasPendingWhatsappReactionsForTarget(
+  queryable,
+  targetWhatsappMessageId
+) {
+  const result = await queryable.query(
+    `SELECT 1
+     FROM pending_whatsapp_reactions
+     WHERE target_whatsapp_message_id = $1
+     LIMIT 1`,
+    [targetWhatsappMessageId]
+  );
+  return Boolean(result.rows[0]);
+}
+
 async function consumePendingWhatsappReactionsForTarget(
   queryable,
   { targetWhatsappMessageId, targetMessageId, contactId }
@@ -1173,6 +1186,18 @@ async function reconcilePendingWhatsappReactionsForTarget(
   targetWhatsappMessageId
 ) {
   if (!target?.id || !target?.contact_id || !targetWhatsappMessageId) return null;
+
+  // Most outbound messages have no pending reactions. Because callers hold the
+  // WAMID transaction lock, this indexed pre-check is race-safe and avoids
+  // taking the heavier per-conversation lock on every normal send.
+  if (
+    !(await hasPendingWhatsappReactionsForTarget(
+      queryable,
+      targetWhatsappMessageId
+    ))
+  ) {
+    return null;
+  }
 
   await lockConversation(queryable, target.contact_id);
 
@@ -1244,7 +1269,6 @@ async function reconcilePendingWhatsappReactionsForMessage(
       target,
       targetWhatsappMessageId
     );
-    await pruneExpiredPendingWhatsappReactions(client);
     await client.query("COMMIT");
     transactionStarted = false;
     return update;
