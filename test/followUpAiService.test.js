@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const aiService = require("../src/services/aiService");
 const {
+  generatePersonalizedFollowUp,
   isSubstantiallySimilar,
   previousFollowUps,
   scopePackageSelectionConversation,
@@ -68,6 +69,56 @@ test("previous automated follow-ups are scoped to the current conversation ancho
   assert.deepEqual(previousFollowUps(messages, 20), ["Current sequence follow-up"]);
 });
 
+
+test("later AI follow-ups also reject repetition of the original normal reply", async () => {
+  let calls = 0;
+  aiService.getReplyWithEnv = async () => {
+    calls += 1;
+    return JSON.stringify(
+      calls === 1
+        ? {
+            action: "send",
+            message: "If you want, I can help you arrange the assessment.",
+            reason: "Continue the conversation.",
+            topic: "Consultation",
+          }
+        : {
+            action: "send",
+            message: "Would you like me to explain what happens during the assessment first?",
+            reason: "Use a different useful angle.",
+            topic: "Consultation",
+          }
+    );
+  };
+
+  const result = await generatePersonalizedFollowUp({
+    conversation: [
+      { id: 19, role: "user", content: "I am still considering." },
+      {
+        id: 20,
+        role: "assistant",
+        content: "If you want, I can help you arrange the assessment.",
+        is_automated_follow_up: false,
+      },
+      {
+        id: 21,
+        role: "assistant",
+        content: "No rush, you can ask me anything about the treatment.",
+        is_automated_follow_up: true,
+        automated_follow_up_for_message_id: 20,
+      },
+    ],
+    triggerMessageId: 20,
+    stepNumber: 2,
+    channel: "whatsapp",
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(
+    result.message,
+    "Would you like me to explain what happens during the assessment first?"
+  );
+});
 
 test("promotion package selector uses customer messages only and returns an exact configured package key", async () => {
   let received = null;
