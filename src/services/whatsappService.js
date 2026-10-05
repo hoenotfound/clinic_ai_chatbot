@@ -287,6 +287,13 @@ function parseIncomingMessages(body) {
 
         for (const message of value?.messages || []) {
           if (!message?.id || !message?.from) continue;
+
+          // WhatsApp reactions are message metadata, not conversational turns.
+          // They are parsed separately by parseReactionEvents() so a ❤️/👍 never
+          // becomes an unsupported inbound message, triggers AI, or affects
+          // follow-up/unread/attention state.
+          if (message.type === "reaction") continue;
+
           const whatsappContact = contacts.find((contact) => contact.wa_id === message.from);
           const profileName = whatsappContact?.profile?.name?.trim() || null;
           const attribution = message.referral
@@ -411,6 +418,46 @@ function parseBusinessAppEchoes(body) {
 }
 
 /**
+ * Pulls out customer reactions to WhatsApp messages. A reaction is an update to
+ * an existing message, not a new customer turn. Meta uses an empty emoji string
+ * to represent removing the customer's current reaction.
+ */
+function parseReactionEvents(body) {
+  try {
+    const parsed = [];
+
+    for (const entry of body?.entry || []) {
+      for (const change of entry?.changes || []) {
+        for (const message of change?.value?.messages || []) {
+          if (
+            !message?.id ||
+            !message?.from ||
+            message.type !== "reaction" ||
+            !message.reaction?.message_id ||
+            typeof message.reaction?.emoji !== "string"
+          ) {
+            continue;
+          }
+
+          parsed.push({
+            id: message.id,
+            from: message.from,
+            targetMessageId: message.reaction.message_id,
+            emoji: message.reaction.emoji,
+            timestamp: message.timestamp || null,
+          });
+        }
+      }
+    }
+
+    return parsed;
+  } catch (err) {
+    console.error("Failed to parse WhatsApp reaction payload:", err);
+    return [];
+  }
+}
+
+/**
  * Pulls out every delivery-status update from a WhatsApp webhook payload —
  * the async 'sent' / 'delivered' / 'read' / 'failed' callbacks Meta sends
  * for messages *we* sent (staff replies, AI replies, promo images). These
@@ -455,6 +502,7 @@ module.exports = {
   sendVoiceById,
   downloadMedia,
   parseIncomingMessages,
+  parseReactionEvents,
   parseBusinessAppEchoes,
   parseStatusUpdates,
 };
