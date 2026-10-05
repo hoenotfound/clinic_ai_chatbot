@@ -65,6 +65,7 @@ test(
           automated_follow_up_step INTEGER,
           automated_follow_up_target_service TEXT,
           automated_follow_up_targeting_recorded BOOLEAN NOT NULL DEFAULT false,
+          automated_follow_up_message_mode TEXT,
           UNIQUE (automated_follow_up_for_message_id, automated_follow_up_step)
         );
 
