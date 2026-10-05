@@ -1,5 +1,8 @@
 const { pool } = require("./db");
-const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
+const {
+  CONVERSATION_LOCK_NAMESPACE,
+  lockWhatsappMessageId,
+} = require("./conversationLock");
 
 async function persistStaffEchoIfNew(
   contactId,
@@ -13,6 +16,7 @@ async function persistStaffEchoIfNew(
   const client = ownsClient ? await pool.connect() : queryable;
   try {
     await client.query("BEGIN");
+    await lockWhatsappMessageId(client, whatsappMessageId);
     await client.query(
       `SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)`,
       [contactId]

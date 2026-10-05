@@ -69,6 +69,12 @@ async function claimIfStillEligible({
        WHERE outbound.contact_id = $1
          AND outbound.role = 'assistant'
          AND outbound.is_automated_follow_up = false
+         AND NOT EXISTS (
+           SELECT 1
+           FROM outbound_message_evidence evidence
+           WHERE evidence.message_id = outbound.id
+             AND evidence.origin = 'system_fallback'
+         )
          AND (outbound.created_at, outbound.id) > (latest_inbound.created_at, latest_inbound.id)
        ORDER BY outbound.created_at DESC, outbound.id DESC
        LIMIT 1

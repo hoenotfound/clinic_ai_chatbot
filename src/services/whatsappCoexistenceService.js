@@ -1,5 +1,6 @@
 const contactsRepo = require("../db/contactsRepo");
 const whatsappCoexistenceRepo = require("../db/whatsappCoexistenceRepo");
+const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const aiReplyCancellation = require("./aiReplyCancellationService");
@@ -81,7 +82,24 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
       releasePendingAiForEcho(echo);
     }
 
-    return persisted;
+    // Business App echoes insert their provider WAMID directly instead of
+    // calling messagesRepo.setWhatsappMessageId(). Reconcile any reaction that
+    // arrived first so coexistence messages get the same reaction guarantees as
+    // API-sent messages. A reconciliation error is non-fatal to the staff send.
+    let reactionUpdate = null;
+    try {
+      reactionUpdate = await messagesRepo.reconcilePendingWhatsappReactionsForMessage(
+        persisted.message.id,
+        persisted.message.whatsapp_message_id || echo.id
+      );
+    } catch (err) {
+      console.error(
+        `Failed to reconcile pending WhatsApp reaction for Business App echo ${echo.id}:`,
+        err
+      );
+    }
+
+    return reactionUpdate ? { ...persisted, reactionUpdate } : persisted;
   } catch (err) {
     releasePendingAiForEcho(echo);
     throw err;
@@ -100,6 +118,14 @@ async function finalizeBusinessAppEcho(persisted) {
     messageId: persisted.message.id,
     reason: "message",
   });
+  if (persisted.reactionUpdate?.changed) {
+    realtimeEvents.publish("conversation_changed", {
+      contactId: persisted.reactionUpdate.contactId,
+      messageId: persisted.reactionUpdate.messageId,
+      reactions: persisted.reactionUpdate.reactions,
+      reason: "reaction",
+    });
+  }
 
   try {
     // A Business App message can be the first message our system has ever seen

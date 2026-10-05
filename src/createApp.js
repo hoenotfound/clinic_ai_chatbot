@@ -163,7 +163,16 @@ function createApp({
     }
 
     for (const update of durableReactionUpdates) {
-      if (!update) continue;
+      if (
+        !update ||
+        update.pending === true ||
+        update.changed === false ||
+        update.contactId == null ||
+        update.messageId == null ||
+        !Array.isArray(update.reactions)
+      ) {
+        continue;
+      }
       realtimeEvents.publish("conversation_changed", {
         contactId: update.contactId,
         messageId: update.messageId,
