@@ -105,6 +105,23 @@ function promotionWindowsOverlap(a, b) {
   return aStart <= bEnd && bStart <= aEnd;
 }
 
+function normalizedFollowUpTranslations(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    ["en", "ms", "zh"]
+      .map((key) => [key, String(value[key] || "").trim()])
+      .filter(([, text]) => text)
+  );
+}
+
+function promotionFollowUpTexts(value) {
+  const translations = normalizedFollowUpTranslations(value?.followUpTranslations);
+  return [...new Set([
+    String(value?.followUpMessage || "").trim(),
+    ...Object.values(translations),
+  ].filter(Boolean))];
+}
+
 function promotionPackages(promotion) {
   const configured = Array.isArray(promotion?.packages)
     ? promotion.packages.filter((item) => item && typeof item === "object")
@@ -120,6 +137,7 @@ function promotionPackages(promotion) {
       imageUrl: String(item.imageUrl || "").trim(),
       caption: String(item.caption || "").trim(),
       followUpMessage: String(item.followUpMessage || "").trim(),
+      followUpTranslations: normalizedFollowUpTranslations(item.followUpTranslations),
     }));
   }
 
@@ -136,6 +154,7 @@ function promotionPackages(promotion) {
     imageUrl,
     caption,
     followUpMessage: String(promotion?.followUpMessage || "").trim(),
+    followUpTranslations: normalizedFollowUpTranslations(promotion?.followUpTranslations),
     legacy: true,
   }];
 }
@@ -240,9 +259,9 @@ function resolvePromotionPackage(packages, requestedOption) {
 }
 
 function promotionHasFollowUpMessage(promotion) {
-  if (String(promotion?.followUpMessage || "").trim()) return true;
+  if (promotionFollowUpTexts(promotion).length > 0) return true;
   return (Array.isArray(promotion?.packages) ? promotion.packages : []).some(
-    (item) => String(item?.followUpMessage || "").trim()
+    (item) => promotionFollowUpTexts(item).length > 0
   );
 }
 
@@ -368,6 +387,8 @@ module.exports = {
   getPricePromotion,
   getPricePromotionBundle,
   promotionPackages,
+  promotionFollowUpTexts,
+  promotionHasFollowUpMessage,
   findAmbiguousPromotionPackageTerm,
   findMentionedPromotionPackages,
   findOverlappingPromotionFollowUpPair,
