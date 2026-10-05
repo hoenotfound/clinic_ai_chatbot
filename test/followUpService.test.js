@@ -19,12 +19,14 @@ const {
 } = require("../src/services/followUpService");
 
 const originalPolicyCheck = whatsappPolicy.checkFreeformAllowed;
+const originalWhatsappSendImage = whatsapp.sendImage;
 const originalGeneratePersonalizedFollowUp =
   followUpAiService.generatePersonalizedFollowUp;
 const originalSelectPromotionPackageForFollowUp =
   followUpAiService.selectPromotionPackageForFollowUp;
 
 test.beforeEach(() => {
+  whatsapp.sendImage = originalWhatsappSendImage;
   followUpAiService.generatePersonalizedFollowUp =
     originalGeneratePersonalizedFollowUp;
   followUpAiService.selectPromotionPackageForFollowUp =
