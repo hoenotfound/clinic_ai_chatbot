@@ -413,6 +413,60 @@ test("generic package price enquiry falls back to the normal first follow-up whe
   assert.equal(claimInput.targetedService, null);
 });
 
+test("single-package promotion remains locked for an ordinary non-price service chat", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "3D offer",
+      linkedService: "3D 小颜术",
+      sendOnPriceQuery: false,
+      caption: "3D trial",
+      imageUrl: "",
+      packages: [
+        {
+          name: "Main package",
+          title: "3D trial",
+          aliases: [],
+          imageUrl: "",
+          caption: "3D trial",
+          followUpMessage: "Hidden 3D gift",
+        },
+      ],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 795,
+      whatsapp_number: "60133333339",
+      trigger_message_id: 794,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["3D 小颜术会痛吗？"],
+      trigger_message_content: "3D 小颜术是徒手调理，会先评估。",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 796, contact_id: 795, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-796" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 795,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(claimInput.content, "您好，请问还需要帮助吗？");
+  assert.notEqual(claimInput.content, "Hidden 3D gift");
+});
+
 test("package preference after an earlier price enquiry can still receive one relevant hidden offer", async () => {
   enableTool();
   clinicConfig.promotions = [
