@@ -2463,6 +2463,153 @@ test("AI mode sends the personalized message instead of the fixed fallback", asy
   assert.equal(claimedInput.targetedService, null);
 });
 
+test("promotion-config-only human review after a staff promo falls back without attention", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.messageMode = "ai";
+  clinicConfig.automatedFollowUp.aiInstruction = "Follow up naturally.";
+  clinicConfig.automatedFollowUp.message = "Safe fallback";
+  clinicConfig.automatedFollowUp.translations = {
+    en: "Safe fallback",
+    ms: "Safe fallback",
+    zh: "Safe fallback",
+  };
+
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 315,
+    channel: "whatsapp",
+    whatsapp_number: "60155555555",
+    trigger_message_id: 314,
+    trigger_message_content:
+      "本月限时优惠 - 骨盆护理 🔥 RM100 优惠券限时领取（只限100位）",
+    recent_inbound_messages: ["骨盆调理多少钱？"],
+    treatment_interest: "Pelvic Care",
+    next_follow_up_step: 1,
+  }];
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [
+      { id: 313, role: "user", content: "骨盆调理多少钱？" },
+      {
+        id: 314,
+        role: "assistant",
+        content:
+          "本月限时优惠 - 骨盆护理 🔥 RM100 优惠券限时领取（只限100位）",
+        sent_by_username: "admin",
+        is_automated_follow_up: false,
+      },
+    ],
+    lead: { treatment_interest: "Pelvic Care", stage_name: "Warm" },
+  });
+  followUpAiService.generatePersonalizedFollowUp = async () => ({
+    action: "human_review",
+    message: "",
+    reason:
+      "Staff sent an unconfigured promotional voucher (RM100 优惠券) not found in active promotions, requiring staff review.",
+    topic: "Pelvic Care",
+  });
+
+  let decisionCount = 0;
+  let attentionCount = 0;
+  let claimedInput = null;
+  const originalSetAttention = contactsRepo.setAttention;
+  followUpRepo.recordAiDecisionIfStillEligible = async () => {
+    decisionCount += 1;
+    return { id: 1 };
+  };
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimedInput = input;
+    return { id: 316, contact_id: 315, delivery_status: null };
+  };
+  contactsRepo.setAttention = async () => {
+    attentionCount += 1;
+    return null;
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 315,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  whatsapp.sendMessage = async (_number, message) => {
+    assert.equal(message, "Safe fallback");
+    return { success: true, wamid: "wamid-316" };
+  };
+  realtimeEvents.publish = () => {};
+
+  try {
+    await runAutomatedFollowUps();
+  } finally {
+    contactsRepo.setAttention = originalSetAttention;
+  }
+
+  assert.equal(decisionCount, 0);
+  assert.equal(attentionCount, 0);
+  assert.equal(claimedInput.content, "Safe fallback");
+  assert.equal(claimedInput.messageMode, "ai_fallback");
+});
+
+test("genuine medical human review after a staff promo is still persisted and flagged", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.messageMode = "ai";
+
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 325,
+    channel: "whatsapp",
+    whatsapp_number: "60166666666",
+    trigger_message_id: 324,
+    trigger_message_content: "RM100 优惠券限时领取",
+    recent_inbound_messages: ["怀孕可以做吗？"],
+    next_follow_up_step: 1,
+  }];
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [
+      { id: 323, role: "user", content: "怀孕可以做吗？" },
+      {
+        id: 324,
+        role: "assistant",
+        content: "RM100 优惠券限时领取",
+        sent_by_username: "admin",
+        is_automated_follow_up: false,
+      },
+    ],
+    lead: null,
+  });
+  followUpAiService.generatePersonalizedFollowUp = async () => ({
+    action: "human_review",
+    message: "",
+    reason: "Customer mentioned pregnancy and treatment suitability requires medical review.",
+    topic: "Pelvic Care",
+  });
+
+  let decision = null;
+  let attention = null;
+  let saveCount = 0;
+  const originalSetAttention = contactsRepo.setAttention;
+  followUpRepo.recordAiDecisionIfStillEligible = async (input) => {
+    decision = input;
+    return { id: 2, ...input };
+  };
+  followUpRepo.saveIfStillEligible = async () => {
+    saveCount += 1;
+    return null;
+  };
+  contactsRepo.setAttention = async (contactId, enabled, reason) => {
+    attention = { contactId, enabled, reason };
+    return null;
+  };
+
+  try {
+    await runAutomatedFollowUps();
+  } finally {
+    contactsRepo.setAttention = originalSetAttention;
+  }
+
+  assert.equal(decision.action, "human_review");
+  assert.equal(saveCount, 0);
+  assert.equal(attention.contactId, 325);
+  assert.equal(attention.enabled, true);
+  assert.match(attention.reason, /pregnancy/i);
+});
+
 test("AI skip is persisted without creating or sending a follow-up message", async () => {
   enableTool();
   clinicConfig.automatedFollowUp.messageMode = "ai";
