@@ -253,36 +253,50 @@ function promotionFollowUpForCandidate(candidate) {
     : null;
   if (!looksLikePromotionEnquiry(latestInbound)) return null;
 
-  const conversationServices =
-    configuredServicesMentionedInConversation(candidate);
-  const serviceName =
-    conversationServices.length === 1
-      ? conversationServices[0]
-      : conversationServices.length > 1
-        ? null
-        : configuredServiceByName(candidate.treatment_interest);
-  if (!serviceName) return null;
+  const transcript = [
+    ...(candidate.recent_inbound_messages || []),
+    candidate.trigger_message_content,
+  ]
+    .filter((value) => typeof value === "string" && value.trim())
+    .join("\n");
 
-  const serviceKey = normalizedServiceName(serviceName);
-  const matches = getActivePromotions(clinicConfig.promotions || []).filter(
-    (promotion) =>
-      normalizedServiceName(promotion?.linkedService) === serviceKey
-  );
-  if (matches.length !== 1) return null;
+  const activePromotions = getActivePromotions(clinicConfig.promotions || []);
+  const directPromotionMatches = activePromotions.filter((promotion) => {
+    const linkedService = normalizedServiceName(promotion?.linkedService);
+    return linkedService && textContainsServiceTerm(transcript, linkedService);
+  });
 
-  const [promotion] = matches;
+  let promotion = directPromotionMatches.length === 1
+    ? directPromotionMatches[0]
+    : null;
+  let serviceName = promotion
+    ? String(promotion.linkedService || "").trim()
+    : null;
+
+  if (!promotion) {
+    const conversationServices =
+      configuredServicesMentionedInConversation(candidate);
+    serviceName =
+      conversationServices.length === 1
+        ? conversationServices[0]
+        : conversationServices.length > 1
+          ? null
+          : configuredServiceByName(candidate.treatment_interest);
+    if (!serviceName) return null;
+
+    const serviceKey = normalizedServiceName(serviceName);
+    const matches = activePromotions.filter(
+      (item) => normalizedServiceName(item?.linkedService) === serviceKey
+    );
+    if (matches.length !== 1) return null;
+    [promotion] = matches;
+  }
   const configuredPackages = Array.isArray(promotion.packages)
     ? promotion.packages.filter((item) => item && typeof item === "object")
     : [];
 
   if (configuredPackages.length > 0) {
     const packages = promotionPackages(promotion);
-    const transcript = [
-      ...(candidate.recent_inbound_messages || []),
-      candidate.trigger_message_content,
-    ]
-      .filter((value) => typeof value === "string" && value.trim())
-      .join("\n");
     const mentioned = findMentionedPromotionPackages(packages, transcript);
     if (mentioned.length !== 1 || !mentioned[0].followUpMessage) return null;
     return {
