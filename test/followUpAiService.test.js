@@ -120,6 +120,42 @@ test("later AI follow-ups also reject repetition of the original normal reply", 
   );
 });
 
+test("manual staff promotion messages are labeled STAFF in AI follow-up context", async () => {
+  let received = null;
+  aiService.getReplyWithEnv = async (messages, options) => {
+    received = { messages, options };
+    return JSON.stringify({
+      action: "send",
+      message: "想问下你刚刚有看到我们发给你的优惠吗？",
+      reason: "Continue neutrally from the staff-sent offer.",
+      topic: "Pelvic Care",
+    });
+  };
+
+  const result = await generatePersonalizedFollowUp({
+    conversation: [
+      { id: 30, role: "user", content: "骨盆调理多少钱？" },
+      {
+        id: 31,
+        role: "assistant",
+        content: "本月限时优惠 - 骨盆护理 🔥 RM100 优惠券限时领取（只限100位）",
+        sent_by_username: "admin",
+        is_automated_follow_up: false,
+      },
+    ],
+    triggerMessageId: 31,
+    stepNumber: 1,
+    channel: "whatsapp",
+  });
+
+  assert.equal(result.action, "send");
+  assert.match(
+    received.messages[0].content,
+    /STAFF: 本月限时优惠 - 骨盆护理 🔥 RM100 优惠券限时领取（只限100位）/
+  );
+  assert.equal(received.options.surface, "follow_up");
+});
+
 test("promotion package selector uses customer messages only and returns an exact configured package key", async () => {
   let received = null;
   aiService.getReplyWithEnv = async (messages, options) => {
