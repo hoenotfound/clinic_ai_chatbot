@@ -280,11 +280,6 @@ async function sendTrackedText(
       );
     });
   }
-  // Do not extend the durable inbound critical path after the provider has
-  // already accepted/rejected the customer reply. Missing telemetry fails the
-  // later go-live check closed; it must never delay or duplicate customer work.
-  recordReadinessSendEvidence(saved, contact, sendResult, origin);
-
   if (!sendResult.success) {
     let retryQueued = false;
 
@@ -323,7 +318,15 @@ async function sendTrackedText(
           ? `Delivery unconfirmed: ${errorText}`
           : `Delivery failed: ${errorText}`
       );
+
+      // Do not extend the customer-delivery path for readiness telemetry.
+      // A queued transient retry deliberately skips the initial rejected
+      // evidence so a late async write cannot overwrite a later successful
+      // retry's accepted evidence.
+      recordReadinessSendEvidence(saved, contact, sendResult, origin);
     }
+  } else {
+    recordReadinessSendEvidence(saved, contact, sendResult, origin);
   }
 
   return { finalMessage, sendResult };
