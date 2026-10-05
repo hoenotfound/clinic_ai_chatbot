@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  classifyWhatsappAcceptedResponse,
   classifyWhatsappSendFailure,
   parseIncomingMessages,
   parseReactionEvents,
@@ -383,4 +384,21 @@ test("does not retry a clear non-transient WhatsApp policy rejection", () => {
   assert.equal(result.retryable, false);
   assert.equal(result.ambiguous, false);
   assert.equal(result.providerErrorCode, 131047);
+});
+
+
+test("requires a WhatsApp message ID before treating HTTP acceptance as confirmed", () => {
+  const confirmed = classifyWhatsappAcceptedResponse({
+    messages: [{ id: "wamid.confirmed" }],
+  });
+  assert.equal(confirmed.success, true);
+  assert.equal(confirmed.wamid, "wamid.confirmed");
+  assert.equal(confirmed.ambiguous, false);
+
+  const unconfirmed = classifyWhatsappAcceptedResponse({ messages: [] });
+  assert.equal(unconfirmed.success, false);
+  assert.equal(unconfirmed.wamid, null);
+  assert.equal(unconfirmed.retryable, false);
+  assert.equal(unconfirmed.ambiguous, true);
+  assert.match(unconfirmed.error, /did not return a message ID/i);
 });
