@@ -157,6 +157,8 @@ test("Inbox returns to a safe list state when a selected restricted lead is reas
   assert.match(inbox, /setContactDetailsOpen\(false\)/);
   assert.match(inbox, /setMobileThreadOpen\(false\)/);
   assert.match(inbox, /setSearchParams\(\{\}, \{ replace: true \}\)/);
+  assert.match(inbox, /const requestedContactParam = searchParams\.get\("contact"\)/);
+  assert.match(inbox, /else if \(requestedContactParam\)/);
 });
 
 test("Contacts exposes the same assignment filter and refreshes assignment badges only on pipeline changes", () => {
