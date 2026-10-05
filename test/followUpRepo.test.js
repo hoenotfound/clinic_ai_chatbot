@@ -16,6 +16,8 @@ test("automated follow-up inserts take the conversation scoring lock and re-chec
     assert.match(sql, /FROM messages inbound, conversation_lock/);
     assert.match(sql, /FROM messages outbound, latest_inbound/);
     assert.match(sql, /c\.needs_attention = false/);
+    assert.match(sql, /c\.mode = 'human'/);
+    assert.match(sql, /anchor\.created_at < c\.takeover_at/);
     assert.deepEqual(params, [
       7,
       55,
@@ -106,6 +108,9 @@ test("automated follow-up discovery excludes conversations already waiting for s
   pool.query = async (sql, params) => {
     assert.match(sql, /FROM contacts c/);
     assert.match(sql, /c\.needs_attention = false/);
+    assert.match(sql, /c\.mode = 'human'/);
+    assert.match(sql, /anchor\.sent_by_username IS NULL/);
+    assert.match(sql, /anchor\.created_at < c\.takeover_at/);
     assert.match(sql, /previous_outbound/);
     assert.match(sql, /recent_inbound\.id <= latest_inbound\.id/);
     assert.match(sql, /recent_inbound\.id > previous_outbound\.id/);
@@ -177,6 +182,9 @@ test("final claim eligibility rechecks newer messages and lead completion under 
       new RegExp(`pg_advisory_xact_lock\\(${CONVERSATION_LOCK_NAMESPACE}`)
     );
     assert.match(sql, /m\.automated_follow_up_for_message_id IS NOT NULL/);
+    assert.match(sql, /JOIN messages anchor/);
+    assert.match(sql, /c\.mode = 'human'/);
+    assert.match(sql, /anchor\.created_at < c\.takeover_at/);
     assert.match(sql, /newer\.role = 'user'/);
     assert.match(sql, /newer\.is_automated_follow_up = false/);
     assert.match(sql, /latest_lead\.is_closed = false/);
