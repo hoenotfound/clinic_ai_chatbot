@@ -45,13 +45,9 @@ function metaAdContextSection(metaAdContext) {
 
   const headline = promptContextText(metaAdContext.headline, 500);
   const body = promptContextText(metaAdContext.body, 1200);
-  const adNameFallback = headline || body
-    ? null
-    : promptContextText(metaAdContext.adName, 240);
   const fields = [
     ["Ad headline", headline],
     ["Ad body/caption", body],
-    ["Ad name fallback", adNameFallback],
   ].filter(([, value]) => Boolean(value));
 
   if (!fields.length) return "";
@@ -63,10 +59,10 @@ ${fields.map(([label, value]) => `- ${label}: ${value}`).join("\n")}
 
 HOW TO USE THIS CONTEXT:
 - Treat it only as a soft clue about why the customer may have started this conversation. The customer's current message and conversation history always take priority.
-- Use the creative headline/body as the primary signal. "Ad name fallback" appears only when Meta did not provide usable creative copy.
-- When the customer's message is vague (for example "hi", "想了解", "interested", "price?", or "berapa?") and this ad context clearly maps to exactly one configured service, answer naturally in the context of that service instead of unnecessarily asking which service they mean.
-- If a vague CURRENT price/package question clearly refers to one service through this context, you may use that service for the structured "treatment" field. "priceQuery" and "packageQuery" still depend only on what the customer's CURRENT message actually asks.
-- If the customer's CURRENT message is a genuine request for information, an expression of interest, or a service-relevant concern, and the Meta creative HEADLINE and/or BODY clearly maps to exactly one configured service, you may set "serviceQuery" to true, set "treatment" to that canonical service, and set "serviceQuerySource" to "meta_ad". "Ad name fallback" alone is never sufficient for serviceQuery or automatic result-media intent.
+- Use only the creative headline/body as the Meta service-intent signal. Internal ad names, campaign names, and ad-set names are intentionally excluded from this reply context.
+- When the customer's message is vague (for example "hi", "想了解", "interested", "price?", or "berapa?") and this creative headline/body clearly maps to exactly one configured service, answer naturally in the context of that service instead of unnecessarily asking which service they mean.
+- If a vague CURRENT price/package question clearly refers to one service through this creative headline/body, you may use that service for the structured "treatment" field. "priceQuery" and "packageQuery" still depend only on what the customer's CURRENT message actually asks.
+- If the customer's CURRENT message is a genuine request for information, an expression of interest, or a service-relevant concern, and the Meta creative HEADLINE and/or BODY clearly maps to exactly one configured service, you may set "serviceQuery" to true, set "treatment" to that canonical service, and set "serviceQuerySource" to "meta_ad".
 - A greeting alone such as "hi", "hello", "你好", or an emoji is NOT a serviceQuery even when the ad maps to one service. You may answer contextually, but wait for actual interest before result-media automation becomes eligible.
 - Location, hours, payment/admin questions, booking/scheduling messages, complaints, safety questions, and human requests are NOT serviceQuery merely because an ad identifies a service.
 - Do NOT infer that the customer personally has any symptom, condition, goal, budget, preference, or treatment history merely because the ad mentions it. Ask naturally when that detail matters.
@@ -563,7 +559,7 @@ STRUCTURED OUTPUT — RETURN ONLY ONE VALID JSON OBJECT, with no markdown/code f
 Rules for structured fields:
 - "reply" must contain only what the ${terms.customerSingular} should see. Never put internal outcome names, control tokens, analysis, or JSON instructions inside it.
 - Set "serviceQuery" to true ONLY when the customer's CURRENT message genuinely asks for information about, expresses interest in, or states a relevant concern that clearly maps to exactly ONE configured service. The service can be established directly by the current message, by a short follow-up to an already clear one-service conversation, or by unambiguous META AD ACQUISITION CONTEXT. A greeting alone, thanks, location/hours/payment/admin question, pure booking/scheduling message, complaint, safety question, or human request is NOT a serviceQuery.
-- When "serviceQuery" is true, "treatment" MUST be the one canonical configured service and "serviceQuerySource" MUST be exactly one of "customer_message", "conversation", or "meta_ad". Use "customer_message" when the CURRENT message itself identifies the service; use "conversation" when a short service-information follow-up relies on the immediately established one-service conversation; use "meta_ad" only when the current message shows genuine interest but is vague and the Meta creative headline/body uniquely identifies the service. An ad-name fallback by itself MUST NOT be used for "meta_ad" serviceQuery. If the service is ambiguous, multiple services are being compared, or the source is unclear, set "serviceQuery" to false and "serviceQuerySource" to null.
+- When "serviceQuery" is true, "treatment" MUST be the one canonical configured service and "serviceQuerySource" MUST be exactly one of "customer_message", "conversation", or "meta_ad". Use "customer_message" when the CURRENT message itself identifies the service; use "conversation" when a short service-information follow-up relies on the immediately established one-service conversation; use "meta_ad" only when the current message shows genuine interest but is vague and the Meta creative headline/body uniquely identifies the service. If the service is ambiguous, multiple services are being compared, or the source is unclear, set "serviceQuery" to false and "serviceQuerySource" to null.
 - A current price/package enquiry about exactly one known service is also a service enquiry: set "serviceQuery" to true as well as the appropriate price/package flag. If the service is known only from the ad, use "meta_ad"; if it is known from the current wording use "customer_message"; otherwise use "conversation".
 - Set "priceQuery" to true ONLY when the customer's CURRENT message explicitly asks for a price, cost, fee, charge, package price, first-trial price, promotion price, or equivalent wording. A short follow-up such as "多少钱?", "price?", or "berapa?" counts when the current conversation clearly establishes which service it refers to. Do not set it true merely because your answer happens to mention a price.
 - Set "packageQuery" to true ONLY when the customer's CURRENT message explicitly asks to see, list, compare, or know the available packages/options/offers for one service, such as "有什么package?", "有什么配套?", "what packages do you have?", or "show me the options". Merely mentioning a package while asking about suitability, symptoms, results, or treatment details is not a packageQuery.
