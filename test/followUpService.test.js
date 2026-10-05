@@ -47,6 +47,8 @@ function enableTool() {
     { name: "Uterus Care" },
     { name: "3D 小颜术" },
   ];
+  clinicConfig.serviceAliases = [];
+  clinicConfig.promotions = [];
   clinicConfig.automatedFollowUp = {
     enabled: true,
     delayMinutes: 120,
@@ -106,6 +108,189 @@ test("sends and records one claimed automated follow-up", async () => {
   assert.equal(published[0].payload.reason, "message");
   assert.equal(published[1].payload.deliveryStatus, "pending");
   assert.deepEqual(contacted, { contactId: 7, actor: "Automated follow-up" });
+});
+
+
+test("first follow-up uses hidden active-promotion copy and does not let AI rewrite it", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "3D October offer",
+      linkedService: "3D 小颜术",
+      sendOnPriceQuery: false,
+      caption: "✨ 3D 小颜术 First Trial: RM488（Normal Price RM888）",
+      followUpMessage: "🎁 Free 1-hour 全身通淋巴按摩 + 脸部提升刮痧",
+      imageUrl: "",
+      packages: [],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+  clinicConfig.automatedFollowUp.messageMode = "ai";
+  clinicConfig.automatedFollowUp.aiInstruction = "Write a personalized follow-up.";
+
+  let aiCalls = 0;
+  let claimInput = null;
+  followUpAiService.generatePersonalizedFollowUp = async () => {
+    aiCalls += 1;
+    return { action: "send", message: "AI changed the offer" };
+  };
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 701,
+      whatsapp_number: "60111111111",
+      trigger_message_id: 700,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["3D 小颜术多少钱？"],
+      trigger_message_content: "✨ 3D 小颜术 First Trial: RM488（Normal Price RM888）",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 702, contact_id: 701, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-702" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 701,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(aiCalls, 0);
+  assert.equal(
+    claimInput.content,
+    "🎁 Free 1-hour 全身通淋巴按摩 + 脸部提升刮痧"
+  );
+  assert.equal(claimInput.targetedService, "3D 小颜术");
+  assert.equal(claimInput.messageMode, "fixed");
+});
+
+test("first follow-up selects the exact configured package offer", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "Pelvic packages",
+      linkedService: "Pelvic Care",
+      sendOnPriceQuery: false,
+      caption: "",
+      imageUrl: "",
+      packages: [
+        {
+          name: "Package A",
+          title: "Premium package",
+          aliases: ["A配套", "RM388配套"],
+          imageUrl: "",
+          caption: "优惠价 RM488",
+          followUpMessage: "10月限时优惠价 RM388",
+        },
+        {
+          name: "Package B",
+          title: "Women's package",
+          aliases: ["B配套", "RM288配套"],
+          imageUrl: "",
+          caption: "优惠价 RM388",
+          followUpMessage: "10月限时优惠价 RM288",
+        },
+      ],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 711,
+      whatsapp_number: "60122222222",
+      trigger_message_id: 710,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["Pelvic Care Package A price?"],
+      trigger_message_content: "Package A 优惠价 RM488",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 712, contact_id: 711, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-712" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 711,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(claimInput.content, "10月限时优惠价 RM388");
+  assert.equal(claimInput.targetedService, "Pelvic Care");
+});
+
+test("ambiguous package enquiries never guess a delayed promotion", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "Pelvic packages",
+      linkedService: "Pelvic Care",
+      sendOnPriceQuery: false,
+      caption: "",
+      imageUrl: "",
+      packages: [
+        {
+          name: "Package A",
+          title: "",
+          aliases: ["A配套"],
+          imageUrl: "",
+          caption: "A",
+          followUpMessage: "10月限时优惠价 RM388",
+        },
+        {
+          name: "Package B",
+          title: "",
+          aliases: ["B配套"],
+          imageUrl: "",
+          caption: "B",
+          followUpMessage: "10月限时优惠价 RM288",
+        },
+      ],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 721,
+      whatsapp_number: "60133333334",
+      trigger_message_id: 720,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["Pelvic Care Package A 跟 Package B price?"],
+      trigger_message_content: "Package A 和 Package B 都有不同配套。",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 722, contact_id: 721, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-722" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 721,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(claimInput.content, "Checking in");
+  assert.equal(claimInput.targetedService, null);
 });
 
 test("quiet hours defer due follow-ups until the configured clinic-local end time", async () => {
