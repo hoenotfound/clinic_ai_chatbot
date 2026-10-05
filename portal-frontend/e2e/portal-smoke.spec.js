@@ -1482,10 +1482,19 @@ test("Promotions keeps package setup compact, saves packages, and stays mobile-s
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByText("7合1", { exact: true })).toBeVisible();
 
-  await expect(page.getByText("Advanced · use image URL", { exact: true })).toBeVisible();
-  await expect(page.getByPlaceholder("https://...")).toBeHidden();
-  await page.getByText("Advanced · use image URL", { exact: true }).click();
-  await page.getByPlaceholder("https://...").fill("https://example.test/package-a.jpg");
+  const promotionImageField = page
+    .getByText("Promotion image", { exact: true })
+    .locator("..");
+  await expect(
+    promotionImageField.getByText("Advanced · use image URL", { exact: true })
+  ).toBeVisible();
+  await expect(promotionImageField.getByPlaceholder("https://...")).toBeHidden();
+  await promotionImageField
+    .getByText("Advanced · use image URL", { exact: true })
+    .click();
+  await promotionImageField
+    .getByPlaceholder("https://...")
+    .fill("https://example.test/package-a.jpg");
   await page
     .getByText("Caption sent with this image", { exact: true })
     .locator("..")
@@ -1684,7 +1693,7 @@ test("Promotions confirms before switching a populated Single offer to Multiple 
   const clickPromise = page.getByRole("button", { name: "Multiple packages" }).click();
   const dialog = await dialogPromise;
   expect(dialog.message()).toContain(
-    "Changing to Multiple packages will remove the current single-offer image, caption, and first follow-up offer when you save."
+    "Changing to Multiple packages will remove the current single-offer image, caption, first follow-up offer, and first follow-up graphic when you save."
   );
   await dialog.dismiss();
   await clickPromise;
