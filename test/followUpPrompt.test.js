@@ -19,6 +19,8 @@ test("AI follow-up prompt includes live business context and structured decision
   assert.match(prompt, /Current service aliases:/);
   assert.match(prompt, /Current FAQs:/);
   assert.match(prompt, /Current active promotions:/);
+  assert.match(prompt, /ACTIVE PROMOTIONS is the only authority/i);
+  assert.match(prompt, /auto-send on price\/package enquiry.*internal automation metadata/i);
   assert.match(prompt, /send \| skip \| human_review/);
   assert.match(prompt, /Keep it low pressure\./);
   assert.match(prompt, /Earlier follow-up/);
