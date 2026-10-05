@@ -1025,7 +1025,7 @@ function FollowUpMessageMode({
                 <span className={`h-3.5 w-3.5 rounded-full border ${selected ? "border-[var(--color-primary)] bg-[var(--color-primary)] shadow-[inset_0_0_0_3px_white]" : "border-[var(--color-border-strong)]"}`} />
                 <span className="text-xs font-semibold">{option.title}</span>
               </div>
-              <p className="mt-1.5 pl-5.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
+              <p className="mt-1.5 pl-5 text-[10px] leading-4 text-[var(--color-text-muted)]">
                 {option.description}
               </p>
             </button>
