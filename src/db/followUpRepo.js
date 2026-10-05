@@ -159,7 +159,7 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
        WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
          AND c.needs_attention = false
          AND NOT (
-           c.mode = 'human'
+           c."mode" = 'human'
            AND c.takeover_at IS NOT NULL
            AND anchor.sent_by_username IS NULL
            AND anchor.created_at < c.takeover_at
@@ -316,7 +316,7 @@ async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt })
        WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
          AND c.needs_attention = false
          AND NOT (
-           c.mode = 'human'
+           c."mode" = 'human'
            AND c.takeover_at IS NOT NULL
            AND anchor.sent_by_username IS NULL
            AND anchor.created_at < c.takeover_at
@@ -512,7 +512,7 @@ async function saveIfStillEligible({
      WHERE c.id = $1
        AND c.needs_attention = false
          AND NOT (
-           c.mode = 'human'
+           c."mode" = 'human'
            AND c.takeover_at IS NOT NULL
            AND anchor.sent_by_username IS NULL
            AND anchor.created_at < c.takeover_at
@@ -758,7 +758,7 @@ async function recordAiDecisionIfStillEligible({
        WHERE c.id = $1
          AND c.needs_attention = false
          AND NOT (
-           c.mode = 'human'
+           c."mode" = 'human'
            AND c.takeover_at IS NOT NULL
            AND anchor.sent_by_username IS NULL
            AND anchor.created_at < c.takeover_at
@@ -896,7 +896,7 @@ async function isClaimStillEligible({ messageId, contactId }) {
        ) latest_lead ON true
        WHERE c.needs_attention = false
          AND NOT (
-           c.mode = 'human'
+           c."mode" = 'human'
            AND c.takeover_at IS NOT NULL
            AND anchor.sent_by_username IS NULL
            AND anchor.created_at < c.takeover_at
