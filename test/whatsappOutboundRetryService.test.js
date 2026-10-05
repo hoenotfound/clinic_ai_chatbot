@@ -358,9 +358,9 @@ test("retry is cancelled when global automated replies are disabled", async () =
     },
   });
 
-  assert.equal(calls[0][0], "cancelled");
-  assert.match(calls[0][3], /automated replies are disabled/i);
-  assert.equal(calls[1][0], "attention");
+  assert.equal(calls[0][0], "attention");
+  assert.match(calls[0][2], /automated replies are disabled/i);
+  assert.equal(calls[1][0], "cancelled");
 });
 
 test("concurrent accepted WAMID wins over an ambiguity update", async () => {
@@ -425,4 +425,189 @@ test("concurrent accepted WAMID wins over an ambiguity update", async () => {
     ["evidence", "wamid.concurrent"],
     ["clear", 20],
   ]);
+});
+
+
+test("stale send-pending retry is safely rescheduled without calling Meta", async () => {
+  const calls = [];
+  const stale = baseRow({
+    lease_token: "stale-pending-lease",
+    processing_kind: "send_pending",
+    last_error: "Meta busy",
+  });
+  const repository = {
+    async recoverStaleProcessing() { return [stale]; },
+    async claimDue() { return []; },
+    async reschedule(id, lease, input) {
+      calls.push(["reschedule", id, lease, input]);
+    },
+    async findNextDueAt() { return null; },
+  };
+
+  await runWhatsappOutboundRetryQueue({
+    repository,
+    inbound: noOpInbound,
+    messages: {},
+    contacts: {},
+    async sendMessage() {
+      throw new Error("send-pending recovery must not call Meta");
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(0, 3), ["reschedule", 1, "stale-pending-lease"]);
+  assert.equal(calls[0][3].delaySeconds, 0);
+});
+
+test("final ownership check cancels a retry if staff takes over after claim", async () => {
+  const calls = [];
+  const repository = {
+    async recoverStaleProcessing() { return []; },
+    async claimDue() { return [baseRow()]; },
+    async checkSendEligibility() {
+      return baseRow({ contact_mode: "human" });
+    },
+    async prepareAttention(id, lease, reason) {
+      calls.push(["prepare", id, lease, reason]);
+      return { id };
+    },
+    async markCancelled(id, lease, reason) {
+      calls.push(["cancelled", id, lease, reason]);
+      return { id };
+    },
+    async findNextDueAt() { return null; },
+  };
+  const contacts = {
+    async setDeliveryAttention(id, reason) {
+      calls.push(["attention", id, reason]);
+    },
+  };
+
+  let providerCalls = 0;
+  await runWhatsappOutboundRetryQueue({
+    repository,
+    inbound: noOpInbound,
+    messages: {},
+    contacts,
+    async sendMessage() {
+      providerCalls += 1;
+      return { success: true, wamid: "should-not-send" };
+    },
+  });
+
+  assert.equal(providerCalls, 0);
+  assert.equal(calls.some((entry) => entry[0] === "attention"), true);
+  assert.equal(calls.some((entry) => entry[0] === "cancelled"), true);
+});
+
+test("production send path supplies service policy purpose before provider retry", async () => {
+  const calls = [];
+  const repository = {
+    async recoverStaleProcessing() { return []; },
+    async claimDue() { return [baseRow()]; },
+    async checkSendEligibility() { return baseRow(); },
+    async markSendStarted(id, lease) {
+      calls.push(["started", id, lease]);
+      return { id };
+    },
+    async prepareAttention(id, lease, reason) {
+      calls.push(["prepare", id, lease, reason]);
+      return { id };
+    },
+    async markFailed(id, lease, reason) {
+      calls.push(["failed", id, lease, reason]);
+      return { id };
+    },
+    async findNextDueAt() { return null; },
+  };
+  const contacts = {
+    async setDeliveryAttention(id, reason) {
+      calls.push(["attention", id, reason]);
+    },
+  };
+
+  await runWhatsappOutboundRetryQueue({
+    repository,
+    inbound: noOpInbound,
+    messages: {
+      async setDeliveryStatusById(id, status, error) {
+        calls.push(["message", id, status, error]);
+        return { id, contact_id: 20, delivery_status: status };
+      },
+    },
+    contacts,
+    async sendText(contact, text, options) {
+      calls.push(["sendText", contact.id, text, options.purpose]);
+      // Simulate the normal policy layer blocking a freeform message because
+      // the 24-hour customer-service window has expired. It must block before
+      // preSendCheck starts the provider-call fence.
+      return {
+        success: false,
+        wamid: null,
+        policyBlocked: true,
+        policyCode: "outside_customer_service_window",
+        retryable: false,
+        ambiguous: false,
+        error: "WhatsApp send blocked because the 24-hour customer-service window has closed.",
+      };
+    },
+  });
+
+  const send = calls.find((entry) => entry[0] === "sendText");
+  assert.deepEqual(send.slice(1), [20, "Hello", "service"]);
+  assert.equal(calls.some((entry) => entry[0] === "started"), false);
+  assert.equal(calls.some((entry) => entry[0] === "attention"), true);
+});
+
+test("terminal retry defers durable staff attention instead of terminalizing when attention write fails", async () => {
+  const calls = [];
+  const repository = {
+    async recoverStaleProcessing() { return []; },
+    async claimDue() {
+      return [baseRow({ attempts: MAX_RETRY_ATTEMPTS })];
+    },
+    async prepareAttention(id, lease, reason) {
+      calls.push(["prepare", id, lease, reason]);
+      return { id };
+    },
+    async deferAttention(id, lease, reason, options) {
+      calls.push(["defer", id, lease, reason, options.delaySeconds]);
+      return { id, status: "attention_pending" };
+    },
+    async markFailed() {
+      throw new Error("must not terminalize before staff attention is durable");
+    },
+    async findNextDueAt() { return null; },
+  };
+  const contacts = {
+    async setDeliveryAttention() {
+      calls.push(["attention-attempt"]);
+      throw new Error("temporary database failure");
+    },
+  };
+  const messages = {
+    async setDeliveryStatusById(id, status, error) {
+      calls.push(["message", id, status, error]);
+      return { id, contact_id: 20, delivery_status: status };
+    },
+  };
+
+  await runWhatsappOutboundRetryQueue({
+    repository,
+    inbound: noOpInbound,
+    messages,
+    contacts,
+    async sendMessage() {
+      return {
+        success: false,
+        retryable: false,
+        ambiguous: false,
+        error: "permanent rejection",
+      };
+    },
+  });
+
+  assert.equal(calls.some((entry) => entry[0] === "prepare"), true);
+  assert.equal(calls.some((entry) => entry[0] === "defer"), true);
+  assert.equal(calls.some((entry) => entry[0] === "failed"), false);
 });
