@@ -121,6 +121,11 @@ async function resolveResultMediaForReply({
   const trustedServiceQuery =
     serviceQuery === true && sourceIsTrusted && metaAdSourceVerified;
 
+  // If the model says this turn's service came from Meta, the deterministic
+  // creative mapping must agree with treatment for every automatic result-media
+  // mode, including legacy price_only sets.
+  if (serviceQuerySource === "meta_ad" && !metaAdSourceVerified) return null;
+
   // service_enquiry mode is deliberately fail-closed: even a price/package
   // question must carry the structured one-service intent signal. For meta_ad
   // intent, the backend-resolved headline/body service must equal treatment;
