@@ -17,6 +17,17 @@ function keyForChannelContact(channel, externalId) {
   return `${normalizedChannel}:${normalizedId}`;
 }
 
+function keyForContact(contact) {
+  const channel = String(contact?.channel || "whatsapp").trim().toLowerCase();
+  return channel === "whatsapp"
+    ? keyForWhatsAppNumber(contact?.whatsapp_number)
+    : keyForChannelContact(channel, contact?.channel_user_id);
+}
+
+function cancelForContact(contact) {
+  return cancel(keyForContact(contact));
+}
+
 function snapshot(key) {
   if (!key) return 0;
   return epochs.get(String(key)) || 0;
@@ -76,8 +87,14 @@ async function settleBeforeSend(
   } = {}
 ) {
   if (!key) return true;
-  if (String(key).startsWith("whatsapp:") && !enabled()) return true;
   if (cancelledSince(key, token)) return false;
+  if (
+    String(key).startsWith("whatsapp:") &&
+    !enabled() &&
+    !hasPendingEcho(key)
+  ) {
+    return true;
+  }
 
   await new Promise((resolve) => setTimeout(resolve, delayMs));
   if (cancelledSince(key, token)) return false;
@@ -97,6 +114,8 @@ module.exports = {
   enabled,
   keyForWhatsAppNumber,
   keyForChannelContact,
+  keyForContact,
+  cancelForContact,
   snapshot,
   cancel,
   cancelledSince,
