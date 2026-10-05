@@ -54,10 +54,9 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
   try {
     const contact = await contactsRepo.getOrCreateContact(echo.to);
 
-    // Insert the provider message and switch ownership in one DB transaction.
-    // A retried echo that already exists becomes a true no-op, so it cannot
-    // unexpectedly take the conversation back from AI after a staff member has
-    // deliberately pressed Return to AI.
+    // Insert the provider message and apply Staff Assist ownership rules in one
+    // DB transaction. Ordinary AI-owned chats remain AI-owned; a synthetic AI
+    // handoff is claimed as real Staff ownership. A retried echo is a true no-op.
     const persisted = await whatsappCoexistenceRepo.persistStaffEchoIfNew(
       contact.id,
       renderEchoContent(echo),
@@ -72,13 +71,13 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
     }
 
     if (persisted.isNew) {
-      // Only a genuinely new app-originated staff action invalidates the AI
-      // turn. The pending flag was set synchronously before DB work so an
-      // in-flight AI can fail closed while this transaction is still resolving.
+      // Only a genuinely new app-originated staff action invalidates the
+      // current AI turn. The pending flag was set synchronously before DB work
+      // so an in-flight AI can fail closed while this transaction resolves.
       confirmPendingAiForEcho(echo);
     } else {
       // A Meta retry may still need post-ACK bookkeeping to run again, but it
-      // must not cancel a later AI turn or retake ownership.
+      // must not cancel a later AI turn or alter ownership.
       releasePendingAiForEcho(echo);
     }
 

@@ -830,6 +830,37 @@ async function setDeliveryStatusById(messageId, status, errorText = null) {
   return result.rows[0] || null;
 }
 
+async function hasStaffReplyAfter(contactId, inboundMessageId, query = pool.query.bind(pool)) {
+  const safeContactId = Number(contactId);
+  const safeInboundMessageId = Number(inboundMessageId);
+  if (
+    !Number.isSafeInteger(safeContactId) ||
+    safeContactId <= 0 ||
+    !Number.isSafeInteger(safeInboundMessageId) ||
+    safeInboundMessageId <= 0
+  ) {
+    return false;
+  }
+
+  const result = await query(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM messages inbound
+       JOIN messages staff
+         ON staff.contact_id = inbound.contact_id
+        AND staff.role = 'assistant'
+        AND staff.sent_by_username IS NOT NULL
+        AND COALESCE(staff.delivery_status, 'pending') <> 'failed'
+        AND (staff.created_at, staff.id) > (inbound.created_at, inbound.id)
+       WHERE inbound.id = $2
+         AND inbound.contact_id = $1
+         AND inbound.role = 'user'
+     ) AS has_staff_reply`,
+    [safeContactId, safeInboundMessageId]
+  );
+  return result.rows[0]?.has_staff_reply === true;
+}
+
 /**
  * Delivery webhooks only need the contact id (for failures) plus status data.
  * Never return media_base64 here. Repeated identical webhook statuses are also
@@ -880,6 +911,7 @@ module.exports = {
   getMessageForRetry,
   getMessageByProviderIdForContact,
   getMessageByAnyProviderIdForContact,
+  hasStaffReplyAfter,
   registerSocialProviderMessageAlias,
   socialProviderAliasRecorder,
   getDeliveryStatusesForContact,

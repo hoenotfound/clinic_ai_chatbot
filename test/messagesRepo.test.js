@@ -211,6 +211,23 @@ test("outbound WhatsApp template metadata is stored atomically with the message"
 
 
 
+test("detects a real staff reply after one specific inbound turn", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /staff\.sent_by_username IS NOT NULL/);
+    assert.match(sql, /\(staff\.created_at, staff\.id\) > \(inbound\.created_at, inbound\.id\)/);
+    assert.deepEqual(params, [42, 99]);
+    return { rows: [{ has_staff_reply: true }] };
+  };
+
+  assert.equal(await messagesRepo.hasStaffReplyAfter(42, 99), true);
+  assert.equal(await messagesRepo.hasStaffReplyAfter(null, 99), false);
+});
+
 test("promo duplicate lookup counts only provider-accepted non-failed media sends", async (t) => {
   const originalQuery = pool.query;
   t.after(() => {

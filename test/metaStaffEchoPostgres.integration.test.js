@@ -48,6 +48,17 @@ test(
           delivery_error TEXT,
           is_automated_follow_up BOOLEAN NOT NULL DEFAULT false
         );
+
+        CREATE TABLE follow_up_ai_decisions (
+          id SERIAL PRIMARY KEY,
+          contact_id INTEGER NOT NULL,
+          trigger_message_id INTEGER NOT NULL,
+          follow_up_step INTEGER NOT NULL,
+          action TEXT NOT NULL,
+          reason TEXT,
+          topic TEXT,
+          UNIQUE (trigger_message_id, follow_up_step)
+        );
       `);
 
       const migrationSql = fs.readFileSync(
@@ -128,8 +139,8 @@ test(
         client
       );
       assert.equal(manual.isNew, true);
-      assert.equal(manual.contact.mode, "human");
-      assert.equal(manual.contact.takeover_by, "Instagram");
+      assert.equal(manual.contact.mode, "ai");
+      assert.equal(manual.contact.takeover_by, null);
       assert.equal(manual.contact.needs_attention, false);
       assert.equal(manual.contact.is_unread, false);
 
@@ -178,6 +189,18 @@ test(
       assert.equal(namedOwner.contact.needs_attention, false);
       assert.equal(namedOwner.contact.is_unread, false);
 
+      const handoffInbound = await client.query(
+        `INSERT INTO messages (contact_id, role, content)
+         VALUES ($1, 'user', 'Please let me speak to staff')
+         RETURNING id`,
+        [contactId]
+      );
+      const handoffAnchor = await client.query(
+        `INSERT INTO messages (contact_id, role, content)
+         VALUES ($1, 'assistant', 'A staff member will help you shortly.')
+         RETURNING id`,
+        [contactId]
+      );
       await client.query(
         `UPDATE contacts
          SET mode = 'human', takeover_by = 'AI handoff', takeover_at = NOW()
@@ -193,7 +216,20 @@ test(
         client
       );
       assert.equal(syntheticOwner.isNew, true);
+      assert.equal(syntheticOwner.contact.mode, "human");
       assert.equal(syntheticOwner.contact.takeover_by, "Instagram");
+
+      const cancelledSequence = await client.query(
+        `SELECT action, trigger_message_id
+         FROM follow_up_ai_decisions
+         WHERE contact_id = $1 AND follow_up_step = 1`,
+        [contactId]
+      );
+      assert.deepEqual(cancelledSequence.rows, [{
+        action: "skip",
+        trigger_message_id: handoffAnchor.rows[0].id,
+      }]);
+      assert.ok(handoffInbound.rows[0].id < handoffAnchor.rows[0].id);
     } finally {
       await client.query("SET search_path TO public").catch(() => {});
       await client
