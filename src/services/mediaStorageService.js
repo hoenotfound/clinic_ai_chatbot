@@ -16,10 +16,12 @@ const {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
+  ListObjectsV2Command,
 } = require("@aws-sdk/client-s3");
 
 const DEFAULT_META_SHARE_SECONDS = 10 * 60;
 const DEFAULT_TEMP_DELETE_DELAY_MS = 12 * 60 * 1000;
+const DEFAULT_STALE_TEMP_MEDIA_AGE_MS = 24 * 60 * 60 * 1000;
 const CLIENT_MEDIA_ROOT = "clients";
 const MAX_CLIENT_SLUG_LENGTH = 80;
 let cachedClient = null;
@@ -293,6 +295,55 @@ function scheduleTemporaryMediaDelete(key, delayMs = DEFAULT_TEMP_DELETE_DELAY_M
   return timer;
 }
 
+function temporaryMediaPrefix(env = process.env) {
+  return applyClientNamespace("meta-outbound/", env);
+}
+
+function isStaleTemporaryObject(object, {
+  now = Date.now(),
+  olderThanMs = DEFAULT_STALE_TEMP_MEDIA_AGE_MS,
+} = {}) {
+  const modifiedAt = object?.LastModified ? new Date(object.LastModified).getTime() : NaN;
+  return Boolean(
+    object?.Key &&
+    Number.isFinite(modifiedAt) &&
+    modifiedAt <= Number(now) - Math.max(0, Number(olderThanMs) || 0)
+  );
+}
+
+/**
+ * Durable backstop for temporary Meta attachments. The normal delete timer is
+ * fast but disappears on a process restart; this sweep removes objects that
+ * survived a restart or a transient delete failure.
+ */
+async function pruneStaleTemporaryMedia({
+  olderThanMs = DEFAULT_STALE_TEMP_MEDIA_AGE_MS,
+  now = Date.now(),
+  env = process.env,
+} = {}) {
+  const prefix = temporaryMediaPrefix(env);
+  let continuationToken = undefined;
+  let deleted = 0;
+
+  do {
+    const page = await getClient().send(new ListObjectsV2Command({
+      Bucket: getBucketName(),
+      Prefix: prefix,
+      ContinuationToken: continuationToken,
+    }));
+
+    for (const object of page.Contents || []) {
+      if (!isStaleTemporaryObject(object, { now, olderThanMs })) continue;
+      await deleteMedia(object.Key);
+      deleted += 1;
+    }
+
+    continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  return deleted;
+}
+
 /**
  * Opens an R2 object as a Node readable stream. When a single HTTP byte range
  * is supplied, that range is forwarded directly to R2 so voice playback and
@@ -362,6 +413,9 @@ module.exports = {
   uploadTemporaryMedia,
   createPresignedGetUrl,
   scheduleTemporaryMediaDelete,
+  temporaryMediaPrefix,
+  isStaleTemporaryObject,
+  pruneStaleTemporaryMedia,
   openMediaStream,
   downloadMedia,
   isRangeNotSatisfiableError,
