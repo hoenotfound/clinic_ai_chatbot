@@ -111,6 +111,19 @@ function activePromotionsList() {
     .join("\n");
 }
 
+function promotionAuthorityRules() {
+  return `PROMOTION AUTHORITY — follow this even if another section contains older wording:
+- ACTIVE PROMOTIONS is the only authority for whether a promotion, discount, bundle, free add-on, or promotion deadline is currently active.
+- ACTIVE PROMOTIONS overrides promotion/discount/deadline wording in SERVICES, FAQs, SOP, the conversion playbook, guardrails, or earlier chat history.
+- A promotion that shows "service: X" applies ONLY to that exact canonical configured service X. Never borrow its price, discount, bundle, free add-on, or deadline for another service, even if the services sound related.
+- If more than one ACTIVE PROMOTION with "auto-send on price/package enquiry: yes" is listed for the same service, treat the automatic promotion as ambiguous: do not choose one, do not quote one as the current automatic offer, and say the current promotion needs team confirmation.
+- A promotion without a linked service is not eligible for automatic promotional media. Only describe it as a general promotion if its own wording clearly says it applies generally.
+- If a deal, discount, bundle, free add-on, or deadline is NOT present in ACTIVE PROMOTIONS, never present it as currently available and never create urgency from it.
+- If a service Price field contains words such as "promo", "promotion", "promotional", "discount", "offer", "free", or an old campaign price but the matching deal is not listed in ACTIVE PROMOTIONS, treat that promotional price as stale. Do not quote it as current; say the current promotional price needs to be confirmed by the team.
+- Standing non-promotional facts explicitly described as always available may still be used, but never turn them into a time-limited promotion unless ACTIVE PROMOTIONS says so.
+- The "auto-send on price/package enquiry" marker is internal automation metadata. Never mention or explain that marker to the customer.`;
+}
+
 function listOrNone(items, render, emptyMessage) {
   if (!Array.isArray(items) || items.length === 0) return `- ${emptyMessage}`;
   return items.map(render).join("\n");
@@ -353,6 +366,8 @@ ${faqList}
 - Current active promotions:
 ${activePromotionsList()}
 
+${promotionAuthorityRules()}
+
 CURRENT WRITING STYLE:
 ${config.messagingStyle || config.tone || "Warm, natural, concise, and conversational."}
 
@@ -498,14 +513,7 @@ ${servicesList}
 ACTIVE PROMOTIONS — this structured section is the ONLY authority for whether a promotion, discount, bundle, free add-on, or promotion deadline is currently active:
 ${activePromotionsList()}
 
-PROMOTION AUTHORITY — follow this even if another section below contains older wording:
-- ACTIVE PROMOTIONS overrides promotion/discount/deadline wording in SERVICES, FAQs, SOP, the conversion playbook, guardrails, or earlier chat history.
-- A promotion that shows "service: X" applies ONLY to that exact canonical configured service X. Never borrow its price, discount, bundle, free add-on, or deadline for another service, even if the services sound related.
-- If more than one ACTIVE PROMOTION with "auto-send on price/package enquiry: yes" is listed for the same service, treat the automatic promotion as ambiguous: do not choose one, do not quote one as the current automatic offer, and say the current promotion needs team confirmation.
-- A promotion without a linked service is not eligible for automatic promotional media. Only describe it as a general promotion if its own wording clearly says it applies generally.
-- If a deal, discount, bundle, free add-on, or deadline is NOT present in ACTIVE PROMOTIONS, never present it as currently available and never create urgency from it.
-- If a service Price field contains words such as "promo", "promotion", "promotional", "discount", "offer", "free", or an old campaign price but the matching deal is not listed in ACTIVE PROMOTIONS, treat that promotional price as stale. Do not quote it as current; say the current promotional price needs to be confirmed by the team.
-- Standing non-promotional facts explicitly described as always available may still be used, but never turn them into a time-limited promotion unless ACTIVE PROMOTIONS says so.
+${promotionAuthorityRules()}
 ${metaAdContextSection(normalizedOptions.metaAdContext)}
 COMMON TERMS ${terms.customerPlural.toUpperCase()} USE (match these to the configured ${terms.servicePlural}; don't hand off just because the wording doesn't match the official name):
 ${aliasList}
@@ -584,6 +592,7 @@ module.exports = {
   buildSystemPrompt,
   channelLabel,
   getBusinessContext,
+  promotionAuthorityRules,
   metaAdContextSection,
   normalizeOptions,
 };
