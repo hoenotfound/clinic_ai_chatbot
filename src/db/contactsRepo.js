@@ -1,4 +1,5 @@
 const { pool } = require("./db");
+const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("../services/telegramImmediateAlertService");
 const metaMessaging = require("../services/metaMessagingService");
@@ -438,24 +439,23 @@ async function listConversations() {
 
 async function takeOver(id, staffUsername) {
   const result = await pool.query(
-    `WITH takeover AS (
-       UPDATE contacts
-       SET mode = 'human', takeover_by = $1, takeover_at = now(),
-           needs_attention = false, attention_reason = NULL, is_unread = false,
-           updated_at = now()
-       WHERE id = $2
-       RETURNING *
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $2::integer)
+     ), current_contact AS MATERIALIZED (
+       SELECT c.id
+       FROM contacts c, conversation_lock
+       WHERE c.id = $2
      ), latest_inbound AS (
        SELECT inbound.id, inbound.created_at
-       FROM messages inbound, takeover
-       WHERE inbound.contact_id = takeover.id
+       FROM messages inbound, current_contact
+       WHERE inbound.contact_id = current_contact.id
          AND inbound.role = 'user'
        ORDER BY inbound.created_at DESC, inbound.id DESC
        LIMIT 1
      ), anchor AS (
        SELECT outbound.id, outbound.sent_by_username
-       FROM messages outbound, takeover, latest_inbound
-       WHERE outbound.contact_id = takeover.id
+       FROM messages outbound, current_contact, latest_inbound
+       WHERE outbound.contact_id = current_contact.id
          AND outbound.role = 'assistant'
          AND outbound.is_automated_follow_up = false
          AND (outbound.created_at, outbound.id) >
@@ -472,16 +472,24 @@ async function takeOver(id, staffUsername) {
          topic
        )
        SELECT
-         takeover.id,
+         current_contact.id,
          anchor.id,
          1,
          'skip',
          'Cancelled because clinic staff took over this conversation.',
          NULL
-       FROM takeover, anchor
+       FROM current_contact, anchor
        WHERE anchor.sent_by_username IS NULL
        ON CONFLICT (trigger_message_id, follow_up_step) DO NOTHING
        RETURNING id
+     ), takeover AS (
+       UPDATE contacts c
+       SET mode = 'human', takeover_by = $1, takeover_at = now(),
+           needs_attention = false, attention_reason = NULL, is_unread = false,
+           updated_at = now()
+       FROM current_contact
+       WHERE c.id = current_contact.id
+       RETURNING c.*
      )
      SELECT takeover.*
      FROM takeover
