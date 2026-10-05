@@ -44,6 +44,17 @@ test(
           delivery_error TEXT,
           is_automated_follow_up BOOLEAN NOT NULL DEFAULT false
         );
+
+        CREATE TABLE follow_up_ai_decisions (
+          id SERIAL PRIMARY KEY,
+          contact_id INTEGER NOT NULL,
+          trigger_message_id INTEGER NOT NULL,
+          follow_up_step INTEGER NOT NULL,
+          action TEXT NOT NULL,
+          reason TEXT,
+          topic TEXT,
+          UNIQUE (trigger_message_id, follow_up_step)
+        );
       `);
 
       const inserted = await client.query(
@@ -64,19 +75,10 @@ test(
       assert.equal(first.isNew, true);
       assert.equal(first.message.role, "assistant");
       assert.equal(first.message.sent_by_username, "WhatsApp Business App");
-      assert.equal(first.contact.mode, "human");
-      assert.equal(first.contact.takeover_by, "WhatsApp Business App");
+      assert.equal(first.contact.mode, "ai");
+      assert.equal(first.contact.takeover_by, null);
       assert.equal(first.contact.needs_attention, false);
       assert.equal(first.contact.is_unread, false);
-
-      // Simulate staff deliberately returning the conversation to AI after the
-      // original echo was processed.
-      await client.query(
-        `UPDATE contacts
-         SET mode = 'ai', takeover_by = NULL, takeover_at = NULL
-         WHERE id = $1`,
-        [contactId]
-      );
 
       const duplicate = await coexistenceRepo.persistStaffEchoIfNew(
         contactId,
@@ -127,7 +129,20 @@ test(
       assert.equal(namedOwnerEcho.contact.is_unread, false);
 
       // A synthetic AI handoff is not a real staff owner. The first Business
-      // App reply must claim that conversation as real human ownership.
+      // App reply must claim that conversation as real human ownership and
+      // durably cancel the previous AI follow-up anchor.
+      const handoffInbound = await client.query(
+        `INSERT INTO messages (contact_id, role, content)
+         VALUES ($1, 'user', 'I need a person')
+         RETURNING id`,
+        [contactId]
+      );
+      const handoffAnchor = await client.query(
+        `INSERT INTO messages (contact_id, role, content)
+         VALUES ($1, 'assistant', 'A staff member will help you shortly.')
+         RETURNING id`,
+        [contactId]
+      );
       await client.query(
         `UPDATE contacts
          SET mode = 'human', takeover_by = 'AI handoff', takeover_at = NOW()
@@ -143,7 +158,20 @@ test(
         client
       );
       assert.equal(handoffEcho.isNew, true);
+      assert.equal(handoffEcho.contact.mode, "human");
       assert.equal(handoffEcho.contact.takeover_by, "WhatsApp Business App");
+
+      const cancelledSequence = await client.query(
+        `SELECT action, trigger_message_id
+         FROM follow_up_ai_decisions
+         WHERE contact_id = $1 AND follow_up_step = 1`,
+        [contactId]
+      );
+      assert.deepEqual(cancelledSequence.rows, [{
+        action: "skip",
+        trigger_message_id: handoffAnchor.rows[0].id,
+      }]);
+      assert.ok(handoffInbound.rows[0].id < handoffAnchor.rows[0].id);
 
       const state = await client.query(
         `SELECT mode, takeover_by,
@@ -155,7 +183,7 @@ test(
       assert.deepEqual(state.rows[0], {
         mode: "human",
         takeover_by: "WhatsApp Business App",
-        message_count: 3,
+        message_count: 5,
       });
     } finally {
       await client.query("SET search_path TO public").catch(() => {});
