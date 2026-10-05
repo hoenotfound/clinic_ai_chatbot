@@ -124,6 +124,25 @@ test("Tools UX keeps advanced details out of the main setup flow", () => {
   assert.doesNotMatch(tools, /function OverviewItem/);
 });
 
+test("manual staff text and image replies keep Needs Attention until the staff row is durable", () => {
+  const route = read("src/routes/conversations.js");
+
+  const textRouteStart = route.indexOf('router.post("/:contactId/messages"');
+  const imageRouteStart = route.indexOf('router.post("/:contactId/media"');
+  const voiceRouteStart = route.indexOf('router.post("/:contactId/voice"');
+
+  const textRoute = route.slice(textRouteStart, imageRouteStart);
+  const imageRoute = route.slice(imageRouteStart, voiceRouteStart);
+
+  const textSave = textRoute.indexOf("conversationStore.appendMessageForContact");
+  const textClear = textRoute.indexOf("contactsRepo.setAttention(contact.id, false)");
+  assert.ok(textSave >= 0 && textClear > textSave);
+
+  const imageSave = imageRoute.indexOf("conversationStore.appendMessageForContact");
+  const imageClear = imageRoute.indexOf("contactsRepo.setAttention(contact.id, false)");
+  assert.ok(imageSave >= 0 && imageClear > imageSave);
+});
+
 test("Follow-up UI explains promotion overrides, sequence stops, and manual follow-up naming", () => {
   const tools = read("portal-frontend/src/pages/Tools.jsx");
   const settings = read("portal-frontend/src/pages/Settings.jsx");
