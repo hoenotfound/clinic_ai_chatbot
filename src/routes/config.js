@@ -74,6 +74,10 @@ const VALIDATORS = {
         (p.linkedService === undefined || isString(p.linkedService)) &&
         (p.sendOnPriceQuery === undefined || typeof p.sendOnPriceQuery === "boolean") &&
         (
+          p.followUpMessage === undefined ||
+          (isString(p.followUpMessage) && p.followUpMessage.trim().length <= 1000)
+        ) &&
+        (
           p.packages === undefined ||
           (
             Array.isArray(p.packages) &&
@@ -125,7 +129,11 @@ function isPromotionPackage(value) {
       (Array.isArray(value.aliases) && value.aliases.every(isString))
     ) &&
     isString(value.imageUrl) &&
-    isString(value.caption)
+    isString(value.caption) &&
+    (
+      value.followUpMessage === undefined ||
+      (isString(value.followUpMessage) && value.followUpMessage.trim().length <= 1000)
+    )
   );
 }
 

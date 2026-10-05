@@ -6,6 +6,11 @@ const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
+const {
+  getActivePromotions,
+  promotionPackages,
+  findMentionedPromotionPackages,
+} = require("../utils/activePromotion");
 const { randomUUID } = require("node:crypto");
 const channelMessaging = require("./channelMessagingService");
 const followUpAiService = require("./followUpAiService");
@@ -226,7 +231,140 @@ function configuredServicesMentionedInConversation(candidate) {
   return [...matched.values()];
 }
 
-function messageForCandidate(step, candidate, language) {
+function looksLikePromotionEnquiry(value) {
+  const text = String(value || "").normalize("NFKC").trim();
+  if (!text) return false;
+  return /(?:\b(?:price|pricing|cost|harga|berapa|promo|promotion|offer|discount|package|packages)\b|\brm\s*\d+|价格|價錢|价钱|多少钱|多少錢|几钱|幾錢|收费|收費|费用|費用|优惠|優惠|配套|套餐|促销|促銷)/iu.test(text);
+}
+
+function configuredServiceByName(value) {
+  const target = normalizedServiceName(value);
+  if (!target) return null;
+  return (Array.isArray(clinicConfig.services) ? clinicConfig.services : [])
+    .map((service) => typeof service?.name === "string" ? service.name.trim() : "")
+    .find((serviceName) => normalizedServiceName(serviceName) === target) || null;
+}
+
+function mostSpecificConfiguredServiceInText(value) {
+  const transcript = String(value || "").trim();
+  if (!transcript) return { serviceName: null, mentioned: false };
+
+  const scored = [];
+  for (const service of Array.isArray(clinicConfig.services)
+    ? clinicConfig.services
+    : []) {
+    const serviceName =
+      typeof service?.name === "string" ? service.name.trim() : "";
+    if (!serviceName) continue;
+
+    const scores = serviceTerms(serviceName)
+      .filter((term) => textContainsServiceTerm(transcript, term))
+      .map((term) =>
+        normalizedServiceName(term).replace(/[^\p{L}\p{N}]+/gu, "").length
+      )
+      .filter((score) => score > 0);
+    if (scores.length > 0) {
+      scored.push({ serviceName, score: Math.max(...scores) });
+    }
+  }
+
+  if (scored.length === 0) {
+    return { serviceName: null, mentioned: false };
+  }
+
+  const bestScore = Math.max(...scored.map((item) => item.score));
+  const winners = scored.filter((item) => item.score === bestScore);
+  return {
+    serviceName: winners.length === 1 ? winners[0].serviceName : null,
+    mentioned: true,
+  };
+}
+
+function promotionFollowUpForCandidate(candidate) {
+  const recentInbound = Array.isArray(candidate.recent_inbound_messages)
+    ? candidate.recent_inbound_messages.filter(
+        (value) => typeof value === "string" && value.trim()
+      )
+    : [];
+  const latestInbound = recentInbound[0] || null;
+  if (!looksLikePromotionEnquiry(latestInbound)) return null;
+
+  const customerTranscript = recentInbound.join("\n");
+  const fullTranscript = [
+    ...recentInbound,
+    candidate.trigger_message_content,
+  ]
+    .filter((value) => typeof value === "string" && value.trim())
+    .join("\n");
+
+  const activePromotions = getActivePromotions(clinicConfig.promotions || []);
+  const conversationService = mostSpecificConfiguredServiceInText(fullTranscript);
+  let serviceName = conversationService.serviceName;
+
+  // If the current exchange mentions multiple equally-specific services, do
+  // not let an older CRM interest choose one arbitrary promotion. When the
+  // current exchange contains no configured service at all, CRM interest can
+  // still provide context for a short "price?" follow-up.
+  if (!serviceName && conversationService.mentioned) return null;
+  if (!serviceName) {
+    serviceName = configuredServiceByName(candidate.treatment_interest);
+  }
+  if (!serviceName) return null;
+
+  const serviceKey = normalizedServiceName(serviceName);
+  const matches = activePromotions.filter(
+    (item) => normalizedServiceName(item?.linkedService) === serviceKey
+  );
+  if (matches.length !== 1) return null;
+  const [promotion] = matches;
+
+  const configuredPackages = Array.isArray(promotion.packages)
+    ? promotion.packages.filter((item) => item && typeof item === "object")
+    : [];
+
+  if (configuredPackages.length > 0) {
+    const packages = promotionPackages(promotion);
+    const mentionedByCustomer = findMentionedPromotionPackages(
+      packages,
+      customerTranscript
+    );
+    const selectedPackages =
+      mentionedByCustomer.length > 0 ? mentionedByCustomer : packages;
+    if (
+      selectedPackages.length === 0 ||
+      selectedPackages.some((item) => !item.followUpMessage)
+    ) {
+      return null;
+    }
+
+    return {
+      message: selectedPackages
+        .map((item) => item.followUpMessage)
+        .join("\n\n"),
+      targetedService: serviceName,
+      promotionFollowUp: true,
+    };
+  }
+
+  const message =
+    typeof promotion.followUpMessage === "string"
+      ? promotion.followUpMessage.trim()
+      : "";
+  return message
+    ? {
+        message,
+        targetedService: serviceName,
+        promotionFollowUp: true,
+      }
+    : null;
+}
+
+function messageForCandidate(step, candidate, language, stepIndex = 1) {
+  if (stepIndex === 1) {
+    const promotionFollowUp = promotionFollowUpForCandidate(candidate);
+    if (promotionFollowUp) return promotionFollowUp;
+  }
+
   const conversationServices =
     configuredServicesMentionedInConversation(candidate);
   const overrideForService = (serviceName) =>
@@ -259,6 +397,7 @@ function messageForCandidate(step, candidate, language) {
   return {
     message: source.translations[language] || source.message,
     targetedService: targeted?.serviceName || null,
+    promotionFollowUp: false,
   };
 }
 
@@ -446,15 +585,21 @@ async function sendCandidate(candidate) {
   const fallbackSelection = messageForCandidate(
     step,
     candidate,
-    language
+    language,
+    stepIndex
   );
   let followUpMessage = fallbackSelection.message;
   const targetedService = fallbackSelection.targetedService;
+  const promotionFollowUp = fallbackSelection.promotionFollowUp === true;
 
   let followUpMessageMode = "fixed";
   let aiLeaseToken = null;
 
-  if (step.messageMode === "ai") {
+  // Configured promotion follow-up copy is exact business-approved text.
+  // It takes priority over AI-personalized follow-up generation so the model
+  // cannot reveal a different offer, rewrite the price, or choose the wrong
+  // package after the customer has gone quiet.
+  if (step.messageMode === "ai" && !promotionFollowUp) {
     aiLeaseToken = randomUUID();
     const lease = await followUpAiLeaseRepo.claimIfStillEligible({
       contactId: candidate.contact_id,
