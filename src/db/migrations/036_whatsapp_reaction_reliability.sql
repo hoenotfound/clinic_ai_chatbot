@@ -27,3 +27,16 @@ CREATE INDEX IF NOT EXISTS idx_pending_whatsapp_reactions_target
 
 CREATE INDEX IF NOT EXISTS idx_pending_whatsapp_reactions_updated
   ON pending_whatsapp_reactions (updated_at);
+
+-- Reaction target lookup normally hits messages.whatsapp_message_id. These two
+-- partial indexes keep the historical/provider-evidence fallbacks cheap.
+CREATE INDEX IF NOT EXISTS idx_outbound_message_evidence_whatsapp_provider
+  ON outbound_message_evidence (provider_message_id)
+  WHERE channel = 'whatsapp'
+    AND accepted = true
+    AND provider_message_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_inbound_outbound_attempts_accepted_provider
+  ON inbound_outbound_attempts (provider_message_id)
+  WHERE outcome = 'accepted'
+    AND provider_message_id IS NOT NULL;
