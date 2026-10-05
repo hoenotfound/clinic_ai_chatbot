@@ -664,18 +664,52 @@ function currentSessionHasPromotionEnquiry(
   const target = normalizedServiceName(serviceName);
   if (!target) return false;
 
-  return followUpAiService
-    .scopePackageSelectionConversation(messages, triggerMessageId)
-    .some((message) => {
-      if (message?.role !== "user" || !looksLikePromotionEnquiry(message?.content)) {
-        return false;
+  const scoped = followUpAiService.scopePackageSelectionConversation(
+    messages,
+    triggerMessageId
+  );
+  let currentCustomerService = null;
+  let sawExplicitCustomerService = false;
+
+  for (const message of scoped) {
+    if (message?.role !== "user") continue;
+
+    const service = mostSpecificConfiguredServiceInText(message.content);
+    if (service.mentioned) {
+      sawExplicitCustomerService = true;
+      currentCustomerService = service.serviceName
+        ? normalizedServiceName(service.serviceName)
+        : null;
+    }
+
+    if (!looksLikePromotionEnquiry(message?.content)) continue;
+
+    // A service named in the same price/package enquiry is authoritative.
+    if (service.mentioned) {
+      if (service.serviceName && currentCustomerService === target) {
+        return true;
       }
-      const service = mostSpecificConfiguredServiceInText(message.content);
-      return (
-        service.serviceName &&
-        normalizedServiceName(service.serviceName) === target
-      );
-    });
+      continue;
+    }
+
+    // Real chats commonly establish the service in one turn and then ask only
+    // "多少钱？" / "price?". Carry that customer-only service context forward
+    // within the current sales session instead of requiring the service name to
+    // be repeated in the price message itself.
+    if (currentCustomerService) {
+      if (currentCustomerService === target) return true;
+      continue;
+    }
+
+    // When the customer never named any service in this session (for example an
+    // ad/referral already established the CRM treatment interest), the current
+    // structured target is the safest available context for a generic price
+    // enquiry. Once the customer has explicitly named another/ambiguous service,
+    // never use CRM alone to unlock a different hidden offer.
+    if (!sawExplicitCustomerService) return true;
+  }
+
+  return false;
 }
 
 async function sendCandidate(candidate) {
