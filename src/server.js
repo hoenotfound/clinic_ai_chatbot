@@ -38,6 +38,7 @@ const {
 } = require("./utils/socialDeliveryError");
 const messagesRepo = require("./db/messagesRepo");
 const inboundProcessingRepo = require("./db/inboundProcessingRepo");
+const whatsappOutboundRetry = require("./services/whatsappOutboundRetryService");
 const outboundMessageEvidenceRepo = require("./db/outboundMessageEvidenceRepo");
 const contactsRepo = require("./db/contactsRepo");
 const {
@@ -87,7 +88,11 @@ async function persistSendOutcome(
       null
     );
   } else if (!sendResult.success) {
-    updated = await messagesRepo.setDeliveryStatusById(savedMessage.id, "failed", errorText);
+    updated = await messagesRepo.setDeliveryStatusById(
+      savedMessage.id,
+      sendResult.ambiguous ? "unknown" : "failed",
+      errorText
+    );
   }
   publishDeliveryStatus(updated);
   return updated || savedMessage;
@@ -258,7 +263,11 @@ async function sendTrackedText(
     await inboundProcessingRepo.finalizeOutboundAttempt(
       processingJobId,
       {
-        outcome: sendResult.success ? "accepted" : "rejected",
+        outcome: sendResult.success
+          ? "accepted"
+          : sendResult.ambiguous
+            ? "ambiguous"
+            : "rejected",
         providerMessageId: providerMessageId(sendResult),
         errorText: sendResult.success ? null : errorText,
       }
@@ -277,10 +286,44 @@ async function sendTrackedText(
   recordReadinessSendEvidence(saved, contact, sendResult, origin);
 
   if (!sendResult.success) {
-    await contactsRepo.setDeliveryAttention(
-      contact.id,
-      `Delivery failed: ${errorText}`
-    );
+    let retryQueued = false;
+
+    if (
+      contact.channel === "whatsapp" &&
+      sendResult.retryable === true &&
+      sendResult.ambiguous !== true &&
+      ["ai_reply", "system_fallback"].includes(origin)
+    ) {
+      try {
+        const queued = await whatsappOutboundRetry.queueTextRetry({
+          messageId: saved.id,
+          contactId: contact.id,
+          recipient: contact.whatsapp_number,
+          origin,
+          sendResult,
+        });
+        retryQueued = Boolean(queued);
+        if (retryQueued) {
+          console.warn(
+            `Queued transient WhatsApp send failure for message ${saved.id} for automatic retry.`
+          );
+        }
+      } catch (retryQueueErr) {
+        console.error(
+          `Failed to queue WhatsApp retry for message ${saved.id}:`,
+          retryQueueErr
+        );
+      }
+    }
+
+    if (!retryQueued) {
+      await contactsRepo.setDeliveryAttention(
+        contact.id,
+        sendResult.ambiguous
+          ? `Delivery unconfirmed: ${errorText}`
+          : `Delivery failed: ${errorText}`
+      );
+    }
   }
 
   return { finalMessage, sendResult };
