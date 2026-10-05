@@ -142,8 +142,8 @@ test("ambiguous retry never resends automatically", async () => {
   });
 
   assert.equal(calls[0][2], "unknown");
-  assert.equal(calls[1][0], "failed");
-  assert.equal(calls[2][0], "attention");
+  assert.equal(calls[1][0], "attention");
+  assert.equal(calls[2][0], "failed");
 });
 
 test("retry exhaustion alerts staff instead of scheduling attempt four", async () => {
@@ -184,4 +184,122 @@ test("retry exhaustion alerts staff instead of scheduling attempt four", async (
 
   assert.equal(calls.some((entry) => entry[0] === "failed"), true);
   assert.equal(calls.some((entry) => entry[0] === "attention"), true);
+});
+
+
+test("stale retry with no provider evidence is surfaced as unconfirmed exactly once", async () => {
+  const calls = [];
+  const stale = baseRow({
+    lease_token: "recovered-lease",
+    delivery_status: "failed",
+    last_error: "server restarted",
+  });
+  const repository = {
+    async recoverStaleProcessing() { return [stale]; },
+    async claimDue() { return []; },
+    async markFailed(id, lease, error) {
+      calls.push(["failed", id, lease, error]);
+    },
+    async findNextDueAt() { return null; },
+  };
+  const messages = {
+    async setDeliveryStatusById(id, status, error) {
+      calls.push(["message", id, status, error]);
+      return { id, contact_id: 20, delivery_status: status, delivery_error: error };
+    },
+  };
+  const contacts = {
+    async setDeliveryAttention(id, reason) {
+      calls.push(["attention", id, reason]);
+    },
+  };
+
+  await runWhatsappOutboundRetryQueue({
+    repository,
+    messages,
+    contacts,
+    async sendMessage() {
+      throw new Error("stale retry must never call Meta again");
+    },
+  });
+
+  assert.equal(calls[0][2], "unknown");
+  assert.equal(calls[1][0], "attention");
+  assert.deepEqual(calls[2].slice(0, 3), ["failed", 1, "recovered-lease"]);
+});
+
+test("stale retry with a durable WAMID is completed without resending", async () => {
+  const calls = [];
+  const stale = baseRow({
+    lease_token: "recovered-accepted-lease",
+    whatsapp_message_id: "wamid.already-accepted",
+    delivery_status: "pending",
+  });
+  const repository = {
+    async recoverStaleProcessing() { return [stale]; },
+    async claimDue() { return []; },
+    async markSent(id, lease) { calls.push(["sent", id, lease]); },
+    async findNextDueAt() { return null; },
+  };
+  const contacts = {
+    async clearDeliveryAttentionIfNoFailedMessages(id) {
+      calls.push(["clear", id]);
+    },
+  };
+
+  await runWhatsappOutboundRetryQueue({
+    repository,
+    messages: {},
+    contacts,
+    async sendMessage() {
+      throw new Error("durably accepted retry must never be resent");
+    },
+  });
+
+  assert.deepEqual(calls, [
+    ["sent", 1, "recovered-accepted-lease"],
+    ["clear", 20],
+  ]);
+});
+
+test("provider acceptance without durable WAMID persistence fails closed", async () => {
+  const calls = [];
+  const repository = {
+    async recoverStaleProcessing() { return []; },
+    async claimDue() { return [baseRow()]; },
+    async markFailed(id, lease, error) {
+      calls.push(["failed", id, lease, error]);
+    },
+    async findNextDueAt() { return null; },
+  };
+  let writeCount = 0;
+  const messages = {
+    async setWhatsappMessageId() {
+      return null;
+    },
+    async setDeliveryStatusById(id, status, error) {
+      writeCount += 1;
+      calls.push(["message", id, status, error]);
+      return { id, contact_id: 20, delivery_status: status, delivery_error: error };
+    },
+  };
+  const contacts = {
+    async setDeliveryAttention(id, reason) {
+      calls.push(["attention", id, reason]);
+    },
+  };
+
+  await runWhatsappOutboundRetryQueue({
+    repository,
+    messages,
+    contacts,
+    async sendMessage() {
+      return { success: true, wamid: "wamid.not-persisted" };
+    },
+  });
+
+  assert.equal(writeCount, 1);
+  assert.equal(calls[0][2], "unknown");
+  assert.equal(calls[1][0], "attention");
+  assert.equal(calls[2][0], "failed");
 });
