@@ -168,7 +168,7 @@ test("staff send routes check channel policy before Staff Assist", () => {
   assert.doesNotMatch(helper, /contactsRepo\.takeOver/);
   assert.match(
     textRoute,
-    /telegramImmediateAlertRepo\.withContactAlertLock\(\s*contact\.id,[\s\S]*prepareStaffSend\(contact, req\.session\.username\)[\s\S]*appendMessageForContact/
+    /telegramImmediateAlertRepo\.withContactAlertLock\(\s*contact\.id,[\s\S]*prepareStaffSend\(\s*contact,\s*req\.session\.username\s*\)[\s\S]*appendMessageForContact/
   );
   assert.match(
     imageRoute,
