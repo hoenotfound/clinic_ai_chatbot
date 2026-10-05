@@ -31,7 +31,7 @@ function capitalized(value) {
 }
 
 export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
-  const { permissions } = useAuth();
+  const { permissions, refreshUser } = useAuth();
   const { config: businessConfig } = useBusinessConfig();
   const ui = getBusinessTerminology(businessConfig || {});
   const { toasts, showToast, dismissToast } = useToasts();
@@ -239,6 +239,7 @@ export default function LeadDistribution({ onDirtyChange, onSavedStatus }) {
       setSettings(current);
       setSavedSettings(current);
       onSavedStatus?.(current.enabled);
+      await refreshUser().catch(() => {});
       showToast(
         !current.enabled
           ? "Automatic lead distribution is paused."

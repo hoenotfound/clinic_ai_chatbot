@@ -120,6 +120,9 @@ function presentUser(user) {
     branchName: user.branch_name || null,
     isActive: user.is_active !== false,
     permissions: effectivePermissions(user),
+    features: {
+      leadDistributionEnabled: clinicConfig.leadDistribution?.enabled === true,
+    },
     businessProfile: {
       businessType: clinicConfig.businessType,
       terminology: { ...(clinicConfig.terminology || {}) },

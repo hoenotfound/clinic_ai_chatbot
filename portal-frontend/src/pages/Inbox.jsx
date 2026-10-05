@@ -135,6 +135,7 @@ function formatPolicyDate(value) {
 export default function Inbox() {
   const { user, username, permissions } = useAuth();
   const ui = getBusinessTerminology(user?.businessProfile || {});
+  const showUnassignedAssignment = user?.features?.leadDistributionEnabled === true;
   const canViewAllLeads = permissions.view_all_leads === true;
   const canReplyToLeads = permissions.reply_to_assigned_leads === true;
   const { toasts, showToast, dismissToast } = useToasts();
@@ -816,6 +817,7 @@ export default function Inbox() {
         mobileThreadOpen={mobileThreadOpen}
         currentUsername={username}
         canViewAllLeads={canViewAllLeads}
+        showUnassignedAssignment={showUnassignedAssignment}
         customerPlural={ui.customerPlural}
       />
       <ThreadView
@@ -823,6 +825,7 @@ export default function Inbox() {
         contact={selectedContact}
         currentUsername={username}
         canReplyToLeads={canReplyToLeads}
+        showUnassignedAssignment={showUnassignedAssignment}
         messages={messages}
         loading={messagesLoading}
         olderMessagesLoading={olderMessagesLoading}
@@ -896,6 +899,7 @@ function ConversationList({
   mobileThreadOpen,
   currentUsername,
   canViewAllLeads,
+  showUnassignedAssignment,
   customerPlural,
 }) {
   const [filters, setFilters] = useState({
@@ -909,8 +913,10 @@ function ConversationList({
 
   const conversationList = useMemo(() => conversations || [], [conversations]);
   const assignmentOptions = useMemo(
-    () => buildLeadAssignmentFilterOptions(conversationList, currentUsername),
-    [conversationList, currentUsername]
+    () => buildLeadAssignmentFilterOptions(conversationList, currentUsername, {
+      includeUnassigned: showUnassignedAssignment,
+    }),
+    [conversationList, currentUsername, showUnassignedAssignment]
   );
   const statusCounts = useMemo(
     () => ({
@@ -932,10 +938,13 @@ function ConversationList({
   );
 
   useEffect(() => {
-    if (!canViewAllLeads && filters.assignment !== "all") {
+    if (
+      (!canViewAllLeads && filters.assignment !== "all") ||
+      (!showUnassignedAssignment && filters.assignment === "unassigned")
+    ) {
       setFilters((current) => ({ ...current, assignment: "all" }));
     }
-  }, [canViewAllLeads, filters.assignment]);
+  }, [canViewAllLeads, filters.assignment, showUnassignedAssignment]);
 
   const filteredConversations = useMemo(() => {
     const query = filters.query.trim().toLowerCase();
@@ -1238,6 +1247,7 @@ function ConversationList({
                       ownerDisplayName={conversation.lead_owner_display_name}
                       currentUsername={currentUsername}
                       compact
+                      showUnassigned={showUnassignedAssignment}
                     />
                     <ControlIndicator mode={conversation.mode} />
                     {conversation.needs_follow_up && <StatusBadge tone="accent">Follow-up</StatusBadge>}
@@ -1402,6 +1412,7 @@ function ThreadView({
   contact,
   currentUsername,
   canReplyToLeads,
+  showUnassignedAssignment,
   messages,
   loading,
   olderMessagesLoading,
@@ -1836,6 +1847,7 @@ function ThreadView({
                   ownerDisplayName={contact.lead_owner_display_name}
                   currentUsername={currentUsername}
                   compact
+                  showUnassigned={showUnassignedAssignment}
                 />
               </div>
             </div>

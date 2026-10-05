@@ -70,11 +70,16 @@ test("Inbox keeps AI handling separate from lead assignment with a clear filter 
   assert.match(inbox, /matchesLeadAssignment/);
   assert.match(inbox, /lead_owner_display_name/);
   assert.match(inbox, /<LeadAssignmentBadge/);
+  assert.match(inbox, /user\?\.features\?\.leadDistributionEnabled === true/);
+  assert.match(inbox, /showUnassigned=\{showUnassignedAssignment\}/);
   assert.match(inbox, /<ControlIndicator/);
 
   assert.match(badge, /\["all", "All leads"\]/);
   assert.match(badge, /\["mine", "My leads"\]/);
   assert.match(badge, /\["unassigned", "Unassigned"\]/);
+  assert.match(badge, /includeUnassigned = true/);
+  assert.match(badge, /showUnassigned = true/);
+  assert.match(badge, /!assigned && !showUnassigned/);
   assert.match(badge, /value === "mine"/);
   assert.match(badge, /value === "unassigned"/);
   assert.match(badge, /value\?\.startsWith\("owner:"\)/);
@@ -160,6 +165,8 @@ test("Contacts exposes the same assignment filter and refreshes assignment badge
   assert.match(contacts, /matchesLeadAssignment/);
   assert.match(contacts, /Filter contacts by lead assignment/);
   assert.match(contacts, /<LeadAssignmentBadge/);
+  assert.match(contacts, /user\?\.features\?\.leadDistributionEnabled === true/);
+  assert.match(contacts, /showUnassigned=\{showUnassignedAssignment\}/);
   assert.match(contacts, /lead_owner_username/);
   assert.match(contacts, /new EventSource\("\/api\/conversations\/events"/);
   assert.match(contacts, /addEventListener\("pipeline_changed"/);

@@ -101,6 +101,9 @@ test("authenticated staff receive the safe business profile regardless of role p
       terminology: { ...(clinicConfig.terminology || {}) },
     });
     assert.deepEqual(Object.keys(presented.businessProfile).sort(), ["businessType", "terminology"]);
+    assert.deepEqual(presented.features, {
+      leadDistributionEnabled: clinicConfig.leadDistribution?.enabled === true,
+    });
     assert.equal(Object.prototype.hasOwnProperty.call(presented.businessProfile, "branches"), false);
     assert.equal(Object.prototype.hasOwnProperty.call(presented.businessProfile, "services"), false);
     assert.equal(Object.prototype.hasOwnProperty.call(presented.businessProfile, "promotions"), false);
