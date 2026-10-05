@@ -7,6 +7,7 @@ if (process.env.TEST_DATABASE_URL && !process.env.DATABASE_URL) {
 }
 
 const { pool } = require("../src/db/db");
+const contactsRepo = require("../src/db/contactsRepo");
 const followUpRepo = require("../src/db/followUpRepo");
 const followUpAiLeaseRepo = require("../src/db/followUpAiLeaseRepo");
 const staffOwnershipService = require("../src/services/staffOwnershipService");
@@ -391,6 +392,73 @@ test(
         activatedAt,
       });
       assert.equal(cancelledClaim, null);
+
+      await client.query(`
+        INSERT INTO contacts (
+          id, channel, whatsapp_number, needs_attention, mode, takeover_by, takeover_at
+        ) VALUES (
+          4, 'whatsapp', '60118887766', false, 'ai', NULL, NULL
+        );
+
+        INSERT INTO messages (
+          id, contact_id, role, content, sent_by_username, created_at, is_automated_follow_up
+        ) VALUES
+          (
+            40, 4, 'user', 'I will think about it',
+            NULL,
+            now() - interval '4 hours',
+            false
+          ),
+          (
+            41, 4, 'assistant', 'Sure, take your time.',
+            'staff1',
+            now() - interval '3 hours',
+            false
+          );
+      `);
+
+      const retakeover = await contactsRepo.takeOver(4, "staff2");
+      assert.ok(retakeover);
+      assert.equal(retakeover.mode, "human");
+      assert.equal(retakeover.takeover_by, "staff2");
+
+      const staffAnchorCancellation = await client.query(
+        `SELECT action, follow_up_step
+         FROM follow_up_ai_decisions
+         WHERE contact_id = 4 AND trigger_message_id = 41`
+      );
+      assert.equal(staffAnchorCancellation.rows.length, 1);
+      assert.equal(staffAnchorCancellation.rows[0].action, "skip");
+      assert.equal(Number(staffAnchorCancellation.rows[0].follow_up_step), 1);
+
+      // Re-takeover is a new human intervention boundary. Returning to AI must
+      // not revive the pre-takeover staff-originated sequence.
+      await contactsRepo.returnToAi(4);
+
+      const oldStaffLease = await followUpAiLeaseRepo.claimIfStillEligible({
+        contactId: 4,
+        triggerMessageId: 41,
+        stepIndex: 1,
+        leaseToken: "cancelled-staff-anchor-lease",
+        delayMinutes: 120,
+        previousDelayMinutes: 0,
+        triggerMode: "all",
+        activatedAt,
+      });
+      assert.equal(oldStaffLease, null);
+
+      const oldStaffClaim = await followUpRepo.saveIfStillEligible({
+        contactId: 4,
+        triggerMessageId: 41,
+        content: "Old staff sequence must stay cancelled",
+        mediaUrl: "",
+        stepIndex: 1,
+        delayMinutes: 120,
+        previousDelayMinutes: 0,
+        triggerMode: "all",
+        activatedAt,
+      });
+      assert.equal(oldStaffClaim, null);
 
       const reviewDecision = await followUpRepo.recordAiDecisionIfStillEligible({
         contactId: 2,
