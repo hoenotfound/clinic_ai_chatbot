@@ -238,7 +238,7 @@ test("parses WhatsApp reactions separately from conversational inbound messages"
   ]);
 });
 
-test("parses an empty WhatsApp reaction emoji as reaction removal", () => {
+test("parses WhatsApp reaction removal when Meta omits the emoji field", () => {
   const reactions = parseReactionEvents({
     entry: [
       {
@@ -252,7 +252,6 @@ test("parses an empty WhatsApp reaction emoji as reaction removal", () => {
                   type: "reaction",
                   reaction: {
                     message_id: "wamid-target-2",
-                    emoji: "",
                   },
                 },
               ],
@@ -265,5 +264,35 @@ test("parses an empty WhatsApp reaction emoji as reaction removal", () => {
 
   assert.equal(reactions.length, 1);
   assert.equal(reactions[0].targetMessageId, "wamid-target-2");
+  assert.equal(reactions[0].emoji, "");
+});
+
+test("also accepts an explicit empty WhatsApp reaction emoji as removal", () => {
+  const reactions = parseReactionEvents({
+    entry: [
+      {
+        changes: [
+          {
+            value: {
+              messages: [
+                {
+                  id: "reaction-remove-2",
+                  from: "6018",
+                  type: "reaction",
+                  reaction: {
+                    message_id: "wamid-target-3",
+                    emoji: "",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(reactions.length, 1);
+  assert.equal(reactions[0].targetMessageId, "wamid-target-3");
   assert.equal(reactions[0].emoji, "");
 });
