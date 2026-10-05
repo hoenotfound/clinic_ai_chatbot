@@ -351,8 +351,9 @@ export default function Inbox() {
   const canReplyToLeads = permissions.reply_to_assigned_leads === true;
   const { toasts, showToast, dismissToast } = useToasts();
   const [searchParams, setSearchParams] = useSearchParams();
-  const requestedContactId = /^\d+$/.test(searchParams.get("contact") || "")
-    ? Number(searchParams.get("contact"))
+  const requestedContactParam = searchParams.get("contact");
+  const requestedContactId = /^\d+$/.test(requestedContactParam || "")
+    ? Number(requestedContactParam)
     : null;
 
   const [conversations, setConversations] = useState(null);
@@ -492,7 +493,11 @@ export default function Inbox() {
         : null;
       const firstConversation = requestedConversation || conversations[0];
       setSelectedId(firstConversation.contact_id);
-      if (requestedConversation) setMobileThreadOpen(true);
+      if (requestedConversation) {
+        setMobileThreadOpen(true);
+      } else if (requestedContactParam) {
+        setSearchParams({}, { replace: true });
+      }
 
       const threadIsVisible = window.matchMedia("(min-width: 1024px)").matches;
       if (firstConversation.is_unread && threadIsVisible) {
@@ -511,7 +516,14 @@ export default function Inbox() {
         });
       }
     }
-  }, [conversations, requestedContactId, selectedId, showToast]);
+  }, [
+    conversations,
+    requestedContactId,
+    requestedContactParam,
+    selectedId,
+    setSearchParams,
+    showToast,
+  ]);
 
   useEffect(() => {
     if (!conversations || selectedId == null) return;
