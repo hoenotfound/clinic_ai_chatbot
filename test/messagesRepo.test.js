@@ -2,7 +2,10 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { pool } = require("../src/db/db");
-const { CONVERSATION_LOCK_NAMESPACE } = require("../src/db/conversationLock");
+const {
+  CONVERSATION_LOCK_NAMESPACE,
+  WHATSAPP_MESSAGE_LOCK_NAMESPACE,
+} = require("../src/db/conversationLock");
 const messagesRepo = require("../src/db/messagesRepo");
 const mediaStorage = require("../src/services/mediaStorageService");
 
@@ -511,11 +514,22 @@ test("stores a WhatsApp reaction against the referenced message without creating
   });
   assert.equal(released, true);
 
-  const targetLookup = queries.find((call) => /WITH candidates AS/.test(call.sql));
-  assert.ok(targetLookup);
+  const wamidLockIndex = queries.findIndex((call) =>
+    /hashtext\(\$2::text\)/.test(call.sql)
+  );
+  const targetLookupIndex = queries.findIndex((call) => /WITH candidates AS/.test(call.sql));
+  assert.ok(wamidLockIndex >= 0);
+  assert.ok(targetLookupIndex > wamidLockIndex);
+  assert.deepEqual(queries[wamidLockIndex].params, [
+    WHATSAPP_MESSAGE_LOCK_NAMESPACE,
+    "wamid-target-1",
+  ]);
+
+  const targetLookup = queries[targetLookupIndex];
   assert.deepEqual(targetLookup.params, ["wamid-target-1"]);
   assert.match(targetLookup.sql, /outbound_message_evidence/);
   assert.match(targetLookup.sql, /inbound_outbound_attempts/);
+  assert.match(targetLookup.sql, /job\.channel = 'whatsapp'/);
 
   const insert = queries.find((call) => /INSERT INTO message_reactions/.test(call.sql));
   assert.ok(insert);
@@ -645,6 +659,89 @@ test("queues a WhatsApp reaction durably when the referenced WAMID is not availa
   assert.ok(pendingInsert.params[6] instanceof Date);
 });
 
+test("attaching a WAMID and consuming a pending reaction share one serialized transaction", async (t) => {
+  const originalConnect = pool.connect;
+  t.after(() => {
+    pool.connect = originalConnect;
+  });
+
+  const queries = [];
+  const client = {
+    async query(sql, params = []) {
+      const text = String(sql);
+      queries.push({ sql: text, params });
+      if (/UPDATE messages\s+SET whatsapp_message_id/.test(text)) {
+        return {
+          rows: [
+            {
+              id: 94,
+              contact_id: 10,
+              role: "assistant",
+              content: "Hello",
+              whatsapp_message_id: "wamid-api-late",
+              delivery_status: "pending",
+            },
+          ],
+        };
+      }
+      if (/SELECT id, reactor_key, reactor_whatsapp_id/.test(text)) {
+        return {
+          rows: [
+            {
+              id: 702,
+              reactor_key: "whatsapp:60183334444",
+              reactor_whatsapp_id: "60183334444",
+              emoji: "👍",
+              provider_reaction_message_id: "reaction-pending-api",
+              provider_timestamp: "1791196804",
+              received_at: new Date("2026-10-05T09:01:00Z"),
+              updated_at: new Date("2026-10-05T09:01:00Z"),
+            },
+          ],
+        };
+      }
+      if (/INSERT INTO message_reactions/.test(text)) {
+        return { rows: [{ id: 504 }] };
+      }
+      if (/AS reactions/.test(text)) {
+        return { rows: [{ reactions: [{ emoji: "👍" }] }] };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  pool.connect = async () => client;
+
+  const updated = await messagesRepo.setWhatsappMessageId(94, "wamid-api-late");
+  assert.equal(updated.id, 94);
+  assert.equal(updated.whatsapp_message_id, "wamid-api-late");
+
+  const beginIndex = queries.findIndex((call) => call.sql === "BEGIN");
+  const wamidLockIndex = queries.findIndex((call) =>
+    /hashtext\(\$2::text\)/.test(call.sql)
+  );
+  const updateIndex = queries.findIndex((call) =>
+    /UPDATE messages\s+SET whatsapp_message_id/.test(call.sql)
+  );
+  const pendingIndex = queries.findIndex((call) =>
+    /SELECT id, reactor_key, reactor_whatsapp_id/.test(call.sql)
+  );
+  const commitIndex = queries.findIndex((call) => call.sql === "COMMIT");
+
+  assert.ok(beginIndex >= 0);
+  assert.ok(wamidLockIndex > beginIndex);
+  assert.ok(updateIndex > wamidLockIndex);
+  assert.ok(pendingIndex > updateIndex);
+  assert.ok(commitIndex > pendingIndex);
+  assert.deepEqual(queries[wamidLockIndex].params, [
+    WHATSAPP_MESSAGE_LOCK_NAMESPACE,
+    "wamid-api-late",
+  ]);
+  assert.ok(
+    queries.some((call) => /DELETE FROM pending_whatsapp_reactions/.test(call.sql))
+  );
+});
+
 test("reconciles a pending WhatsApp reaction after the target message receives its WAMID", async (t) => {
   const originalConnect = pool.connect;
   t.after(() => {
@@ -691,6 +788,19 @@ test("reconciles a pending WhatsApp reaction after the target message receives i
     93,
     "wamid-late-target"
   );
+
+  const publicWamidLockIndex = queries.findIndex((call) =>
+    /hashtext\(\$2::text\)/.test(call.sql)
+  );
+  const targetSelectIndex = queries.findIndex((call) =>
+    /FROM messages\s+WHERE id = \$1\s+AND whatsapp_message_id = \$2/.test(call.sql)
+  );
+  assert.ok(publicWamidLockIndex >= 0);
+  assert.ok(targetSelectIndex > publicWamidLockIndex);
+  assert.deepEqual(queries[publicWamidLockIndex].params, [
+    WHATSAPP_MESSAGE_LOCK_NAMESPACE,
+    "wamid-late-target",
+  ]);
 
   assert.deepEqual(updated, {
     contactId: 9,
