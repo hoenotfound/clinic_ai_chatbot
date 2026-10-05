@@ -1,6 +1,7 @@
 const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const mediaStorage = require("../services/mediaStorageService");
+const realtimeEvents = require("../utils/realtimeEvents");
 
 const MAX_PORTAL_PAGE_SIZE = 100;
 
@@ -79,6 +80,7 @@ const PORTAL_REACTIONS_COLUMN = `
       )
       FROM message_reactions mr
       WHERE mr.target_message_id = messages.id
+        AND mr.emoji <> ''
     ),
     '[]'::jsonb
   ) AS reactions
@@ -780,7 +782,35 @@ async function setWhatsappMessageId(messageId, whatsappMessageId) {
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
     [messageId, whatsappMessageId]
   );
-  return result.rows[0] || null;
+  const updated = result.rows[0] || null;
+  if (!updated) return null;
+
+  // A reaction webhook can race the provider send response. If Meta delivered
+  // the reaction before this WAMID was attached to the local message, the
+  // reaction was queued durably. Reconcile it now, but never let reaction
+  // bookkeeping turn a provider-accepted customer send into an application
+  // failure.
+  try {
+    const reactionUpdate = await reconcilePendingWhatsappReactionsForMessage(
+      updated.id,
+      whatsappMessageId
+    );
+    if (reactionUpdate?.changed) {
+      realtimeEvents.publish("conversation_changed", {
+        contactId: reactionUpdate.contactId,
+        messageId: reactionUpdate.messageId,
+        reactions: reactionUpdate.reactions,
+        reason: "reaction",
+      });
+    }
+  } catch (err) {
+    console.error(
+      `Failed to reconcile pending WhatsApp reactions for message ${updated.id}:`,
+      err
+    );
+  }
+
+  return updated;
 }
 
 async function setSocialProviderMessageId(
@@ -878,21 +908,234 @@ async function hasStaffReplyAfter(contactId, inboundMessageId, query = pool.quer
   return result.rows[0]?.has_staff_reply === true;
 }
 
-/**
- * Applies a customer WhatsApp reaction to the message it references.
- *
- * Reactions deliberately live outside the messages table so they do not become
- * AI history, unread customer turns, follow-up anchors, or staff-waiting events.
- * Repeating the same webhook is idempotent, and an empty emoji removes the
- * customer's current reaction as specified by WhatsApp.
- */
-async function applyWhatsappReaction(reaction) {
-  const targetWhatsappMessageId = String(reaction?.targetMessageId || "").trim();
-  const reactorWhatsappId = String(reaction?.from || "").trim();
-  const providerReactionMessageId = String(reaction?.id || "").trim() || null;
-  const emoji = typeof reaction?.emoji === "string" ? reaction.emoji : null;
+function normalizeReactionTimestamp(value) {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
 
-  if (!targetWhatsappMessageId || !reactorWhatsappId || emoji == null) {
+async function findWhatsappReactionTarget(queryable, targetWhatsappMessageId) {
+  const result = await queryable.query(
+    `WITH candidates AS (
+       SELECT m.id, m.contact_id, 0 AS priority
+       FROM messages m
+       WHERE m.whatsapp_message_id = $1
+
+       UNION ALL
+
+       SELECT m.id, m.contact_id, 1 AS priority
+       FROM outbound_message_evidence evidence
+       JOIN messages m ON m.id = evidence.message_id
+       WHERE evidence.channel = 'whatsapp'
+         AND evidence.accepted = true
+         AND evidence.provider_message_id = $1
+
+       UNION ALL
+
+       SELECT m.id, m.contact_id, 2 AS priority
+       FROM inbound_outbound_attempts attempt
+       JOIN messages m ON m.id = attempt.assistant_message_id
+       WHERE attempt.outcome = 'accepted'
+         AND attempt.provider_message_id = $1
+     )
+     SELECT id, contact_id
+     FROM candidates
+     ORDER BY priority ASC
+     LIMIT 1`,
+    [targetWhatsappMessageId]
+  );
+  return result.rows[0] || null;
+}
+
+async function readActiveWhatsappReactions(queryable, targetMessageId) {
+  const result = await queryable.query(
+    `SELECT COALESCE(
+       jsonb_agg(jsonb_build_object('emoji', emoji) ORDER BY id)
+         FILTER (WHERE emoji <> ''),
+       '[]'::jsonb
+     ) AS reactions
+     FROM message_reactions
+     WHERE target_message_id = $1`,
+    [targetMessageId]
+  );
+  return result.rows[0]?.reactions || [];
+}
+
+async function upsertWhatsappReactionState(
+  queryable,
+  {
+    targetMessageId,
+    contactId,
+    reactorKey,
+    emoji,
+    providerReactionMessageId,
+    providerTimestamp,
+    receivedAt,
+  }
+) {
+  const result = await queryable.query(
+    `INSERT INTO message_reactions (
+       target_message_id,
+       contact_id,
+       reactor_key,
+       emoji,
+       provider_reaction_message_id,
+       provider_timestamp,
+       created_at,
+       updated_at
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $7::timestamptz)
+     ON CONFLICT (target_message_id, reactor_key)
+     DO UPDATE SET
+       contact_id = EXCLUDED.contact_id,
+       emoji = EXCLUDED.emoji,
+       provider_reaction_message_id = EXCLUDED.provider_reaction_message_id,
+       provider_timestamp = EXCLUDED.provider_timestamp,
+       updated_at = EXCLUDED.updated_at
+     WHERE (
+       EXCLUDED.provider_timestamp IS NOT NULL
+       AND (
+         message_reactions.provider_timestamp IS NULL
+         OR EXCLUDED.provider_timestamp >= message_reactions.provider_timestamp
+       )
+     ) OR (
+       EXCLUDED.provider_timestamp IS NULL
+       AND message_reactions.provider_timestamp IS NULL
+       AND EXCLUDED.updated_at >= message_reactions.updated_at
+     )
+     RETURNING id`,
+    [
+      targetMessageId,
+      contactId,
+      reactorKey,
+      emoji,
+      providerReactionMessageId,
+      providerTimestamp,
+      receivedAt,
+    ]
+  );
+  return Boolean(result.rows[0]);
+}
+
+async function queuePendingWhatsappReaction(
+  queryable,
+  {
+    targetWhatsappMessageId,
+    reactorWhatsappId,
+    reactorKey,
+    emoji,
+    providerReactionMessageId,
+    providerTimestamp,
+    receivedAt,
+  }
+) {
+  const result = await queryable.query(
+    `INSERT INTO pending_whatsapp_reactions (
+       target_whatsapp_message_id,
+       reactor_key,
+       reactor_whatsapp_id,
+       emoji,
+       provider_reaction_message_id,
+       provider_timestamp,
+       received_at,
+       updated_at
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz, $7::timestamptz)
+     ON CONFLICT (target_whatsapp_message_id, reactor_key)
+     DO UPDATE SET
+       reactor_whatsapp_id = EXCLUDED.reactor_whatsapp_id,
+       emoji = EXCLUDED.emoji,
+       provider_reaction_message_id = EXCLUDED.provider_reaction_message_id,
+       provider_timestamp = EXCLUDED.provider_timestamp,
+       updated_at = EXCLUDED.updated_at
+     WHERE (
+       EXCLUDED.provider_timestamp IS NOT NULL
+       AND (
+         pending_whatsapp_reactions.provider_timestamp IS NULL
+         OR EXCLUDED.provider_timestamp >= pending_whatsapp_reactions.provider_timestamp
+       )
+     ) OR (
+       EXCLUDED.provider_timestamp IS NULL
+       AND pending_whatsapp_reactions.provider_timestamp IS NULL
+       AND EXCLUDED.updated_at >= pending_whatsapp_reactions.updated_at
+     )
+     RETURNING id`,
+    [
+      targetWhatsappMessageId,
+      reactorKey,
+      reactorWhatsappId,
+      emoji,
+      providerReactionMessageId,
+      providerTimestamp,
+      receivedAt,
+    ]
+  );
+  return Boolean(result.rows[0]);
+}
+
+async function consumePendingWhatsappReactionsForTarget(
+  queryable,
+  { targetWhatsappMessageId, targetMessageId, contactId }
+) {
+  const pendingResult = await queryable.query(
+    `SELECT id, reactor_key, reactor_whatsapp_id, emoji,
+            provider_reaction_message_id, provider_timestamp,
+            received_at, updated_at
+     FROM pending_whatsapp_reactions
+     WHERE target_whatsapp_message_id = $1
+     ORDER BY id ASC`,
+    [targetWhatsappMessageId]
+  );
+
+  if (!pendingResult.rows.length) {
+    return { hadPending: false, changed: false };
+  }
+
+  let changed = false;
+  for (const pending of pendingResult.rows) {
+    const applied = await upsertWhatsappReactionState(queryable, {
+      targetMessageId,
+      contactId,
+      reactorKey: pending.reactor_key,
+      emoji: pending.emoji,
+      providerReactionMessageId: pending.provider_reaction_message_id,
+      providerTimestamp: normalizeReactionTimestamp(pending.provider_timestamp),
+      receivedAt: pending.updated_at || pending.received_at || new Date(),
+    });
+    changed = applied || changed;
+  }
+
+  await queryable.query(
+    `DELETE FROM pending_whatsapp_reactions
+     WHERE target_whatsapp_message_id = $1`,
+    [targetWhatsappMessageId]
+  );
+
+  return { hadPending: true, changed };
+}
+
+async function pruneExpiredPendingWhatsappReactions(queryable) {
+  await queryable.query(
+    `DELETE FROM pending_whatsapp_reactions
+     WHERE updated_at < NOW() - interval '35 days'`
+  );
+}
+
+/**
+ * Replays reactions that arrived before an outbound WAMID was attached locally.
+ * This is called from setWhatsappMessageId() after the provider send is saved.
+ */
+async function reconcilePendingWhatsappReactionsForMessage(
+  messageId,
+  whatsappMessageId
+) {
+  const safeMessageId = Number(messageId);
+  const targetWhatsappMessageId = String(whatsappMessageId || "").trim();
+  if (
+    !Number.isSafeInteger(safeMessageId) ||
+    safeMessageId < 1 ||
+    !targetWhatsappMessageId
+  ) {
     return null;
   }
 
@@ -905,9 +1148,10 @@ async function applyWhatsappReaction(reaction) {
     const targetResult = await client.query(
       `SELECT id, contact_id
        FROM messages
-       WHERE whatsapp_message_id = $1
+       WHERE id = $1
+         AND whatsapp_message_id = $2
        LIMIT 1`,
-      [targetWhatsappMessageId]
+      [safeMessageId, targetWhatsappMessageId]
     );
     const target = targetResult.rows[0];
     if (!target) {
@@ -921,55 +1165,139 @@ async function applyWhatsappReaction(reaction) {
       [target.contact_id]
     );
 
-    const reactorKey = `whatsapp:${reactorWhatsappId}`;
-    if (emoji) {
-      await client.query(
-        `INSERT INTO message_reactions (
-           target_message_id,
-           contact_id,
-           reactor_key,
-           emoji,
-           provider_reaction_message_id
-         )
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (target_message_id, reactor_key)
-         DO UPDATE SET
-           emoji = EXCLUDED.emoji,
-           provider_reaction_message_id = EXCLUDED.provider_reaction_message_id,
-           updated_at = NOW()`,
-        [
-          target.id,
-          target.contact_id,
-          reactorKey,
-          emoji,
-          providerReactionMessageId,
-        ]
-      );
-    } else {
-      await client.query(
-        `DELETE FROM message_reactions
-         WHERE target_message_id = $1
-           AND reactor_key = $2`,
-        [target.id, reactorKey]
-      );
+    const pending = await consumePendingWhatsappReactionsForTarget(client, {
+      targetWhatsappMessageId,
+      targetMessageId: target.id,
+      contactId: target.contact_id,
+    });
+
+    if (!pending.hadPending) {
+      await client.query("COMMIT");
+      transactionStarted = false;
+      return null;
     }
 
-    const reactionResult = await client.query(
-      `SELECT COALESCE(
-         jsonb_agg(jsonb_build_object('emoji', emoji) ORDER BY id),
-         '[]'::jsonb
-       ) AS reactions
-       FROM message_reactions
-       WHERE target_message_id = $1`,
-      [target.id]
-    );
-
+    const reactions = await readActiveWhatsappReactions(client, target.id);
+    await pruneExpiredPendingWhatsappReactions(client);
     await client.query("COMMIT");
     transactionStarted = false;
+
+    console.log(
+      `[WhatsApp reaction] Reconciled pending reaction(s) for local message ${target.id}.`
+    );
     return {
       contactId: target.contact_id,
       messageId: target.id,
-      reactions: reactionResult.rows[0]?.reactions || [],
+      reactions,
+      changed: pending.changed,
+    };
+  } catch (err) {
+    if (transactionStarted) {
+      await client.query("ROLLBACK").catch(() => {});
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Applies a customer WhatsApp reaction to the message it references.
+ *
+ * Reactions deliberately live outside the messages table so they do not become
+ * AI history, unread customer turns, follow-up anchors, or staff-waiting events.
+ * If the target WAMID is not locally resolvable yet, the event is durably
+ * queued and reconciled when the outbound message receives its WAMID.
+ *
+ * Reaction removals are stored as an empty-emoji tombstone. Keeping the
+ * provider timestamp lets us reject a delayed older webhook instead of
+ * resurrecting a reaction the customer already removed or changed.
+ */
+async function applyWhatsappReaction(reaction) {
+  const targetWhatsappMessageId = String(reaction?.targetMessageId || "").trim();
+  const reactorWhatsappId = String(reaction?.from || "").trim();
+  const providerReactionMessageId = String(reaction?.id || "").trim() || null;
+  const emoji = typeof reaction?.emoji === "string" ? reaction.emoji : null;
+  const providerTimestamp = normalizeReactionTimestamp(reaction?.timestamp);
+
+  if (!targetWhatsappMessageId || !reactorWhatsappId || emoji == null) {
+    return null;
+  }
+
+  const reactorKey = `whatsapp:${reactorWhatsappId}`;
+  const receivedAt = new Date();
+  const client = await pool.connect();
+  let transactionStarted = false;
+
+  try {
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    const target = await findWhatsappReactionTarget(
+      client,
+      targetWhatsappMessageId
+    );
+
+    if (!target) {
+      const changed = await queuePendingWhatsappReaction(client, {
+        targetWhatsappMessageId,
+        reactorWhatsappId,
+        reactorKey,
+        emoji,
+        providerReactionMessageId,
+        providerTimestamp,
+        receivedAt,
+      });
+      await pruneExpiredPendingWhatsappReactions(client);
+      await client.query("COMMIT");
+      transactionStarted = false;
+
+      console.warn(
+        `[WhatsApp reaction] Target ${targetWhatsappMessageId} is not available locally yet; queued reaction for reconciliation.`
+      );
+      return {
+        pending: true,
+        targetMessageId: targetWhatsappMessageId,
+        changed,
+      };
+    }
+
+    await client.query(
+      `SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)`,
+      [target.contact_id]
+    );
+
+    const pending = await consumePendingWhatsappReactionsForTarget(client, {
+      targetWhatsappMessageId,
+      targetMessageId: target.id,
+      contactId: target.contact_id,
+    });
+
+    const currentChanged = await upsertWhatsappReactionState(client, {
+      targetMessageId: target.id,
+      contactId: target.contact_id,
+      reactorKey,
+      emoji,
+      providerReactionMessageId,
+      providerTimestamp,
+      receivedAt,
+    });
+
+    const reactions = await readActiveWhatsappReactions(client, target.id);
+    await pruneExpiredPendingWhatsappReactions(client);
+    await client.query("COMMIT");
+    transactionStarted = false;
+
+    const changed = pending.changed || currentChanged;
+    console.log(
+      `[WhatsApp reaction] ${changed ? "Applied" : "Ignored stale/duplicate"} reaction for local message ${target.id}.`
+    );
+
+    return {
+      contactId: target.contact_id,
+      messageId: target.id,
+      reactions,
+      changed,
     };
   } catch (err) {
     if (transactionStarted) {
@@ -1033,6 +1361,7 @@ module.exports = {
   getMessageByAnyProviderIdForContact,
   hasStaffReplyAfter,
   applyWhatsappReaction,
+  reconcilePendingWhatsappReactionsForMessage,
   registerSocialProviderMessageAlias,
   socialProviderAliasRecorder,
   getDeliveryStatusesForContact,
