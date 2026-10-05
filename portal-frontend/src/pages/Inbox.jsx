@@ -527,11 +527,7 @@ export default function Inbox() {
     setContactDetailsOpen(false);
     setWhatsAppTemplateOpen(false);
     setMobileThreadOpen(false);
-    if (nextConversation) {
-      setSearchParams({ contact: String(nextConversation.contact_id) }, { replace: true });
-    } else {
-      setSearchParams({}, { replace: true });
-    }
+    setSearchParams({}, { replace: true });
   }, [conversations, selectedId, setSearchParams]);
 
   useEffect(() => {
