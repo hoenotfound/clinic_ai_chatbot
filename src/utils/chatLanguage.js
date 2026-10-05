@@ -53,10 +53,8 @@ const MALAY_WORDS = new Set([
 ]);
 
 const ENGLISH_WORDS = new Set([
-  "after",
   "are",
   "available",
-  "busy",
   "can",
   "cost",
   "do",
@@ -65,24 +63,20 @@ const ENGLISH_WORDS = new Set([
   "how",
   "interested",
   "is",
-  "later",
-  "location",
-  "msg",
   "much",
   "morning",
   "need",
-  "now",
   "offer",
   "price",
   "promo",
   "promotion",
+  "location",
   "treatment",
   "want",
   "what",
   "when",
   "where",
   "which",
-  "will",
   "you",
 ]);
 
