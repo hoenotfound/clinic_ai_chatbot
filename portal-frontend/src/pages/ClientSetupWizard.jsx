@@ -115,6 +115,7 @@ function cleanPromotions(items) {
       (item?._offerType == null && Array.isArray(item?.packages) && item.packages.length > 0);
     const imageUrl = packageMode ? "" : text(item?.imageUrl).trim();
     const caption = packageMode ? "" : text(item?.caption).trim();
+    const followUpMessage = packageMode ? "" : text(item?.followUpMessage).trim();
     const validFrom = text(item?.validFrom).trim();
     const validUntil = text(item?.validUntil).trim();
     const packages = packageMode
@@ -124,17 +125,19 @@ function cleanPromotions(items) {
           const aliases = cleanStrings(packageOption?.aliases || []);
           const packageImageUrl = text(packageOption?.imageUrl).trim();
           const packageCaption = text(packageOption?.caption).trim();
-          if (!packageName && !title && !aliases.length && !packageImageUrl && !packageCaption) return null;
+          const packageFollowUpMessage = text(packageOption?.followUpMessage).trim();
+          if (!packageName && !title && !aliases.length && !packageImageUrl && !packageCaption && !packageFollowUpMessage) return null;
           return {
             name: packageName,
             title,
             aliases,
             imageUrl: packageImageUrl,
             caption: packageCaption,
+            followUpMessage: packageFollowUpMessage,
           };
         })
       : [];
-    if (!name && !linkedService && !imageUrl && !caption && !packages.length && !validFrom && !validUntil) return null;
+    if (!name && !linkedService && !imageUrl && !caption && !followUpMessage && !packages.length && !validFrom && !validUntil) return null;
     return {
       name,
       linkedService,
@@ -142,6 +145,7 @@ function cleanPromotions(items) {
       packages,
       imageUrl,
       caption,
+      followUpMessage,
       validFrom: validFrom || null,
       validUntil: validUntil || null,
     };
@@ -930,10 +934,12 @@ function PromotionsStep({ draft, setDraft, onError }) {
           aliases: Array.isArray(packageOption.aliases) ? [...packageOption.aliases] : [],
           imageUrl: packageOption.imageUrl || "",
           caption: packageOption.caption || "",
+          followUpMessage: packageOption.followUpMessage || "",
         }))
       : [],
     imageUrl: item.imageUrl || "",
     caption: item.caption || "",
+    followUpMessage: item.followUpMessage || "",
     validFrom: item.validFrom || "",
     validUntil: item.validUntil || "",
   }));
@@ -955,6 +961,7 @@ function PromotionsStep({ draft, setDraft, onError }) {
       text(item?.title).trim() ||
       text(item?.imageUrl).trim() ||
       text(item?.caption).trim() ||
+      text(item?.followUpMessage).trim() ||
       cleanStrings(item?.aliases || []).length
     );
   }
@@ -962,7 +969,8 @@ function PromotionsStep({ draft, setDraft, onError }) {
   function hasSingleOfferContent(promotion) {
     return Boolean(
       text(promotion?.imageUrl).trim() ||
-      text(promotion?.caption).trim()
+      text(promotion?.caption).trim() ||
+      text(promotion?.followUpMessage).trim()
     );
   }
 
@@ -977,6 +985,7 @@ function PromotionsStep({ draft, setDraft, onError }) {
         text(item?.title).trim() ||
         text(item?.imageUrl).trim() ||
         text(item?.caption).trim() ||
+        text(item?.followUpMessage).trim() ||
         cleanStrings(item?.aliases || []).length
       ).length;
       warning = `Changing to Single offer will remove ${packageCount} package option${packageCount === 1 ? "" : "s"} when you save. Continue?`;
@@ -998,6 +1007,7 @@ function PromotionsStep({ draft, setDraft, onError }) {
       packages: [],
       imageUrl: "",
       caption: "",
+      followUpMessage: "",
       validFrom: "",
       validUntil: "",
     }];
@@ -1095,6 +1105,7 @@ function PromotionsStep({ draft, setDraft, onError }) {
                     <>
                       <Field label="Promotion image"><PromoImageField value={item.imageUrl} onChange={(imageUrl) => updatePromotion(index, { imageUrl })} onError={onError} /></Field>
                       <Field label="Caption sent with the image"><textarea rows={3} className={TEXTAREA_CLASS} value={item.caption} onChange={(event) => updatePromotion(index, { caption: event.target.value })} /></Field>
+                      <Field label="First follow-up offer" hint="Optional. Kept out of the normal AI reply and eligible only for the first automated follow-up while this promotion is active."><textarea rows={2} className={TEXTAREA_CLASS} value={item.followUpMessage || ""} onChange={(event) => updatePromotion(index, { followUpMessage: event.target.value })} /></Field>
                     </>
                   )}
 
@@ -1365,7 +1376,7 @@ function PromotionPackagesField({ items, setItems, onError }) {
   }
 
   function addPackage() {
-    const next = [...items, { name: "", title: "", aliases: [], imageUrl: "", caption: "" }];
+    const next = [...items, { name: "", title: "", aliases: [], imageUrl: "", caption: "", followUpMessage: "" }];
     setItems(next);
     setOpenIndex(next.length - 1);
   }
@@ -1401,6 +1412,7 @@ function PromotionPackagesField({ items, setItems, onError }) {
                 <Field label="Customer may also call this"><PromotionAliasChips items={Array.isArray(item.aliases) ? item.aliases : []} setItems={(value) => change(index, "aliases", value)} /></Field>
                 <Field label="Promotion image"><PromoImageField value={item.imageUrl || ""} onChange={(value) => change(index, "imageUrl", value)} onError={onError} /></Field>
                 <Field label="Caption sent with the image"><textarea rows={3} className={TEXTAREA_CLASS} value={item.caption || ""} onChange={(event) => change(index, "caption", event.target.value)} /></Field>
+                <Field label="First follow-up offer" hint="Optional. Used only when this exact package is identified in a price/package enquiry."><textarea rows={2} className={TEXTAREA_CLASS} value={item.followUpMessage || ""} onChange={(event) => change(index, "followUpMessage", event.target.value)} /></Field>
                 <div className="flex flex-col-reverse gap-2 border-t border-[var(--color-border)] pt-3 sm:flex-row sm:justify-between">
                   <button type="button" onClick={() => removePackage(index)} className="h-10 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)]">Remove package</button>
                   <button type="button" onClick={() => setOpenIndex(null)} className="h-10 rounded-xl bg-[var(--color-primary)] px-4 text-xs font-semibold text-white">Done</button>
