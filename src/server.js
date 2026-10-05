@@ -9,6 +9,7 @@ const { convertToMp3 } = require("./services/audioConvertService");
 const { getAiOwnedContact } = require("./services/automaticReplyGuard");
 const { automatedRepliesEnabled } = require("./services/automaticReplyControl");
 const {
+  hasMetaAdCreativeContext,
   loadMetaAdReplyContext,
 } = require("./services/metaAdReplyContextService");
 const {
@@ -646,6 +647,8 @@ async function processIncomingMessage(
     let bookingReady = false;
     let serviceQuery = false;
     let serviceQuerySource = null;
+    let metaAdContext = null;
+    let metaAdCreativeAvailable = false;
     let priceQuery = false;
     let packageQuery = false;
     let details = null;
@@ -658,13 +661,13 @@ async function processIncomingMessage(
         { urgent: true }
       );
     } else {
-      let metaAdContext = null;
       try {
         // This is a local Postgres lookup only. Meta hierarchy enrichment stays
         // fire-and-forget, so a Graph API delay/failure can never block the
         // customer reply. If referral creative text or cached hierarchy is
         // already available, the AI can use it immediately as soft intent.
         metaAdContext = await loadMetaAdReplyContext(contact.id);
+        metaAdCreativeAvailable = hasMetaAdCreativeContext(metaAdContext);
       } catch (contextErr) {
         console.error(
           `Failed to load Meta ad reply context for contact ${contact.id}:`,
@@ -939,6 +942,7 @@ async function processIncomingMessage(
         const resultBundle = await resolveResultMediaForReply({
           serviceQuery,
           serviceQuerySource,
+          metaAdCreativeAvailable,
           priceQuery,
           packageQuery,
           treatment: details?.treatment,
