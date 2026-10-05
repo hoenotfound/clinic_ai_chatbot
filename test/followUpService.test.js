@@ -477,7 +477,7 @@ test("a comparison naming multiple packages does not send both hidden discounts"
 
   await runAutomatedFollowUps();
 
-  assert.equal(claimInput.content, "Checking in");
+  assert.equal(claimInput.content, "您好，请问还需要帮助吗？");
   assert.doesNotMatch(claimInput.content, /RM388|RM288/);
 });
 
@@ -546,7 +546,7 @@ test("ambiguous package aliases fail closed at runtime even if stale config bypa
   await runAutomatedFollowUps();
 
   assert.equal(selectorCalls, 0);
-  assert.equal(claimInput.content, "Checking in");
+  assert.equal(claimInput.content, "您好，请问还需要帮助吗？");
 });
 
 test("compound 9D + 3D service wins over its component services for the delayed offer", async () => {
