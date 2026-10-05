@@ -845,6 +845,42 @@ test("Advanced Config enforces alias, FAQ, and promotion integrity across partia
   assert.deepEqual(ambiguousPackageAliases.invalidKeys, ["promotions"]);
   assert.match(ambiguousPackageAliases.error, /ambiguous/i);
 
+  const ambiguousManualPackageAliases = prepareAdvancedConfigPayload(
+    {
+      promotions: [{
+        name: "Consultation Packages Manual",
+        linkedService: "Consultation",
+        sendOnPriceQuery: false,
+        imageUrl: "",
+        caption: "",
+        packages: [
+          {
+            name: "Package A",
+            title: "",
+            aliases: ["same"],
+            imageUrl: "",
+            caption: "A",
+            followUpMessage: "A follow-up",
+          },
+          {
+            name: "Package B",
+            title: "",
+            aliases: ["same"],
+            imageUrl: "",
+            caption: "B",
+            followUpMessage: "B follow-up",
+          },
+        ],
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(ambiguousManualPackageAliases.ok, false);
+  assert.deepEqual(ambiguousManualPackageAliases.invalidKeys, ["promotions"]);
+  assert.match(ambiguousManualPackageAliases.error, /ambiguous/i);
+
   const overlappingPricePromos = prepareConfigUpdatePayload(
     {
       promotions: [
