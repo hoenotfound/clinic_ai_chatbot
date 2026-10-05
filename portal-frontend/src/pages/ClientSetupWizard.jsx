@@ -133,7 +133,7 @@ function cleanPromotions(items) {
             aliases,
             imageUrl: packageImageUrl,
             caption: packageCaption,
-            followUpMessage: packageFollowUpMessage,
+            ...(packageFollowUpMessage ? { followUpMessage: packageFollowUpMessage } : {}),
           };
         })
       : [];
@@ -145,7 +145,7 @@ function cleanPromotions(items) {
       packages,
       imageUrl,
       caption,
-      followUpMessage,
+      ...(followUpMessage ? { followUpMessage } : {}),
       validFrom: validFrom || null,
       validUntil: validUntil || null,
     };
