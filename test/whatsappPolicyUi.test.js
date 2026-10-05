@@ -237,6 +237,36 @@ test("manual WhatsApp templates use Staff Assist without automatic takeover", ()
   );
 });
 
+test("manual failed-message retry participates in Staff Assist race protection", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/routes/conversations.js"),
+    "utf8"
+  );
+  const retryRoute = source.slice(
+    source.indexOf('router.post("/:contactId/messages/:messageId/retry",'),
+    source.indexOf('router.post("/:contactId/messages",')
+  );
+
+  assert.match(retryRoute, /isManualStaffRetry/);
+  assert.match(
+    retryRoute,
+    /telegramImmediateAlertRepo\.withContactAlertLock\([\s\S]*prepareStaffSend\([\s\S]*setDeliveryStatusById\([\s\S]*"unknown"/
+  );
+  assert.match(retryRoute, /finalizeStaffSendState/);
+  assert.match(retryRoute, /markLeadContacted\(sendContact\.id/);
+});
+
+test("Staff Assist cancellation epochs are bounded in memory", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/services/aiReplyCancellationService.js"),
+    "utf8"
+  );
+  assert.match(source, /EPOCH_TTL_MS/);
+  assert.match(source, /MAX_EPOCH_KEYS/);
+  assert.match(source, /function pruneEpochs/);
+  assert.match(source, /!pendingEchoes\.has\(key\)/);
+});
+
 test("messaging-policy surfaces keep responsive mobile affordances", () => {
   const root = path.join(__dirname, "..");
   const inbox = fs.readFileSync(path.join(root, "portal-frontend/src/pages/Inbox.jsx"), "utf8");
