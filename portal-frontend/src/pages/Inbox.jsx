@@ -485,36 +485,44 @@ export default function Inbox() {
   }, []);
 
   useEffect(() => {
-    if (conversations?.length && selectedId == null) {
-      const requestedConversation = requestedContactId
-        ? conversations.find(
-            (conversation) => Number(conversation.contact_id) === requestedContactId
-          )
-        : null;
-      const firstConversation = requestedConversation || conversations[0];
-      setSelectedId(firstConversation.contact_id);
-      if (requestedConversation) {
-        setMobileThreadOpen(true);
-      } else if (requestedContactParam) {
+    if (!conversations || selectedId != null) return;
+
+    if (conversations.length === 0) {
+      if (requestedContactParam) {
         setSearchParams({}, { replace: true });
       }
+      return;
+    }
 
-      const threadIsVisible = window.matchMedia("(min-width: 1024px)").matches;
-      if (firstConversation.is_unread && threadIsVisible) {
-        setConversations((current) =>
-          current?.map((conversation) =>
-            conversation.contact_id === firstConversation.contact_id
-              ? { ...conversation, is_unread: false }
-              : conversation
-          ) || current
-        );
+    const requestedConversation = requestedContactId
+      ? conversations.find(
+          (conversation) => Number(conversation.contact_id) === requestedContactId
+        )
+      : null;
+    const firstConversation = requestedConversation || conversations[0];
+    setSelectedId(firstConversation.contact_id);
+    if (requestedConversation) {
+      setMobileThreadOpen(true);
+    } else if (requestedContactParam) {
+      setSearchParams({}, { replace: true });
+    }
 
-        api.setReadState(firstConversation.contact_id, false).catch(async (err) => {
-          console.error("Failed to mark the initial conversation as read:", err);
-          await refreshConversations();
-          showToast("Couldn't mark this conversation as read.", "error");
-        });
-      }
+    const threadIsVisible =
+      !!requestedConversation || window.matchMedia("(min-width: 1024px)").matches;
+    if (firstConversation.is_unread && threadIsVisible) {
+      setConversations((current) =>
+        current?.map((conversation) =>
+          conversation.contact_id === firstConversation.contact_id
+            ? { ...conversation, is_unread: false }
+            : conversation
+        ) || current
+      );
+
+      api.setReadState(firstConversation.contact_id, false).catch(async (err) => {
+        console.error("Failed to mark the initial conversation as read:", err);
+        await refreshConversations();
+        showToast("Couldn't mark this conversation as read.", "error");
+      });
     }
   }, [
     conversations,
