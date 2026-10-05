@@ -25,6 +25,10 @@ const migration031Source = fs.readFileSync(
   path.join(__dirname, "../src/db/migrations/031_follow_up_targeting_analytics.sql"),
   "utf8"
 );
+const migration033Source = fs.readFileSync(
+  path.join(__dirname, "../src/db/migrations/033_follow_up_ai_decisions.sql"),
+  "utf8"
+);
 
 test("database bootstrap uses the versioned runner instead of replaying schema files directly", () => {
   assert.match(dbSource, /runMigrations\(pool(?:\s*,|\s*\))/);
@@ -87,5 +91,21 @@ test("follow-up targeting analytics metadata is forward-migrated", () => {
   assert.match(
     migration031Source,
     /automated_follow_up_for_message_id IS NOT NULL/i
+  );
+});
+
+
+test("AI follow-up terminal decisions are forward-migrated durably", () => {
+  assert.match(
+    migration033Source,
+    /CREATE TABLE IF NOT EXISTS follow_up_ai_decisions/i
+  );
+  assert.match(
+    migration033Source,
+    /UNIQUE \(trigger_message_id, follow_up_step\)/i
+  );
+  assert.match(
+    migration033Source,
+    /CHECK \(action IN \('skip', 'human_review'\)\)/i
   );
 });
