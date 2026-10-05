@@ -372,9 +372,12 @@ async function getOutboundAttempt(processingJobId, database = pool) {
        a.finalized_at,
        m.whatsapp_message_id,
        m.delivery_status,
-       m.delivery_error
+       m.delivery_error,
+       retry.status AS whatsapp_retry_status,
+       retry.processing_kind AS whatsapp_retry_processing_kind
      FROM inbound_outbound_attempts a
      LEFT JOIN messages m ON m.id = a.assistant_message_id
+     LEFT JOIN whatsapp_outbound_retries retry ON retry.message_id = a.assistant_message_id
      WHERE a.processing_job_id = $1`,
     [safeJobId]
   );
@@ -408,6 +411,41 @@ async function finalizeOutboundAttempt(
                started_at, finalized_at`,
     [
       safeJobId,
+      safeOutcome,
+      providerMessageId ? String(providerMessageId) : null,
+      errorText ? String(errorText).slice(0, 1000) : null,
+    ]
+  );
+  return result.rows[0] || null;
+}
+
+async function finalizeOutboundAttemptByAssistantMessageId(
+  assistantMessageId,
+  { outcome, providerMessageId = null, errorText = null } = {},
+  database = pool
+) {
+  const safeMessageId = Number(assistantMessageId);
+  const safeOutcome = String(outcome || "").trim();
+  if (!Number.isSafeInteger(safeMessageId) || safeMessageId < 1) {
+    throw new TypeError("assistantMessageId must be a positive integer.");
+  }
+  if (!["accepted", "rejected", "cancelled", "ambiguous"].includes(safeOutcome)) {
+    throw new TypeError("outcome must be accepted, rejected, cancelled or ambiguous.");
+  }
+
+  const result = await database.query(
+    `UPDATE inbound_outbound_attempts
+     SET outcome = $2,
+         provider_message_id = $3,
+         error_text = $4,
+         finalized_at = NOW(),
+         updated_at = NOW()
+     WHERE assistant_message_id = $1
+     RETURNING processing_job_id, inbound_message_id, assistant_message_id,
+               contact_id, origin, outcome, provider_message_id, error_text,
+               started_at, finalized_at`,
+    [
+      safeMessageId,
       safeOutcome,
       providerMessageId ? String(providerMessageId) : null,
       errorText ? String(errorText).slice(0, 1000) : null,
@@ -1011,6 +1049,7 @@ module.exports = {
   cancelOutboundAttempt,
   getOutboundAttempt,
   finalizeOutboundAttempt,
+  finalizeOutboundAttemptByAssistantMessageId,
   markOutboundAttemptAmbiguous,
   storeMetaResolutionClaim,
 };
