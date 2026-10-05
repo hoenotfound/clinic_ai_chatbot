@@ -1640,6 +1640,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         String(item?.imageUrl || "").trim() ||
         String(item?.caption || "").trim() ||
         String(item?.followUpMessage || "").trim() ||
+        hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
         (Array.isArray(item?.aliases) && item.aliases.some((alias) => String(alias || "").trim()))
       ).length;
       warning = `Changing to Single offer will remove ${packageCount} package option${packageCount === 1 ? "" : "s"} when you save. Continue?`;
@@ -1669,6 +1670,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         p.imageUrl.trim() ||
         p.caption.trim() ||
         String(p.followUpMessage || "").trim() ||
+        hasPromotionFollowUpTranslation(p.followUpTranslations) ||
         (Array.isArray(p.packages) && p.packages.length > 0) ||
         p.validFrom ||
         p.validUntil
@@ -1687,6 +1689,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                   String(item?.imageUrl || "").trim() ||
                   String(item?.caption || "").trim() ||
                   String(item?.followUpMessage || "").trim() ||
+                  hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
                   (Array.isArray(item?.aliases) && item.aliases.some((alias) => String(alias || "").trim()))
                 )
                 .map((item) => ({
@@ -1888,6 +1891,9 @@ function PromotionsTab({ config, onSaved, onError }) {
                           onChange={(packages) => updateItem(index, { packages })}
                           onError={onError}
                         />
+                        <p className="mt-3 rounded-xl bg-[var(--color-primary-light)]/45 px-3 py-2.5 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                          Package first follow-up offers require Tools → Automated follow-up to be on. They use the Follow-up 1 timing, and only one safely matched package offer can replace the normal Follow-up 1 message.
+                        </p>
                       </div>
                     ) : (
                       <div className="grid gap-4">
