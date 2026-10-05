@@ -38,6 +38,12 @@ const MAX_INCREMENTAL_MESSAGES = 100;
 const DELIVERY_STATUS_BATCH_SIZE = 500;
 const REALTIME_DEBOUNCE_MS = 100;
 const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
+const IMAGE_OPTIMIZE_THRESHOLD_BYTES = 1.5 * 1024 * 1024;
+const IMAGE_OPTIMIZE_MAX_DIMENSION = 1920;
+const IMAGE_JPEG_QUALITY = 0.82;
+const IMAGE_PROGRESSIVE_JPEG_QUALITY = 0.92;
+const IMAGE_PNG_TO_JPEG_QUALITY = 0.9;
+const JPEG_INSPECTION_BYTES = 1024 * 1024;
 const MAX_VOICE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_SECONDS = 120;
 const VOICE_MIME_TYPES = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"];
@@ -112,6 +118,211 @@ function mergeMessages(existing, incoming) {
     const bId = Number.isInteger(b.id) ? b.id : Number.MAX_SAFE_INTEGER;
     return aId - bId;
   });
+}
+
+function isJpegFile(file) {
+  const type = String(file?.type || "").toLowerCase();
+  return type === "image/jpeg" || type === "image/jpg";
+}
+
+function shouldOptimizeImageUpload(file) {
+  if (!file || file.size <= IMAGE_OPTIMIZE_THRESHOLD_BYTES) return false;
+  const type = String(file.type || "").toLowerCase();
+  return isJpegFile(file) || type === "image/png";
+}
+
+const JPEG_SOF_MARKERS = new Set([
+  0xc0, 0xc1, 0xc2, 0xc3,
+  0xc5, 0xc6, 0xc7,
+  0xc9, 0xca, 0xcb,
+  0xcd, 0xce, 0xcf,
+]);
+const JPEG_PROGRESSIVE_SOF_MARKERS = new Set([0xc2, 0xc6, 0xca, 0xce]);
+
+function jpegFrameEncoding(bytes) {
+  if (
+    !(bytes instanceof Uint8Array) ||
+    bytes.length < 4 ||
+    bytes[0] !== 0xff ||
+    bytes[1] !== 0xd8
+  ) {
+    return null;
+  }
+
+  let offset = 2;
+  while (offset < bytes.length - 1) {
+    while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
+    if (offset >= bytes.length) break;
+
+    const marker = bytes[offset];
+    offset += 1;
+
+    if (marker === 0xd9 || marker === 0xda) break;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (offset + 1 >= bytes.length) break;
+
+    const segmentLength = (bytes[offset] << 8) | bytes[offset + 1];
+    if (segmentLength < 2 || offset + segmentLength > bytes.length) break;
+
+    if (JPEG_SOF_MARKERS.has(marker)) {
+      return JPEG_PROGRESSIVE_SOF_MARKERS.has(marker)
+        ? "progressive"
+        : "non-progressive";
+    }
+
+    offset += segmentLength;
+  }
+
+  return null;
+}
+
+async function inspectJpegEncoding(file) {
+  if (!isJpegFile(file)) return null;
+  try {
+    // JPEG frame metadata is normally near the beginning. Bound inspection so
+    // a large phone photo does not get copied in full just to read its SOF marker.
+    const inspectionSize = Math.min(file.size, JPEG_INSPECTION_BYTES);
+    const bytes = new Uint8Array(
+      await file.slice(0, inspectionSize).arrayBuffer()
+    );
+    return jpegFrameEncoding(bytes);
+  } catch (err) {
+    console.warn("Couldn't inspect JPEG encoding:", err);
+    return null;
+  }
+}
+
+async function isProgressiveJpeg(file) {
+  return (await inspectJpegEncoding(file)) === "progressive";
+}
+
+function canvasHasTransparency(context, width, height) {
+  const pixels = context.getImageData(0, 0, width, height).data;
+  for (let index = 3; index < pixels.length; index += 4) {
+    if (pixels[index] !== 255) return true;
+  }
+  return false;
+}
+
+function optimizedImageFileName(name, outputType) {
+  const fallbackName = name || "image";
+  if (outputType === "image/jpeg") {
+    return /\.(?:png|jpe?g)$/i.test(fallbackName)
+      ? fallbackName.replace(/\.(?:png|jpe?g)$/i, ".jpg")
+      : `${fallbackName}.jpg`;
+  }
+  if (outputType === "image/png") {
+    return /\.(?:png|jpe?g)$/i.test(fallbackName)
+      ? fallbackName.replace(/\.(?:png|jpe?g)$/i, ".png")
+      : `${fallbackName}.png`;
+  }
+  return fallbackName;
+}
+
+async function decodeImageForCanvas(file) {
+  if (typeof createImageBitmap === "function") {
+    const bitmap = await createImageBitmap(file);
+    return {
+      source: bitmap,
+      width: bitmap.width,
+      height: bitmap.height,
+      cleanup: () => bitmap.close?.(),
+    };
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = "async";
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(new Error("Browser could not decode the selected image."));
+      image.src = objectUrl;
+    });
+    return {
+      source: image,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      cleanup: () => URL.revokeObjectURL(objectUrl),
+    };
+  } catch (err) {
+    URL.revokeObjectURL(objectUrl);
+    throw err;
+  }
+}
+
+async function optimizeImageUpload(file, { normalizeProgressiveJpeg = false } = {}) {
+  if (!shouldOptimizeImageUpload(file) && !normalizeProgressiveJpeg) {
+    return file;
+  }
+
+  let decoded = null;
+  try {
+    decoded = await decodeImageForCanvas(file);
+    const largestSide = Math.max(decoded.width, decoded.height);
+    const scale = Math.min(1, IMAGE_OPTIMIZE_MAX_DIMENSION / largestSide);
+    const width = Math.max(1, Math.round(decoded.width * scale));
+    const height = Math.max(1, Math.round(decoded.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { alpha: true });
+    if (!context) return file;
+
+    context.drawImage(decoded.source, 0, 0, width, height);
+
+    const inputType = String(file.type || "").toLowerCase();
+    let outputType = "image/jpeg";
+    let quality = normalizeProgressiveJpeg
+      ? IMAGE_PROGRESSIVE_JPEG_QUALITY
+      : IMAGE_JPEG_QUALITY;
+
+    if (inputType === "image/png") {
+      // Most promo graphics and screenshots are opaque PNGs. Sending those as
+      // high-quality JPEG dramatically reduces mobile upload time while keeping
+      // transparent artwork as PNG so logos/cut-outs are not damaged.
+      const hasTransparency = canvasHasTransparency(context, width, height);
+      outputType = hasTransparency ? "image/png" : "image/jpeg";
+      quality = hasTransparency ? undefined : IMAGE_PNG_TO_JPEG_QUALITY;
+    }
+
+    let blob = await new Promise((resolve) => {
+      canvas.toBlob(resolve, outputType, quality);
+    });
+
+    if (!blob || !blob.size) return file;
+
+    if (normalizeProgressiveJpeg && outputType === "image/jpeg") {
+      const generatedEncoding = await inspectJpegEncoding(blob);
+      if (generatedEncoding !== "non-progressive") {
+        // Canvas encoders do not expose a baseline/progressive switch. If this
+        // browser still produced a progressive (or unverifiable) JPEG, fall
+        // back to PNG rather than sending the problematic JPEG bytes to Meta.
+        const pngBlob = await new Promise((resolve) => {
+          canvas.toBlob(resolve, "image/png");
+        });
+        if (!pngBlob || !pngBlob.size || pngBlob.size > MAX_IMAGE_BYTES) {
+          return file;
+        }
+        blob = pngBlob;
+        outputType = "image/png";
+      }
+    }
+
+    if (!normalizeProgressiveJpeg && blob.size >= file.size) return file;
+    if (blob.size > MAX_IMAGE_BYTES) return file;
+    return new File([blob], optimizedImageFileName(file.name, outputType), {
+      type: outputType,
+      lastModified: file.lastModified,
+    });
+  } catch (err) {
+    // Optimization is best-effort. A browser that cannot decode the selected
+    // image should still be allowed to send the original file.
+    console.warn("Image optimization skipped:", err);
+    return file;
+  } finally {
+    decoded?.cleanup?.();
+  }
 }
 
 function isConversationUnreplied(conversation) {
@@ -1465,6 +1676,7 @@ function ThreadView({
   const discardRecordingRef = useRef(false);
   const recordingStartingRef = useRef(false);
   const recordingRequestIdRef = useRef(0);
+  const imagePreparationIdRef = useRef(0);
   const actionsMenuRef = useRef(null);
   const mountedRef = useRef(true);
   const activeContactIdRef = useRef(contact?.contact_id);
@@ -1472,6 +1684,7 @@ function ThreadView({
   const [sending, setSending] = useState(false);
   const [imageFile, setImageFile] = useState(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
+  const [imagePreparing, setImagePreparing] = useState(false);
   const [isStartingRecording, setIsStartingRecording] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
@@ -1569,7 +1782,7 @@ function ThreadView({
     shouldStickToBottomRef.current = distanceFromBottom < 120;
   }
 
-  function handleFilePicked(e) {
+  async function handleFilePicked(e) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -1585,12 +1798,47 @@ function ThreadView({
       onToast("That image is larger than 16MB — please choose a smaller file.", "error");
       return;
     }
+
+    const preparationId = imagePreparationIdRef.current + 1;
+    imagePreparationIdRef.current = preparationId;
     if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
     setImageFile(file);
     setImagePreviewUrl(URL.createObjectURL(file));
+
+    const couldNeedPreparation =
+      shouldOptimizeImageUpload(file) || isJpegFile(file);
+    setImagePreparing(couldNeedPreparation);
+    if (!couldNeedPreparation) return;
+
+    try {
+      const normalizeProgressiveJpeg = await isProgressiveJpeg(file);
+      const shouldOptimize =
+        shouldOptimizeImageUpload(file) || normalizeProgressiveJpeg;
+      if (!shouldOptimize) return;
+
+      const optimizedFile = await optimizeImageUpload(file, {
+        normalizeProgressiveJpeg,
+      });
+      if (
+        !mountedRef.current ||
+        imagePreparationIdRef.current !== preparationId
+      ) {
+        return;
+      }
+      setImageFile(optimizedFile);
+    } finally {
+      if (
+        mountedRef.current &&
+        imagePreparationIdRef.current === preparationId
+      ) {
+        setImagePreparing(false);
+      }
+    }
   }
 
   function clearImage() {
+    imagePreparationIdRef.current += 1;
+    setImagePreparing(false);
     if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
     setImageFile(null);
     setImagePreviewUrl(null);
@@ -1791,7 +2039,7 @@ function ThreadView({
   async function handleSubmit(e) {
     e.preventDefault();
     const text = draft.trim();
-    if (sending || isStartingRecording || isRecording || voiceBlob) return;
+    if (sending || imagePreparing || isStartingRecording || isRecording || voiceBlob) return;
     if (!text && !imageFile) return;
     if (policyBlocksComposer) {
       onToast(messagingPolicy.explanation, "warning");
@@ -2076,15 +2324,17 @@ function ThreadView({
               <img src={imagePreviewUrl} alt="Selected attachment" className="h-14 w-14 rounded-lg border border-[var(--color-border)] object-cover" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-xs font-medium">{imageFile.name}</p>
-                <p className="text-[11px] text-[var(--color-text-muted)]">Caption optional</p>
+                <p className="text-[11px] text-[var(--color-text-muted)]">
+                  {imagePreparing ? "Preparing for faster upload…" : "Caption optional"}
+                </p>
               </div>
-              <button type="button" onClick={clearImage} className="rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-white">Remove</button>
+              <button type="button" onClick={clearImage} disabled={sending} className="rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-white disabled:opacity-50">Remove</button>
             </div>
           )}
           <div className="flex items-end gap-1.5 rounded-2xl border border-[var(--color-border)] bg-white p-1.5 transition focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)] sm:gap-2">
             <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFilePicked} className="hidden" />
-            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={sending || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Attach an image"} aria-label="Attach an image" className="flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><ImageIcon className="h-[18px] w-[18px]" /></button>
-            <button type="button" onClick={startRecording} disabled={sending || isStartingRecording || isRecording || !!voiceBlob || !!imageFile || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Record a voice message"} aria-label="Record a voice message" className="flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><MicrophoneIcon className="h-[18px] w-[18px]" /></button>
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={sending || imagePreparing || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Attach an image"} aria-label="Attach an image" className="flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><ImageIcon className="h-[18px] w-[18px]" /></button>
+            <button type="button" onClick={startRecording} disabled={sending || imagePreparing || isStartingRecording || isRecording || !!voiceBlob || !!imageFile || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Record a voice message"} aria-label="Record a voice message" className="flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><MicrophoneIcon className="h-[18px] w-[18px]" /></button>
             <textarea
               ref={textareaRef}
               value={draft}
@@ -2100,9 +2350,9 @@ function ThreadView({
               rows={1}
               className="max-h-32 min-h-10 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2.5 text-sm leading-relaxed outline-none disabled:opacity-50 sm:px-2.5"
             />
-            <button type="submit" disabled={(!draft.trim() && !imageFile) || sending || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Send message"} aria-label="Send message" className="flex h-10 shrink-0 touch-manipulation items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40 sm:px-4 sm:text-sm">
-              {sending ? <Spinner /> : <SendIcon className="h-4 w-4" />}
-              <span className="hidden sm:inline">{sending ? (imageFile ? "Uploading…" : "Sending…") : "Send"}</span>
+            <button type="submit" disabled={(!draft.trim() && !imageFile) || sending || imagePreparing || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : imagePreparing ? "Preparing image" : "Send message"} aria-label="Send message" className="flex h-10 shrink-0 touch-manipulation items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40 sm:px-4 sm:text-sm">
+              {sending || imagePreparing ? <Spinner /> : <SendIcon className="h-4 w-4" />}
+              <span className="hidden sm:inline">{imagePreparing ? "Preparing…" : sending ? (imageFile ? "Uploading…" : "Sending…") : "Send"}</span>
             </button>
           </div>
         </div>

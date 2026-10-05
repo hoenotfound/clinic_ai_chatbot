@@ -25,6 +25,11 @@ const ONE_PIXEL_PNG = Buffer.from(
   "base64"
 );
 
+const PROGRESSIVE_JPEG = Buffer.from(
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wgARCAAQABADASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAABv/EABUBAQEAAAAAAAAAAAAAAAAAAAEC/9oADAMBAAIQAxAAAAEQnQJqP//EABYQAQEBAAAAAAAAAAAAAAAAAAQAEf/aAAgBAQABBQIw4w4w45Mv/8QAFxEBAAMAAAAAAAAAAAAAAAAABQAhMf/aAAgBAwEBPwENzLn/xAAYEQACAwAAAAAAAAAAAAAAAAABAwACEf/aAAgBAgEBPwFbhUaZ/8QAFxABAQEBAAAAAAAAAAAAAAAAADEBEf/aAAgBAQAGPwKIjuv/xAAXEAADAQAAAAAAAAAAAAAAAAAAATER/9oACAEBAAE/IZiImEphiR//2gAMAwEAAgADAAAAEMf/xAAVEQEBAAAAAAAAAAAAAAAAAAAAEf/aAAgBAwEBPxC4/8QAGBEBAAMBAAAAAAAAAAAAAAAAAQARITH/2gAIAQIBAT8QYPQarwJ//8QAGRABAQADAQAAAAAAAAAAAAAAAQARIfHB/9oACAEBAAE/EODbvG4MfCDKpf/Z",
+  "base64"
+);
+
 function isoAgo(hours) {
   return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 }
@@ -108,6 +113,7 @@ async function installRealtimeHarness(page) {
       sources: [],
       getUserMediaCalls: 0,
       tracksStopped: 0,
+      mediaUploads: [],
     };
 
     class MockEventSource {
@@ -213,6 +219,71 @@ async function installRealtimeHarness(page) {
       },
     });
 
+    function browserJpegFrameEncoding(bytes) {
+      const progressiveMarkers = new Set([0xc2, 0xc6, 0xca, 0xce]);
+      const sofMarkers = new Set([
+        0xc0, 0xc1, 0xc2, 0xc3,
+        0xc5, 0xc6, 0xc7,
+        0xc9, 0xca, 0xcb,
+        0xcd, 0xce, 0xcf,
+      ]);
+
+      if (
+        !(bytes instanceof Uint8Array) ||
+        bytes.length < 4 ||
+        bytes[0] !== 0xff ||
+        bytes[1] !== 0xd8
+      ) {
+        return null;
+      }
+
+      let offset = 2;
+      while (offset < bytes.length - 1) {
+        while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
+        if (offset >= bytes.length) break;
+
+        const marker = bytes[offset];
+        offset += 1;
+
+        if (marker === 0xd9 || marker === 0xda) break;
+        if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+        if (offset + 1 >= bytes.length) break;
+
+        const segmentLength = (bytes[offset] << 8) | bytes[offset + 1];
+        if (segmentLength < 2 || offset + segmentLength > bytes.length) break;
+
+        if (sofMarkers.has(marker)) {
+          return progressiveMarkers.has(marker) ? "progressive" : "non-progressive";
+        }
+        offset += segmentLength;
+      }
+
+      return null;
+    }
+
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async (input, init = {}) => {
+      const url = typeof input === "string" ? input : input?.url || "";
+      if (
+        /\/api\/conversations\/\d+\/media(?:\?|$)/.test(url) &&
+        init.body instanceof FormData
+      ) {
+        const image = init.body.get("image");
+        if (image instanceof Blob) {
+          const bytes = new Uint8Array(await image.arrayBuffer());
+          state.mediaUploads.push({
+            name: image instanceof File ? image.name : "",
+            type: image.type || "",
+            size: image.size,
+            encoding: image.type === "image/jpeg"
+              ? browserJpegFrameEncoding(bytes)
+              : null,
+          });
+        }
+      }
+      return nativeFetch(input, init);
+    };
+
     window.__realtimeMediaTest = {
       emit(type, payload) {
         for (const source of state.sources) source.emit(type, payload);
@@ -225,6 +296,9 @@ async function installRealtimeHarness(page) {
       },
       tracksStopped() {
         return state.tracksStopped;
+      },
+      latestMediaUpload() {
+        return state.mediaUploads.at(-1) || null;
       },
     };
   });
@@ -411,11 +485,13 @@ async function installApi(page, {
     const mediaMatch = path.match(/^\/api\/conversations\/(\d+)\/media$/);
     if (mediaMatch && method === "POST") {
       const contactId = Number(mediaMatch[1]);
-      const raw = request.postDataBuffer()?.toString("latin1") || "";
+      const bodyBuffer = request.postDataBuffer() || Buffer.alloc(0);
+      const raw = bodyBuffer.toString("latin1");
       mediaRequests.push({
         contactId,
         contentType: request.headers()["content-type"] || "",
         raw,
+        bodyBuffer,
       });
 
       if (imageSendFailure) {
@@ -531,6 +607,51 @@ function imagePayload(name = "test-photo.png") {
     mimeType: "image/png",
     buffer: ONE_PIXEL_PNG,
   };
+}
+
+function progressiveJpegPayload(name = "progressive-photo.jpg") {
+  return {
+    name,
+    mimeType: "image/jpeg",
+    buffer: PROGRESSIVE_JPEG,
+  };
+}
+
+function jpegFrameEncoding(buffer) {
+  const progressiveMarkers = new Set([0xc2, 0xc6, 0xca, 0xce]);
+  const sofMarkers = new Set([
+    0xc0, 0xc1, 0xc2, 0xc3,
+    0xc5, 0xc6, 0xc7,
+    0xc9, 0xca, 0xcb,
+    0xcd, 0xce, 0xcf,
+  ]);
+
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) {
+    return null;
+  }
+
+  let offset = 2;
+  while (offset < buffer.length - 1) {
+    while (offset < buffer.length && buffer[offset] === 0xff) offset += 1;
+    if (offset >= buffer.length) break;
+
+    const marker = buffer[offset];
+    offset += 1;
+
+    if (marker === 0xd9 || marker === 0xda) break;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (offset + 1 >= buffer.length) break;
+
+    const segmentLength = (buffer[offset] << 8) | buffer[offset + 1];
+    if (segmentLength < 2 || offset + segmentLength > buffer.length) break;
+
+    if (sofMarkers.has(marker)) {
+      return progressiveMarkers.has(marker) ? "progressive" : "non-progressive";
+    }
+    offset += segmentLength;
+  }
+
+  return null;
 }
 
 function expectNoUnexpectedApi(apiState) {
@@ -672,6 +793,38 @@ test("staff can preview an image and send it as multipart with its caption", asy
   expect(apiState.mediaRequests[0].raw).toContain('filename="consultation-photo.png"');
   expect(apiState.mediaRequests[0].raw).toContain('name="caption"');
   expect(apiState.mediaRequests[0].raw).toContain("Photo caption from staff");
+  expectNoUnexpectedApi(apiState);
+});
+
+test("progressive JPEG is normalized before upload", async ({ page }) => {
+  const apiState = await installApi(page);
+
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+
+  expect(jpegFrameEncoding(PROGRESSIVE_JPEG)).toBe("progressive");
+
+  const input = page.locator('input[type="file"][accept="image/*"]');
+  await input.setInputFiles(progressiveJpegPayload());
+
+  await expect(page.getByText(/^progressive-photo\.(?:jpg|png)$/)).toBeVisible();
+  await expect(page.getByText("Caption optional", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  expect(apiState.mediaRequests).toHaveLength(1);
+
+  const uploaded = await page.evaluate(
+    () => window.__realtimeMediaTest?.latestMediaUpload?.() || null
+  );
+  expect(uploaded).not.toBeNull();
+  if (uploaded.type === "image/jpeg") {
+    expect(uploaded.encoding).toBe("non-progressive");
+    expect(uploaded.name).toMatch(/\.jpg$/i);
+  } else {
+    expect(uploaded.type).toBe("image/png");
+    expect(uploaded.name).toMatch(/\.png$/i);
+  }
+
   expectNoUnexpectedApi(apiState);
 });
 
