@@ -41,6 +41,7 @@ const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 const IMAGE_OPTIMIZE_THRESHOLD_BYTES = 1.5 * 1024 * 1024;
 const IMAGE_OPTIMIZE_MAX_DIMENSION = 1920;
 const IMAGE_JPEG_QUALITY = 0.82;
+const IMAGE_PROGRESSIVE_JPEG_QUALITY = 0.92;
 const IMAGE_PNG_TO_JPEG_QUALITY = 0.9;
 const MAX_VOICE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_SECONDS = 120;
@@ -118,10 +119,60 @@ function mergeMessages(existing, incoming) {
   });
 }
 
+function isJpegFile(file) {
+  const type = String(file?.type || "").toLowerCase();
+  return type === "image/jpeg" || type === "image/jpg";
+}
+
 function shouldOptimizeImageUpload(file) {
   if (!file || file.size <= IMAGE_OPTIMIZE_THRESHOLD_BYTES) return false;
   const type = String(file.type || "").toLowerCase();
-  return type === "image/jpeg" || type === "image/jpg" || type === "image/png";
+  return isJpegFile(file) || type === "image/png";
+}
+
+function jpegFrameEncoding(bytes) {
+  if (
+    !(bytes instanceof Uint8Array) ||
+    bytes.length < 4 ||
+    bytes[0] !== 0xff ||
+    bytes[1] !== 0xd8
+  ) {
+    return null;
+  }
+
+  let offset = 2;
+  while (offset < bytes.length - 1) {
+    while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
+    if (offset >= bytes.length) break;
+
+    const marker = bytes[offset];
+    offset += 1;
+
+    if (marker === 0xd9 || marker === 0xda) break;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (offset + 1 >= bytes.length) break;
+
+    const segmentLength = (bytes[offset] << 8) | bytes[offset + 1];
+    if (segmentLength < 2 || offset + segmentLength > bytes.length) break;
+
+    if (marker === 0xc0) return "baseline";
+    if (marker === 0xc2) return "progressive";
+
+    offset += segmentLength;
+  }
+
+  return null;
+}
+
+async function isProgressiveJpeg(file) {
+  if (!isJpegFile(file)) return false;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return jpegFrameEncoding(bytes) === "progressive";
+  } catch (err) {
+    console.warn("Couldn't inspect JPEG encoding:", err);
+    return false;
+  }
 }
 
 function canvasHasTransparency(context, width, height) {
@@ -139,8 +190,11 @@ function optimizedImageFileName(name, outputType) {
     : `${name || "image"}.jpg`;
 }
 
-async function optimizeImageUpload(file) {
-  if (!shouldOptimizeImageUpload(file) || typeof createImageBitmap !== "function") {
+async function optimizeImageUpload(file, { normalizeProgressiveJpeg = false } = {}) {
+  if (
+    (!shouldOptimizeImageUpload(file) && !normalizeProgressiveJpeg) ||
+    typeof createImageBitmap !== "function"
+  ) {
     return file;
   }
 
@@ -161,7 +215,9 @@ async function optimizeImageUpload(file) {
 
     const inputType = String(file.type || "").toLowerCase();
     let outputType = "image/jpeg";
-    let quality = IMAGE_JPEG_QUALITY;
+    let quality = normalizeProgressiveJpeg
+      ? IMAGE_PROGRESSIVE_JPEG_QUALITY
+      : IMAGE_JPEG_QUALITY;
 
     if (inputType === "image/png") {
       // Most promo graphics and screenshots are opaque PNGs. Sending those as
@@ -176,7 +232,9 @@ async function optimizeImageUpload(file) {
       canvas.toBlob(resolve, outputType, quality);
     });
 
-    if (!blob || !blob.size || blob.size >= file.size) return file;
+    if (!blob || !blob.size) return file;
+    if (!normalizeProgressiveJpeg && blob.size >= file.size) return file;
+    if (blob.size > MAX_IMAGE_BYTES) return file;
     return new File([blob], optimizedImageFileName(file.name, outputType), {
       type: outputType,
       lastModified: file.lastModified,
@@ -1657,12 +1715,20 @@ function ThreadView({
     setImageFile(file);
     setImagePreviewUrl(URL.createObjectURL(file));
 
-    const shouldOptimize = shouldOptimizeImageUpload(file);
-    setImagePreparing(shouldOptimize);
-    if (!shouldOptimize) return;
+    const couldNeedPreparation =
+      shouldOptimizeImageUpload(file) || isJpegFile(file);
+    setImagePreparing(couldNeedPreparation);
+    if (!couldNeedPreparation) return;
 
     try {
-      const optimizedFile = await optimizeImageUpload(file);
+      const normalizeProgressiveJpeg = await isProgressiveJpeg(file);
+      const shouldOptimize =
+        shouldOptimizeImageUpload(file) || normalizeProgressiveJpeg;
+      if (!shouldOptimize) return;
+
+      const optimizedFile = await optimizeImageUpload(file, {
+        normalizeProgressiveJpeg,
+      });
       if (
         !mountedRef.current ||
         imagePreparationIdRef.current !== preparationId
