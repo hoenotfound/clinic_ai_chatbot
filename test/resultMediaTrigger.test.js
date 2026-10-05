@@ -204,3 +204,31 @@ test("rotation treats the legacy public path and private preview path as the sam
     [items[1], items[0]]
   );
 });
+
+
+test("legacy result media config normalizes to price-only without changing existing clients", () => {
+  assert.equal(normalizeResultMediaTriggerMode({ sendAfterPrice: true }), "price_only");
+  assert.equal(normalizeResultMediaTriggerMode({ sendAfterPrice: false }), "off");
+  assert.equal(
+    normalizeResultMediaTriggerMode({ triggerMode: "service_enquiry", sendAfterPrice: true }),
+    "service_enquiry"
+  );
+});
+
+test("service-enquiry mode sends for a direct customer service enquiry", async () => {
+  const selected = await resolveResultMediaForReply(base({
+    priceQuery: false,
+    serviceQuery: true,
+    serviceQuerySource: "customer_message",
+    resultMedia: [{
+      ...resultMedia[0],
+      triggerMode: "service_enquiry",
+      sendAfterPrice: undefined,
+    }],
+  }));
+
+  assert.equal(selected.service, "3D 小颜术");
+  assert.equal(selected.triggerMode, "service_enquiry");
+  assert.equal(selected.serviceQuerySource, "customer_message");
+  assert.deepEqual(selected.items, [resultMedia[0].items[0]]);
+});
