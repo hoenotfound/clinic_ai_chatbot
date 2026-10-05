@@ -438,12 +438,54 @@ async function listConversations() {
 
 async function takeOver(id, staffUsername) {
   const result = await pool.query(
-    `UPDATE contacts
-     SET mode = 'human', takeover_by = $1, takeover_at = now(),
-         needs_attention = false, attention_reason = NULL, is_unread = false,
-         updated_at = now()
-     WHERE id = $2
-     RETURNING *`,
+    `WITH takeover AS (
+       UPDATE contacts
+       SET mode = 'human', takeover_by = $1, takeover_at = now(),
+           needs_attention = false, attention_reason = NULL, is_unread = false,
+           updated_at = now()
+       WHERE id = $2
+       RETURNING *
+     ), latest_inbound AS (
+       SELECT inbound.id, inbound.created_at
+       FROM messages inbound, takeover
+       WHERE inbound.contact_id = takeover.id
+         AND inbound.role = 'user'
+       ORDER BY inbound.created_at DESC, inbound.id DESC
+       LIMIT 1
+     ), anchor AS (
+       SELECT outbound.id, outbound.sent_by_username
+       FROM messages outbound, takeover, latest_inbound
+       WHERE outbound.contact_id = takeover.id
+         AND outbound.role = 'assistant'
+         AND outbound.is_automated_follow_up = false
+         AND (outbound.created_at, outbound.id) >
+             (latest_inbound.created_at, latest_inbound.id)
+       ORDER BY outbound.created_at DESC, outbound.id DESC
+       LIMIT 1
+     ), cancelled_sequence AS (
+       INSERT INTO follow_up_ai_decisions (
+         contact_id,
+         trigger_message_id,
+         follow_up_step,
+         action,
+         reason,
+         topic
+       )
+       SELECT
+         takeover.id,
+         anchor.id,
+         1,
+         'skip',
+         'Cancelled because clinic staff took over this conversation.',
+         NULL
+       FROM takeover, anchor
+       WHERE anchor.sent_by_username IS NULL
+       ON CONFLICT (trigger_message_id, follow_up_step) DO NOTHING
+       RETURNING id
+     )
+     SELECT takeover.*
+     FROM takeover
+     LEFT JOIN cancelled_sequence ON true`,
     [staffUsername, id]
   );
   const updated = result.rows[0] || null;
