@@ -245,62 +245,102 @@ function configuredServiceByName(value) {
     .find((serviceName) => normalizedServiceName(serviceName) === target) || null;
 }
 
+function mostSpecificConfiguredServiceInText(value) {
+  const transcript = String(value || "").trim();
+  if (!transcript) return { serviceName: null, mentioned: false };
+
+  const scored = [];
+  for (const service of Array.isArray(clinicConfig.services)
+    ? clinicConfig.services
+    : []) {
+    const serviceName =
+      typeof service?.name === "string" ? service.name.trim() : "";
+    if (!serviceName) continue;
+
+    const scores = serviceTerms(serviceName)
+      .filter((term) => textContainsServiceTerm(transcript, term))
+      .map((term) =>
+        normalizedServiceName(term).replace(/[^\p{L}\p{N}]+/gu, "").length
+      )
+      .filter((score) => score > 0);
+    if (scores.length > 0) {
+      scored.push({ serviceName, score: Math.max(...scores) });
+    }
+  }
+
+  if (scored.length === 0) {
+    return { serviceName: null, mentioned: false };
+  }
+
+  const bestScore = Math.max(...scored.map((item) => item.score));
+  const winners = scored.filter((item) => item.score === bestScore);
+  return {
+    serviceName: winners.length === 1 ? winners[0].serviceName : null,
+    mentioned: true,
+  };
+}
+
 function promotionFollowUpForCandidate(candidate) {
-  const latestInbound = Array.isArray(candidate.recent_inbound_messages)
-    ? candidate.recent_inbound_messages.find(
+  const recentInbound = Array.isArray(candidate.recent_inbound_messages)
+    ? candidate.recent_inbound_messages.filter(
         (value) => typeof value === "string" && value.trim()
       )
-    : null;
+    : [];
+  const latestInbound = recentInbound[0] || null;
   if (!looksLikePromotionEnquiry(latestInbound)) return null;
 
-  const transcript = [
-    ...(candidate.recent_inbound_messages || []),
+  const customerTranscript = recentInbound.join("\n");
+  const fullTranscript = [
+    ...recentInbound,
     candidate.trigger_message_content,
   ]
     .filter((value) => typeof value === "string" && value.trim())
     .join("\n");
 
   const activePromotions = getActivePromotions(clinicConfig.promotions || []);
-  const directPromotionMatches = activePromotions.filter((promotion) => {
-    const linkedService = normalizedServiceName(promotion?.linkedService);
-    return linkedService && textContainsServiceTerm(transcript, linkedService);
-  });
+  const conversationService = mostSpecificConfiguredServiceInText(fullTranscript);
+  let serviceName = conversationService.serviceName;
 
-  let promotion = directPromotionMatches.length === 1
-    ? directPromotionMatches[0]
-    : null;
-  let serviceName = promotion
-    ? String(promotion.linkedService || "").trim()
-    : null;
-
-  if (!promotion) {
-    const conversationServices =
-      configuredServicesMentionedInConversation(candidate);
-    serviceName =
-      conversationServices.length === 1
-        ? conversationServices[0]
-        : conversationServices.length > 1
-          ? null
-          : configuredServiceByName(candidate.treatment_interest);
-    if (!serviceName) return null;
-
-    const serviceKey = normalizedServiceName(serviceName);
-    const matches = activePromotions.filter(
-      (item) => normalizedServiceName(item?.linkedService) === serviceKey
-    );
-    if (matches.length !== 1) return null;
-    [promotion] = matches;
+  // If the current exchange mentions multiple equally-specific services, do
+  // not let an older CRM interest choose one arbitrary promotion. When the
+  // current exchange contains no configured service at all, CRM interest can
+  // still provide context for a short "price?" follow-up.
+  if (!serviceName && conversationService.mentioned) return null;
+  if (!serviceName) {
+    serviceName = configuredServiceByName(candidate.treatment_interest);
   }
+  if (!serviceName) return null;
+
+  const serviceKey = normalizedServiceName(serviceName);
+  const matches = activePromotions.filter(
+    (item) => normalizedServiceName(item?.linkedService) === serviceKey
+  );
+  if (matches.length !== 1) return null;
+  const [promotion] = matches;
+
   const configuredPackages = Array.isArray(promotion.packages)
     ? promotion.packages.filter((item) => item && typeof item === "object")
     : [];
 
   if (configuredPackages.length > 0) {
     const packages = promotionPackages(promotion);
-    const mentioned = findMentionedPromotionPackages(packages, transcript);
-    if (mentioned.length !== 1 || !mentioned[0].followUpMessage) return null;
+    const mentionedByCustomer = findMentionedPromotionPackages(
+      packages,
+      customerTranscript
+    );
+    const selectedPackages =
+      mentionedByCustomer.length > 0 ? mentionedByCustomer : packages;
+    if (
+      selectedPackages.length === 0 ||
+      selectedPackages.some((item) => !item.followUpMessage)
+    ) {
+      return null;
+    }
+
     return {
-      message: mentioned[0].followUpMessage,
+      message: selectedPackages
+        .map((item) => item.followUpMessage)
+        .join("\n\n"),
       targetedService: serviceName,
       promotionFollowUp: true,
     };
