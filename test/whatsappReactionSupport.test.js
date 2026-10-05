@@ -11,6 +11,10 @@ const whatsappSource = read("src/services/whatsappService.js");
 const createAppSource = read("src/createApp.js");
 const inboxSource = read("portal-frontend/src/pages/Inbox.jsx");
 const messagesRepoSource = read("src/db/messagesRepo.js");
+const conversationLockSource = read("src/db/conversationLock.js");
+const coexistenceRepoSource = read("src/db/whatsappCoexistenceRepo.js");
+const coexistenceServiceSource = read("src/services/whatsappCoexistenceService.js");
+const followUpRepoSource = read("src/db/followUpRepo.js");
 const migrationSource = read("src/db/migrations/035_whatsapp_message_reactions.sql");
 const reliabilityMigrationSource = read("src/db/migrations/036_whatsapp_reaction_reliability.sql");
 
@@ -48,7 +52,7 @@ test("reaction storage is separate from messages and Inbox renders it on the tar
 });
 
 
-test("unresolved reactions are queued and reconciled when the target WAMID becomes available", () => {
+test("unresolved reactions are serialized with WAMID persistence and reconciled durably", () => {
   assert.match(
     reliabilityMigrationSource,
     /CREATE TABLE IF NOT EXISTS pending_whatsapp_reactions/i
@@ -57,13 +61,16 @@ test("unresolved reactions are queued and reconciled when the target WAMID becom
     reliabilityMigrationSource,
     /ADD COLUMN IF NOT EXISTS provider_timestamp BIGINT/i
   );
+  assert.match(conversationLockSource, /WHATSAPP_MESSAGE_LOCK_NAMESPACE/);
+  assert.match(conversationLockSource, /hashtext\(\$2::text\)/);
   assert.match(messagesRepoSource, /INSERT INTO pending_whatsapp_reactions/);
+  assert.match(messagesRepoSource, /await lockWhatsappMessageId\(client, targetWhatsappMessageId\)/);
   assert.match(
     messagesRepoSource,
-    /reconcilePendingWhatsappReactionsForMessage\(\s*updated\.id,\s*whatsappMessageId\s*\)/
+    /reconcilePendingWhatsappReactionsForTarget\(\s*client,[\s\S]*targetWhatsappMessageId/
   );
   assert.match(messagesRepoSource, /outbound_message_evidence/);
-  assert.match(messagesRepoSource, /inbound_outbound_attempts/);
+  assert.match(messagesRepoSource, /job\.channel = 'whatsapp'/);
 });
 
 test("reaction ordering keeps removal tombstones and rejects stale retries", () => {
@@ -85,4 +92,40 @@ test("unresolved or unchanged reactions do not emit malformed Inbox realtime upd
   assert.match(createAppSource, /update\.pending === true/);
   assert.match(createAppSource, /update\.changed === false/);
   assert.match(createAppSource, /!Array\.isArray\(update\.reactions\)/);
+});
+
+
+test("Business App coexistence uses the same WAMID lock and pending-reaction reconciliation", () => {
+  assert.match(coexistenceRepoSource, /lockWhatsappMessageId\(client, whatsappMessageId\)/);
+  assert.match(
+    coexistenceServiceSource,
+    /reconcilePendingWhatsappReactionsForMessage\(\s*persisted\.message\.id/
+  );
+  assert.match(coexistenceServiceSource, /persisted\.reactionUpdate\?\.changed/);
+});
+
+test("legacy unsupported-reaction turns are cleaned without clearing unrelated attention", () => {
+  assert.match(
+    reliabilityMigrationSource,
+    /legacy_whatsapp_reaction_messages/
+  );
+  assert.match(
+    reliabilityMigrationSource,
+    /unsupported reaction message/
+  );
+  assert.match(
+    reliabilityMigrationSource,
+    /attention_reason = 'Unsupported WhatsApp message \(reaction\) needs staff review\.'/
+  );
+  assert.match(
+    reliabilityMigrationSource,
+    /DELETE FROM messages m[\s\S]*legacy_whatsapp_reaction_messages/
+  );
+});
+
+test("system fallback replies never become automated follow-up anchors", () => {
+  const occurrences = followUpRepoSource.match(
+    /evidence\.origin = 'system_fallback'/g
+  ) || [];
+  assert.equal(occurrences.length, 2);
 });
