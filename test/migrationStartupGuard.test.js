@@ -29,6 +29,10 @@ const migration033Source = fs.readFileSync(
   path.join(__dirname, "../src/db/migrations/033_follow_up_ai_decisions.sql"),
   "utf8"
 );
+const migration034Source = fs.readFileSync(
+  path.join(__dirname, "../src/db/migrations/034_follow_up_ai_hardening.sql"),
+  "utf8"
+);
 
 test("database bootstrap uses the versioned runner instead of replaying schema files directly", () => {
   assert.match(dbSource, /runMigrations\(pool(?:\s*,|\s*\))/);
@@ -107,5 +111,25 @@ test("AI follow-up terminal decisions are forward-migrated durably", () => {
   assert.match(
     migration033Source,
     /CHECK \(action IN \('skip', 'human_review'\)\)/i
+  );
+});
+
+
+test("AI follow-up generation leases and message modes are forward-migrated", () => {
+  assert.match(
+    migration034Source,
+    /ADD COLUMN IF NOT EXISTS automated_follow_up_message_mode TEXT/i
+  );
+  assert.match(
+    migration034Source,
+    /CREATE TABLE IF NOT EXISTS follow_up_ai_generation_claims/i
+  );
+  assert.match(
+    migration034Source,
+    /UNIQUE \(trigger_message_id, follow_up_step\)/i
+  );
+  assert.match(
+    migration034Source,
+    /lease_token TEXT NOT NULL/i
   );
 });
