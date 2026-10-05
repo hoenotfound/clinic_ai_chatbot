@@ -8,7 +8,11 @@ export function matchesLeadAssignment(item, value, currentUsername) {
   return true;
 }
 
-export function buildLeadAssignmentFilterOptions(items, currentUsername) {
+export function buildLeadAssignmentFilterOptions(
+  items,
+  currentUsername,
+  { includeUnassigned = true } = {}
+) {
   const owners = new Map();
   for (const item of items || []) {
     const username = String(item?.lead_owner_username || "").trim();
@@ -24,7 +28,7 @@ export function buildLeadAssignmentFilterOptions(items, currentUsername) {
   return [
     ["all", "All leads"],
     ["mine", "My leads"],
-    ["unassigned", "Unassigned"],
+    ...(includeUnassigned ? [["unassigned", "Unassigned"]] : []),
     ...specificOwners,
   ];
 }
@@ -34,8 +38,10 @@ export default function LeadAssignmentBadge({
   ownerDisplayName,
   currentUsername,
   compact = false,
+  showUnassigned = true,
 }) {
   const assigned = Boolean(ownerUsername);
+  if (!assigned && !showUnassigned) return null;
   const mine = assigned && ownerUsername === currentUsername;
   const name = ownerDisplayName || ownerUsername;
   const label = !assigned
