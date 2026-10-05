@@ -219,6 +219,21 @@ function buildCommentAutomationPrompt(options = {}) {
       `- ${service.name}: ${service.description} | Price: ${service.priceRange}`,
     `No ${terms.servicePlural} are configured. Do not invent any.`
   );
+  const faqList = listOrNone(
+    config.faqs,
+    (faq) => `- Q: ${faq.q}\n  A: ${faq.a}`,
+    "No FAQs configured."
+  );
+  const aliasList = listOrNone(
+    config.serviceAliases,
+    (alias) => `- "${alias.alias}" → ${alias.officialService}`,
+    "No alternate service terms configured."
+  );
+  const locationsList = listOrNone(
+    config.branches,
+    (location) => `- ${location.name}: ${location.address}`,
+    `No ${terms.locationPlural} configured. Do not invent a location.`
+  );
   const guardrailsList = listOrNone(
     config.guardrails,
     (guardrail) => `- ${guardrail}`,
@@ -328,6 +343,13 @@ CURRENT BUSINESS INFORMATION:
 - Business type: ${config.businessType || "generic"}
 - Current configured ${terms.servicePlural}:
 ${servicesList}
+- Current service aliases:
+${aliasList}
+- Current ${terms.locationPlural}:
+${locationsList}
+- Current hours: ${config.hours?.general || "Not configured"}${config.hours?.closed ? `. ${config.hours.closed}` : ""}
+- Current FAQs:
+${faqList}
 - Current active promotions:
 ${activePromotionsList()}
 
