@@ -684,7 +684,29 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
     );
 
     for (const promotion of Array.isArray(promotions) ? promotions : []) {
+      const packages = Array.isArray(promotion?.packages)
+        ? promotion.packages
+        : [];
+
+      // Package names/titles/aliases are also used by delayed promotion
+      // follow-up routing, even when immediate price-media auto-send is off.
+      // Reject ambiguous wording for every package promotion at save/import
+      // time instead of silently falling back at runtime.
+      if (packages.length > 0) {
+        const ambiguousTerm = findAmbiguousPromotionPackageTerm(promotion);
+        if (ambiguousTerm) {
+          return {
+            ok: false,
+            status: 400,
+            error:
+              `Package wording "${ambiguousTerm.term}" is ambiguous between "${ambiguousTerm.firstPackage}" and "${ambiguousTerm.secondPackage}". Use unique package names/titles/aliases.`,
+            invalidKeys: ["promotions"],
+          };
+        }
+      }
+
       if (promotion?.sendOnPriceQuery !== true) continue;
+
       const linkedService = String(promotion?.linkedService || "").trim();
       if (!linkedService || !serviceNames.has(linkedService.toLowerCase())) {
         return {
@@ -694,9 +716,6 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
           invalidKeys: ["promotions"],
         };
       }
-      const packages = Array.isArray(promotion?.packages)
-        ? promotion.packages
-        : [];
       if (packages.length > 0) {
         const incompletePackage = packages.find(
           (item) =>
@@ -709,16 +728,6 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
             ok: false,
             status: 400,
             error: "Every automatic promotion package needs a name, image, and caption.",
-            invalidKeys: ["promotions"],
-          };
-        }
-        const ambiguousTerm = findAmbiguousPromotionPackageTerm(promotion);
-        if (ambiguousTerm) {
-          return {
-            ok: false,
-            status: 400,
-            error:
-              `Package wording "${ambiguousTerm.term}" is ambiguous between "${ambiguousTerm.firstPackage}" and "${ambiguousTerm.secondPackage}". Use unique package names/titles/aliases.`,
             invalidKeys: ["promotions"],
           };
         }
