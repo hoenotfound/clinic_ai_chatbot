@@ -9,6 +9,7 @@ if (process.env.TEST_DATABASE_URL && !process.env.DATABASE_URL) {
 const { pool } = require("../src/db/db");
 const followUpRepo = require("../src/db/followUpRepo");
 const followUpAiLeaseRepo = require("../src/db/followUpAiLeaseRepo");
+const staffOwnershipService = require("../src/services/staffOwnershipService");
 
 const connectionString = process.env.TEST_DATABASE_URL;
 
@@ -32,6 +33,9 @@ test(
           channel_user_id TEXT,
           needs_attention BOOLEAN NOT NULL DEFAULT false,
           attention_reason TEXT,
+          mode TEXT NOT NULL DEFAULT 'ai',
+          takeover_by TEXT,
+          takeover_at TIMESTAMPTZ,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
 
@@ -311,6 +315,82 @@ test(
         stepIndex: 1,
         leaseToken: "lease-d",
       });
+
+      await client.query(`
+        INSERT INTO contacts (
+          id, channel, whatsapp_number, needs_attention, mode, takeover_by, takeover_at
+        ) VALUES (
+          3, 'whatsapp', '60119998877', true, 'human', 'AI handoff', now() - interval '5 minutes'
+        );
+
+        INSERT INTO messages (
+          id, contact_id, role, content, created_at, is_automated_follow_up
+        ) VALUES
+          (
+            30, 3, 'user', 'Can someone help me?',
+            now() - interval '4 hours',
+            false
+          ),
+          (
+            31, 3, 'assistant', 'A staff member will help you shortly.',
+            now() - interval '3 hours',
+            false
+          );
+      `);
+
+      const claimedHandoff = await staffOwnershipService.claimAiHandoffOwnership(
+        3,
+        "staff1"
+      );
+      assert.ok(claimedHandoff);
+      assert.equal(claimedHandoff.takeover_by, "staff1");
+
+      const cancellation = await client.query(
+        `SELECT action, follow_up_step
+         FROM follow_up_ai_decisions
+         WHERE contact_id = 3 AND trigger_message_id = 31`
+      );
+      assert.equal(cancellation.rows.length, 1);
+      assert.equal(cancellation.rows[0].action, "skip");
+      assert.equal(Number(cancellation.rows[0].follow_up_step), 1);
+
+      // Simulate the normal staff-send cleanup followed by Return to AI. The
+      // durable decision must keep the old AI anchor dead even after the
+      // temporary handoff/attention state has been cleared.
+      await client.query(
+        `UPDATE contacts
+         SET needs_attention = false,
+             attention_reason = NULL,
+             mode = 'ai',
+             takeover_by = NULL,
+             takeover_at = NULL
+         WHERE id = 3`
+      );
+
+      const cancelledLease = await followUpAiLeaseRepo.claimIfStillEligible({
+        contactId: 3,
+        triggerMessageId: 31,
+        stepIndex: 1,
+        leaseToken: "cancelled-handoff-lease",
+        delayMinutes: 120,
+        previousDelayMinutes: 0,
+        triggerMode: "all",
+        activatedAt,
+      });
+      assert.equal(cancelledLease, null);
+
+      const cancelledClaim = await followUpRepo.saveIfStillEligible({
+        contactId: 3,
+        triggerMessageId: 31,
+        content: "This must not send",
+        mediaUrl: "",
+        stepIndex: 1,
+        delayMinutes: 120,
+        previousDelayMinutes: 0,
+        triggerMode: "all",
+        activatedAt,
+      });
+      assert.equal(cancelledClaim, null);
 
       const reviewDecision = await followUpRepo.recordAiDecisionIfStillEligible({
         contactId: 2,

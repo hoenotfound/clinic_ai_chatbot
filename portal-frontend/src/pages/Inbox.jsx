@@ -45,7 +45,7 @@ const VOICE_MIME_TYPES = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "au
 const STATUS_FILTERS = [
   { key: "all", label: "All" },
   { key: "unreplied", label: "Unreplied" },
-  { key: "follow-up", label: "Follow-up" },
+  { key: "follow-up", label: "Needs follow-up" },
   { key: "unread", label: "Unread" },
   { key: "attention", label: "Needs attention" },
 ];
@@ -1250,7 +1250,7 @@ function ConversationList({
                       showUnassigned={showUnassignedAssignment}
                     />
                     <ControlIndicator mode={conversation.mode} />
-                    {conversation.needs_follow_up && <StatusBadge tone="accent">Follow-up</StatusBadge>}
+                    {conversation.needs_follow_up && <StatusBadge tone="accent">Needs follow-up</StatusBadge>}
                     {conversation.needs_attention && <StatusBadge tone="danger">Attention</StatusBadge>}
                   </div>
                 </div>
