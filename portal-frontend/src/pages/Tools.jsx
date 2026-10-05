@@ -850,6 +850,7 @@ export default function Tools() {
             saving={saving}
             delayDescription={delayDescription}
             services={config.services || []}
+            promotions={config.promotions || []}
             imageInputRef={imageInputRef}
             onSourceMessageChange={handleSourceMessageChange}
             onTranslationChange={handleTranslationChange}
@@ -1334,6 +1335,7 @@ function FollowUpTool({
   saving,
   delayDescription,
   services,
+  promotions,
   imageInputRef,
   onSourceMessageChange,
   onTranslationChange,
@@ -1351,6 +1353,20 @@ function FollowUpTool({
   ];
   const lastDelay = allSteps[allSteps.length - 1]?.delayMinutes;
   const suggestedNextDelay = nextSequenceDelay(lastDelay);
+  const hasPromotionFollowUps = (Array.isArray(promotions) ? promotions : []).some(
+    (promotion) =>
+      String(promotion?.followUpMessage || "").trim() ||
+      Object.values(promotion?.followUpTranslations || {}).some(
+        (message) => String(message || "").trim()
+      ) ||
+      (Array.isArray(promotion?.packages) ? promotion.packages : []).some(
+        (item) =>
+          String(item?.followUpMessage || "").trim() ||
+          Object.values(item?.followUpTranslations || {}).some(
+            (message) => String(message || "").trim()
+          )
+      )
+  );
 
   function updateAdditionalStep(index, patch) {
     setForm((current) => ({
@@ -1511,6 +1527,14 @@ function FollowUpTool({
                 ? "AI writes from the recent conversation. The message below remains the safe fallback if generation fails."
                 : "Use a reviewed fixed message, with optional service-specific versions."}
             />
+            {hasPromotionFollowUps && (
+              <div className="mt-4 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/45 px-3.5 py-3">
+                <p className="text-xs font-semibold text-[var(--color-primary)]">Promotion override is available</p>
+                <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
+                  For an eligible recent price/package enquiry, a configured promotion follow-up can replace Follow-up 1. It uses this same timing. If no safe promotion match is found, the normal Follow-up 1 message below is used.
+                </p>
+              </div>
+            )}
             <FollowUpMessageMode
               mode={form.messageMode}
               instruction={form.aiInstruction}
@@ -1842,7 +1866,9 @@ function FollowUpTool({
             <h2 className="font-display text-sm font-bold">Before it sends</h2>
             <ul className="mt-4 space-y-3">
               <Rule text="Any customer reply stops all remaining follow-ups in that sequence." />
-              <Rule text="A newer normal AI or staff reply starts a fresh sequence from that message." />
+              <Rule text="If AI decides to skip or request human review, the remaining steps for that conversation cycle stop too." />
+              <Rule text="A real staff takeover cancels an older AI-started sequence. A later staff reply can start a fresh sequence." />
+              <Rule text="A newer normal AI or staff reply starts a fresh sequence from that message. Sent scheduled staff messages count as staff replies." />
               <Rule text="A targeted message is used only when the lead interest clearly matches one configured service; otherwise the default message is used." />
               <Rule text="WhatsApp, Messenger, and Instagram follow-ups only send inside the permitted reply window. WhatsApp opt-outs remain a hard stop." />
               <Rule text="A failed or unconfirmed follow-up blocks later steps for staff review instead of continuing blindly." />
