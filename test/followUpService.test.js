@@ -187,6 +187,112 @@ test("first follow-up uses hidden active-promotion copy and does not let AI rewr
   assert.equal(imageCalls, 0);
 });
 
+test("promotion follow-up ignores overlapping active promos that have no delayed follow-up copy", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "3D image promo",
+      linkedService: "3D 小颜术",
+      sendOnPriceQuery: true,
+      imageUrl: "https://example.com/3d.jpg",
+      caption: "3D promo image",
+      packages: [],
+      validFrom: null,
+      validUntil: null,
+    },
+    {
+      name: "3D delayed offer",
+      linkedService: "3D 小颜术",
+      sendOnPriceQuery: false,
+      imageUrl: "",
+      caption: "",
+      followUpMessage: "🎁 Free 1-hour 全身通淋巴按摩 + 脸部提升刮痧",
+      packages: [],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 705,
+    whatsapp_number: "60111111115",
+    trigger_message_id: 704,
+    next_follow_up_step: 1,
+    recent_inbound_messages: ["3D 小颜术多少钱？"],
+    trigger_message_content: "3D 小颜术 First Trial RM488",
+  }];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 706, contact_id: 705, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-706" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 705,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(
+    claimInput.content,
+    "🎁 Free 1-hour 全身通淋巴按摩 + 脸部提升刮痧"
+  );
+});
+
+test("promotion follow-up uses the configured customer-language version when available", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "3D localized offer",
+      linkedService: "3D 小颜术",
+      sendOnPriceQuery: false,
+      imageUrl: "",
+      caption: "",
+      followUpMessage: "Free lymphatic massage add-on",
+      followUpTranslations: {
+        en: "Free lymphatic massage add-on",
+        zh: "🎁 免费1小时全身通淋巴按摩 + 脸部提升刮痧",
+      },
+      packages: [],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 707,
+    whatsapp_number: "60111111117",
+    trigger_message_id: 708,
+    next_follow_up_step: 1,
+    recent_inbound_messages: ["3D 小颜术多少钱？"],
+    trigger_message_content: "3D 小颜术体验价 RM488",
+  }];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 709, contact_id: 707, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-709" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 707,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(
+    claimInput.content,
+    "🎁 免费1小时全身通淋巴按摩 + 脸部提升刮痧"
+  );
+});
+
 test("first follow-up selects the exact configured package offer", async () => {
   enableTool();
   clinicConfig.promotions = [
