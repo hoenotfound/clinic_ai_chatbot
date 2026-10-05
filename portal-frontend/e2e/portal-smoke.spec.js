@@ -902,6 +902,7 @@ test("Meta Ads analytics renders spend-to-CRM metrics without horizontal page ov
 });
 
 test("Meta Ads lead preview opens the correct attributed Inbox conversation", async ({ page }) => {
+  const activeInbound = new Date().toISOString();
   await mockPortalApi(page, {
     loggedIn: true,
     conversations: [{
@@ -916,7 +917,9 @@ test("Meta Ads lead preview opens the correct attributed Inbox conversation", as
       is_unread: false,
       last_message: "Can I book the pelvis treatment?",
       last_message_role: "user",
-      last_message_at: "2026-10-04T12:00:00.000Z",
+      last_message_at: activeInbound,
+      latest_inbound_at: activeInbound,
+      latest_customer_message_at: activeInbound,
       lead_owner_username: "staff",
     }],
     conversationMessagesByContact: {
@@ -1012,6 +1015,38 @@ test("Meta Ads lead preview opens the correct attributed Inbox conversation", as
     await expect(page.getByLabel("Conversation inbox")).toBeVisible();
   } else {
     await expect(sidebar).toBeVisible();
+  }
+});
+
+test("invalid Inbox contact links restore the conversation list and navigation", async ({ page }) => {
+  const activeInbound = new Date().toISOString();
+  await mockPortalApi(page, {
+    loggedIn: true,
+    conversations: [{
+      contact_id: 42,
+      channel: "whatsapp",
+      name: "Alice Inbox Lead",
+      whatsapp_profile_name: "Alice Inbox Lead",
+      whatsapp_number: "60123456789",
+      mode: "ai",
+      needs_attention: false,
+      needs_follow_up: false,
+      is_unread: false,
+      last_message: "Hello",
+      last_message_role: "user",
+      last_message_at: activeInbound,
+      latest_inbound_at: activeInbound,
+      latest_customer_message_at: activeInbound,
+      lead_owner_username: "staff",
+    }],
+  });
+
+  const sidebar = page.getByTestId("app-sidebar");
+  for (const target of ["/inbox?contact=not-a-contact", "/inbox?contact=999999"]) {
+    await page.goto(target);
+    await expect(page).toHaveURL(/\/inbox$/);
+    await expect(sidebar).toBeVisible();
+    await expect(page.getByLabel("Conversation inbox")).toBeVisible();
   }
 });
 
