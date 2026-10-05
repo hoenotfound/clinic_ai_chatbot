@@ -163,14 +163,20 @@ test("staff send routes check channel policy before automatic takeover", () => {
   assert.ok(imageRoute.indexOf("requireFreeformPolicy") < imageRoute.indexOf("contactsRepo.takeOver"));
   assert.match(
     textRoute,
-    /contactsRepo\.takeOver\(contact\.id, req\.session\.username, \{ publish: false \}\)/
+    /telegramImmediateAlertRepo\.withContactAlertLock\(\s*contact\.id,[\s\S]*contactsRepo\.takeOver\(contact\.id, req\.session\.username\)[\s\S]*appendMessageForContact/
   );
   assert.match(
     imageRoute,
-    /contactsRepo\.takeOver\(contact\.id, req\.session\.username, \{ publish: false \}\)/
+    /telegramImmediateAlertRepo\.withContactAlertLock\(\s*contact\.id,[\s\S]*contactsRepo\.takeOver\(contact\.id, req\.session\.username\)[\s\S]*appendMessageForContact/
   );
-  assert.match(textRoute, /finally \{[\s\S]*publishContactChange\(contact\.id\)/);
-  assert.match(imageRoute, /finally \{[\s\S]*publishContactChange\(contact\.id\)/);
+  assert.match(
+    textRoute,
+    /withContactAlertLock[\s\S]*contactsRepo\.setAttention\(contact\.id, false\)[\s\S]*contactsRepo\.setUnread\(contact\.id, false\)[\s\S]*appendMessageForContact/
+  );
+  assert.match(
+    imageRoute,
+    /withContactAlertLock[\s\S]*contactsRepo\.setAttention\(contact\.id, false\)[\s\S]*contactsRepo\.setUnread\(contact\.id, false\)[\s\S]*appendMessageForContact/
+  );
   assert.match(
     textRoute,
     /requireFreeformPolicy\(contact, res, whatsappPolicy\.manualStaffPurpose\(contact\)\)/
