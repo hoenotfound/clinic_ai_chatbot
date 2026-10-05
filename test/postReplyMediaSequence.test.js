@@ -7,6 +7,10 @@ const {
 const {
   resolveResultMediaForReply,
 } = require("../src/utils/resultMediaTrigger");
+const {
+  hasMetaAdCreativeContext,
+  normalizeMetaAdReplyContext,
+} = require("../src/services/metaAdReplyContextService");
 
 const treatment = "3D 小颜术";
 
@@ -222,4 +226,54 @@ test("ad-name-only attribution cannot trigger automatic result media", async () 
   });
 
   assert.equal(resultBundle, null);
+});
+
+
+test("normalized Meta attribution only unlocks result media when headline/body creative exists", async () => {
+  const configured = [{
+    ...resultMedia[0],
+    triggerMode: "service_enquiry",
+    sendAfterPrice: undefined,
+  }];
+  const common = {
+    serviceQuery: true,
+    serviceQuerySource: "meta_ad",
+    priceQuery: false,
+    packageQuery: false,
+    treatment,
+    flagged: false,
+    bookingReady: false,
+    keywordReason: null,
+    needsAttention: false,
+    textSendSucceeded: true,
+    resultMedia: configured,
+    contactId: 42,
+    wasMediaRecentlySent: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+  };
+
+  const creativeContext = normalizeMetaAdReplyContext({
+    source: "meta_ads",
+    ad_name: "Internal 3D ad",
+    headline: "3D 小颜术",
+    body: "改善脸型轮廓与大小脸",
+  });
+  assert.ok(await resolveResultMediaForReply({
+    ...common,
+    metaAdCreativeAvailable: hasMetaAdCreativeContext(creativeContext),
+  }));
+
+  const adNameOnlyContext = normalizeMetaAdReplyContext({
+    source: "meta_ads",
+    ad_name: "3D 小颜术 Internal Campaign Naming",
+    headline: null,
+    body: null,
+  });
+  assert.equal(
+    await resolveResultMediaForReply({
+      ...common,
+      metaAdCreativeAvailable: hasMetaAdCreativeContext(adNameOnlyContext),
+    }),
+    null
+  );
 });
