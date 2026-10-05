@@ -461,3 +461,130 @@ test("result media rotation history can find a legacy public path for a private 
     "https://old.example/promo-images/321"
   );
 });
+
+
+test("stores a WhatsApp reaction against the referenced message without creating a new message", async (t) => {
+  const originalConnect = pool.connect;
+  t.after(() => {
+    pool.connect = originalConnect;
+  });
+
+  const queries = [];
+  let released = false;
+  const client = {
+    async query(sql, params = []) {
+      queries.push({ sql: String(sql), params });
+      if (/SELECT id, contact_id\s+FROM messages/.test(sql)) {
+        return { rows: [{ id: 91, contact_id: 7 }] };
+      }
+      if (/AS reactions\s+FROM message_reactions/.test(sql)) {
+        return { rows: [{ reactions: [{ emoji: "❤️" }] }] };
+      }
+      return { rows: [] };
+    },
+    release() {
+      released = true;
+    },
+  };
+  pool.connect = async () => client;
+
+  const updated = await messagesRepo.applyWhatsappReaction({
+    id: "reaction-event-1",
+    from: "60123456789",
+    targetMessageId: "wamid-target-1",
+    emoji: "❤️",
+  });
+
+  assert.deepEqual(updated, {
+    contactId: 7,
+    messageId: 91,
+    reactions: [{ emoji: "❤️" }],
+  });
+  assert.equal(released, true);
+
+  const targetLookup = queries.find((call) => /SELECT id, contact_id\s+FROM messages/.test(call.sql));
+  assert.deepEqual(targetLookup.params, ["wamid-target-1"]);
+
+  const insert = queries.find((call) => /INSERT INTO message_reactions/.test(call.sql));
+  assert.ok(insert);
+  assert.match(insert.sql, /ON CONFLICT \(target_message_id, reactor_key\)/);
+  assert.deepEqual(insert.params, [
+    91,
+    7,
+    "whatsapp:60123456789",
+    "❤️",
+    "reaction-event-1",
+  ]);
+  assert.equal(
+    queries.some((call) => /INSERT INTO messages/.test(call.sql)),
+    false,
+    "a reaction must never create a conversational message row"
+  );
+});
+
+test("removing a WhatsApp reaction deletes only the reaction metadata", async (t) => {
+  const originalConnect = pool.connect;
+  t.after(() => {
+    pool.connect = originalConnect;
+  });
+
+  const queries = [];
+  const client = {
+    async query(sql, params = []) {
+      queries.push({ sql: String(sql), params });
+      if (/SELECT id, contact_id\s+FROM messages/.test(sql)) {
+        return { rows: [{ id: 92, contact_id: 8 }] };
+      }
+      if (/AS reactions\s+FROM message_reactions/.test(sql)) {
+        return { rows: [{ reactions: [] }] };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  pool.connect = async () => client;
+
+  const updated = await messagesRepo.applyWhatsappReaction({
+    id: "reaction-remove-1",
+    from: "60180000000",
+    targetMessageId: "wamid-target-2",
+    emoji: "",
+  });
+
+  assert.deepEqual(updated, {
+    contactId: 8,
+    messageId: 92,
+    reactions: [],
+  });
+
+  const deletion = queries.find((call) => /DELETE FROM message_reactions/.test(call.sql));
+  assert.ok(deletion);
+  assert.deepEqual(deletion.params, [92, "whatsapp:60180000000"]);
+  assert.equal(queries.some((call) => /INSERT INTO message_reactions/.test(call.sql)), false);
+});
+
+test("Inbox message pages include attached reaction metadata", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /FROM message_reactions mr/);
+    assert.match(sql, /mr\.target_message_id = messages\.id/);
+    assert.deepEqual(params, [7, 51]);
+    return {
+      rows: [
+        {
+          id: 101,
+          role: "assistant",
+          content: "Photo",
+          reactions: [{ emoji: "👍" }],
+        },
+      ],
+    };
+  };
+
+  const page = await messagesRepo.getMessagePageForContact(7, { limit: 50 });
+  assert.deepEqual(page.rows[0].reactions, [{ emoji: "👍" }]);
+});

@@ -70,6 +70,20 @@ const LIGHTWEIGHT_MESSAGE_COLUMNS = `
   delivery_error,
   is_automated_follow_up
 `;
+const PORTAL_REACTIONS_COLUMN = `
+  COALESCE(
+    (
+      SELECT jsonb_agg(
+        jsonb_build_object('emoji', mr.emoji)
+        ORDER BY mr.id
+      )
+      FROM message_reactions mr
+      WHERE mr.target_message_id = messages.id
+    ),
+    '[]'::jsonb
+  ) AS reactions
+`;
+
 
 /**
  * Saves a message for a contact. Large media bytes are deliberately excluded
@@ -458,7 +472,8 @@ async function getMessagePageForContact(
   if (afterId != null) {
     const result = await pool.query(
       `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
-              delivery_status, delivery_error, is_automated_follow_up, whatsapp_template
+              delivery_status, delivery_error, is_automated_follow_up, whatsapp_template,
+              ${PORTAL_REACTIONS_COLUMN}
        FROM messages
        WHERE contact_id = $1 AND id > $2
        ORDER BY id ASC`,
@@ -477,7 +492,8 @@ async function getMessagePageForContact(
 
   const result = await pool.query(
     `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
-            delivery_status, delivery_error, is_automated_follow_up, whatsapp_template
+            delivery_status, delivery_error, is_automated_follow_up, whatsapp_template,
+            ${PORTAL_REACTIONS_COLUMN}
      FROM messages
      WHERE contact_id = $1${cursorClause}
      ORDER BY id DESC
@@ -685,7 +701,8 @@ function socialProviderAliasRecorder(messageId, channel) {
 async function getDeliveryStatusesForContact(contactId, messageIds) {
   if (!messageIds.length) return [];
   const result = await pool.query(
-    `SELECT id, whatsapp_message_id, delivery_status, delivery_error
+    `SELECT id, whatsapp_message_id, delivery_status, delivery_error,
+            ${PORTAL_REACTIONS_COLUMN}
      FROM messages
      WHERE contact_id = $1 AND id = ANY($2::int[])`,
     [contactId, messageIds]
@@ -862,6 +879,109 @@ async function hasStaffReplyAfter(contactId, inboundMessageId, query = pool.quer
 }
 
 /**
+ * Applies a customer WhatsApp reaction to the message it references.
+ *
+ * Reactions deliberately live outside the messages table so they do not become
+ * AI history, unread customer turns, follow-up anchors, or staff-waiting events.
+ * Repeating the same webhook is idempotent, and an empty emoji removes the
+ * customer's current reaction as specified by WhatsApp.
+ */
+async function applyWhatsappReaction(reaction) {
+  const targetWhatsappMessageId = String(reaction?.targetMessageId || "").trim();
+  const reactorWhatsappId = String(reaction?.from || "").trim();
+  const providerReactionMessageId = String(reaction?.id || "").trim() || null;
+  const emoji = typeof reaction?.emoji === "string" ? reaction.emoji : null;
+
+  if (!targetWhatsappMessageId || !reactorWhatsappId || emoji == null) {
+    return null;
+  }
+
+  const client = await pool.connect();
+  let transactionStarted = false;
+  try {
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    const targetResult = await client.query(
+      `SELECT id, contact_id
+       FROM messages
+       WHERE whatsapp_message_id = $1
+       LIMIT 1`,
+      [targetWhatsappMessageId]
+    );
+    const target = targetResult.rows[0];
+    if (!target) {
+      await client.query("COMMIT");
+      transactionStarted = false;
+      return null;
+    }
+
+    await client.query(
+      `SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)`,
+      [target.contact_id]
+    );
+
+    const reactorKey = `whatsapp:${reactorWhatsappId}`;
+    if (emoji) {
+      await client.query(
+        `INSERT INTO message_reactions (
+           target_message_id,
+           contact_id,
+           reactor_key,
+           emoji,
+           provider_reaction_message_id
+         )
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (target_message_id, reactor_key)
+         DO UPDATE SET
+           emoji = EXCLUDED.emoji,
+           provider_reaction_message_id = EXCLUDED.provider_reaction_message_id,
+           updated_at = NOW()`,
+        [
+          target.id,
+          target.contact_id,
+          reactorKey,
+          emoji,
+          providerReactionMessageId,
+        ]
+      );
+    } else {
+      await client.query(
+        `DELETE FROM message_reactions
+         WHERE target_message_id = $1
+           AND reactor_key = $2`,
+        [target.id, reactorKey]
+      );
+    }
+
+    const reactionResult = await client.query(
+      `SELECT COALESCE(
+         jsonb_agg(jsonb_build_object('emoji', emoji) ORDER BY id),
+         '[]'::jsonb
+       ) AS reactions
+       FROM message_reactions
+       WHERE target_message_id = $1`,
+      [target.id]
+    );
+
+    await client.query("COMMIT");
+    transactionStarted = false;
+    return {
+      contactId: target.contact_id,
+      messageId: target.id,
+      reactions: reactionResult.rows[0]?.reactions || [],
+    };
+  } catch (err) {
+    if (transactionStarted) {
+      await client.query("ROLLBACK").catch(() => {});
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Delivery webhooks only need the contact id (for failures) plus status data.
  * Never return media_base64 here. Repeated identical webhook statuses are also
  * ignored so they do not create needless writes.
@@ -912,6 +1032,7 @@ module.exports = {
   getMessageByProviderIdForContact,
   getMessageByAnyProviderIdForContact,
   hasStaffReplyAfter,
+  applyWhatsappReaction,
   registerSocialProviderMessageAlias,
   socialProviderAliasRecorder,
   getDeliveryStatusesForContact,
