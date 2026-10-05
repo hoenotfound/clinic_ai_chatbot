@@ -25,4 +25,17 @@ test("AI follow-up prompt includes live business context and structured decision
   assert.match(prompt, /Keep it low pressure\./);
   assert.match(prompt, /Earlier follow-up/);
   assert.match(prompt, /Current BUSINESS INFORMATION/i);
+  assert.match(prompt, /Messages labeled STAFF were manually sent/i);
+  assert.match(
+    prompt,
+    /Do NOT use "human_review" solely because a STAFF message mentioned an offer, voucher, discount/i
+  );
+  assert.match(
+    prompt,
+    /refer neutrally to "the offer\/voucher we sent earlier"/i
+  );
+  assert.match(
+    prompt,
+    /asks you to confirm whether an unconfigured STAFF offer is still valid.*use "human_review"/is
+  );
 });
