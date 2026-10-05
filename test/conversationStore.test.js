@@ -95,7 +95,7 @@ test("publishes an updated inbound row so the Inbox does not need a refresh", as
 });
 
 
-test("does not send WhatsApp sticker artwork into AI vision context", async (t) => {
+test("excludes WhatsApp sticker turns entirely from AI history and vision context", async (t) => {
   const originalGetPage = messagesRepo.getMessagePageForContact;
   const originalGetMedia = messagesRepo.getMessageMediaForContact;
   const mediaReads = [];
@@ -142,12 +142,36 @@ test("does not send WhatsApp sticker artwork into AI vision context", async (t) 
   });
 
   assert.deepEqual(history, [
-    { role: "user", content: "🙂 [Customer sent a sticker]" },
     { role: "user", content: "Can I know the price?" },
   ]);
+  assert.equal(
+    history.length,
+    1,
+    "a prior sticker must not make the first real customer question look like a later AI turn"
+  );
   assert.deepEqual(
     mediaReads,
     [],
     "sticker artwork must not be loaded into the AI vision prompt"
   );
+});
+
+
+test("aiVisibleRows removes sticker placeholders while retaining real customer text", () => {
+  const rows = conversationStore.aiVisibleRows([
+    {
+      id: 80,
+      role: "user",
+      content: "🙂 [Customer sent a sticker]",
+      delivery_status: null,
+    },
+    {
+      id: 81,
+      role: "user",
+      content: "3D多少钱？",
+      delivery_status: null,
+    },
+  ]);
+
+  assert.deepEqual(rows.map((row) => row.id), [81]);
 });
