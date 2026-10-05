@@ -436,7 +436,7 @@ async function listConversations() {
   return hydrated.map((row) => presentPortalContact(row));
 }
 
-async function takeOver(id, staffUsername, { publish = true } = {}) {
+async function takeOver(id, staffUsername) {
   const result = await pool.query(
     `UPDATE contacts
      SET mode = 'human', takeover_by = $1, takeover_at = now(),
@@ -450,11 +450,7 @@ async function takeOver(id, staffUsername, { publish = true } = {}) {
   // Keep the existing Telegram cooldown while staff owns the chat. Otherwise
   // the very next customer message in human mode could immediately generate a
   // second intervention alert for the same unresolved conversation.
-  //
-  // Manual Inbox sends may defer this event until their staff-authored message
-  // is durably saved. That prevents the Staff Waiting worker from observing the
-  // temporary state where Staff owns the chat but the reply row does not exist.
-  if (updated && publish) publishContactChange(updated.id);
+  if (updated) publishContactChange(updated.id);
   return updated;
 }
 
@@ -626,7 +622,6 @@ module.exports = {
   updateContact,
   normalizeWhatsappNumber,
   presentPortalContact,
-  publishContactChange,
   takeOver,
   returnToAi,
   setAttention,
