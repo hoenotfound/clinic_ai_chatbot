@@ -340,6 +340,13 @@ function promotionFollowUpForCandidate(candidate) {
     if (findAmbiguousPromotionPackageTerm(promotion)) return null;
 
     const packages = promotionPackages(promotion);
+
+    // The recent-price-context bridge exists only to choose between multiple
+    // package offers. A single-package promotion keeps the original strict
+    // behavior: the current customer message itself must be a price/promo
+    // enquiry before its hidden follow-up can replace the normal step.
+    if (packages.length === 1 && !latestIsPromotionEnquiry) return null;
+
     const mentionedByCustomer = findMentionedPromotionPackages(
       packages,
       customerTranscript
