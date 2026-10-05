@@ -138,11 +138,16 @@ function isResultMediaItem(value) {
 }
 
 function isResultMediaSet(value) {
+  const hasValidTriggerMode =
+    ["off", "price_only", "service_enquiry"].includes(value?.triggerMode);
+  const hasLegacyTrigger =
+    value?.triggerMode === undefined && typeof value?.sendAfterPrice === "boolean";
+
   return (
     isPlainObject(value) &&
     isNonEmptyString(value.service) &&
     typeof value.enabled === "boolean" &&
-    typeof value.sendAfterPrice === "boolean" &&
+    (hasValidTriggerMode || hasLegacyTrigger) &&
     (
       value.autoSendCount === undefined ||
       (Number.isInteger(value.autoSendCount) &&
