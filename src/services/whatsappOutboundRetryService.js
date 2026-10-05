@@ -169,7 +169,14 @@ async function runWhatsappOutboundRetryQueue({
 
       if (result?.success && result?.wamid) {
         const updated = await messages.setWhatsappMessageId(row.message_id, result.wamid);
-        acceptedPersisted = Boolean(updated?.whatsapp_message_id || result.wamid);
+        if (!updated?.whatsapp_message_id) {
+          const persistenceError = new Error(
+            "WhatsApp accepted the retry but its provider message ID could not be persisted."
+          );
+          persistenceError.code = "WHATSAPP_RETRY_WAMID_PERSIST_FAILED";
+          throw persistenceError;
+        }
+        acceptedPersisted = true;
         publishDeliveryStatus(updated);
         await repository.markSent(row.id, leaseToken);
         await contacts.clearDeliveryAttentionIfNoFailedMessages(row.contact_id);
