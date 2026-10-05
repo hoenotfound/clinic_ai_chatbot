@@ -109,11 +109,6 @@ async function claimIfStillEligible({
      LEFT JOIN latest_lead ON true
      WHERE c.id = $1
        AND c.needs_attention = false
-       AND NOT (
-         c.takeover_at IS NOT NULL
-         AND anchor.sent_by_username IS NULL
-         AND anchor.created_at < c.takeover_at
-       )
        AND c.channel IN ('whatsapp', 'facebook', 'instagram')
        AND (
          (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
