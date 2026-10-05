@@ -101,8 +101,9 @@ export default function Sidebar() {
   const visiblePrimaryItems = PRIMARY_NAV_ITEMS.filter((item) => canShowItem(item, user, permissions));
   const settingsVisible = canShowItem(SETTINGS_ITEM, user, permissions);
   const userDisplayName = user?.displayName || username || "User";
+  const inboxContactParam = new URLSearchParams(location.search).get("contact");
   const inboxThreadOpen =
-    location.pathname === "/inbox" && new URLSearchParams(location.search).has("contact");
+    location.pathname === "/inbox" && /^\d+$/.test(inboxContactParam || "");
   const toggleLabel = isPhone
     ? (mobileOpen ? "Close sidebar" : "Open sidebar")
     : (sidebarExpanded ? "Collapse sidebar" : "Expand sidebar");
