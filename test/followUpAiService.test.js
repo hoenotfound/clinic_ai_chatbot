@@ -4,6 +4,7 @@ const aiService = require("../src/services/aiService");
 const {
   isSubstantiallySimilar,
   previousFollowUps,
+  scopePackageSelectionConversation,
   selectPromotionPackageForFollowUp,
   similarity,
   trimConversation,
@@ -157,4 +158,38 @@ test("promotion package selector skips AI entirely without customer evidence", a
 
   assert.equal(selected, null);
   assert.equal(calls, 0);
+});
+
+
+test("package selection context excludes old follow-up cycles and messages outside the recent session", () => {
+  const messages = [
+    {
+      id: 1,
+      role: "user",
+      content: "以前我比较想要 Package A",
+      created_at: "2026-10-01T02:00:00.000Z",
+    },
+    {
+      id: 2,
+      role: "assistant",
+      content: "Old automated follow-up",
+      is_automated_follow_up: true,
+      created_at: "2026-10-01T04:00:00.000Z",
+    },
+    {
+      id: 3,
+      role: "user",
+      content: "骨盆调理多少钱？",
+      created_at: "2026-10-05T02:00:00.000Z",
+    },
+    {
+      id: 4,
+      role: "assistant",
+      content: "Package A / Package B",
+      created_at: "2026-10-05T02:01:00.000Z",
+    },
+  ];
+
+  const scoped = scopePackageSelectionConversation(messages, 4);
+  assert.deepEqual(scoped.map((message) => message.id), [3, 4]);
 });
