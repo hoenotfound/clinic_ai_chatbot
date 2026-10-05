@@ -922,10 +922,11 @@ async function setDeliveryStatusById(messageId, status, errorText = null) {
 async function markDeliveryUnknownIfUnconfirmed(messageId, errorText = null) {
   const updated = await pool.query(
     `UPDATE messages
-     SET delivery_status = 'unknown', delivery_error = $2
+     SET whatsapp_message_id = NULL,
+         delivery_status = 'unknown',
+         delivery_error = $2
      WHERE id = $1
        AND role = 'assistant'
-       AND whatsapp_message_id IS NULL
        AND (
          delivery_status IS NULL
          OR delivery_status IN ('failed', 'unknown')
@@ -952,8 +953,11 @@ async function markDeliveryUnknownIfUnconfirmed(messageId, errorText = null) {
   return {
     marked: false,
     accepted:
-      Boolean(message?.whatsapp_message_id) ||
-      ["pending", "sent", "delivered", "read"].includes(status),
+      ["pending", "sent", "delivered", "read"].includes(status) ||
+      (
+        Boolean(message?.whatsapp_message_id) &&
+        !["failed", "unknown"].includes(status)
+      ),
     message,
   };
 }
