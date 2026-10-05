@@ -956,6 +956,130 @@ test("generic price question with no explicit customer service can use the curre
   assert.equal(claimInput.content, "Package A｜10月限时优惠价 RM388");
 });
 
+test("a later explicit service switch blocks a stale hidden package offer", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "Pelvic packages",
+      linkedService: "Pelvic Care",
+      sendOnPriceQuery: false,
+      caption: "",
+      imageUrl: "",
+      packages: [
+        {
+          name: "Package A",
+          title: "Premium package",
+          aliases: ["A配套"],
+          imageUrl: "",
+          caption: "Includes 经络穴位按摩",
+          followUpMessage: "Package A｜10月限时优惠价 RM388",
+        },
+        {
+          name: "Package B",
+          title: "Women's package",
+          aliases: ["B配套"],
+          imageUrl: "",
+          caption: "Includes 子宫护理",
+          followUpMessage: "Package B｜10月限时优惠价 RM288",
+        },
+      ],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [
+      {
+        id: 850,
+        role: "user",
+        content: "Pelvic Care",
+        created_at: "2026-10-05T01:00:00.000Z",
+      },
+      {
+        id: 851,
+        role: "assistant",
+        content: "Pelvic Care explanation",
+        created_at: "2026-10-05T01:01:00.000Z",
+      },
+      {
+        id: 852,
+        role: "user",
+        content: "多少钱？",
+        created_at: "2026-10-05T01:05:00.000Z",
+      },
+      {
+        id: 853,
+        role: "assistant",
+        content: "Package A and Package B",
+        created_at: "2026-10-05T01:06:00.000Z",
+      },
+      {
+        id: 854,
+        role: "user",
+        content: "其实我现在想问 3D 小颜术",
+        created_at: "2026-10-05T01:10:00.000Z",
+      },
+      {
+        id: 855,
+        role: "assistant",
+        content: "3D explanation",
+        created_at: "2026-10-05T01:11:00.000Z",
+      },
+      {
+        id: 856,
+        role: "user",
+        content: "我想要有经络按摩的",
+        created_at: "2026-10-05T01:15:00.000Z",
+      },
+      {
+        id: 857,
+        role: "assistant",
+        content: "可以继续了解。",
+        created_at: "2026-10-05T01:16:00.000Z",
+      },
+    ],
+    lead: { treatment_interest: "Pelvic Care" },
+  });
+
+  let selectorCalls = 0;
+  followUpAiService.selectPromotionPackageForFollowUp = async () => {
+    selectorCalls += 1;
+    return "Package A";
+  };
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 857,
+      whatsapp_number: "60133333347",
+      trigger_message_id: 857,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["我想要有经络按摩的"],
+      treatment_interest: "Pelvic Care",
+      trigger_message_content: "可以继续了解。",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 858, contact_id: 857, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-858" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 857,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(selectorCalls, 0);
+  assert.equal(claimInput.content, "您好，请问还需要帮助吗？");
+  assert.doesNotMatch(claimInput.content, /RM388|RM288/);
+});
+
 test("ordinary multi-package service chat without recent price or package intent does not unlock a hidden offer", async () => {
   enableTool();
   clinicConfig.promotions = [
