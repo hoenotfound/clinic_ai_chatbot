@@ -2091,7 +2091,7 @@ function ResultMediaSection({ config, onSaved, onError }) {
         <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)] sm:text-sm">
           Add approved result examples by service and choose when each set can send.
           Service enquiries can include clear interest from the customer's message, the current
-          conversation, or an unambiguous Meta ad creative. Automatic result media is suppressed
+          conversation, or unambiguous Meta ad headline/body creative. Automatic result media is suppressed
           for 7 days after a send, then continues with the next configured example.
         </p>
       </div>
@@ -2207,7 +2207,7 @@ function ResultMediaSection({ config, onSaved, onError }) {
                       </select>
                       <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
                         Service enquiry mode can use a clear customer message, the current one-service
-                        conversation, or an unambiguous Meta ad creative. Greetings, booking, location,
+                        conversation, or unambiguous Meta ad headline/body creative. Greetings, booking, location,
                         admin, safety, complaints, and ambiguous multi-service questions do not trigger it.
                       </p>
                     </div>
