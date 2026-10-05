@@ -188,6 +188,7 @@ async function finishAttention(
   reason,
   {
     terminal = "failed",
+    inboundOutcome = null,
     repository = retryRepo,
     contacts = contactsRepo,
     inbound = inboundProcessingRepo,
@@ -223,7 +224,7 @@ async function finishAttention(
 
   await finalizeInboundAttempt(
     row,
-    terminal === "cancelled" ? "cancelled" : "rejected",
+    inboundOutcome || (terminal === "cancelled" ? "cancelled" : "rejected"),
     { errorText: attentionReason, inbound }
   );
 
@@ -316,14 +317,11 @@ async function failClosedAmbiguous(row, reason, {
   const attentionReason = `Delivery unconfirmed: ${errorText}`;
   await finishAttention(row, attentionReason, {
     terminal: "failed",
+    inboundOutcome: "ambiguous",
     repository,
     contacts,
     inbound,
     leaseToken,
-  });
-  await finalizeInboundAttempt(row, "ambiguous", {
-    errorText,
-    inbound,
   });
   return { accepted: false, message: state?.message || null };
 }
