@@ -119,6 +119,7 @@ function promotionPackages(promotion) {
         : [],
       imageUrl: String(item.imageUrl || "").trim(),
       caption: String(item.caption || "").trim(),
+      followUpMessage: String(item.followUpMessage || "").trim(),
     }));
   }
 
@@ -134,6 +135,7 @@ function promotionPackages(promotion) {
     aliases: [],
     imageUrl,
     caption,
+    followUpMessage: String(promotion?.followUpMessage || "").trim(),
     legacy: true,
   }];
 }
