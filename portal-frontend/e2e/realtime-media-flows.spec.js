@@ -583,14 +583,21 @@ function jpegFrameEncoding(buffer) {
   return null;
 }
 
-function multipartFileBytes(raw) {
+function multipartFileBytes(raw, contentType) {
+  const boundaryMatch = String(contentType || "").match(/boundary=([^;]+)/i);
+  if (!boundaryMatch) return null;
+  const boundary = boundaryMatch[1].trim().replace(/^"|"$/g, "");
+
   const filenameIndex = raw.indexOf('filename="');
   if (filenameIndex < 0) return null;
   const bodyStart = raw.indexOf("\r\n\r\n", filenameIndex);
   if (bodyStart < 0) return null;
+
   const dataStart = bodyStart + 4;
-  const dataEnd = raw.indexOf("\r\n--", dataStart);
+  const closingBoundary = `\r\n--${boundary}`;
+  const dataEnd = raw.indexOf(closingBoundary, dataStart);
   if (dataEnd < 0) return null;
+
   return Buffer.from(raw.slice(dataStart, dataEnd), "latin1");
 }
 
@@ -752,10 +759,11 @@ test("progressive JPEG is normalized before upload", async ({ page }) => {
   await page.getByRole("button", { name: "Send message" }).click();
 
   expect(apiState.mediaRequests).toHaveLength(1);
-  const uploaded = multipartFileBytes(apiState.mediaRequests[0].raw);
+  const mediaRequest = apiState.mediaRequests[0];
+  const uploaded = multipartFileBytes(mediaRequest.raw, mediaRequest.contentType);
   expect(uploaded).not.toBeNull();
 
-  const multipart = apiState.mediaRequests[0].raw;
+  const multipart = mediaRequest.raw;
   if (multipart.includes('Content-Type: image/jpeg')) {
     expect(jpegFrameEncoding(uploaded)).toBe("non-progressive");
   } else {
