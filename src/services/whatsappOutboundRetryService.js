@@ -3,6 +3,7 @@ const messagesRepo = require("../db/messagesRepo");
 const contactsRepo = require("../db/contactsRepo");
 const outboundMessageEvidenceRepo = require("../db/outboundMessageEvidenceRepo");
 const whatsapp = require("./whatsappService");
+const { automatedRepliesEnabled } = require("./automaticReplyControl");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 
@@ -144,6 +145,7 @@ async function runWhatsappOutboundRetryQueue({
   messages = messagesRepo,
   contacts = contactsRepo,
   evidence = outboundMessageEvidenceRepo,
+  isAutomationEnabled = automatedRepliesEnabled,
   sendMessage = whatsapp.sendMessage,
 } = {}) {
   const stale = await repository.recoverStaleProcessing({
@@ -193,11 +195,16 @@ async function runWhatsappOutboundRetryQueue({
       }
 
       if (
+        isAutomationEnabled() !== true ||
         row.contact_channel !== "whatsapp" ||
-        String(row.contact_mode || "").toLowerCase() !== "ai"
+        String(row.contact_mode || "").toLowerCase() !== "ai" ||
+        row.contact_needs_attention === true
       ) {
-        const reason =
-          "Automatic WhatsApp retry cancelled because the conversation is no longer AI-owned.";
+        const reason = isAutomationEnabled() !== true
+          ? "Automatic WhatsApp retry cancelled because automated replies are disabled."
+          : row.contact_needs_attention === true
+            ? "Automatic WhatsApp retry cancelled because the conversation needs staff attention."
+            : "Automatic WhatsApp retry cancelled because the conversation is no longer AI-owned.";
         await repository.markCancelled(row.id, leaseToken, reason);
         await contacts.setDeliveryAttention(
           row.contact_id,
