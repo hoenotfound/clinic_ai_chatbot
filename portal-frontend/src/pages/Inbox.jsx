@@ -1031,6 +1031,11 @@ export default function Inbox() {
     }
   }
 
+  function handleBackToConversationList() {
+    setMobileThreadOpen(false);
+    setSearchParams({}, { replace: true });
+  }
+
   const selectedContact = conversations?.find((c) => c.contact_id === selectedId);
 
   return (
@@ -1073,7 +1078,7 @@ export default function Inbox() {
         onOpenWhatsAppTemplates={() => setWhatsAppTemplateOpen(true)}
         onToast={showToast}
         mobileThreadOpen={mobileThreadOpen}
-        onBack={() => setMobileThreadOpen(false)}
+        onBack={handleBackToConversationList}
         customerSingular={ui.customerSingular}
       />
       <ContactDetailsDrawer
@@ -1707,6 +1712,20 @@ function ThreadView({
     canReplyToLeads &&
     messagingPolicy.channel === "whatsapp" &&
     !messagingPolicy.freeformAllowed;
+  const composerPlaceholder = policyBlocksComposer
+    ? `${messagingPolicy.channelLabel} reply unavailable`
+    : imageFile
+    ? "Add a caption…"
+    : contact?.mode === "human"
+    ? "Message…"
+    : "Reply…";
+  const composerLabel = policyBlocksComposer
+    ? `${messagingPolicy.channelLabel} reply unavailable`
+    : imageFile
+    ? "Add a caption to the selected image"
+    : contact?.mode === "human"
+    ? `Message this ${customerSingular}`
+    : "Reply manually while AI stays on";
 
   useEffect(() => {
     setPolicyNow(Date.now());
@@ -1754,7 +1773,7 @@ function ThreadView({
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
-  }, [draft]);
+  }, [draft, composerPlaceholder]);
 
   useEffect(() => {
     if (!actionsOpen) return;
@@ -2346,7 +2365,8 @@ function ThreadView({
                   handleSubmit(e);
                 }
               }}
-              placeholder={policyBlocksComposer ? `${messagingPolicy.channelLabel} reply unavailable` : imageFile ? "Add a caption…" : contact.mode === "human" ? `Message this ${customerSingular}…` : "Reply manually — AI stays on…"}
+              placeholder={composerPlaceholder}
+              aria-label={composerLabel}
               rows={1}
               className="max-h-32 min-h-10 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2.5 text-sm leading-relaxed outline-none disabled:opacity-50 sm:px-2.5"
             />
