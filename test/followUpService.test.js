@@ -413,6 +413,185 @@ test("generic package price enquiry falls back to the normal first follow-up whe
   assert.equal(claimInput.targetedService, null);
 });
 
+test("vague price enquiry prefers current CRM service over service words in the outbound package caption", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "Pelvic packages",
+      linkedService: "Pelvic Care",
+      sendOnPriceQuery: false,
+      caption: "",
+      imageUrl: "",
+      packages: [
+        {
+          name: "Package A",
+          title: "Premium package",
+          aliases: ["A配套"],
+          imageUrl: "",
+          caption: "Includes Uterus Care",
+          followUpMessage: "Package A hidden offer",
+        },
+        {
+          name: "Package B",
+          title: "Women's package",
+          aliases: ["B配套"],
+          imageUrl: "",
+          caption: "Includes Uterus Care",
+          followUpMessage: "Package B hidden offer",
+        },
+      ],
+      validFrom: null,
+      validUntil: null,
+    },
+    {
+      name: "Uterus offer",
+      linkedService: "Uterus Care",
+      sendOnPriceQuery: false,
+      caption: "Uterus Care promo",
+      followUpMessage: "Wrong uterus follow-up",
+      imageUrl: "",
+      packages: [],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [{ id: 790, role: "user", content: "price?" }],
+    lead: { treatment_interest: "Pelvic Care" },
+  });
+  followUpAiService.selectPromotionPackageForFollowUp = async () => null;
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 790,
+      whatsapp_number: "60133333342",
+      trigger_message_id: 789,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["price?"],
+      treatment_interest: "Pelvic Care",
+      trigger_message_content: "Package B｜Includes Uterus Care",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 791, contact_id: 790, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-791" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 790,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(claimInput.content, "Checking in");
+  assert.notEqual(claimInput.content, "Wrong uterus follow-up");
+});
+
+test("recent promotion enquiry for a different service does not unlock a hidden package offer", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "Pelvic packages",
+      linkedService: "Pelvic Care",
+      sendOnPriceQuery: false,
+      caption: "",
+      imageUrl: "",
+      packages: [
+        {
+          name: "Package A",
+          title: "Premium package",
+          aliases: ["A配套"],
+          imageUrl: "",
+          caption: "Includes meridian massage",
+          followUpMessage: "Package A hidden offer",
+        },
+        {
+          name: "Package B",
+          title: "Women's package",
+          aliases: ["B配套"],
+          imageUrl: "",
+          caption: "Includes uterus care",
+          followUpMessage: "Package B hidden offer",
+        },
+      ],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [
+      {
+        id: 820,
+        role: "user",
+        content: "3D 小颜术 price?",
+        created_at: "2026-10-05T01:00:00.000Z",
+      },
+      {
+        id: 821,
+        role: "assistant",
+        content: "3D price reply",
+        created_at: "2026-10-05T01:01:00.000Z",
+      },
+      {
+        id: 822,
+        role: "user",
+        content: "我现在比较想要骨盆有经络按摩的",
+        created_at: "2026-10-05T01:05:00.000Z",
+      },
+      {
+        id: 823,
+        role: "assistant",
+        content: "Pelvic Care package reply",
+        created_at: "2026-10-05T01:06:00.000Z",
+      },
+    ],
+    lead: { treatment_interest: "Pelvic Care" },
+  });
+
+  let selectorCalls = 0;
+  followUpAiService.selectPromotionPackageForFollowUp = async () => {
+    selectorCalls += 1;
+    return "Package A";
+  };
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 823,
+      whatsapp_number: "60133333343",
+      trigger_message_id: 823,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["我现在比较想要骨盆有经络按摩的"],
+      treatment_interest: "Pelvic Care",
+      trigger_message_content: "Pelvic Care package reply",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 824, contact_id: 823, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-824" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 823,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(selectorCalls, 0);
+  assert.equal(claimInput.content, "您好，请问还需要帮助吗？");
+});
+
 test("single-package promotion remains locked for an ordinary non-price service chat", async () => {
   enableTool();
   clinicConfig.promotions = [
