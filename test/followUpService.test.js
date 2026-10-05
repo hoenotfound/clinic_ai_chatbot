@@ -235,7 +235,7 @@ test("first follow-up selects the exact configured package offer", async () => {
   assert.equal(claimInput.targetedService, "Pelvic Care");
 });
 
-test("ambiguous package enquiries never guess a delayed promotion", async () => {
+test("a price enquiry naming multiple packages follows up with those configured offers", async () => {
   enableTool();
   clinicConfig.promotions = [
     {
@@ -293,8 +293,155 @@ test("ambiguous package enquiries never guess a delayed promotion", async () => 
 
   await runAutomatedFollowUps();
 
-  assert.equal(claimInput.content, "您好，请问还需要帮助吗？");
-  assert.equal(claimInput.targetedService, null);
+  assert.equal(
+    claimInput.content,
+    "10月限时优惠价 RM388\n\n10月限时优惠价 RM288"
+  );
+  assert.equal(claimInput.targetedService, "Pelvic Care");
+});
+
+test("generic package price enquiry sends all configured first-follow-up offers without using the last promo caption as package intent", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "Pelvic packages",
+      linkedService: "Pelvic Care",
+      sendOnPriceQuery: false,
+      caption: "",
+      imageUrl: "",
+      packages: [
+        {
+          name: "Package A",
+          title: "",
+          aliases: ["A配套"],
+          imageUrl: "",
+          caption: "A",
+          followUpMessage: "Package A｜10月限时优惠价 RM388",
+        },
+        {
+          name: "Package B",
+          title: "",
+          aliases: ["B配套"],
+          imageUrl: "",
+          caption: "B",
+          followUpMessage: "Package B｜10月限时优惠价 RM288",
+        },
+      ],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 731,
+      whatsapp_number: "60133333335",
+      trigger_message_id: 730,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["Pelvic Care price?"],
+      // In production the latest normal outbound anchor can be Package B after
+      // both package promo messages were sent. Generic customer intent must stay generic.
+      trigger_message_content: "Package B 优惠价 RM388",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 732, contact_id: 731, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-732" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 731,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(
+    claimInput.content,
+    "Package A｜10月限时优惠价 RM388\n\nPackage B｜10月限时优惠价 RM288"
+  );
+  assert.equal(claimInput.targetedService, "Pelvic Care");
+});
+
+test("compound 9D + 3D service wins over its component services for the delayed offer", async () => {
+  enableTool();
+  clinicConfig.services = [
+    { name: "3D 小颜术" },
+    { name: "9D 逆龄抗衰" },
+    { name: "3D + 9D 组合" },
+  ];
+  clinicConfig.serviceAliases = [
+    { alias: "9D + 3D 组合", officialService: "3D + 9D 组合" },
+    { alias: "9D+3D", officialService: "3D + 9D 组合" },
+  ];
+  clinicConfig.promotions = [
+    {
+      name: "3D offer",
+      linkedService: "3D 小颜术",
+      sendOnPriceQuery: false,
+      caption: "3D RM488",
+      followUpMessage: "3D gift",
+      imageUrl: "",
+      packages: [],
+      validFrom: null,
+      validUntil: null,
+    },
+    {
+      name: "9D offer",
+      linkedService: "9D 逆龄抗衰",
+      sendOnPriceQuery: false,
+      caption: "9D RM488",
+      followUpMessage: "9D gift",
+      imageUrl: "",
+      packages: [],
+      validFrom: null,
+      validUntil: null,
+    },
+    {
+      name: "9D + 3D combo",
+      linkedService: "3D + 9D 组合",
+      sendOnPriceQuery: false,
+      caption: "9D + 3D RM688",
+      followUpMessage: "🎁 Includes 经络按摩",
+      imageUrl: "",
+      packages: [],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 741,
+      whatsapp_number: "60133333336",
+      trigger_message_id: 740,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["9D + 3D 组合多少钱？"],
+      trigger_message_content: "✨ 9D + 3D 组合限时优惠: RM688",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 742, contact_id: 741, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-742" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 741,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(claimInput.content, "🎁 Includes 经络按摩");
+  assert.equal(claimInput.targetedService, "3D + 9D 组合");
 });
 
 test("quiet hours defer due follow-ups until the configured clinic-local end time", async () => {
