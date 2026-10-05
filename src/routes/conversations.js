@@ -1095,20 +1095,30 @@ router.post("/:contactId/messages", async (req, res) => {
     }
     if (!(await requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)))) return;
 
+    let takeoverNotificationDeferred = false;
     if (contact.mode !== "human") {
-      await contactsRepo.takeOver(contact.id, req.session.username);
+      await contactsRepo.takeOver(contact.id, req.session.username, { publish: false });
+      takeoverNotificationDeferred = true;
     } else {
       await contactsRepo.setAttention(contact.id, false);
       await contactsRepo.setUnread(contact.id, false);
     }
 
-    const saved = await conversationStore.appendMessageForContact(
-      contact.id,
-      "assistant",
-      text.trim(),
-      null,
-      req.session.username
-    );
+    let saved;
+    try {
+      saved = await conversationStore.appendMessageForContact(
+        contact.id,
+        "assistant",
+        text.trim(),
+        null,
+        req.session.username
+      );
+    } finally {
+      // Do not wake Staff Waiting between automatic takeover and persistence of
+      // this staff reply. If persistence fails, still release the deferred
+      // contact-state event so a genuinely unanswered Staff-owned chat is seen.
+      if (takeoverNotificationDeferred) contactsRepo.publishContactChange(contact.id);
+    }
 
     const sendResult = await channelMessaging.sendText(
       contact,
@@ -1179,8 +1189,10 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
 
     const caption = (req.body?.caption || "").trim();
 
+    let takeoverNotificationDeferred = false;
     if (contact.mode !== "human") {
-      await contactsRepo.takeOver(contact.id, req.session.username);
+      await contactsRepo.takeOver(contact.id, req.session.username, { publish: false });
+      takeoverNotificationDeferred = true;
     } else {
       await contactsRepo.setAttention(contact.id, false);
       await contactsRepo.setUnread(contact.id, false);
@@ -1188,15 +1200,22 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
 
     // Persist the exact image bytes first. This keeps the Inbox and retry path
     // consistent even when Meta accepts the upload but later rejects delivery.
-    const saved = await conversationStore.appendMessageForContact(
-      contact.id,
-      "assistant",
-      caption,
-      null,
-      req.session.username,
-      null,
-      { mimeType: req.file.mimetype, buffer: req.file.buffer }
-    );
+    let saved;
+    try {
+      saved = await conversationStore.appendMessageForContact(
+        contact.id,
+        "assistant",
+        caption,
+        null,
+        req.session.username,
+        null,
+        { mimeType: req.file.mimetype, buffer: req.file.buffer }
+      );
+    } finally {
+      // Match text sends: Staff Waiting must not inspect the brief state between
+      // automatic takeover and persistence of the staff-authored image message.
+      if (takeoverNotificationDeferred) contactsRepo.publishContactChange(contact.id);
+    }
 
     const sendResult = await channelMessaging.sendImageBuffer(
       contact,
