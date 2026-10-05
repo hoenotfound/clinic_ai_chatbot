@@ -6,6 +6,11 @@ const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
 const { detectConversationLanguage } = require("../utils/chatLanguage");
+const {
+  getActivePromotions,
+  promotionPackages,
+  findMentionedPromotionPackages,
+} = require("../utils/activePromotion");
 const { randomUUID } = require("node:crypto");
 const channelMessaging = require("./channelMessagingService");
 const followUpAiService = require("./followUpAiService");
@@ -226,7 +231,86 @@ function configuredServicesMentionedInConversation(candidate) {
   return [...matched.values()];
 }
 
-function messageForCandidate(step, candidate, language) {
+function looksLikePromotionEnquiry(value) {
+  const text = String(value || "").normalize("NFKC").trim();
+  if (!text) return false;
+  return /(?:\b(?:price|pricing|cost|harga|berapa|promo|promotion|offer|discount|package|packages)\b|\brm\s*\d+|价格|價錢|价钱|多少钱|多少錢|几钱|幾錢|收费|收費|费用|費用|优惠|優惠|配套|套餐|促销|促銷)/iu.test(text);
+}
+
+function configuredServiceByName(value) {
+  const target = normalizedServiceName(value);
+  if (!target) return null;
+  return (Array.isArray(clinicConfig.services) ? clinicConfig.services : [])
+    .map((service) => typeof service?.name === "string" ? service.name.trim() : "")
+    .find((serviceName) => normalizedServiceName(serviceName) === target) || null;
+}
+
+function promotionFollowUpForCandidate(candidate) {
+  const latestInbound = Array.isArray(candidate.recent_inbound_messages)
+    ? candidate.recent_inbound_messages.find(
+        (value) => typeof value === "string" && value.trim()
+      )
+    : null;
+  if (!looksLikePromotionEnquiry(latestInbound)) return null;
+
+  const conversationServices =
+    configuredServicesMentionedInConversation(candidate);
+  const serviceName =
+    conversationServices.length === 1
+      ? conversationServices[0]
+      : conversationServices.length > 1
+        ? null
+        : configuredServiceByName(candidate.treatment_interest);
+  if (!serviceName) return null;
+
+  const serviceKey = normalizedServiceName(serviceName);
+  const matches = getActivePromotions(clinicConfig.promotions || []).filter(
+    (promotion) =>
+      normalizedServiceName(promotion?.linkedService) === serviceKey
+  );
+  if (matches.length !== 1) return null;
+
+  const [promotion] = matches;
+  const configuredPackages = Array.isArray(promotion.packages)
+    ? promotion.packages.filter((item) => item && typeof item === "object")
+    : [];
+
+  if (configuredPackages.length > 0) {
+    const packages = promotionPackages(promotion);
+    const transcript = [
+      ...(candidate.recent_inbound_messages || []),
+      candidate.trigger_message_content,
+    ]
+      .filter((value) => typeof value === "string" && value.trim())
+      .join("\n");
+    const mentioned = findMentionedPromotionPackages(packages, transcript);
+    if (mentioned.length !== 1 || !mentioned[0].followUpMessage) return null;
+    return {
+      message: mentioned[0].followUpMessage,
+      targetedService: serviceName,
+      promotionFollowUp: true,
+    };
+  }
+
+  const message =
+    typeof promotion.followUpMessage === "string"
+      ? promotion.followUpMessage.trim()
+      : "";
+  return message
+    ? {
+        message,
+        targetedService: serviceName,
+        promotionFollowUp: true,
+      }
+    : null;
+}
+
+function messageForCandidate(step, candidate, language, stepIndex = 1) {
+  if (stepIndex === 1) {
+    const promotionFollowUp = promotionFollowUpForCandidate(candidate);
+    if (promotionFollowUp) return promotionFollowUp;
+  }
+
   const conversationServices =
     configuredServicesMentionedInConversation(candidate);
   const overrideForService = (serviceName) =>
@@ -259,6 +343,7 @@ function messageForCandidate(step, candidate, language) {
   return {
     message: source.translations[language] || source.message,
     targetedService: targeted?.serviceName || null,
+    promotionFollowUp: false,
   };
 }
 
@@ -446,15 +531,21 @@ async function sendCandidate(candidate) {
   const fallbackSelection = messageForCandidate(
     step,
     candidate,
-    language
+    language,
+    stepIndex
   );
   let followUpMessage = fallbackSelection.message;
   const targetedService = fallbackSelection.targetedService;
+  const promotionFollowUp = fallbackSelection.promotionFollowUp === true;
 
   let followUpMessageMode = "fixed";
   let aiLeaseToken = null;
 
-  if (step.messageMode === "ai") {
+  // Configured promotion follow-up copy is exact business-approved text.
+  // It takes priority over AI-personalized follow-up generation so the model
+  // cannot reveal a different offer, rewrite the price, or choose the wrong
+  // package after the customer has gone quiet.
+  if (step.messageMode === "ai" && !promotionFollowUp) {
     aiLeaseToken = randomUUID();
     const lease = await followUpAiLeaseRepo.claimIfStillEligible({
       contactId: candidate.contact_id,
