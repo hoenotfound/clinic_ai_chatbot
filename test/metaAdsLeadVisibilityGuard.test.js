@@ -59,7 +59,7 @@ test("Inbox acquisition context renders outside the actions menu", () => {
   const menuAt = inboxSource.indexOf("{actionsOpen && (");
   const contextAt = inboxSource.indexOf("<AcquisitionContextBar", menuAt);
   const attentionBannerAt = inboxSource.indexOf(
-    '{contact.needs_attention && (\n          <div className="flex items-center gap-2 border-t',
+    '{contact.needs_attention && (\n          <button',
     menuAt
   );
 
