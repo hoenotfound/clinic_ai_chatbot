@@ -124,6 +124,21 @@ test("Tools UX keeps advanced details out of the main setup flow", () => {
   assert.doesNotMatch(tools, /function OverviewItem/);
 });
 
+test("Follow-up UI explains promotion overrides, sequence stops, and manual follow-up naming", () => {
+  const tools = read("portal-frontend/src/pages/Tools.jsx");
+  const settings = read("portal-frontend/src/pages/Settings.jsx");
+  const inbox = read("portal-frontend/src/pages/Inbox.jsx");
+
+  assert.match(tools, /Promotion override is available/);
+  assert.match(tools, /If AI decides to skip or request human review/);
+  assert.match(tools, /A real staff takeover cancels an older AI-started sequence/);
+  assert.match(tools, /Sent scheduled staff messages count as staff replies/);
+  assert.match(settings, /Requires Tools → Automated follow-up to be on/);
+  assert.match(settings, /Language-specific follow-up copy/);
+  assert.match(settings, /image, caption, and first follow-up offer/);
+  assert.match(inbox, /Needs follow-up/);
+});
+
 test("leaving a dirty tool discards its local draft consistently", () => {
   const tools = read("portal-frontend/src/pages/Tools.jsx");
 
