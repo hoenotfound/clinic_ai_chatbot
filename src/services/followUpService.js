@@ -403,6 +403,28 @@ async function sendSocialImageCompanion(contact, contactId, imageUrl, quietHours
   }
 }
 
+async function releaseAiGenerationLease({
+  contactId,
+  triggerMessageId,
+  stepIndex,
+  leaseToken,
+}) {
+  if (!leaseToken) return;
+  try {
+    await followUpAiLeaseRepo.release({
+      contactId,
+      triggerMessageId,
+      stepIndex,
+      leaseToken,
+    });
+  } catch (err) {
+    console.error(
+      `Failed to release AI follow-up generation lease for contact ${contactId}:`,
+      err
+    );
+  }
+}
+
 async function sendCandidate(candidate) {
   // Read the live settings again for every candidate. A staff member may
   // pause the tool or make its criteria stricter while a sweep is running.
@@ -481,7 +503,7 @@ async function sendCandidate(candidate) {
             activatedAt: settings.activatedAt,
           });
         } finally {
-          await followUpAiLeaseRepo.release({
+          await releaseAiGenerationLease({
             contactId: candidate.contact_id,
             triggerMessageId: candidate.trigger_message_id,
             stepIndex,
@@ -534,7 +556,7 @@ async function sendCandidate(candidate) {
   // after the quiet window instead of creating an unsent claim.
   if (quietHoursStatus(new Date(), settings.quietHours).active) {
     if (aiLeaseToken) {
-      await followUpAiLeaseRepo.release({
+      await releaseAiGenerationLease({
         contactId: candidate.contact_id,
         triggerMessageId: candidate.trigger_message_id,
         stepIndex,
@@ -569,7 +591,7 @@ async function sendCandidate(candidate) {
     });
   } finally {
     if (aiLeaseToken) {
-      await followUpAiLeaseRepo.release({
+      await releaseAiGenerationLease({
         contactId: candidate.contact_id,
         triggerMessageId: candidate.trigger_message_id,
         stepIndex,
