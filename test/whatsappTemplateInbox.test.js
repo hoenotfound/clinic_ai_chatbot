@@ -41,7 +41,7 @@ test("Inbox WhatsApp template flow stays staff-only and policy-gated", () => {
   assert.match(route, /sendResult\.unknown === true/);
   assert.match(route, /initialDeliveryStatus: "unknown"/);
   assert.match(route, /publish: false/);
-  assert.match(route, /sendApprovedTemplate\(contact/);
+  assert.match(route, /sendApprovedTemplate\((?:preparedContact|activeContact)/);
 
   assert.match(requireAuth, /action === "whatsapp-opt-in"/);
   assert.match(requireAuth, /action === "whatsapp-templates" && subAction === "send"/);

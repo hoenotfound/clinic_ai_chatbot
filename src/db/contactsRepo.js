@@ -518,6 +518,39 @@ async function returnToAi(id) {
   return updated;
 }
 
+async function clearStaffAssistStateIfUnchanged(contact) {
+  if (!contact?.id || !contact?.updated_at) return null;
+
+  const result = await pool.query(
+    `UPDATE contacts
+     SET needs_attention = false,
+         attention_reason = NULL,
+         is_unread = false,
+         updated_at = now()
+     WHERE id = $1
+       AND updated_at = $2
+       AND mode = $3
+       AND takeover_by IS NOT DISTINCT FROM $4
+       AND needs_attention = $5
+       AND attention_reason IS NOT DISTINCT FROM $6
+       AND is_unread = $7
+     RETURNING *`,
+    [
+      contact.id,
+      contact.updated_at,
+      contact.mode,
+      contact.takeover_by ?? null,
+      contact.needs_attention === true,
+      contact.attention_reason ?? null,
+      contact.is_unread === true,
+    ]
+  );
+
+  const updated = result.rows[0] || null;
+  if (updated) publishContactChange(updated.id);
+  return updated;
+}
+
 async function setAttention(id, needsAttention, reason = null) {
   const result = await pool.query(
     `UPDATE contacts c
@@ -673,6 +706,7 @@ module.exports = {
   presentPortalContact,
   takeOver,
   returnToAi,
+  clearStaffAssistStateIfUnchanged,
   setAttention,
   setTemporaryAiAttention,
   clearTemporaryAiAttention,
