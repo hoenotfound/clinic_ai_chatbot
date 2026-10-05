@@ -372,16 +372,36 @@ async function getOutboundAttempt(processingJobId, database = pool) {
        a.finalized_at,
        m.whatsapp_message_id,
        m.delivery_status,
-       m.delivery_error,
-       retry.status AS whatsapp_retry_status,
-       retry.processing_kind AS whatsapp_retry_processing_kind
+       m.delivery_error
      FROM inbound_outbound_attempts a
      LEFT JOIN messages m ON m.id = a.assistant_message_id
-     LEFT JOIN whatsapp_outbound_retries retry ON retry.message_id = a.assistant_message_id
      WHERE a.processing_job_id = $1`,
     [safeJobId]
   );
-  return result.rows[0] || null;
+  const attempt = result.rows[0] || null;
+  if (!attempt?.assistant_message_id) return attempt;
+
+  // Keep the inbound-processing repository usable in isolated tests and during
+  // startup/migration boundaries where migration 039 may not exist yet. Retry
+  // ownership is additive recovery metadata, not a prerequisite for reading
+  // the durable outbound attempt itself.
+  try {
+    const retryResult = await database.query(
+      `SELECT status, processing_kind
+       FROM whatsapp_outbound_retries
+       WHERE message_id = $1`,
+      [attempt.assistant_message_id]
+    );
+    const retry = retryResult.rows[0] || null;
+    attempt.whatsapp_retry_status = retry?.status || null;
+    attempt.whatsapp_retry_processing_kind = retry?.processing_kind || null;
+  } catch (err) {
+    if (err?.code !== "42P01") throw err;
+    attempt.whatsapp_retry_status = null;
+    attempt.whatsapp_retry_processing_kind = null;
+  }
+
+  return attempt;
 }
 
 async function finalizeOutboundAttempt(
