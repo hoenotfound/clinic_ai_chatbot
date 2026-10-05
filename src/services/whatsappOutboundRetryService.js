@@ -194,13 +194,14 @@ async function runWhatsappOutboundRetryQueue({
         continue;
       }
 
+      const automationEnabled = isAutomationEnabled() === true;
       if (
-        isAutomationEnabled() !== true ||
+        !automationEnabled ||
         row.contact_channel !== "whatsapp" ||
         String(row.contact_mode || "").toLowerCase() !== "ai" ||
         row.contact_needs_attention === true
       ) {
-        const reason = isAutomationEnabled() !== true
+        const reason = !automationEnabled
           ? "Automatic WhatsApp retry cancelled because automated replies are disabled."
           : row.contact_needs_attention === true
             ? "Automatic WhatsApp retry cancelled because the conversation needs staff attention."
