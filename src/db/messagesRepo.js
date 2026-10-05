@@ -701,7 +701,8 @@ function socialProviderAliasRecorder(messageId, channel) {
 async function getDeliveryStatusesForContact(contactId, messageIds) {
   if (!messageIds.length) return [];
   const result = await pool.query(
-    `SELECT id, whatsapp_message_id, delivery_status, delivery_error
+    `SELECT id, whatsapp_message_id, delivery_status, delivery_error,
+            ${PORTAL_REACTIONS_COLUMN}
      FROM messages
      WHERE contact_id = $1 AND id = ANY($2::int[])`,
     [contactId, messageIds]
