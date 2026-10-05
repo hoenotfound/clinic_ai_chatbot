@@ -293,7 +293,7 @@ test("ambiguous package enquiries never guess a delayed promotion", async () => 
 
   await runAutomatedFollowUps();
 
-  assert.equal(claimInput.content, "Checking in");
+  assert.equal(claimInput.content, "您好，请问还需要帮助吗？");
   assert.equal(claimInput.targetedService, null);
 });
 
