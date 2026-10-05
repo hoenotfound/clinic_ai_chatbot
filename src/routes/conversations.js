@@ -5,6 +5,7 @@ const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const leadAttributionRepo = require("../db/leadAttributionRepo");
+const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
 const conversationStore = require("../utils/conversationStore");
 const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
@@ -1095,30 +1096,29 @@ router.post("/:contactId/messages", async (req, res) => {
     }
     if (!(await requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)))) return;
 
-    let takeoverNotificationDeferred = false;
-    if (contact.mode !== "human") {
-      await contactsRepo.takeOver(contact.id, req.session.username, { publish: false });
-      takeoverNotificationDeferred = true;
-    } else {
-      await contactsRepo.setAttention(contact.id, false);
-      await contactsRepo.setUnread(contact.id, false);
-    }
+    const saved = await telegramImmediateAlertRepo.withContactAlertLock(
+      contact.id,
+      async () => {
+        // The Telegram immediate-alert worker uses this same per-contact lock
+        // for Staff Waiting queue/send decisions. Keep ownership changes and the
+        // staff-authored message persistence inside one lock window so Telegram
+        // can never validate the brief "Staff mode, no reply row yet" state.
+        if (contact.mode !== "human") {
+          await contactsRepo.takeOver(contact.id, req.session.username);
+        } else {
+          await contactsRepo.setAttention(contact.id, false);
+          await contactsRepo.setUnread(contact.id, false);
+        }
 
-    let saved;
-    try {
-      saved = await conversationStore.appendMessageForContact(
-        contact.id,
-        "assistant",
-        text.trim(),
-        null,
-        req.session.username
-      );
-    } finally {
-      // Do not wake Staff Waiting between automatic takeover and persistence of
-      // this staff reply. If persistence fails, still release the deferred
-      // contact-state event so a genuinely unanswered Staff-owned chat is seen.
-      if (takeoverNotificationDeferred) contactsRepo.publishContactChange(contact.id);
-    }
+        return conversationStore.appendMessageForContact(
+          contact.id,
+          "assistant",
+          text.trim(),
+          null,
+          req.session.username
+        );
+      }
+    );
 
     const sendResult = await channelMessaging.sendText(
       contact,
@@ -1189,33 +1189,31 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
 
     const caption = (req.body?.caption || "").trim();
 
-    let takeoverNotificationDeferred = false;
-    if (contact.mode !== "human") {
-      await contactsRepo.takeOver(contact.id, req.session.username, { publish: false });
-      takeoverNotificationDeferred = true;
-    } else {
-      await contactsRepo.setAttention(contact.id, false);
-      await contactsRepo.setUnread(contact.id, false);
-    }
-
     // Persist the exact image bytes first. This keeps the Inbox and retry path
     // consistent even when Meta accepts the upload but later rejects delivery.
-    let saved;
-    try {
-      saved = await conversationStore.appendMessageForContact(
-        contact.id,
-        "assistant",
-        caption,
-        null,
-        req.session.username,
-        null,
-        { mimeType: req.file.mimetype, buffer: req.file.buffer }
-      );
-    } finally {
-      // Match text sends: Staff Waiting must not inspect the brief state between
-      // automatic takeover and persistence of the staff-authored image message.
-      if (takeoverNotificationDeferred) contactsRepo.publishContactChange(contact.id);
-    }
+    // Hold the Telegram per-contact alert lock across both takeover and media
+    // persistence because R2 upload happens before the message row is inserted.
+    const saved = await telegramImmediateAlertRepo.withContactAlertLock(
+      contact.id,
+      async () => {
+        if (contact.mode !== "human") {
+          await contactsRepo.takeOver(contact.id, req.session.username);
+        } else {
+          await contactsRepo.setAttention(contact.id, false);
+          await contactsRepo.setUnread(contact.id, false);
+        }
+
+        return conversationStore.appendMessageForContact(
+          contact.id,
+          "assistant",
+          caption,
+          null,
+          req.session.username,
+          null,
+          { mimeType: req.file.mimetype, buffer: req.file.buffer }
+        );
+      }
+    );
 
     const sendResult = await channelMessaging.sendImageBuffer(
       contact,
