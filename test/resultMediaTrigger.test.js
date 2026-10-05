@@ -232,3 +232,70 @@ test("service-enquiry mode sends for a direct customer service enquiry", async (
   assert.equal(selected.serviceQuerySource, "customer_message");
   assert.deepEqual(selected.items, [resultMedia[0].items[0]]);
 });
+
+
+test("service-enquiry mode accepts ad and conversation intent", async () => {
+  for (const source of ["meta_ad", "conversation"]) {
+    const selected = await resolveResultMediaForReply(base({
+      priceQuery: false,
+      serviceQuery: true,
+      serviceQuerySource: source,
+      resultMedia: [{
+        ...resultMedia[0],
+        triggerMode: "service_enquiry",
+        sendAfterPrice: undefined,
+      }],
+    }));
+    assert.equal(selected?.serviceQuerySource, source);
+  }
+});
+
+test("service-enquiry mode fails closed for an invalid serviceQuery source", async () => {
+  const selected = await resolveResultMediaForReply(base({
+    priceQuery: false,
+    serviceQuery: true,
+    serviceQuerySource: "invalid_source",
+    resultMedia: [{
+      ...resultMedia[0],
+      triggerMode: "service_enquiry",
+      sendAfterPrice: undefined,
+    }],
+  }));
+  assert.equal(selected, null);
+});
+
+test("service-enquiry mode accepts explicit price or package enquiries", async () => {
+  const configured = [{
+    ...resultMedia[0],
+    triggerMode: "service_enquiry",
+    sendAfterPrice: undefined,
+  }];
+
+  assert.ok(await resolveResultMediaForReply(base({
+    serviceQuery: false,
+    serviceQuerySource: null,
+    priceQuery: true,
+    resultMedia: configured,
+  })));
+
+  assert.ok(await resolveResultMediaForReply(base({
+    serviceQuery: false,
+    serviceQuerySource: null,
+    priceQuery: false,
+    packageQuery: true,
+    resultMedia: configured,
+  })));
+});
+
+test("off trigger mode never auto-sends result media", async () => {
+  const selected = await resolveResultMediaForReply(base({
+    serviceQuery: true,
+    serviceQuerySource: "customer_message",
+    resultMedia: [{
+      ...resultMedia[0],
+      triggerMode: "off",
+      sendAfterPrice: undefined,
+    }],
+  }));
+  assert.equal(selected, null);
+});
