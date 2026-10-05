@@ -300,7 +300,6 @@ async function installApi(page, {
       const contactId = Number(messageMatch[1]);
       const body = request.postDataJSON();
       record(request, body);
-      setConversationMode(contactId, "human");
       const message = {
         id: nextMessageId++,
         role: "assistant",
@@ -319,8 +318,6 @@ async function installApi(page, {
         Number(item.contact_id) === contactId
           ? {
               ...item,
-              mode: "human",
-              takeover_by: STAFF_USER.username,
               last_message_role: "assistant",
               last_message_content: body.text,
               last_message_at: message.created_at,
@@ -705,19 +702,20 @@ test("older Inbox messages keep their sent time while the conversation list keep
   expectNoUnexpectedApi(apiState);
 });
 
-test("manual Inbox reply sends the exact text and takes ownership", async ({ page }) => {
+test("manual Inbox reply sends the exact text without taking ownership", async ({ page }) => {
   const apiState = await installApi(page);
 
   await page.goto("/inbox");
   await openInboxConversation(page);
-  const composer = page.getByPlaceholder("Message to take over from AI…");
+  const composer = page.getByPlaceholder("Reply manually — AI stays on…");
   await expect(composer).toBeVisible();
 
   await composer.fill("Test reply from staff");
   await page.getByRole("button", { name: "Send message" }).click();
 
   await expect(page.getByText("Test reply from staff", { exact: true }).last()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Return control to AI" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Take over conversation" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Return control to AI" })).toHaveCount(0);
 
   expect(findCall(apiState, "POST", "/api/conversations/101/messages")?.body).toEqual({
     text: "Test reply from staff",
