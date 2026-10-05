@@ -20,6 +20,7 @@ test("sidebar uses coherent compact expanded and mobile-overlay layouts", () => 
   assert.match(sidebarSource, /data-mobile-open=\{mobileOpen \? "true" : "false"\}/);
   assert.match(sidebarSource, /data-inbox-thread=\{inboxThreadOpen \? "true" : "false"\}/);
   assert.ok(sidebarSource.includes('location.pathname === "/inbox"'));
+  assert.match(sidebarSource, /\^\\d\+\$\/\.test\(inboxContactParam \|\| ""\)/);
   assert.match(sidebarSource, /aria-label="Dismiss navigation"/);
   assert.match(sidebarSource, /aria-controls="portal-sidebar-primary-nav"/);
   assert.match(sidebarSource, /aria-label="Utility navigation"/);
