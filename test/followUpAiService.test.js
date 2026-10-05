@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   isSubstantiallySimilar,
+  previousFollowUps,
   similarity,
   trimConversation,
 } = require("../src/services/followUpAiService");
@@ -36,4 +37,24 @@ test("different useful follow-up angles are not treated as duplicates", () => {
     ),
     false
   );
+});
+
+
+test("previous automated follow-ups are scoped to the current conversation anchor", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: "Old sequence follow-up",
+      is_automated_follow_up: true,
+      automated_follow_up_for_message_id: 10,
+    },
+    {
+      role: "assistant",
+      content: "Current sequence follow-up",
+      is_automated_follow_up: true,
+      automated_follow_up_for_message_id: 20,
+    },
+  ];
+
+  assert.deepEqual(previousFollowUps(messages, 20), ["Current sequence follow-up"]);
 });
