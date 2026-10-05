@@ -43,6 +43,7 @@ const IMAGE_OPTIMIZE_MAX_DIMENSION = 1920;
 const IMAGE_JPEG_QUALITY = 0.82;
 const IMAGE_PROGRESSIVE_JPEG_QUALITY = 0.92;
 const IMAGE_PNG_TO_JPEG_QUALITY = 0.9;
+const JPEG_INSPECTION_BYTES = 1024 * 1024;
 const MAX_VOICE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_SECONDS = 120;
 const VOICE_MIME_TYPES = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"];
@@ -130,6 +131,14 @@ function shouldOptimizeImageUpload(file) {
   return isJpegFile(file) || type === "image/png";
 }
 
+const JPEG_SOF_MARKERS = new Set([
+  0xc0, 0xc1, 0xc2, 0xc3,
+  0xc5, 0xc6, 0xc7,
+  0xc9, 0xca, 0xcb,
+  0xcd, 0xce, 0xcf,
+]);
+const JPEG_PROGRESSIVE_SOF_MARKERS = new Set([0xc2, 0xc6, 0xca, 0xce]);
+
 function jpegFrameEncoding(bytes) {
   if (
     !(bytes instanceof Uint8Array) ||
@@ -155,8 +164,11 @@ function jpegFrameEncoding(bytes) {
     const segmentLength = (bytes[offset] << 8) | bytes[offset + 1];
     if (segmentLength < 2 || offset + segmentLength > bytes.length) break;
 
-    if (marker === 0xc0) return "baseline";
-    if (marker === 0xc2) return "progressive";
+    if (JPEG_SOF_MARKERS.has(marker)) {
+      return JPEG_PROGRESSIVE_SOF_MARKERS.has(marker)
+        ? "progressive"
+        : "non-progressive";
+    }
 
     offset += segmentLength;
   }
@@ -164,15 +176,24 @@ function jpegFrameEncoding(bytes) {
   return null;
 }
 
-async function isProgressiveJpeg(file) {
-  if (!isJpegFile(file)) return false;
+async function inspectJpegEncoding(file) {
+  if (!isJpegFile(file)) return null;
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    return jpegFrameEncoding(bytes) === "progressive";
+    // JPEG frame metadata is normally near the beginning. Bound inspection so
+    // a large phone photo does not get copied in full just to read its SOF marker.
+    const inspectionSize = Math.min(file.size, JPEG_INSPECTION_BYTES);
+    const bytes = new Uint8Array(
+      await file.slice(0, inspectionSize).arrayBuffer()
+    );
+    return jpegFrameEncoding(bytes);
   } catch (err) {
     console.warn("Couldn't inspect JPEG encoding:", err);
-    return false;
+    return null;
   }
+}
+
+async function isProgressiveJpeg(file) {
+  return (await inspectJpegEncoding(file)) === "progressive";
 }
 
 function canvasHasTransparency(context, width, height) {
@@ -228,11 +249,29 @@ async function optimizeImageUpload(file, { normalizeProgressiveJpeg = false } = 
       quality = hasTransparency ? undefined : IMAGE_PNG_TO_JPEG_QUALITY;
     }
 
-    const blob = await new Promise((resolve) => {
+    let blob = await new Promise((resolve) => {
       canvas.toBlob(resolve, outputType, quality);
     });
 
     if (!blob || !blob.size) return file;
+
+    if (normalizeProgressiveJpeg && outputType === "image/jpeg") {
+      const generatedEncoding = await inspectJpegEncoding(blob);
+      if (generatedEncoding !== "non-progressive") {
+        // Canvas encoders do not expose a baseline/progressive switch. If this
+        // browser still produced a progressive (or unverifiable) JPEG, fall
+        // back to PNG rather than sending the problematic JPEG bytes to Meta.
+        const pngBlob = await new Promise((resolve) => {
+          canvas.toBlob(resolve, "image/png");
+        });
+        if (!pngBlob || !pngBlob.size || pngBlob.size > MAX_IMAGE_BYTES) {
+          return file;
+        }
+        blob = pngBlob;
+        outputType = "image/png";
+      }
+    }
+
     if (!normalizeProgressiveJpeg && blob.size >= file.size) return file;
     if (blob.size > MAX_IMAGE_BYTES) return file;
     return new File([blob], optimizedImageFileName(file.name, outputType), {
