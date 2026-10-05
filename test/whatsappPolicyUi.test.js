@@ -253,6 +253,7 @@ test("manual failed-message retry participates in Staff Assist race protection",
     /telegramImmediateAlertRepo\.withContactAlertLock\([\s\S]*prepareStaffSend\([\s\S]*setDeliveryStatusById\([\s\S]*"unknown"/
   );
   assert.match(retryRoute, /finalizeStaffSendState/);
+  assert.match(retryRoute, /requireStaffMode: activeContact\.mode === "human"/);
   assert.match(retryRoute, /markLeadContacted\(sendContact\.id/);
 });
 
