@@ -296,7 +296,7 @@ function promotionFollowUpForCandidate(candidate) {
       )
     : [];
   const latestInbound = recentInbound[0] || null;
-  if (!looksLikePromotionEnquiry(latestInbound)) return null;
+  const latestIsPromotionEnquiry = looksLikePromotionEnquiry(latestInbound);
 
   const customerTranscript = recentInbound.join("\n");
   const activePromotions = getActivePromotions(clinicConfig.promotions || []);
@@ -376,11 +376,14 @@ function promotionFollowUpForCandidate(candidate) {
         packageSelection: {
           serviceName,
           packages,
+          requiresRecentPromotionEnquiry: !latestIsPromotionEnquiry,
         },
       };
     }
     return null;
   }
+
+  if (!latestIsPromotionEnquiry) return null;
 
   const message =
     typeof promotion.followUpMessage === "string"
@@ -628,6 +631,16 @@ async function releaseAiGenerationLease({
   }
 }
 
+function currentSessionHasPromotionEnquiry(messages, triggerMessageId) {
+  return followUpAiService
+    .scopePackageSelectionConversation(messages, triggerMessageId)
+    .some(
+      (message) =>
+        message?.role === "user" &&
+        looksLikePromotionEnquiry(message?.content)
+    );
+}
+
 async function sendCandidate(candidate) {
   // Read the live settings again for every candidate. A staff member may
   // pause the tool or make its criteria stricter while a sweep is running.
@@ -691,7 +704,18 @@ async function sendCandidate(candidate) {
       );
     }
 
-    if (promotionPackageSelection && aiContext) {
+    const packagePromotionContextAllowed =
+      Boolean(promotionPackageSelection) &&
+      Boolean(aiContext) &&
+      (
+        promotionPackageSelection.requiresRecentPromotionEnquiry !== true ||
+        currentSessionHasPromotionEnquiry(
+          aiContext.messages,
+          candidate.trigger_message_id
+        )
+      );
+
+    if (packagePromotionContextAllowed) {
       try {
         const selectedPackageName =
           await followUpAiService.selectPromotionPackageForFollowUp({
