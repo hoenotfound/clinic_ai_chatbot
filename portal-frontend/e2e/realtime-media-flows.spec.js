@@ -704,7 +704,11 @@ test("delivery status changes from Sent to Read immediately from realtime event"
 
   await page.goto("/inbox");
   await openInboxConversation(page);
-  await expect(page.getByLabel("Sent")).toBeVisible();
+
+  const sentIndicator = page.getByLabel("Sent");
+  await expect(sentIndicator).toBeVisible();
+  await expect(sentIndicator).toHaveAttribute("data-delivery-status", "sent");
+  await expect(sentIndicator.locator("svg path")).toHaveCount(1);
 
   apiState.setDeliveryStatus(101, sent.id, {
     delivery_status: "read",
@@ -720,8 +724,29 @@ test("delivery status changes from Sent to Read immediately from realtime event"
     reason: "delivery_status",
   });
 
-  await expect(page.getByLabel("Read")).toBeVisible();
+  const readIndicator = page.getByLabel("Read");
+  await expect(readIndicator).toBeVisible();
+  await expect(readIndicator).toHaveAttribute("data-delivery-status", "read");
+  await expect(readIndicator).toHaveClass(/text-sky-300/);
+  await expect(readIndicator.locator("svg path")).toHaveCount(2);
   await expect(page.getByLabel("Sent")).toHaveCount(0);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("Delivered uses double ticks without the blue read state", async ({ page }) => {
+  const delivered = outboundMessage({ status: "delivered" });
+  const apiState = await installApi(page, {
+    initialMessagesByContact: new Map([[101, [inboundMessage(), delivered]]]),
+  });
+
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+
+  const indicator = page.getByLabel("Delivered");
+  await expect(indicator).toBeVisible();
+  await expect(indicator).toHaveAttribute("data-delivery-status", "delivered");
+  await expect(indicator).not.toHaveClass(/text-sky-300/);
+  await expect(indicator.locator("svg path")).toHaveCount(2);
   expectNoUnexpectedApi(apiState);
 });
 
