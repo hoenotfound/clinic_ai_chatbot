@@ -244,6 +244,162 @@ function validateAppliedMigrations(appliedRows, migrations) {
   });
 }
 
+
+async function runPreMigrationRepairs(client, migration) {
+  // Migration files are immutable once any client database has applied them.
+  // 036 can fail on older production data when a legacy reaction placeholder is
+  // still referenced by leads.last_temperature_scored_message_id. Repair that
+  // reference in the same transaction before 036 runs, without changing 036's
+  // checksum for databases that already applied it.
+  if (
+    migration.version !== 36 ||
+    migration.name !== "whatsapp_reaction_reliability"
+  ) {
+    return;
+  }
+
+  await client.query(`
+    UPDATE leads l
+    SET last_temperature_scored_message_id = NULL
+    WHERE l.last_temperature_scored_message_id IN (
+      SELECT m.id
+      FROM messages m
+      JOIN contacts c ON c.id = m.contact_id
+      WHERE c.channel = 'whatsapp'
+        AND m.role = 'user'
+        AND m.content ~ '^📎 \\[[^]]+ sent an unsupported reaction message\\]
+  if (!poolLike || typeof poolLike.connect !== "function") {
+    throw new Error("runMigrations requires a PostgreSQL pool-like object with connect().");
+  }
+
+  const migrations = validateMigrationPlan(options.migrations || loadMigrations());
+  const lockTimeoutMs = positiveInt(
+    options.lockTimeoutMs,
+    DEFAULT_MIGRATION_LOCK_TIMEOUT_MS
+  );
+  const lockRetryMs = positiveInt(
+    options.lockRetryMs,
+    DEFAULT_MIGRATION_LOCK_RETRY_MS
+  );
+  const client = await poolLike.connect();
+  let appliedCount = 0;
+  let loggedLockAcquired = false;
+  let finalAppliedRows = [];
+
+  try {
+    if (!options.quiet) {
+      console.log(
+        `[Startup] Waiting for database migration lock (max ${lockTimeoutMs}ms)...`
+      );
+    }
+
+    while (true) {
+      await client.query("BEGIN");
+      let activeMigration = null;
+
+      try {
+        // The transaction-scoped advisory lock pins this transaction's
+        // migration work to one PostgreSQL backend even when DATABASE_URL
+        // points at a PgBouncer transaction pool.
+        await acquireMigrationLock(client, {
+          timeoutMs: lockTimeoutMs,
+          retryMs: lockRetryMs,
+        });
+
+        if (!loggedLockAcquired && !options.quiet) {
+          console.log("[Startup] Database migration lock acquired.");
+          loggedLockAcquired = true;
+        }
+
+        await ensureMigrationTable(client);
+        const appliedResult = await client.query(
+          "SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version ASC"
+        );
+        validateAppliedMigrations(appliedResult.rows, migrations);
+
+        const appliedVersions = new Set(
+          appliedResult.rows.map((row) => Number(row.version))
+        );
+        activeMigration = migrations.find(
+          (migration) => !appliedVersions.has(migration.version)
+        );
+
+        if (!activeMigration) {
+          finalAppliedRows = appliedResult.rows;
+          await client.query("COMMIT");
+          break;
+        }
+
+        await runPreMigrationRepairs(client, activeMigration);
+        await client.query(activeMigration.sql);
+        await client.query(
+          `INSERT INTO schema_migrations (version, name, checksum)
+           VALUES ($1, $2, $3)`,
+          [activeMigration.version, activeMigration.name, activeMigration.checksum]
+        );
+        await client.query("COMMIT");
+        appliedCount += 1;
+
+        if (!options.quiet) {
+          console.log(
+            `Applied database migration ${String(activeMigration.version).padStart(3, "0")}_${activeMigration.name}`
+          );
+        }
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
+
+        if (activeMigration && err?.code !== "MIGRATION_LOCK_TIMEOUT") {
+          const wrapped = new Error(
+            `Database migration ${String(activeMigration.version).padStart(3, "0")}_${activeMigration.name} failed: ${err.message}`
+          );
+          wrapped.cause = err;
+          throw wrapped;
+        }
+        throw err;
+      }
+    }
+
+    const result = {
+      appliedCount,
+      skippedCount: migrations.length - appliedCount,
+      currentVersion: migrations.length ? migrations[migrations.length - 1].version : 0,
+      migrations: finalAppliedRows,
+    };
+    if (!options.quiet) {
+      console.log(
+        `[Startup] Database migrations ready at version ${result.currentVersion} ` +
+          `(${result.appliedCount} applied, ${result.skippedCount} already current).`
+      );
+    }
+    return result;
+  } finally {
+    // Transaction-scoped advisory locks are released automatically by COMMIT
+    // or ROLLBACK, so no session-level unlock query is required (or safe when
+    // running through PgBouncer transaction pooling).
+    if (typeof client.release === "function") await client.release();
+  }
+}
+
+module.exports = {
+  BASELINE_MIGRATIONS,
+  DEFAULT_MIGRATION_LOCK_RETRY_MS,
+  DEFAULT_MIGRATION_LOCK_TIMEOUT_MS,
+  LEGACY_MIGRATION_LOCK_KEYS,
+  MIGRATION_FILE_PATTERN,
+  MIGRATION_LOCK_KEYS,
+  acquireMigrationLock,
+  gitBlobSha1,
+  loadMigrations,
+  runMigrations,
+  sha256,
+  validateAppliedMigrations,
+  validateMigrationPlan,
+};
+
+    )
+  `);
+}
+
 async function runMigrations(poolLike, options = {}) {
   if (!poolLike || typeof poolLike.connect !== "function") {
     throw new Error("runMigrations requires a PostgreSQL pool-like object with connect().");
