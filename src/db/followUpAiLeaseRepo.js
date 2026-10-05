@@ -110,8 +110,7 @@ async function claimIfStillEligible({
      WHERE c.id = $1
        AND c.needs_attention = false
        AND NOT (
-         c."mode" = 'human'
-         AND c.takeover_at IS NOT NULL
+         c.takeover_at IS NOT NULL
          AND anchor.sent_by_username IS NULL
          AND anchor.created_at < c.takeover_at
        )
