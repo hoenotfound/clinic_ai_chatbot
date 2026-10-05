@@ -82,6 +82,7 @@ function rotateAfter(items, lastImageUrl) {
 async function resolveResultMediaForReply({
   serviceQuery,
   serviceQuerySource,
+  metaAdCreativeAvailable = false,
   priceQuery,
   packageQuery,
   treatment,
@@ -110,11 +111,19 @@ async function resolveResultMediaForReply({
   const resultSet = matchingResultMediaSet(resultMedia, treatment);
   if (!resultSet) return null;
 
+  const sourceIsTrusted = SERVICE_QUERY_SOURCES.has(serviceQuerySource);
+  const metaAdSourceVerified =
+    serviceQuerySource !== "meta_ad" || metaAdCreativeAvailable === true;
   const trustedServiceQuery =
-    serviceQuery === true && SERVICE_QUERY_SOURCES.has(serviceQuerySource);
+    serviceQuery === true && sourceIsTrusted && metaAdSourceVerified;
+
+  // service_enquiry mode is deliberately fail-closed: even a price/package
+  // question must carry the structured one-service intent signal. This avoids
+  // treating ad-name fallback or a model-invented meta_ad source as sufficient
+  // evidence for an automatic Before/After send.
   const intentEligible =
     resultSet.triggerMode === "service_enquiry"
-      ? trustedServiceQuery || priceQuery === true || packageQuery === true
+      ? trustedServiceQuery
       : priceQuery === true;
   if (!intentEligible) return null;
 
