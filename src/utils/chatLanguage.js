@@ -2,6 +2,8 @@ const CHINESE_CHARACTERS = /[\u3400-\u4dbf\u4e00-\u9fff]/u;
 
 // Words that are useful signals in short Malaysian WhatsApp messages. Common
 // shared words such as "clinic" and "appointment" are deliberately omitted.
+// Casual particles such as "ya" are intentionally language-neutral because
+// they are common in both Malay and Malaysian English conversations.
 const MALAY_WORDS = new Set([
   "ada",
   "adakah",
@@ -47,7 +49,6 @@ const MALAY_WORDS = new Set([
   "tolong",
   "untuk",
   "ubat",
-  "ya",
   "yang",
 ]);
 
