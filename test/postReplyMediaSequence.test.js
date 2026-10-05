@@ -147,6 +147,7 @@ test("clear service enquiry can send result media immediately after the AI reply
   const resultBundle = await resolveResultMediaForReply({
     serviceQuery: true,
     serviceQuerySource: "meta_ad",
+    metaAdCreativeAvailable: true,
     priceQuery: false,
     packageQuery: false,
     treatment,
@@ -175,6 +176,33 @@ test("a non-service admin turn does not send result media even when treatment co
   const resultBundle = await resolveResultMediaForReply({
     serviceQuery: false,
     serviceQuerySource: null,
+    priceQuery: false,
+    packageQuery: false,
+    treatment,
+    flagged: false,
+    bookingReady: false,
+    keywordReason: null,
+    needsAttention: false,
+    textSendSucceeded: true,
+    resultMedia: [{
+      ...resultMedia[0],
+      triggerMode: "service_enquiry",
+      sendAfterPrice: undefined,
+    }],
+    contactId: 42,
+    wasMediaRecentlySent: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+  });
+
+  assert.equal(resultBundle, null);
+});
+
+
+test("ad-name-only attribution cannot trigger automatic result media", async () => {
+  const resultBundle = await resolveResultMediaForReply({
+    serviceQuery: true,
+    serviceQuerySource: "meta_ad",
+    metaAdCreativeAvailable: false,
     priceQuery: false,
     packageQuery: false,
     treatment,
