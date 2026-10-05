@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  classifyWhatsappSendFailure,
   parseIncomingMessages,
   parseReactionEvents,
   parseStatusUpdates,
@@ -334,4 +335,52 @@ test("also accepts an explicit empty WhatsApp reaction emoji as removal", () => 
   assert.equal(reactions.length, 1);
   assert.equal(reactions[0].targetMessageId, "wamid-target-3");
   assert.equal(reactions[0].emoji, "");
+});
+
+
+test("classifies Meta 131000 as a safe transient rejection", () => {
+  const result = classifyWhatsappSendFailure(
+    500,
+    JSON.stringify({
+      error: {
+        code: 131000,
+        message: "(#131000) Something went wrong",
+        error_data: { details: "Something went wrong" },
+      },
+    })
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.retryable, true);
+  assert.equal(result.ambiguous, false);
+  assert.equal(result.providerStatus, 500);
+  assert.equal(result.providerErrorCode, 131000);
+  assert.equal(result.error, "Something went wrong");
+});
+
+test("classifies any explicit 5xx WhatsApp rejection as transient", () => {
+  const result = classifyWhatsappSendFailure(
+    521,
+    JSON.stringify({ error: { message: "Provider unavailable" } })
+  );
+
+  assert.equal(result.retryable, true);
+  assert.equal(result.ambiguous, false);
+  assert.equal(result.providerStatus, 521);
+});
+
+test("does not retry a clear non-transient WhatsApp policy rejection", () => {
+  const result = classifyWhatsappSendFailure(
+    400,
+    JSON.stringify({
+      error: {
+        code: 131047,
+        message: "Re-engagement message",
+      },
+    })
+  );
+
+  assert.equal(result.retryable, false);
+  assert.equal(result.ambiguous, false);
+  assert.equal(result.providerErrorCode, 131047);
 });
