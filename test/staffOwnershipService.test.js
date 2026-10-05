@@ -21,6 +21,8 @@ test("first staff reply claims a synthetic AI handoff without changing Staff mod
 
   const result = await claim(42, "caden");
   assert.equal(result.takeover_by, "caden");
+  assert.match(calls[0].sql, /pg_advisory_xact_lock/);
+  assert.match(calls[0].sql, /eligible_contact AS MATERIALIZED/);
   assert.match(calls[0].sql, /mode = 'human'/);
   assert.match(calls[0].sql, /takeover_by = \$3/);
   assert.match(calls[0].sql, /INSERT INTO follow_up_ai_decisions/);
