@@ -21,6 +21,7 @@ test("does not mistake Malaysian-English ya for Bahasa Malaysia", () => {
   );
   assert.equal(detectMessageLanguage("Can later ya"), "en");
   assert.equal(detectMessageLanguage("ok ya"), null);
+  assert.equal(detectMessageLanguage("Saya busy now ya"), "ms");
 
   // Real Malay signals still win in code-mixed messages.
   assert.equal(detectMessageLanguage("Price berapa?"), "ms");
