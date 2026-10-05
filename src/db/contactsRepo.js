@@ -453,7 +453,7 @@ async function takeOver(id, staffUsername) {
        ORDER BY inbound.created_at DESC, inbound.id DESC
        LIMIT 1
      ), anchor AS (
-       SELECT outbound.id, outbound.sent_by_username
+       SELECT outbound.id
        FROM messages outbound, current_contact, latest_inbound
        WHERE outbound.contact_id = current_contact.id
          AND outbound.role = 'assistant'
@@ -479,7 +479,6 @@ async function takeOver(id, staffUsername) {
          'Cancelled because clinic staff took over this conversation.',
          NULL
        FROM current_contact, anchor
-       WHERE anchor.sent_by_username IS NULL
        ON CONFLICT (trigger_message_id, follow_up_step) DO NOTHING
        RETURNING id
      ), takeover AS (
