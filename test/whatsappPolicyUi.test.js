@@ -159,8 +159,8 @@ test("staff send routes check channel policy before automatic takeover", () => {
     source.indexOf('router.post("/:contactId/voice",')
   );
 
-  assert.ok(textRoute.indexOf("requireFreeformPolicy") < textRoute.indexOf("contactsRepo.takeOver"));
-  assert.ok(imageRoute.indexOf("requireFreeformPolicy") < imageRoute.indexOf("contactsRepo.takeOver"));
+  assert.ok(textRoute.indexOf("requireFreeformPolicy") < textRoute.indexOf("prepareStaffSend"));
+  assert.ok(imageRoute.indexOf("requireFreeformPolicy") < imageRoute.indexOf("prepareStaffSend"));
   assert.match(
     textRoute,
     /requireFreeformPolicy\(contact, res, whatsappPolicy\.manualStaffPurpose\(contact\)\)/
