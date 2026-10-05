@@ -664,18 +664,63 @@ function currentSessionHasPromotionEnquiry(
   const target = normalizedServiceName(serviceName);
   if (!target) return false;
 
-  return followUpAiService
-    .scopePackageSelectionConversation(messages, triggerMessageId)
-    .some((message) => {
-      if (message?.role !== "user" || !looksLikePromotionEnquiry(message?.content)) {
-        return false;
+  const scoped = followUpAiService.scopePackageSelectionConversation(
+    messages,
+    triggerMessageId
+  );
+  let currentCustomerService = null;
+  let targetPromotionEnquirySeen = false;
+  let genericPromotionEnquirySeen = false;
+  let incompatibleServiceSeen = false;
+
+  for (const message of scoped) {
+    if (message?.role !== "user") continue;
+
+    const service = mostSpecificConfiguredServiceInText(message.content);
+    if (service.mentioned) {
+      if (!service.serviceName) {
+        currentCustomerService = null;
+        incompatibleServiceSeen = true;
+      } else {
+        currentCustomerService = normalizedServiceName(service.serviceName);
+        if (currentCustomerService !== target) {
+          incompatibleServiceSeen = true;
+        }
       }
-      const service = mostSpecificConfiguredServiceInText(message.content);
-      return (
-        service.serviceName &&
-        normalizedServiceName(service.serviceName) === target
-      );
-    });
+    }
+
+    if (!looksLikePromotionEnquiry(message?.content)) continue;
+
+    if (service.mentioned) {
+      if (service.serviceName && currentCustomerService === target) {
+        targetPromotionEnquirySeen = true;
+      }
+      continue;
+    }
+
+    // Real chats commonly establish the service in one turn and then ask only
+    // "多少钱？" / "price?". Carry that customer-only service context into the
+    // generic price turn.
+    if (currentCustomerService) {
+      if (currentCustomerService === target) {
+        targetPromotionEnquirySeen = true;
+      }
+      continue;
+    }
+
+    // With no customer-spoken service yet (for example a Meta ad already set
+    // the structured treatment interest), remember the generic price enquiry.
+    // It is usable only if the rest of this scoped session never introduces a
+    // competing/ambiguous service.
+    genericPromotionEnquirySeen = true;
+  }
+
+  // Fail closed if the customer explicitly moved to another/ambiguous service
+  // anywhere in this current session. The normal follow-up is safer than
+  // reviving a hidden offer for stale CRM interest.
+  if (incompatibleServiceSeen) return false;
+
+  return targetPromotionEnquirySeen || genericPromotionEnquirySeen;
 }
 
 async function sendCandidate(candidate) {
