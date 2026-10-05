@@ -299,10 +299,14 @@ function parseIncomingMessages(body) {
           const attribution = message.referral
             ? normalizeWhatsAppReferral(message.referral)
             : null;
+          const sourceTimestamp = message.timestamp
+            ? String(message.timestamp)
+            : null;
           const base = {
             id: message.id,
             from: message.from,
             profileName,
+            ...(sourceTimestamp ? { timestamp: sourceTimestamp } : {}),
             ...(attribution ? { attribution } : {}),
           };
 

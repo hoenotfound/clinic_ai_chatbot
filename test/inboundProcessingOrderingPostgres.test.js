@@ -49,6 +49,7 @@ test(
           media_key TEXT,
           media_mime_type TEXT,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          source_created_at TIMESTAMPTZ,
           delivery_status TEXT,
           delivery_error TEXT,
           is_automated_follow_up BOOLEAN NOT NULL DEFAULT false
@@ -203,6 +204,7 @@ test(
           media_key TEXT,
           media_mime_type TEXT,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          source_created_at TIMESTAMPTZ,
           delivery_status TEXT,
           delivery_error TEXT,
           is_automated_follow_up BOOLEAN NOT NULL DEFAULT false

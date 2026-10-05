@@ -70,6 +70,23 @@ function safeOwnerId(ownerId) {
   return text || PROCESSING_OWNER_ID;
 }
 
+function whatsappMessageSourceCreatedAt(channel, incoming, nowMs = Date.now()) {
+  if (channel !== "whatsapp") return null;
+
+  const seconds = Number(incoming?.timestamp);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+
+  const sourceMs = seconds * 1000;
+  if (!Number.isFinite(sourceMs)) return null;
+
+  // Meta's message timestamp is the policy clock we care about. Never allow a
+  // provider/client clock that is ahead of this server to extend the 24-hour
+  // window beyond when we actually received and persisted the webhook.
+  const boundedMs = Math.min(sourceMs, Number(nowMs));
+  if (!Number.isFinite(boundedMs) || boundedMs <= 0) return null;
+  return new Date(boundedMs).toISOString();
+}
+
 /**
  * Atomically stores the inbound customer message and the durable processing
  * job that represents the remaining reply work. A Meta retry races safely on
@@ -84,14 +101,15 @@ async function storeInboundClaim({
   incoming,
 }, database = pool) {
   const payload = serializeIncoming(incoming);
+  const sourceCreatedAt = whatsappMessageSourceCreatedAt(channel, incoming);
   const result = await database.query(
     `WITH conversation_lock AS MATERIALIZED (
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
      ), inserted_message AS (
        INSERT INTO messages (
-         contact_id, role, content, whatsapp_message_id
+         contact_id, role, content, whatsapp_message_id, source_created_at
        )
-       SELECT $1, 'user', $2, $3
+       SELECT $1, 'user', $2, $3, $6::timestamptz
        FROM conversation_lock
        ON CONFLICT (whatsapp_message_id) DO NOTHING
        RETURNING ${MESSAGE_COLUMNS}
@@ -114,7 +132,7 @@ async function storeInboundClaim({
        ) AS derived_first_message
      FROM inserted_message m
      JOIN inserted_job j ON j.message_id = m.id`,
-    [contactId, content, storedMessageId, channel, payload]
+    [contactId, content, storedMessageId, channel, payload, sourceCreatedAt]
   );
 
   const row = result.rows[0];
@@ -987,6 +1005,7 @@ module.exports = {
   markTerminal,
   pruneCompleted,
   serializeIncoming,
+  whatsappMessageSourceCreatedAt,
   storeInboundClaim,
   reserveOutboundAttempt,
   cancelOutboundAttempt,

@@ -135,6 +135,9 @@ test("Inbox and contact details expose policy guidance for standard-window chann
   assert.match(contactsRepo, /human_agent_enabled: humanAgentChannelEnabled\(row\.channel\)/);
   assert.match(inbox, /Cannot retry/);
   assert.match(inbox, /must message the business before staff can send a normal reply/);
+  assert.match(inbox, /whatsappTemplateNeedsOptIn/);
+  assert.match(inbox, /WhatsApp opt-in is not recorded/);
+  assert.match(inbox, /Record opt-in & choose template/);
   assert.match(details, /policy\.channelLabel} reply window/);
   assert.match(details, /Standard 24-hour reply-window status/);
   assert.match(details, /Opt-in date \/ source/);
