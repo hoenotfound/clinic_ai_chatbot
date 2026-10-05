@@ -1630,12 +1630,16 @@ function PromotionsTab({ config, onSaved, onError }) {
                   aliases: cleanStrings(item.aliases || []),
                   imageUrl: String(item.imageUrl || "").trim(),
                   caption: String(item.caption || "").trim(),
-                  followUpMessage: String(item.followUpMessage || "").trim(),
+                  ...(String(item.followUpMessage || "").trim()
+                    ? { followUpMessage: String(item.followUpMessage || "").trim() }
+                    : {}),
                 }))
             : [],
           imageUrl: packageMode ? "" : p.imageUrl.trim(),
           caption: packageMode ? "" : p.caption.trim(),
-          followUpMessage: packageMode ? "" : String(p.followUpMessage || "").trim(),
+          ...(!packageMode && String(p.followUpMessage || "").trim()
+            ? { followUpMessage: String(p.followUpMessage || "").trim() }
+            : {}),
           validFrom: p.validFrom.trim() || null,
           validUntil: p.validUntil.trim() || null,
         };
