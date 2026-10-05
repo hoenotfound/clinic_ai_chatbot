@@ -7,13 +7,15 @@ const { pool } = require("../src/db/db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("../src/db/conversationLock");
 const followUpRepo = require("../src/db/followUpRepo");
 
-test("AI generation lease also blocks an AI anchor that predates real staff takeover", () => {
+test("AI generation lease respects durable sequence cancellation decisions", () => {
   const source = fs.readFileSync(
     path.join(__dirname, "..", "src/db/followUpAiLeaseRepo.js"),
     "utf8"
   );
 
-  assert.match(source, /anchor\.sent_by_username IS NULL/);
+  assert.match(source, /follow_up_ai_decisions decision/);
+  assert.match(source, /decision\.trigger_message_id = anchor\.id/);
+  assert.match(source, /decision\.action IN \('skip', 'human_review'\)/);
 });
 
 test("automated follow-up inserts take the conversation scoring lock and re-check staff attention", async (t) => {
