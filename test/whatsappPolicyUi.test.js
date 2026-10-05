@@ -163,6 +163,16 @@ test("staff send routes check channel policy before automatic takeover", () => {
   assert.ok(imageRoute.indexOf("requireFreeformPolicy") < imageRoute.indexOf("contactsRepo.takeOver"));
   assert.match(
     textRoute,
+    /contactsRepo\.takeOver\(contact\.id, req\.session\.username, \{ publish: false \}\)/
+  );
+  assert.match(
+    imageRoute,
+    /contactsRepo\.takeOver\(contact\.id, req\.session\.username, \{ publish: false \}\)/
+  );
+  assert.match(textRoute, /finally \{[\s\S]*publishContactChange\(contact\.id\)/);
+  assert.match(imageRoute, /finally \{[\s\S]*publishContactChange\(contact\.id\)/);
+  assert.match(
+    textRoute,
     /requireFreeformPolicy\(contact, res, whatsappPolicy\.manualStaffPurpose\(contact\)\)/
   );
   assert.match(
