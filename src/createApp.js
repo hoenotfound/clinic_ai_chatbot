@@ -13,6 +13,8 @@ const {
 } = require("./services/whatsappDeliveryStatusService");
 const setupStatusRepo = require("./db/setupStatusRepo");
 const promoImagesRepo = require("./db/promoImagesRepo");
+const messagesRepo = require("./db/messagesRepo");
+const realtimeEvents = require("./utils/realtimeEvents");
 const { verifyWebhookSignature } = require("./middleware/verifyWebhookSignature");
 const { verifyMetaWebhookSignature } = require("./middleware/verifyMetaWebhookSignature");
 const {
@@ -115,6 +117,7 @@ function createApp({
 
   app.post("/webhook", webhookJsonParser, async (req, res) => {
     const incomingMessages = whatsapp.parseIncomingMessages(req.body);
+    const reactionEvents = whatsapp.parseReactionEvents(req.body);
     const businessAppEchoes = whatsapp.parseBusinessAppEchoes(req.body);
     const statusUpdates = whatsapp.parseStatusUpdates(req.body);
     const passiveSync = whatsappCoexistence.summarizePassiveSync(req.body);
@@ -125,8 +128,9 @@ function createApp({
     let durableClaims;
     let durableStatusJobs;
     let durableBusinessAppEchoes;
+    let durableReactionUpdates;
     try {
-      [durableClaims, durableStatusJobs, durableBusinessAppEchoes] = await Promise.all([
+      [durableClaims, durableStatusJobs, durableBusinessAppEchoes, durableReactionUpdates] = await Promise.all([
         Promise.all(
           incomingMessages.map(async (incoming) => ({
             queueKey: incoming.from,
@@ -137,6 +141,11 @@ function createApp({
         Promise.all(
           businessAppEchoes.map((echo) =>
             whatsappCoexistence.persistBusinessAppEcho(echo, { pendingStarted: true })
+          )
+        ),
+        Promise.all(
+          reactionEvents.map((reaction) =>
+            messagesRepo.applyWhatsappReaction(reaction)
           )
         ),
       ]);
@@ -151,6 +160,16 @@ function createApp({
     for (const persisted of durableBusinessAppEchoes) {
       if (!persisted) continue;
       await whatsappCoexistence.finalizeBusinessAppEcho(persisted);
+    }
+
+    for (const update of durableReactionUpdates) {
+      if (!update) continue;
+      realtimeEvents.publish("conversation_changed", {
+        contactId: update.contactId,
+        messageId: update.messageId,
+        reactions: update.reactions,
+        reason: "reaction",
+      });
     }
 
     res.sendStatus(200);
