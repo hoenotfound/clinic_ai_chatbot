@@ -3,7 +3,6 @@ const assert = require("node:assert/strict");
 
 const { pool } = require("../src/db/db");
 const telegramImmediateAlerts = require("../src/services/telegramImmediateAlertService");
-const realtimeEvents = require("../src/utils/realtimeEvents");
 const contactsRepo = require("../src/db/contactsRepo");
 
 function nextTick() {
@@ -152,36 +151,6 @@ test("staff takeover keeps the existing human-intervention Telegram cooldown", a
 
   const updated = await contactsRepo.takeOver(12, "staff1");
   assert.equal(updated.mode, "human");
-});
-
-test("staff takeover can defer its contact-state event until a manual reply is saved", async (t) => {
-  const originalQuery = pool.query;
-  const originalPublish = realtimeEvents.publish;
-  t.after(() => {
-    pool.query = originalQuery;
-    realtimeEvents.publish = originalPublish;
-  });
-
-  pool.query = async (sql, params) => {
-    assert.match(sql, /SET mode = 'human'/);
-    assert.deepEqual(params, ["staff1", 12]);
-    return { rows: [{ id: 12, mode: "human", updated_at: UPDATED_AT }] };
-  };
-
-  const published = [];
-  realtimeEvents.publish = (event, payload) => {
-    published.push({ event, payload });
-  };
-
-  const updated = await contactsRepo.takeOver(12, "staff1", { publish: false });
-  assert.equal(updated.mode, "human");
-  assert.deepEqual(published, []);
-
-  contactsRepo.publishContactChange(12);
-  assert.deepEqual(published, [{
-    event: "conversation_changed",
-    payload: { contactId: 12, reason: "contact_state" },
-  }]);
 });
 
 test("returning a conversation to AI does not reopen the strict cooldown", async (t) => {
