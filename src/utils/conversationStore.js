@@ -20,12 +20,19 @@ function publishMessageChange(contactId, messageId) {
   });
 }
 
+function isStickerRow(row) {
+  return /sent a sticker\]$/i.test(String(row?.content || "").trim());
+}
+
 function aiVisibleRows(rows) {
   return (rows || []).filter(
     (row) =>
-      row.role !== "assistant" ||
-      row.delivery_status == null ||
-      !["failed", "unknown"].includes(row.delivery_status)
+      !isStickerRow(row) &&
+      (
+        row.role !== "assistant" ||
+        row.delivery_status == null ||
+        !["failed", "unknown"].includes(row.delivery_status)
+      )
   );
 }
 
@@ -49,19 +56,18 @@ async function getHistoryForContact(contactId, { throughMessageId = null } = {})
     });
     rows = aiVisibleRows(page.rows);
   } else {
-    rows = await messagesRepo.getMessagesForContact(
-      contactId,
-      MAX_MESSAGES_FOR_AI_CONTEXT,
-      false
+    rows = aiVisibleRows(
+      await messagesRepo.getMessagesForContact(
+        contactId,
+        MAX_MESSAGES_FOR_AI_CONTEXT,
+        false
+      )
     );
   }
 
-  const isStickerRow = (r) =>
-    /sent a sticker\]$/i.test(String(r?.content || "").trim());
   const isPhotoRow = (r) =>
     r.has_media_attachment &&
-    r.media_mime_type?.startsWith("image/") &&
-    !isStickerRow(r);
+    r.media_mime_type?.startsWith("image/");
   const photoIndices = [];
   for (let i = rows.length - 1; i >= 0 && photoIndices.length < MAX_PHOTOS_IN_AI_CONTEXT; i--) {
     if (isPhotoRow(rows[i])) photoIndices.push(i);
