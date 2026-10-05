@@ -145,7 +145,7 @@ test("Inbox and contact details expose policy guidance for standard-window chann
   assert.match(leadDrawer, /does not record the dedicated WhatsApp opt-in/);
 });
 
-test("staff send routes check channel policy before automatic takeover", () => {
+test("staff send routes check channel policy before Staff Assist", () => {
   const source = fs.readFileSync(
     path.join(__dirname, "../src/routes/conversations.js"),
     "utf8"
@@ -161,6 +161,11 @@ test("staff send routes check channel policy before automatic takeover", () => {
 
   assert.ok(textRoute.indexOf("requireFreeformPolicy") < textRoute.indexOf("prepareStaffSend"));
   assert.ok(imageRoute.indexOf("requireFreeformPolicy") < imageRoute.indexOf("prepareStaffSend"));
+  const helperStart = source.indexOf("async function prepareStaffSend");
+  const helperEnd = source.indexOf("async function persistSendOutcome", helperStart);
+  const helper = source.slice(helperStart, helperEnd);
+  assert.match(helper, /aiReplyCancellation\.cancelForContact\(contact\)/);
+  assert.doesNotMatch(helper, /contactsRepo\.takeOver/);
   assert.match(
     textRoute,
     /telegramImmediateAlertRepo\.withContactAlertLock\(\s*contact\.id,[\s\S]*prepareStaffSend\(contact, req\.session\.username\)[\s\S]*appendMessageForContact/
@@ -206,7 +211,9 @@ test("staff voice sends keep Staff Waiting blocked until the voice reply is pers
   assert.ok(prepareIndex > lockIndex && persistIndex > prepareIndex);
   assert.match(voiceRoute, /transcribeStaffAudio[\s\S]*prepareStaffSend[\s\S]*appendMessageForContact/);
   assert.match(voiceRoute, /voicePreparation\.status === "conversion_failed"/);
-  assert.match(voiceRoute, /voicePreparation\.status === "not_human"/);
+  assert.match(voiceRoute, /voicePreparation\.status === "contact_missing"/);
+  assert.match(voiceRoute, /requireStaffMode: false/);
+  assert.doesNotMatch(voiceRoute, /Take over this conversation before sending a voice message/);
 });
 
 test("messaging-policy surfaces keep responsive mobile affordances", () => {
