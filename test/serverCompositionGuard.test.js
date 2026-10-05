@@ -129,7 +129,7 @@ test("optional result media exceptions stay isolated from the main AI handoff pa
 });
 
 
-test("post-price runtime keeps text then promo then result-media ordering", () => {
+test("post-reply runtime keeps text then promo then result-media ordering and forwards service intent", () => {
   const textSendAt = serverSource.indexOf("const sendOutcome = await sendTrackedText(");
   const promoResolveAt = serverSource.indexOf("resolvePricePromotionForReply({", textSendAt);
   const resultResolveAt = serverSource.indexOf("resolveResultMediaForReply({", promoResolveAt);
@@ -145,4 +145,10 @@ test("post-price runtime keeps text then promo then result-media ordering", () =
     serverSource.slice(resultResolveAt - 500, resultResolveAt),
     /automaticPromoMediaSent <= 1/
   );
+
+  const resultCall = serverSource.slice(resultResolveAt, resultResolveAt + 900);
+  assert.match(resultCall, /serviceQuery,/);
+  assert.match(resultCall, /serviceQuerySource,/);
+  assert.match(resultCall, /priceQuery,/);
+  assert.match(resultCall, /packageQuery,/);
 });
