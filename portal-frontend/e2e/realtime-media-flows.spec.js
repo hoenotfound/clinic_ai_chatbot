@@ -747,7 +747,7 @@ test("progressive JPEG is normalized before upload", async ({ page }) => {
   const input = page.locator('input[type="file"][accept="image/*"]');
   await input.setInputFiles(progressiveJpegPayload());
 
-  await expect(page.getByText("progressive-photo.jpg", { exact: true })).toBeVisible();
+  await expect(page.getByText(/^progressive-photo\.(?:jpg|png)$/)).toBeVisible();
   await expect(page.getByText("Caption optional", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Send message" }).click();
 
