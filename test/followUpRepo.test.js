@@ -1,9 +1,23 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const { pool } = require("../src/db/db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("../src/db/conversationLock");
 const followUpRepo = require("../src/db/followUpRepo");
+
+test("AI generation lease also blocks an AI anchor that predates real staff takeover", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "src/db/followUpAiLeaseRepo.js"),
+    "utf8"
+  );
+
+  assert.match(source, /c\.mode = 'human'/);
+  assert.match(source, /c\.takeover_at IS NOT NULL/);
+  assert.match(source, /anchor\.sent_by_username IS NULL/);
+  assert.match(source, /anchor\.created_at < c\.takeover_at/);
+});
 
 test("automated follow-up inserts take the conversation scoring lock and re-check staff attention", async (t) => {
   const originalQuery = pool.query;
