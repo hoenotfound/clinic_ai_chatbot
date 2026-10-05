@@ -22,8 +22,9 @@ const inputClass =
 const labelClass = "block text-xs font-medium text-[var(--color-text-muted)] mb-1.5";
 
 export default function Contacts() {
-  const { permissions, username } = useAuth();
+  const { user, permissions, username } = useAuth();
   const { toasts, showToast, dismissToast } = useToasts();
+  const showUnassignedAssignment = user?.features?.leadDistributionEnabled === true;
   const canCreateContacts = permissions.create_leads === true;
   const canManageContacts = permissions.manage_assigned_leads === true;
   const canExportCustomerData = permissions.export_customer_data === true;
@@ -57,6 +58,12 @@ export default function Contacts() {
     refreshContacts("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!showUnassignedAssignment && assignmentFilter === "unassigned") {
+      setAssignmentFilter("all");
+    }
+  }, [assignmentFilter, showUnassignedAssignment]);
 
   useEffect(() => {
     const timer = setTimeout(() => refreshContacts(searchInput), SEARCH_DEBOUNCE_MS);
@@ -148,6 +155,7 @@ export default function Contacts() {
         assignmentFilter={assignmentFilter}
         onAssignmentFilterChange={setAssignmentFilter}
         currentUsername={username}
+        showUnassignedAssignment={showUnassignedAssignment}
         hiddenOnMobile={mobilePanelOpen}
       />
       <div className={`${mobilePanelOpen ? "block" : "hidden"} min-w-0 flex-1 overflow-y-auto lg:block`}>
@@ -178,6 +186,7 @@ export default function Contacts() {
               key={selectedContact.id}
               contact={selectedContact}
               currentUsername={username}
+              showUnassignedAssignment={showUnassignedAssignment}
               canManage={canManageContacts}
               canCreateLeads={canCreateContacts}
               onEdit={() => canManageContacts && setPanelMode("edit")}
@@ -223,12 +232,15 @@ function ContactList({
   assignmentFilter,
   onAssignmentFilterChange,
   currentUsername,
+  showUnassignedAssignment,
   hiddenOnMobile,
 }) {
   const contactList = useMemo(() => contacts || [], [contacts]);
   const assignmentOptions = useMemo(
-    () => buildLeadAssignmentFilterOptions(contactList, currentUsername),
-    [contactList, currentUsername]
+    () => buildLeadAssignmentFilterOptions(contactList, currentUsername, {
+      includeUnassigned: showUnassignedAssignment,
+    }),
+    [contactList, currentUsername, showUnassignedAssignment]
   );
   const filteredContacts = useMemo(
     () => contactList.filter((contact) => matchesLeadAssignment(contact, assignmentFilter, currentUsername)),
@@ -341,6 +353,7 @@ function ContactList({
                   ownerDisplayName={c.lead_owner_display_name}
                   currentUsername={currentUsername}
                   compact
+                  showUnassigned={showUnassignedAssignment}
                 />
               </div>
             </div>
@@ -551,7 +564,16 @@ function ExportCustomerModal({ currentCount, search, assignment, currentViewRead
   );
 }
 
-function ContactProfile({ contact, currentUsername, canManage, canCreateLeads, onEdit, onBack, onToast }) {
+function ContactProfile({
+  contact,
+  currentUsername,
+  showUnassignedAssignment,
+  canManage,
+  canCreateLeads,
+  onEdit,
+  onBack,
+  onToast,
+}) {
   const navigate = useNavigate();
   const { config } = useBusinessConfig();
   const ui = getBusinessTerminology(config || {});
@@ -645,6 +667,7 @@ function ContactProfile({ contact, currentUsername, canManage, canCreateLeads, o
                 ownerUsername={contact.lead_owner_username}
                 ownerDisplayName={contact.lead_owner_display_name}
                 currentUsername={currentUsername}
+                showUnassigned={showUnassignedAssignment}
               />
               <span className="text-xs text-[var(--color-text-muted)]">
                 Added {new Date(contact.created_at).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })}
