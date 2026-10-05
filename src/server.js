@@ -662,10 +662,10 @@ async function processIncomingMessage(
       );
     } else {
       try {
-        // This is a local Postgres lookup only. Meta hierarchy enrichment stays
+        // This is a local Postgres lookup only. Meta enrichment stays
         // fire-and-forget, so a Graph API delay/failure can never block the
-        // customer reply. If referral creative text or cached hierarchy is
-        // already available, the AI can use it immediately as soft intent.
+        // customer reply. Only stored creative headline/body may influence
+        // reply intent; internal ad/campaign/ad-set names are ignored.
         metaAdContext = await loadMetaAdReplyContext(contact.id);
         metaAdCreativeService = resolveMetaAdCreativeService(
           metaAdContext,
