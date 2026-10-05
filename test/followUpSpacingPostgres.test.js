@@ -78,6 +78,18 @@ test(
           UNIQUE (automated_follow_up_for_message_id, automated_follow_up_step)
         );
 
+        CREATE TABLE outbound_message_evidence (
+          message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+          contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+          channel TEXT NOT NULL,
+          origin TEXT NOT NULL,
+          accepted BOOLEAN NOT NULL,
+          provider_message_id TEXT,
+          attempted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          accepted_at TIMESTAMPTZ,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
         CREATE TABLE follow_up_ai_decisions (
           id BIGSERIAL PRIMARY KEY,
           contact_id INTEGER NOT NULL REFERENCES contacts(id),
