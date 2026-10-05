@@ -1,6 +1,44 @@
 const GRAPH_API_VERSION = "v26.0";
 const { normalizeWhatsAppReferral } = require("../utils/leadAttribution");
 
+const TRANSIENT_SEND_HTTP_STATUSES = new Set([429, 500, 502, 503, 504]);
+const TRANSIENT_SEND_ERROR_CODES = new Set([131000, 131016]);
+
+function parseWhatsappApiError(rawBody) {
+  try {
+    const parsed = JSON.parse(String(rawBody || ""));
+    return parsed?.error && typeof parsed.error === "object" ? parsed.error : null;
+  } catch {
+    return null;
+  }
+}
+
+function classifyWhatsappSendFailure(httpStatus, rawBody) {
+  const providerError = parseWhatsappApiError(rawBody);
+  const providerErrorCode = Number(providerError?.code);
+  const normalizedCode = Number.isInteger(providerErrorCode)
+    ? providerErrorCode
+    : null;
+  const retryable =
+    TRANSIENT_SEND_HTTP_STATUSES.has(Number(httpStatus)) ||
+    (normalizedCode !== null && TRANSIENT_SEND_ERROR_CODES.has(normalizedCode));
+  const error = String(
+    providerError?.error_data?.details ||
+      providerError?.message ||
+      `WhatsApp rejected the send with HTTP ${httpStatus}.`
+  ).trim();
+
+  return {
+    success: false,
+    wamid: null,
+    error,
+    retryable,
+    ambiguous: false,
+    providerStatus: Number(httpStatus) || null,
+    providerErrorCode: normalizedCode,
+  };
+}
+
 // A 200 OK from POST .../messages only means Meta *accepted* the send
 // request for later processing — it is not proof the patient's phone ever
 // received it. Actual delivery/failure is reported asynchronously via a
@@ -43,13 +81,26 @@ async function sendMessage(to, text) {
     if (!res.ok) {
       const errBody = await res.text();
       console.error("WhatsApp send failed:", res.status, errBody);
-      return { success: false, wamid: null };
+      return classifyWhatsappSendFailure(res.status, errBody);
     }
     const data = await res.json();
-    return { success: true, wamid: extractWamid(data) };
+    return {
+      success: true,
+      wamid: extractWamid(data),
+      retryable: false,
+      ambiguous: false,
+    };
   } catch (err) {
     console.error("WhatsApp send threw an error:", err);
-    return { success: false, wamid: null };
+    return {
+      success: false,
+      wamid: null,
+      error:
+        "WhatsApp delivery could not be confirmed because the provider request was interrupted.",
+      retryable: false,
+      ambiguous: true,
+      networkErrorCode: err?.code ? String(err.code) : null,
+    };
   }
 }
 
@@ -514,6 +565,10 @@ function parseStatusUpdates(body) {
 }
 
 module.exports = {
+  TRANSIENT_SEND_ERROR_CODES,
+  TRANSIENT_SEND_HTTP_STATUSES,
+  classifyWhatsappSendFailure,
+  parseWhatsappApiError,
   sendMessage,
   sendImage,
   uploadMedia,
