@@ -112,6 +112,7 @@ async function claimDue({ limit = 10 } = {}, database = pool) {
        c.mode AS contact_mode,
        c.channel AS contact_channel,
        c.whatsapp_number AS current_recipient,
+       c.needs_attention AS contact_needs_attention,
        EXISTS (
          SELECT 1
          FROM messages newer
