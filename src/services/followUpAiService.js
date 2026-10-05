@@ -144,8 +144,11 @@ async function selectPromotionPackageForFollowUp({
 
   if (allowedPackages.length < 2) return null;
 
-  const customerMessages = trimConversation(conversation)
-    .filter((message) => message.role === "user");
+  const customerMessages = trimConversation(
+    (Array.isArray(conversation) ? conversation : []).filter(
+      (message) => message?.role === "user"
+    )
+  );
   if (!customerMessages.length) return null;
 
   const raw = await aiService.getReplyWithEnv(
