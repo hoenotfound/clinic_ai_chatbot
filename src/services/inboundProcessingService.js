@@ -243,6 +243,20 @@ async function reconcileRecoveredOutbound(
     attempt.provider_message_id || attempt.whatsapp_message_id || null;
   const finalizedOutcome = String(attempt.outcome || "").toLowerCase();
 
+  const activeWhatsappRetry = ["scheduled", "processing", "attention_pending"].includes(
+    String(attempt.whatsapp_retry_status || "").toLowerCase()
+  );
+
+  // A transient provider rejection may already have been handed to the
+  // dedicated durable WhatsApp retry queue. That queue now owns the exact
+  // saved outbound text and all later delivery/attention recovery. Completing
+  // the inbound job here prevents restart recovery from raising delivery
+  // attention and then causing the retry worker to cancel itself.
+  if (activeWhatsappRetry) {
+    await repository.markCompleted(job.id);
+    return true;
+  }
+
   const accepted =
     finalizedOutcome === "accepted" ||
     Boolean(providerMessageId) ||
