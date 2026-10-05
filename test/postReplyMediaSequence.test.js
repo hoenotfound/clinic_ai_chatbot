@@ -8,8 +8,8 @@ const {
   resolveResultMediaForReply,
 } = require("../src/utils/resultMediaTrigger");
 const {
-  hasMetaAdCreativeContext,
   normalizeMetaAdReplyContext,
+  resolveMetaAdCreativeService,
 } = require("../src/services/metaAdReplyContextService");
 
 const treatment = "3D 小颜术";
@@ -151,7 +151,7 @@ test("clear service enquiry can send result media immediately after the AI reply
   const resultBundle = await resolveResultMediaForReply({
     serviceQuery: true,
     serviceQuerySource: "meta_ad",
-    metaAdCreativeAvailable: true,
+    metaAdCreativeService: treatment,
     priceQuery: false,
     packageQuery: false,
     treatment,
@@ -206,7 +206,7 @@ test("ad-name-only attribution cannot trigger automatic result media", async () 
   const resultBundle = await resolveResultMediaForReply({
     serviceQuery: true,
     serviceQuerySource: "meta_ad",
-    metaAdCreativeAvailable: false,
+    metaAdCreativeService: null,
     priceQuery: false,
     packageQuery: false,
     treatment,
@@ -258,9 +258,15 @@ test("normalized Meta attribution only unlocks result media when headline/body c
     headline: "3D 小颜术",
     body: "改善脸型轮廓与大小脸",
   });
+  const creativeService = resolveMetaAdCreativeService(
+    creativeContext,
+    [{ name: "3D 小颜术" }, { name: "骨盆调理" }],
+    []
+  );
+  assert.equal(creativeService, treatment);
   assert.ok(await resolveResultMediaForReply({
     ...common,
-    metaAdCreativeAvailable: hasMetaAdCreativeContext(creativeContext),
+    metaAdCreativeService: creativeService,
   }));
 
   const adNameOnlyContext = normalizeMetaAdReplyContext({
@@ -269,10 +275,25 @@ test("normalized Meta attribution only unlocks result media when headline/body c
     headline: null,
     body: null,
   });
+  assert.equal(adNameOnlyContext, null);
   assert.equal(
     await resolveResultMediaForReply({
       ...common,
-      metaAdCreativeAvailable: hasMetaAdCreativeContext(adNameOnlyContext),
+      metaAdCreativeService: null,
+    }),
+    null
+  );
+
+  const wrongCreativeService = resolveMetaAdCreativeService(
+    { headline: "骨盆调理", body: "产后体态" },
+    [{ name: "3D 小颜术" }, { name: "骨盆调理" }],
+    []
+  );
+  assert.equal(wrongCreativeService, "骨盆调理");
+  assert.equal(
+    await resolveResultMediaForReply({
+      ...common,
+      metaAdCreativeService: wrongCreativeService,
     }),
     null
   );
