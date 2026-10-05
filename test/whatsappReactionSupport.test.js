@@ -15,6 +15,7 @@ const conversationLockSource = read("src/db/conversationLock.js");
 const coexistenceRepoSource = read("src/db/whatsappCoexistenceRepo.js");
 const coexistenceServiceSource = read("src/services/whatsappCoexistenceService.js");
 const followUpRepoSource = read("src/db/followUpRepo.js");
+const followUpAiLeaseRepoSource = read("src/db/followUpAiLeaseRepo.js");
 const migrationSource = read("src/db/migrations/035_whatsapp_message_reactions.sql");
 const reliabilityMigrationSource = read("src/db/migrations/036_whatsapp_reaction_reliability.sql");
 
@@ -124,8 +125,12 @@ test("legacy unsupported-reaction turns are cleaned without clearing unrelated a
 });
 
 test("system fallback replies never become automated follow-up anchors", () => {
-  const occurrences = followUpRepoSource.match(
+  const repoOccurrences = followUpRepoSource.match(
     /evidence\.origin = 'system_fallback'/g
   ) || [];
-  assert.equal(occurrences.length, 2);
+  assert.equal(repoOccurrences.length, 4);
+  assert.match(
+    followUpAiLeaseRepoSource,
+    /evidence\.origin = 'system_fallback'/
+  );
 });
