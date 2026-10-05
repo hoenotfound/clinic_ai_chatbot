@@ -570,7 +570,7 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
   function addPackage() {
     const next = [
       ...items,
-      { name: "", title: "", aliases: [], imageUrl: "", caption: "" },
+      { name: "", title: "", aliases: [], imageUrl: "", caption: "", followUpMessage: "" },
     ];
     onChange(next);
     setOpenIndex(next.length - 1);
@@ -654,6 +654,19 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
                       value={item.caption || ""}
                       onChange={(e) => updatePackage(index, "caption", e.target.value)}
                     />
+                  </div>
+                  <div>
+                    <label className={labelClass}>First follow-up offer</label>
+                    <textarea
+                      rows={2}
+                      className={textareaClass}
+                      value={item.followUpMessage || ""}
+                      placeholder="Optional: sent on the first automated follow-up after a price/package enquiry"
+                      onChange={(e) => updatePackage(index, "followUpMessage", e.target.value)}
+                    />
+                    <p className="mt-1.5 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                      Kept out of the normal AI reply. If this package is clearly identified, this exact text can be used for the first follow-up.
+                    </p>
                   </div>
                   <div className="flex flex-col-reverse gap-2 border-t border-[var(--color-border)] pt-3 sm:flex-row sm:items-center sm:justify-between">
                     <button
@@ -1473,10 +1486,12 @@ function PromotionsTab({ config, onSaved, onError }) {
             aliases: Array.isArray(item.aliases) ? [...item.aliases] : [],
             imageUrl: item.imageUrl || "",
             caption: item.caption || "",
+            followUpMessage: item.followUpMessage || "",
           }))
         : [],
       imageUrl: p.imageUrl || "",
       caption: p.caption || "",
+      followUpMessage: p.followUpMessage || "",
       validFrom: p.validFrom || "",
       validUntil: p.validUntil || "",
     }))
@@ -1502,6 +1517,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         packages: [],
         imageUrl: "",
         caption: "",
+        followUpMessage: "",
         validFrom: "",
         validUntil: "",
       },
@@ -1534,6 +1550,7 @@ function PromotionsTab({ config, onSaved, onError }) {
       String(item?.title || "").trim() ||
       String(item?.imageUrl || "").trim() ||
       String(item?.caption || "").trim() ||
+      String(item?.followUpMessage || "").trim() ||
       (Array.isArray(item?.aliases) && item.aliases.some((alias) => String(alias || "").trim()))
     );
   }
@@ -1541,7 +1558,8 @@ function PromotionsTab({ config, onSaved, onError }) {
   function hasSingleOfferContent(promotion) {
     return Boolean(
       String(promotion?.imageUrl || "").trim() ||
-      String(promotion?.caption || "").trim()
+      String(promotion?.caption || "").trim() ||
+      String(promotion?.followUpMessage || "").trim()
     );
   }
 
@@ -1556,6 +1574,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         String(item?.title || "").trim() ||
         String(item?.imageUrl || "").trim() ||
         String(item?.caption || "").trim() ||
+        String(item?.followUpMessage || "").trim() ||
         (Array.isArray(item?.aliases) && item.aliases.some((alias) => String(alias || "").trim()))
       ).length;
       warning = `Changing to Single offer will remove ${packageCount} package option${packageCount === 1 ? "" : "s"} when you save. Continue?`;
@@ -1584,6 +1603,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         p.linkedService.trim() ||
         p.imageUrl.trim() ||
         p.caption.trim() ||
+        String(p.followUpMessage || "").trim() ||
         (Array.isArray(p.packages) && p.packages.length > 0) ||
         p.validFrom ||
         p.validUntil
@@ -1601,6 +1621,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                   String(item?.title || "").trim() ||
                   String(item?.imageUrl || "").trim() ||
                   String(item?.caption || "").trim() ||
+                  String(item?.followUpMessage || "").trim() ||
                   (Array.isArray(item?.aliases) && item.aliases.some((alias) => String(alias || "").trim()))
                 )
                 .map((item) => ({
@@ -1609,10 +1630,12 @@ function PromotionsTab({ config, onSaved, onError }) {
                   aliases: cleanStrings(item.aliases || []),
                   imageUrl: String(item.imageUrl || "").trim(),
                   caption: String(item.caption || "").trim(),
+                  followUpMessage: String(item.followUpMessage || "").trim(),
                 }))
             : [],
           imageUrl: packageMode ? "" : p.imageUrl.trim(),
           caption: packageMode ? "" : p.caption.trim(),
+          followUpMessage: packageMode ? "" : String(p.followUpMessage || "").trim(),
           validFrom: p.validFrom.trim() || null,
           validUntil: p.validUntil.trim() || null,
         };
@@ -1809,6 +1832,19 @@ function PromotionsTab({ config, onSaved, onError }) {
                             value={item.caption}
                             onChange={(e) => updateItem(index, { caption: e.target.value })}
                           />
+                        </div>
+                        <div>
+                          <label className={labelClass}>First follow-up offer</label>
+                          <textarea
+                            rows={2}
+                            className={textareaClass}
+                            value={item.followUpMessage || ""}
+                            placeholder="Optional: sent on the first automated follow-up after a price/package enquiry"
+                            onChange={(e) => updateItem(index, { followUpMessage: e.target.value })}
+                          />
+                          <p className="mt-1.5 text-[11px] leading-5 text-[var(--color-text-muted)]">
+                            This stays hidden from the normal AI reply and is only eligible for the first automated follow-up while the promotion is active.
+                          </p>
                         </div>
                       </div>
                     )}
