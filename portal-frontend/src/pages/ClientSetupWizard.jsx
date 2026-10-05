@@ -1014,6 +1014,7 @@ function PromotionsStep({ draft, setDraft, onError }) {
         text(item?.imageUrl).trim() ||
         text(item?.caption).trim() ||
         text(item?.followUpMessage).trim() ||
+        hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
         cleanStrings(item?.aliases || []).length
       ).length;
       warning = `Changing to Single offer will remove ${packageCount} package option${packageCount === 1 ? "" : "s"} when you save. Continue?`;
