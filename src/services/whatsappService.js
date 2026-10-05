@@ -41,6 +41,27 @@ function classifyWhatsappSendFailure(httpStatus, rawBody) {
   };
 }
 
+function classifyWhatsappAcceptedResponse(data) {
+  const wamid = extractWamid(data);
+  if (wamid) {
+    return {
+      success: true,
+      wamid,
+      retryable: false,
+      ambiguous: false,
+    };
+  }
+
+  return {
+    success: false,
+    wamid: null,
+    error:
+      "WhatsApp accepted the HTTP request but did not return a message ID, so delivery cannot be confirmed.",
+    retryable: false,
+    ambiguous: true,
+  };
+}
+
 // A 200 OK from POST .../messages only means Meta *accepted* the send
 // request for later processing — it is not proof the patient's phone ever
 // received it. Actual delivery/failure is reported asynchronously via a
@@ -86,12 +107,7 @@ async function sendMessage(to, text) {
       return classifyWhatsappSendFailure(res.status, errBody);
     }
     const data = await res.json();
-    return {
-      success: true,
-      wamid: extractWamid(data),
-      retryable: false,
-      ambiguous: false,
-    };
+    return classifyWhatsappAcceptedResponse(data);
   } catch (err) {
     console.error("WhatsApp send threw an error:", err);
     return {
@@ -569,6 +585,7 @@ function parseStatusUpdates(body) {
 module.exports = {
   TRANSIENT_SEND_ERROR_CODES,
   TRANSIENT_SEND_HTTP_STATUSES,
+  classifyWhatsappAcceptedResponse,
   classifyWhatsappSendFailure,
   parseWhatsappApiError,
   sendMessage,
