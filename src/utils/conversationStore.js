@@ -6,7 +6,7 @@
 
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
-const { claimAiHandoffOwnership } = require("../services/staffOwnershipService");
+const staffOwnershipService = require("../services/staffOwnershipService");
 const realtimeEvents = require("./realtimeEvents");
 
 const MAX_MESSAGES_FOR_AI_CONTEXT = 20; // bounds prompt size/cost, not what's shown in the portal
@@ -106,7 +106,7 @@ async function appendMessageForContact(
   // prevent staff from sending the message itself.
   if (sentByUsername) {
     try {
-      await claimAiHandoffOwnership(contactId, sentByUsername);
+      await staffOwnershipService.claimAiHandoffOwnership(contactId, sentByUsername);
     } catch (err) {
       console.error(`Failed to claim AI handoff for contact ${contactId}:`, err);
     }
