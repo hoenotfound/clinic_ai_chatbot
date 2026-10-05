@@ -851,3 +851,16 @@ test("Human Agent text transport fails closed when the runtime flag is disabled"
   assert.equal(fetchCalls, 0);
 });
 
+
+
+test("Meta Graph requests never put Page access tokens in query strings", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/services/metaMessagingService.js"),
+    "utf8"
+  );
+
+  assert.doesNotMatch(source, /[?&]access_token=/);
+  assert.match(source, /Authorization:\s*`Bearer \$\{config\.token\}`/);
+});
