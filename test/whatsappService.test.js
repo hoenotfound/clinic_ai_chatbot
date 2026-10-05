@@ -188,6 +188,45 @@ test("template opt-out quick reply reaches the existing WhatsApp opt-out classif
 
 
 
+test("parses WhatsApp stickers as supported inbound media", () => {
+  const parsed = parseIncomingMessages({
+    entry: [
+      {
+        changes: [
+          {
+            value: {
+              contacts: [{ wa_id: "6017", profile: { name: "Sticker Customer" } }],
+              messages: [
+                {
+                  id: "sticker-1",
+                  from: "6017",
+                  type: "sticker",
+                  sticker: {
+                    id: "media-sticker-1",
+                    animated: true,
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.deepEqual(parsed, [
+    {
+      id: "sticker-1",
+      from: "6017",
+      profileName: "Sticker Customer",
+      text: null,
+      mediaId: "media-sticker-1",
+      mediaType: "sticker",
+      unsupportedType: null,
+    },
+  ]);
+});
+
 test("parses WhatsApp reactions separately from conversational inbound messages", () => {
   const body = {
     entry: [
