@@ -1134,6 +1134,9 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       performRetrySend = (activeContact) =>
         sendStoredMessage(activeContact, message, {
           purpose: retryPurpose,
+          ...(isManualStaffRetry
+            ? { requireStaffMode: activeContact.mode === "human" }
+            : {}),
         });
     }
 
@@ -1171,11 +1174,12 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
           // so concurrent/restarted AI work sees that staff is actively handling
           // this turn. If the request is interrupted, "unknown" is also the
           // safest delivery state because blindly retrying could duplicate it.
-          await messagesRepo.setDeliveryStatusById(
+          const retryPending = await messagesRepo.setDeliveryStatusById(
             message.id,
             "unknown",
             "Retry started; delivery has not been confirmed yet."
           );
+          publishDeliveryStatus(retryPending);
 
           const outcome = await executeRetry(preparedContact);
           let finalContact = preparedContact;
