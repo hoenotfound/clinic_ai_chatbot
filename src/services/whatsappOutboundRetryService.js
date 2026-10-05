@@ -102,6 +102,15 @@ async function runWhatsappOutboundRetryQueue({
     limit: BATCH_SIZE,
   });
   for (const row of stale) {
+    const acceptedEvidence =
+      Boolean(row.whatsapp_message_id) ||
+      ["pending", "sent", "delivered", "read"].includes(
+        String(row.delivery_status || "").toLowerCase()
+      );
+    if (acceptedEvidence) {
+      continue;
+    }
+
     await failClosedAmbiguous(row, row.last_error, {
       repository,
       messages,
@@ -118,6 +127,7 @@ async function runWhatsappOutboundRetryQueue({
   const retries = await repository.claimDue({ limit: BATCH_SIZE });
   for (const row of retries) {
     const leaseToken = row.lease_token;
+    let acceptedPersisted = false;
     try {
       if (
         row.whatsapp_message_id ||
@@ -159,6 +169,7 @@ async function runWhatsappOutboundRetryQueue({
 
       if (result?.success && result?.wamid) {
         const updated = await messages.setWhatsappMessageId(row.message_id, result.wamid);
+        acceptedPersisted = Boolean(updated?.whatsapp_message_id || result.wamid);
         publishDeliveryStatus(updated);
         await repository.markSent(row.id, leaseToken);
         await contacts.clearDeliveryAttentionIfNoFailedMessages(row.contact_id);
@@ -206,6 +217,17 @@ async function runWhatsappOutboundRetryQueue({
         `Delivery failed: ${errorText}`
       );
     } catch (err) {
+      if (acceptedPersisted) {
+        // The provider acceptance is already durable on the message row. Queue
+        // bookkeeping may recover later, but never erase that WAMID or turn a
+        // confirmed acceptance into an ambiguous delivery.
+        console.error(
+          `WhatsApp retry ${row.id} was accepted but post-send bookkeeping failed:`,
+          err
+        );
+        continue;
+      }
+
       // Once a row is claimed, a process interruption during the provider call
       // is ambiguous. Do not reschedule blindly and risk a duplicate.
       await failClosedAmbiguous(
