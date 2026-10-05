@@ -56,7 +56,12 @@ async function getHistoryForContact(contactId, { throughMessageId = null } = {})
     );
   }
 
-  const isPhotoRow = (r) => r.has_media_attachment && r.media_mime_type?.startsWith("image/");
+  const isStickerRow = (r) =>
+    /sent a sticker\]$/i.test(String(r?.content || "").trim());
+  const isPhotoRow = (r) =>
+    r.has_media_attachment &&
+    r.media_mime_type?.startsWith("image/") &&
+    !isStickerRow(r);
   const photoIndices = [];
   for (let i = rows.length - 1; i >= 0 && photoIndices.length < MAX_PHOTOS_IN_AI_CONTEXT; i--) {
     if (isPhotoRow(rows[i])) photoIndices.push(i);
