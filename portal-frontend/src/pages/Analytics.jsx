@@ -473,17 +473,21 @@ export default function Analytics() {
                   </div>
 
                   <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-                    <p className="text-xs font-bold">Message targeting</p>
+                    <p className="text-xs font-bold">Message type</p>
                     <div className="mt-2 space-y-2">
                       {(data.followUps.byTargeting || []).map((row) => (
                         <div key={row.targeting} className="rounded-lg bg-white px-2.5 py-2 text-xs">
                           <div className="flex items-center justify-between gap-3">
                             <span className="font-semibold">
-  {row.targeting === "targeted"
-    ? "Service-targeted"
-    : row.targeting === "legacy_unknown"
-      ? "Legacy / unknown"
-      : "General"}
+  {row.targeting === "ai_personalized"
+    ? "AI personalized"
+    : row.targeting === "ai_fallback"
+      ? "AI fallback → fixed"
+      : row.targeting === "targeted"
+        ? "Fixed · service-targeted"
+        : row.targeting === "legacy_unknown"
+          ? "Legacy / unknown"
+          : "Fixed · general"}
 </span>
                             <span className="text-[var(--color-text-muted)]">{row.leads} leads</span>
                           </div>
