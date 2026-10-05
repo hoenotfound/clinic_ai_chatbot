@@ -19,12 +19,18 @@ const {
 } = require("../src/services/followUpService");
 
 const originalPolicyCheck = whatsappPolicy.checkFreeformAllowed;
+const originalWhatsappSendImage = whatsapp.sendImage;
 const originalGeneratePersonalizedFollowUp =
   followUpAiService.generatePersonalizedFollowUp;
+const originalSelectPromotionPackageForFollowUp =
+  followUpAiService.selectPromotionPackageForFollowUp;
 
 test.beforeEach(() => {
+  whatsapp.sendImage = originalWhatsappSendImage;
   followUpAiService.generatePersonalizedFollowUp =
     originalGeneratePersonalizedFollowUp;
+  followUpAiService.selectPromotionPackageForFollowUp =
+    originalSelectPromotionPackageForFollowUp;
   followUpRepo.markStaleClaimsUnconfirmed = async () => [];
   followUpRepo.getNextCandidateDueAt = async () => null;
   followUpRepo.getNextStaleClaimDueAt = async () => null;
@@ -132,8 +138,14 @@ test("first follow-up uses hidden active-promotion copy and does not let AI rewr
   ];
   clinicConfig.automatedFollowUp.messageMode = "ai";
   clinicConfig.automatedFollowUp.aiInstruction = "Write a personalized follow-up.";
+  clinicConfig.automatedFollowUp.imageUrl = "https://example.com/generic-follow-up.jpg";
 
   let aiCalls = 0;
+  let imageCalls = 0;
+  whatsapp.sendImage = async () => {
+    imageCalls += 1;
+    return { success: true, wamid: "unexpected-image" };
+  };
   let claimInput = null;
   followUpAiService.generatePersonalizedFollowUp = async () => {
     aiCalls += 1;
@@ -171,6 +183,8 @@ test("first follow-up uses hidden active-promotion copy and does not let AI rewr
   );
   assert.equal(claimInput.targetedService, "3D 小颜术");
   assert.equal(claimInput.messageMode, "fixed");
+  assert.equal(claimInput.mediaUrl, null);
+  assert.equal(imageCalls, 0);
 });
 
 test("first follow-up selects the exact configured package offer", async () => {
@@ -206,6 +220,11 @@ test("first follow-up selects the exact configured package offer", async () => {
   ];
 
   let claimInput = null;
+  let selectorCalls = 0;
+  followUpAiService.selectPromotionPackageForFollowUp = async () => {
+    selectorCalls += 1;
+    return "Package B";
+  };
   followUpRepo.findCandidates = async () => [
     {
       contact_id: 711,
@@ -233,9 +252,168 @@ test("first follow-up selects the exact configured package offer", async () => {
 
   assert.equal(claimInput.content, "10月限时优惠价 RM388");
   assert.equal(claimInput.targetedService, "Pelvic Care");
+  assert.equal(selectorCalls, 0);
 });
 
-test("a price enquiry naming multiple packages follows up with those configured offers", async () => {
+test("generic package price enquiry uses one AI-selected configured offer", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "Pelvic packages",
+      linkedService: "Pelvic Care",
+      sendOnPriceQuery: false,
+      caption: "",
+      imageUrl: "",
+      packages: [
+        {
+          name: "Package A",
+          title: "Premium package",
+          aliases: ["A配套"],
+          imageUrl: "",
+          caption: "Includes 经络穴位按摩",
+          followUpMessage: "Package A｜10月限时优惠价 RM388",
+        },
+        {
+          name: "Package B",
+          title: "Women's package",
+          aliases: ["B配套"],
+          imageUrl: "",
+          caption: "Includes 子宫护理",
+          followUpMessage: "Package B｜10月限时优惠价 RM288",
+        },
+      ],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [
+      { role: "user", content: "骨盆调理有什么配套？" },
+      { role: "assistant", content: "我们有 Package A 和 Package B。" },
+      { role: "user", content: "我比较想要有经络按摩的" },
+    ],
+    lead: { treatment_interest: "Pelvic Care" },
+  });
+
+  let selectorInput = null;
+  followUpAiService.selectPromotionPackageForFollowUp = async (input) => {
+    selectorInput = input;
+    return "Package A";
+  };
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 721,
+      whatsapp_number: "60133333334",
+      trigger_message_id: 720,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["Pelvic Care price?"],
+      // The outbound anchor may be the last package caption. It must not decide
+      // which hidden follow-up offer is sent.
+      trigger_message_content: "Package B 优惠价 RM388，Includes Uterus Care",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 722, contact_id: 721, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-722" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 721,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(selectorInput.serviceName, "Pelvic Care");
+  assert.equal(selectorInput.packages.length, 2);
+  assert.equal(claimInput.content, "Package A｜10月限时优惠价 RM388");
+  assert.equal(claimInput.targetedService, "Pelvic Care");
+  assert.equal(claimInput.messageMode, "fixed");
+});
+
+test("generic package price enquiry falls back to the normal first follow-up when AI cannot identify one package", async () => {
+  enableTool();
+  clinicConfig.promotions = [
+    {
+      name: "Pelvic packages",
+      linkedService: "Pelvic Care",
+      sendOnPriceQuery: false,
+      caption: "",
+      imageUrl: "",
+      packages: [
+        {
+          name: "Package A",
+          title: "Premium package",
+          aliases: ["A配套"],
+          imageUrl: "",
+          caption: "A",
+          followUpMessage: "Package A｜10月限时优惠价 RM388",
+        },
+        {
+          name: "Package B",
+          title: "Women's package",
+          aliases: ["B配套"],
+          imageUrl: "",
+          caption: "B",
+          followUpMessage: "Package B｜10月限时优惠价 RM288",
+        },
+      ],
+      validFrom: null,
+      validUntil: null,
+    },
+  ];
+
+  let selectorCalls = 0;
+  followUpAiService.selectPromotionPackageForFollowUp = async () => {
+    selectorCalls += 1;
+    return null;
+  };
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [{ role: "user", content: "Pelvic Care price?" }],
+    lead: null,
+  });
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 731,
+      whatsapp_number: "60133333335",
+      trigger_message_id: 730,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["Pelvic Care price?"],
+      trigger_message_content: "Package B 优惠价 RM388",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 732, contact_id: 731, delivery_status: null };
+  };
+  whatsapp.sendMessage = async (_number, message) => {
+    assert.equal(message, "Checking in");
+    return { success: true, wamid: "wamid-732" };
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 731,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(selectorCalls, 1);
+  assert.equal(claimInput.content, "Checking in");
+  assert.equal(claimInput.targetedService, null);
+});
+
+test("a comparison naming multiple packages does not send both hidden discounts", async () => {
   enableTool();
   clinicConfig.promotions = [
     {
@@ -267,12 +445,18 @@ test("a price enquiry naming multiple packages follows up with those configured 
     },
   ];
 
+  followUpAiService.selectPromotionPackageForFollowUp = async () => null;
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [{ role: "user", content: "Package A 跟 Package B 有什么分别？" }],
+    lead: null,
+  });
+
   let claimInput = null;
   followUpRepo.findCandidates = async () => [
     {
-      contact_id: 721,
-      whatsapp_number: "60133333334",
-      trigger_message_id: 720,
+      contact_id: 741,
+      whatsapp_number: "60133333337",
+      trigger_message_id: 740,
       next_follow_up_step: 1,
       recent_inbound_messages: ["Pelvic Care Package A 跟 Package B price?"],
       trigger_message_content: "Package A 和 Package B 都有不同配套。",
@@ -280,12 +464,12 @@ test("a price enquiry naming multiple packages follows up with those configured 
   ];
   followUpRepo.saveIfStillEligible = async (input) => {
     claimInput = input;
-    return { id: 722, contact_id: 721, delivery_status: null };
+    return { id: 742, contact_id: 741, delivery_status: null };
   };
-  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-722" });
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-742" });
   messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
     id,
-    contact_id: 721,
+    contact_id: 741,
     whatsapp_message_id: wamid,
     delivery_status: "pending",
   });
@@ -293,14 +477,11 @@ test("a price enquiry naming multiple packages follows up with those configured 
 
   await runAutomatedFollowUps();
 
-  assert.equal(
-    claimInput.content,
-    "10月限时优惠价 RM388\n\n10月限时优惠价 RM288"
-  );
-  assert.equal(claimInput.targetedService, "Pelvic Care");
+  assert.equal(claimInput.content, "Checking in");
+  assert.doesNotMatch(claimInput.content, /RM388|RM288/);
 });
 
-test("generic package price enquiry sends all configured first-follow-up offers without using the last promo caption as package intent", async () => {
+test("ambiguous package aliases fail closed at runtime even if stale config bypassed Settings validation", async () => {
   enableTool();
   clinicConfig.promotions = [
     {
@@ -313,18 +494,18 @@ test("generic package price enquiry sends all configured first-follow-up offers 
         {
           name: "Package A",
           title: "",
-          aliases: ["A配套"],
+          aliases: ["RM388配套"],
           imageUrl: "",
           caption: "A",
-          followUpMessage: "Package A｜10月限时优惠价 RM388",
+          followUpMessage: "A hidden offer",
         },
         {
           name: "Package B",
           title: "",
-          aliases: ["B配套"],
+          aliases: ["RM388配套"],
           imageUrl: "",
           caption: "B",
-          followUpMessage: "Package B｜10月限时优惠价 RM288",
+          followUpMessage: "B hidden offer",
         },
       ],
       validFrom: null,
@@ -332,27 +513,31 @@ test("generic package price enquiry sends all configured first-follow-up offers 
     },
   ];
 
+  let selectorCalls = 0;
+  followUpAiService.selectPromotionPackageForFollowUp = async () => {
+    selectorCalls += 1;
+    return "Package A";
+  };
+
   let claimInput = null;
   followUpRepo.findCandidates = async () => [
     {
-      contact_id: 731,
-      whatsapp_number: "60133333335",
-      trigger_message_id: 730,
+      contact_id: 751,
+      whatsapp_number: "60133333338",
+      trigger_message_id: 750,
       next_follow_up_step: 1,
-      recent_inbound_messages: ["Pelvic Care price?"],
-      // In production the latest normal outbound anchor can be Package B after
-      // both package promo messages were sent. Generic customer intent must stay generic.
-      trigger_message_content: "Package B 优惠价 RM388",
+      recent_inbound_messages: ["Pelvic Care RM388配套还有吗？"],
+      trigger_message_content: "我们有两个配套。",
     },
   ];
   followUpRepo.saveIfStillEligible = async (input) => {
     claimInput = input;
-    return { id: 732, contact_id: 731, delivery_status: null };
+    return { id: 752, contact_id: 751, delivery_status: null };
   };
-  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-732" });
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-752" });
   messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
     id,
-    contact_id: 731,
+    contact_id: 751,
     whatsapp_message_id: wamid,
     delivery_status: "pending",
   });
@@ -360,11 +545,8 @@ test("generic package price enquiry sends all configured first-follow-up offers 
 
   await runAutomatedFollowUps();
 
-  assert.equal(
-    claimInput.content,
-    "Package A｜10月限时优惠价 RM388\n\nPackage B｜10月限时优惠价 RM288"
-  );
-  assert.equal(claimInput.targetedService, "Pelvic Care");
+  assert.equal(selectorCalls, 0);
+  assert.equal(claimInput.content, "Checking in");
 });
 
 test("compound 9D + 3D service wins over its component services for the delayed offer", async () => {
