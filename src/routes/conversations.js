@@ -991,7 +991,12 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       });
     }
 
-    let sendResult;
+    const isManualStaffRetry =
+      Boolean(message.sent_by_username) &&
+      message.is_automated_follow_up !== true &&
+      message.is_scheduled_message !== true;
+    let performRetrySend = null;
+
     if (message.whatsapp_template) {
       if ((contact.channel || "whatsapp") !== "whatsapp") {
         return res.status(409).json({
@@ -1106,16 +1111,17 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
         }
       }
 
-      sendResult = await whatsappTemplate.sendApprovedTemplate(contact, {
-        templateName: message.whatsapp_template.name,
-        languageCode: message.whatsapp_template.language,
-        components: rebuiltTemplate.components,
-        expectedOptInAt:
-          currentTemplate.template.category === "MARKETING"
-            ? message.whatsapp_template.consentOptInAt
-            : null,
-        templateCategory: currentTemplate.template.category,
-      });
+      performRetrySend = (activeContact) =>
+        whatsappTemplate.sendApprovedTemplate(activeContact, {
+          templateName: message.whatsapp_template.name,
+          languageCode: message.whatsapp_template.language,
+          components: rebuiltTemplate.components,
+          expectedOptInAt:
+            currentTemplate.template.category === "MARKETING"
+              ? message.whatsapp_template.consentOptInAt
+              : null,
+          templateCategory: currentTemplate.template.category,
+        });
     } else {
       const retryPurpose =
         message.sent_by_username &&
@@ -1125,28 +1131,86 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
           : "service";
       if (!(await requireFreeformPolicy(contact, res, retryPurpose))) return;
 
-      sendResult = await sendStoredMessage(contact, message, {
-        purpose: retryPurpose,
-      });
+      performRetrySend = (activeContact) =>
+        sendStoredMessage(activeContact, message, {
+          purpose: retryPurpose,
+        });
     }
+
+    let sendResult;
+    let updated;
+    let sendContact = contact;
+
+    const executeRetry = async (activeContact) => {
+      const result = await performRetrySend(activeContact);
+      const errorText = deliveryErrorForSend(
+        result,
+        result.error || rejectedErrorFor(activeContact),
+        message.delivery_error
+      );
+      const persisted = await persistSendOutcome(
+        message,
+        result,
+        errorText,
+        activeContact.channel || "whatsapp"
+      );
+      return { result, errorText, persisted };
+    };
+
+    if (isManualStaffRetry) {
+      const retried = await telegramImmediateAlertRepo.withContactAlertLock(
+        contact.id,
+        async () => {
+          const preparedContact = await prepareStaffSend(
+            contact,
+            req.session.username
+          );
+
+          // A failed row is intentionally ignored by the durable Staff Assist
+          // guard. Mark this retry unconfirmed before contacting the provider
+          // so concurrent/restarted AI work sees that staff is actively handling
+          // this turn. If the request is interrupted, "unknown" is also the
+          // safest delivery state because blindly retrying could duplicate it.
+          await messagesRepo.setDeliveryStatusById(
+            message.id,
+            "unknown",
+            "Retry started; delivery has not been confirmed yet."
+          );
+
+          const outcome = await executeRetry(preparedContact);
+          let finalContact = preparedContact;
+          if (outcome.result.success) {
+            finalContact =
+              await finalizeStaffSendState(
+                preparedContact.id,
+                req.session.username
+              ) || preparedContact;
+          }
+          return { ...outcome, sendContact: finalContact };
+        }
+      );
+
+      sendResult = retried.result;
+      updated = retried.persisted;
+      sendContact = retried.sendContact;
+    } else {
+      const retried = await executeRetry(contact);
+      sendResult = retried.result;
+      updated = retried.persisted;
+    }
+
     const errorText = deliveryErrorForSend(
       sendResult,
-      sendResult.error || rejectedErrorFor(contact),
+      sendResult.error || rejectedErrorFor(sendContact),
       message.delivery_error
-    );
-    const updated = await persistSendOutcome(
-      message,
-      sendResult,
-      errorText,
-      contact.channel || "whatsapp"
     );
 
     if (sendResult.success) {
-      await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(contact.id);
-      await markLeadContacted(preparedContact.id, req.session.username, sendResult);
+      await contactsRepo.clearDeliveryAttentionIfNoFailedMessages(sendContact.id);
+      await markLeadContacted(sendContact.id, req.session.username, sendResult);
     } else {
       await contactsRepo.setDeliveryAttention(
-        contact.id,
+        sendContact.id,
         `${sendResult.unknown === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
       );
     }
