@@ -187,6 +187,28 @@ test("staff send routes check channel policy before automatic takeover", () => {
   assert.match(source, /channelMessaging\.sendText/);
   assert.match(source, /channelMessaging\.sendImageBuffer/);
 });
+test("staff voice sends keep Staff Waiting blocked until the voice reply is persisted", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/routes/conversations.js"),
+    "utf8"
+  );
+  const voiceRoute = source.slice(
+    source.indexOf('router.post("/:contactId/voice",'),
+    source.indexOf("module.exports = router;")
+  );
+
+  const policyIndex = voiceRoute.indexOf("requireFreeformPolicy");
+  const lockIndex = voiceRoute.indexOf("telegramImmediateAlertRepo.withContactAlertLock");
+  const prepareIndex = voiceRoute.indexOf("prepareStaffSend");
+  const persistIndex = voiceRoute.indexOf("conversationStore.appendMessageForContact");
+
+  assert.ok(policyIndex >= 0 && lockIndex > policyIndex);
+  assert.ok(prepareIndex > lockIndex && persistIndex > prepareIndex);
+  assert.match(voiceRoute, /transcribeStaffAudio[\s\S]*prepareStaffSend[\s\S]*appendMessageForContact/);
+  assert.match(voiceRoute, /voicePreparation\.status === "conversion_failed"/);
+  assert.match(voiceRoute, /voicePreparation\.status === "not_human"/);
+});
+
 test("messaging-policy surfaces keep responsive mobile affordances", () => {
   const root = path.join(__dirname, "..");
   const inbox = fs.readFileSync(path.join(root, "portal-frontend/src/pages/Inbox.jsx"), "utf8");
