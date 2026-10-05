@@ -1280,38 +1280,69 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       return res.status(400).json({ error: "A voice recording is required." });
     }
 
-    await contactsRepo.setUnread(contact.id, false);
+    const voicePreparation = await telegramImmediateAlertRepo.withContactAlertLock(
+      contact.id,
+      async () => {
+        // Voice conversion/transcription can take several seconds. Hold the same
+        // per-contact alert lock used by Staff Waiting so another conversation
+        // event cannot validate/send a false reminder while Staff is actively
+        // preparing this reply but the persisted voice-message row does not yet exist.
+        const converted = await convertToWhatsAppVoice(req.file.buffer, req.file.mimetype);
+        if (!converted) return { status: "conversion_failed" };
 
-    const converted = await convertToWhatsAppVoice(req.file.buffer, req.file.mimetype);
+        const transcript = await resolveWithin(
+          transcribeStaffAudio(converted.whatsapp.buffer, converted.whatsapp.mimeType),
+          STAFF_TRANSCRIPTION_TIMEOUT_MS,
+          null
+        );
 
-    if (!converted) {
-      return res.status(422).json({ error: "Couldn't process that recording. Please record it again." });
-    }
+        const currentContact = await contactsRepo.getContactById(contact.id);
+        if (!currentContact || currentContact.mode !== "human") {
+          return { status: "not_human" };
+        }
 
-    const transcript = await resolveWithin(
-      transcribeStaffAudio(converted.whatsapp.buffer, converted.whatsapp.mimeType),
-      STAFF_TRANSCRIPTION_TIMEOUT_MS,
-      null
+        // Match text/image sends: claim a synthetic AI handoff before clearing
+        // attention/unread state, then persist the real staff reply under the
+        // same Telegram alert lock.
+        await prepareStaffSend(currentContact, req.session.username);
+
+        const content = transcript ? `🎤 ${transcript}` : "🎤 Staff sent a voice message";
+        const saved = await conversationStore.appendMessageForContact(
+          currentContact.id,
+          "assistant",
+          content,
+          null,
+          req.session.username,
+          null,
+          {
+            mimeType: converted.playback.mimeType,
+            buffer: converted.playback.buffer,
+          }
+        );
+
+        return {
+          status: "ready",
+          converted,
+          transcript,
+          currentContact,
+          saved,
+        };
+      }
     );
 
-    let currentContact = await contactsRepo.getContactById(contact.id);
-    if (!currentContact || currentContact.mode !== "human") {
+    if (voicePreparation.status === "conversion_failed") {
+      return res.status(422).json({ error: "Couldn't process that recording. Please record it again." });
+    }
+    if (voicePreparation.status === "not_human") {
       return res.status(409).json({ error: "This conversation is no longer in Staff mode." });
     }
 
-    const content = transcript ? `🎤 ${transcript}` : "🎤 Staff sent a voice message";
-    const saved = await conversationStore.appendMessageForContact(
-      currentContact.id,
-      "assistant",
-      content,
-      null,
-      req.session.username,
-      null,
-      {
-        mimeType: converted.playback.mimeType,
-        buffer: converted.playback.buffer,
-      }
-    );
+    const {
+      converted,
+      transcript,
+      currentContact,
+      saved,
+    } = voicePreparation;
 
     const channel = currentContact.channel || "whatsapp";
     const outboundAudio = channel === "whatsapp" ? converted.whatsapp : {
