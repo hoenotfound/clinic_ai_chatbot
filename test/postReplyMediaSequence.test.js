@@ -7,6 +7,10 @@ const {
 const {
   resolveResultMediaForReply,
 } = require("../src/utils/resultMediaTrigger");
+const {
+  normalizeMetaAdReplyContext,
+  resolveMetaAdCreativeService,
+} = require("../src/services/metaAdReplyContextService");
 
 const treatment = "3D 小颜术";
 
@@ -133,4 +137,164 @@ test("multi-package promo burst suppresses result media in the combined flow", a
     "promo:https://example.test/promo-images/201",
     "promo:https://example.test/promo-images/202",
   ]);
+});
+
+
+test("clear service enquiry can send result media immediately after the AI reply", async () => {
+  const events = ["text"];
+  const serviceResultMedia = [{
+    ...resultMedia[0],
+    triggerMode: "service_enquiry",
+    sendAfterPrice: undefined,
+  }];
+
+  const resultBundle = await resolveResultMediaForReply({
+    serviceQuery: true,
+    serviceQuerySource: "meta_ad",
+    metaAdCreativeService: treatment,
+    priceQuery: false,
+    packageQuery: false,
+    treatment,
+    flagged: false,
+    bookingReady: false,
+    keywordReason: null,
+    needsAttention: false,
+    textSendSucceeded: true,
+    resultMedia: serviceResultMedia,
+    contactId: 42,
+    wasMediaRecentlySent: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+  });
+
+  for (const item of resultBundle?.items || []) {
+    events.push(`result:${item.imageUrl}`);
+  }
+
+  assert.deepEqual(events, [
+    "text",
+    "result:https://example.test/promo-images/301",
+  ]);
+});
+
+test("a non-service admin turn does not send result media even when treatment context exists", async () => {
+  const resultBundle = await resolveResultMediaForReply({
+    serviceQuery: false,
+    serviceQuerySource: null,
+    priceQuery: false,
+    packageQuery: false,
+    treatment,
+    flagged: false,
+    bookingReady: false,
+    keywordReason: null,
+    needsAttention: false,
+    textSendSucceeded: true,
+    resultMedia: [{
+      ...resultMedia[0],
+      triggerMode: "service_enquiry",
+      sendAfterPrice: undefined,
+    }],
+    contactId: 42,
+    wasMediaRecentlySent: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+  });
+
+  assert.equal(resultBundle, null);
+});
+
+
+test("ad-name-only attribution cannot trigger automatic result media", async () => {
+  const resultBundle = await resolveResultMediaForReply({
+    serviceQuery: true,
+    serviceQuerySource: "meta_ad",
+    metaAdCreativeService: null,
+    priceQuery: false,
+    packageQuery: false,
+    treatment,
+    flagged: false,
+    bookingReady: false,
+    keywordReason: null,
+    needsAttention: false,
+    textSendSucceeded: true,
+    resultMedia: [{
+      ...resultMedia[0],
+      triggerMode: "service_enquiry",
+      sendAfterPrice: undefined,
+    }],
+    contactId: 42,
+    wasMediaRecentlySent: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+  });
+
+  assert.equal(resultBundle, null);
+});
+
+
+test("normalized Meta attribution only unlocks result media when headline/body creative exists", async () => {
+  const configured = [{
+    ...resultMedia[0],
+    triggerMode: "service_enquiry",
+    sendAfterPrice: undefined,
+  }];
+  const common = {
+    serviceQuery: true,
+    serviceQuerySource: "meta_ad",
+    priceQuery: false,
+    packageQuery: false,
+    treatment,
+    flagged: false,
+    bookingReady: false,
+    keywordReason: null,
+    needsAttention: false,
+    textSendSucceeded: true,
+    resultMedia: configured,
+    contactId: 42,
+    wasMediaRecentlySent: async () => false,
+    getMostRecentlySentMediaUrl: async () => null,
+  };
+
+  const creativeContext = normalizeMetaAdReplyContext({
+    source: "meta_ads",
+    ad_name: "Internal 3D ad",
+    headline: "3D 小颜术",
+    body: "改善脸型轮廓与大小脸",
+  });
+  const creativeService = resolveMetaAdCreativeService(
+    creativeContext,
+    [{ name: "3D 小颜术" }, { name: "骨盆调理" }],
+    []
+  );
+  assert.equal(creativeService, treatment);
+  assert.ok(await resolveResultMediaForReply({
+    ...common,
+    metaAdCreativeService: creativeService,
+  }));
+
+  const adNameOnlyContext = normalizeMetaAdReplyContext({
+    source: "meta_ads",
+    ad_name: "3D 小颜术 Internal Campaign Naming",
+    headline: null,
+    body: null,
+  });
+  assert.equal(adNameOnlyContext, null);
+  assert.equal(
+    await resolveResultMediaForReply({
+      ...common,
+      metaAdCreativeService: null,
+    }),
+    null
+  );
+
+  const wrongCreativeService = resolveMetaAdCreativeService(
+    { headline: "骨盆调理", body: "产后体态" },
+    [{ name: "3D 小颜术" }, { name: "骨盆调理" }],
+    []
+  );
+  assert.equal(wrongCreativeService, "骨盆调理");
+  assert.equal(
+    await resolveResultMediaForReply({
+      ...common,
+      metaAdCreativeService: wrongCreativeService,
+    }),
+    null
+  );
 });

@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS,
+  normalizeResultMediaTriggerMode,
   rotateAfter,
   resolveResultMediaForReply,
 } = require("../src/utils/resultMediaTrigger");
@@ -201,5 +202,169 @@ test("rotation treats the legacy public path and private preview path as the sam
   assert.deepEqual(
     rotateAfter(items, "https://legacy.example/promo-images/41"),
     [items[1], items[0]]
+  );
+});
+
+
+test("legacy result media config normalizes to price-only without changing existing clients", () => {
+  assert.equal(normalizeResultMediaTriggerMode({ sendAfterPrice: true }), "price_only");
+  assert.equal(normalizeResultMediaTriggerMode({ sendAfterPrice: false }), "off");
+  assert.equal(
+    normalizeResultMediaTriggerMode({ triggerMode: "service_enquiry", sendAfterPrice: true }),
+    "service_enquiry"
+  );
+});
+
+test("service-enquiry mode sends for a direct customer service enquiry", async () => {
+  const selected = await resolveResultMediaForReply(base({
+    priceQuery: false,
+    serviceQuery: true,
+    serviceQuerySource: "customer_message",
+    resultMedia: [{
+      ...resultMedia[0],
+      triggerMode: "service_enquiry",
+      sendAfterPrice: undefined,
+    }],
+  }));
+
+  assert.equal(selected.service, "3D 小颜术");
+  assert.equal(selected.triggerMode, "service_enquiry");
+  assert.equal(selected.serviceQuerySource, "customer_message");
+  assert.deepEqual(selected.items, [resultMedia[0].items[0]]);
+});
+
+
+test("service-enquiry mode accepts verified ad and conversation intent", async () => {
+  for (const source of ["meta_ad", "conversation"]) {
+    const selected = await resolveResultMediaForReply(base({
+      priceQuery: false,
+      serviceQuery: true,
+      serviceQuerySource: source,
+      metaAdCreativeService: source === "meta_ad" ? "3D 小颜术" : null,
+      resultMedia: [{
+        ...resultMedia[0],
+        triggerMode: "service_enquiry",
+        sendAfterPrice: undefined,
+      }],
+    }));
+    assert.equal(selected?.serviceQuerySource, source);
+  }
+});
+
+test("service-enquiry mode fails closed for an invalid serviceQuery source", async () => {
+  const selected = await resolveResultMediaForReply(base({
+    priceQuery: false,
+    serviceQuery: true,
+    serviceQuerySource: "invalid_source",
+    resultMedia: [{
+      ...resultMedia[0],
+      triggerMode: "service_enquiry",
+      sendAfterPrice: undefined,
+    }],
+  }));
+  assert.equal(selected, null);
+});
+
+test("service-enquiry mode requires trusted one-service intent even for price or package enquiries", async () => {
+  const configured = [{
+    ...resultMedia[0],
+    triggerMode: "service_enquiry",
+    sendAfterPrice: undefined,
+  }];
+
+  assert.equal(await resolveResultMediaForReply(base({
+    serviceQuery: false,
+    serviceQuerySource: null,
+    priceQuery: true,
+    resultMedia: configured,
+  })), null);
+
+  assert.ok(await resolveResultMediaForReply(base({
+    serviceQuery: true,
+    serviceQuerySource: "customer_message",
+    priceQuery: true,
+    resultMedia: configured,
+  })));
+
+  assert.ok(await resolveResultMediaForReply(base({
+    serviceQuery: true,
+    serviceQuerySource: "conversation",
+    priceQuery: false,
+    packageQuery: true,
+    resultMedia: configured,
+  })));
+});
+
+test("off trigger mode never auto-sends result media", async () => {
+  const selected = await resolveResultMediaForReply(base({
+    serviceQuery: true,
+    serviceQuerySource: "customer_message",
+    resultMedia: [{
+      ...resultMedia[0],
+      triggerMode: "off",
+      sendAfterPrice: undefined,
+    }],
+  }));
+  assert.equal(selected, null);
+});
+
+
+test("meta_ad service intent is rejected when backend did not load usable creative copy", async () => {
+  const selected = await resolveResultMediaForReply(base({
+    serviceQuery: true,
+    serviceQuerySource: "meta_ad",
+    metaAdCreativeService: null,
+    priceQuery: false,
+    resultMedia: [{
+      ...resultMedia[0],
+      triggerMode: "service_enquiry",
+      sendAfterPrice: undefined,
+    }],
+  }));
+
+  assert.equal(selected, null);
+});
+
+test("legacy price-only mode does not depend on the new serviceQuery metadata", async () => {
+  const selected = await resolveResultMediaForReply(base({
+    serviceQuery: false,
+    serviceQuerySource: null,
+    priceQuery: true,
+    resultMedia,
+  }));
+
+  assert.equal(selected?.triggerMode, "price_only");
+  assert.equal(selected?.serviceQuerySource, null);
+});
+
+
+test("meta_ad result media is rejected when creative resolves to a different service", async () => {
+  const configured = [{
+    ...resultMedia[0],
+    triggerMode: "service_enquiry",
+    sendAfterPrice: undefined,
+  }];
+
+  assert.equal(
+    await resolveResultMediaForReply(base({
+      serviceQuery: true,
+      serviceQuerySource: "meta_ad",
+      metaAdCreativeService: "骨盆调理",
+      priceQuery: false,
+      resultMedia: configured,
+    })),
+    null
+  );
+
+  // The same trust boundary applies to legacy price-only sets.
+  assert.equal(
+    await resolveResultMediaForReply(base({
+      serviceQuery: true,
+      serviceQuerySource: "meta_ad",
+      metaAdCreativeService: "骨盆调理",
+      priceQuery: true,
+      resultMedia,
+    })),
+    null
   );
 });

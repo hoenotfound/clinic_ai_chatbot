@@ -10,6 +10,7 @@ const { getAiOwnedContact } = require("./services/automaticReplyGuard");
 const { automatedRepliesEnabled } = require("./services/automaticReplyControl");
 const {
   loadMetaAdReplyContext,
+  resolveMetaAdCreativeService,
 } = require("./services/metaAdReplyContextService");
 const {
   getPendingAiHandoffContact,
@@ -644,6 +645,10 @@ async function processIncomingMessage(
     let aiReply;
     let flagged = false;
     let bookingReady = false;
+    let serviceQuery = false;
+    let serviceQuerySource = null;
+    let metaAdContext = null;
+    let metaAdCreativeService = null;
     let priceQuery = false;
     let packageQuery = false;
     let details = null;
@@ -656,13 +661,17 @@ async function processIncomingMessage(
         { urgent: true }
       );
     } else {
-      let metaAdContext = null;
       try {
-        // This is a local Postgres lookup only. Meta hierarchy enrichment stays
+        // This is a local Postgres lookup only. Meta enrichment stays
         // fire-and-forget, so a Graph API delay/failure can never block the
-        // customer reply. If referral creative text or cached hierarchy is
-        // already available, the AI can use it immediately as soft intent.
+        // customer reply. Only stored creative headline/body may influence
+        // reply intent; internal ad/campaign/ad-set names are ignored.
         metaAdContext = await loadMetaAdReplyContext(contact.id);
+        metaAdCreativeService = resolveMetaAdCreativeService(
+          metaAdContext,
+          clinicConfig.services,
+          clinicConfig.serviceAliases
+        );
       } catch (contextErr) {
         console.error(
           `Failed to load Meta ad reply context for contact ${contact.id}:`,
@@ -680,6 +689,8 @@ async function processIncomingMessage(
         text: aiReply,
         flagged,
         bookingReady,
+        serviceQuery,
+        serviceQuerySource,
         priceQuery,
         packageQuery,
         details,
@@ -933,6 +944,9 @@ async function processIncomingMessage(
       let pendingResultError = null;
       try {
         const resultBundle = await resolveResultMediaForReply({
+          serviceQuery,
+          serviceQuerySource,
+          metaAdCreativeService,
           priceQuery,
           packageQuery,
           treatment: details?.treatment,
@@ -948,6 +962,9 @@ async function processIncomingMessage(
         });
 
         if (resultBundle) {
+          console.log(
+            `Automatic result media eligible for ${resultBundle.service} via ${resultBundle.serviceQuerySource || resultBundle.triggerMode}.`
+          );
           for (const resultItem of resultBundle.items) {
             const resultContact = await getAiOwnedContact(contact, {
               channel,

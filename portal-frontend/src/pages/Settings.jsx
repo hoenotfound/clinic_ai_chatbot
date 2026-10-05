@@ -1953,7 +1953,11 @@ function ResultMediaSection({ config, onSaved, onError }) {
     (config.resultMedia || []).map((entry) => ({
       service: entry.service || "",
       enabled: entry.enabled === true,
-      sendAfterPrice: entry.sendAfterPrice === true,
+      triggerMode: ["off", "price_only", "service_enquiry"].includes(entry.triggerMode)
+        ? entry.triggerMode
+        : entry.sendAfterPrice === true
+          ? "price_only"
+          : "off",
       autoSendCount:
         Number.isInteger(entry.autoSendCount) && entry.autoSendCount >= 1
           ? Math.min(entry.autoSendCount, 2)
@@ -1983,7 +1987,7 @@ function ResultMediaSection({ config, onSaved, onError }) {
       {
         service,
         enabled: true,
-        sendAfterPrice: true,
+        triggerMode: "service_enquiry",
         autoSendCount: 1,
         items: [{ imageUrl: "", caption: "" }],
       },
@@ -2027,7 +2031,9 @@ function ResultMediaSection({ config, onSaved, onError }) {
         return {
           service: String(entry.service || "").trim(),
           enabled: entry.enabled === true,
-          sendAfterPrice: entry.sendAfterPrice === true,
+          triggerMode: ["off", "price_only", "service_enquiry"].includes(entry.triggerMode)
+            ? entry.triggerMode
+            : "off",
           autoSendCount: Math.min(
             Math.max(Number(entry.autoSendCount) || 1, 1),
             2,
@@ -2083,8 +2089,9 @@ function ResultMediaSection({ config, onSaved, onError }) {
       <div className="mb-5">
         <h3 className="font-display text-base font-bold sm:text-lg">Before & After</h3>
         <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)] sm:text-sm">
-          Add approved result examples by service. After a successful price reply,
-          the bot can send these after the promotion image. Automatic result media is suppressed
+          Add approved result examples by service and choose when each set can send.
+          Service enquiries can include clear interest from the customer's message, the current
+          conversation, or unambiguous Meta ad headline/body creative. Automatic result media is suppressed
           for 7 days after a send, then continues with the next configured example.
         </p>
       </div>
@@ -2121,17 +2128,23 @@ function ResultMediaSection({ config, onSaved, onError }) {
                     </span>
                     <span
                       className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                        entry.enabled && entry.sendAfterPrice
+                        entry.enabled && entry.triggerMode !== "off"
                           ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
                           : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"
                       }`}
                     >
-                      {entry.enabled && entry.sendAfterPrice ? "Auto-send on" : "Auto-send off"}
+                      {entry.enabled && entry.triggerMode !== "off" ? "Auto-send on" : "Auto-send off"}
                     </span>
                   </div>
                   <p className="mt-1 text-xs text-[var(--color-text-muted)]">
                     Sends {Math.min(entry.autoSendCount || 1, Math.max(entry.items.length, 1))} example
-                    {Math.min(entry.autoSendCount || 1, Math.max(entry.items.length, 1)) === 1 ? "" : "s"} per eligible price reply.
+                    {Math.min(entry.autoSendCount || 1, Math.max(entry.items.length, 1)) === 1 ? "" : "s"} per eligible{" "}
+                    {entry.triggerMode === "service_enquiry"
+                      ? "service enquiry"
+                      : entry.triggerMode === "price_only"
+                        ? "price enquiry"
+                        : "reply (auto-send disabled)"}
+                    .
                   </p>
                 </div>
                 <button
@@ -2181,20 +2194,23 @@ function ResultMediaSection({ config, onSaved, onError }) {
                       </span>
                     </label>
 
-                    <label className="flex min-h-12 items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3 text-sm">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5"
-                        checked={entry.sendAfterPrice === true}
-                        onChange={(event) => updateSet(index, { sendAfterPrice: event.target.checked })}
-                      />
-                      <span>
-                        <span className="block font-semibold">Send after price enquiries</span>
-                        <span className="mt-0.5 block text-xs leading-5 text-[var(--color-text-muted)]">
-                          Sends only after the normal AI reply succeeds and the service is matched safely.
-                        </span>
-                      </span>
-                    </label>
+                    <div>
+                      <label className={labelClass}>Automatically send when</label>
+                      <select
+                        className={inputClass}
+                        value={entry.triggerMode || "off"}
+                        onChange={(event) => updateSet(index, { triggerMode: event.target.value })}
+                      >
+                        <option value="service_enquiry">Customer asks about this service</option>
+                        <option value="price_only">Customer asks the price only</option>
+                        <option value="off">Don't auto-send</option>
+                      </select>
+                      <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+                        Service enquiry mode can use a clear customer message, the current one-service
+                        conversation, or unambiguous Meta ad headline/body creative. Greetings, booking, location,
+                        admin, safety, complaints, and ambiguous multi-service questions do not trigger it.
+                      </p>
+                    </div>
 
                     <div>
                       <label className={labelClass}>Automatic examples per eligible reply</label>
