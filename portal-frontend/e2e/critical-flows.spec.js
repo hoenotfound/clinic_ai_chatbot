@@ -741,7 +741,7 @@ test("closed WhatsApp conversation records opt-in and sends an approved template
   await openInboxConversation(page);
 
   await expect(page.getByText("Reply window closed", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Send WhatsApp template" }).click();
+  await page.getByRole("button", { name: "Record opt-in & choose template" }).click();
 
   const dialog = page.getByRole("dialog", { name: "Send WhatsApp template" });
   await expect(dialog).toBeVisible();
