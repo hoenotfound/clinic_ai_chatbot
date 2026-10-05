@@ -34,8 +34,29 @@ test("sticker media is saved for Inbox display without AI interpretation", () =>
   );
   assert.match(
     conversationStoreSource,
-    /sent a sticker\\\]\$\/i/
+    /function isStickerRow\(row\)/
   );
+  assert.match(
+    conversationStoreSource,
+    /!isStickerRow\(row\)/
+  );
+});
+
+test("sticker attachment storage failures stay internal and do not enter the generic handoff path", () => {
+  const stickerStart = serverSource.indexOf('if (mediaType === "sticker")');
+  const stickerEnd = serverSource.indexOf(
+    "// Photos without captions and stickers",
+    stickerStart
+  );
+  assert.ok(stickerStart >= 0 && stickerEnd > stickerStart);
+
+  const stickerBlock = serverSource.slice(stickerStart, stickerEnd);
+  assert.match(stickerBlock, /try \{/);
+  assert.match(stickerBlock, /conversationStore\.updateInboundMessage/);
+  assert.match(stickerBlock, /catch \(stickerStorageErr\)/);
+  assert.match(stickerBlock, /keeping the durable placeholder without changing ownership/);
+  assert.doesNotMatch(stickerBlock, /sendTrackedText\(/);
+  assert.doesNotMatch(stickerBlock, /pauseAiForHumanHandoff\(/);
 });
 
 test("a trailing sticker does not suppress a useful reply to an earlier burst message", () => {
