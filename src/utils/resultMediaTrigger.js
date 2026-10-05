@@ -82,7 +82,7 @@ function rotateAfter(items, lastImageUrl) {
 async function resolveResultMediaForReply({
   serviceQuery,
   serviceQuerySource,
-  metaAdCreativeAvailable = false,
+  metaAdCreativeService = null,
   priceQuery,
   packageQuery,
   treatment,
@@ -113,14 +113,18 @@ async function resolveResultMediaForReply({
 
   const sourceIsTrusted = SERVICE_QUERY_SOURCES.has(serviceQuerySource);
   const metaAdSourceVerified =
-    serviceQuerySource !== "meta_ad" || metaAdCreativeAvailable === true;
+    serviceQuerySource !== "meta_ad" ||
+    (
+      normalizeServiceName(metaAdCreativeService) &&
+      normalizeServiceName(metaAdCreativeService) === normalizeServiceName(treatment)
+    );
   const trustedServiceQuery =
     serviceQuery === true && sourceIsTrusted && metaAdSourceVerified;
 
   // service_enquiry mode is deliberately fail-closed: even a price/package
-  // question must carry the structured one-service intent signal. This avoids
-  // treating ad-name fallback or a model-invented meta_ad source as sufficient
-  // evidence for an automatic Before/After send.
+  // question must carry the structured one-service intent signal. For meta_ad
+  // intent, the backend-resolved headline/body service must equal treatment;
+  // model-only guesses or ambiguous creative can never unlock result media.
   const intentEligible =
     resultSet.triggerMode === "service_enquiry"
       ? trustedServiceQuery
