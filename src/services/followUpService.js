@@ -696,6 +696,7 @@ async function sendCandidate(candidate) {
         const selectedPackageName =
           await followUpAiService.selectPromotionPackageForFollowUp({
             conversation: aiContext.messages,
+            triggerMessageId: candidate.trigger_message_id,
             serviceName: promotionPackageSelection.serviceName,
             packages: promotionPackageSelection.packages,
             channel: candidate.channel || "whatsapp",
