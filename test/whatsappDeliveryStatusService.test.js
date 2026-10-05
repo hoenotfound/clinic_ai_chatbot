@@ -19,7 +19,12 @@ function job(overrides = {}) {
   };
 }
 
-function harness({ claimed = [], updateResult = null, existingMessage = null } = {}) {
+function harness({
+  claimed = [],
+  updateResult = null,
+  existingMessage = null,
+  queueTransientFailureRetry = async () => null,
+} = {}) {
   const calls = [];
   const repo = {
     storeBatch: async (updates) => {
@@ -73,6 +78,7 @@ function harness({ claimed = [], updateResult = null, existingMessage = null } =
     publish,
     publishContact,
     sendDeliveryFailureAlert,
+    queueTransientFailureRetry,
     logger,
   });
   return { calls, repo, service };
@@ -251,4 +257,43 @@ test("recovery claims retryable work and terminalizes exhausted non-failure rows
 
   assert.ok(calls.some((call) => call[0] === "markCompleted" && call[1] === retryJob.id));
   assert.ok(calls.some((call) => call[0] === "markTerminal" && call[1] === exhaustedJob.id));
+});
+
+
+test("known transient asynchronous WhatsApp failure queues retry and defers staff alert", async () => {
+  const statusJob = job({
+    id: 91,
+    delivery_status: "failed",
+    error_code: "131000",
+    error_message: "Something went wrong",
+  });
+  const updated = {
+    id: 501,
+    contact_id: 120,
+    whatsapp_message_id: statusJob.wamid,
+    delivery_status: "failed",
+    delivery_error: statusJob.error_message,
+  };
+  const retryCalls = [];
+  const { calls, service } = harness({
+    claimed: [statusJob],
+    updateResult: updated,
+    queueTransientFailureRetry: async (input) => {
+      retryCalls.push(input);
+      return { id: 7001, status: "scheduled" };
+    },
+  });
+
+  await service.processStoredDeliveryStatuses([{ id: statusJob.id }]);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(retryCalls, [{
+    messageId: 501,
+    contactId: 120,
+    errorText: "Something went wrong",
+    providerErrorCode: "131000",
+  }]);
+  assert.equal(calls.some((call) => call[0] === "setDeliveryAttentionState"), false);
+  assert.equal(calls.some((call) => call[0] === "sendDeliveryFailureAlert"), false);
+  assert.equal(calls.some((call) => call[0] === "markCompleted" && call[1] === statusJob.id), true);
 });
