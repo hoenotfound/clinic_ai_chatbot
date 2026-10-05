@@ -19,8 +19,10 @@ function classifyWhatsappSendFailure(httpStatus, rawBody) {
   const normalizedCode = Number.isInteger(providerErrorCode)
     ? providerErrorCode
     : null;
+  const normalizedStatus = Number(httpStatus);
   const retryable =
-    TRANSIENT_SEND_HTTP_STATUSES.has(Number(httpStatus)) ||
+    TRANSIENT_SEND_HTTP_STATUSES.has(normalizedStatus) ||
+    (normalizedStatus >= 500 && normalizedStatus <= 599) ||
     (normalizedCode !== null && TRANSIENT_SEND_ERROR_CODES.has(normalizedCode));
   const error = String(
     providerError?.error_data?.details ||
