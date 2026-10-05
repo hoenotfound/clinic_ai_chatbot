@@ -1453,3 +1453,20 @@ test("result media accepts new trigger modes while preserving legacy snapshots",
   assert.equal(invalid.ok, false);
   assert.deepEqual(invalid.invalidKeys, ["resultMedia"]);
 });
+
+
+test("config repository normalizes legacy result-media triggers without changing old behavior", () => {
+  const source = read("src/db/configRepo.js");
+  assert.match(
+    source,
+    /entry\?\.sendAfterPrice === true\s*\? "price_only"\s*:\s*"off"/
+  );
+  assert.match(
+    source,
+    /\["off", "price_only", "service_enquiry"\]\.includes\(configuredMode\)/
+  );
+  assert.match(
+    source,
+    /const \{ sendAfterPrice: _legacySendAfterPrice, \.\.\.rest \} = entry \|\| \{\}/
+  );
+});
