@@ -198,6 +198,43 @@ test("clearing attention does not reopen the strict cooldown or send a new alert
   assert.equal(alertCalls, 0);
 });
 
+test("Staff Assist clears unread and attention only when the contact snapshot is unchanged", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  const snapshot = {
+    id: 12,
+    updated_at: UPDATED_AT,
+    mode: "ai",
+    takeover_by: null,
+    needs_attention: true,
+    attention_reason: "Needs review",
+    is_unread: true,
+  };
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /updated_at = \$2/);
+    assert.match(sql, /mode = \$3/);
+    assert.match(sql, /takeover_by IS NOT DISTINCT FROM \$4/);
+    assert.match(sql, /attention_reason IS NOT DISTINCT FROM \$6/);
+    assert.deepEqual(params, [
+      12,
+      UPDATED_AT,
+      "ai",
+      null,
+      true,
+      "Needs review",
+      true,
+    ]);
+    return { rows: [] };
+  };
+
+  const updated = await contactsRepo.clearStaffAssistStateIfUnchanged(snapshot);
+  assert.equal(updated, null);
+});
+
 test("temporary AI outage attention clears only when that exact reason is still current", async (t) => {
   const originalQuery = pool.query;
   t.after(() => {
