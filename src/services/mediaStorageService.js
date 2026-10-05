@@ -321,6 +321,12 @@ async function pruneStaleTemporaryMedia({
   now = Date.now(),
   env = process.env,
 } = {}) {
+  const isolation = getMediaIsolationStatus(env);
+  // A legacy unprefixed deployment cannot prove that meta-outbound/ belongs
+  // exclusively to this client when buckets are shared. Fail closed instead
+  // of risking deletion of another client's temporary objects.
+  if (!isolation.prefix) return 0;
+
   const prefix = temporaryMediaPrefix(env);
   let continuationToken = undefined;
   let deleted = 0;
