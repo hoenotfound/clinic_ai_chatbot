@@ -25,7 +25,7 @@ test("WhatsApp inbound parser preserves Meta's message timestamp", () => {
   assert.equal(incoming.timestamp, "1791000000");
 });
 
-test("durable WhatsApp inbound uses Meta message time as messages.created_at", async () => {
+test("durable WhatsApp inbound stores Meta message time separately from persistence time", async () => {
   const incoming = {
     id: "wamid-source-time-2",
     from: "60123456789",
@@ -39,7 +39,7 @@ test("durable WhatsApp inbound uses Meta message time as messages.created_at", a
       captured = { sql, params };
       return {
         rows: [{
-          saved_inbound: { id: 1, contact_id: 7, created_at: params[5] },
+          saved_inbound: { id: 1, contact_id: 7, source_created_at: params[5] },
           processing_job: { id: 2, status: "pending" },
           derived_first_message: true,
         }],
@@ -55,8 +55,8 @@ test("durable WhatsApp inbound uses Meta message time as messages.created_at", a
     incoming,
   }, database);
 
-  assert.match(captured.sql, /whatsapp_message_id, created_at/);
-  assert.match(captured.sql, /COALESCE\(\$6::timestamptz, NOW\(\)\)/);
+  assert.match(captured.sql, /whatsapp_message_id, source_created_at/);
+  assert.match(captured.sql, /\$6::timestamptz/);
   assert.equal(
     captured.params[5],
     new Date(Number(incoming.timestamp) * 1000).toISOString()
@@ -68,7 +68,7 @@ test("WhatsApp source time cannot extend the window into the future", () => {
   const futureTimestamp = String((nowMs + 60 * 60 * 1000) / 1000);
 
   assert.equal(
-    inboundProcessingRepo.whatsappMessageCreatedAt(
+    inboundProcessingRepo.whatsappMessageSourceCreatedAt(
       "whatsapp",
       { timestamp: futureTimestamp },
       nowMs
@@ -76,7 +76,7 @@ test("WhatsApp source time cannot extend the window into the future", () => {
     new Date(nowMs).toISOString()
   );
   assert.equal(
-    inboundProcessingRepo.whatsappMessageCreatedAt(
+    inboundProcessingRepo.whatsappMessageSourceCreatedAt(
       "facebook",
       { timestamp: futureTimestamp },
       nowMs
@@ -84,7 +84,7 @@ test("WhatsApp source time cannot extend the window into the future", () => {
     null
   );
   assert.equal(
-    inboundProcessingRepo.whatsappMessageCreatedAt(
+    inboundProcessingRepo.whatsappMessageSourceCreatedAt(
       "whatsapp",
       { timestamp: "not-a-time" },
       nowMs
