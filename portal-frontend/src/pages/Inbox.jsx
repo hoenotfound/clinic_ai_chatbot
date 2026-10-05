@@ -2425,6 +2425,9 @@ function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
     ? message.sent_by_username
     : "AI";
   const isAudio = message.media_mime_type?.startsWith("audio/");
+  const isSticker =
+    isPatient &&
+    /sent a sticker\]$/i.test(String(message.content || "").trim());
   const deliveryFailed = !isPatient && message.delivery_status === "failed";
   const deliveryUnconfirmed = !isPatient && message.delivery_status === "unknown";
   const deliveryNeedsAction = deliveryFailed || deliveryUnconfirmed;
@@ -2456,12 +2459,19 @@ function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
         ) : (
           hasImage && (
             <div className="relative mb-1.5">
-              <img src={imageSrc} alt={message.content || "Sent image"} onClick={() => !message._uploading && onImageClick?.(imageSrc)} className={`max-h-64 max-w-full rounded-lg object-cover ${message._uploading ? "" : "cursor-zoom-in"}`} />
+              <img
+                src={imageSrc}
+                alt={isSticker ? "Customer sticker" : (message.content || "Sent image")}
+                onClick={() => !message._uploading && onImageClick?.(imageSrc)}
+                className={`${isSticker ? "max-h-36 max-w-[9rem] object-contain" : "max-h-64 max-w-full rounded-lg object-cover"} ${message._uploading ? "" : "cursor-zoom-in"}`}
+              />
               {message._uploading && <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/30"><Spinner className="h-6 w-6 text-white" /></div>}
             </div>
           )
         )}
-        {message.content && <p className="whitespace-pre-wrap break-words">{message.content}</p>}
+        {message.content && (!isSticker || !hasImage) && (
+          <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        )}
         <div className={`mt-1.5 flex items-center gap-1.5 text-[10px] ${isPatient ? "text-[var(--color-text-muted)]" : "justify-end text-white/70"}`}>
           {message._optimistic && <Spinner className="h-2.5 w-2.5" />}
           <span>{formatMessageTime(message.created_at)}</span>
