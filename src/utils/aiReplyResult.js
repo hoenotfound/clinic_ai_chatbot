@@ -7,6 +7,7 @@ const {
 } = require("./attentionTriggers");
 
 const VALID_OUTCOMES = new Set(["normal", "needs_human", "booking_ready"]);
+const VALID_SERVICE_QUERY_SOURCES = new Set(["customer_message", "conversation", "meta_ad"]);
 const VALID_PROJECT_NEXT_STEPS = new Set(["site_visit", "quotation_discussion"]);
 const MAX_METADATA_LENGTH = 240;
 const MAX_STAFF_SUMMARY_LENGTH = 600;
@@ -168,7 +169,7 @@ function containsInternalAiScaffolding(value) {
   return (
     /json\s+construction\s*:/i.test(text)
     || /structured\s+output\s*[-:：]?/i.test(text)
-    || /(?:^|[{,\n])\s*["']?(?:priceQuery|packageQuery|promotionOption|appointmentPreference|projectLocation|projectSummary|nextStep|staffSummary)["']?\s*:/m.test(text)
+    || /(?:^|[{,\n])\s*["']?(?:serviceQuery|serviceQuerySource|priceQuery|packageQuery|promotionOption|appointmentPreference|projectLocation|projectSummary|nextStep|staffSummary)["']?\s*:/m.test(text)
     || /(?:^|[{,\n])\s*["']?outcome["']?\s*:\s*["']?(?:normal|needs_human|booking_ready)\b/im.test(text)
     || /\{\s*["']?reply["']?\s*:[\s\S]{0,1200}["']?outcome["']?\s*:/i.test(text)
   );
@@ -219,6 +220,8 @@ function parseStructuredReply(raw) {
   const outcome = typeof parsed.outcome === "string"
     ? parsed.outcome.trim().toLowerCase()
     : "";
+  const requestedServiceQuery = parsed.serviceQuery === true;
+  const requestedServiceQuerySource = cleanOptionalText(parsed.serviceQuerySource);
   const priceQuery = parsed.priceQuery === true;
   const packageQuery = parsed.packageQuery === true;
   const promotionOption = cleanOptionalText(parsed.promotionOption);
@@ -238,6 +241,8 @@ function parseStructuredReply(raw) {
       text: reply,
       flagged: false,
       bookingReady: false,
+      serviceQuery: false,
+      serviceQuerySource: null,
       priceQuery,
       packageQuery,
       promotionOption,
@@ -257,6 +262,10 @@ function parseStructuredReply(raw) {
   const treatment = parsed.treatment == null
     ? null
     : canonicalConfiguredService(parsed.treatment);
+  const serviceQuerySource = VALID_SERVICE_QUERY_SOURCES.has(requestedServiceQuerySource)
+    ? requestedServiceQuerySource
+    : null;
+  const serviceQuery = requestedServiceQuery && !!treatment && !!serviceQuerySource;
   const appointmentPreference = cleanOptionalText(parsed.appointmentPreference);
   const staffSummary = outcome === "booking_ready"
     ? cleanStaffSummary(parsed.staffSummary)
@@ -329,6 +338,8 @@ function parseStructuredReply(raw) {
     text: reply,
     flagged: outcome === "needs_human",
     bookingReady: outcome === "booking_ready",
+    serviceQuery,
+    serviceQuerySource: serviceQuery ? serviceQuerySource : null,
     priceQuery,
     packageQuery,
     promotionOption,
@@ -369,6 +380,8 @@ function parseAiReplyResult(raw) {
   return {
     ...legacy,
     bookingReady,
+    serviceQuery: false,
+    serviceQuerySource: null,
     priceQuery: false,
     packageQuery: false,
     promotionOption: null,
@@ -384,6 +397,7 @@ function parseAiReplyResult(raw) {
 
 module.exports = {
   VALID_OUTCOMES,
+  VALID_SERVICE_QUERY_SOURCES,
   VALID_PROJECT_NEXT_STEPS,
   MAX_STAFF_SUMMARY_LENGTH,
   canonicalConfiguredBranch,
