@@ -23,12 +23,26 @@ const {
   startScheduledMessageWorker,
 } = require("./scheduledMessageBootstrap");
 const startupReadiness = require("./startupReadinessService");
+const mediaStorage = require("./mediaStorageService");
 const {
   closeHttpServer,
   listenHttpServer,
 } = require("./httpServerStartup");
 
 const PROMO_IMAGE_PRUNE_INTERVAL_MS = 30 * 60 * 1000;
+const TEMP_MEDIA_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+function pruneStaleTemporaryMediaSafely() {
+  mediaStorage.pruneStaleTemporaryMedia()
+    .then((deleted) => {
+      if (deleted > 0) {
+        console.log(`Pruned ${deleted} stale temporary Meta media object(s).`);
+      }
+    })
+    .catch((err) => {
+      console.error("Failed to prune stale temporary Meta media:", err);
+    });
+}
 
 async function startApplication({
   app,
@@ -76,6 +90,12 @@ async function startApplication({
       configRepo.pruneOrphanedPromoImages,
       PROMO_IMAGE_PRUNE_INTERVAL_MS
     );
+    pruneStaleTemporaryMediaSafely();
+    const tempMediaPruneTimer = setIntervalFn(
+      pruneStaleTemporaryMediaSafely,
+      TEMP_MEDIA_PRUNE_INTERVAL_MS
+    );
+    tempMediaPruneTimer?.unref?.();
 
     startInboundProcessingRecovery({ processBatch: processIncomingBatch });
     startWhatsAppDeliveryStatusRecovery();
@@ -103,5 +123,7 @@ async function startApplication({
 
 module.exports = {
   PROMO_IMAGE_PRUNE_INTERVAL_MS,
+  TEMP_MEDIA_PRUNE_INTERVAL_MS,
+  pruneStaleTemporaryMediaSafely,
   startApplication,
 };
