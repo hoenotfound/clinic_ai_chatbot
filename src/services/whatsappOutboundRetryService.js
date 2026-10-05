@@ -82,13 +82,13 @@ async function failClosedAmbiguous(row, reason, {
     errorText
   );
   publishDeliveryStatus(updated);
-  if (leaseToken) {
-    await repository.markFailed(row.id, leaseToken, errorText);
-  }
   await contacts.setDeliveryAttention(
     row.contact_id,
     `Delivery unconfirmed: ${errorText}`
   );
+  if (leaseToken) {
+    await repository.markFailed(row.id, leaseToken, errorText);
+  }
 }
 
 async function runWhatsappOutboundRetryQueue({
@@ -108,6 +108,8 @@ async function runWhatsappOutboundRetryQueue({
         String(row.delivery_status || "").toLowerCase()
       );
     if (acceptedEvidence) {
+      await repository.markSent(row.id, row.lease_token);
+      await contacts.clearDeliveryAttentionIfNoFailedMessages(row.contact_id);
       continue;
     }
 
@@ -115,7 +117,7 @@ async function runWhatsappOutboundRetryQueue({
       repository,
       messages,
       contacts,
-      leaseToken: null,
+      leaseToken: row.lease_token,
     }).catch((err) => {
       console.error(
         `Failed to surface stale WhatsApp retry ${row.id} for contact ${row.contact_id}:`,
@@ -254,7 +256,9 @@ async function runWhatsappOutboundRetryQueue({
   return {
     processed: retries.length,
     staleRecovered: stale.length,
-    nextDueAt: await repository.findNextDueAt(),
+    nextDueAt: await repository.findNextDueAt({
+      staleAfterSeconds: STALE_PROCESSING_SECONDS,
+    }),
   };
 }
 
