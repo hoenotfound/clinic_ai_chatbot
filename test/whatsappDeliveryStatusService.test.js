@@ -71,7 +71,7 @@ function harness({
     calls.push(["sendDeliveryFailureAlert", input.contactId, input.reason]);
     return { status: "sent" };
   };
-  const logger = { error() {} };
+  const logger = { error() {}, warn() {} };
   const service = createWhatsAppDeliveryStatusService({
     repo,
     messages,
