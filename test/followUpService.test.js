@@ -19,8 +19,12 @@ const {
 } = require("../src/services/followUpService");
 
 const originalPolicyCheck = whatsappPolicy.checkFreeformAllowed;
+const originalGeneratePersonalizedFollowUp =
+  followUpAiService.generatePersonalizedFollowUp;
 
 test.beforeEach(() => {
+  followUpAiService.generatePersonalizedFollowUp =
+    originalGeneratePersonalizedFollowUp;
   followUpRepo.markStaleClaimsUnconfirmed = async () => [];
   followUpRepo.getNextCandidateDueAt = async () => null;
   followUpRepo.getNextStaleClaimDueAt = async () => null;
