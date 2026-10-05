@@ -3,6 +3,8 @@ const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 
 const MAX_FOLLOW_UP_STEPS = 3;
 const REPLY_WINDOW_BUFFER = "23 hours 50 minutes";
+const AI_GENERATION_LEASE_STALE_SECONDS = 120;
+const FOLLOW_UP_MESSAGE_MODES = new Set(["fixed", "ai_personalized", "ai_fallback"]);
 
 const FOLLOW_UP_MESSAGE_COLUMNS = `
   id,
@@ -20,7 +22,8 @@ const FOLLOW_UP_MESSAGE_COLUMNS = `
   is_automated_follow_up,
   automated_follow_up_step,
   automated_follow_up_target_service,
-  automated_follow_up_targeting_recorded
+  automated_follow_up_targeting_recorded,
+  automated_follow_up_message_mode
 `;
 
 function normalizeDelayMinutes(value) {
@@ -391,6 +394,7 @@ async function saveIfStillEligible({
   mediaUrl,
   stepIndex = 1,
   targetedService = null,
+  messageMode = "fixed",
   delayMinutes,
   previousDelayMinutes = 0,
   triggerMode,
@@ -399,6 +403,7 @@ async function saveIfStillEligible({
   const numericDelay = Number(delayMinutes);
   const numericPreviousDelay = Number(previousDelayMinutes);
   const numericStep = Number(stepIndex);
+  const normalizedMessageMode = String(messageMode || "fixed").trim().toLowerCase();
   if (
     !Number.isInteger(numericDelay) ||
     numericDelay < 5 ||
@@ -410,7 +415,8 @@ async function saveIfStillEligible({
     (numericStep > 1 && numericPreviousDelay < 5) ||
     !Number.isInteger(numericStep) ||
     numericStep < 1 ||
-    numericStep > MAX_FOLLOW_UP_STEPS
+    numericStep > MAX_FOLLOW_UP_STEPS ||
+    !FOLLOW_UP_MESSAGE_MODES.has(normalizedMessageMode)
   ) {
     throw new TypeError("Invalid automated follow-up step or delay.");
   }
@@ -473,9 +479,10 @@ async function saveIfStillEligible({
        automated_follow_up_for_message_id,
        automated_follow_up_step,
        automated_follow_up_target_service,
-       automated_follow_up_targeting_recorded
+       automated_follow_up_targeting_recorded,
+       automated_follow_up_message_mode
      )
-     SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2, $5, $6, true
+     SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2, $5, $6, true, $11
      FROM anchor, latest_inbound, progress, contacts c
      LEFT JOIN previous_follow_up ON true
      LEFT JOIN LATERAL (
@@ -554,6 +561,7 @@ async function saveIfStillEligible({
       triggerMode,
       activatedAt,
       numericPreviousDelay,
+      normalizedMessageMode,
     ]
   );
   return result.rows[0] || null;
@@ -574,6 +582,7 @@ async function getAiFollowUpContext({ contactId, limit = 20 }) {
        m.sent_by_username,
        m.is_automated_follow_up,
        m.automated_follow_up_step,
+       m.automated_follow_up_for_message_id,
        m.created_at
      FROM messages m
      WHERE m.contact_id = $1
