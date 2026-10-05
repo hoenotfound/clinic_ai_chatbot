@@ -196,11 +196,13 @@ async function finishAttention(
 ) {
   const attentionReason = String(reason || "Delivery failed.").slice(0, 1000);
 
-  const prepared = await repository.prepareAttention(
-    row.id,
-    leaseToken,
-    attentionReason
-  );
+  const prepared = typeof repository.prepareAttention === "function"
+    ? await repository.prepareAttention(
+        row.id,
+        leaseToken,
+        attentionReason
+      )
+    : { id: row.id };
   if (!prepared) return false;
 
   try {
