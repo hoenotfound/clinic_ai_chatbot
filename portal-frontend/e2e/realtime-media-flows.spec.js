@@ -113,6 +113,7 @@ async function installRealtimeHarness(page) {
       sources: [],
       getUserMediaCalls: 0,
       tracksStopped: 0,
+      mediaUploads: [],
     };
 
     class MockEventSource {
@@ -218,6 +219,71 @@ async function installRealtimeHarness(page) {
       },
     });
 
+    function browserJpegFrameEncoding(bytes) {
+      const progressiveMarkers = new Set([0xc2, 0xc6, 0xca, 0xce]);
+      const sofMarkers = new Set([
+        0xc0, 0xc1, 0xc2, 0xc3,
+        0xc5, 0xc6, 0xc7,
+        0xc9, 0xca, 0xcb,
+        0xcd, 0xce, 0xcf,
+      ]);
+
+      if (
+        !(bytes instanceof Uint8Array) ||
+        bytes.length < 4 ||
+        bytes[0] !== 0xff ||
+        bytes[1] !== 0xd8
+      ) {
+        return null;
+      }
+
+      let offset = 2;
+      while (offset < bytes.length - 1) {
+        while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
+        if (offset >= bytes.length) break;
+
+        const marker = bytes[offset];
+        offset += 1;
+
+        if (marker === 0xd9 || marker === 0xda) break;
+        if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+        if (offset + 1 >= bytes.length) break;
+
+        const segmentLength = (bytes[offset] << 8) | bytes[offset + 1];
+        if (segmentLength < 2 || offset + segmentLength > bytes.length) break;
+
+        if (sofMarkers.has(marker)) {
+          return progressiveMarkers.has(marker) ? "progressive" : "non-progressive";
+        }
+        offset += segmentLength;
+      }
+
+      return null;
+    }
+
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async (input, init = {}) => {
+      const url = typeof input === "string" ? input : input?.url || "";
+      if (
+        /\/api\/conversations\/\d+\/media(?:\?|$)/.test(url) &&
+        init.body instanceof FormData
+      ) {
+        const image = init.body.get("image");
+        if (image instanceof Blob) {
+          const bytes = new Uint8Array(await image.arrayBuffer());
+          state.mediaUploads.push({
+            name: image instanceof File ? image.name : "",
+            type: image.type || "",
+            size: image.size,
+            encoding: image.type === "image/jpeg"
+              ? browserJpegFrameEncoding(bytes)
+              : null,
+          });
+        }
+      }
+      return nativeFetch(input, init);
+    };
+
     window.__realtimeMediaTest = {
       emit(type, payload) {
         for (const source of state.sources) source.emit(type, payload);
@@ -230,6 +296,9 @@ async function installRealtimeHarness(page) {
       },
       tracksStopped() {
         return state.tracksStopped;
+      },
+      latestMediaUpload() {
+        return state.mediaUploads.at(-1) || null;
       },
     };
   });
@@ -585,27 +654,6 @@ function jpegFrameEncoding(buffer) {
   return null;
 }
 
-function multipartFileBytes(bodyBuffer, contentType) {
-  if (!Buffer.isBuffer(bodyBuffer)) return null;
-  const boundaryMatch = String(contentType || "").match(/boundary=([^;]+)/i);
-  if (!boundaryMatch) return null;
-  const boundary = boundaryMatch[1].trim().replace(/^"|"$/g, "");
-
-  const filenameIndex = bodyBuffer.indexOf(Buffer.from('filename="', "ascii"));
-  if (filenameIndex < 0) return null;
-
-  const headerEndMarker = Buffer.from("\r\n\r\n", "ascii");
-  const bodyStart = bodyBuffer.indexOf(headerEndMarker, filenameIndex);
-  if (bodyStart < 0) return null;
-
-  const dataStart = bodyStart + headerEndMarker.length;
-  const closingBoundary = Buffer.from(`\r\n--${boundary}`, "ascii");
-  const dataEnd = bodyBuffer.indexOf(closingBoundary, dataStart);
-  if (dataEnd < 0) return null;
-
-  return bodyBuffer.subarray(dataStart, dataEnd);
-}
-
 function expectNoUnexpectedApi(apiState) {
   expect(apiState.unexpected, "All browser API calls should be explicitly mocked").toEqual([]);
 }
@@ -764,15 +812,17 @@ test("progressive JPEG is normalized before upload", async ({ page }) => {
   await page.getByRole("button", { name: "Send message" }).click();
 
   expect(apiState.mediaRequests).toHaveLength(1);
-  const mediaRequest = apiState.mediaRequests[0];
-  const uploaded = multipartFileBytes(mediaRequest.bodyBuffer, mediaRequest.contentType);
-  expect(uploaded).not.toBeNull();
 
-  const multipart = mediaRequest.raw;
-  if (multipart.includes('Content-Type: image/jpeg')) {
-    expect(jpegFrameEncoding(uploaded)).toBe("non-progressive");
+  const uploaded = await page.evaluate(
+    () => window.__realtimeMediaTest?.latestMediaUpload?.() || null
+  );
+  expect(uploaded).not.toBeNull();
+  if (uploaded.type === "image/jpeg") {
+    expect(uploaded.encoding).toBe("non-progressive");
+    expect(uploaded.name).toMatch(/\.jpg$/i);
   } else {
-    expect(multipart).toContain("Content-Type: image/png");
+    expect(uploaded.type).toBe("image/png");
+    expect(uploaded.name).toMatch(/\.png$/i);
   }
 
   expectNoUnexpectedApi(apiState);
