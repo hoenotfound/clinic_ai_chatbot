@@ -5,6 +5,7 @@ const path = require("node:path");
 
 const {
   cleanContextText,
+  hasMetaAdCreativeContext,
   loadMetaAdReplyContext,
   normalizeMetaAdReplyContext,
 } = require("../src/services/metaAdReplyContextService");
@@ -60,6 +61,16 @@ test("uses headline/body for Meta reply context and keeps hierarchy metadata out
     null
   );
   assert.equal(cleanContextText("x".repeat(300), 20).length, 20);
+  assert.equal(hasMetaAdCreativeContext(context), true);
+  assert.equal(
+    hasMetaAdCreativeContext({
+      headline: null,
+      body: null,
+      adName: "3D 小颜术 - 大小脸",
+    }),
+    false
+  );
+  assert.equal(hasMetaAdCreativeContext(null), false);
 });
 
 test("loads current lead attribution locally without requiring Meta API enrichment", async () => {
@@ -118,6 +129,7 @@ test("system prompt uses ad creative as soft intent rather than customer truth",
   assert.match(section, /current message and conversation history always take priority/);
   assert.match(section, /priceQuery.*CURRENT message/s);
   assert.match(section, /serviceQuery.*meta_ad/s);
+  assert.match(section, /Ad name fallback.*never sufficient.*serviceQuery/i);
   assert.match(section, /greeting alone.*NOT a serviceQuery/i);
   assert.match(section, /Do NOT infer that the customer personally has any symptom/);
   assert.match(section, /Never copy ad-only claims into "staffSummary"/);
@@ -230,20 +242,31 @@ test("both Gemini and Claude receive the Meta ad context in their system prompt"
   assert.doesNotMatch(claudeBody.system, /Campaign name|Ad set name/);
 });
 
-test("server feeds local Meta ad context to AI without calling Meta on the reply path", () => {
+test("server verifies creative Meta context before it can drive result media", () => {
   const serverSource = fs.readFileSync(
     path.join(__dirname, "../src/server.js"),
     "utf8"
   );
 
   const loadAt = serverSource.indexOf("metaAdContext = await loadMetaAdReplyContext(contact.id)");
-  const replyAt = serverSource.indexOf("const rawAiReply = await ai.getReply(history");
+  const verifyAt = serverSource.indexOf(
+    "metaAdCreativeAvailable = hasMetaAdCreativeContext(metaAdContext)",
+    loadAt
+  );
+  const replyAt = serverSource.indexOf("const rawAiReply = await ai.getReply(history", verifyAt);
+  const resultAt = serverSource.indexOf("resolveResultMediaForReply({", replyAt);
 
   assert.ok(loadAt >= 0, "server should load Meta ad reply context");
-  assert.ok(replyAt > loadAt, "context should be loaded before generation");
+  assert.ok(verifyAt > loadAt, "server should independently verify creative headline/body");
+  assert.ok(replyAt > verifyAt, "verified context should be established before generation");
+  assert.ok(resultAt > replyAt, "result media should resolve after the AI reply");
   assert.match(
     serverSource.slice(loadAt, replyAt + 400),
     /ai\.getReply\(history, \{[\s\S]*metaAdContext/
+  );
+  assert.match(
+    serverSource.slice(resultAt, resultAt + 700),
+    /metaAdCreativeAvailable,/
   );
   assert.doesNotMatch(
     serverSource.slice(loadAt, replyAt),
