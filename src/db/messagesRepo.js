@@ -850,6 +850,7 @@ async function hasStaffReplyAfter(contactId, inboundMessageId, query = pool.quer
          ON staff.contact_id = inbound.contact_id
         AND staff.role = 'assistant'
         AND staff.sent_by_username IS NOT NULL
+        AND COALESCE(staff.delivery_status, 'pending') <> 'failed'
         AND (staff.created_at, staff.id) > (inbound.created_at, inbound.id)
        WHERE inbound.id = $2
          AND inbound.contact_id = $1
