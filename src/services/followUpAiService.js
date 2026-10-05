@@ -87,9 +87,13 @@ function similarity(left, right) {
   return union ? intersection / union : 0;
 }
 
-function previousFollowUps(messages) {
+function previousFollowUps(messages, triggerMessageId) {
+  const numericTriggerMessageId = Number(triggerMessageId);
   return messages
-    .filter((message) => message.is_automated_follow_up)
+    .filter((message) =>
+      message.is_automated_follow_up
+      && Number(message.automated_follow_up_for_message_id) === numericTriggerMessageId
+    )
     .slice(-MAX_PREVIOUS_FOLLOW_UPS)
     .map((message) => message.content);
 }
@@ -120,6 +124,7 @@ function internalRequest(conversationText) {
 
 async function generatePersonalizedFollowUp({
   conversation,
+  triggerMessageId,
   stepNumber,
   treatmentInterest = null,
   stageName = null,
@@ -136,7 +141,7 @@ async function generatePersonalizedFollowUp({
     throw err;
   }
 
-  const priorFollowUps = previousFollowUps(trimmed);
+  const priorFollowUps = previousFollowUps(trimmed, triggerMessageId);
   const recentAssistant = recentAssistantMessages(trimmed);
   let avoidMessage = "";
 
@@ -184,6 +189,7 @@ module.exports = {
   MAX_CONTEXT_MESSAGES,
   generatePersonalizedFollowUp,
   isSubstantiallySimilar,
+  previousFollowUps,
   renderConversation,
   similarity,
   trimConversation,
