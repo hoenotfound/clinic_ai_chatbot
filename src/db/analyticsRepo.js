@@ -562,6 +562,7 @@ async function getFollowUps(filters, analyticsProfile) {
          COALESCE(m.automated_follow_up_step, 1)::int AS follow_up_step,
          NULLIF(TRIM(m.automated_follow_up_target_service), '') AS target_service,
          COALESCE(m.automated_follow_up_targeting_recorded, false) AS targeting_recorded,
+         NULLIF(TRIM(m.automated_follow_up_message_mode), '') AS message_mode,
          (
            SELECT MIN(next_follow_up.created_at)
            FROM messages next_follow_up
@@ -672,6 +673,8 @@ async function getFollowUps(filters, analyticsProfile) {
      targeting_stats AS (
        SELECT
          CASE
+           WHEN message_mode = 'ai_personalized' THEN 'ai_personalized'
+           WHEN message_mode = 'ai_fallback' THEN 'ai_fallback'
            WHEN target_service IS NOT NULL THEN 'targeted'
            WHEN targeting_recorded THEN 'general'
            ELSE 'legacy_unknown'
