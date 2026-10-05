@@ -359,15 +359,26 @@ test("classifies Meta 131000 as a safe transient rejection", () => {
   assert.equal(result.error, "Something went wrong");
 });
 
-test("classifies any explicit 5xx WhatsApp rejection as transient", () => {
+test("does not automatically retry an unknown generic 5xx WhatsApp rejection", () => {
   const result = classifyWhatsappSendFailure(
     521,
     JSON.stringify({ error: { message: "Provider unavailable" } })
   );
 
-  assert.equal(result.retryable, true);
+  assert.equal(result.retryable, false);
   assert.equal(result.ambiguous, false);
   assert.equal(result.providerStatus, 521);
+});
+
+test("still retries an explicit WhatsApp rate-limit rejection", () => {
+  const result = classifyWhatsappSendFailure(
+    429,
+    JSON.stringify({ error: { message: "Too many requests" } })
+  );
+
+  assert.equal(result.retryable, true);
+  assert.equal(result.ambiguous, false);
+  assert.equal(result.providerStatus, 429);
 });
 
 test("does not retry a clear non-transient WhatsApp policy rejection", () => {
