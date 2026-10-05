@@ -230,3 +230,11 @@ test("temporary media cleanup only considers objects older than the safety windo
     false
   );
 });
+
+
+test("durable temporary-media sweep fails closed without a client namespace", async () => {
+  assert.equal(
+    await mediaStorage.pruneStaleTemporaryMedia({ env: {} }),
+    0
+  );
+});
