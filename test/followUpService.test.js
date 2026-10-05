@@ -136,8 +136,14 @@ test("first follow-up uses hidden active-promotion copy and does not let AI rewr
   ];
   clinicConfig.automatedFollowUp.messageMode = "ai";
   clinicConfig.automatedFollowUp.aiInstruction = "Write a personalized follow-up.";
+  clinicConfig.automatedFollowUp.imageUrl = "https://example.com/generic-follow-up.jpg";
 
   let aiCalls = 0;
+  let imageCalls = 0;
+  whatsapp.sendImage = async () => {
+    imageCalls += 1;
+    return { success: true, wamid: "unexpected-image" };
+  };
   let claimInput = null;
   followUpAiService.generatePersonalizedFollowUp = async () => {
     aiCalls += 1;
@@ -175,6 +181,8 @@ test("first follow-up uses hidden active-promotion copy and does not let AI rewr
   );
   assert.equal(claimInput.targetedService, "3D 小颜术");
   assert.equal(claimInput.messageMode, "fixed");
+  assert.equal(claimInput.mediaUrl, null);
+  assert.equal(imageCalls, 0);
 });
 
 test("first follow-up selects the exact configured package offer", async () => {
@@ -302,7 +310,7 @@ test("generic package price enquiry uses one AI-selected configured offer", asyn
       recent_inbound_messages: ["Pelvic Care price?"],
       // The outbound anchor may be the last package caption. It must not decide
       // which hidden follow-up offer is sent.
-      trigger_message_content: "Package B 优惠价 RM388",
+      trigger_message_content: "Package B 优惠价 RM388，Includes Uterus Care",
     },
   ];
   followUpRepo.saveIfStillEligible = async (input) => {
