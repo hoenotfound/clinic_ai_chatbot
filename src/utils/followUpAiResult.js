@@ -60,6 +60,13 @@ function parseFollowUpAiResult(raw) {
     throw invalidResponse("AI follow-up response is missing a valid action.");
   }
 
+  if (
+    typeof parsed.message === "string" &&
+    parsed.message.trim().length > MAX_FOLLOW_UP_MESSAGE_LENGTH
+  ) {
+    throw invalidResponse("AI follow-up message is too long.");
+  }
+
   const message = cleanText(parsed.message, MAX_FOLLOW_UP_MESSAGE_LENGTH);
   const reason = cleanText(parsed.reason, MAX_FOLLOW_UP_REASON_LENGTH);
   const topic = cleanText(parsed.topic, MAX_FOLLOW_UP_TOPIC_LENGTH);
