@@ -78,6 +78,7 @@ const VALIDATORS = {
           p.followUpMessage === undefined ||
           (isString(p.followUpMessage) && p.followUpMessage.trim().length <= 1000)
         ) &&
+        isPromotionFollowUpTranslations(p.followUpTranslations) &&
         (
           p.packages === undefined ||
           (
@@ -120,6 +121,24 @@ function isPlainObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+function isPromotionFollowUpTranslations(value) {
+  if (value === undefined) return true;
+  if (!isPlainObject(value)) return false;
+  return ["en", "ms", "zh"].every(
+    (key) =>
+      value[key] === undefined ||
+      (isString(value[key]) && value[key].trim().length <= 1000)
+  );
+}
+
+function hasPromotionFollowUpCopy(value) {
+  if (isString(value?.followUpMessage) && value.followUpMessage.trim()) return true;
+  if (!isPlainObject(value?.followUpTranslations)) return false;
+  return ["en", "ms", "zh"].some(
+    (key) => isString(value.followUpTranslations[key]) && value.followUpTranslations[key].trim()
+  );
+}
+
 function isPromotionPackage(value) {
   return (
     isPlainObject(value) &&
@@ -134,7 +153,8 @@ function isPromotionPackage(value) {
     (
       value.followUpMessage === undefined ||
       (isString(value.followUpMessage) && value.followUpMessage.trim().length <= 1000)
-    )
+    ) &&
+    isPromotionFollowUpTranslations(value.followUpTranslations)
   );
 }
 
@@ -708,8 +728,8 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
 
       const linkedService = String(promotion?.linkedService || "").trim();
       const hasFollowUpMessage =
-        Boolean(String(promotion?.followUpMessage || "").trim()) ||
-        packages.some((item) => Boolean(String(item?.followUpMessage || "").trim()));
+        hasPromotionFollowUpCopy(promotion) ||
+        packages.some((item) => hasPromotionFollowUpCopy(item));
       if (
         hasFollowUpMessage &&
         (!linkedService || !serviceNames.has(linkedService.toLowerCase()))
