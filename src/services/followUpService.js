@@ -669,47 +669,58 @@ function currentSessionHasPromotionEnquiry(
     triggerMessageId
   );
   let currentCustomerService = null;
-  let sawExplicitCustomerService = false;
+  let targetPromotionEnquirySeen = false;
+  let genericPromotionEnquirySeen = false;
+  let incompatibleServiceSeen = false;
 
   for (const message of scoped) {
     if (message?.role !== "user") continue;
 
     const service = mostSpecificConfiguredServiceInText(message.content);
     if (service.mentioned) {
-      sawExplicitCustomerService = true;
-      currentCustomerService = service.serviceName
-        ? normalizedServiceName(service.serviceName)
-        : null;
+      if (!service.serviceName) {
+        currentCustomerService = null;
+        incompatibleServiceSeen = true;
+      } else {
+        currentCustomerService = normalizedServiceName(service.serviceName);
+        if (currentCustomerService !== target) {
+          incompatibleServiceSeen = true;
+        }
+      }
     }
 
     if (!looksLikePromotionEnquiry(message?.content)) continue;
 
-    // A service named in the same price/package enquiry is authoritative.
     if (service.mentioned) {
       if (service.serviceName && currentCustomerService === target) {
-        return true;
+        targetPromotionEnquirySeen = true;
       }
       continue;
     }
 
     // Real chats commonly establish the service in one turn and then ask only
-    // "多少钱？" / "price?". Carry that customer-only service context forward
-    // within the current sales session instead of requiring the service name to
-    // be repeated in the price message itself.
+    // "多少钱？" / "price?". Carry that customer-only service context into the
+    // generic price turn.
     if (currentCustomerService) {
-      if (currentCustomerService === target) return true;
+      if (currentCustomerService === target) {
+        targetPromotionEnquirySeen = true;
+      }
       continue;
     }
 
-    // When the customer never named any service in this session (for example an
-    // ad/referral already established the CRM treatment interest), the current
-    // structured target is the safest available context for a generic price
-    // enquiry. Once the customer has explicitly named another/ambiguous service,
-    // never use CRM alone to unlock a different hidden offer.
-    if (!sawExplicitCustomerService) return true;
+    // With no customer-spoken service yet (for example a Meta ad already set
+    // the structured treatment interest), remember the generic price enquiry.
+    // It is usable only if the rest of this scoped session never introduces a
+    // competing/ambiguous service.
+    genericPromotionEnquirySeen = true;
   }
 
-  return false;
+  // Fail closed if the customer explicitly moved to another/ambiguous service
+  // anywhere in this current session. The normal follow-up is safer than
+  // reviving a hidden offer for stale CRM interest.
+  if (incompatibleServiceSeen) return false;
+
+  return targetPromotionEnquirySeen || genericPromotionEnquirySeen;
 }
 
 async function sendCandidate(candidate) {
