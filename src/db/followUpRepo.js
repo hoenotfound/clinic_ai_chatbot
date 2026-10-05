@@ -158,6 +158,12 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
        ) latest_lead ON true
        WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
          AND c.needs_attention = false
+         AND NOT (
+           c.mode = 'human'
+           AND c.takeover_at IS NOT NULL
+           AND anchor.sent_by_username IS NULL
+           AND anchor.created_at < c.takeover_at
+         )
          AND (
            (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
            OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
@@ -309,6 +315,12 @@ async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt })
        ) latest_lead ON true
        WHERE c.channel IN ('whatsapp', 'facebook', 'instagram')
          AND c.needs_attention = false
+         AND NOT (
+           c.mode = 'human'
+           AND c.takeover_at IS NOT NULL
+           AND anchor.sent_by_username IS NULL
+           AND anchor.created_at < c.takeover_at
+         )
          AND (
            (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
            OR (c.channel IN ('facebook', 'instagram') AND c.channel_user_id IS NOT NULL)
@@ -499,6 +511,12 @@ async function saveIfStillEligible({
      ) latest_lead ON true
      WHERE c.id = $1
        AND c.needs_attention = false
+         AND NOT (
+           c.mode = 'human'
+           AND c.takeover_at IS NOT NULL
+           AND anchor.sent_by_username IS NULL
+           AND anchor.created_at < c.takeover_at
+         )
        AND c.channel IN ('whatsapp', 'facebook', 'instagram')
        AND (
          (c.channel = 'whatsapp' AND c.whatsapp_number IS NOT NULL)
@@ -739,6 +757,12 @@ async function recordAiDecisionIfStillEligible({
        LEFT JOIN latest_lead ON true
        WHERE c.id = $1
          AND c.needs_attention = false
+         AND NOT (
+           c.mode = 'human'
+           AND c.takeover_at IS NOT NULL
+           AND anchor.sent_by_username IS NULL
+           AND anchor.created_at < c.takeover_at
+         )
          AND anchor.id = $2
          AND anchor.delivery_status IS DISTINCT FROM 'failed'
          AND (
@@ -840,7 +864,8 @@ async function isClaimStillEligible({ messageId, contactId }) {
          m.contact_id,
          m.created_at,
          m.delivery_status,
-         m.whatsapp_message_id
+         m.whatsapp_message_id,
+         m.automated_follow_up_for_message_id AS trigger_message_id
        FROM messages m, conversation_lock
        WHERE m.id = $2
          AND m.contact_id = $1
@@ -853,6 +878,9 @@ async function isClaimStillEligible({ messageId, contactId }) {
        SELECT 1
        FROM claim
        JOIN contacts c ON c.id = claim.contact_id
+       JOIN messages anchor
+         ON anchor.id = claim.trigger_message_id
+        AND anchor.contact_id = claim.contact_id
        LEFT JOIN LATERAL (
          SELECT
            l.id,
@@ -867,6 +895,12 @@ async function isClaimStillEligible({ messageId, contactId }) {
          LIMIT 1
        ) latest_lead ON true
        WHERE c.needs_attention = false
+         AND NOT (
+           c.mode = 'human'
+           AND c.takeover_at IS NOT NULL
+           AND anchor.sent_by_username IS NULL
+           AND anchor.created_at < c.takeover_at
+         )
          AND claim.delivery_status IS NULL
          AND claim.whatsapp_message_id IS NULL
          AND (
