@@ -212,8 +212,29 @@ test("staff voice sends keep Staff Waiting blocked until the voice reply is pers
   assert.match(voiceRoute, /transcribeStaffAudio[\s\S]*prepareStaffSend[\s\S]*appendMessageForContact/);
   assert.match(voiceRoute, /voicePreparation\.status === "conversion_failed"/);
   assert.match(voiceRoute, /voicePreparation\.status === "contact_missing"/);
-  assert.match(voiceRoute, /requireStaffMode: false/);
+  assert.match(voiceRoute, /requireStaffMode: currentContact\.mode === "human"/);
   assert.doesNotMatch(voiceRoute, /Take over this conversation before sending a voice message/);
+});
+
+test("manual WhatsApp templates use Staff Assist without automatic takeover", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/routes/conversations.js"),
+    "utf8"
+  );
+  const templateRoute = source.slice(
+    source.indexOf('router.post("/:contactId/whatsapp-templates/send",'),
+    source.indexOf('router.post("/:contactId/messages/:messageId/retry",')
+  );
+
+  assert.match(
+    templateRoute,
+    /telegramImmediateAlertRepo\.withContactAlertLock\(\s*contact\.id,[\s\S]*prepareStaffSend\(\s*contact,[\s\S]*appendMessageForContact/
+  );
+  assert.doesNotMatch(templateRoute, /contactsRepo\.takeOver/);
+  assert.match(
+    templateRoute,
+    /whatsappTemplate\.sendApprovedTemplate\(preparedContact/
+  );
 });
 
 test("messaging-policy surfaces keep responsive mobile affordances", () => {
