@@ -70,7 +70,7 @@ function safeOwnerId(ownerId) {
   return text || PROCESSING_OWNER_ID;
 }
 
-function whatsappMessageCreatedAt(channel, incoming, nowMs = Date.now()) {
+function whatsappMessageSourceCreatedAt(channel, incoming, nowMs = Date.now()) {
   if (channel !== "whatsapp") return null;
 
   const seconds = Number(incoming?.timestamp);
@@ -101,15 +101,15 @@ async function storeInboundClaim({
   incoming,
 }, database = pool) {
   const payload = serializeIncoming(incoming);
-  const messageCreatedAt = whatsappMessageCreatedAt(channel, incoming);
+  const sourceCreatedAt = whatsappMessageSourceCreatedAt(channel, incoming);
   const result = await database.query(
     `WITH conversation_lock AS MATERIALIZED (
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
      ), inserted_message AS (
        INSERT INTO messages (
-         contact_id, role, content, whatsapp_message_id, created_at
+         contact_id, role, content, whatsapp_message_id, source_created_at
        )
-       SELECT $1, 'user', $2, $3, COALESCE($6::timestamptz, NOW())
+       SELECT $1, 'user', $2, $3, $6::timestamptz
        FROM conversation_lock
        ON CONFLICT (whatsapp_message_id) DO NOTHING
        RETURNING ${MESSAGE_COLUMNS}
@@ -132,7 +132,7 @@ async function storeInboundClaim({
        ) AS derived_first_message
      FROM inserted_message m
      JOIN inserted_job j ON j.message_id = m.id`,
-    [contactId, content, storedMessageId, channel, payload, messageCreatedAt]
+    [contactId, content, storedMessageId, channel, payload, sourceCreatedAt]
   );
 
   const row = result.rows[0];
@@ -1005,7 +1005,7 @@ module.exports = {
   markTerminal,
   pruneCompleted,
   serializeIncoming,
-  whatsappMessageCreatedAt,
+  whatsappMessageSourceCreatedAt,
   storeInboundClaim,
   reserveOutboundAttempt,
   cancelOutboundAttempt,
