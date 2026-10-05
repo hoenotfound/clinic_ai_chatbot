@@ -1,6 +1,7 @@
 const retryRepo = require("../db/whatsappOutboundRetryRepo");
 const messagesRepo = require("../db/messagesRepo");
 const contactsRepo = require("../db/contactsRepo");
+const outboundMessageEvidenceRepo = require("../db/outboundMessageEvidenceRepo");
 const whatsapp = require("./whatsappService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
@@ -69,6 +70,27 @@ async function queueTextRetry({
   return queued;
 }
 
+async function recordAcceptedEvidence(row, providerMessageId, evidence) {
+  if (!providerMessageId || typeof evidence?.recordOutcome !== "function") return;
+  try {
+    await evidence.recordOutcome({
+      messageId: row.message_id,
+      contactId: row.contact_id,
+      channel: "whatsapp",
+      origin: row.origin,
+      accepted: true,
+      providerMessageId,
+    });
+  } catch (err) {
+    // Delivery is already durable on the message row. Evidence is diagnostic
+    // and must never turn a successful retry back into a customer-facing error.
+    console.error(
+      `Failed to refresh outbound acceptance evidence for retried message ${row.message_id}:`,
+      err
+    );
+  }
+}
+
 async function failClosedAmbiguous(row, reason, {
   repository = retryRepo,
   messages = messagesRepo,
@@ -95,6 +117,7 @@ async function runWhatsappOutboundRetryQueue({
   repository = retryRepo,
   messages = messagesRepo,
   contacts = contactsRepo,
+  evidence = outboundMessageEvidenceRepo,
   sendMessage = whatsapp.sendMessage,
 } = {}) {
   const stale = await repository.recoverStaleProcessing({
@@ -109,6 +132,7 @@ async function runWhatsappOutboundRetryQueue({
       );
     if (acceptedEvidence) {
       await repository.markSent(row.id, row.lease_token);
+      await recordAcceptedEvidence(row, row.whatsapp_message_id, evidence);
       await contacts.clearDeliveryAttentionIfNoFailedMessages(row.contact_id);
       continue;
     }
@@ -181,6 +205,7 @@ async function runWhatsappOutboundRetryQueue({
         acceptedPersisted = true;
         publishDeliveryStatus(updated);
         await repository.markSent(row.id, leaseToken);
+        await recordAcceptedEvidence(row, result.wamid, evidence);
         await contacts.clearDeliveryAttentionIfNoFailedMessages(row.contact_id);
         console.log(
           `WhatsApp retry succeeded for message ${row.message_id} on attempt ${row.attempts}.`
@@ -287,6 +312,7 @@ module.exports = {
   STALE_PROCESSING_SECONDS,
   delayUntilNextRetry,
   queueTextRetry,
+  recordAcceptedEvidence,
   retryDelayForAttempt,
   runWhatsappOutboundRetryQueue,
   startWhatsappOutboundRetryWorker,
