@@ -41,6 +41,8 @@ function neutralAutomationDefaults() {
         start: "00:00",
         end: "07:00",
       },
+      messageMode: "fixed",
+      aiInstruction: "",
       message: "Hi! Just checking in to see if you still need any help. Feel free to reply whenever you're ready 😊",
       translations: {
         en: "Hi! Just checking in to see if you still need any help. Feel free to reply whenever you're ready 😊",

@@ -8,6 +8,7 @@ if (process.env.TEST_DATABASE_URL && !process.env.DATABASE_URL) {
 
 const { pool } = require("../src/db/db");
 const followUpRepo = require("../src/db/followUpRepo");
+const followUpAiLeaseRepo = require("../src/db/followUpAiLeaseRepo");
 
 const connectionString = process.env.TEST_DATABASE_URL;
 
@@ -29,7 +30,9 @@ test(
           channel TEXT NOT NULL,
           whatsapp_number TEXT,
           channel_user_id TEXT,
-          needs_attention BOOLEAN NOT NULL DEFAULT false
+          needs_attention BOOLEAN NOT NULL DEFAULT false,
+          attention_reason TEXT,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
 
         CREATE TABLE pipeline_stages (
@@ -65,7 +68,30 @@ test(
           automated_follow_up_step INTEGER,
           automated_follow_up_target_service TEXT,
           automated_follow_up_targeting_recorded BOOLEAN NOT NULL DEFAULT false,
+          automated_follow_up_message_mode TEXT,
           UNIQUE (automated_follow_up_for_message_id, automated_follow_up_step)
+        );
+
+        CREATE TABLE follow_up_ai_decisions (
+          id BIGSERIAL PRIMARY KEY,
+          contact_id INTEGER NOT NULL REFERENCES contacts(id),
+          trigger_message_id INTEGER,
+          follow_up_step INTEGER NOT NULL,
+          action TEXT NOT NULL,
+          reason TEXT,
+          topic TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          UNIQUE (trigger_message_id, follow_up_step)
+        );
+
+        CREATE TABLE follow_up_ai_generation_claims (
+          id BIGSERIAL PRIMARY KEY,
+          contact_id INTEGER NOT NULL REFERENCES contacts(id),
+          trigger_message_id INTEGER NOT NULL REFERENCES messages(id),
+          follow_up_step INTEGER NOT NULL,
+          lease_token TEXT NOT NULL,
+          claimed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          UNIQUE (trigger_message_id, follow_up_step)
         );
 
         INSERT INTO contacts (
@@ -186,6 +212,129 @@ test(
       });
       assert.ok(claim);
       assert.equal(Number(claim.automated_follow_up_step), 2);
+
+      await client.query(`
+        INSERT INTO contacts (
+          id, channel, whatsapp_number, needs_attention
+        ) VALUES (
+          2, 'whatsapp', '60112223344', false
+        );
+
+        INSERT INTO messages (
+          id, contact_id, role, content, created_at, is_automated_follow_up
+        ) VALUES
+          (
+            20, 2, 'user', 'I am interested',
+            now() - interval '4 hours',
+            false
+          ),
+          (
+            21, 2, 'assistant', 'Here are the details',
+            now() - interval '3 hours',
+            false
+          );
+      `);
+
+      const firstLease = await followUpAiLeaseRepo.claimIfStillEligible({
+        contactId: 2,
+        triggerMessageId: 21,
+        stepIndex: 1,
+        leaseToken: "lease-a",
+        delayMinutes: 120,
+        previousDelayMinutes: 0,
+        triggerMode: "all",
+        activatedAt,
+      });
+      assert.ok(firstLease);
+
+      const competingLease = await followUpAiLeaseRepo.claimIfStillEligible({
+        contactId: 2,
+        triggerMessageId: 21,
+        stepIndex: 1,
+        leaseToken: "lease-b",
+        delayMinutes: 120,
+        previousDelayMinutes: 0,
+        triggerMode: "all",
+        activatedAt,
+      });
+      assert.equal(competingLease, null);
+
+      const wrongRelease = await followUpAiLeaseRepo.release({
+        contactId: 2,
+        triggerMessageId: 21,
+        stepIndex: 1,
+        leaseToken: "wrong-token",
+      });
+      assert.equal(wrongRelease, null);
+
+      const released = await followUpAiLeaseRepo.release({
+        contactId: 2,
+        triggerMessageId: 21,
+        stepIndex: 1,
+        leaseToken: "lease-a",
+      });
+      assert.ok(released);
+
+      const secondLease = await followUpAiLeaseRepo.claimIfStillEligible({
+        contactId: 2,
+        triggerMessageId: 21,
+        stepIndex: 1,
+        leaseToken: "lease-c",
+        delayMinutes: 120,
+        previousDelayMinutes: 0,
+        triggerMode: "all",
+        activatedAt,
+      });
+      assert.ok(secondLease);
+
+      await client.query(
+        "UPDATE follow_up_ai_generation_claims SET claimed_at = now() - interval '5 minutes' WHERE trigger_message_id = 21"
+      );
+
+      const recoveredLease = await followUpAiLeaseRepo.claimIfStillEligible({
+        contactId: 2,
+        triggerMessageId: 21,
+        stepIndex: 1,
+        leaseToken: "lease-d",
+        delayMinutes: 120,
+        previousDelayMinutes: 0,
+        triggerMode: "all",
+        activatedAt,
+        staleAfterSeconds: 30,
+      });
+      assert.ok(recoveredLease);
+      assert.equal(recoveredLease.lease_token, "lease-d");
+
+      await followUpAiLeaseRepo.release({
+        contactId: 2,
+        triggerMessageId: 21,
+        stepIndex: 1,
+        leaseToken: "lease-d",
+      });
+
+      const reviewDecision = await followUpRepo.recordAiDecisionIfStillEligible({
+        contactId: 2,
+        triggerMessageId: 21,
+        stepIndex: 1,
+        action: "human_review",
+        reason: "Customer asked a medical suitability question.",
+        topic: "3D 小颜术",
+        delayMinutes: 120,
+        previousDelayMinutes: 0,
+        triggerMode: "all",
+        activatedAt,
+      });
+      assert.ok(reviewDecision);
+
+      const flagged = await client.query(
+        "SELECT needs_attention, attention_reason FROM contacts WHERE id = 2"
+      );
+      assert.equal(flagged.rows[0].needs_attention, true);
+      assert.match(
+        flagged.rows[0].attention_reason,
+        /AI follow-up requested human review: Customer asked a medical suitability question\./
+      );
+
     } finally {
       pool.query = originalQuery;
       await client.query("SET search_path TO public").catch(() => {});

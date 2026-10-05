@@ -129,6 +129,8 @@ test("follow-up config accepts a targeted sequence and keeps legacy one-step pay
     current
   );
   assert.equal(legacy.ok, true);
+  assert.equal(legacy.updates.automatedFollowUp.messageMode, "fixed");
+  assert.equal(legacy.updates.automatedFollowUp.aiInstruction, "");
   assert.deepEqual(legacy.updates.automatedFollowUp.serviceOverrides, []);
   assert.deepEqual(legacy.updates.automatedFollowUp.additionalSteps, []);
   assert.deepEqual(legacy.updates.automatedFollowUp.quietHours, {
@@ -213,6 +215,23 @@ test("follow-up config accepts a targeted sequence and keeps legacy one-step pay
   );
   assert.equal(outOfOrder.ok, false);
   assert.match(outOfOrder.error, /increasing delays/i);
+
+  const aiMode = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        ...sequence.updates.automatedFollowUp,
+        messageMode: "ai",
+        aiInstruction: "Continue from the unresolved concern without being pushy.",
+      },
+    },
+    current
+  );
+  assert.equal(aiMode.ok, true);
+  assert.equal(aiMode.updates.automatedFollowUp.messageMode, "ai");
+  assert.equal(
+    aiMode.updates.automatedFollowUp.aiInstruction,
+    "Continue from the unresolved concern without being pushy."
+  );
 });
 
 test("follow-up quiet hours validate and do not reset an active sequence", () => {

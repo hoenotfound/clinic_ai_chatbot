@@ -2,6 +2,7 @@ const gemini = require("./geminiService");
 const claude = require("./claudeService");
 const aiRoutingTelemetry = require("../db/aiRoutingTelemetryRepo");
 const { parseAiReplyResult } = require("../utils/aiReplyResult");
+const { parseFollowUpAiResult } = require("../utils/followUpAiResult");
 const {
   classifyCandidateHealthFailure,
   credentialFingerprint,
@@ -19,6 +20,12 @@ function getProviderPreference(env = process.env) {
     throw new Error(`Unknown AI_PROVIDER "${value}" - use "claude" or "gemini" in your .env`);
   }
   return value;
+}
+
+function validateAiSurfaceResult(raw, options = {}) {
+  return options?.surface === "follow_up"
+    ? parseFollowUpAiResult(raw)
+    : parseAiReplyResult(raw);
 }
 
 const DEFAULT_TIMEOUT_MS = 18 * 1000;
@@ -117,7 +124,7 @@ async function runCandidate(
         attemptLabel,
         { onTimeout: () => controller.abort() }
       );
-      parseAiReplyResult(raw);
+      validateAiSurfaceResult(raw, options);
       candidate.reportOutcome?.({ status: "ready", failureKind: null });
       return raw;
     } catch (err) {
@@ -260,7 +267,7 @@ async function runGeminiModelAttempt(
   for (let attempt = 0; attempt <= boundedRetryCount; attempt += 1) {
     try {
       const raw = await gemini.getReply(messages, options, apiKey, model);
-      parseAiReplyResult(raw);
+      validateAiSurfaceResult(raw, options);
       return raw;
     } catch (err) {
       if (!isGeminiModelUnavailableError(err)) throw err;
@@ -623,6 +630,7 @@ function normalizeReplyOptions(optionsOrFirstMessage = false) {
       publicReplyEnabled: true,
       privateReplyEnabled: true,
       metaAdContext: null,
+      followUpContext: null,
     };
   }
 
@@ -634,6 +642,7 @@ function normalizeReplyOptions(optionsOrFirstMessage = false) {
     publicReplyEnabled: optionsOrFirstMessage?.publicReplyEnabled !== false,
     privateReplyEnabled: optionsOrFirstMessage?.privateReplyEnabled !== false,
     metaAdContext: optionsOrFirstMessage?.metaAdContext || null,
+    followUpContext: optionsOrFirstMessage?.followUpContext || null,
   };
 }
 
@@ -818,4 +827,5 @@ module.exports = {
   runClaudeReply,
   runGeminiModelAttempt,
   runGeminiReply,
+  validateAiSurfaceResult,
 };

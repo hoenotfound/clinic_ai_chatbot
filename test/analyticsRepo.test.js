@@ -203,3 +203,14 @@ test("follow-up analytics exclude social image companions and expose step/target
   assert.match(source, /appointmentRate/);
   assert.match(source, /winRate/);
 });
+
+
+test("follow-up analytics distinguish AI personalized and AI fallback modes", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/db/analyticsRepo.js"),
+    "utf8"
+  );
+  assert.match(source, /automated_follow_up_message_mode/);
+  assert.match(source, /message_mode = 'ai_personalized'/);
+  assert.match(source, /message_mode = 'ai_fallback'/);
+});

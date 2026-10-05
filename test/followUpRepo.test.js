@@ -27,10 +27,12 @@ test("automated follow-up inserts take the conversation scoring lock and re-chec
       "all",
       "2026-08-28T00:00:00.000Z",
       0,
+      "fixed",
     ]);
     assert.match(sql, /automated_follow_up_step/);
     assert.match(sql, /automated_follow_up_target_service/);
     assert.match(sql, /automated_follow_up_targeting_recorded/);
+    assert.match(sql, /automated_follow_up_message_mode/);
     assert.match(sql, /latest_lead\.is_closed = false/);
     assert.match(sql, /appointment_set.*visited/);
     assert.match(sql, /appointment_status.*set.*visited/);
@@ -77,6 +79,7 @@ test("later follow-up claims preserve spacing from the actual previous send", as
       "all",
       "2026-08-28T00:00:00.000Z",
       120,
+      "fixed",
     ]);
     return { rows: [] };
   };

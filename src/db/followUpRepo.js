@@ -3,6 +3,7 @@ const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 
 const MAX_FOLLOW_UP_STEPS = 3;
 const REPLY_WINDOW_BUFFER = "23 hours 50 minutes";
+const FOLLOW_UP_MESSAGE_MODES = new Set(["fixed", "ai_personalized", "ai_fallback"]);
 
 const FOLLOW_UP_MESSAGE_COLUMNS = `
   id,
@@ -20,7 +21,8 @@ const FOLLOW_UP_MESSAGE_COLUMNS = `
   is_automated_follow_up,
   automated_follow_up_step,
   automated_follow_up_target_service,
-  automated_follow_up_targeting_recorded
+  automated_follow_up_targeting_recorded,
+  automated_follow_up_message_mode
 `;
 
 function normalizeDelayMinutes(value) {
@@ -175,6 +177,13 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
              )
            )
          )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM follow_up_ai_decisions decision
+           WHERE decision.contact_id = c.id
+             AND decision.trigger_message_id = anchor.id
+             AND decision.action IN ('skip', 'human_review')
+         )
          AND anchor.created_at >= $3::timestamptz
          AND latest_inbound.created_at > now() - interval '23 hours 50 minutes'
          AND ($2 = 'all' OR anchor.sent_by_username IS NOT NULL)
@@ -319,6 +328,13 @@ async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt })
              )
            )
          )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM follow_up_ai_decisions decision
+           WHERE decision.contact_id = c.id
+             AND decision.trigger_message_id = anchor.id
+             AND decision.action IN ('skip', 'human_review')
+         )
          AND anchor.created_at >= $3::timestamptz
          AND latest_inbound.created_at > now() - interval '23 hours 50 minutes'
          AND ($2 = 'all' OR anchor.sent_by_username IS NOT NULL)
@@ -377,6 +393,7 @@ async function saveIfStillEligible({
   mediaUrl,
   stepIndex = 1,
   targetedService = null,
+  messageMode = "fixed",
   delayMinutes,
   previousDelayMinutes = 0,
   triggerMode,
@@ -385,6 +402,7 @@ async function saveIfStillEligible({
   const numericDelay = Number(delayMinutes);
   const numericPreviousDelay = Number(previousDelayMinutes);
   const numericStep = Number(stepIndex);
+  const normalizedMessageMode = String(messageMode || "fixed").trim().toLowerCase();
   if (
     !Number.isInteger(numericDelay) ||
     numericDelay < 5 ||
@@ -396,7 +414,8 @@ async function saveIfStillEligible({
     (numericStep > 1 && numericPreviousDelay < 5) ||
     !Number.isInteger(numericStep) ||
     numericStep < 1 ||
-    numericStep > MAX_FOLLOW_UP_STEPS
+    numericStep > MAX_FOLLOW_UP_STEPS ||
+    !FOLLOW_UP_MESSAGE_MODES.has(normalizedMessageMode)
   ) {
     throw new TypeError("Invalid automated follow-up step or delay.");
   }
@@ -459,9 +478,10 @@ async function saveIfStillEligible({
        automated_follow_up_for_message_id,
        automated_follow_up_step,
        automated_follow_up_target_service,
-       automated_follow_up_targeting_recorded
+       automated_follow_up_targeting_recorded,
+       automated_follow_up_message_mode
      )
-     SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2, $5, $6, true
+     SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2, $5, $6, true, $11
      FROM anchor, latest_inbound, progress, contacts c
      LEFT JOIN previous_follow_up ON true
      LEFT JOIN LATERAL (
@@ -500,6 +520,13 @@ async function saveIfStillEligible({
            )
          )
        )
+       AND NOT EXISTS (
+         SELECT 1
+         FROM follow_up_ai_decisions decision
+         WHERE decision.contact_id = c.id
+           AND decision.trigger_message_id = anchor.id
+           AND decision.action IN ('skip', 'human_review')
+       )
        AND anchor.created_at >= $9::timestamptz
        AND GREATEST(
              anchor.created_at + ($7::integer * interval '1 minute'),
@@ -533,8 +560,262 @@ async function saveIfStillEligible({
       triggerMode,
       activatedAt,
       numericPreviousDelay,
+      normalizedMessageMode,
     ]
   );
+  return result.rows[0] || null;
+}
+
+async function getAiFollowUpContext({ contactId, limit = 20 }) {
+  const numericContactId = Number(contactId);
+  const numericLimit = Math.max(1, Math.min(40, Number(limit) || 20));
+  if (!Number.isSafeInteger(numericContactId) || numericContactId < 1) {
+    return { messages: [], lead: null };
+  }
+
+  const messagesResult = await pool.query(
+    `SELECT
+       m.id,
+       m.role,
+       m.content,
+       m.sent_by_username,
+       m.is_automated_follow_up,
+       m.automated_follow_up_step,
+       m.automated_follow_up_for_message_id,
+       m.created_at
+     FROM messages m
+     WHERE m.contact_id = $1
+       AND m.role IN ('user', 'assistant')
+       AND COALESCE(BTRIM(m.content), '') <> ''
+       AND m.delivery_status IS DISTINCT FROM 'failed'
+     ORDER BY m.created_at DESC, m.id DESC
+     LIMIT $2`,
+    [numericContactId, numericLimit]
+  );
+
+  const leadResult = await pool.query(
+    `SELECT
+       l.id AS lead_id,
+       l.treatment_interest,
+       l.branch_name,
+       l.appointment_status,
+       s.name AS stage_name
+     FROM leads l
+     LEFT JOIN pipeline_stages s ON s.id = l.stage_id
+     WHERE l.contact_id = $1
+     ORDER BY l.created_at DESC, l.id DESC
+     LIMIT 1`,
+    [numericContactId]
+  );
+
+  return {
+    messages: messagesResult.rows.reverse(),
+    lead: leadResult.rows[0] || null,
+  };
+}
+
+async function recordAiDecisionIfStillEligible({
+  contactId,
+  triggerMessageId,
+  stepIndex,
+  action,
+  reason = "",
+  topic = "",
+  delayMinutes,
+  previousDelayMinutes = 0,
+  triggerMode,
+  activatedAt,
+}) {
+  const numericContactId = Number(contactId);
+  const numericTriggerMessageId = Number(triggerMessageId);
+  const numericStep = Number(stepIndex);
+  const numericDelay = Number(delayMinutes);
+  const numericPreviousDelay = Number(previousDelayMinutes);
+  const normalizedAction = String(action || "").trim().toLowerCase();
+  const normalizedReason = String(reason || "").slice(0, 1000);
+  const normalizedTopic = String(topic || "").slice(0, 500);
+
+  if (
+    !Number.isSafeInteger(numericContactId) ||
+    numericContactId < 1 ||
+    !Number.isSafeInteger(numericTriggerMessageId) ||
+    numericTriggerMessageId < 1 ||
+    !Number.isInteger(numericStep) ||
+    numericStep < 1 ||
+    numericStep > MAX_FOLLOW_UP_STEPS ||
+    !["skip", "human_review"].includes(normalizedAction) ||
+    !Number.isInteger(numericDelay) ||
+    numericDelay < 5 ||
+    numericDelay > 23 * 60 ||
+    !Number.isInteger(numericPreviousDelay) ||
+    numericPreviousDelay < 0 ||
+    numericPreviousDelay >= numericDelay ||
+    (numericStep === 1 && numericPreviousDelay !== 0) ||
+    (numericStep > 1 && numericPreviousDelay < 5) ||
+    !["all", "staff"].includes(triggerMode) ||
+    typeof activatedAt !== "string" ||
+    Number.isNaN(Date.parse(activatedAt))
+  ) {
+    throw new TypeError("Invalid AI follow-up decision or sequence state.");
+  }
+
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     ), latest_inbound AS (
+       SELECT inbound.id, inbound.created_at
+       FROM messages inbound, conversation_lock
+       WHERE inbound.contact_id = $1
+         AND inbound.role = 'user'
+       ORDER BY inbound.created_at DESC, inbound.id DESC
+       LIMIT 1
+     ), anchor AS (
+       SELECT
+         outbound.id,
+         outbound.sent_by_username,
+         outbound.created_at,
+         outbound.delivery_status
+       FROM messages outbound, latest_inbound
+       WHERE outbound.contact_id = $1
+         AND outbound.role = 'assistant'
+         AND outbound.is_automated_follow_up = false
+         AND (outbound.created_at, outbound.id) >
+             (latest_inbound.created_at, latest_inbound.id)
+       ORDER BY outbound.created_at DESC, outbound.id DESC
+       LIMIT 1
+     ), progress AS (
+       SELECT
+         MAX(follow_up.automated_follow_up_step) AS max_step,
+         BOOL_OR(
+           follow_up.delivery_status IN ('failed', 'unknown')
+           OR (
+             follow_up.delivery_status IS NULL
+             AND follow_up.whatsapp_message_id IS NULL
+           )
+         ) AS has_blocking_claim
+       FROM messages follow_up, anchor
+       WHERE follow_up.contact_id = $1
+         AND follow_up.is_automated_follow_up = true
+         AND follow_up.automated_follow_up_for_message_id = anchor.id
+     ), previous_follow_up AS (
+       SELECT follow_up.created_at
+       FROM messages follow_up, anchor
+       WHERE follow_up.contact_id = $1
+         AND follow_up.is_automated_follow_up = true
+         AND follow_up.automated_follow_up_for_message_id = anchor.id
+         AND follow_up.automated_follow_up_step = $3 - 1
+       ORDER BY follow_up.created_at DESC, follow_up.id DESC
+       LIMIT 1
+     ), latest_lead AS (
+       SELECT
+         l.id,
+         l.is_closed,
+         l.appointment_status,
+         s.stage_type,
+         s.system_key
+       FROM leads l
+       LEFT JOIN pipeline_stages s ON s.id = l.stage_id
+       WHERE l.contact_id = $1
+       ORDER BY l.created_at DESC, l.id DESC
+       LIMIT 1
+     ), inserted_decision AS (
+       INSERT INTO follow_up_ai_decisions (
+         contact_id,
+         trigger_message_id,
+         follow_up_step,
+         action,
+         reason,
+         topic
+       )
+       SELECT
+         $1,
+         $2,
+         $3,
+         $4,
+         NULLIF(BTRIM($5), ''),
+         NULLIF(BTRIM($6), '')
+       FROM contacts c, latest_inbound, anchor, progress
+       LEFT JOIN previous_follow_up ON true
+       LEFT JOIN latest_lead ON true
+       WHERE c.id = $1
+         AND c.needs_attention = false
+         AND anchor.id = $2
+         AND anchor.delivery_status IS DISTINCT FROM 'failed'
+         AND (
+           latest_lead.id IS NULL
+           OR (
+             latest_lead.is_closed = false
+             AND COALESCE(latest_lead.stage_type, 'open') = 'open'
+             AND (
+               COALESCE(latest_lead.appointment_status, 'none') IN ('reschedule', 'cancelled')
+               OR (
+                 COALESCE(latest_lead.system_key, '') NOT IN ('appointment_set', 'visited')
+                 AND COALESCE(latest_lead.appointment_status, 'none') NOT IN ('set', 'visited')
+               )
+             )
+           )
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM follow_up_ai_decisions existing
+           WHERE existing.contact_id = c.id
+             AND existing.trigger_message_id = anchor.id
+             AND existing.action IN ('skip', 'human_review')
+         )
+         AND anchor.created_at >= $9::timestamptz
+         AND GREATEST(
+               anchor.created_at + ($7::integer * interval '1 minute'),
+               COALESCE(
+                 previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
+                 anchor.created_at + ($7::integer * interval '1 minute')
+               )
+             ) <= now()
+         AND GREATEST(
+               anchor.created_at + ($7::integer * interval '1 minute'),
+               COALESCE(
+                 previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
+                 anchor.created_at + ($7::integer * interval '1 minute')
+               )
+             ) <= latest_inbound.created_at + interval '23 hours 50 minutes'
+         AND ($8 = 'all' OR anchor.sent_by_username IS NOT NULL)
+         AND COALESCE(progress.max_step, 0) + 1 = $3
+         AND COALESCE(progress.has_blocking_claim, false) = false
+       ON CONFLICT (trigger_message_id, follow_up_step) DO NOTHING
+       RETURNING *
+     ), attention_update AS (
+       UPDATE contacts c
+       SET needs_attention = true,
+           attention_reason = LEFT(
+             'AI follow-up requested human review: ' ||
+             COALESCE(
+               NULLIF(BTRIM(inserted_decision.reason), ''),
+               'Staff should review this conversation before any follow-up.'
+             ),
+             1000
+           ),
+           updated_at = now()
+       FROM inserted_decision
+       WHERE inserted_decision.action = 'human_review'
+         AND c.id = inserted_decision.contact_id
+       RETURNING c.id
+     )
+     SELECT inserted_decision.*
+     FROM inserted_decision
+     LEFT JOIN attention_update ON true`,
+    [
+      numericContactId,
+      numericTriggerMessageId,
+      numericStep,
+      normalizedAction,
+      normalizedReason,
+      normalizedTopic,
+      numericDelay,
+      triggerMode,
+      activatedAt,
+      numericPreviousDelay,
+    ]
+  );
+
   return result.rows[0] || null;
 }
 
@@ -746,6 +1027,8 @@ module.exports = {
   findCandidates,
   getNextCandidateDueAt,
   getNextStaleClaimDueAt,
+  getAiFollowUpContext,
+  recordAiDecisionIfStillEligible,
   saveIfStillEligible,
   isClaimStillEligible,
   discardUnsentClaim,
