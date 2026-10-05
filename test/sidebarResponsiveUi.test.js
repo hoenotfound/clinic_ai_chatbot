@@ -18,6 +18,9 @@ test("sidebar uses coherent compact expanded and mobile-overlay layouts", () => 
   assert.match(sidebarSource, /matchMedia\("\(min-width: 1280px\)"\)/);
   assert.match(sidebarSource, /matchMedia\("\(max-width: 639px\)"\)/);
   assert.match(sidebarSource, /data-mobile-open=\{mobileOpen \? "true" : "false"\}/);
+  assert.match(sidebarSource, /data-inbox-thread=\{inboxThreadOpen \? "true" : "false"\}/);
+  assert.ok(sidebarSource.includes('location.pathname === "/inbox"'));
+  assert.match(sidebarSource, /\^\\d\+\$\/\.test\(inboxContactParam \|\| ""\)/);
   assert.match(sidebarSource, /aria-label="Dismiss navigation"/);
   assert.match(sidebarSource, /aria-controls="portal-sidebar-primary-nav"/);
   assert.match(sidebarSource, /aria-label="Utility navigation"/);
@@ -26,6 +29,9 @@ test("sidebar uses coherent compact expanded and mobile-overlay layouts", () => 
   assert.doesNotMatch(sidebarSource, /app-sidebar-compact-label/);
   assert.doesNotMatch(sidebarSource, /app-sidebar-full-label/);
   assert.doesNotMatch(sidebarSource, /min-\[1440px\]/);
+
+  // Open Inbox threads use the full compact viewport instead of keeping the navigation rail visible.
+  assert.match(cssSource, /@media \(max-width:\s*1023px\)[\s\S]*?\.app-sidebar\[data-inbox-thread="true"\][\s\S]*?display:\s*none;/);
 
   // Phone: 64px layout rail with a temporary 220px discoverable panel.
   assert.match(cssSource, /\.app-sidebar\s*\{[\s\S]*?width:\s*4rem;/);

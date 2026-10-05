@@ -707,7 +707,7 @@ test("manual Inbox reply sends the exact text without taking ownership", async (
 
   await page.goto("/inbox");
   await openInboxConversation(page);
-  const composer = page.getByPlaceholder("Reply manually — AI stays on…");
+  const composer = page.getByPlaceholder("Reply…");
   await expect(composer).toBeVisible();
 
   await composer.fill("Test reply from staff");
@@ -798,7 +798,7 @@ test("Messenger conversation stays manually replyable in the Human Agent window"
   await openInboxConversation(page);
 
   await expect(page.getByText(/Staff reply only/)).toBeVisible();
-  const composer = page.getByPlaceholder("Reply manually — AI stays on…");
+  const composer = page.getByPlaceholder("Reply…");
   await expect(composer).toBeEnabled();
 
   await composer.fill("Manual Human Agent reply");

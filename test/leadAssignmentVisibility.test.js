@@ -115,6 +115,11 @@ test("Inbox keeps normal states quiet and emphasizes actionable exceptions", () 
   assert.match(inbox, /<StatusBadge tone="accent">Needs follow-up<\/StatusBadge>/);
   assert.match(inbox, /<StatusBadge tone="danger">Attention<\/StatusBadge>/);
   assert.match(inbox, /contact\.needs_attention && \(/);
+  assert.match(inbox, /const \[attentionExpanded, setAttentionExpanded\] = useState\(false\)/);
+  assert.match(inbox, /aria-expanded=\{attentionExpanded\}/);
+  assert.match(inbox, /Show full attention reason/);
+  assert.match(inbox, /messagingPolicy\.applies && !quietReplyAvailable/);
+  assert.match(inbox, /replyWindowCompactLabel/);
 });
 
 test("Inbox thread header stays compact while keeping owner and channel context", () => {
@@ -126,8 +131,12 @@ test("Inbox thread header stays compact while keeping owner and channel context"
   assert.match(inbox, /if \(channel === "instagram"\) return "Instagram"/);
   assert.match(inbox, /ownerUsername=\{contact\.lead_owner_username\}/);
   assert.match(inbox, /ownerDisplayName=\{contact\.lead_owner_display_name\}/);
-  assert.match(inbox, /`Message this \$\{customerSingular\}…`/);
-  assert.match(inbox, /Reply manually — AI stays on…/);
+  assert.match(inbox, /`Message this \$\{customerSingular\}`/);
+  assert.match(inbox, /"Reply…"/);
+  assert.match(inbox, /"Reply manually while AI stays on"/);
+  assert.match(inbox, /contact\.mode === "human" \? "Staff" : "AI"/);
+  assert.match(inbox, /replyWindowCompactLabel\} left/);
+  assert.match(inbox, /h-11 w-11 shrink-0 touch-manipulation/);
   assert.doesNotMatch(inbox, /Type a WhatsApp message to this patient/);
 });
 
@@ -156,6 +165,9 @@ test("Inbox returns to a safe list state when a selected restricted lead is reas
   assert.match(inbox, /setContactDetailsOpen\(false\)/);
   assert.match(inbox, /setMobileThreadOpen\(false\)/);
   assert.match(inbox, /setSearchParams\(\{\}, \{ replace: true \}\)/);
+  assert.match(inbox, /const requestedContactParam = searchParams\.get\("contact"\)/);
+  assert.match(inbox, /if \(conversations\.length === 0\)/);
+  assert.match(inbox, /else if \(requestedContactParam\)/);
 });
 
 test("Contacts exposes the same assignment filter and refreshes assignment badges only on pipeline changes", () => {

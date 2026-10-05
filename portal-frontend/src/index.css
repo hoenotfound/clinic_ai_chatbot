@@ -431,6 +431,15 @@ html[data-can-reply-leads="false"] section[aria-label^="Conversation with "]::af
   }
 }
 
+/* A compact Inbox thread should use the full phone/tablet width. The thread
+   already includes its own back button, so keeping the global navigation rail
+   visible here only steals space from messages and the composer. */
+@media (max-width: 1023px) {
+  .app-sidebar[data-inbox-thread="true"] {
+    display: none;
+  }
+}
+
 /* Phones keep a 64px layout rail, but the same toggle opens a temporary
    220px panel over the content so icon meanings are always discoverable. */
 @media (max-width: 639px) {

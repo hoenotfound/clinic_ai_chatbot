@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useClientBranding } from "../hooks/useClientBranding";
 
@@ -90,6 +90,7 @@ function SidebarNavLink({
 export default function Sidebar() {
   const { user, username, permissions, logout } = useAuth();
   const branding = useClientBranding();
+  const location = useLocation();
   const navigate = useNavigate();
   const [sidebarPreference, setSidebarPreference] = useState(getInitialSidebarPreference);
   const [isPhone, setIsPhone] = useState(getInitialPhoneState);
@@ -100,6 +101,9 @@ export default function Sidebar() {
   const visiblePrimaryItems = PRIMARY_NAV_ITEMS.filter((item) => canShowItem(item, user, permissions));
   const settingsVisible = canShowItem(SETTINGS_ITEM, user, permissions);
   const userDisplayName = user?.displayName || username || "User";
+  const inboxContactParam = new URLSearchParams(location.search).get("contact");
+  const inboxThreadOpen =
+    location.pathname === "/inbox" && /^\d+$/.test(inboxContactParam || "");
   const toggleLabel = isPhone
     ? (mobileOpen ? "Close sidebar" : "Open sidebar")
     : (sidebarExpanded ? "Collapse sidebar" : "Expand sidebar");
@@ -200,6 +204,7 @@ export default function Sidebar() {
         data-testid="app-sidebar"
         data-expanded={sidebarExpanded ? "true" : "false"}
         data-mobile-open={mobileOpen ? "true" : "false"}
+        data-inbox-thread={inboxThreadOpen ? "true" : "false"}
         className="app-sidebar flex h-dvh shrink-0 flex-col bg-[var(--color-sidebar)] text-[var(--color-sidebar-text)]"
       >
         <div className="app-sidebar-brand flex items-center">

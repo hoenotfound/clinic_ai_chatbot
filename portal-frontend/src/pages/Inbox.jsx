@@ -351,8 +351,9 @@ export default function Inbox() {
   const canReplyToLeads = permissions.reply_to_assigned_leads === true;
   const { toasts, showToast, dismissToast } = useToasts();
   const [searchParams, setSearchParams] = useSearchParams();
-  const requestedContactId = /^\d+$/.test(searchParams.get("contact") || "")
-    ? Number(searchParams.get("contact"))
+  const requestedContactParam = searchParams.get("contact");
+  const requestedContactId = /^\d+$/.test(requestedContactParam || "")
+    ? Number(requestedContactParam)
     : null;
 
   const [conversations, setConversations] = useState(null);
@@ -484,34 +485,53 @@ export default function Inbox() {
   }, []);
 
   useEffect(() => {
-    if (conversations?.length && selectedId == null) {
-      const requestedConversation = requestedContactId
-        ? conversations.find(
-            (conversation) => Number(conversation.contact_id) === requestedContactId
-          )
-        : null;
-      const firstConversation = requestedConversation || conversations[0];
-      setSelectedId(firstConversation.contact_id);
-      if (requestedConversation) setMobileThreadOpen(true);
+    if (!conversations || selectedId != null) return;
 
-      const threadIsVisible = window.matchMedia("(min-width: 1024px)").matches;
-      if (firstConversation.is_unread && threadIsVisible) {
-        setConversations((current) =>
-          current?.map((conversation) =>
-            conversation.contact_id === firstConversation.contact_id
-              ? { ...conversation, is_unread: false }
-              : conversation
-          ) || current
-        );
-
-        api.setReadState(firstConversation.contact_id, false).catch(async (err) => {
-          console.error("Failed to mark the initial conversation as read:", err);
-          await refreshConversations();
-          showToast("Couldn't mark this conversation as read.", "error");
-        });
+    if (conversations.length === 0) {
+      if (requestedContactParam) {
+        setSearchParams({}, { replace: true });
       }
+      return;
     }
-  }, [conversations, requestedContactId, selectedId, showToast]);
+
+    const requestedConversation = requestedContactId
+      ? conversations.find(
+          (conversation) => Number(conversation.contact_id) === requestedContactId
+        )
+      : null;
+    const firstConversation = requestedConversation || conversations[0];
+    setSelectedId(firstConversation.contact_id);
+    if (requestedConversation) {
+      setMobileThreadOpen(true);
+    } else if (requestedContactParam) {
+      setSearchParams({}, { replace: true });
+    }
+
+    const threadIsVisible =
+      !!requestedConversation || window.matchMedia("(min-width: 1024px)").matches;
+    if (firstConversation.is_unread && threadIsVisible) {
+      setConversations((current) =>
+        current?.map((conversation) =>
+          conversation.contact_id === firstConversation.contact_id
+            ? { ...conversation, is_unread: false }
+            : conversation
+        ) || current
+      );
+
+      api.setReadState(firstConversation.contact_id, false).catch(async (err) => {
+        console.error("Failed to mark the initial conversation as read:", err);
+        await refreshConversations();
+        showToast("Couldn't mark this conversation as read.", "error");
+      });
+    }
+  }, [
+    conversations,
+    requestedContactId,
+    requestedContactParam,
+    selectedId,
+    setSearchParams,
+    showToast,
+  ]);
 
   useEffect(() => {
     if (!conversations || selectedId == null) return;
@@ -527,11 +547,7 @@ export default function Inbox() {
     setContactDetailsOpen(false);
     setWhatsAppTemplateOpen(false);
     setMobileThreadOpen(false);
-    if (nextConversation) {
-      setSearchParams({ contact: String(nextConversation.contact_id) }, { replace: true });
-    } else {
-      setSearchParams({}, { replace: true });
-    }
+    setSearchParams({}, { replace: true });
   }, [conversations, selectedId, setSearchParams]);
 
   useEffect(() => {
@@ -1031,6 +1047,11 @@ export default function Inbox() {
     }
   }
 
+  function handleBackToConversationList() {
+    setMobileThreadOpen(false);
+    setSearchParams({}, { replace: true });
+  }
+
   const selectedContact = conversations?.find((c) => c.contact_id === selectedId);
 
   return (
@@ -1073,7 +1094,7 @@ export default function Inbox() {
         onOpenWhatsAppTemplates={() => setWhatsAppTemplateOpen(true)}
         onToast={showToast}
         mobileThreadOpen={mobileThreadOpen}
-        onBack={() => setMobileThreadOpen(false)}
+        onBack={handleBackToConversationList}
         customerSingular={ui.customerSingular}
       />
       <ContactDetailsDrawer
@@ -1556,7 +1577,7 @@ function StatusBadge({ tone, children }) {
 function AcquisitionContextBar({ context, loading }) {
   if (loading) {
     return (
-      <div className="border-t border-[var(--color-border)] bg-white px-4 py-2 sm:px-5">
+      <div className="border-t border-[var(--color-border)] bg-white px-3 py-1.5 sm:px-5 sm:py-2">
         <div className="h-3 w-52 animate-pulse rounded bg-[var(--color-border)]/60" />
       </div>
     );
@@ -1573,8 +1594,8 @@ function AcquisitionContextBar({ context, loading }) {
     : null;
 
   return (
-    <div className="border-t border-blue-100 bg-blue-50/70 px-4 py-2 sm:px-5">
-      <div className="flex min-w-0 items-center gap-2 text-[10px] sm:text-[11px]">
+    <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 sm:border-blue-100 sm:bg-blue-50/70 sm:px-5 sm:py-2">
+      <div className="flex min-w-0 items-center gap-1.5 text-[10px] sm:gap-2 sm:text-[11px]">
         <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 font-bold text-blue-700">
           Meta Ads
         </span>
@@ -1694,6 +1715,7 @@ function ThreadView({
   const [voicePreviewUrl, setVoicePreviewUrl] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [attentionExpanded, setAttentionExpanded] = useState(false);
   const [policyNow, setPolicyNow] = useState(Date.now());
 
   activeContactIdRef.current = contact?.contact_id;
@@ -1707,12 +1729,35 @@ function ThreadView({
     canReplyToLeads &&
     messagingPolicy.channel === "whatsapp" &&
     !messagingPolicy.freeformAllowed;
+  const replyWindowCompactLabel = quietReplyAvailable
+    ? String(messagingPolicy.label || "")
+        .replace(/^Reply available\s*·\s*/i, "")
+        .replace(/\s+remaining$/i, "")
+    : "";
+  const composerPlaceholder = policyBlocksComposer
+    ? `${messagingPolicy.channelLabel} reply unavailable`
+    : imageFile
+    ? "Add a caption…"
+    : contact?.mode === "human"
+    ? "Message…"
+    : "Reply…";
+  const composerLabel = policyBlocksComposer
+    ? `${messagingPolicy.channelLabel} reply unavailable`
+    : imageFile
+    ? "Add a caption to the selected image"
+    : contact?.mode === "human"
+    ? `Message this ${customerSingular}`
+    : "Reply manually while AI stays on";
 
   useEffect(() => {
     setPolicyNow(Date.now());
     const timer = setInterval(() => setPolicyNow(Date.now()), 60 * 1000);
     return () => clearInterval(timer);
   }, [contact?.contact_id]);
+
+  useEffect(() => {
+    setAttentionExpanded(false);
+  }, [contact?.contact_id, contact?.attention_reason]);
 
   useEffect(() => {
     if (!loading && messages.length > 0 && shouldStickToBottomRef.current) {
@@ -1754,7 +1799,7 @@ function ThreadView({
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
-  }, [draft]);
+  }, [draft, composerPlaceholder]);
 
   useEffect(() => {
     if (!actionsOpen) return;
@@ -2063,14 +2108,14 @@ function ThreadView({
   return (
     <section className={`${mobileThreadOpen ? "flex" : "hidden lg:flex"} min-w-0 flex-1 flex-col h-full bg-[var(--color-bg)]`} aria-label={`Conversation with ${displayName(contact)}`}>
       <header className="relative z-10 shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="flex items-center justify-between gap-3 px-3 py-2.5 sm:px-5">
+        <div className="flex items-center justify-between gap-3 px-3 py-2 sm:px-5 sm:py-2.5">
           <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
             <button
               type="button"
               onClick={handleBackToConversations}
               aria-label="Back to conversations"
               title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice message first" : "Back to conversations"}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] lg:hidden"
+              className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] lg:hidden"
             >
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
@@ -2079,23 +2124,45 @@ function ThreadView({
               onClick={onOpenContactDetails}
               aria-label={`Open details for ${displayName(contact)}`}
               title="View contact details"
-              className="shrink-0 rounded-full outline-none transition focus:ring-2 focus:ring-[var(--color-primary)]/40 focus:ring-offset-2"
+              className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-full outline-none transition focus:ring-2 focus:ring-[var(--color-primary)]/40 focus:ring-offset-2"
             >
               <ContactAvatar src={contact.photo_url} channel={contact.channel} size={42} />
             </button>
             <div className="min-w-0">
               <h2 className="truncate font-display text-[15px] font-bold sm:text-base">{displayName(contact)}</h2>
-              <div className="mt-1 flex min-w-0 items-center gap-2 overflow-hidden">
-                <span className="truncate text-[10px] text-[var(--color-text-muted)] sm:text-[11px]">
+              <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden">
+                <span className="min-w-0 flex-1 truncate text-[10px] text-[var(--color-text-muted)] sm:flex-none sm:text-[11px]">
                   {contactMeta(contact)}
                 </span>
-                <LeadAssignmentBadge
-                  ownerUsername={contact.lead_owner_username}
-                  ownerDisplayName={contact.lead_owner_display_name}
-                  currentUsername={currentUsername}
-                  compact
-                  showUnassigned={showUnassignedAssignment}
-                />
+                <span
+                  className={`inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
+                    contact.mode === "human"
+                      ? "bg-[var(--color-accent-light)] text-[var(--color-accent-text)]"
+                      : "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                  }`}
+                  title={contact.mode === "human" ? "Handled by staff" : "Handled by AI"}
+                >
+                  {contact.mode === "human" ? "Staff" : "AI"}
+                </span>
+                {quietReplyAvailable && replyWindowCompactLabel && (
+                  <span
+                    className="inline-flex shrink-0 items-center gap-1 text-[9px] font-medium text-[var(--color-text-muted)] sm:text-[10px]"
+                    title={messagingPolicy.label || undefined}
+                    aria-label={messagingPolicy.label || undefined}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+                    <span>{replyWindowCompactLabel} left</span>
+                  </span>
+                )}
+                <span className="hidden sm:inline-flex">
+                  <LeadAssignmentBadge
+                    ownerUsername={contact.lead_owner_username}
+                    ownerDisplayName={contact.lead_owner_display_name}
+                    currentUsername={currentUsername}
+                    compact
+                    showUnassigned={showUnassignedAssignment}
+                  />
+                </span>
               </div>
             </div>
           </div>
@@ -2110,7 +2177,7 @@ function ThreadView({
                 disabled={actionPending || isStartingRecording || isRecording || !!voiceBlob}
                 title={isStartingRecording || isRecording || voiceBlob ? "Finish or cancel the voice recording first" : "Return control to AI"}
                 aria-label="Return control to AI"
-                className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-white px-2.5 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50 sm:h-auto sm:gap-2 sm:px-3 sm:py-2"
+                className="inline-flex h-11 min-w-11 shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl border border-[var(--color-border)] bg-white px-2.5 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50 lg:h-auto lg:gap-2 lg:px-3 lg:py-2"
               >
                 {actionPending ? <Spinner /> : <BotIcon className="h-4 w-4" />}
                 <span className="hidden min-[430px]:inline">Return to AI</span>
@@ -2124,7 +2191,7 @@ function ThreadView({
                 }}
                 disabled={actionPending}
                 aria-label="Take over conversation"
-                className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-[var(--color-primary)] px-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50 sm:h-auto sm:gap-2 sm:px-3 sm:py-2"
+                className="inline-flex h-11 min-w-11 shrink-0 touch-manipulation items-center justify-center gap-1.5 rounded-xl bg-[var(--color-primary)] px-2.5 text-xs font-semibold text-white transition hover:bg-[var(--color-primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:ring-offset-2 disabled:opacity-50 lg:h-auto lg:gap-2 lg:px-3 lg:py-2"
               >
                 {actionPending ? <Spinner /> : <UserIcon className="h-4 w-4" />}
                 <span className="hidden min-[430px]:inline">Take over</span>
@@ -2136,7 +2203,7 @@ function ThreadView({
               aria-label="Conversation actions"
               aria-haspopup="menu"
               aria-expanded={actionsOpen}
-              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${
+              className={`flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-xl border transition focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${
                 actionsOpen
                   ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
                   : "border-[var(--color-border)] bg-white text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
@@ -2188,21 +2255,30 @@ function ThreadView({
         />
 
         {contact.needs_attention && (
-          <div className="flex items-center gap-2 border-t border-[var(--color-danger)]/15 bg-[var(--color-danger-light)] px-4 py-2 text-[var(--color-danger)] sm:px-5">
-            <AlertIcon className="h-4 w-4 shrink-0" />
+          <button
+            type="button"
+            onClick={() => setAttentionExpanded((current) => !current)}
+            aria-expanded={attentionExpanded}
+            className="flex w-full touch-manipulation items-start gap-2 border-t border-[var(--color-danger)]/15 bg-[var(--color-danger-light)] px-3 py-2 text-left text-[var(--color-danger)] transition hover:bg-[var(--color-danger-light)] sm:px-5"
+            title={attentionExpanded ? "Collapse attention reason" : "Show full attention reason"}
+          >
+            <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
             <span className="shrink-0 text-[11px] font-semibold">Needs attention</span>
-            <span className="truncate text-[11px] opacity-80">
+            <span className={`min-w-0 flex-1 text-[11px] leading-4 opacity-80 ${attentionExpanded ? "whitespace-normal" : "truncate"}`}>
               {contact.attention_reason || "Flagged for staff review."}
             </span>
-          </div>
+            <ChevronDownIcon
+              className={`mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform ${attentionExpanded ? "rotate-180" : ""}`}
+            />
+          </button>
         )}
-        {messagingPolicy.applies && (
-          <div className={`border-t px-3 sm:px-5 ${quietReplyAvailable ? "border-[var(--color-border)] bg-[var(--color-surface)] py-1.5 text-[var(--color-text-muted)]" : "border-amber-200 bg-amber-50 py-2.5 text-amber-900"}`}>
-            <div className={`flex gap-2 ${quietReplyAvailable ? "items-center" : "items-start"}`}>
-              <span className={`${quietReplyAvailable ? "h-1.5 w-1.5 bg-emerald-500" : "mt-1 h-2 w-2 bg-amber-500"} shrink-0 rounded-full`} />
+        {messagingPolicy.applies && !quietReplyAvailable && (
+          <div className="border-t border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-900 sm:px-5">
+            <div className="flex items-start gap-2">
+              <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-amber-500" />
               <div className="min-w-0 flex-1">
-                <p className={`break-words ${quietReplyAvailable ? "text-[10px] font-medium" : "text-[11px] font-semibold"}`}>{messagingPolicy.label}</p>
-                {!messagingPolicy.freeformAllowed && messagingPolicy.explanation && (
+                <p className="break-words text-[11px] font-semibold">{messagingPolicy.label}</p>
+                {messagingPolicy.explanation && (
                   <p className="mt-0.5 break-words text-[10px] leading-4 opacity-80">{messagingPolicy.explanation}</p>
                 )}
                 {messagingPolicy.optedOutAt && (
@@ -2333,8 +2409,8 @@ function ThreadView({
           )}
           <div className="flex items-end gap-1.5 rounded-2xl border border-[var(--color-border)] bg-white p-1.5 transition focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)] sm:gap-2">
             <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFilePicked} className="hidden" />
-            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={sending || imagePreparing || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Attach an image"} aria-label="Attach an image" className="flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><ImageIcon className="h-[18px] w-[18px]" /></button>
-            <button type="button" onClick={startRecording} disabled={sending || imagePreparing || isStartingRecording || isRecording || !!voiceBlob || !!imageFile || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Record a voice message"} aria-label="Record a voice message" className="flex h-10 w-10 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><MicrophoneIcon className="h-[18px] w-[18px]" /></button>
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={sending || imagePreparing || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Attach an image"} aria-label="Attach an image" className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><ImageIcon className="h-[18px] w-[18px]" /></button>
+            <button type="button" onClick={startRecording} disabled={sending || imagePreparing || isStartingRecording || isRecording || !!voiceBlob || !!imageFile || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : "Record a voice message"} aria-label="Record a voice message" className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-xl text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-primary)] disabled:opacity-50"><MicrophoneIcon className="h-[18px] w-[18px]" /></button>
             <textarea
               ref={textareaRef}
               value={draft}
@@ -2346,11 +2422,12 @@ function ThreadView({
                   handleSubmit(e);
                 }
               }}
-              placeholder={policyBlocksComposer ? `${messagingPolicy.channelLabel} reply unavailable` : imageFile ? "Add a caption…" : contact.mode === "human" ? `Message this ${customerSingular}…` : "Reply manually — AI stays on…"}
+              placeholder={composerPlaceholder}
+              aria-label={composerLabel}
               rows={1}
               className="max-h-32 min-h-10 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-2.5 text-sm leading-relaxed outline-none disabled:opacity-50 sm:px-2.5"
             />
-            <button type="submit" disabled={(!draft.trim() && !imageFile) || sending || imagePreparing || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : imagePreparing ? "Preparing image" : "Send message"} aria-label="Send message" className="flex h-10 shrink-0 touch-manipulation items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-3 text-xs font-semibold text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40 sm:px-4 sm:text-sm">
+            <button type="submit" disabled={(!draft.trim() && !imageFile) || sending || imagePreparing || isStartingRecording || isRecording || !!voiceBlob || policyBlocksComposer} title={policyBlocksComposer ? messagingPolicy.explanation : imagePreparing ? "Preparing image" : "Send message"} aria-label="Send message" className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-0 text-xs font-semibold text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto sm:px-4 sm:text-sm">
               {sending || imagePreparing ? <Spinner /> : <SendIcon className="h-4 w-4" />}
               <span className="hidden sm:inline">{imagePreparing ? "Preparing…" : sending ? (imageFile ? "Uploading…" : "Sending…") : "Send"}</span>
             </button>
