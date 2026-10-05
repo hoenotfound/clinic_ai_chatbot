@@ -200,6 +200,8 @@ test("both Gemini and Claude receive the Meta ad context in their system prompt"
             text: JSON.stringify({
               reply: "可以～",
               outcome: "normal",
+              serviceQuery: false,
+              serviceQuerySource: null,
               priceQuery: false,
               packageQuery: false,
               promotionOption: null,
