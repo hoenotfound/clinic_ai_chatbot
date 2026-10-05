@@ -616,12 +616,25 @@ async function processIncomingMessage(
         );
       }
 
-      await conversationStore.updateInboundMessage(
-        contact.id,
-        savedInbound.id,
-        text,
-        mediaAttachment
-      );
+      try {
+        await conversationStore.updateInboundMessage(
+          contact.id,
+          savedInbound.id,
+          text,
+          mediaAttachment
+        );
+      } catch (stickerStorageErr) {
+        // The durable inbound claim already contains the neutral sticker
+        // placeholder. Sticker artwork is optional UI media, so an R2/storage
+        // problem must not trigger the generic customer-facing error reply or
+        // hand the conversation to staff. A later customer turn should continue
+        // normally even if this sticker could not be attached.
+        console.error(
+          `Failed to store WhatsApp sticker media for ${channel}:${from}; keeping the durable placeholder without changing ownership:`,
+          stickerStorageErr
+        );
+        mediaAttachment = null;
+      }
     }
 
     // Photos without captions and stickers contain no textual intent that can
