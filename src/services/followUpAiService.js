@@ -4,6 +4,7 @@ const { parseFollowUpAiResult } = require("../utils/followUpAiResult");
 const MAX_CONTEXT_MESSAGES = 20;
 const MAX_CONTEXT_CHARS = 14_000;
 const MAX_PREVIOUS_FOLLOW_UPS = 3;
+const PACKAGE_SELECTION_CONTEXT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function cleanContent(value) {
   return String(value || "")
@@ -122,8 +123,46 @@ function internalRequest(conversationText) {
   ].join("\n");
 }
 
+function scopePackageSelectionConversation(messages, triggerMessageId) {
+  const source = Array.isArray(messages) ? messages : [];
+  if (!source.length) return [];
+
+  const numericTriggerMessageId = Number(triggerMessageId);
+  let endIndex = source.length - 1;
+  if (Number.isSafeInteger(numericTriggerMessageId) && numericTriggerMessageId > 0) {
+    const anchorIndex = source.findIndex(
+      (message) => Number(message?.id) === numericTriggerMessageId
+    );
+    if (anchorIndex >= 0) endIndex = anchorIndex;
+  }
+
+  const anchorTime = new Date(source[endIndex]?.created_at || "").getTime();
+  const earliestTime = Number.isFinite(anchorTime)
+    ? anchorTime - PACKAGE_SELECTION_CONTEXT_WINDOW_MS
+    : null;
+
+  let startIndex = 0;
+  for (let index = endIndex - 1; index >= 0; index -= 1) {
+    const message = source[index];
+    if (message?.is_automated_follow_up) {
+      startIndex = index + 1;
+      break;
+    }
+    if (earliestTime !== null) {
+      const messageTime = new Date(message?.created_at || "").getTime();
+      if (Number.isFinite(messageTime) && messageTime < earliestTime) {
+        startIndex = index + 1;
+        break;
+      }
+    }
+  }
+
+  return source.slice(startIndex, endIndex + 1);
+}
+
 async function selectPromotionPackageForFollowUp({
   conversation,
+  triggerMessageId,
   serviceName,
   packages,
   channel = "whatsapp",
@@ -145,7 +184,7 @@ async function selectPromotionPackageForFollowUp({
   if (allowedPackages.length < 2) return null;
 
   const customerMessages = trimConversation(
-    (Array.isArray(conversation) ? conversation : []).filter(
+    scopePackageSelectionConversation(conversation, triggerMessageId).filter(
       (message) => message?.role === "user"
     )
   );
@@ -257,6 +296,7 @@ module.exports = {
   isSubstantiallySimilar,
   previousFollowUps,
   renderConversation,
+  scopePackageSelectionConversation,
   selectPromotionPackageForFollowUp,
   similarity,
   trimConversation,
