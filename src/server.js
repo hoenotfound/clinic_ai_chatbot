@@ -644,6 +644,8 @@ async function processIncomingMessage(
     let aiReply;
     let flagged = false;
     let bookingReady = false;
+    let serviceQuery = false;
+    let serviceQuerySource = null;
     let priceQuery = false;
     let packageQuery = false;
     let details = null;
@@ -680,6 +682,8 @@ async function processIncomingMessage(
         text: aiReply,
         flagged,
         bookingReady,
+        serviceQuery,
+        serviceQuerySource,
         priceQuery,
         packageQuery,
         details,
@@ -933,6 +937,8 @@ async function processIncomingMessage(
       let pendingResultError = null;
       try {
         const resultBundle = await resolveResultMediaForReply({
+          serviceQuery,
+          serviceQuerySource,
           priceQuery,
           packageQuery,
           treatment: details?.treatment,
@@ -948,6 +954,9 @@ async function processIncomingMessage(
         });
 
         if (resultBundle) {
+          console.log(
+            `Automatic result media eligible for ${resultBundle.service} via ${resultBundle.serviceQuerySource || resultBundle.triggerMode}.`
+          );
           for (const resultItem of resultBundle.items) {
             const resultContact = await getAiOwnedContact(contact, {
               channel,
