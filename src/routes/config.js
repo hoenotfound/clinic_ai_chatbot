@@ -78,6 +78,7 @@ const VALIDATORS = {
           p.followUpMessage === undefined ||
           (isString(p.followUpMessage) && p.followUpMessage.trim().length <= 1000)
         ) &&
+        (p.followUpImageUrl === undefined || isString(p.followUpImageUrl)) &&
         isPromotionFollowUpTranslations(p.followUpTranslations) &&
         (
           p.packages === undefined ||
@@ -154,6 +155,7 @@ function isPromotionPackage(value) {
       value.followUpMessage === undefined ||
       (isString(value.followUpMessage) && value.followUpMessage.trim().length <= 1000)
     ) &&
+    (value.followUpImageUrl === undefined || isString(value.followUpImageUrl)) &&
     isPromotionFollowUpTranslations(value.followUpTranslations)
   );
 }
@@ -724,6 +726,20 @@ function prepareConfigUpdatePayload(input, currentConfig = configRepo.getConfig(
             invalidKeys: ["promotions"],
           };
         }
+      }
+
+      const orphanFollowUpGraphic = [promotion, ...packages].find(
+        (item) =>
+          String(item?.followUpImageUrl || "").trim() &&
+          !hasPromotionFollowUpCopy(item)
+      );
+      if (orphanFollowUpGraphic) {
+        return {
+          ok: false,
+          status: 400,
+          error: "A first follow-up graphic requires first follow-up offer text.",
+          invalidKeys: ["promotions"],
+        };
       }
 
       const linkedService = String(promotion?.linkedService || "").trim();

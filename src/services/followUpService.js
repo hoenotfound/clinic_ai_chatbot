@@ -387,6 +387,9 @@ function promotionFollowUpForCandidate(candidate, language = "en") {
             targetedService: serviceName,
             promotionFollowUp: true,
             promotionPackageName: deterministicPackage.name,
+            promotionFollowUpImageUrl: String(
+              deterministicPackage.followUpImageUrl || ""
+            ).trim(),
           }
         : null;
     }
@@ -418,6 +421,9 @@ function promotionFollowUpForCandidate(candidate, language = "en") {
         message,
         targetedService: serviceName,
         promotionFollowUp: true,
+        promotionFollowUpImageUrl: String(
+          promotion.followUpImageUrl || ""
+        ).trim(),
       }
     : null;
 }
@@ -425,11 +431,13 @@ function promotionFollowUpForCandidate(candidate, language = "en") {
 function activePromotionFollowUpStillConfigured(
   serviceName,
   message,
-  packageName = null
+  packageName = null,
+  imageUrl = ""
 ) {
   const serviceKey = normalizedServiceName(serviceName);
   const expectedMessage = String(message || "").trim();
   const expectedPackage = normalizedServiceName(packageName);
+  const expectedImageUrl = String(imageUrl || "").trim();
   if (!serviceKey || !expectedMessage) return false;
 
   const matches = getActivePromotions(clinicConfig.promotions || []).filter(
@@ -453,15 +461,21 @@ function activePromotionFollowUpStillConfigured(
       );
       return (
         matches.length === 1 &&
-        promotionFollowUpTexts(matches[0]).includes(expectedMessage)
+        promotionFollowUpTexts(matches[0]).includes(expectedMessage) &&
+        String(matches[0].followUpImageUrl || "").trim() === expectedImageUrl
       );
     }
-    return packages.some((item) =>
-      promotionFollowUpTexts(item).includes(expectedMessage)
+    return packages.some(
+      (item) =>
+        promotionFollowUpTexts(item).includes(expectedMessage) &&
+        String(item.followUpImageUrl || "").trim() === expectedImageUrl
     );
   }
 
-  return promotionFollowUpTexts(promotion).includes(expectedMessage);
+  return (
+    promotionFollowUpTexts(promotion).includes(expectedMessage) &&
+    String(promotion.followUpImageUrl || "").trim() === expectedImageUrl
+  );
 }
 
 function messageForCandidate(step, candidate, language, stepIndex = 1) {
@@ -767,6 +781,8 @@ async function sendCandidate(candidate) {
   let targetedService = fallbackSelection.targetedService;
   let promotionFollowUp = fallbackSelection.promotionFollowUp === true;
   let promotionPackageName = fallbackSelection.promotionPackageName || null;
+  let promotionFollowUpImageUrl =
+    fallbackSelection.promotionFollowUpImageUrl || "";
   const promotionPackageSelection =
     fallbackSelection.promotionPackageSelection || null;
 
@@ -844,6 +860,9 @@ async function sendCandidate(candidate) {
             followUpMessage = selectedFollowUp;
             targetedService = promotionPackageSelection.serviceName;
             promotionPackageName = selectedPackage.name;
+            promotionFollowUpImageUrl = String(
+              selectedPackage.followUpImageUrl || ""
+            ).trim();
             promotionFollowUp = true;
           }
         }
@@ -956,9 +975,12 @@ async function sendCandidate(candidate) {
   const contact = contactForCandidate(candidate);
   const channel = contact.channel || "whatsapp";
   const isSocial = channel === "facebook" || channel === "instagram";
-  // A promotion override replaces the normal step content, so do not attach a
-  // generic follow-up graphic that may be unrelated to the selected offer.
-  const effectiveImageUrl = promotionFollowUp ? "" : step.imageUrl;
+  // A promotion override replaces the normal step content. Use only the
+  // matched promotion/package follow-up graphic; never fall back to the
+  // generic step image because it may belong to a different offer.
+  const effectiveImageUrl = promotionFollowUp
+    ? promotionFollowUpImageUrl
+    : step.imageUrl;
 
   // WhatsApp can send its image + caption as one tracked message. Messenger
   // and Instagram require separate text/image API messages, so the atomic
@@ -1013,7 +1035,8 @@ async function sendCandidate(candidate) {
         !activePromotionFollowUpStillConfigured(
           targetedService,
           followUpMessage,
-          promotionPackageName
+          promotionPackageName,
+          promotionFollowUpImageUrl
         ))
     ) {
       return false;

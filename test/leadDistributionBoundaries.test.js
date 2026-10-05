@@ -132,11 +132,16 @@ test("manual staff sends cancel synthetic AI handoff before clearing Needs Atten
   const helper = route.slice(helperStart, helperEnd);
 
   const claimIndex = helper.indexOf("claimAiHandoffOwnership");
-  const clearIndex = helper.indexOf("contactsRepo.setAttention(preparedContact.id, false)");
-  assert.ok(claimIndex >= 0 && clearIndex > claimIndex);
-  assert.match(helper, /contact\.takeover_by === AI_HANDOFF_OWNER/);
+  const finalizeIndex = helper.indexOf("finalizeStaffSendState");
+  const compareAndSetIndex = helper.indexOf("clearStaffAssistStateIfUnchanged");
+  assert.ok(claimIndex >= 0 && finalizeIndex > claimIndex);
+  assert.ok(compareAndSetIndex > finalizeIndex);
+  assert.match(helper, /preparedContact\.takeover_by === AI_HANDOFF_OWNER/);
   assert.match(helper, /AI handoff ownership could not be claimed safely/);
   assert.match(helper, /aiReplyCancellation\.cancelForContact\(contact\)/);
+  assert.match(helper, /contactsRepo\.getContactById\(contact\.id\)/);
+  assert.doesNotMatch(helper, /contactsRepo\.setAttention/);
+  assert.doesNotMatch(helper, /contactsRepo\.setUnread/);
   assert.doesNotMatch(helper, /contactsRepo\.takeOver/);
 
   const textRouteStart = route.indexOf('router.post("/:contactId/messages"');
@@ -158,6 +163,7 @@ test("manual staff sends cancel synthetic AI handoff before clearing Needs Atten
 test("Follow-up UI explains promotion overrides, sequence stops, and manual follow-up naming", () => {
   const tools = read("portal-frontend/src/pages/Tools.jsx");
   const settings = read("portal-frontend/src/pages/Settings.jsx");
+  const setup = read("portal-frontend/src/pages/ClientSetupWizard.jsx");
   const inbox = read("portal-frontend/src/pages/Inbox.jsx");
 
   assert.match(tools, /Promotion override is available/);
@@ -166,7 +172,9 @@ test("Follow-up UI explains promotion overrides, sequence stops, and manual foll
   assert.match(tools, /Sent scheduled staff messages count as staff replies/);
   assert.match(settings, /Requires Tools → Automated follow-up to be on/);
   assert.match(settings, /Language-specific follow-up copy/);
-  assert.match(settings, /image, caption, and first follow-up offer/);
+  assert.match(settings, /image, caption, first follow-up offer, and first follow-up graphic/);
+  assert.match(settings, /First follow-up graphic/);
+  assert.match(setup, /First follow-up graphic/);
   assert.match(inbox, /Needs follow-up/);
 });
 

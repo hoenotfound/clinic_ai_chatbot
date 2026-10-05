@@ -1,5 +1,43 @@
 const epochs = new Map();
+const epochTouchedAt = new Map();
 const pendingEchoes = new Map();
+
+const EPOCH_TTL_MS = 6 * 60 * 60 * 1000;
+const EPOCH_PRUNE_INTERVAL_MS = 60 * 1000;
+const MAX_EPOCH_KEYS = 5000;
+let lastEpochPruneAt = 0;
+
+function pruneEpochs(now = Date.now()) {
+  if (
+    now - lastEpochPruneAt < EPOCH_PRUNE_INTERVAL_MS &&
+    epochs.size <= MAX_EPOCH_KEYS
+  ) {
+    return;
+  }
+  lastEpochPruneAt = now;
+
+  for (const [key, touchedAt] of epochTouchedAt.entries()) {
+    if (
+      !pendingEchoes.has(key) &&
+      now - touchedAt > EPOCH_TTL_MS
+    ) {
+      epochTouchedAt.delete(key);
+      epochs.delete(key);
+    }
+  }
+
+  if (epochs.size <= MAX_EPOCH_KEYS) return;
+
+  const oldest = [...epochTouchedAt.entries()]
+    .filter(([key]) => !pendingEchoes.has(key))
+    .sort((a, b) => a[1] - b[1]);
+
+  for (const [key] of oldest) {
+    if (epochs.size <= MAX_EPOCH_KEYS) break;
+    epochTouchedAt.delete(key);
+    epochs.delete(key);
+  }
+}
 
 function enabled() {
   return String(process.env.WHATSAPP_COEXISTENCE_ENABLED || "").trim().toLowerCase() === "true";
@@ -30,6 +68,7 @@ function cancelForContact(contact) {
 
 function snapshot(key) {
   if (!key) return 0;
+  pruneEpochs();
   return epochs.get(String(key)) || 0;
 }
 
@@ -38,6 +77,8 @@ function cancel(key) {
   const normalized = String(key);
   const next = snapshot(normalized) + 1;
   epochs.set(normalized, next);
+  epochTouchedAt.set(normalized, Date.now());
+  pruneEpochs();
   return next;
 }
 
