@@ -33,6 +33,8 @@ const SSE_HEARTBEAT_MS = 25 * 1000;
 const SEND_REJECTED_ERROR =
   "WhatsApp did not accept this message. Check the reply window or connection and try again.";
 const MAX_DELIVERY_STATUS_IDS = 500;
+const WHATSAPP_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const WHATSAPP_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -101,6 +103,18 @@ async function resolveReplyTarget(contact, rawMessageId, res) {
   }
   if (!target.whatsapp_message_id) {
     res.status(409).json({ error: "That message is not available to quote on WhatsApp yet." });
+    return { ok: false, target: null };
+  }
+
+  const targetDeliveryStatus = String(target.delivery_status || "").toLowerCase();
+  if (
+    target.role !== "user" &&
+    ["failed", "unknown"].includes(targetDeliveryStatus)
+  ) {
+    res.status(409).json({
+      error:
+        "That outbound message was not confirmed delivered, so it cannot be used as a WhatsApp quote.",
+    });
     return { ok: false, target: null };
   }
 
@@ -1563,6 +1577,23 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "An image file is required." });
     }
+
+    if ((contact.channel || "whatsapp") === "whatsapp") {
+      const mimeType = String(req.file.mimetype || "").toLowerCase();
+      if (!WHATSAPP_IMAGE_MIME_TYPES.has(mimeType)) {
+        return res.status(400).json({
+          error: "WhatsApp images must be JPEG or PNG.",
+          code: "unsupported_whatsapp_image_type",
+        });
+      }
+      if (req.file.size > WHATSAPP_IMAGE_MAX_BYTES) {
+        return res.status(400).json({
+          error: "WhatsApp images must be 5MB or smaller.",
+          code: "whatsapp_image_too_large",
+        });
+      }
+    }
+
     const reply = await resolveReplyTarget(contact, req.body?.replyToMessageId, res);
     if (!reply.ok) return;
     const replyTarget = reply.target;
