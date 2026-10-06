@@ -7,6 +7,7 @@ const {
   parseIncomingMessages,
   parseReactionEvents,
   parseStatusUpdates,
+  sendMessage,
 } = require("../src/services/whatsappService");
 const whatsappPolicy = require("../src/services/whatsappPolicyService");
 
@@ -55,6 +56,71 @@ test("parses messages from every webhook entry and change", () => {
   ]);
   assert.equal(parsed[1].mediaId, "image-2");
   assert.equal(parsed[2].mediaId, "audio-3");
+});
+
+test("preserves WhatsApp quoted-reply and forwarded context on inbound messages", () => {
+  const [quoted, forwarded] = parseIncomingMessages({
+    entry: [{
+      changes: [{
+        value: {
+          messages: [
+            {
+              id: "message-reply-1",
+              from: "6011",
+              type: "text",
+              text: { body: "This one" },
+              context: { id: "wamid.original-1" },
+            },
+            {
+              id: "message-forwarded-1",
+              from: "6011",
+              type: "text",
+              text: { body: "Forwarded content" },
+              context: { forwarded: true },
+            },
+          ],
+        },
+      }],
+    }],
+  });
+
+  assert.equal(quoted.replyToProviderMessageId, "wamid.original-1");
+  assert.equal(quoted.isForwarded, undefined);
+  assert.equal(forwarded.replyToProviderMessageId, undefined);
+  assert.equal(forwarded.isForwarded, true);
+});
+
+test("outbound WhatsApp quoted reply sends context.message_id", async (t) => {
+  const originalFetch = global.fetch;
+  const oldPhone = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const oldToken = process.env.WHATSAPP_TOKEN;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (oldPhone === undefined) delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    else process.env.WHATSAPP_PHONE_NUMBER_ID = oldPhone;
+    if (oldToken === undefined) delete process.env.WHATSAPP_TOKEN;
+    else process.env.WHATSAPP_TOKEN = oldToken;
+  });
+
+  process.env.WHATSAPP_PHONE_NUMBER_ID = "phone-test";
+  process.env.WHATSAPP_TOKEN = "token-test";
+  let requestBody = null;
+  global.fetch = async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      json: async () => ({ messages: [{ id: "wamid.reply-sent" }] }),
+    };
+  };
+
+  const result = await sendMessage("60112223333", "Reply text", {
+    replyToProviderMessageId: "wamid.original-2",
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.wamid, "wamid.reply-sent");
+  assert.deepEqual(requestBody.context, { message_id: "wamid.original-2" });
+  assert.equal(requestBody.text.body, "Reply text");
 });
 
 test("parses delivery statuses from every webhook entry and change", () => {
