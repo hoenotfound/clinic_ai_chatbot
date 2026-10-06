@@ -129,6 +129,101 @@ test("reply-target lookup exposes delivery status for server-side quote validati
   assert.equal(message.whatsapp_message_id, "wamid-unconfirmed");
 });
 
+test("forward lookup keeps the R2 key and never downloads media bytes", async (t) => {
+  const originalQuery = pool.query;
+  const originalDownloadMedia = mediaStorage.downloadMedia;
+  t.after(() => {
+    pool.query = originalQuery;
+    mediaStorage.downloadMedia = originalDownloadMedia;
+  });
+
+  mediaStorage.downloadMedia = async () => {
+    throw new Error("forward lookup must not download media");
+  };
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /m\.media_key/);
+    assert.deepEqual(params, [88, 7]);
+    return {
+      rows: [{
+        id: 88,
+        contact_id: 7,
+        role: "assistant",
+        content: "Photo",
+        media_key: "clients/acme/messages/7/photo.jpg",
+        media_mime_type: "image/jpeg",
+      }],
+    };
+  };
+
+  const message = await messagesRepo.getMessageForForward(7, 88);
+  assert.equal(message.media_key, "clients/acme/messages/7/photo.jpg");
+  assert.equal(message.media_mime_type, "image/jpeg");
+});
+
+test("saving a message with an existing media key skips R2 upload", async (t) => {
+  const originalQuery = pool.query;
+  const originalUploadMedia = mediaStorage.uploadMedia;
+  t.after(() => {
+    pool.query = originalQuery;
+    mediaStorage.uploadMedia = originalUploadMedia;
+  });
+
+  mediaStorage.uploadMedia = async () => {
+    throw new Error("existing media key should bypass upload");
+  };
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /INSERT INTO messages/);
+    assert.equal(params[6], "clients/acme/messages/99/copied.jpg");
+    assert.equal(params[7], "image/jpeg");
+    return { rows: [{ id: 99, contact_id: 12, content: "Forwarded" }] };
+  };
+
+  const saved = await messagesRepo.saveMessage(
+    12,
+    "assistant",
+    "Forwarded",
+    null,
+    "staff",
+    null,
+    null,
+    "image/jpeg",
+    { mediaKey: "clients/acme/messages/99/copied.jpg", isForwarded: true }
+  );
+
+  assert.equal(saved.id, 99);
+});
+
+test("attaching persisted media updates the existing lightweight message row", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /UPDATE messages/);
+    assert.match(sql, /SET media_key = \$3, media_mime_type = \$4/);
+    assert.deepEqual(params, [55, 7, "clients/acme/messages/7/photo.jpg", "image/jpeg"]);
+    return {
+      rows: [{
+        id: 55,
+        contact_id: 7,
+        has_media_attachment: true,
+        media_mime_type: "image/jpeg",
+      }],
+    };
+  };
+
+  const updated = await messagesRepo.setMessageMediaKeyById(
+    55,
+    7,
+    "clients/acme/messages/7/photo.jpg",
+    "image/jpeg"
+  );
+  assert.equal(updated.has_media_attachment, true);
+});
+
 test("uploads Buffer attachments to R2 without a base64 round-trip", async (t) => {
   const originalQuery = pool.query;
   const originalUploadMedia = mediaStorage.uploadMedia;
