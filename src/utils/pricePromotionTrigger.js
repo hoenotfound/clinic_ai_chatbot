@@ -2,6 +2,7 @@ const {
   findMentionedPromotionPackages,
   getPricePromotionBundle,
 } = require("./activePromotion");
+const { resolveLocalizedMedia } = require("./mediaLocalization");
 
 /**
  * Resolves whether the current AI reply is allowed to trigger promotional media.
@@ -51,6 +52,7 @@ async function resolvePricePromotionForReply({
   needsAttention,
   textSendSucceeded,
   promotions,
+  language = "en",
   contactId,
   wasPromoRecentlySent,
   duplicateWindowHours = 24,
@@ -105,13 +107,14 @@ async function resolvePricePromotionForReply({
 
   const unsentPackages = [];
   for (const packageOption of bundle.packages) {
+    const localizedPackage = resolveLocalizedMedia(packageOption, language);
     const recentlySent = await wasPromoRecentlySent(
       contactId,
-      packageOption.imageUrl,
-      packageOption.caption,
+      localizedPackage.imageUrl,
+      localizedPackage.caption,
       duplicateWindowHours
     );
-    if (!recentlySent) unsentPackages.push(packageOption);
+    if (!recentlySent) unsentPackages.push(localizedPackage);
   }
 
   return unsentPackages.length > 0
