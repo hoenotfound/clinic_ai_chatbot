@@ -128,6 +128,7 @@ test("Inbox and contact details expose policy guidance for standard-window chann
   const contactsRepo = fs.readFileSync(path.join(root, "src/db/contactsRepo.js"), "utf8");
   const tools = fs.readFileSync(path.join(root, "portal-frontend/src/pages/Tools.jsx"), "utf8");
   const leadDrawer = fs.readFileSync(path.join(root, "portal-frontend/src/components/pipeline/LeadDrawer.jsx"), "utf8");
+  const contactInsights = fs.readFileSync(path.join(root, "portal-frontend/src/components/ContactInsights.jsx"), "utf8");
 
   assert.doesNotMatch(inbox, /Sending unavailable\./);
   assert.match(inbox, /quietReplyAvailable/);
@@ -142,6 +143,11 @@ test("Inbox and contact details expose policy guidance for standard-window chann
   assert.match(details, /Standard 24-hour reply-window status/);
   assert.match(details, /Opt-in date \/ source/);
   assert.match(details, /Opt-out date \/ source/);
+  assert.match(details, /aria-expanded=\{expanded\}/);
+  assert.match(details, /Tap to view reply window and consent details/);
+  assert.match(contactInsights, /api\.updateLead\(lead\.id, patch\)/);
+  assert.match(contactInsights, /temperatureLocked: true/);
+  assert.match(contactInsights, /Allow AI updates/);
   assert.match(tools, /Messenger, and Instagram follow-ups/);
   assert.match(tools, /WhatsApp opt-outs remain a hard stop/);
   assert.match(leadDrawer, /CRM marketing consent/);
@@ -376,7 +382,8 @@ test("messaging-policy surfaces keep responsive mobile affordances", () => {
   assert.match(inbox, /safe-area-inset-bottom/);
   assert.match(inbox, /min-\[430px\]:inline/);
   assert.match(inbox, /touch-manipulation/);
-  assert.match(details, /min-\[400px\]:flex-row/);
+  assert.match(details, /touch-manipulation/);
+  assert.match(details, /aria-expanded=\{expanded\}/);
   assert.match(details, /grid grid-cols-2/);
   assert.match(scheduler, /max-h-\[92dvh\]/);
   assert.match(scheduler, /pb-\[env\(safe-area-inset-bottom\)\]/);
