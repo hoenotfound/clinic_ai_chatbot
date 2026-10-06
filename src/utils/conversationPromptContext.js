@@ -14,6 +14,17 @@ function cleanText(value) {
     .trim();
 }
 
+function messageText(message) {
+  if (typeof message?.content === "string") return cleanText(message.content);
+  if (!Array.isArray(message?.content)) return "";
+  return cleanText(
+    message.content
+      .filter((part) => part?.type === "text" && typeof part?.text === "string")
+      .map((part) => part.text)
+      .join(" ")
+  );
+}
+
 function normalizeComparable(value) {
   return cleanText(value)
     .normalize("NFKC")
@@ -84,8 +95,7 @@ function latestCustomerMessages(messages, limit = 8) {
     .filter(
       (message) =>
         message?.role === "user" &&
-        typeof message?.content === "string" &&
-        cleanText(message.content)
+        messageText(message)
     )
     .slice(-Math.max(1, Number(limit) || 8));
 }
@@ -104,19 +114,27 @@ function buildConversationPromptContext(
 ) {
   const candidates = serviceCandidates(services, aliases);
   const customerMessages = latestCustomerMessages(messages, 8);
-  const currentCustomerText = cleanText(customerMessages.at(-1)?.content);
+  const currentCustomerText = messageText(customerMessages.at(-1));
   const currentMatches = unique(findServicesInText(currentCustomerText, candidates));
 
-  let relevantServiceNames = currentMatches.slice(0, 2);
-  let serviceSource = relevantServiceNames.length ? "current_customer" : null;
+  let relevantServiceNames = currentMatches.length <= 2 ? currentMatches : [];
+  let serviceSource = currentMatches.length > 2
+    ? "multi_service_broad"
+    : relevantServiceNames.length
+      ? "current_customer"
+      : null;
 
-  if (!relevantServiceNames.length) {
+  if (!relevantServiceNames.length && currentMatches.length <= 2) {
     for (let index = customerMessages.length - 2; index >= 0; index -= 1) {
       const matches = unique(
-        findServicesInText(customerMessages[index]?.content, candidates)
+        findServicesInText(messageText(customerMessages[index]), candidates)
       );
       if (!matches.length) continue;
-      relevantServiceNames = matches.slice(0, 2);
+      if (matches.length > 2) {
+        serviceSource = "multi_service_broad";
+        break;
+      }
+      relevantServiceNames = matches;
       serviceSource = "recent_customer";
       break;
     }
@@ -138,7 +156,7 @@ function buildConversationPromptContext(
 
   const recentCustomerText = customerMessages
     .slice(-3)
-    .map((message) => cleanText(message.content))
+    .map((message) => messageText(message))
     .join("\n");
 
   return {
@@ -158,6 +176,7 @@ module.exports = {
   buildConversationPromptContext,
   cleanText,
   findServicesInText,
+  messageText,
   normalizeComparable,
   serviceCandidates,
   splitAliasTerms,
