@@ -183,24 +183,6 @@ test(
         [contactId, parent.rows[0].id]
       );
       await client.query(
-        `INSERT INTO message_reactions (
-           target_message_id, contact_id, reactor_key, emoji,
-           provider_reaction_message_id
-         )
-         VALUES ($1, $2, 'whatsapp:60120001111', '👍', 'wamid.reaction.saved')`,
-        [parent.rows[0].id, contactId]
-      );
-      await client.query(
-        `INSERT INTO pending_whatsapp_reactions (
-           target_whatsapp_message_id, reactor_key, reactor_whatsapp_id,
-           emoji, provider_reaction_message_id
-         )
-         VALUES (
-           'facebook:mid-deleted-1', 'whatsapp:60120001111',
-           'social-1', '❤️', 'wamid.reaction.pending'
-         )`
-      );
-      await client.query(
         `INSERT INTO leads (contact_id, updated_at)
          VALUES ($1, NOW() - INTERVAL '99 days')`,
         [contactId]
@@ -242,8 +224,8 @@ test(
         providerMessageTombstones: 1,
         providerReferralTombstones: 1,
         providerCommentTombstones: 1,
-        pendingReactions: 1,
-        providerReactionTombstones: 2,
+        pendingReactions: 0,
+        providerReactionTombstones: 0,
       });
 
       for (const table of [
@@ -283,8 +265,6 @@ test(
         [
           "facebook:mid-deleted-1",
           "facebook:referral:deleted-event-1",
-          "wamid.reaction.saved",
-          "wamid.reaction.pending",
         ].sort()
       );
 
@@ -310,13 +290,6 @@ test(
         ),
         true
       );
-      assert.equal(
-        await messagesRepo.isDeletedWhatsappReactionEvent(client, {
-          targetWhatsappMessageId: "facebook:mid-deleted-1",
-          providerReactionMessageId: "wamid.new-reaction-retry",
-        }),
-        true
-      );
       const replayedComment = await metaCommentAutomationRepo.storeIncomingComment({
         channel: "facebook",
         commentId: "comment-deleted-1",
@@ -331,6 +304,106 @@ test(
         rawEvent: {},
       }, client);
       assert.equal(replayedComment, null);
+    } finally {
+      await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`).catch(() => {});
+      await client.end();
+    }
+  }
+);
+
+test(
+  "WhatsApp customer purge removes pending reaction identity and blocks later reaction retries",
+  { skip: !connectionString },
+  async () => {
+    const client = new Client({ connectionString });
+    const schemaName = `customer_reaction_purge_${process.pid}_${Date.now()}`;
+    await client.connect();
+    try {
+      await client.query(`CREATE SCHEMA ${schemaName}`);
+      await client.query(`SET search_path TO ${schemaName}`);
+      await createLifecycleSchema(client);
+
+      const contact = await client.query(
+        `INSERT INTO contacts (
+           whatsapp_number, channel, created_at, updated_at
+         )
+         VALUES (
+           '60120001111', 'whatsapp',
+           NOW() - INTERVAL '100 days', NOW() - INTERVAL '100 days'
+         )
+         RETURNING id`
+      );
+      const contactId = contact.rows[0].id;
+      const target = await client.query(
+        `INSERT INTO messages (
+           contact_id, role, content, whatsapp_message_id, created_at
+         )
+         VALUES (
+           $1, 'assistant', 'staff reply', 'wamid.target-deleted',
+           NOW() - INTERVAL '99 days'
+         )
+         RETURNING id`,
+        [contactId]
+      );
+
+      await client.query(
+        `INSERT INTO message_reactions (
+           target_message_id, contact_id, reactor_key, emoji,
+           provider_reaction_message_id
+         )
+         VALUES (
+           $1, $2, 'whatsapp:60120001111', '👍',
+           'wamid.reaction.saved'
+         )`,
+        [target.rows[0].id, contactId]
+      );
+      await client.query(
+        `INSERT INTO pending_whatsapp_reactions (
+           target_whatsapp_message_id, reactor_key, reactor_whatsapp_id,
+           emoji, provider_reaction_message_id
+         )
+         VALUES (
+           'wamid.target-deleted', 'whatsapp:60120001111',
+           '60120001111', '❤️', 'wamid.reaction.pending'
+         )`
+      );
+
+      const result = await lifecycleRepo.purgeContactData({
+        contactId,
+        reason: "manual",
+        requestedBy: "admin",
+        mediaPrefixes: [],
+      }, client);
+
+      assert.equal(result.status, "purged");
+      assert.equal(result.deletedCounts.pendingReactions, 1);
+      assert.equal(result.deletedCounts.providerReactionTombstones, 2);
+      assert.equal(
+        (await client.query(
+          "SELECT COUNT(*)::int AS count FROM pending_whatsapp_reactions"
+        )).rows[0].count,
+        0
+      );
+
+      const tombstones = await client.query(
+        "SELECT provider_message_id FROM customer_data_deleted_message_ids"
+      );
+      assert.deepEqual(
+        tombstones.rows.map((row) => row.provider_message_id).sort(),
+        [
+          "wamid.target-deleted",
+          "wamid.reaction.saved",
+          "wamid.reaction.pending",
+        ].sort()
+      );
+
+      assert.equal(
+        await messagesRepo.isDeletedWhatsappReactionEvent(client, {
+          targetWhatsappMessageId: "wamid.target-deleted",
+          providerReactionMessageId: "wamid.reaction.future-retry",
+        }),
+        true
+      );
     } finally {
       await client.query(`DROP SCHEMA IF EXISTS ${schemaName} CASCADE`).catch(() => {});
       await client.end();
