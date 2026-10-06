@@ -4,6 +4,7 @@ const CLAIM_STALE_MINUTES = 10;
 const MAX_ATTEMPTS = 3;
 const QUEUE_LOCK_NAMESPACE = 24684;
 const ACTIONABLE_SUMMARY_SUPPRESSION_MINUTES = 60;
+const RETRY_DELAY_MINUTES = Object.freeze([1, 5]);
 
 async function withTransaction(work) {
   const client = await pool.connect();
@@ -88,8 +89,23 @@ async function findReadySummaries({
      WHERE a.status IN ('pending', 'sending')
        AND a.attempts < ${MAX_ATTEMPTS}
        AND (
-         a.status = 'pending'
-         OR a.claimed_at <= now() - (${CLAIM_STALE_MINUTES} * interval '1 minute')
+         (
+           a.status = 'pending'
+           AND (
+             a.attempts = 0
+             OR a.updated_at <= now() - (
+               CASE a.attempts
+                 WHEN 1 THEN interval '1 minute'
+                 WHEN 2 THEN interval '5 minutes'
+                 ELSE interval '100 years'
+               END
+             )
+           )
+         )
+         OR (
+           a.status = 'sending'
+           AND a.claimed_at <= now() - (${CLAIM_STALE_MINUTES} * interval '1 minute')
+         )
        )
        AND NOT EXISTS (
          SELECT 1
@@ -141,7 +157,19 @@ async function claimSummary(
        AND a.lead_id = l.id
        AND a.attempts < ${MAX_ATTEMPTS}
        AND (
-         a.status = 'pending'
+         (
+           a.status = 'pending'
+           AND (
+             a.attempts = 0
+             OR a.updated_at <= now() - (
+               CASE a.attempts
+                 WHEN 1 THEN interval '1 minute'
+                 WHEN 2 THEN interval '5 minutes'
+                 ELSE interval '100 years'
+               END
+             )
+           )
+         )
          OR (
            a.status = 'sending'
            AND a.claimed_at <= now() - (${CLAIM_STALE_MINUTES} * interval '1 minute')
@@ -298,6 +326,23 @@ async function markSent(alertId) {
   return result.rows[0] || null;
 }
 
+async function findNextRetryAt() {
+  const result = await pool.query(
+    `SELECT MIN(
+       updated_at + CASE attempts
+         WHEN 1 THEN interval '1 minute'
+         WHEN 2 THEN interval '5 minutes'
+         ELSE NULL
+       END
+     ) AS next_retry_at
+     FROM telegram_summary_alerts
+     WHERE status = 'pending'
+       AND attempts > 0
+       AND attempts < ${MAX_ATTEMPTS}`
+  );
+  return result.rows[0]?.next_retry_at || null;
+}
+
 async function markFailed(alertId, error) {
   const message = String(error?.message || error || "Telegram send failed.").slice(0, 1000);
   const result = await pool.query(
@@ -316,8 +361,10 @@ module.exports = {
   CLAIM_STALE_MINUTES,
   MAX_ATTEMPTS,
   QUEUE_LOCK_NAMESPACE,
+  RETRY_DELAY_MINUTES,
   claimSummary,
   findActionableCoverage,
+  findNextRetryAt,
   findReadySummaries,
   markFailed,
   markSent,
