@@ -335,6 +335,67 @@ async function sendStoredMessage(contact, message, options = {}) {
     };
   }
 
+  const storedSticker =
+    mimeType === "image/webp" &&
+    /(?:sent a sticker|forwarded sticker|sticker sent from)/i.test(
+      String(message.content || "")
+    );
+
+  // Normal stored images can stay entirely inside R2. Create a disposable
+  // provider-facing copy and let Meta fetch it instead of downloading the
+  // permanent object into Render and uploading those bytes again.
+  if (
+    mimeType.startsWith("image/") &&
+    !storedSticker &&
+    message.media_key
+  ) {
+    try {
+      const temporaryMedia = await mediaStorage.copyStoredMediaToTemporary(
+        message.media_key,
+        mimeType,
+        {
+          contactId: contact.id,
+          expiresSeconds: 10 * 60,
+        }
+      );
+      mediaStorage.scheduleTemporaryMediaDelete(temporaryMedia.key);
+      return await channelMessaging.sendImageByUrl(
+        contact,
+        temporaryMedia.url,
+        skipCaption ? undefined : (message.content || undefined),
+        socialProviderSendOptions(message, contact, { ...options, skipCaption })
+      );
+    } catch (copyErr) {
+      console.warn(
+        `[Inbox stored image] R2 provider-copy fast path failed for contact ${contact.id}; falling back to buffered send:`,
+        copyErr
+      );
+      const storedBuffer = await mediaStorage.downloadMedia(message.media_key);
+      return channelMessaging.sendImageBuffer(
+        contact,
+        storedBuffer,
+        mimeType,
+        skipCaption ? undefined : (message.content || undefined),
+        "image",
+        socialProviderSendOptions(message, contact, { ...options, skipCaption })
+      );
+    }
+  }
+
+  // Voice notes and stickers need provider-specific upload semantics, so only
+  // those uncommon stored media types are materialized into Render memory.
+  if (
+    message.media_key &&
+    !message.media_base64 &&
+    (mimeType.startsWith("audio/") || storedSticker)
+  ) {
+    const storedBuffer = await mediaStorage.downloadMedia(message.media_key);
+    message = {
+      ...message,
+      media_base64: storedBuffer.toString("base64"),
+    };
+  }
+
   if (mimeType.startsWith("audio/") && message.media_base64) {
     const storedBuffer = Buffer.from(message.media_base64, "base64");
     if (channel === "whatsapp") {
@@ -358,12 +419,6 @@ async function sendStoredMessage(contact, message, options = {}) {
       socialProviderSendOptions(message, contact, options)
     );
   }
-
-  const storedSticker =
-    mimeType === "image/webp" &&
-    /(?:sent a sticker|forwarded sticker|sticker sent from)/i.test(
-      String(message.content || "")
-    );
 
   if (storedSticker && message.media_base64 && channel === "whatsapp") {
     return channelMessaging.sendStickerBuffer(
@@ -1326,6 +1381,7 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
 });
 
 async function forwardStoredMessage(sourceMessage, targetContact, username) {
+  const forwardStartedAt = Date.now();
   const policy = await whatsappPolicy.checkFreeformAllowed(targetContact, new Date(), {
     purpose: whatsappPolicy.manualStaffPurpose(targetContact),
   });
@@ -1346,8 +1402,6 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
     /(?:sent a sticker|sticker sent from)/i.test(sourceContent);
   let forwardedContent = sourceContent;
   if (sourceIsSticker) {
-    // Keep a small local marker so failed forwarded stickers can be retried
-    // through the sticker endpoint instead of being mistaken for normal images.
     forwardedContent = "🙂 [Forwarded sticker]";
   } else if (
     sourceMimeType.startsWith("image/") &&
@@ -1358,30 +1412,68 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
     forwardedContent = sourceContent.replace(/^📷\s*/u, "");
   }
 
-  const mediaAttachment = sourceMessage.media_base64
-    ? {
+  let targetMediaKey = null;
+  let fallbackMediaAttachment = null;
+  let mediaCopyMs = null;
+
+  if (sourceMessage.media_key) {
+    const copyStartedAt = Date.now();
+    try {
+      targetMediaKey = await mediaStorage.copyStoredMediaToMessage(
+        sourceMessage.media_key,
+        sourceMessage.media_mime_type,
+        { contactId: targetContact.id }
+      );
+      mediaCopyMs = Date.now() - copyStartedAt;
+    } catch (copyErr) {
+      // Keep forwarding available if R2's server-side copy is temporarily
+      // unavailable. This fallback is intentionally the only path that
+      // downloads the original bytes into Render.
+      console.warn(
+        `[Inbox forward] R2 server-side copy failed for message ${sourceMessage.id}; falling back to buffered copy:`,
+        copyErr
+      );
+      const buffer = await mediaStorage.downloadMedia(sourceMessage.media_key);
+      fallbackMediaAttachment = {
         mimeType: sourceMessage.media_mime_type,
-        buffer: Buffer.from(sourceMessage.media_base64, "base64"),
-      }
-    : null;
+        buffer,
+      };
+      mediaCopyMs = Date.now() - copyStartedAt;
+    }
+  }
 
   const prepared = await telegramImmediateAlertRepo.withContactAlertLock(
     targetContact.id,
     async () => {
       const preparedContact = await prepareStaffSend(targetContact, username);
-      const saved = await conversationStore.appendMessageForContact(
-        preparedContact.id,
-        "assistant",
-        forwardedContent,
-        null,
-        username,
-        sourceMessage.media_url || null,
-        mediaAttachment,
-        { isForwarded: true }
-      );
-      const finalContact =
-        await finalizeStaffSendState(preparedContact.id, username);
-      return { preparedContact: finalContact || preparedContact, saved };
+      try {
+        const saved = await conversationStore.appendMessageForContact(
+          preparedContact.id,
+          "assistant",
+          forwardedContent,
+          null,
+          username,
+          sourceMessage.media_url || null,
+          fallbackMediaAttachment,
+          {
+            isForwarded: true,
+            mediaKey: targetMediaKey,
+          }
+        );
+        const finalContact =
+          await finalizeStaffSendState(preparedContact.id, username);
+        return { preparedContact: finalContact || preparedContact, saved };
+      } catch (err) {
+        if (targetMediaKey) {
+          await mediaStorage.deleteMedia(targetMediaKey).catch((cleanupErr) => {
+            console.error(
+              `Failed to clean up copied forward media ${targetMediaKey}:`,
+              cleanupErr
+            );
+          });
+        }
+        throw err;
+      }
     }
   );
 
@@ -1391,13 +1483,21 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
     id: saved.id,
     contact_id: saved.contact_id,
     content: forwardedContent,
+    media_key: targetMediaKey,
+    media_base64: fallbackMediaAttachment
+      ? fallbackMediaAttachment.buffer.toString("base64")
+      : null,
     delivery_error: null,
     reply_to_provider_message_id: null,
     is_forwarded: true,
   };
+
+  const providerStartedAt = Date.now();
   const sendResult = await sendStoredMessage(preparedContact, messageForSend, {
     purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
   });
+  const providerMs = Date.now() - providerStartedAt;
+
   const errorText = deliveryErrorForSend(
     sendResult,
     sendResult.error || rejectedErrorFor(preparedContact)
@@ -1415,6 +1515,13 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
     await contactsRepo.setDeliveryAttention(
       preparedContact.id,
       `Delivery failed: ${publicDeliveryError(errorText)}`
+    );
+  }
+
+  const totalMs = Date.now() - forwardStartedAt;
+  if (sourceMimeType.startsWith("image/") && totalMs >= 1000) {
+    console.info(
+      `[Inbox forward timing] source=${sourceMessage.id} target=${preparedContact.id} copy=${mediaCopyMs ?? "n/a"}ms provider=${providerMs}ms total=${totalMs}ms`
     );
   }
 
@@ -1451,7 +1558,7 @@ router.post("/:contactId/messages/:messageId/forward", async (req, res) => {
       return res.status(400).json({ error: "You can forward to up to 10 conversations at a time." });
     }
 
-    const sourceMessage = await messagesRepo.getMessageForRetry(
+    const sourceMessage = await messagesRepo.getMessageForForward(
       sourceContactId,
       sourceMessageId
     );
@@ -1460,7 +1567,7 @@ router.post("/:contactId/messages/:messageId/forward", async (req, res) => {
     }
     const hasForwardableContent =
       Boolean(String(sourceMessage.content || "").trim()) ||
-      Boolean(sourceMessage.media_base64) ||
+      Boolean(sourceMessage.media_key) ||
       Boolean(sourceMessage.media_url);
     if (!hasForwardableContent) {
       return res.status(400).json({ error: "This message cannot be forwarded." });
