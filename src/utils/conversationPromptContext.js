@@ -136,7 +136,7 @@ function strongServiceMatchesInText(text, candidates) {
 }
 
 
-function recentConversationServiceAnchor(messages, candidates, maxMessages = 8) {
+function recentConversationServiceAnchor(messages, candidates, maxMessages = 16) {
   const source = Array.isArray(messages) ? messages : [];
   let skippedCurrentCustomer = false;
   let inspected = 0;
