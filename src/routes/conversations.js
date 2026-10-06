@@ -78,6 +78,25 @@ function parsePositiveInt(value) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, limit), items.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= items.length) return;
+        results[index] = await worker(items[index], index);
+      }
+    })
+  );
+
+  return results;
+}
+
 async function resolveReplyTarget(contact, rawMessageId, res) {
   if (rawMessageId == null || rawMessageId === "") {
     return { ok: true, target: null };
@@ -1447,38 +1466,49 @@ router.post("/:contactId/messages/:messageId/forward", async (req, res) => {
       return res.status(400).json({ error: "This message cannot be forwarded." });
     }
 
-    const targets = [];
-    for (const contactId of targetContactIds) {
-      if (!(await canAccessContact(req.user, contactId))) {
-        return res.status(403).json({
-          error: "One of the selected conversations is not assigned to you.",
-        });
-      }
-      const target = await contactsRepo.getContactById(contactId);
-      if (!target) {
-        return res.status(404).json({ error: "One of the selected conversations no longer exists." });
-      }
-      targets.push(target);
+    const targetChecks = await Promise.all(
+      targetContactIds.map(async (contactId) => {
+        const allowed = await canAccessContact(req.user, contactId);
+        if (!allowed) return { contactId, allowed: false, target: null };
+        return {
+          contactId,
+          allowed: true,
+          target: await contactsRepo.getContactById(contactId),
+        };
+      })
+    );
+
+    if (targetChecks.some((item) => !item.allowed)) {
+      return res.status(403).json({
+        error: "One of the selected conversations is not assigned to you.",
+      });
+    }
+    if (targetChecks.some((item) => !item.target)) {
+      return res.status(404).json({
+        error: "One of the selected conversations no longer exists.",
+      });
     }
 
-    const results = [];
-    for (const target of targets) {
+    const targets = targetChecks.map((item) => item.target);
+    const results = await mapWithConcurrency(targets, 3, async (target) => {
       try {
-        results.push(
-          await forwardStoredMessage(sourceMessage, target, req.session.username)
+        return await forwardStoredMessage(
+          sourceMessage,
+          target,
+          req.session.username
         );
       } catch (err) {
         console.error(
           `Failed to forward message ${sourceMessageId} to contact ${target.id}:`,
           err
         );
-        results.push({
+        return {
           contactId: target.id,
           delivered: false,
           error: "Something went wrong forwarding this message.",
-        });
+        };
       }
-    }
+    });
 
     const deliveredCount = results.filter((result) => result.delivered).length;
     res.status(200).json({
@@ -1654,17 +1684,51 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     );
 
     const { preparedContact, saved } = prepared;
-    const sendResult = await channelMessaging.sendImageBuffer(
-      preparedContact,
-      req.file.buffer,
-      req.file.mimetype,
-      caption || undefined,
-      req.file.originalname || "image",
-      socialProviderSendOptions(saved, preparedContact, {
-        purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
-        replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
-      })
-    );
+    const sendOptions = socialProviderSendOptions(saved, preparedContact, {
+      purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+      replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+    });
+
+    const providerSendStartedAt = Date.now();
+    let sendResult;
+    if ((preparedContact.channel || "whatsapp") === "whatsapp") {
+      // The image has already been durably written to private R2 by
+      // appendMessageForContact(). Reuse that exact object through a short-lived
+      // signed GET URL instead of uploading the same bytes to Meta a second time.
+      // This keeps retries durable while removing one full file upload from the
+      // critical path of every manual WhatsApp photo send.
+      const mediaReference =
+        await messagesRepo.getMessageMediaReferenceForContact(saved.contact_id, saved.id);
+      if (!mediaReference?.media_key) {
+        throw new Error("Saved image media reference is missing.");
+      }
+      const signedImageUrl = mediaStorage.createPresignedGetUrl(
+        mediaReference.media_key,
+        { expiresSeconds: 5 * 60 }
+      );
+      sendResult = await channelMessaging.sendImageByUrl(
+        preparedContact,
+        signedImageUrl,
+        caption || undefined,
+        sendOptions
+      );
+    } else {
+      sendResult = await channelMessaging.sendImageBuffer(
+        preparedContact,
+        req.file.buffer,
+        req.file.mimetype,
+        caption || undefined,
+        req.file.originalname || "image",
+        sendOptions
+      );
+    }
+
+    const providerSendMs = Date.now() - providerSendStartedAt;
+    if (providerSendMs >= 2500) {
+      console.warn(
+        `[Inbox image] slow provider send for contact ${preparedContact.id}: ${providerSendMs}ms`
+      );
+    }
     const errorText = deliveryErrorForSend(
       sendResult,
       sendResult.error || rejectedErrorFor(preparedContact)
