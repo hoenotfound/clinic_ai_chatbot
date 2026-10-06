@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   buildConversationSummaryMessage,
+  buildWhatsappChatUrl,
   createTelegramAlertService,
   formatWhatsappNumber,
   isTelegramEnabled,
@@ -22,6 +23,7 @@ const lead = {
   branch_name: null,
   appointment_at: null,
   appointment_status: "none",
+  channel: "whatsapp",
 };
 
 const score = {
@@ -52,7 +54,22 @@ test("formats Malaysian WhatsApp number for Telegram display", () => {
   assert.equal(formatWhatsappNumber("+60 12-345 6789"), "+60123456789");
 });
 
-test("shows pipeline temperature separately from the AI review", () => {
+test("builds a direct WhatsApp chat link only for WhatsApp contacts", () => {
+  assert.equal(
+    buildWhatsappChatUrl({ channel: "whatsapp", whatsapp_number: "+60 12-345 6789" }),
+    "https://wa.me/60123456789"
+  );
+  assert.equal(
+    buildWhatsappChatUrl({ channel: "instagram", whatsapp_number: "+60 12-345 6789" }),
+    null
+  );
+  assert.equal(
+    buildWhatsappChatUrl({ channel: "whatsapp", whatsapp_number: null }),
+    null
+  );
+});
+
+test("shows the saved pipeline temperature only once and adds the WhatsApp follow-up link", () => {
   const text = buildConversationSummaryMessage({
     lead,
     score,
@@ -61,13 +78,69 @@ test("shows pipeline temperature separately from the AI review", () => {
 
   assert.match(text, /🟠 Warm Conversation Summary/);
   assert.match(text, /Kit Leong \(\+60123456789\)/);
-  assert.match(text, /Current Temperature: 🟠 Warm/);
-  assert.match(text, /AI Review: 🔥 Hot \(medium confidence\)/);
+  assert.doesNotMatch(text, /Current Temperature:/);
+  assert.doesNotMatch(text, /AI Review:/);
+  assert.doesNotMatch(text, /🔥 Hot/);
+  assert.doesNotMatch(text, /Temperature reason:/);
   assert.match(text, /Treatment: HIFU/);
   assert.match(text, /Branch: Puchong/);
   assert.match(text, /Appointment: tomorrow afternoon/);
   assert.match(text, /Chat Summary:/);
   assert.match(text, /Inbox: https:\/\/clinic\.example\.com\/inbox\?contact=12/);
+  assert.match(text, /WhatsApp follow-up: https:\/\/wa\.me\/60123456789/);
+});
+
+test("hides Branch for single-branch clients and Assigned to when lead distribution is disabled", () => {
+  const text = buildConversationSummaryMessage({
+    lead: {
+      ...lead,
+      branch_name: "Petaling Jaya",
+      owner_username: "sales-a",
+      owner_display_name: "Sales A",
+    },
+    score,
+    config: {
+      branches: [{ name: "Petaling Jaya" }],
+      leadDistribution: { enabled: false },
+    },
+  });
+
+  assert.doesNotMatch(text, /Branch:/);
+  assert.doesNotMatch(text, /Assigned to:/);
+});
+
+test("shows Branch and Assigned to when they are operationally relevant", () => {
+  const text = buildConversationSummaryMessage({
+    lead: {
+      ...lead,
+      branch_name: "Puchong",
+      owner_username: "sales-a",
+      owner_display_name: "Sales A",
+    },
+    score,
+    config: {
+      branches: [{ name: "Puchong" }, { name: "Petaling Jaya" }],
+      leadDistribution: { enabled: true },
+    },
+  });
+
+  assert.match(text, /Branch: Puchong/);
+  assert.match(text, /Assigned to: Sales A/);
+});
+
+test("does not add a WhatsApp follow-up link for non-WhatsApp leads", () => {
+  const text = buildConversationSummaryMessage({
+    lead: {
+      ...lead,
+      channel: "instagram",
+      channel_user_id: "ig-123",
+    },
+    score,
+    env: { PUBLIC_BASE_URL: "https://clinic.example.com/" },
+  });
+
+  assert.match(text, /Instagram: ig-123/);
+  assert.doesNotMatch(text, /WhatsApp follow-up:/);
 });
 
 test("current appointment workflow state overrides stale AI appointment preference", () => {
@@ -111,7 +184,7 @@ test("AI scoring failure sends customer details and a manual-review alert withou
 
   assert.match(text, /⚠️ Conversation Needs Manual Review/);
   assert.match(text, /Kit Leong \(\+60123456789\)/);
-  assert.match(text, /Current Temperature: 🟠 Warm/);
+  assert.match(text, /Temperature: 🟠 Warm/);
   assert.match(text, /Treatment: HIFU/);
   assert.match(text, /Branch: Puchong/);
   assert.match(text, /AI Summary: Unavailable/);
@@ -247,7 +320,9 @@ test("flush rechecks inactivity at claim time and formats from the claimed snaps
   assert.equal(markedSentId, 31);
   assert.equal(sent.token, "bot-token");
   assert.equal(sent.chatId, "-100123");
-  assert.match(sent.text, /Current Temperature: 🟠 Warm/);
+  assert.match(sent.text, /🟠 Warm Conversation Summary/);
+  assert.doesNotMatch(sent.text, /Current Temperature:/);
+  assert.match(sent.text, /WhatsApp follow-up: https:\/\/wa\.me\/60123456789/);
   assert.deepEqual(result, { status: "completed", sent: 1 });
 });
 
