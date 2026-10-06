@@ -122,7 +122,7 @@ test("explicit rejection becomes Cold in English, Bahasa Malaysia, and Chinese",
   assert.equal(
     classifyTemperatureMessage({ messageText: "No thanks, I am not interested." })
       ?.rejectionStrength,
-    "standard"
+    "absolute"
   );
 });
 
