@@ -239,6 +239,45 @@ test("recent assistant can anchor an unambiguous service after an ambiguous cust
   });
 });
 
+test("service anchor survives staff and result-media chatter within the AI history window", () => {
+  const base = scopedConfig();
+  withConfig({
+    ...base,
+    services: [
+      ...base.services,
+      {
+        name: "徒手体态调理",
+        description: "MANUAL_POSTURE_DETAILS",
+        priceRange: "",
+        duration: "",
+      },
+    ],
+    serviceAliases: [
+      ...base.serviceAliases,
+      { alias: "徒手调理", officialService: "徒手体态调理" },
+    ],
+  }, () => {
+    const messages = [
+      { role: "user", content: "你好！我想了解你们骨盆的疗程" },
+      { role: "assistant", content: "骨盆调理主要看骨盆和整体体态。" },
+      { role: "user", content: "你看见你的宣传有调整身体" },
+      { role: "assistant", content: "有的呀～我们的徒手体态调理主要是用手法看整体平衡，像骨盆、腰背、肩颈这些都会根据个人情况来看。" },
+      { role: "user", content: "颈不舒服咯" },
+      { role: "assistant", content: "可以先看看肩颈紧绷情况。" },
+      { role: "user", content: "腰酸背痛就没有" },
+      { role: "assistant", content: "了解～主要是肩颈这边。" },
+      { role: "assistant", content: "想跟进一下，有问题可以问我。" },
+      { role: "assistant", content: "这个是顾客护理后的 Before & After。" },
+      { role: "assistant", content: "想了解的话可以再告诉我。" },
+      { role: "user", content: "通常一次可以维持多久" },
+    ];
+
+    const context = buildConversationPromptContext(messages);
+    assert.deepEqual(context.relevantServiceNames, ["徒手体态调理"]);
+    assert.equal(context.serviceSource, "recent_assistant");
+  });
+});
+
 test("assessment wording never replaces the actual treatment anchor", () => {
   const base = scopedConfig();
   withConfig({
