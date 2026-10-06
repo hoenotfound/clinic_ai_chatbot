@@ -1985,6 +1985,9 @@ function ThreadView({
       onToast("Please choose an image file.", "error");
       return;
     }
+    // Selecting a new attachment is a user composer edit. An older queued
+    // send that fails later must not restore its caption onto this new photo.
+    draftEditVersionRef.current += 1;
     if (file.size > MAX_IMAGE_BYTES) {
       onToast("That image is larger than 16MB — please choose a smaller file.", "error");
       return;
@@ -2311,6 +2314,7 @@ function ThreadView({
       onToast("This message cannot be quoted on WhatsApp.", "warning");
       return;
     }
+    draftEditVersionRef.current += 1;
     setReplyingTo(message);
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
@@ -2752,7 +2756,10 @@ function ThreadView({
               </div>
               <button
                 type="button"
-                onClick={() => setReplyingTo(null)}
+                onClick={() => {
+                  draftEditVersionRef.current += 1;
+                  setReplyingTo(null);
+                }}
                 disabled={sending}
                 className="flex h-12 w-12 shrink-0 touch-manipulation items-center justify-center text-xl text-[var(--color-text-muted)] active:bg-white hover:bg-white disabled:opacity-50"
                 aria-label="Cancel reply"
