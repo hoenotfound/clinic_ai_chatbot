@@ -169,6 +169,7 @@ async function purgeContactData({
       mediaResult.rows.map((row) => row.media_key)
     );
     let pendingAttributions = 0;
+    let referralTombstones = 0;
     let commentJobs = 0;
     const externalUserId =
       contact.channel === "whatsapp"
@@ -187,6 +188,7 @@ async function purgeContactData({
       const referralEventIds = normalizeJsonArray(
         attributionDelete.rows.map((row) => row.event_id)
       );
+      referralTombstones = referralEventIds.length;
       if (referralEventIds.length > 0) {
         await client.query(
           `INSERT INTO customer_data_deleted_message_ids (
@@ -283,10 +285,7 @@ async function purgeContactData({
       pendingAttributions,
       commentJobs,
       providerMessageTombstones: tombstoneResult.rowCount || 0,
-      providerReferralTombstones:
-        externalUserId && ["facebook", "instagram"].includes(contact.channel)
-          ? normalizeJsonArray(attributionDelete?.rows?.map((row) => row.event_id)).length
-          : 0,
+      providerReferralTombstones: referralTombstones,
       providerCommentTombstones: commentJobs,
     };
 
