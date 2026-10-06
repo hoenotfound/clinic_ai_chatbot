@@ -24,6 +24,7 @@ const {
 const DEFAULT_META_SHARE_SECONDS = 10 * 60;
 const DEFAULT_TEMP_DELETE_DELAY_MS = 12 * 60 * 1000;
 const DEFAULT_STALE_TEMP_MEDIA_AGE_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_R2_REQUEST_TIMEOUT_MS = 10 * 1000;
 const CLIENT_MEDIA_ROOT = "clients";
 const MAX_CLIENT_SLUG_LENGTH = 80;
 let cachedClient = null;
@@ -58,6 +59,39 @@ function getClient() {
 
 function getBucketName() {
   return getStorageConfig().bucket;
+}
+
+function r2RequestTimeoutMs(env = process.env) {
+  const parsed = Number(env?.R2_REQUEST_TIMEOUT_MS);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_R2_REQUEST_TIMEOUT_MS;
+}
+
+async function sendR2(command, { timeoutMs = r2RequestTimeoutMs() } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  timer.unref?.();
+  try {
+    return await getClient().send(command, { abortSignal: controller.signal });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      const timeoutError = new Error(
+        `R2 request timed out after ${timeoutMs}ms.`
+      );
+      timeoutError.name = "R2RequestTimeoutError";
+      timeoutError.code = "R2_REQUEST_TIMEOUT";
+      timeoutError.cause = err;
+      throw timeoutError;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function isR2RequestTimeoutError(err) {
+  return err?.code === "R2_REQUEST_TIMEOUT";
 }
 
 function extensionForMimeType(mimeType) {
@@ -227,7 +261,7 @@ function createPresignedGetUrl(
 }
 
 async function putObject(key, buffer, mimeType) {
-  await getClient().send(
+  await sendR2(
     new PutObjectCommand({
       Bucket: getBucketName(),
       Key: key,
@@ -310,7 +344,7 @@ async function copyStoredMediaToMessage(
     env,
   });
 
-  await getClient().send(
+  await sendR2(
     new CopyObjectCommand({
       Bucket: bucket,
       Key: key,
@@ -342,7 +376,7 @@ async function copyStoredMediaToTemporary(
     env,
   });
 
-  await getClient().send(
+  await sendR2(
     new CopyObjectCommand({
       Bucket: bucket,
       Key: key,
@@ -408,7 +442,7 @@ async function pruneStaleTemporaryMedia({
   let deleted = 0;
 
   do {
-    const page = await getClient().send(new ListObjectsV2Command({
+    const page = await sendR2(new ListObjectsV2Command({
       Bucket: bucket,
       Prefix: prefix,
       ContinuationToken: continuationToken,
@@ -423,7 +457,7 @@ async function pruneStaleTemporaryMedia({
     // sequential delete requests competing with live customer media traffic.
     for (let offset = 0; offset < staleKeys.length; offset += 500) {
       const batch = staleKeys.slice(offset, offset + 500);
-      const result = await getClient().send(new DeleteObjectsCommand({
+      const result = await sendR2(new DeleteObjectsCommand({
         Bucket: bucket,
         Delete: {
           Objects: batch.map((Key) => ({ Key })),
@@ -464,7 +498,7 @@ async function openMediaStream(key, { range = null } = {}) {
   };
   if (range) input.Range = range;
 
-  const result = await getClient().send(new GetObjectCommand(input));
+  const result = await sendR2(new GetObjectCommand(input));
   if (!result.Body || typeof result.Body.pipe !== "function") {
     throw new Error("R2 returned a media object without a readable body.");
   }
@@ -504,15 +538,19 @@ function isRangeNotSatisfiableError(err) {
 
 /** Deletes a media object from R2. Stored legacy keys are accepted unchanged. */
 async function deleteMedia(key) {
-  await getClient().send(new DeleteObjectCommand({ Bucket: getBucketName(), Key: key }));
+  await sendR2(new DeleteObjectCommand({ Bucket: getBucketName(), Key: key }));
 }
 
 module.exports = {
   CLIENT_MEDIA_ROOT,
+  DEFAULT_R2_REQUEST_TIMEOUT_MS,
   applyClientNamespace,
   buildMediaObjectKey,
   sanitizeClientSlug,
   getMediaIsolationStatus,
+  r2RequestTimeoutMs,
+  sendR2,
+  isR2RequestTimeoutError,
   uploadMedia,
   uploadTemporaryMedia,
   copyStoredMediaToMessage,
