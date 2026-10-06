@@ -94,6 +94,7 @@ test("webhook parsers still verify raw signatures and portal routes stay protect
     "pipeline",
     "setup-status",
     "go-live",
+    "web-push",
   ]) {
     const pattern = new RegExp(
       `app\\.use\\("\\/api\\/${route.replace("-", "\\-")}", requireAuth,`
