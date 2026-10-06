@@ -26,6 +26,31 @@ test("clear booking intent becomes Hot in English, Bahasa Malaysia, and Chinese"
   }
 });
 
+test("clear purchase, package acceptance, and payment intent becomes Hot", () => {
+  const examples = [
+    "I want this package.",
+    "I want to take this promotion.",
+    "I'll go with this package.",
+    "How can I make payment?",
+    "Please send me the payment link.",
+    "Saya nak ambil pakej ini.",
+    "Saya mahu teruskan rawatan ini.",
+    "Macam mana nak bayar?",
+    "Boleh bagi payment link?",
+    "我要这个配套。",
+    "我想要这个优惠。",
+    "我想付款。",
+    "怎么付定金？",
+    "发给我付款链接。",
+  ];
+
+  for (const messageText of examples) {
+    const result = classifyTemperatureMessage({ messageText });
+    assert.equal(result?.temperature, "hot", messageText);
+    assert.equal(result?.matchedRule, "booking_intent", messageText);
+  }
+});
+
 test("explicit rejection becomes Cold in English, Bahasa Malaysia, and Chinese", () => {
   const examples = [
     "No thanks, I am not interested.",
@@ -45,6 +70,12 @@ test("explicit rejection becomes Cold in English, Bahasa Malaysia, and Chinese",
     "我不想去你们诊所。",
     "我不要到店。",
     "不要再联系我。",
+    "I've already booked another clinic.",
+    "I am not proceeding with this treatment anymore.",
+    "It is too far, so I won't come.",
+    "Saya tak mahu teruskan rawatan ini.",
+    "我已经预约了别的诊所。",
+    "我不继续了。",
   ];
 
   for (const messageText of examples) {
@@ -90,11 +121,39 @@ test("general interest, uncertainty, cancellation, and silence remain Warm", () 
     "这个疗程多少钱？",
     "暂时不预约。",
     "可能想预约下周。",
+    "This package is too expensive, let me think about it.",
+    "Do I need to pay a deposit?",
+    "Is a deposit required?",
+    "Any discount if I take Package A?",
+    "I live in Johor. Do you only have a PJ branch?",
+    "Saya nak fikir dulu sebab agak mahal.",
+    "Perlu saya bayar deposit ke?",
+    "这个配套太贵，我考虑一下。",
+    "需要付定金吗？",
     "",
   ];
 
   for (const messageText of examples) {
     assert.equal(classifyTemperatureMessage({ messageText }), null, messageText);
+  }
+});
+
+test("distance and different-state location stay Warm unless the customer withdraws", () => {
+  for (const messageText of [
+    "I live in Johor. Is your clinic only in PJ?",
+    "I'm from Penang, PJ is quite far.",
+    "Saya di Melaka, ada branch dekat sini?",
+    "我住在槟城，PJ有点远。",
+  ]) {
+    assert.equal(classifyTemperatureMessage({ messageText }), null, messageText);
+  }
+
+  for (const messageText of [
+    "I'm from Johor but I want to book Saturday.",
+    "Saya dari Melaka tapi saya nak buat appointment Sabtu.",
+    "我住在槟城，不过我想预约星期六。",
+  ]) {
+    assert.equal(classifyTemperatureMessage({ messageText })?.temperature, "hot", messageText);
   }
 });
 
