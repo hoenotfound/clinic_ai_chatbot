@@ -257,6 +257,22 @@ test(
       assert.deepEqual(job.rows[0].media_keys, ["clients/demo/messages/1/photo.jpg"]);
       assert.deepEqual(job.rows[0].media_prefixes, [`clients/demo/messages/${contactId}/`]);
 
+      const claimedJob = await lifecycleRepo.claimPurgeJob({
+        jobId: Number(job.rows[0].id),
+        leaseToken: "test-purge-lease",
+        database: client,
+      });
+      assert.equal(claimedJob.status, "processing");
+
+      const completedJob = await lifecycleRepo.markPurgeJobCompleted({
+        jobId: Number(job.rows[0].id),
+        leaseToken: "test-purge-lease",
+        database: client,
+      });
+      assert.equal(completedJob.status, "completed");
+      assert.deepEqual(completedJob.media_keys, []);
+      assert.deepEqual(completedJob.media_prefixes, []);
+
       const tombstones = await client.query(
         "SELECT provider_message_id FROM customer_data_deleted_message_ids"
       );
