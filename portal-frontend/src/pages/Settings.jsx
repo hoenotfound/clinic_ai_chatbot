@@ -449,16 +449,16 @@ function ImageFieldEditor({
         <img
           src={value}
           alt={alt}
-          className="mb-3 max-h-52 w-full rounded-xl border border-[var(--color-border)] object-cover"
+          className="mb-3 max-h-72 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] object-contain"
         />
       )}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex items-center gap-2">
         <input ref={fileInputRef} type="file" accept="image/jpeg,image/png" onChange={handleFilePicked} className="hidden" />
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading}
-          className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 text-xs font-semibold transition-colors hover:bg-[var(--color-surface)] disabled:opacity-50"
+          className="inline-flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold transition-colors hover:bg-[var(--color-surface)] disabled:opacity-50 sm:h-10 sm:flex-none sm:rounded-lg"
         >
           {uploading && <Spinner className="h-3 w-3" />}
           {uploading ? "Uploading…" : value ? "Replace image" : "Upload image"}
@@ -467,7 +467,7 @@ function ImageFieldEditor({
           <button
             type="button"
             onClick={() => onChange("")}
-            className="h-10 rounded-lg px-3 text-xs font-semibold text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-danger-light)] hover:text-[var(--color-danger)]"
+            className="h-11 min-w-0 flex-1 rounded-xl px-3 text-xs font-semibold text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-danger-light)] hover:text-[var(--color-danger)] sm:h-10 sm:flex-none sm:rounded-lg"
           >
             Remove
           </button>
@@ -644,9 +644,9 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
         const subtitle = item.title?.trim() || (item.imageUrl ? "Image added" : "Details not completed");
         return (
           <div key={index} className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-            <div className="flex items-center gap-3 p-3">
+            <div className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-3 p-3 sm:flex sm:items-center">
               <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] text-[10px] text-[var(--color-text-muted)]">
-                {item.imageUrl ? <img src={item.imageUrl} alt="" className="h-full w-full object-cover" /> : "No image"}
+                {item.imageUrl ? <img src={item.imageUrl} alt="" className="h-full w-full object-contain" /> : "No image"}
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-bold">{packageName}</p>
@@ -660,7 +660,7 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
               <button
                 type="button"
                 onClick={() => setOpenIndex(expanded ? null : index)}
-                className="h-10 shrink-0 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold"
+                className="col-span-2 h-11 w-full rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold sm:h-10 sm:w-auto sm:shrink-0"
               >
                 {expanded ? "Close" : "Edit"}
               </button>
@@ -1831,31 +1831,33 @@ function PromotionsTab({ config, onSaved, onError }) {
 
           return (
             <div key={index} className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-              <div className="flex items-start gap-3 p-4">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="truncate text-sm font-bold sm:text-base">{displayName}</p>
+              <div className="grid gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:p-4">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-bold sm:text-base">{displayName}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
                       {offerSummary}
                     </span>
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${item.sendOnPriceQuery ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
                       {item.sendOnPriceQuery ? "Auto-send on" : "Auto-send off"}
                     </span>
+                    <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]">
+                      {dateSummary}
+                    </span>
                   </div>
-                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">{dateSummary}</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setOpenIndex(expanded ? null : index)}
-                  className="h-10 shrink-0 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold"
+                  className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold sm:h-10 sm:w-auto sm:shrink-0"
                 >
-                  {expanded ? "Close" : "Edit"}
+                  {expanded ? "Close" : "Edit promotion"}
                 </button>
               </div>
 
               {expanded && (
-                <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-                  <div className="grid gap-5">
+                <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:p-4">
+                  <div className="grid gap-4 sm:gap-5">
                     <div>
                       <label className={labelClass}>Service</label>
                       <select
@@ -2002,14 +2004,14 @@ function PromotionsTab({ config, onSaved, onError }) {
                       <button
                         type="button"
                         onClick={() => removePromotion(index)}
-                        className="h-10 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+                        className="h-11 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] sm:h-10"
                       >
                         Remove promotion
                       </button>
                       <button
                         type="button"
                         onClick={() => setOpenIndex(null)}
-                        className="h-10 rounded-xl border border-[var(--color-border)] bg-white px-4 text-xs font-semibold"
+                        className="h-11 rounded-xl border border-[var(--color-border)] bg-white px-4 text-xs font-semibold sm:h-10"
                       >
                         Finish editing
                       </button>
@@ -2288,12 +2290,12 @@ function ResultMediaSection({ config, onSaved, onError }) {
               key={index}
               className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]"
             >
-              <div className="flex items-start gap-3 p-4">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="truncate text-sm font-bold sm:text-base">
-                      {entry.service || "New result set"}
-                    </p>
+              <div className="grid gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:p-4">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-bold sm:text-base">
+                    {entry.service || "New result set"}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
                       {entry.items.length} example{entry.items.length === 1 ? "" : "s"}
                     </span>
@@ -2307,7 +2309,7 @@ function ResultMediaSection({ config, onSaved, onError }) {
                       {entry.enabled && entry.triggerMode !== "off" ? "Auto-send on" : "Auto-send off"}
                     </span>
                   </div>
-                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                  <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
                     Sends {Math.min(entry.autoSendCount || 1, Math.max(entry.items.length, 1))} example
                     {Math.min(entry.autoSendCount || 1, Math.max(entry.items.length, 1)) === 1 ? "" : "s"} per eligible{" "}
                     {entry.triggerMode === "service_enquiry"
@@ -2321,15 +2323,15 @@ function ResultMediaSection({ config, onSaved, onError }) {
                 <button
                   type="button"
                   onClick={() => setOpenIndex(expanded ? null : index)}
-                  className="h-10 shrink-0 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold"
+                  className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold sm:h-10 sm:w-auto sm:shrink-0"
                 >
-                  {expanded ? "Close" : "Edit"}
+                  {expanded ? "Close" : "Edit set"}
                 </button>
               </div>
 
               {expanded && (
-                <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-                  <div className="grid gap-5">
+                <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:p-4">
+                  <div className="grid gap-4 sm:gap-5">
                     <div>
                       <label className={labelClass}>Service</label>
                       <select
