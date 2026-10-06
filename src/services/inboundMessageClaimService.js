@@ -256,6 +256,13 @@ function createInboundMessageClaimService({
     // OPEN_THREAD attribution is already persisted in Postgres. Awaiting it in
     // the webhook durability phase means the referral also survives a restart.
     if (incoming?.attributionOnly) {
+      const referralEventId =
+        incoming?.channel && incoming?.id
+          ? `${incoming.channel}:${incoming.id}`
+          : null;
+      if (referralEventId && await wasDeletedProviderMessage(referralEventId)) {
+        return null;
+      }
       await attribution.rememberPendingReferral(incoming);
       return null;
     }
