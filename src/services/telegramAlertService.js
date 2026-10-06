@@ -26,6 +26,21 @@ function formatWhatsappNumber(value) {
   return digits ? `+${digits}` : "Not captured";
 }
 
+function buildWhatsappChatUrl(contact) {
+  const channel = String(contact?.channel || "whatsapp").toLowerCase();
+  if (channel !== "whatsapp") return null;
+  const digits = String(contact?.whatsapp_number || "").replace(/[^\d]/g, "");
+  return digits ? `https://wa.me/${digits}` : null;
+}
+
+function shouldShowBranch(config) {
+  return Array.isArray(config?.branches) ? config.branches.length > 1 : true;
+}
+
+function shouldShowAssignedOwner(config) {
+  return config?.leadDistribution?.enabled === true;
+}
+
 function channelLabel(channel) {
   if (channel === "facebook") return "Facebook Messenger";
   if (channel === "instagram") return "Instagram";
@@ -106,6 +121,9 @@ function buildConversationSummaryMessage({
   const currentTemperature = temperatureLabel(lead.current_temperature);
   const contactIdentifier = formatContactIdentifier(lead);
   const assignedOwner = formatAssignedOwner(lead);
+  const whatsappChatUrl = buildWhatsappChatUrl(lead);
+  const showBranch = shouldShowBranch(config);
+  const showAssignedOwner = shouldShowAssignedOwner(config);
 
   if (score?.summaryUnavailable === true || score?.alertType === "ai_scoring_failed") {
     const lines = [
@@ -114,20 +132,31 @@ function buildConversationSummaryMessage({
       `${name} (${contactIdentifier})`,
       "",
       `Stage: ${clean(lead.stage_name)}`,
-      `Current Temperature: ${currentTemperature}`,
+      `Temperature: ${currentTemperature}`,
       `${labels.serviceInterestLabel}: ${clean(lead.treatment_interest)}`,
-      `${labels.locationLabel}: ${clean(lead.branch_name)}`,
-      `Assigned to: ${assignedOwner}`,
+    ];
+
+    if (showBranch) {
+      lines.push(`${labels.locationLabel}: ${clean(lead.branch_name)}`);
+    }
+    if (showAssignedOwner) {
+      lines.push(`Assigned to: ${assignedOwner}`);
+    }
+
+    lines.push(
       `${labels.nextStepTimingLabel}: ${formatAppointmentForLead(lead)}`,
       "",
       "AI Summary: Unavailable",
       "",
       "Recommended Action:",
-      `Open the Inbox, review the conversation manually, and follow up with the ${labels.customerSingular}.`,
-    ];
+      `Open the Inbox, review the conversation manually, and follow up with the ${labels.customerSingular}.`
+    );
 
-    if (inboxUrl) {
-      lines.push("", `Inbox: ${inboxUrl}`);
+    const actionLinks = [];
+    if (inboxUrl) actionLinks.push(`Inbox: ${inboxUrl}`);
+    if (whatsappChatUrl) actionLinks.push(`WhatsApp follow-up: ${whatsappChatUrl}`);
+    if (actionLinks.length > 0) {
+      lines.push("", ...actionLinks);
     }
     return limitTelegramMessage(lines);
   }
@@ -136,19 +165,23 @@ function buildConversationSummaryMessage({
   const treatment = clean(summary.treatmentInterest || lead.treatment_interest);
   const branch = clean(summary.preferredBranch || lead.branch_name);
   const appointment = formatAppointmentForLead(lead, summary.preferredAppointment);
-  const aiTemperature = temperatureLabel(score?.temperature);
-
   const lines = [
     `${currentTemperature} Conversation Summary`,
     "",
     `${name} (${contactIdentifier})`,
     "",
     `Stage: ${clean(lead.stage_name)}`,
-    `Current Temperature: ${currentTemperature}`,
-    `AI Review: ${aiTemperature} (${clean(score?.confidence, "unknown")} confidence)`,
     `${labels.serviceInterestLabel}: ${treatment}`,
-    `${labels.locationLabel}: ${branch}`,
-    `Assigned to: ${assignedOwner}`,
+  ];
+
+  if (showBranch) {
+    lines.push(`${labels.locationLabel}: ${branch}`);
+  }
+  if (showAssignedOwner) {
+    lines.push(`Assigned to: ${assignedOwner}`);
+  }
+
+  lines.push(
     `${labels.nextStepTimingLabel}: ${appointment}`,
     `Main concern: ${clean(summary.mainConcern)}`,
     "",
@@ -156,13 +189,14 @@ function buildConversationSummaryMessage({
     clean(summary.chatSummary, "No summary was generated."),
     "",
     "Recommended Action:",
-    clean(summary.nextAction, "Review the conversation and follow up as needed."),
-    "",
-    `Temperature reason: ${clean(score?.reason)}`,
-  ];
+    clean(summary.nextAction, "Review the conversation and follow up as needed.")
+  );
 
-  if (inboxUrl) {
-    lines.push("", `Inbox: ${inboxUrl}`);
+  const actionLinks = [];
+  if (inboxUrl) actionLinks.push(`Inbox: ${inboxUrl}`);
+  if (whatsappChatUrl) actionLinks.push(`WhatsApp follow-up: ${whatsappChatUrl}`);
+  if (actionLinks.length > 0) {
+    lines.push("", ...actionLinks);
   }
 
   return limitTelegramMessage(lines);
@@ -328,6 +362,7 @@ module.exports = {
   TELEGRAM_FLUSH_BATCH_SIZE,
   TELEGRAM_MESSAGE_LIMIT,
   buildConversationSummaryMessage,
+  buildWhatsappChatUrl,
   channelLabel,
   createTelegramAlertService,
   formatAppointmentForLead,
