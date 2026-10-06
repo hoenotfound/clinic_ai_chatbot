@@ -63,6 +63,14 @@ test("booking, branch and timing language enables scheduling context", () => {
     needsSchedulingContext([], { branchName: "PJ" }),
     true
   );
+  assert.equal(
+    needsSchedulingContext([], { appointmentStatus: "none" }),
+    false
+  );
+  assert.equal(
+    needsSchedulingContext([], { appointmentStatus: "reschedule" }),
+    true
+  );
 });
 
 test("similarity catches near-duplicate Chinese follow-ups", () => {
