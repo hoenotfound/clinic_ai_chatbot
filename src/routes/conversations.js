@@ -1442,11 +1442,12 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
     }
   }
 
-  const prepared = await telegramImmediateAlertRepo.withContactAlertLock(
-    targetContact.id,
-    async () => {
-      const preparedContact = await prepareStaffSend(targetContact, username);
-      try {
+  let prepared;
+  try {
+    prepared = await telegramImmediateAlertRepo.withContactAlertLock(
+      targetContact.id,
+      async () => {
+        const preparedContact = await prepareStaffSend(targetContact, username);
         const saved = await conversationStore.appendMessageForContact(
           preparedContact.id,
           "assistant",
@@ -1463,19 +1464,19 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
         const finalContact =
           await finalizeStaffSendState(preparedContact.id, username);
         return { preparedContact: finalContact || preparedContact, saved };
-      } catch (err) {
-        if (targetMediaKey) {
-          await mediaStorage.deleteMedia(targetMediaKey).catch((cleanupErr) => {
-            console.error(
-              `Failed to clean up copied forward media ${targetMediaKey}:`,
-              cleanupErr
-            );
-          });
-        }
-        throw err;
       }
+    );
+  } catch (err) {
+    if (targetMediaKey) {
+      await mediaStorage.deleteMedia(targetMediaKey).catch((cleanupErr) => {
+        console.error(
+          `Failed to clean up copied forward media ${targetMediaKey}:`,
+          cleanupErr
+        );
+      });
     }
-  );
+    throw err;
+  }
 
   const { preparedContact, saved } = prepared;
   const messageForSend = {
