@@ -27,6 +27,24 @@ function configuredPromotionReference(text, promotions = config.promotions) {
       return true;
     }
 
+    // The UI commonly names options "Package A" / "Package B" while the
+    // configured aliases are "A套餐" / "B套餐". Treat an explicit uppercase
+    // standalone A/B/C as a package reference when that package name exists,
+    // without making lowercase English articles such as "a" match.
+    const rawText = String(text || "");
+    const packageLabels = packages
+      .map((item) => String(item?.name || "").trim().match(/^Package\s+([A-Z])$/u)?.[1])
+      .filter(Boolean);
+    if (
+      packageLabels.some((label) =>
+        new RegExp(
+          "(^|[^A-Za-z0-9])" + label + "([^A-Za-z0-9]|$)"
+        ).test(rawText)
+      )
+    ) {
+      return true;
+    }
+
     const promotionName = normalizeComparable(promotion?.name);
     if (promotionName && promotionName.length >= 4) {
       const normalizedText = normalizeComparable(value);
