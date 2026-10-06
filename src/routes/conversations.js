@@ -1278,10 +1278,13 @@ router.post("/:contactId/messages", async (req, res) => {
     const contact = await contactsRepo.getContactById(req.params.contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
 
-    const { text } = req.body || {};
+    const { text, replyToMessageId } = req.body || {};
     if (!text || !text.trim()) {
       return res.status(400).json({ error: "Message text is required." });
     }
+    const reply = await resolveReplyTarget(contact, replyToMessageId, res);
+    if (!reply.ok) return;
+    const replyTarget = reply.target;
     if (!(await requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)))) return;
 
     const prepared = await telegramImmediateAlertRepo.withContactAlertLock(
@@ -1296,7 +1299,12 @@ router.post("/:contactId/messages", async (req, res) => {
           "assistant",
           text.trim(),
           null,
-          req.session.username
+          req.session.username,
+          null,
+          null,
+          {
+            replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+          }
         );
         const finalContact =
           await finalizeStaffSendState(preparedContact.id, req.session.username);
@@ -1310,6 +1318,7 @@ router.post("/:contactId/messages", async (req, res) => {
       text.trim(),
       socialProviderSendOptions(saved, preparedContact, {
         purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+        replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
       })
     );
     const errorText = deliveryErrorForSend(
@@ -1372,6 +1381,9 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "An image file is required." });
     }
+    const reply = await resolveReplyTarget(contact, req.body?.replyToMessageId, res);
+    if (!reply.ok) return;
+    const replyTarget = reply.target;
     if (!(await requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)))) return;
 
     const caption = (req.body?.caption || "").trim();
@@ -1394,7 +1406,10 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
           null,
           req.session.username,
           null,
-          { mimeType: req.file.mimetype, buffer: req.file.buffer }
+          { mimeType: req.file.mimetype, buffer: req.file.buffer },
+          {
+            replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+          }
         );
         const finalContact =
           await finalizeStaffSendState(preparedContact.id, req.session.username);
@@ -1411,6 +1426,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       req.file.originalname || "image",
       socialProviderSendOptions(saved, preparedContact, {
         purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+        replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
       })
     );
     const errorText = deliveryErrorForSend(
@@ -1452,6 +1468,10 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "A voice recording is required." });
     }
+
+    const reply = await resolveReplyTarget(contact, req.body?.replyToMessageId, res);
+    if (!reply.ok) return;
+    const replyTarget = reply.target;
 
     // Stop an in-flight AI reply immediately; conversion/transcription below
     // can take several seconds. Ownership/attention state is changed only after
@@ -1497,6 +1517,9 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
           {
             mimeType: converted.playback.mimeType,
             buffer: converted.playback.buffer,
+          },
+          {
+            replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
           }
         );
         const finalContact =
@@ -1540,6 +1563,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       socialProviderSendOptions(saved, currentContact, {
         purpose: whatsappPolicy.manualStaffPurpose(currentContact),
         requireStaffMode: currentContact.mode === "human",
+        replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
       })
     );
     const errorText = sendResult.error || rejectedErrorFor(currentContact);
