@@ -324,4 +324,20 @@ export const api = {
     }),
   deletePipelineStage: (stageId) =>
     request(`/pipeline/stages/${stageId}`, { method: "DELETE" }),
+  getWebPushStatus: () => request("/web-push/status"),
+  saveWebPushSubscription: (subscription) =>
+    request("/web-push/subscriptions", {
+      method: "POST",
+      body: JSON.stringify({ subscription }),
+    }),
+  deleteWebPushSubscription: (endpoint) =>
+    request("/web-push/subscriptions", {
+      method: "DELETE",
+      body: JSON.stringify({ endpoint }),
+    }),
+  sendWebPushTest: (endpoint) =>
+    request("/web-push/test", {
+      method: "POST",
+      body: JSON.stringify({ endpoint }),
+    }),
 };
