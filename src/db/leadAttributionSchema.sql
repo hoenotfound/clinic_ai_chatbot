@@ -122,10 +122,18 @@ CREATE TABLE IF NOT EXISTS pending_lead_attributions (
   channel TEXT NOT NULL CHECK (channel IN ('facebook', 'instagram')),
   external_user_id TEXT NOT NULL,
   attribution JSONB NOT NULL,
+  event_id TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '7 days'),
   PRIMARY KEY (channel, external_user_id)
 );
 
+ALTER TABLE pending_lead_attributions
+  ADD COLUMN IF NOT EXISTS event_id TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_pending_lead_attributions_expiry
   ON pending_lead_attributions(expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_pending_lead_attributions_event_id
+  ON pending_lead_attributions(event_id)
+  WHERE event_id IS NOT NULL;
