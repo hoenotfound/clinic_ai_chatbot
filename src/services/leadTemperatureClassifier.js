@@ -123,7 +123,10 @@ function evaluateLeadTemperatureMessage({
     ? {
         temperature: "warm",
         matchedRule: "explicit_hesitation",
-        warmStrength: "cooling",
+        warmStrength:
+          signals.hotIntent || signals.warmInterest
+            ? "cooling_interest"
+            : "cooling",
         reason: "The customer remains interested but explicitly stepped back from an immediate decision.",
         evidence,
       }
