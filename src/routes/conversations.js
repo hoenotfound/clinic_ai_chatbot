@@ -295,9 +295,12 @@ async function sendStoredMessage(contact, message, options = {}) {
   const mimeType = String(message.media_mime_type || "").toLowerCase();
   const channel = contact.channel || "whatsapp";
   const skipCaption = hasPartialCaptionMarker(message.delivery_error);
-  const sendOptions = message.reply_to_provider_message_id
-    ? { ...options, replyToProviderMessageId: message.reply_to_provider_message_id }
-    : options;
+  if (message.reply_to_provider_message_id) {
+    options = {
+      ...options,
+      replyToProviderMessageId: message.reply_to_provider_message_id,
+    };
+  }
 
   if (mimeType.startsWith("audio/") && message.media_base64) {
     const storedBuffer = Buffer.from(message.media_base64, "base64");
@@ -311,7 +314,7 @@ async function sendStoredMessage(contact, message, options = {}) {
         converted.whatsapp.buffer,
         converted.whatsapp.mimeType,
         converted.whatsapp.filename,
-        socialProviderSendOptions(message, contact, sendOptions)
+        socialProviderSendOptions(message, contact, options)
       );
     }
     return channelMessaging.sendAudioBuffer(
@@ -319,7 +322,7 @@ async function sendStoredMessage(contact, message, options = {}) {
       storedBuffer,
       mimeType,
       "voice.mp3",
-      socialProviderSendOptions(message, contact, sendOptions)
+      socialProviderSendOptions(message, contact, options)
     );
   }
 
@@ -330,7 +333,7 @@ async function sendStoredMessage(contact, message, options = {}) {
       mimeType,
       skipCaption ? undefined : (message.content || undefined),
       "image",
-      socialProviderSendOptions(message, contact, { ...sendOptions, skipCaption })
+      socialProviderSendOptions(message, contact, { ...options, skipCaption })
     );
   }
 
@@ -339,7 +342,7 @@ async function sendStoredMessage(contact, message, options = {}) {
       contact,
       message.media_url,
       skipCaption ? undefined : (message.content || undefined),
-      socialProviderSendOptions(message, contact, { ...sendOptions, skipCaption })
+      socialProviderSendOptions(message, contact, { ...options, skipCaption })
     );
   }
 
@@ -347,7 +350,7 @@ async function sendStoredMessage(contact, message, options = {}) {
     return channelMessaging.sendText(
       contact,
       message.content.trim(),
-      socialProviderSendOptions(message, contact, sendOptions)
+      socialProviderSendOptions(message, contact, options)
     );
   }
 
