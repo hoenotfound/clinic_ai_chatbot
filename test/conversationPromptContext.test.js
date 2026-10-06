@@ -224,8 +224,9 @@ test("scoped normal prompt keeps relevant treatment detail and global safety whi
     assert.doesNotMatch(prompt, /NINED_FULL_DETAILS/);
     assert.doesNotMatch(prompt, /PELVIS_FULL_DETAILS/);
 
-    assert.match(prompt, /THREED_PROMO_FULL/);
-    assert.match(prompt, /THREED_PACKAGE_FULL/);
+    assert.match(prompt, /3D Promo/);
+    assert.doesNotMatch(prompt, /THREED_PROMO_FULL/);
+    assert.doesNotMatch(prompt, /THREED_PACKAGE_FULL/);
     assert.doesNotMatch(prompt, /NINED_PROMO_FULL/);
     assert.doesNotMatch(prompt, /PELVIS_PROMO_FULL/);
 
@@ -250,6 +251,25 @@ test("scoped normal prompt keeps relevant treatment detail and global safety whi
     assert.doesNotMatch(prompt, /HOURS_SENTINEL/);
     assert.doesNotMatch(prompt, /WHATSAPP_SENTINEL/);
     assert.doesNotMatch(prompt, /INSTAGRAM_SENTINEL/);
+  });
+});
+
+test("relevant service promotion enquiry restores full matching promotion/package detail", () => {
+  withConfig(scopedConfig(), () => {
+    const prompt = buildSystemPrompt({
+      channel: "whatsapp",
+      conversationContext: {
+        relevantServiceNames: ["3D 小颜术"],
+        schedulingIntent: false,
+        contactIntent: false,
+        promotionIntent: true,
+      },
+    });
+
+    assert.match(prompt, /THREED_PROMO_FULL/);
+    assert.match(prompt, /THREED_PACKAGE_FULL/);
+    assert.doesNotMatch(prompt, /NINED_PROMO_FULL/);
+    assert.doesNotMatch(prompt, /PELVIS_PROMO_FULL/);
   });
 });
 
