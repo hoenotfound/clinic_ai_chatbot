@@ -11,6 +11,7 @@ test("AI handoff atomically pauses AI, keeps Needs Attention, and alerts staff",
   const calls = [];
   const published = [];
   const alerts = [];
+  const pushes = [];
   const pause = createAiHandoffService({
     database: {
       async query(sql, params) {
@@ -34,6 +35,10 @@ test("AI handoff atomically pauses AI, keeps Needs Attention, and alerts staff",
       alerts.push(input);
       return { status: "sent" };
     },
+    sendHumanAttentionPush(input) {
+      pushes.push(input);
+      return { sent: 1 };
+    },
   });
 
   const result = await pause(42);
@@ -52,6 +57,7 @@ test("AI handoff atomically pauses AI, keeps Needs Attention, and alerts staff",
     messageId: 777,
     reason: "AI handed off this conversation.",
   }]);
+  assert.deepEqual(pushes, [{ contactId: 42 }]);
 });
 
 test("AI handoff is a no-op if staff already took ownership", async () => {
@@ -60,6 +66,7 @@ test("AI handoff is a no-op if staff already took ownership", async () => {
     database: { async query() { return { rows: [] }; } },
     publish() { throw new Error("should not publish"); },
     sendHumanInterventionAlert() { alerted = true; },
+    sendHumanAttentionPush() { throw new Error("should not push"); },
   });
 
   assert.equal(await pause(42), null);
