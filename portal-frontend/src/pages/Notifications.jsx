@@ -233,6 +233,10 @@ export default function Notifications() {
                     <span aria-hidden="true">✓</span>
                     <span><strong>Needs Human Attention</strong> when the AI hands a conversation to staff.</span>
                   </div>
+                  <div className="flex items-start gap-2.5">
+                    <span aria-hidden="true">✓</span>
+                    <span><strong>Delivery Failed</strong> when a WhatsApp message needs staff action after automatic retry handling.</span>
+                  </div>
                 </div>
                 <p className="mt-4 border-t border-[var(--color-border)] pt-3 text-xs font-medium leading-relaxed text-[var(--color-text-muted)]">
                   Ordinary new customer messages do not send push notifications.
