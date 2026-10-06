@@ -37,7 +37,7 @@ function score() {
   };
 }
 
-function formatLeadOwner(row) {
+function formatLeadOwner(row, leadDistributionEnabled) {
   return buildConversationSummaryMessage({
     lead: {
       ...row,
@@ -49,6 +49,11 @@ function formatLeadOwner(row) {
       appointment_status: "none",
     },
     score: score(),
+    config: {
+      businessType: "aesthetic_clinic",
+      branches: [],
+      leadDistribution: { enabled: leadDistributionEnabled },
+    },
   });
 }
 
@@ -136,11 +141,11 @@ test(
     // shows the friendly staff display name.
     const autoLead = await createLead("auto-on");
     assert.equal(autoLead.owner_username, "amy");
-    const autoText = formatLeadOwner(await readLeadOwner(autoLead.id));
+    const autoText = formatLeadOwner(await readLeadOwner(autoLead.id), true);
     assert.match(autoText, /Assigned to: Amy Tan/);
 
-    // Automatic Lead Distribution OFF: a new lead remains unassigned, but
-    // Telegram still sends the same summary format and says Unassigned.
+    // Automatic Lead Distribution OFF: a new lead remains unassigned and
+    // Telegram hides the ownership row because the distribution tool is off.
     await client.query(
       `UPDATE clinic_config
        SET data = jsonb_set(data, '{leadDistribution,enabled}', 'false'::jsonb, true)
@@ -148,16 +153,16 @@ test(
     );
     const unassignedLead = await createLead("auto-off");
     assert.equal(unassignedLead.owner_username, null);
-    const unassignedText = formatLeadOwner(await readLeadOwner(unassignedLead.id));
-    assert.match(unassignedText, /Assigned to: Unassigned/);
+    const unassignedText = formatLeadOwner(await readLeadOwner(unassignedLead.id), false);
+    assert.doesNotMatch(unassignedText, /Assigned to:/);
 
-    // Manual assignment still works while the automatic tool is off, and the
-    // Telegram summary reflects the actual current owner rather than the tool state.
+    // Manual assignment can still exist while the automatic tool is off, but
+    // Telegram keeps the ownership row hidden until Lead Distribution is enabled.
     await client.query(
       `UPDATE leads SET owner_username = 'amy' WHERE id = $1`,
       [unassignedLead.id]
     );
-    const manualText = formatLeadOwner(await readLeadOwner(unassignedLead.id));
-    assert.match(manualText, /Assigned to: Amy Tan/);
+    const manualText = formatLeadOwner(await readLeadOwner(unassignedLead.id), false);
+    assert.doesNotMatch(manualText, /Assigned to:/);
   }
 );
