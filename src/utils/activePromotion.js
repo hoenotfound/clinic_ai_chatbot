@@ -1,3 +1,4 @@
+const { normalizeMediaTranslations } = require("./mediaLocalization");
 const FALLBACK_CLINIC_TIMEZONE = "Asia/Kuala_Lumpur";
 const DEFAULT_CLINIC_TIMEZONE = process.env.CLINIC_TIMEZONE || FALLBACK_CLINIC_TIMEZONE;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -136,6 +137,7 @@ function promotionPackages(promotion) {
         : [],
       imageUrl: String(item.imageUrl || "").trim(),
       caption: String(item.caption || "").trim(),
+      mediaTranslations: normalizeMediaTranslations(item.mediaTranslations),
       followUpMessage: String(item.followUpMessage || "").trim(),
       followUpImageUrl: String(item.followUpImageUrl || "").trim(),
       followUpTranslations: normalizedFollowUpTranslations(item.followUpTranslations),
@@ -154,6 +156,7 @@ function promotionPackages(promotion) {
     aliases: [],
     imageUrl,
     caption,
+    mediaTranslations: normalizeMediaTranslations(promotion?.mediaTranslations),
     followUpMessage: String(promotion?.followUpMessage || "").trim(),
     followUpImageUrl: String(promotion?.followUpImageUrl || "").trim(),
     followUpTranslations: normalizedFollowUpTranslations(promotion?.followUpTranslations),
