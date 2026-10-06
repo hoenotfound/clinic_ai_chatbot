@@ -326,17 +326,30 @@ async function markSent(alertId) {
   return result.rows[0] || null;
 }
 
-async function findNextRetryAt() {
+async function findNextRetryAt({
+  inactivityMinutes,
+  suppressionMinutes = ACTIONABLE_SUMMARY_SUPPRESSION_MINUTES,
+}) {
   const result = await pool.query(
     `SELECT MIN(
-       updated_at + CASE attempts
-         WHEN 1 THEN interval '1 minute'
-         WHEN 2 THEN interval '5 minutes'
-         ELSE NULL
-       END
+       GREATEST(
+         a.updated_at + CASE a.attempts
+           WHEN 1 THEN interval '1 minute'
+           WHEN 2 THEN interval '5 minutes'
+           ELSE NULL
+         END,
+         latest.created_at + ($1::integer * interval '1 minute')
+       )
      ) AS next_retry_at
      FROM telegram_summary_alerts a
      JOIN leads l ON l.id = a.lead_id
+     JOIN LATERAL (
+       SELECT m.created_at
+       FROM messages m
+       WHERE m.contact_id = l.contact_id
+       ORDER BY m.id DESC
+       LIMIT 1
+     ) latest ON true
      WHERE a.status = 'pending'
        AND a.attempts > 0
        AND a.attempts < ${MAX_ATTEMPTS}
@@ -346,7 +359,23 @@ async function findNextRetryAt() {
          WHERE newer_customer.contact_id = l.contact_id
            AND newer_customer.role = 'user'
            AND newer_customer.id > a.through_message_id
-       )`
+       )
+       AND (
+         COALESCE(a.score_data->>'alertType', '') = 'ai_scoring_failed'
+         OR NOT EXISTS (
+           SELECT 1
+           FROM telegram_immediate_alerts immediate
+           WHERE immediate.contact_id = l.contact_id
+             AND immediate.lead_id = l.id
+             AND immediate.alert_type IN ('human_intervention', 'booking_ready', 'staff_waiting')
+             AND immediate.status IN ('pending', 'sending', 'sent')
+             AND immediate.created_at >=
+                 a.created_at - ($2::integer * interval '1 minute')
+             AND immediate.created_at <=
+                 a.created_at + ($2::integer * interval '1 minute')
+         )
+       )`,
+    [inactivityMinutes, suppressionMinutes]
   );
   return result.rows[0]?.next_retry_at || null;
 }
