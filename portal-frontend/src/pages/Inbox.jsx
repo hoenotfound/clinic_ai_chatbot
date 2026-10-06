@@ -1833,6 +1833,11 @@ function ThreadView({
   }, [contact?.contact_id, contact?.attention_reason]);
 
   useEffect(() => {
+    setReplyingTo(null);
+    setForwardingMessage(null);
+  }, [contact?.contact_id]);
+
+  useEffect(() => {
     if (!loading && messages.length > 0 && shouldStickToBottomRef.current) {
       requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ block: "end" }));
     }
@@ -1966,9 +1971,11 @@ function ThreadView({
     const imageItem = Array.from(event.clipboardData?.items || []).find((item) =>
       String(item.type || "").startsWith("image/")
     );
-    if (!imageItem) return;
-
-    const pasted = imageItem.getAsFile();
+    const pasted =
+      imageItem?.getAsFile?.() ||
+      Array.from(event.clipboardData?.files || []).find((file) =>
+        String(file.type || "").startsWith("image/")
+      );
     if (!pasted) return;
     event.preventDefault();
     const extension = pasted.type === "image/png" ? "png" : pasted.type === "image/webp" ? "webp" : "jpg";
