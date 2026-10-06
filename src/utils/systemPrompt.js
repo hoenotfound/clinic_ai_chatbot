@@ -111,8 +111,8 @@ function activePromotionsList() {
 }
 
 
-function followUpLookupKey(value) {
-  const text = promptContextText(value, 500);
+function followUpLookupKey(value, maxLength = 500) {
+  const text = promptContextText(value, maxLength);
   return text
     ? text.normalize("NFKC").toLocaleLowerCase().replace(/[\p{P}\p{S}\s]+/gu, "")
     : "";
@@ -259,7 +259,7 @@ function followUpRelevantGuidance(resolvedService) {
       .map((block) => block.trim())
       .filter(Boolean)
       .filter((block) => {
-        const blockKey = followUpLookupKey(block);
+        const blockKey = followUpLookupKey(block, 5_000);
         return keys.some((key) => blockKey.includes(key));
       });
     return promptContextText(blocks.join("\n\n"), maxLength) || "";
