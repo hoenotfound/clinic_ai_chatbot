@@ -17,12 +17,14 @@ const {
   CopyObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   ListObjectsV2Command,
 } = require("@aws-sdk/client-s3");
 
 const DEFAULT_META_SHARE_SECONDS = 10 * 60;
 const DEFAULT_TEMP_DELETE_DELAY_MS = 12 * 60 * 1000;
 const DEFAULT_STALE_TEMP_MEDIA_AGE_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_R2_REQUEST_TIMEOUT_MS = 10 * 1000;
 const CLIENT_MEDIA_ROOT = "clients";
 const MAX_CLIENT_SLUG_LENGTH = 80;
 let cachedClient = null;
@@ -66,6 +68,38 @@ function getClient() {
 
 function getBucketName() {
   return getStorageConfig().bucket;
+}
+
+function r2RequestTimeoutMs(env = process.env) {
+  const parsed = Number(env?.R2_REQUEST_TIMEOUT_MS);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_R2_REQUEST_TIMEOUT_MS;
+}
+
+async function sendR2(command, { timeoutMs = r2RequestTimeoutMs() } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await getClient().send(command, { abortSignal: controller.signal });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      const timeoutError = new Error(
+        `R2 request timed out after ${timeoutMs}ms.`
+      );
+      timeoutError.name = "R2RequestTimeoutError";
+      timeoutError.code = "R2_REQUEST_TIMEOUT";
+      timeoutError.cause = err;
+      throw timeoutError;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function isR2RequestTimeoutError(err) {
+  return err?.code === "R2_REQUEST_TIMEOUT";
 }
 
 function extensionForMimeType(mimeType) {
@@ -235,7 +269,7 @@ function createPresignedGetUrl(
 }
 
 async function putObject(key, buffer, mimeType) {
-  await getClient().send(
+  await sendR2(
     new PutObjectCommand({
       Bucket: getBucketName(),
       Key: key,
@@ -261,8 +295,23 @@ async function uploadMedia(
     mimeType,
     env,
   });
-  await putObject(key, buffer, mimeType);
-  return key;
+  try {
+    await putObject(key, buffer, mimeType);
+    return key;
+  } catch (err) {
+    if (isR2RequestTimeoutError(err)) {
+      // The client aborted before it learned whether R2 committed the write.
+      // Best-effort deletion prevents an untracked permanent customer-media
+      // object if the server finished just before the response was lost.
+      deleteMedia(key).catch((cleanupErr) => {
+        console.error(
+          `Failed to clean up timed-out R2 media write ${key}:`,
+          cleanupErr
+        );
+      });
+    }
+    throw err;
+  }
 }
 
 /**
@@ -300,6 +349,48 @@ async function uploadTemporaryMedia(
  * Render->R2 link twice while also keeping the permanent customer-media key
  * out of third-party URLs/logs.
  */
+async function copyStoredMediaToMessage(
+  sourceKey,
+  mimeType,
+  {
+    contactId = "misc",
+    env = process.env,
+  } = {}
+) {
+  if (!sourceKey) throw new Error("Stored media key is required.");
+
+  const bucket = getBucketName();
+  const key = buildMediaObjectKey({
+    kind: "messages",
+    contactId,
+    mimeType,
+    env,
+  });
+
+  try {
+    await sendR2(
+      new CopyObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        CopySource: `${bucket}/${sourceKey}`,
+        MetadataDirective: "REPLACE",
+        ContentType: mimeType || "application/octet-stream",
+      })
+    );
+    return key;
+  } catch (err) {
+    if (isR2RequestTimeoutError(err)) {
+      deleteMedia(key).catch((cleanupErr) => {
+        console.error(
+          `Failed to clean up timed-out R2 media copy ${key}:`,
+          cleanupErr
+        );
+      });
+    }
+    throw err;
+  }
+}
+
 async function copyStoredMediaToTemporary(
   sourceKey,
   mimeType,
@@ -319,7 +410,7 @@ async function copyStoredMediaToTemporary(
     env,
   });
 
-  await getClient().send(
+  await sendR2(
     new CopyObjectCommand({
       Bucket: bucket,
       Key: key,
@@ -351,7 +442,6 @@ function temporaryMediaPrefix(env = process.env) {
   return applyClientNamespace("meta-outbound/", env);
 }
 
-
 function customerMediaPrefixes(contactId, env = process.env) {
   if (!isStorageConfigured(env)) return [];
   const isolation = getMediaIsolationStatus(env);
@@ -375,37 +465,61 @@ function isOwnedCustomerMediaPrefix(prefix, env = process.env) {
 
 async function deleteMediaPrefix(prefix, { env = process.env } = {}) {
   if (!isOwnedCustomerMediaPrefix(prefix, env)) {
-    const err = new Error("Refusing to delete a customer-media prefix outside this client namespace.");
+    const err = new Error(
+      "Refusing to delete a customer-media prefix outside this client namespace."
+    );
     err.code = "CUSTOMER_MEDIA_PREFIX_NOT_OWNED";
     throw err;
   }
 
-  let continuationToken = undefined;
-  let deleted = 0;
+  const bucket = getBucketName();
+  const keys = [];
+  let continuationToken;
+
   do {
-    const page = await getClient().send(new ListObjectsV2Command({
-      Bucket: getBucketName(),
+    const page = await sendR2(new ListObjectsV2Command({
+      Bucket: bucket,
       Prefix: prefix,
       ContinuationToken: continuationToken,
     }));
-
-    for (const object of page.Contents || []) {
-      if (!object?.Key) continue;
-      await deleteMedia(object.Key);
-      deleted += 1;
-    }
-
+    keys.push(
+      ...(page.Contents || [])
+        .map((object) => object?.Key)
+        .filter(Boolean)
+    );
     continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
   } while (continuationToken);
+
+  let deleted = 0;
+  for (let offset = 0; offset < keys.length; offset += 500) {
+    const batch = keys.slice(offset, offset + 500);
+    const result = await sendR2(new DeleteObjectsCommand({
+      Bucket: bucket,
+      Delete: {
+        Objects: batch.map((Key) => ({ Key })),
+        Quiet: true,
+      },
+    }));
+    const failures = (result.Errors || []).filter((item) => item?.Key);
+    if (failures.length > 0) {
+      const err = new Error(
+        `Failed to delete ${failures.length} customer media object(s) from R2.`
+      );
+      err.code = "CUSTOMER_MEDIA_DELETE_PARTIAL";
+      err.failedKeys = failures.map((item) => item.Key);
+      throw err;
+    }
+    deleted += batch.length;
+  }
 
   return deleted;
 }
 
 /**
- * Deletes all customer media known at purge time. Exact stored keys are always
- * safe to delete because they came from this client's database. Prefix cleanup
- * is used only for namespaced clients and catches temporary/unreferenced R2
- * objects. Legacy shared-bucket deployments deliberately skip prefix deletion.
+ * Exact stored keys come from this client's own database. Namespaced keys must
+ * still belong to this client; legacy permanent keys retain the historical
+ * messages/<contact>/... shape so old clients remain deletable after enabling
+ * CLIENT_SLUG.
  */
 function isOwnedStoredMediaKey(key, env = process.env) {
   const normalized = String(key || "").trim();
@@ -419,11 +533,15 @@ function isOwnedStoredMediaKey(key, env = process.env) {
     );
   }
 
-  // Legacy permanent keys predate CLIENT_SLUG and use messages/<contact>/...
-  // Keep those deletable after an existing client is upgraded to namespacing.
   return normalized.startsWith("messages/");
 }
 
+/**
+ * Deletes all customer media known at purge time. Exact keys are deleted first.
+ * Namespaced prefix cleanup then catches temporary/unreferenced objects. Legacy
+ * shared-bucket deployments deliberately skip prefix deletion because ownership
+ * of a bare messages/<contact>/ prefix cannot be proven across clients.
+ */
 async function deleteCustomerMediaObjects({
   mediaKeys = [],
   mediaPrefixes = [],
@@ -487,20 +605,43 @@ async function pruneStaleTemporaryMedia({
   if (!isolation.prefix) return 0;
 
   const prefix = temporaryMediaPrefix(env);
+  const bucket = getBucketName();
   let continuationToken = undefined;
   let deleted = 0;
 
   do {
-    const page = await getClient().send(new ListObjectsV2Command({
-      Bucket: getBucketName(),
+    const page = await sendR2(new ListObjectsV2Command({
+      Bucket: bucket,
       Prefix: prefix,
       ContinuationToken: continuationToken,
     }));
 
-    for (const object of page.Contents || []) {
-      if (!isStaleTemporaryObject(object, { now, olderThanMs })) continue;
-      await deleteMedia(object.Key);
-      deleted += 1;
+    const staleKeys = (page.Contents || [])
+      .filter((object) => isStaleTemporaryObject(object, { now, olderThanMs }))
+      .map((object) => object.Key)
+      .filter(Boolean);
+
+    // R2 implements S3 DeleteObjects. Batch cleanup avoids hundreds of
+    // sequential delete requests competing with live customer media traffic.
+    for (let offset = 0; offset < staleKeys.length; offset += 500) {
+      const batch = staleKeys.slice(offset, offset + 500);
+      const result = await sendR2(new DeleteObjectsCommand({
+        Bucket: bucket,
+        Delete: {
+          Objects: batch.map((Key) => ({ Key })),
+          Quiet: true,
+        },
+      }));
+      const failedKeys = new Set(
+        (result.Errors || []).map((item) => item?.Key).filter(Boolean)
+      );
+      deleted += batch.filter((key) => !failedKeys.has(key)).length;
+
+      if (failedKeys.size) {
+        console.warn(
+          `R2 temporary-media batch cleanup failed for ${failedKeys.size} object(s).`
+        );
+      }
     }
 
     continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
@@ -525,7 +666,7 @@ async function openMediaStream(key, { range = null } = {}) {
   };
   if (range) input.Range = range;
 
-  const result = await getClient().send(new GetObjectCommand(input));
+  const result = await sendR2(new GetObjectCommand(input));
   if (!result.Body || typeof result.Body.pipe !== "function") {
     throw new Error("R2 returned a media object without a readable body.");
   }
@@ -565,18 +706,23 @@ function isRangeNotSatisfiableError(err) {
 
 /** Deletes a media object from R2. Stored legacy keys are accepted unchanged. */
 async function deleteMedia(key) {
-  await getClient().send(new DeleteObjectCommand({ Bucket: getBucketName(), Key: key }));
+  await sendR2(new DeleteObjectCommand({ Bucket: getBucketName(), Key: key }));
 }
 
 module.exports = {
   CLIENT_MEDIA_ROOT,
+  DEFAULT_R2_REQUEST_TIMEOUT_MS,
   applyClientNamespace,
   buildMediaObjectKey,
   sanitizeClientSlug,
   getMediaIsolationStatus,
   isStorageConfigured,
+  r2RequestTimeoutMs,
+  sendR2,
+  isR2RequestTimeoutError,
   uploadMedia,
   uploadTemporaryMedia,
+  copyStoredMediaToMessage,
   copyStoredMediaToTemporary,
   createPresignedGetUrl,
   scheduleTemporaryMediaDelete,
