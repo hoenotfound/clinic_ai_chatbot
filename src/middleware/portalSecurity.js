@@ -13,7 +13,7 @@ const PORTAL_CSP = [
   "media-src 'self' blob: https:",
   "font-src 'self' data:",
   "connect-src 'self' https://connect.facebook.net https://www.facebook.com https://web.facebook.com https://business.facebook.com https://graph.facebook.com",
-  "frame-src 'self' https://www.facebook.com https://web.facebook.com https://business.facebook.com",
+  "frame-src 'self' https://www.facebook.com https://web.facebook.com https://business.facebook.com https://staticxx.facebook.com",
   "manifest-src 'self'",
 ].join("; ");
 
