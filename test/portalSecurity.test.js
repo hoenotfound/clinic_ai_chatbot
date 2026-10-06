@@ -54,7 +54,7 @@ test("portal security headers prevent framing and external script execution", ()
   assert.doesNotMatch(csp, /script-src[^;]*unsafe-inline/);
   assert.match(csp, /style-src 'self' 'unsafe-inline'/);
   assert.match(csp, /img-src 'self' data: blob: https:/);
-  assert.match(csp, /frame-src 'self' https:\/\/www\.facebook\.com https:\/\/web\.facebook\.com https:\/\/business\.facebook\.com/);
+  assert.match(csp, /frame-src 'self' https:\/\/www\.facebook\.com https:\/\/web\.facebook\.com https:\/\/business\.facebook\.com https:\/\/staticxx\.facebook\.com/);
   assert.match(csp, /connect-src 'self'[^;]*https:\/\/graph\.facebook\.com/);
   assert.doesNotMatch(csp, /script-src[^;]*https:\s/);
 });
