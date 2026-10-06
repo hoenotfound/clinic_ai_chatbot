@@ -369,7 +369,18 @@ function createTelegramAlertService({
         }
       }
 
-      return { status: "completed", sent };
+      let nextRetryAt = null;
+      if (typeof repository.findNextRetryAt === "function") {
+        try {
+          nextRetryAt = await repository.findNextRetryAt();
+        } catch (err) {
+          console.error("Failed to read next Telegram summary retry time:", err);
+        }
+      }
+
+      return nextRetryAt
+        ? { status: "completed", sent, nextRetryAt }
+        : { status: "completed", sent };
     },
   };
 }
