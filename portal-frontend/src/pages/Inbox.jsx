@@ -399,6 +399,7 @@ export default function Inbox() {
   const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
   const [hasMoreOlderMessages, setHasMoreOlderMessages] = useState(false);
   const [actionPending, setActionPending] = useState(false);
+  const [outboundPendingByContact, setOutboundPendingByContact] = useState({});
   const [conversationStatePending, setConversationStatePending] = useState(false);
   const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
   const [contactDetailsOpen, setContactDetailsOpen] = useState(false);
@@ -410,6 +411,7 @@ export default function Inbox() {
   const messagesRef = useRef(messages);
   const latestMessageIdRef = useRef(null);
   const threadRequestVersionRef = useRef(0);
+  const outboundQueueByContactRef = useRef(new Map());
 
   selectedIdRef.current = selectedId;
   acquisitionContextRef.current = acquisitionContext;
@@ -970,10 +972,39 @@ export default function Inbox() {
     return `optimistic-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 
+  function adjustOutboundPending(contactId, delta) {
+    setOutboundPendingByContact((current) => {
+      const key = String(contactId);
+      const nextCount = Math.max(0, Number(current[key] || 0) + delta);
+      if (nextCount === Number(current[key] || 0)) return current;
+      const next = { ...current };
+      if (nextCount > 0) next[key] = nextCount;
+      else delete next[key];
+      return next;
+    });
+  }
+
+  function enqueueOutbound(contactId, task) {
+    const key = String(contactId);
+    const previous =
+      outboundQueueByContactRef.current.get(key) || Promise.resolve();
+
+    adjustOutboundPending(contactId, 1);
+    const run = previous.catch(() => {}).then(task);
+    const tail = run.catch(() => {});
+    outboundQueueByContactRef.current.set(key, tail);
+
+    return run.finally(() => {
+      adjustOutboundPending(contactId, -1);
+      if (outboundQueueByContactRef.current.get(key) === tail) {
+        outboundQueueByContactRef.current.delete(key);
+      }
+    });
+  }
+
   async function handleSend(text, replyToMessageId = null) {
     if (selectedId == null || !text.trim()) return;
     const contactId = selectedId;
-    setActionPending(true);
 
     const optimisticId = makeOptimisticId();
     const replyTarget = replyToMessageId == null
@@ -998,7 +1029,10 @@ export default function Inbox() {
     ]);
 
     try {
-      const result = await api.sendMessage(contactId, text.trim(), replyToMessageId);
+      const result = await enqueueOutbound(
+        contactId,
+        () => api.sendMessage(contactId, text.trim(), replyToMessageId)
+      );
       const visibleResult = replyPreview ? { ...result, reply_preview: replyPreview } : result;
       if (selectedIdRef.current === contactId) {
         setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [visibleResult]));
@@ -1019,15 +1053,12 @@ export default function Inbox() {
       }
       showToast(err.message || "Couldn't send that message — please try again.", "error");
       throw err;
-    } finally {
-      if (selectedIdRef.current === contactId) setActionPending(false);
     }
   }
 
   async function handleSendImage(file, caption, replyToMessageId = null) {
     if (selectedId == null || !file) return;
     const contactId = selectedId;
-    setActionPending(true);
 
     const optimisticId = makeOptimisticId();
     const previewUrl = URL.createObjectURL(file);
@@ -1055,7 +1086,10 @@ export default function Inbox() {
     ]);
 
     try {
-      const result = await api.sendImage(contactId, file, caption, replyToMessageId);
+      const result = await enqueueOutbound(
+        contactId,
+        () => api.sendImage(contactId, file, caption, replyToMessageId)
+      );
       const visibleResult = replyPreview ? { ...result, reply_preview: replyPreview } : result;
       if (selectedIdRef.current === contactId) {
         setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [visibleResult]));
@@ -1078,21 +1112,22 @@ export default function Inbox() {
       throw err;
     } finally {
       URL.revokeObjectURL(previewUrl);
-      if (selectedIdRef.current === contactId) setActionPending(false);
     }
   }
 
   async function handleSendVoice(recording, mimeType, replyToMessageId = null) {
     if (selectedId == null || !recording) return;
     const contactId = selectedId;
-    setActionPending(true);
     const replyTarget = replyToMessageId == null
       ? null
       : messagesRef.current.find((message) => Number(message.id) === Number(replyToMessageId));
     const replyPreview = buildReplyPreview(replyTarget);
 
     try {
-      const result = await api.sendVoice(contactId, recording, mimeType, replyToMessageId);
+      const result = await enqueueOutbound(
+        contactId,
+        () => api.sendVoice(contactId, recording, mimeType, replyToMessageId)
+      );
       const visibleResult = replyPreview ? { ...result, reply_preview: replyPreview } : result;
       if (selectedIdRef.current === contactId) {
         setMessages((prev) => mergeMessages(prev, [{ ...visibleResult, has_media_attachment: true }]));
@@ -1112,8 +1147,6 @@ export default function Inbox() {
       console.error("Failed to send voice message:", err);
       showToast(err.message || "Couldn't send that voice message — please try again.", "error");
       throw err;
-    } finally {
-      if (selectedIdRef.current === contactId) setActionPending(false);
     }
   }
 
@@ -1161,7 +1194,10 @@ export default function Inbox() {
         loading={messagesLoading}
         olderMessagesLoading={olderMessagesLoading}
         hasMoreOlderMessages={hasMoreOlderMessages}
-        actionPending={actionPending}
+        actionPending={
+          actionPending ||
+          Boolean(outboundPendingByContact[String(selectedId)] || 0)
+        }
         conversationStatePending={conversationStatePending}
         acquisitionContext={acquisitionContext}
         acquisitionLoading={acquisitionLoading}
@@ -1787,6 +1823,7 @@ function ThreadView({
   const recordingRequestIdRef = useRef(0);
   const imagePreparationIdRef = useRef(0);
   const draftEditVersionRef = useRef(0);
+  const composerSendVersionRef = useRef(0);
   const actionsMenuRef = useRef(null);
   const mountedRef = useRef(true);
   const activeContactIdRef = useRef(contact?.contact_id);
@@ -2369,12 +2406,15 @@ function ThreadView({
     const selectedReply = replyingTo;
     const contactIdAtSend = contact?.contact_id;
     const draftEditVersionAtSend = draftEditVersionRef.current;
+    const sendVersion = composerSendVersionRef.current + 1;
+    composerSendVersionRef.current = sendVersion;
     setSending(true);
 
     try {
-      // onSend/onSendImage add their optimistic bubble synchronously before
-      // awaiting the network. Clear the composer immediately after that bubble
-      // exists so staff can keep working instead of staring at a blocked draft.
+      // The parent handlers add an optimistic bubble synchronously and enqueue
+      // the actual request in per-conversation order. Clear and unlock this
+      // composer immediately so staff can keep chatting while the bubble shows
+      // its own upload/send progress, just like a native messaging app.
       const sendPromise = selectedImage
         ? onSendImage(selectedImage, text, selectedReply?.id || null)
         : onSend(text, selectedReply?.id || null);
@@ -2385,14 +2425,23 @@ function ThreadView({
         if (selectedImage) clearImage();
       }
 
-      await sendPromise;
-    } catch {
-      // Restore the failed send only if staff has not already started composing
-      // something new. Never overwrite a newer draft or reply target while an
-      // older request is finishing in the background.
+      // Yield once so React paints the cleared composer/optimistic bubble before
+      // re-enabling submit. Network completion remains serialized by the parent.
+      await Promise.resolve();
       if (
         mountedRef.current &&
-        activeContactIdRef.current === contactIdAtSend
+        composerSendVersionRef.current === sendVersion
+      ) {
+        setSending(false);
+      }
+
+      await sendPromise;
+    } catch {
+      // Restore the failed send only if no newer send or draft edit has happened.
+      if (
+        mountedRef.current &&
+        activeContactIdRef.current === contactIdAtSend &&
+        composerSendVersionRef.current === sendVersion
       ) {
         const draftUntouched =
           draftEditVersionRef.current === draftEditVersionAtSend;
@@ -2408,7 +2457,12 @@ function ThreadView({
         }
       }
     } finally {
-      if (mountedRef.current) setSending(false);
+      if (
+        mountedRef.current &&
+        composerSendVersionRef.current === sendVersion
+      ) {
+        setSending(false);
+      }
     }
   }
 
