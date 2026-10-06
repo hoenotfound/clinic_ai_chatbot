@@ -309,7 +309,7 @@ async function sendText(contact, text, options = {}) {
   if (channel === "whatsapp") {
     return whatsapp.sendMessage(contact.whatsapp_number, text, {
       replyToProviderMessageId: sendOptions.replyToProviderMessageId,
-      ...(options.requestId ? { ...(options.requestId ? { requestId: options.requestId } : {}) } : {}),
+      ...(options.requestId ? { requestId: options.requestId } : {}),
     });
   }
   const result = await trackSocialOutbound(
@@ -362,7 +362,7 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
     if (cancelled) return cancelled;
     return whatsapp.sendImage(contact.whatsapp_number, imageUrl, caption, {
       replyToProviderMessageId: sendOptions.replyToProviderMessageId,
-      ...(options.requestId ? { ...(options.requestId ? { requestId: options.requestId } : {}) } : {}),
+      ...(options.requestId ? { requestId: options.requestId } : {}),
     });
   }
 
@@ -535,7 +535,7 @@ async function sendStickerBuffer(
   if (cancelled) return cancelled;
   return whatsapp.sendStickerById(contact.whatsapp_number, mediaId, {
     replyToProviderMessageId: sendOptions.replyToProviderMessageId,
-      ...(options.requestId ? { ...(options.requestId ? { requestId: options.requestId } : {}) } : {}),
+      ...(options.requestId ? { requestId: options.requestId } : {}),
   });
 }
 
@@ -568,7 +568,7 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
 
     return whatsapp.sendVoiceById(contact.whatsapp_number, mediaId, {
       replyToProviderMessageId: sendOptions.replyToProviderMessageId,
-      ...(options.requestId ? { ...(options.requestId ? { requestId: options.requestId } : {}) } : {}),
+      ...(options.requestId ? { requestId: options.requestId } : {}),
     });
   }
 
