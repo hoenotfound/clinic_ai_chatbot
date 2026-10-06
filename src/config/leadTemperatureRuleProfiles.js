@@ -55,7 +55,7 @@ const GENERIC_DECLINE_PATTERNS = frozenPatterns([
   /\b(?:not for me|i(?:'ll| will) pass)\b/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+berminat(?:\s+lagi)?(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
   /^(?:terima kasih,?\s*)?(?:saya\s+)?(?:tak|tidak)\s+nak(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
-  /^(?:我)?(?:不感兴趣|没兴趣|沒有興趣|没有兴趣|不要了|不需要了|不用了|不做了|不继续了|不繼續了|不考虑了|不考慮了|谢谢不用了?|謝謝不用了?)(?:[,，]?(?:谢谢|謝謝))?[。.!！]*$/,
+  /^(?:我)?(?:不感兴趣|没兴趣|沒有興趣|没有兴趣|不要了|不需要了|不用了|谢谢不用了?|謝謝不用了?)(?:[,，]?(?:谢谢|謝謝))?[。.!！]*$/,
 ]);
 
 const GENERIC_POSITIVE_CONTRAST_PATTERNS = frozenPatterns([
@@ -64,7 +64,7 @@ const GENERIC_POSITIVE_CONTRAST_PATTERNS = frozenPatterns([
 
 const CLINIC_DECLINE_PATTERNS = frozenPatterns([
   /\b(?:i(?:'m| am)?\s+)?(?:not|no longer)\s+interested(?:\s+(?:anymore|in\s+(?:your\s+)?(?:service|services|treatment|treatments|clinic)))?(?:,?\s*(?:thanks?|thank you))?\s*[.!?]*$/,
-  /\b(?:i\s+)?(?:don't|do not)\s+(?:want|need)\s+(?:this|it|that|the treatment|your services?|an?\s+appointment|to\s+(?:book|schedule|make an appointment))\b/,
+  /\b(?:i\s+)?(?:don't|do not)\s+(?:want|need)\s+(?:the treatment|your services?|an?\s+appointment|to\s+(?:book|schedule|make an appointment))\b/,
   /\b(?:i\s+)?(?:don't|do not)\s+(?:want|plan|intend)\s+to\s+(?:come|visit|reserve)\b/,
   /\b(?:i(?:'m| am)?\s+)?(?:won't|will not|am not going to|not going to)\s+(?:book|schedule|make an appointment)\b/,
   /\b(?:i(?:'m| am)?\s+)?(?:won't|will not|am not going to|not going to)\s+(?:come|visit|reserve)\b/,
@@ -73,12 +73,12 @@ const CLINIC_DECLINE_PATTERNS = frozenPatterns([
   /\bno\s+thanks?(?:\s+you)?\b/,
   /\b(?:not for me|i(?:'ll| will) pass)\b/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+berminat(?:\s+(?:lagi|dengan\s+(?:servis|rawatan)(?:\s+(?:ini|anda|awak))?))?(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
-  /\b(?:saya\s+)?(?:tak|tidak)\s+(?:nak|mahu)\s+(?:ini|itu|rawatan\s+ini|servis\s+(?:ini|anda)|book|booking|reserve|datang|visit|buat\s+(?:appointment|temujanji|janji temu))\b/,
+  /\b(?:saya\s+)?(?:tak|tidak)\s+(?:nak|mahu)\s+(?:rawatan\s+ini|servis\s+(?:ini|anda)|book|booking|reserve|datang|visit|buat\s+(?:appointment|temujanji|janji temu))\b/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+akan\s+(?:datang|visit|book|booking|reserve)\b/,
   /\b(?:saya|kami)\s+(?:tak|tidak)\s+(?:nak|mahu)\s+(?:teruskan|proceed)\s+(?:rawatan|treatment|package|pakej|promo|promosi|servis|service)?\s*(?:ini|itu)?\b/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+(?:perlu|payah)(?:\s+(?:ini|itu|servis|rawatan))?(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
   /^(?:terima kasih,?\s*)?(?:saya\s+)?(?:tak|tidak)\s+nak(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
-  /^(?:我)?(?:不感兴趣|没兴趣|沒有興趣|没有兴趣|不要了|不需要了|不用了|谢谢不用了?|謝謝不用了?)(?:[,，]?(?:谢谢|謝謝))?[。.!！]*$/,
+  /^(?:我)?(?:不感兴趣|没兴趣|沒有興趣|没有兴趣|不要了|不需要了|不用了|不做了|不继续了|不繼續了|不考虑了|不考慮了|谢谢不用了?|謝謝不用了?)(?:[,，]?(?:谢谢|謝謝))?[。.!！]*$/,
   /^(?:我)?(?:对|對)(?:你们|你們|这项|這項)?(?:服务|服務|疗程|療程)(?:不感兴趣|没兴趣|沒有興趣|没有兴趣)[。.!！]*$/,
   /^(?:我)?(?:不想|不要|不打算)(?:预约|預約|预订|預訂|订位|訂位|去你们|去你們|过去|過去|到店|来|來)(?:诊所|診所|门店|門店)?[。.!！]*$/,
 ]);
@@ -88,14 +88,14 @@ const CLINIC_POSITIVE_CONTRAST_PATTERNS = frozenPatterns([
 ]);
 
 const CLINIC_UNCLEAR_HOT_PATTERNS = frozenPatterns([
-  /\b(?:maybe|perhaps|not ready|not yet|still thinking|need to think|let me think|think about it|just (?:asking|checking|browsing)|maybe later|later on|not now|too expensive|over budget|compare first|still comparing|(?:don't|do not) want to book (?:yet|now)|not booking (?:yet|now))\b/,
+  /\b(?:maybe|perhaps|not ready|not yet|still thinking|need to think|let me think|think about it|just (?:asking|checking|browsing)|maybe later|later on|not now|compare first|still comparing|(?:don't|do not) want to book (?:yet|now)|not booking (?:yet|now))\b/,
   /\bi\s+(?:may|might)\s+(?:want\s+to\s+)?(?:book|schedule|come|visit|buy|take|proceed)\b/,
   /\b(?:need|want)\s+to\s+(?:ask|check with)\s+(?:my\s+)?(?:husband|wife|partner|family)\s+first\b/,
   /\b(?:do|would)\s+(?:i|we)\s+need\s+to\s+(?:pay\s+)?(?:a\s+)?deposit\b/,
   /\b(?:is|are)\s+(?:a\s+)?deposit\s+(?:required|needed)\b/,
-  /\b(?:belum (?:bersedia|nak|mahu)|mungkin|masih fikir|nak fikir dulu|fikir dulu|tanya sahaja|tanya saja|survey dulu|nanti dulu|mahal sangat|terlalu mahal|banding dulu|(?:tak nak|tidak mahu) book (?:dulu|lagi|sekarang))\b/,
+  /\b(?:belum (?:bersedia|nak|mahu)|mungkin|masih fikir|nak fikir dulu|fikir dulu|tanya sahaja|tanya saja|survey dulu|nanti dulu|banding dulu|(?:tak nak|tidak mahu) book (?:dulu|lagi|sekarang))\b/,
   /\b(?:perlu|kena)\s+(?:saya|kami)?\s*(?:bayar\s+)?deposit\s*(?:ke|kah)?\b/,
-  /(?:可能|也许|也許|还不想预约|還不想預約|暂时不预约|暫時不預約|还没决定|還沒決定|先看看|只是问问|只是問問|以后再说|以後再說|再考虑|再考慮|考虑一下|考慮一下|先问家人|先問家人|太贵|太貴|先比较|先比較|还在比较|還在比較|需要付定金吗|需要付定金嗎|要付定金吗|要付定金嗎)/,
+  /(?:可能|也许|也許|还不想预约|還不想預約|暂时不预约|暫時不預約|还没决定|還沒決定|先看看|只是问问|只是問問|以后再说|以後再說|再考虑|再考慮|考虑一下|考慮一下|先问家人|先問家人|先比较|先比較|还在比较|還在比較|需要付定金吗|需要付定金嗎|要付定金吗|要付定金嗎)/,
   /\b(?:visit|check|open)\s+(?:your\s+)?(?:website|site|page|instagram|facebook)\b/,
 ]);
 
