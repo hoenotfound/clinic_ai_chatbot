@@ -135,6 +135,19 @@ function buildReplyPreview(message) {
   };
 }
 
+function replyPreviewText(message) {
+  if (!message) return "Original message unavailable";
+  const mimeType = String(message.media_mime_type || "").toLowerCase();
+  const content = String(message.content || "").trim();
+  if (mimeType.startsWith("audio/")) return content || "Voice message";
+  if (mimeType.startsWith("image/")) {
+    const placeholder = /\[[^\]]+sent (?:a photo|a sticker)\]$/iu.test(content);
+    if (content && !placeholder) return content.replace(/^(?:📷|🙂)\s*/u, "");
+    return /sticker/i.test(content) ? "Sticker" : "Photo";
+  }
+  return content || "Message";
+}
+
 function isJpegFile(file) {
   const type = String(file?.type || "").toLowerCase();
   return type === "image/jpeg" || type === "image/jpg";
@@ -2622,6 +2635,120 @@ function ThreadView({
   );
 }
 
+function ForwardMessageModal({ message, conversations, currentContactId, onClose, onConfirm }) {
+  const [query, setQuery] = useState("");
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setQuery("");
+    setSelectedIds([]);
+    setSending(false);
+    setError("");
+  }, [message?.id]);
+
+  if (!message) return null;
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const choices = (conversations || []).filter((item) => {
+    if (!normalizedQuery) return true;
+    return [
+      displayName(item),
+      item.whatsapp_number,
+      item.last_message,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedQuery);
+  });
+
+  function toggleContact(contactId) {
+    setError("");
+    setSelectedIds((current) => {
+      if (current.includes(contactId)) return current.filter((id) => id !== contactId);
+      if (current.length >= 10) {
+        setError("You can forward to up to 10 conversations at a time.");
+        return current;
+      }
+      return [...current, contactId];
+    });
+  }
+
+  async function submitForward() {
+    if (!selectedIds.length || sending) return;
+    setSending(true);
+    setError("");
+    try {
+      await onConfirm(selectedIds);
+    } catch (err) {
+      setError(err?.message || "Couldn't forward this message. Please try again.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/35 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label="Forward message">
+      <div className="flex max-h-[82vh] w-full flex-col rounded-t-2xl bg-white shadow-xl sm:max-w-md sm:rounded-2xl">
+        <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3.5">
+          <div className="min-w-0">
+            <h3 className="text-sm font-bold">Forward message</h3>
+            <p className="mt-0.5 truncate text-[11px] text-[var(--color-text-muted)]">{replyPreviewText(message)}</p>
+          </div>
+          <button type="button" onClick={onClose} disabled={sending} className="flex h-10 w-10 items-center justify-center rounded-xl text-xl text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-50" aria-label="Close forward message">×</button>
+        </div>
+        <div className="px-4 pt-3">
+          <input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search conversations…"
+            className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+          />
+          <div className="mt-2 flex items-center justify-between text-[10px] text-[var(--color-text-muted)]">
+            <span>Select up to 10</span>
+            <span>{selectedIds.length} selected</span>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+          {choices.length === 0 ? (
+            <p className="px-3 py-8 text-center text-xs text-[var(--color-text-muted)]">No conversations found.</p>
+          ) : choices.map((item) => {
+            const id = Number(item.contact_id);
+            const selected = selectedIds.includes(id);
+            return (
+              <button
+                key={item.contact_id}
+                type="button"
+                onClick={() => toggleContact(id)}
+                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${selected ? "bg-[var(--color-primary-light)]" : "hover:bg-[var(--color-bg)]"}`}
+              >
+                <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[11px] font-bold ${selected ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white" : "border-[var(--color-border)] bg-white text-transparent"}`}>✓</span>
+                <ContactAvatar src={item.photo_url} channel={item.channel} size={36} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-semibold">
+                    {displayName(item)}{Number(item.contact_id) === Number(currentContactId) ? " (current)" : ""}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[10px] text-[var(--color-text-muted)]">{contactMeta(item)}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {error && <p className="mx-4 mb-2 rounded-lg bg-[var(--color-danger-light)] px-3 py-2 text-xs text-[var(--color-danger)]">{error}</p>}
+        <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] px-4 py-3">
+          <button type="button" onClick={onClose} disabled={sending} className="rounded-xl border border-[var(--color-border)] px-4 py-2.5 text-xs font-semibold hover:bg-[var(--color-bg)] disabled:opacity-50">Cancel</button>
+          <button type="button" onClick={submitForward} disabled={!selectedIds.length || sending} className="inline-flex min-w-24 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-40">
+            {sending && <Spinner />}{sending ? "Forwarding…" : "Forward"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ConversationActionItem({ icon: Icon, label, active, disabled, tone = "default", onClick }) {
   const danger = tone === "danger";
   return (
@@ -2674,7 +2801,19 @@ function Spinner({ className = "" }) {
   );
 }
 
-function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
+function MessageBubble({
+  contactId,
+  channel,
+  message,
+  onImageClick,
+  onRetry,
+  onReply,
+  onForward,
+  onCopy,
+  canReply,
+  canForward,
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
   const isWhatsAppTemplate = !!message.whatsapp_template;
@@ -2703,15 +2842,58 @@ function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
         .map((reaction) => reaction?.emoji)
         .filter((emoji) => typeof emoji === "string" && emoji.length > 0)
     : [];
+  const canQuote = Boolean(
+    canReply &&
+    message.whatsapp_message_id &&
+    !message._optimistic
+  );
+  const canCopy = Boolean(String(message.content || "").trim());
+  const showActions = canQuote || canForward || canCopy;
+  const replyPreview = message.reply_preview || null;
 
   return (
     <div className={`flex ${isPatient ? "justify-start" : "justify-end"} ${reactionEmojis.length ? "mb-2" : ""}`}>
-      <div className={`relative max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryNeedsAction ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}>
-        {!isPatient && <p className="mb-1 text-[10px] font-semibold text-white/65">{senderLabel}</p>}
+      <div className={`group relative max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryNeedsAction ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}>
+        {showActions && (
+          <div className="absolute right-1.5 top-1.5 z-20">
+            <button
+              type="button"
+              onClick={() => setMenuOpen((open) => !open)}
+              className={`flex h-7 w-7 items-center justify-center rounded-full text-lg leading-none transition ${isPatient ? "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]" : "text-white/75 hover:bg-white/15"} ${menuOpen ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100"}`}
+              aria-label="Message actions"
+              title="Message actions"
+            >
+              ⋮
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 top-8 z-30 min-w-32 rounded-xl border border-[var(--color-border)] bg-white p-1.5 text-[var(--color-text)] shadow-lg">
+                {canQuote && <button type="button" onClick={() => { setMenuOpen(false); onReply?.(message); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">Reply</button>}
+                {canForward && <button type="button" onClick={() => { setMenuOpen(false); onForward?.(message); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">Forward</button>}
+                {canCopy && <button type="button" onClick={() => { setMenuOpen(false); onCopy?.(message); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">Copy</button>}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!isPatient && <p className="mb-1 pr-7 text-[10px] font-semibold text-white/65">{senderLabel}</p>}
+        {isPatient && showActions && <div className="h-3" aria-hidden="true" />}
+        {message.is_forwarded && (
+          <p className={`mb-1 text-[10px] italic ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/65"}`}>↪ Forwarded</p>
+        )}
         {isWhatsAppTemplate && (
           <p className="mb-1.5 inline-flex rounded-full bg-white/15 px-2 py-0.5 text-[9px] font-semibold text-white/80">
             Template · {message.whatsapp_template.name}
           </p>
+        )}
+        {message.reply_to_provider_message_id && (
+          <div className={`mb-2 overflow-hidden rounded-lg border-l-[3px] px-2.5 py-2 ${isPatient ? "border-[var(--color-primary)] bg-[var(--color-bg)]" : "border-white/70 bg-white/12"}`}>
+            <p className={`text-[10px] font-semibold ${isPatient ? "text-[var(--color-primary)]" : "text-white/80"}`}>
+              {replyPreview?.role === "user" ? "Customer" : (replyPreview?.sent_by_username || (replyPreview ? "AI" : "Original message"))}
+            </p>
+            <p className={`mt-0.5 truncate text-[11px] ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/75"}`}>
+              {replyPreviewText(replyPreview)}
+            </p>
+          </div>
         )}
         {isAudio && storedMediaSrc ? (
           <audio controls preload="none" src={storedMediaSrc} className="mb-1.5 max-w-full" style={{ height: "36px" }} />
