@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+const { S3Client, CopyObjectCommand } = require("@aws-sdk/client-s3");
 const mediaStorage = require("../src/services/mediaStorageService");
 
 test("new permanent media keys are isolated by client slug", () => {
@@ -117,6 +118,60 @@ test("missing client slug keeps the historical unprefixed key shape", () => {
     mediaStorage.applyClientNamespace("messages/12/existing.jpg", {}),
     "messages/12/existing.jpg"
   );
+});
+
+test("stored media is copied server-side into a disposable Meta object", async (t) => {
+  const originalSend = S3Client.prototype.send;
+  const original = {
+    accountId: process.env.R2_ACCOUNT_ID,
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    bucket: process.env.R2_BUCKET_NAME,
+  };
+
+  t.after(() => {
+    S3Client.prototype.send = originalSend;
+    if (original.accountId === undefined) delete process.env.R2_ACCOUNT_ID;
+    else process.env.R2_ACCOUNT_ID = original.accountId;
+    if (original.accessKeyId === undefined) delete process.env.R2_ACCESS_KEY_ID;
+    else process.env.R2_ACCESS_KEY_ID = original.accessKeyId;
+    if (original.secretAccessKey === undefined) delete process.env.R2_SECRET_ACCESS_KEY;
+    else process.env.R2_SECRET_ACCESS_KEY = original.secretAccessKey;
+    if (original.bucket === undefined) delete process.env.R2_BUCKET_NAME;
+    else process.env.R2_BUCKET_NAME = original.bucket;
+  });
+
+  process.env.R2_ACCOUNT_ID = "copy-test";
+  process.env.R2_ACCESS_KEY_ID = "AKIDCOPY";
+  process.env.R2_SECRET_ACCESS_KEY = "SECRETCOPY";
+  process.env.R2_BUCKET_NAME = "private-media";
+
+  let copyInput = null;
+  S3Client.prototype.send = async function send(command) {
+    assert.ok(command instanceof CopyObjectCommand);
+    copyInput = command.input;
+    return {};
+  };
+
+  const sourceKey = "clients/acme/messages/42/123-original.jpg";
+  const result = await mediaStorage.copyStoredMediaToTemporary(
+    sourceKey,
+    "image/jpeg",
+    {
+      contactId: 42,
+      expiresSeconds: 600,
+      env: { CLIENT_SLUG: "acme" },
+    }
+  );
+
+  assert.equal(copyInput.Bucket, "private-media");
+  assert.equal(copyInput.CopySource, `private-media/${sourceKey}`);
+  assert.equal(copyInput.MetadataDirective, "REPLACE");
+  assert.equal(copyInput.ContentType, "image/jpeg");
+  assert.match(result.key, /^clients\/acme\/meta-outbound\/42\//);
+  assert.equal(result.url.includes(sourceKey), false);
+  assert.ok(result.url.includes("/private-media/clients/acme/meta-outbound/42/"));
+  assert.equal(result.expiresSeconds, 600);
 });
 
 test("R2 presigned GET URL matches AWS SigV4 for a fixed request", (t) => {
