@@ -1,11 +1,12 @@
 const config = require("../config/clinicConfig");
 
 const SCHEDULING_PATTERN =
-  /(appointment|book(?:ing)?|slot|availability|available|date|time|branch|location|address|hours?|open|close|today|tomorrow|morning|afternoon|evening|night|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|预约|预[订定]|时[间段]|几点|几时|分店|地点|地址|营业|开门|关门|今天|明天|后天|星期[一二三四五六日天]|礼拜[一二三四五六日天]|早上|上午|中午|下午|晚上|temujanji|janji temu|slot|masa|pukul|cawangan|lokasi|alamat|buka|tutup|hari ini|esok|pagi|petang|malam|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad)/iu;
+  /(appointment|book(?:ing)?|slot|availability|available|date|time|branch|location|address|where|place|shop|clinic|centre|center|hours?|open|close|today|tomorrow|morning|afternoon|evening|night|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|预约|预[订定]|时[间段]|几点|几时|分店|分行|门店|門店|店在|店哪|哪里|哪裡|哪儿|哪兒|在哪|地点|地點|地址|营业|營業|开门|開門|关门|關門|今天|明天|后天|後天|星期[一二三四五六日天]|礼拜[一二三四五六日天]|禮拜[一二三四五六日天]|早上|上午|中午|下午|晚上|temujanji|janji temu|slot|masa|pukul|cawangan|lokasi|alamat|di mana|kat mana|tempat|buka|tutup|hari ini|esok|pagi|petang|malam|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad)/iu;
 const CONTACT_PATTERN =
   /(phone|contact|call|whatsapp|instagram|facebook|tiktok|号码|電話|电话|联系|聯絡|hubungi|telefon|nombor|\big\b|\bfb\b)/iu;
 const PROMOTION_PATTERN =
-  /(price|cost|fee|charge|package|promo|promotion|offer|discount|voucher|多少钱|多少錢|价格|價錢|价钱|配套|优惠|優惠|促销|促銷|berapa|harga|pakej|promosi|diskaun|baucar|tawaran)/iu;
+  /(price|pricing|cost|fee|charge|rate|how\s+much|package|promo|promotion|offer|discount|voucher|多少钱|多少錢|价格|價格|價錢|价钱|价位|價位|费用|費用|收费|收費|几多|幾多|配套|优惠|優惠|促销|促銷|berapa|harga|pakej|promosi|diskaun|baucar|tawaran)/iu;
+const BARE_AMOUNT_PATTERN = /(?:\brm\s*)?\b\d{3,4}\b/iu;
 const SERVICE_DISCOVERY_PATTERN =
   /(what|which|show|list|any).{0,30}(treatments|services|options)|(other|more).{0,20}(treatments?|services?|options?)|(treatments|services).{0,30}(do you have|available|offer)|还有什么.{0,12}(疗程|療程|服务|服務)|其他.{0,12}(疗程|療程|服务|服務)|有什么.{0,12}(疗程|療程|服务|服務)|有哪些.{0,12}(疗程|療程|服务|服務)|rawatan apa|rawatan lain|servis apa|servis lain/iu;
 
@@ -44,6 +45,16 @@ function splitAliasTerms(value) {
   return [...new Set([raw, ...parts])];
 }
 
+function compactServiceCodeTerms(value) {
+  const raw = cleanText(value);
+  if (!raw) return [];
+  const matches = raw.match(/\b[a-z0-9]{2,8}\b/giu) || [];
+  const mixed = matches.filter(
+    (token) => /[a-z]/iu.test(token) && /[0-9]/u.test(token)
+  );
+  return mixed.length === 1 ? mixed : [];
+}
+
 function usefulTerm(value) {
   const key = normalizeComparable(value);
   if (!key || key.length < 2) return null;
@@ -70,7 +81,11 @@ function serviceCandidates(services = config.services, aliases = config.serviceA
         )
         .flatMap((alias) => splitAliasTerms(alias?.alias));
 
-      const terms = [name, ...aliasTerms]
+      const terms = [
+        name,
+        ...aliasTerms,
+        ...compactServiceCodeTerms(name),
+      ]
         .map(usefulTerm)
         .filter(Boolean);
 
@@ -90,6 +105,51 @@ function findServicesInText(text, candidates) {
     }
   }
   return matches;
+}
+
+function recentConversationServiceAnchor(messages, candidates, maxMessages = 8) {
+  const source = Array.isArray(messages) ? messages : [];
+  let skippedCurrentCustomer = false;
+  let inspected = 0;
+
+  for (let index = source.length - 1; index >= 0; index -= 1) {
+    const message = source[index];
+    if (!["user", "assistant"].includes(message?.role)) continue;
+
+    if (!skippedCurrentCustomer) {
+      if (message.role === "user") {
+        skippedCurrentCustomer = true;
+      }
+      continue;
+    }
+
+    inspected += 1;
+    if (inspected > maxMessages) break;
+
+    const matches = unique(findServicesInText(messageText(message), candidates));
+    if (!matches.length) continue;
+
+    if (message.role === "user") {
+      if (matches.length > 2) {
+        return { relevantServiceNames: [], serviceSource: "multi_service_broad" };
+      }
+      return {
+        relevantServiceNames: matches,
+        serviceSource: "recent_customer",
+      };
+    }
+
+    if (matches.length === 1) {
+      return {
+        relevantServiceNames: matches,
+        serviceSource: "recent_assistant",
+      };
+    }
+    // Assistant replies that mention several services are usually comparisons
+    // or menus. They are useful context, but too ambiguous to choose one.
+  }
+
+  return null;
 }
 
 function latestCustomerMessages(messages, limit = 8) {
@@ -138,18 +198,10 @@ function buildConversationPromptContext(
     currentMatches.length <= 2 &&
     !serviceDiscoveryIntent
   ) {
-    for (let index = customerMessages.length - 2; index >= 0; index -= 1) {
-      const matches = unique(
-        findServicesInText(messageText(customerMessages[index]), candidates)
-      );
-      if (!matches.length) continue;
-      if (matches.length > 2) {
-        serviceSource = "multi_service_broad";
-        break;
-      }
-      relevantServiceNames = matches;
-      serviceSource = "recent_customer";
-      break;
+    const recentAnchor = recentConversationServiceAnchor(messages, candidates);
+    if (recentAnchor) {
+      relevantServiceNames = recentAnchor.relevantServiceNames;
+      serviceSource = recentAnchor.serviceSource;
     }
   }
 
@@ -178,21 +230,26 @@ function buildConversationPromptContext(
     currentCustomerText,
     schedulingIntent: SCHEDULING_PATTERN.test(recentCustomerText),
     contactIntent: CONTACT_PATTERN.test(recentCustomerText),
-    promotionIntent: PROMOTION_PATTERN.test(currentCustomerText),
+    promotionIntent:
+      PROMOTION_PATTERN.test(currentCustomerText) ||
+      (currentCustomerText.length <= 24 && BARE_AMOUNT_PATTERN.test(currentCustomerText)),
     serviceDiscoveryIntent,
   };
 }
 
 module.exports = {
+  BARE_AMOUNT_PATTERN,
   CONTACT_PATTERN,
   PROMOTION_PATTERN,
   SCHEDULING_PATTERN,
   SERVICE_DISCOVERY_PATTERN,
   buildConversationPromptContext,
   cleanText,
+  compactServiceCodeTerms,
   findServicesInText,
   messageText,
   normalizeComparable,
+  recentConversationServiceAnchor,
   serviceCandidates,
   splitAliasTerms,
 };
