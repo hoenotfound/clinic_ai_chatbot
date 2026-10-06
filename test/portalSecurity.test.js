@@ -7,6 +7,7 @@ const {
   PORTAL_CSP,
   applyPortalSecurityHeaders,
   buildPortalSessionOptions,
+  enforcePortalRequestOrigin,
 } = require("../src/middleware/portalSecurity");
 
 test("production portal sessions are Secure, HttpOnly, and SameSite=Lax", () => {
@@ -55,6 +56,96 @@ test("portal security headers prevent framing and external script execution", ()
   assert.match(csp, /img-src 'self' data: blob: https:/);
 });
 
+function requestWithHeaders({
+  method = "POST",
+  protocol = "https",
+  host = "clinic.example",
+  origin = null,
+  fetchSite = null,
+} = {}) {
+  const headers = new Map();
+  if (host) headers.set("host", host);
+  if (origin) headers.set("origin", origin);
+  if (fetchSite) headers.set("sec-fetch-site", fetchSite);
+  return {
+    method,
+    protocol,
+    get(name) {
+      return headers.get(String(name).toLowerCase()) || undefined;
+    },
+  };
+}
+
+function responseRecorder() {
+  return {
+    statusCode: null,
+    body: null,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(body) {
+      this.body = body;
+      return this;
+    },
+  };
+}
+
+test("portal origin guard permits safe methods and same-origin browser mutations", () => {
+  let nextCalls = 0;
+  const next = () => { nextCalls += 1; };
+
+  enforcePortalRequestOrigin(
+    requestWithHeaders({ method: "GET", origin: "https://evil.example", fetchSite: "cross-site" }),
+    responseRecorder(),
+    next
+  );
+  enforcePortalRequestOrigin(
+    requestWithHeaders({
+      method: "POST",
+      origin: "https://clinic.example",
+      fetchSite: "same-origin",
+    }),
+    responseRecorder(),
+    next
+  );
+
+  assert.equal(nextCalls, 2);
+});
+
+test("portal origin guard rejects explicit cross-origin browser mutations", () => {
+  let nextCalled = false;
+  const res = responseRecorder();
+
+  enforcePortalRequestOrigin(
+    requestWithHeaders({
+      method: "POST",
+      origin: "https://evil.example",
+      fetchSite: "cross-site",
+    }),
+    res,
+    () => { nextCalled = true; }
+  );
+
+  assert.equal(nextCalled, false);
+  assert.equal(res.statusCode, 403);
+  assert.match(res.body?.error || "", /cross-site|cross-origin/i);
+});
+
+test("portal origin guard permits non-browser internal mutations without Origin headers", () => {
+  let nextCalled = false;
+  const res = responseRecorder();
+
+  enforcePortalRequestOrigin(
+    requestWithHeaders({ method: "POST", origin: null, fetchSite: null }),
+    res,
+    () => { nextCalled = true; }
+  );
+
+  assert.equal(nextCalled, true);
+  assert.equal(res.statusCode, null);
+});
+
 test("createApp mounts portal security before serving traffic", () => {
   const source = fs.readFileSync(
     path.join(__dirname, "../src/createApp.js"),
@@ -62,6 +153,7 @@ test("createApp mounts portal security before serving traffic", () => {
   );
   assert.match(source, /app\.disable\("x-powered-by"\)/);
   assert.match(source, /app\.use\(applyPortalSecurityHeaders\)/);
+  assert.match(source, /app\.use\("\/api", enforcePortalRequestOrigin\)/);
   assert.match(
     source,
     /cookieSession\(buildPortalSessionOptions\(sessionSecret, process\.env\)\)/
