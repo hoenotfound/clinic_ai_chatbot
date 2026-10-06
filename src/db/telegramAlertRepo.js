@@ -335,10 +335,18 @@ async function findNextRetryAt() {
          ELSE NULL
        END
      ) AS next_retry_at
-     FROM telegram_summary_alerts
-     WHERE status = 'pending'
-       AND attempts > 0
-       AND attempts < ${MAX_ATTEMPTS}`
+     FROM telegram_summary_alerts a
+     JOIN leads l ON l.id = a.lead_id
+     WHERE a.status = 'pending'
+       AND a.attempts > 0
+       AND a.attempts < ${MAX_ATTEMPTS}
+       AND NOT EXISTS (
+         SELECT 1
+         FROM messages newer_customer
+         WHERE newer_customer.contact_id = l.contact_id
+           AND newer_customer.role = 'user'
+           AND newer_customer.id > a.through_message_id
+       )`
   );
   return result.rows[0]?.next_retry_at || null;
 }
