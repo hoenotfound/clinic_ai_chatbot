@@ -4,6 +4,7 @@ const { getConversionProfile } = require("../config/conversionProfiles");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
 const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
+const webPush = require("./webPushService");
 
 const BOOKING_READY_REASON =
   "Booking ready: customer provided scheduling preferences; staff should confirm availability.";
@@ -90,6 +91,7 @@ function createBookingReadyOutcomeService({
   publish = realtimeEvents.publish,
   sendBookingReadyAlert = telegramImmediateAlerts.sendBookingReadyAlert,
   lockContactAlertQueue = telegramImmediateAlertRepo.lockContactAlertQueue,
+  sendBookingReadyPush = webPush.notifyBookingReady,
 } = {}) {
   return async function markBookingReadyForContact(
     contactId,
@@ -294,6 +296,12 @@ function createBookingReadyOutcomeService({
     }
 
     if (bookingAlertQueued) telegramImmediateAlerts.wakeImmediateAlertQueue(0);
+
+    if (contactUpdated) {
+      Promise.resolve(sendBookingReadyPush({ contactId })).catch((err) => {
+        console.error(`Booking Ready Web Push failed for contact ${contactId}:`, err);
+      });
+    }
 
     return {
       contactUpdated,
