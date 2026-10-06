@@ -142,6 +142,7 @@ function replyPreviewText(message) {
   const mimeType = String(message.media_mime_type || "").toLowerCase();
   const content = String(message.content || "").trim();
   if (mimeType.startsWith("audio/")) return content || "Voice message";
+  if (mimeType === "image/webp") return "Sticker";
   if (mimeType.startsWith("image/")) {
     const placeholder = /\[[^\]]+sent (?:a photo|a sticker)\]$/iu.test(content);
     if (content && !placeholder) return content.replace(/^(?:📷|🙂)\s*/u, "");
@@ -2931,8 +2932,10 @@ function MessageBubble({
     : "AI";
   const isAudio = message.media_mime_type?.startsWith("audio/");
   const isSticker =
-    isPatient &&
-    /sent a sticker\]$/i.test(String(message.content || "").trim());
+    String(message.media_mime_type || "").toLowerCase() === "image/webp" &&
+    /(?:sent a sticker|forwarded sticker|sticker sent from)/i.test(
+      String(message.content || "")
+    );
   const deliveryFailed = !isPatient && message.delivery_status === "failed";
   const deliveryUnconfirmed = !isPatient && message.delivery_status === "unknown";
   const deliveryNeedsAction = deliveryFailed || deliveryUnconfirmed;
