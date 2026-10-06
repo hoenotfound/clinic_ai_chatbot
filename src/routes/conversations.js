@@ -1601,7 +1601,9 @@ router.post("/:contactId/messages", async (req, res) => {
 });
 
 function handleImageUpload(req, res, next) {
+  const receiveStartedAt = Date.now();
   upload.single("image")(req, res, (err) => {
+    req.inboxImageReceiveMs = Date.now() - receiveStartedAt;
     if (!err) return next();
 
     if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
@@ -1623,6 +1625,8 @@ function handleVoiceUpload(req, res, next) {
 }
 
 router.post("/:contactId/media", handleImageUpload, async (req, res) => {
+  const routeStartedAt = Date.now();
+
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
@@ -1631,7 +1635,10 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       return res.status(400).json({ error: "An image file is required." });
     }
 
-    if ((contact.channel || "whatsapp") === "whatsapp") {
+    const channel = contact.channel || "whatsapp";
+    const isWhatsApp = channel === "whatsapp";
+
+    if (isWhatsApp) {
       const mimeType = String(req.file.mimetype || "").toLowerCase();
       if (!WHATSAPP_IMAGE_MIME_TYPES.has(mimeType)) {
         return res.status(400).json({
@@ -1653,109 +1660,190 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     if (!(await requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)))) return;
 
     const caption = (req.body?.caption || "").trim();
-
-    // Persist the exact image bytes first. This keeps the Inbox and retry path
-    // consistent even when Meta accepts the upload but later rejects delivery.
-    // R2 persistence happens before the message row exists, so keep the same
-    // Telegram per-contact lock across staff preparation and media persistence.
-    const prepared = await telegramImmediateAlertRepo.withContactAlertLock(
-      contact.id,
-      async () => {
-        const preparedContact = await prepareStaffSend(
-          contact,
-          req.session.username
-        );
-        const saved = await conversationStore.appendMessageForContact(
-          preparedContact.id,
-          "assistant",
-          caption,
-          null,
-          req.session.username,
-          null,
-          { mimeType: req.file.mimetype, buffer: req.file.buffer },
-          {
-            replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
-          }
-        );
-        const finalContact =
-          await finalizeStaffSendState(preparedContact.id, req.session.username);
-        return { preparedContact: finalContact || preparedContact, saved };
-      }
-    );
-
-    const { preparedContact, saved } = prepared;
-    const sendOptions = socialProviderSendOptions(saved, preparedContact, {
-      purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
-      replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
-    });
-
-    const providerSendStartedAt = Date.now();
+    let preparedContact;
+    let saved;
     let sendResult;
-    if ((preparedContact.channel || "whatsapp") === "whatsapp") {
-      // The image has already been durably written to private R2 by
-      // appendMessageForContact(). Ask R2 to create a disposable server-side
-      // copy for Meta, then send a short-lived signed URL for that copy. This
-      // avoids another Render->provider byte upload without exposing the
-      // permanent customer-media object key.
-      try {
-        const mediaReference =
-          await messagesRepo.getMessageMediaReferenceForContact(
-            saved.contact_id,
-            saved.id
-          );
-        if (!mediaReference?.media_key) {
-          throw new Error("Saved image media reference is missing.");
-        }
+    let r2PersistMs = null;
+    let providerSendMs = null;
 
-        const temporaryMedia = await mediaStorage.copyStoredMediaToTemporary(
-          mediaReference.media_key,
-          req.file.mimetype,
-          {
-            contactId: preparedContact.id,
-            expiresSeconds: 10 * 60,
-          }
-        );
-        mediaStorage.scheduleTemporaryMediaDelete(temporaryMedia.key);
-        sendResult = await channelMessaging.sendImageByUrl(
-          preparedContact,
-          temporaryMedia.url,
-          caption || undefined,
-          sendOptions
-        );
-      } catch (copyErr) {
-        // A temporary R2 copy failure must not block staff from replying.
-        // Fall back to the existing direct WhatsApp upload path; this is slower
-        // but preserves delivery availability.
-        console.warn(
-          `[Inbox image] temporary R2 copy failed for contact ${preparedContact.id}; falling back to direct provider upload:`,
-          copyErr
-        );
-        sendResult = await channelMessaging.sendImageBuffer(
+    if (isWhatsApp) {
+      // Save a lightweight message row before any provider call so a successful
+      // WhatsApp send can never become an orphaned conversation event. The
+      // expensive R2 write and Meta media upload then run in parallel.
+      const prepared = await telegramImmediateAlertRepo.withContactAlertLock(
+        contact.id,
+        async () => {
+          const initialContact = await prepareStaffSend(
+            contact,
+            req.session.username
+          );
+          const initialSaved = await conversationStore.appendMessageForContact(
+            initialContact.id,
+            "assistant",
+            caption,
+            null,
+            req.session.username,
+            null,
+            { mimeType: req.file.mimetype },
+            {
+              publish: false,
+              replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+            }
+          );
+          const finalContact =
+            await finalizeStaffSendState(initialContact.id, req.session.username);
+          return {
+            preparedContact: finalContact || initialContact,
+            saved: initialSaved,
+          };
+        }
+      );
+
+      preparedContact = prepared.preparedContact;
+      saved = prepared.saved;
+      const sendOptions = socialProviderSendOptions(saved, preparedContact, {
+        purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+        replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+      });
+
+      const r2StartedAt = Date.now();
+      const persistPromise = mediaStorage
+        .uploadMedia(req.file.buffer, req.file.mimetype, {
+          contactId: preparedContact.id,
+        })
+        .then((mediaKey) => {
+          r2PersistMs = Date.now() - r2StartedAt;
+          return mediaKey;
+        });
+
+      const providerStartedAt = Date.now();
+      const providerPromise = channelMessaging
+        .sendImageBuffer(
           preparedContact,
           req.file.buffer,
           req.file.mimetype,
           caption || undefined,
           req.file.originalname || "image",
           sendOptions
+        )
+        .then((result) => {
+          providerSendMs = Date.now() - providerStartedAt;
+          return result;
+        });
+
+      const [persistOutcome, providerOutcome] = await Promise.allSettled([
+        persistPromise,
+        providerPromise,
+      ]);
+
+      let mediaKey = null;
+      if (persistOutcome.status === "fulfilled") {
+        mediaKey = persistOutcome.value;
+      } else {
+        console.warn(
+          `[Inbox image] initial R2 persistence failed for contact ${preparedContact.id}; retrying once:`,
+          persistOutcome.reason
+        );
+        const retryStartedAt = Date.now();
+        try {
+          mediaKey = await mediaStorage.uploadMedia(
+            req.file.buffer,
+            req.file.mimetype,
+            { contactId: preparedContact.id }
+          );
+          r2PersistMs = Date.now() - retryStartedAt;
+        } catch (persistErr) {
+          console.error(
+            `[Inbox image] R2 persistence failed after retry for contact ${preparedContact.id}:`,
+            persistErr
+          );
+        }
+      }
+
+      if (mediaKey) {
+        saved =
+          (await conversationStore.attachStoredMediaForContact(
+            preparedContact.id,
+            saved.id,
+            mediaKey,
+            req.file.mimetype
+          )) || saved;
+      } else {
+        // The provider result is still meaningful, but surface the message row
+        // so staff can see that history persistence needs attention.
+        realtimeEvents.publish("conversation_changed", {
+          contactId: preparedContact.id,
+          messageId: saved.id,
+          message: saved,
+          reason: "message",
+        });
+      }
+
+      sendResult =
+        providerOutcome.status === "fulfilled"
+          ? providerOutcome.value
+          : {
+              success: false,
+              wamid: null,
+              error:
+                providerOutcome.reason?.message ||
+                "WhatsApp image send failed unexpectedly.",
+            };
+
+      if (!mediaKey) {
+        await contactsRepo.setDeliveryAttention(
+          preparedContact.id,
+          "Image storage failed after send attempt; attachment history/retry may be unavailable."
         );
       }
     } else {
+      // Keep the existing social-channel path unchanged. Those providers have
+      // different attachment semantics and already rely on stored media.
+      const prepared = await telegramImmediateAlertRepo.withContactAlertLock(
+        contact.id,
+        async () => {
+          const initialContact = await prepareStaffSend(
+            contact,
+            req.session.username
+          );
+          const initialSaved = await conversationStore.appendMessageForContact(
+            initialContact.id,
+            "assistant",
+            caption,
+            null,
+            req.session.username,
+            null,
+            { mimeType: req.file.mimetype, buffer: req.file.buffer },
+            {
+              replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+            }
+          );
+          const finalContact =
+            await finalizeStaffSendState(initialContact.id, req.session.username);
+          return {
+            preparedContact: finalContact || initialContact,
+            saved: initialSaved,
+          };
+        }
+      );
+
+      preparedContact = prepared.preparedContact;
+      saved = prepared.saved;
+      const providerStartedAt = Date.now();
       sendResult = await channelMessaging.sendImageBuffer(
         preparedContact,
         req.file.buffer,
         req.file.mimetype,
         caption || undefined,
         req.file.originalname || "image",
-        sendOptions
+        socialProviderSendOptions(saved, preparedContact, {
+          purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+          replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+        })
       );
+      providerSendMs = Date.now() - providerStartedAt;
     }
 
-    const providerSendMs = Date.now() - providerSendStartedAt;
-    if (providerSendMs >= 2500) {
-      console.warn(
-        `[Inbox image] slow provider send for contact ${preparedContact.id}: ${providerSendMs}ms`
-      );
-    }
     const errorText = deliveryErrorForSend(
       sendResult,
       sendResult.error || rejectedErrorFor(preparedContact)
@@ -1766,6 +1854,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       errorText,
       preparedContact.channel || "whatsapp"
     );
+
     if (!sendResult.success) {
       await contactsRepo.setDeliveryAttention(
         preparedContact.id,
@@ -1773,6 +1862,18 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       );
     } else {
       await markLeadContacted(preparedContact.id, req.session.username, sendResult);
+    }
+
+    const totalRouteMs = Date.now() - routeStartedAt;
+    if (
+      totalRouteMs >= 2000 ||
+      Number(req.inboxImageReceiveMs || 0) >= 1500 ||
+      Number(r2PersistMs || 0) >= 1500 ||
+      Number(providerSendMs || 0) >= 1500
+    ) {
+      console.info(
+        `[Inbox image timing] contact=${preparedContact.id} bytes=${req.file.size} receive=${req.inboxImageReceiveMs ?? "n/a"}ms r2=${r2PersistMs ?? "n/a"}ms provider=${providerSendMs ?? "n/a"}ms route=${totalRouteMs}ms`
+      );
     }
 
     res.status(201).json({
