@@ -48,6 +48,31 @@ test("WhatsApp contacts keep using the existing WhatsApp send function after pol
   assert.equal(result.wamid, "wamid-1");
 });
 
+test("WhatsApp quoted reply context reaches the provider sender", async (t) => {
+  const originalWhatsappSend = whatsapp.sendMessage;
+  t.after(() => {
+    whatsapp.sendMessage = originalWhatsappSend;
+  });
+
+  let whatsappCall = null;
+  whatsapp.sendMessage = async (to, text, options) => {
+    whatsappCall = { to, text, options };
+    return { success: true, wamid: "wamid-reply" };
+  };
+
+  await messaging.sendText(
+    { id: 12, channel: "whatsapp", whatsapp_number: "60123456789" },
+    "Quoted reply",
+    { replyToProviderMessageId: "wamid-original" }
+  );
+
+  assert.deepEqual(whatsappCall, {
+    to: "60123456789",
+    text: "Quoted reply",
+    options: { replyToProviderMessageId: "wamid-original" },
+  });
+});
+
 test("WhatsApp policy rejection blocks the lower-level send", async (t) => {
   const originalPolicy = whatsappPolicy.checkFreeformAllowed;
   const originalWhatsappSend = whatsapp.sendMessage;
