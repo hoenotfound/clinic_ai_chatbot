@@ -416,11 +416,7 @@ test("pending actionable alert holds the normal conversation summary without bur
   const result = await service.flushConversationSummaries({ inactivityMinutes: 10 });
   assert.equal(sends, 0);
   assert.equal(released, 31);
-  assert.deepEqual(result, {
-    status: "completed",
-    sent: 0,
-    nextRetryAt: "2026-10-07T00:01:00.000Z",
-  });
+  assert.deepEqual(result, { status: "completed", sent: 0 });
 });
 
 test("sent actionable alert permanently supersedes the redundant normal summary", async () => {
@@ -510,5 +506,9 @@ test("Telegram send failure is recorded for retry without aborting the flush", a
   const result = await service.flushConversationSummaries({ inactivityMinutes: 10 });
   assert.equal(failure.id, 31);
   assert.match(failure.error.message, /Telegram unavailable/);
-  assert.deepEqual(result, { status: "completed", sent: 0 });
+  assert.deepEqual(result, {
+    status: "completed",
+    sent: 0,
+    nextRetryAt: "2026-10-07T00:01:00.000Z",
+  });
 });
