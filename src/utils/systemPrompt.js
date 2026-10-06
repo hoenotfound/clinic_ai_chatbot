@@ -243,8 +243,8 @@ function promotionKnowledgeLines(promotion) {
           aliases.length ? `aliases: ${aliases.join(", ")}` : null,
         ].filter(Boolean);
 
-        const details = compactPromotionKnowledgeText(item.caption, 1_600);
-        const followUp = compactPromotionKnowledgeText(item.followUpMessage, 700);
+        const details = compactPromotionKnowledgeText(item.caption, 2_400);
+        const followUp = compactPromotionKnowledgeText(item.followUpMessage, 900);
         return [
           `  - ${parts.join(" | ")}`,
           details ? `    offer details: ${details}` : null,
@@ -256,8 +256,11 @@ function promotionKnowledgeLines(promotion) {
     ];
   }
 
-  const caption = compactPromotionKnowledgeText(promotion?.caption, 1_400);
-  const followUp = compactPromotionKnowledgeText(promotion?.followUpMessage, 1_000);
+  const followUp = compactPromotionKnowledgeText(promotion?.followUpMessage, 1_200);
+  const caption = compactPromotionKnowledgeText(
+    promotion?.caption,
+    followUp ? 1_400 : 3_000
+  );
   const lines = [renderCompactPromotion(promotion)];
 
   // The follow-up text normally contains the concise commercial terms
