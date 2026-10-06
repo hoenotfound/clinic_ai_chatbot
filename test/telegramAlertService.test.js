@@ -69,7 +69,7 @@ test("builds a direct WhatsApp chat link only for WhatsApp contacts", () => {
   );
 });
 
-test("shows the saved pipeline temperature only once and adds the WhatsApp follow-up link", () => {
+test("shows the saved pipeline temperature and a different AI suggestion without replacing it", () => {
   const text = buildConversationSummaryMessage({
     lead,
     score,
@@ -80,7 +80,7 @@ test("shows the saved pipeline temperature only once and adds the WhatsApp follo
   assert.match(text, /Kit Leong \(\+60123456789\)/);
   assert.doesNotMatch(text, /Current Temperature:/);
   assert.doesNotMatch(text, /AI Review:/);
-  assert.doesNotMatch(text, /🔥 Hot/);
+  assert.match(text, /AI suggests: 🔥 Hot \(medium confidence\)/);
   assert.doesNotMatch(text, /Temperature reason:/);
   assert.match(text, /Treatment: HIFU/);
   assert.match(text, /Branch: Puchong/);
@@ -88,6 +88,20 @@ test("shows the saved pipeline temperature only once and adds the WhatsApp follo
   assert.match(text, /Chat Summary:/);
   assert.match(text, /Inbox: https:\/\/clinic\.example\.com\/inbox\?contact=12/);
   assert.match(text, /WhatsApp follow-up: https:\/\/wa\.me\/60123456789/);
+});
+
+test("hides the AI suggestion when the AI agrees with the saved pipeline temperature", () => {
+  const text = buildConversationSummaryMessage({
+    lead,
+    score: {
+      ...score,
+      temperature: "warm",
+      confidence: "high",
+    },
+  });
+
+  assert.match(text, /🟠 Warm Conversation Summary/);
+  assert.doesNotMatch(text, /AI suggests:/);
 });
 
 test("hides Branch for single-branch clients and Assigned to when lead distribution is disabled", () => {
