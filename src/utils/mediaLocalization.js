@@ -18,6 +18,24 @@ function normalizeMediaTranslations(value) {
   return result;
 }
 
+function mediaVariants(item) {
+  if (!item || typeof item !== "object") return [];
+  const variants = [
+    resolveLocalizedMedia(item, null),
+    ...MEDIA_LANGUAGE_KEYS.map((language) => resolveLocalizedMedia(item, language)),
+  ];
+  const seen = new Set();
+  return variants.filter((variant) => {
+    const imageUrl = String(variant?.imageUrl || "").trim();
+    const caption = String(variant?.caption || "").trim();
+    if (!imageUrl && !caption) return false;
+    const key = JSON.stringify([imageUrl, caption]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function resolveLocalizedMedia(item, language) {
   if (!item || typeof item !== "object") return item;
   const translations = normalizeMediaTranslations(item.mediaTranslations);
@@ -32,6 +50,7 @@ function resolveLocalizedMedia(item, language) {
 
 module.exports = {
   MEDIA_LANGUAGE_KEYS,
+  mediaVariants,
   normalizeMediaTranslations,
   resolveLocalizedMedia,
 };
