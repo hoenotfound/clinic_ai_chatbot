@@ -67,6 +67,24 @@ function normalizedComparable(value) {
     .replace(/[\p{P}\p{S}\s]+/gu, "");
 }
 
+function selectExplicitPackageFromLatestCustomerMessage(customerMessages, packages) {
+  const latest = (Array.isArray(customerMessages) ? customerMessages : []).at(-1);
+  const latestKey = normalizedComparable(latest?.content);
+  if (!latestKey) return null;
+
+  // Fail closed: skip the model only when the customer's latest message is
+  // essentially just one configured package name/title/alias. Sentences such
+  // as "I don't want Package A", comparisons, goals and fuzzy preferences stay
+  // on the existing AI path.
+  const matches = (Array.isArray(packages) ? packages : []).filter((item) =>
+    [item?.name, item?.title, ...(Array.isArray(item?.aliases) ? item.aliases : [])]
+      .filter(Boolean)
+      .some((label) => normalizedComparable(label) === latestKey)
+  );
+
+  return matches.length === 1 ? matches[0].name : null;
+}
+
 function bigrams(value) {
   const text = normalizedComparable(value);
   const result = new Set();
@@ -256,6 +274,14 @@ async function selectPromotionPackageForFollowUp({
   );
   if (!customerMessages.length) return null;
 
+  // Exact current-message choices do not need an AI call. Keep fuzzy matching,
+  // package-goal inference, comparisons and ambiguity on the existing AI path.
+  const explicitPackage = selectExplicitPackageFromLatestCustomerMessage(
+    customerMessages,
+    allowedPackages
+  );
+  if (explicitPackage) return explicitPackage;
+
   const raw = await aiService.getReplyWithEnv(
     [{
       role: "user",
@@ -363,6 +389,7 @@ module.exports = {
   previousFollowUps,
   renderConversation,
   scopePackageSelectionConversation,
+  selectExplicitPackageFromLatestCustomerMessage,
   selectPromotionPackageForFollowUp,
   shouldSuppressStaffPromotionHumanReview,
   similarity,
