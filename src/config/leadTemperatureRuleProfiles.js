@@ -154,12 +154,24 @@ const CLINIC_HOT_INTENT_PATTERNS = frozenPatterns([
 
 const CLINIC_CONTEXT_PROMPT_PATTERNS = frozenPatterns([
   /\b(?:would|do)\s+you\s+like\s+(?:me\s+)?to\s+(?:book|schedule|reserve)/,
+  /\b(?:would|do)\s+you\s+like\s+(?:to\s+)?(?:proceed|go ahead|continue)\b/,
+  /\b(?:would|do)\s+you\s+like\s+(?:the\s+)?(?:package|promo(?:tion)?|offer|treatment|service)\b/,
+  /\b(?:which|what)\s+(?:package|promo(?:tion)?|offer|option)\b/,
+  /\b(?:nak|mahu)\s+(?:teruskan|proceed|ambil|pilih)\b/,
+  /(?:要不要|想不想|需要我|可以帮你|可以幫你).{0,16}(?:继续|繼續|拿|选|選|配套|套餐|优惠|優惠|付款)/,
   /\b(?:which|what)\s+(?:branch|day|date|time|slot)\b/,
   /\b(?:shall|can)\s+i\s+(?:book|schedule|confirm|reserve)/,
   /\b(?:appointment|booking|slot)\b.{0,60}\b(?:day|date|time|branch|confirm|available|work for you)\b/,
   /\b(?:cawangan|hari|tarikh|masa|pukul|slot|temujanji|janji temu)\b.{0,60}\b(?:mana|bila|sesuai|pilih|confirm|sahkan)\b/,
   /(?:要不要|需要我|可以帮你|可以幫你).{0,12}(?:预约|預約|订位|訂位)/,
   /(?:哪个|哪個|哪家|哪天|几号|幾號|几点|幾點|什么时间|什麼時間).{0,12}(?:分行|门店|門店|预约|預約|方便|合适|合適)/,
+]);
+
+const CLINIC_CONTEXT_CHOICE_PATTERNS = frozenPatterns([
+  /^(?:package|plan|option|promo(?:tion)?)\s*[a-z0-9-]+[.! ]*$/,
+  /^(?:pakej|package|promo|promosi)\s*[a-z0-9-]+[.! ]*$/,
+  /^(?:配套|套餐|优惠|優惠)\s*[a-z0-9一二三四五六七八九十]+[。.!！ ]*$/i,
+  /^[abc123][.! ]*$/i,
 ]);
 
 const CLINIC_NON_CONFIRMING_CONTEXT_PATTERNS = frozenPatterns([
@@ -199,6 +211,7 @@ const TCM_CONTEXT_PROMPT_PATTERNS = frozenPatterns([
 ]);
 
 const TCM_CONTEXT_CHOICE_PATTERNS = frozenPatterns([
+  ...CLINIC_CONTEXT_CHOICE_PATTERNS,
   /^(?:an?\s+)?assessment(?:\s+(?:please|pls))?[.! ]*$/,
   /^(?:assessment|penilaian)(?:\s+(?:boleh|ya|please))?[.! ]*$/,
   /^(?:评估|評估)(?:可以|吧|就好)?[。.!！ ]*$/,
@@ -315,14 +328,14 @@ const LEAD_TEMPERATURE_RULE_PROFILES = Object.freeze({
     contextPromptPatterns: CLINIC_CONTEXT_PROMPT_PATTERNS,
     contextConfirmPatterns: CONFIRMATION_PATTERNS,
     contextDetailPatterns: DATE_OR_TIME_PATTERNS,
-    contextChoicePatterns: frozenPatterns([]),
+    contextChoicePatterns: CLINIC_CONTEXT_CHOICE_PATTERNS,
     nonConfirmingContextPatterns: CLINIC_NON_CONFIRMING_CONTEXT_PATTERNS,
     allowConfiguredLocationAnswers: true,
     alternativeOverridesNonConfirming: false,
     hotMatchedRule: "booking_intent",
     hotReason: "The customer showed clear intent to proceed, purchase, pay, book, or arrange an appointment.",
     contextMatchedRule: "scheduling_confirmation",
-    contextReason: "The customer confirmed scheduling details after a booking question.",
+    contextReason: "The customer confirmed a concrete booking, package, purchase, or other sales next step after the business prompted them.",
   }),
   tcm_clinic: Object.freeze({
     id: "tcm_clinic",
@@ -344,7 +357,7 @@ const LEAD_TEMPERATURE_RULE_PROFILES = Object.freeze({
     hotMatchedRule: "booking_intent",
     hotReason: "The patient showed clear intent to proceed, purchase, pay, arrange an assessment, or book an appointment.",
     contextMatchedRule: "scheduling_confirmation",
-    contextReason: "The patient confirmed an assessment or appointment next step after the clinic prompted them.",
+    contextReason: "The patient confirmed an assessment, appointment, package, purchase, or other concrete next step after the clinic prompted them.",
   }),
   home_renovation: Object.freeze({
     id: "home_renovation",
