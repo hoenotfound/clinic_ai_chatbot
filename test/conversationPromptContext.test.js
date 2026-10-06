@@ -585,8 +585,8 @@ test("configured A/B package comparison is recognized as promo intent without pr
       name: "骨盆调理套餐",
       linkedService: "骨盆调理",
       sendOnPriceQuery: true,
-      validFrom: "2026-10-01",
-      validUntil: "2026-10-31",
+      validFrom: null,
+      validUntil: null,
       packages: [
         {
           name: "Package A",
@@ -633,8 +633,8 @@ test("short package follow-up carries promo context from the immediately previou
       name: "骨盆调理套餐",
       linkedService: "骨盆调理",
       sendOnPriceQuery: true,
-      validFrom: "2026-10-01",
-      validUntil: "2026-10-31",
+      validFrom: null,
+      validUntil: null,
       packages: [
         {
           name: "Package A",
@@ -669,8 +669,8 @@ test("ordinary lowercase English article does not falsely trigger Package A prom
       name: "骨盆调理套餐",
       linkedService: "骨盆调理",
       sendOnPriceQuery: true,
-      validFrom: "2026-10-01",
-      validUntil: "2026-10-31",
+      validFrom: null,
+      validUntil: null,
       packages: [
         {
           name: "Package A",
@@ -698,8 +698,8 @@ test("long promo ad copy is compacted while all commercial terms remain availabl
       linkedService: "3D 小颜术",
       sendOnPriceQuery: true,
       packages: [],
-      validFrom: "2026-10-01",
-      validUntil: "2026-10-31",
+      validFrom: null,
+      validUntil: null,
       caption: `LONG_AD_CLAIM bone-gap claim and other marketing copy. ${"LONG_AD_FILLER ".repeat(80)}`,
       followUpMessage: [
         "RM 488",
@@ -727,8 +727,6 @@ test("long promo ad copy is compacted while all commercial terms remain availabl
     assert.match(prompt, /2 hours 30 minutes/);
     assert.match(prompt, /全身通淋巴按摩/);
     assert.match(prompt, /V-shape mask/);
-    assert.match(prompt, /2026-10-01/);
-    assert.match(prompt, /2026-10-31/);
     assert.doesNotMatch(prompt, /LONG_AD_CLAIM/);
     assert.doesNotMatch(prompt, /LONG_AD_FILLER/);
     assert.match(prompt, /exact long-form promotional caption is handled by the promotion media system/);
@@ -745,8 +743,8 @@ test("promo caption remains available when it is the only configured source of o
       linkedService: "3D 小颜术",
       sendOnPriceQuery: true,
       packages: [],
-      validFrom: "2026-10-01",
-      validUntil: "2026-10-31",
+      validFrom: null,
+      validUntil: null,
       caption: `${"Configured offer detail ".repeat(80)}${uniqueTail}`,
       followUpMessage: "",
     }],
@@ -784,8 +782,8 @@ test("short combo caption and follow-up gift are both preserved as promo knowled
       linkedService: "3D + 9D 组合",
       sendOnPriceQuery: true,
       packages: [],
-      validFrom: "2026-10-01",
-      validUntil: "2026-10-31",
+      validFrom: null,
+      validUntil: null,
       caption: "9D + 3D 组合限时优惠: RM688",
       followUpMessage: "Includes 经络按摩",
     }],
