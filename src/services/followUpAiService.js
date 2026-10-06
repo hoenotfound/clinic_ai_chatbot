@@ -177,7 +177,10 @@ function recentConfiguredServiceNames(messages, maxServices = 2) {
     })
     .filter(Boolean);
 
-  const recent = trimConversation(messages, { maxMessages: 8, maxChars: 3_500 });
+  const recent = trimConversation(
+    (Array.isArray(messages) ? messages : []).filter((message) => message?.role === "user"),
+    { maxMessages: 6, maxChars: 3_500 }
+  );
   const found = [];
   for (let index = recent.length - 1; index >= 0; index -= 1) {
     const contentKey = normalizedComparable(recent[index].content);
