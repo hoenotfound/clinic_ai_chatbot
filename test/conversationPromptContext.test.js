@@ -189,6 +189,60 @@ test("two-service comparison preserves exactly the two services in the current m
   });
 });
 
+test("three-service customer comparison falls back to the broad compact catalog instead of dropping a service", () => {
+  withConfig(scopedConfig(), () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "3D、9D和骨盆调理有什么不同？" },
+    ], {
+      metaAdContext: {
+        headline: "3D 小颜术",
+        body: "脸型轮廓",
+      },
+    });
+
+    assert.deepEqual(context.relevantServiceNames, []);
+    assert.equal(context.serviceSource, "multi_service_broad");
+
+    const prompt = buildSystemPrompt({
+      channel: "whatsapp",
+      conversationContext: context,
+    });
+    assert.match(prompt, /THREED_FULL_DETAILS/);
+    assert.match(prompt, /NINED_FULL_DETAILS/);
+    assert.match(prompt, /PELVIS_FULL_DETAILS/);
+    assert.doesNotMatch(prompt, /THREED_PRICE/);
+    assert.doesNotMatch(prompt, /NINED_PRICE/);
+    assert.doesNotMatch(prompt, /PELVIS_PRICE/);
+  });
+});
+
+test("photo caption still drives normal reply treatment context without removing the image", () => {
+  withConfig(scopedConfig(), () => {
+    const messages = [{
+      role: "user",
+      content: [
+        { type: "text", text: "想问这个骨盆调理多少钱？" },
+        { type: "image", mimeType: "image/jpeg", data: "abc123" },
+      ],
+    }];
+
+    const context = buildConversationPromptContext(messages);
+    assert.deepEqual(context.relevantServiceNames, ["骨盆调理"]);
+    assert.equal(context.promotionIntent, true);
+
+    const built = geminiService.buildGeminiRequest(
+      messages,
+      { channel: "whatsapp", surface: "conversation" },
+      "gemini-3.8-flash"
+    );
+    assert.equal(built.request.contents.length, 1);
+    assert.equal(built.request.contents[0].parts.length, 2);
+    assert.equal(built.request.contents[0].parts[0].text, "想问这个骨盆调理多少钱？");
+    assert.equal(built.request.contents[0].parts[1].inlineData.data, "abc123");
+    assert.match(built.request.config.systemInstruction, /PELVIS_FULL_DETAILS/);
+  });
+});
+
 test("vague lead can use one unambiguous Meta creative service without changing conversation text", () => {
   withConfig(scopedConfig(), () => {
     const messages = [{ role: "user", content: "想了解" }];
