@@ -110,6 +110,15 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_mime_type TEXT;
 -- db/messagesRepo.js for how reads/writes resolve this to actual bytes.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_key TEXT;
 
+-- WhatsApp-style Inbox actions. Quoted replies store the provider message id
+-- they reference so the original content stays authoritative. Forward is a
+-- local audit/display marker; the provider receives a normal new message.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_provider_message_id TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_forwarded BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_messages_reply_to_provider_message_id
+  ON messages (reply_to_provider_message_id)
+  WHERE reply_to_provider_message_id IS NOT NULL;
+
 -- Async delivery outcome for an outbound message, as reported later by
 -- Meta's status webhook callback (see server.js POST /webhook, which reads
 -- value.statuses). Accepting a send request (HTTP 200 from the /messages
