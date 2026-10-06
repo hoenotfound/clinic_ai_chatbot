@@ -821,6 +821,62 @@ test("staff can preview an image and send it as multipart with its caption", asy
   expectNoUnexpectedApi(apiState);
 });
 
+test("pasted WebP is normalized to a WhatsApp-compatible image before upload", async ({ page }) => {
+  const apiState = await installApi(page);
+
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+
+  const composer = page.locator("textarea").first();
+  const pastedType = await composer.evaluate(async (element) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 8;
+    canvas.height = 8;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#16a34a";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise((resolve) => {
+      canvas.toBlob(resolve, "image/webp", 0.8);
+    });
+    if (!blob) return null;
+
+    const file = new File([blob], "clipboard.webp", {
+      type: blob.type,
+      lastModified: Date.now(),
+    });
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        items: [{
+          type: file.type,
+          getAsFile: () => file,
+        }],
+        files: [file],
+      },
+    });
+    element.dispatchEvent(event);
+    return file.type;
+  });
+
+  expect(pastedType).toBe("image/webp");
+  await expect(page.getByAltText("Selected attachment")).toBeVisible();
+  await expect(page.getByText(/^pasted-image-\d+\.(?:jpg|png)$/)).toBeVisible();
+  await expect(page.getByText("Caption optional", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  expect(apiState.mediaRequests).toHaveLength(1);
+  const uploaded = await page.evaluate(
+    () => window.__realtimeMediaTest?.latestMediaUpload?.() || null
+  );
+  expect(uploaded).not.toBeNull();
+  expect(["image/jpeg", "image/png"]).toContain(uploaded.type);
+  expect(uploaded.type).not.toBe("image/webp");
+  expect(uploaded.name).toMatch(/\.(?:jpg|png)$/i);
+  expectNoUnexpectedApi(apiState);
+});
+
 test("progressive JPEG is normalized before upload", async ({ page }) => {
   const apiState = await installApi(page);
 
