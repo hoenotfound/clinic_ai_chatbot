@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   createLeadScoringRunner,
+  delayUntilTelegramRetry,
   trimTranscript,
 } = require("../src/services/leadScoringService");
 
@@ -414,6 +415,34 @@ test("recovery sweep queues a fallback if the process died after the terminal sc
   assert.equal(queued[0].throughMessageId, 55);
   assert.equal(queued[0].score.summaryUnavailable, true);
   assert.equal(queued[0].score.attempts, 3);
+});
+
+test("Telegram retry backoff schedules the lead-scoring worker without rerunning AI", async () => {
+  const wakes = [];
+  const run = createLeadScoringRunner({
+    settingsGetter: () => settings,
+    repository: {
+      findCandidates: async () => [],
+    },
+    flushConversationSummaries: async () => ({
+      status: "completed",
+      sent: 0,
+      nextRetryAt: "2026-10-07T00:01:00.000Z",
+    }),
+    scheduleWake: (delayMs) => wakes.push(delayMs),
+    clock: () => Date.parse("2026-10-07T00:00:00.000Z"),
+  });
+
+  await run();
+  assert.deepEqual(wakes, [60_000]);
+  assert.equal(
+    delayUntilTelegramRetry(
+      "2026-10-07T00:05:00.000Z",
+      Date.parse("2026-10-07T00:00:00.000Z")
+    ),
+    300_000
+  );
+  assert.equal(delayUntilTelegramRetry("not-a-date", 0), null);
 });
 
 test("long transcripts keep the newest complete messages", () => {
