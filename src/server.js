@@ -721,7 +721,13 @@ async function processIncomingMessage(
       await contactsRepo.setAttention(
         contact.id,
         true,
-        keywordReason || "New message — conversation is staff-owned."
+        keywordReason || "New message — conversation is staff-owned.",
+        {
+          // Routine inbound messages in an already staff-owned conversation
+          // should update Inbox attention without becoming phone push spam.
+          // Deterministic keyword/safety escalations remain high priority.
+          notifyWebPush: Boolean(keywordReason),
+        }
       );
       console.log(`Skipping AI reply for ${channel}:${from} — conversation is in human mode.`);
       return { wasFirstMessage, keywordReason };
