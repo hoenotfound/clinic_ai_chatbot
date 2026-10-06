@@ -623,6 +623,37 @@ test("long promo ad copy is compacted while all commercial terms remain availabl
   });
 });
 
+test("promo caption remains available when it is the only configured source of offer facts", () => {
+  const base = scopedConfig();
+  const uniqueTail = "UNIQUE_OFFER_FACT_AT_END";
+  withConfig({
+    ...base,
+    promotions: [{
+      name: "3D Caption Only Promo",
+      linkedService: "3D 小颜术",
+      sendOnPriceQuery: true,
+      packages: [],
+      validFrom: "2026-10-01",
+      validUntil: "2026-10-31",
+      caption: `${"Configured offer detail ".repeat(80)}${uniqueTail}`,
+      followUpMessage: "",
+    }],
+  }, () => {
+    const prompt = buildSystemPrompt({
+      channel: "whatsapp",
+      conversationContext: {
+        relevantServiceNames: ["3D 小颜术"],
+        schedulingIntent: false,
+        contactIntent: false,
+        promotionIntent: true,
+      },
+    });
+
+    assert.match(prompt, /3D Caption Only Promo/);
+    assert.match(prompt, /UNIQUE_OFFER_FACT_AT_END/);
+  });
+});
+
 test("short combo caption and follow-up gift are both preserved as promo knowledge", () => {
   const base = scopedConfig();
   withConfig({
