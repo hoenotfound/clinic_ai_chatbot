@@ -272,8 +272,21 @@ function createWebPushService({
     });
   }
 
+  async function notifyDeliveryFailure({ contactId }) {
+    const contact = await contacts.getContactById(contactId);
+    if (!contact) return { configured: true, sent: 0 };
+
+    return sendToAccessibleStaff(contactId, {
+      title: "Message Delivery Failed",
+      body: `A WhatsApp message to ${contactDisplayName(contact)} failed to deliver.`,
+      url: `/inbox?contact=${encodeURIComponent(contactId)}`,
+      tag: `delivery-failure:${contactId}`,
+    });
+  }
+
   return {
     notifyBookingReady,
+    notifyDeliveryFailure,
     notifyHumanAttention,
     removeSubscription,
     saveSubscription,
@@ -289,6 +302,7 @@ module.exports = {
   createWebPushService,
   normalizeSubscription,
   notifyBookingReady: defaultService.notifyBookingReady,
+  notifyDeliveryFailure: defaultService.notifyDeliveryFailure,
   notifyHumanAttention: defaultService.notifyHumanAttention,
   removeSubscription: defaultService.removeSubscription,
   saveSubscription: defaultService.saveSubscription,
