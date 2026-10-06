@@ -90,6 +90,7 @@ test("recent service hints preserve a two-service comparison when CRM interest i
     config.serviceAliases = [
       { alias: "3D", officialService: "3D 小颜术" },
       { alias: "9D", officialService: "9D 逆龄抗衰" },
+      { alias: "A", officialService: "骨盆调理" },
     ];
 
     const names = recentConfiguredServiceNames([
@@ -99,6 +100,11 @@ test("recent service hints preserve a two-service comparison when CRM interest i
     ]);
 
     assert.deepEqual(names, ["3D 小颜术", "9D 逆龄抗衰"]);
+    assert.deepEqual(
+      recentConfiguredServiceNames([{ role: "user", content: "I have a question" }]),
+      [],
+      "single-letter alias A must not match ordinary English text"
+    );
   } finally {
     Object.assign(config, original);
   }
