@@ -16,8 +16,14 @@ const UNIVERSAL_ABSOLUTE_REJECTION_PATTERNS = frozenPatterns([
 const CLINIC_ABSOLUTE_REJECTION_PATTERNS = frozenPatterns([
   ...UNIVERSAL_ABSOLUTE_REJECTION_PATTERNS,
   /\b(?:i|we)(?:'ve| have)?\s+(?:already\s+)?(?:booked|chosen|gone with|decided on)\s+(?:another|a different)\s+(?:clinic|centre|center|provider|treatment provider)\b/,
+  /^(?:sorry[, ]*)?(?:i|we)(?:'m| are| am)?\s+(?:not|no longer)\s+(?:proceeding|going ahead|moving forward)(?:\s+(?:anymore|with this))?(?:[, ]*(?:thanks|thank you))?[.!? ]*$/,
+  /^(?:sorry[, ]*)?(?:i|we)\s+(?:changed my mind|don't want to proceed|do not want to proceed|won't proceed|will not proceed)(?:\s+anymore)?(?:[, ]*(?:thanks|thank you))?[.!? ]*$/,
+  /^(?:i\s+)?(?:don't|do not|won't|will not)\s+(?:want\s+to\s+)?(?:book|come|visit|proceed|go ahead)(?:\s+(?:anymore|at all))?[.!? ]*$/,
+  /\b(?:too far|too expensive|over budget).{0,50}\b(?:i|we)?\s*(?:won't|will not|can't|cannot)\s+(?:proceed|book|come|visit|go ahead)\b/,
   /\b(?:saya|kami)\s+(?:dah|sudah)\s+(?:book|booking|pilih)\s+(?:klinik|pusat|provider)\s+lain\b/,
+  /^(?:maaf[, ]*)?(?:saya|kami)\s+(?:tak|tidak)\s+(?:nak|mahu|akan)\s+(?:teruskan|proceed|book|booking|datang)(?:\s+lagi)?(?:[, ]*(?:terima kasih|thanks))?[.!? ]*$/,
   /(?:我|我们|我們)(?:已经|已經)(?:预约了|預約了|选了|選了|决定去|決定去)(?:别的|別的|其他)(?:诊所|診所|中心|机构|機構)/,
+  /^(?:我|我们|我們)?(?:不做了|不继续了|不繼續了|不去了|不预约了|不預約了|不要了)(?:[,，]?(?:谢谢|謝謝))?[。.!！ ]*$/,
 ]);
 
 const CONFIRMATION_PATTERNS = frozenPatterns([
@@ -69,6 +75,7 @@ const CLINIC_DECLINE_PATTERNS = frozenPatterns([
   /\b(?:saya\s+)?(?:tak|tidak)\s+berminat(?:\s+(?:lagi|dengan\s+(?:servis|rawatan)(?:\s+(?:ini|anda|awak))?))?(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+(?:nak|mahu)\s+(?:ini|itu|rawatan\s+ini|servis\s+(?:ini|anda)|book|booking|reserve|datang|visit|buat\s+(?:appointment|temujanji|janji temu))\b/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+akan\s+(?:datang|visit|book|booking|reserve)\b/,
+  /\b(?:saya|kami)\s+(?:tak|tidak)\s+(?:nak|mahu)\s+(?:teruskan|proceed)\s+(?:rawatan|treatment|package|pakej|promo|promosi|servis|service)?\s*(?:ini|itu)?\b/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+(?:perlu|payah)(?:\s+(?:ini|itu|servis|rawatan))?(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
   /^(?:terima kasih,?\s*)?(?:saya\s+)?(?:tak|tidak)\s+nak(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
   /^(?:我)?(?:不感兴趣|没兴趣|沒有興趣|没有兴趣|不要了|不需要了|不用了|谢谢不用了?|謝謝不用了?)(?:[,，]?(?:谢谢|謝謝))?[。.!！]*$/,
