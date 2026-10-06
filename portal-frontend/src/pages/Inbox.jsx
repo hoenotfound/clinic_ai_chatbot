@@ -2580,7 +2580,7 @@ function ThreadView({
 
   return (
     <section className={`${mobileThreadOpen ? "flex" : "hidden lg:flex"} min-w-0 flex-1 flex-col h-full bg-[var(--color-bg)]`} aria-label={`Conversation with ${displayName(contact)}`}>
-      <header className="relative z-10 shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+      <header className="relative z-30 shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className="flex items-center justify-between gap-3 px-3 py-2 sm:px-5 sm:py-2.5">
           <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
             <button
