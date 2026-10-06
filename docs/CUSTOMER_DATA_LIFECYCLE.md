@@ -22,8 +22,9 @@ including:
 The database deletion and the durable R2 cleanup job are committed in one
 transaction. R2 deletion then runs immediately. If R2 is unavailable, the
 database purge still remains committed and the cleanup job retries with
-backoff. Completed purge jobs are retained for 30 days as a minimal operational
-audit and then pruned.
+backoff. Once media cleanup succeeds, the job immediately clears its exact R2
+keys/prefixes and retains only minimal operational status/count metadata for 30
+days before the audit row is pruned.
 
 The purge also retains only opaque provider message IDs, WhatsApp reaction
 event IDs, standalone Meta referral-event IDs, and Meta comment IDs for 30 days.
@@ -84,7 +85,10 @@ conversation advisory lock immediately before deletion, so an old candidate
 cannot be purged after new activity arrives.
 
 The worker checks retention every six hours, processes at most 25 customers per
-sweep, and runs media-cleanup recovery every ten minutes.
+sweep, and runs media-cleanup recovery every ten minutes. These periodic
+lifecycle sweeps do not run immediately during application startup, so deploys
+do not compete with live Inbox/media traffic. Manual deletion still attempts
+its own media cleanup immediately.
 
 ## Operational notes
 
