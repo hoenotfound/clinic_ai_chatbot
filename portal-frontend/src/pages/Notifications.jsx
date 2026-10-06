@@ -13,7 +13,17 @@ function supportsWebPush() {
 }
 
 function isIosBrowserMode() {
-  return typeof navigator !== "undefined" && navigator.standalone === false;
+  if (typeof navigator === "undefined" || typeof window === "undefined") return false;
+
+  const isIos =
+    /iPad|iPhone|iPod/.test(navigator.userAgent || "") ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if (!isIos) return false;
+
+  const standalone =
+    navigator.standalone === true ||
+    window.matchMedia("(display-mode: standalone)").matches;
+  return !standalone;
 }
 
 function urlBase64ToUint8Array(value) {
