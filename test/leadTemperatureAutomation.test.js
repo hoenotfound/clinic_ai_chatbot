@@ -17,6 +17,20 @@ test("clear booking intent becomes Hot in English, Bahasa Malaysia, and Chinese"
     "Macam mana nak booking?",
     "Boleh saya datang hari Sabtu?",
     "还有空位吗？",
+    "I'll come tomorrow.",
+    "I'm on my way.",
+    "See you at 3pm.",
+    "Can you reserve first?",
+    "Ask your staff to call me.",
+    "Saya akan datang esok.",
+    "Saya dah on the way.",
+    "Boleh reserve dulu?",
+    "Tolong suruh staff call saya.",
+    "我明天会过去。",
+    "我已经在路上了。",
+    "明天见。",
+    "可以先帮我留位吗？",
+    "叫客服联系我。",
   ];
 
   for (const messageText of examples) {
@@ -145,12 +159,55 @@ test("general interest, uncertainty, cancellation, and silence remain Warm", () 
     "I don't want this package.",
     "Saya tak nak pakej ini.",
     "我不要这个套餐，但我想了解另一个。",
+    "If I decide next month, can I book online?",
+    "If I want to book later, how do I do it?",
+    "Just asking how booking works.",
+    "Kalau saya nanti nak book, boleh buat online?",
+    "如果我之后想预约，可以线上预约吗？",
     "",
   ];
 
   for (const messageText of examples) {
     assert.equal(classifyTemperatureMessage({ messageText }), null, messageText);
   }
+});
+
+test("reviewer recovers Cold leads to Warm on renewed interest and cools Hot leads on explicit hesitation", async () => {
+  let activeLead = { id: 20, temperature: "cold", is_closed: false };
+  const applied = [];
+  const reviewer = createLeadTemperatureReviewer({
+    pipelineRepository: {
+      getActiveLeadForContact: async () => activeLead,
+      applyRuleBasedTemperature: async (leadId, classification, currentTemperature) => {
+        applied.push({ leadId, classification, currentTemperature });
+        return { id: leadId, temperature: classification.temperature };
+      },
+    },
+    messagesRepository: {
+      getMessagesForContact: async () => [],
+    },
+    getBranchNames: () => [],
+  });
+
+  const renewed = await reviewer(21, 201, "How much is the pelvis treatment now?");
+  assert.equal(renewed.status, "updated");
+  assert.equal(renewed.lead.temperature, "warm");
+  assert.equal(renewed.classification.matchedRule, "renewed_interest");
+  assert.equal(renewed.classification.warmStrength, "interest");
+  assert.equal(applied[0].currentTemperature, "cold");
+
+  activeLead = { id: 21, temperature: "hot", is_closed: false };
+  const cooled = await reviewer(22, 202, "RM388 is a bit expensive, let me think first.");
+  assert.equal(cooled.status, "updated");
+  assert.equal(cooled.lead.temperature, "warm");
+  assert.equal(cooled.classification.matchedRule, "explicit_hesitation");
+  assert.equal(cooled.classification.warmStrength, "cooling");
+  assert.equal(applied[1].currentTemperature, "hot");
+
+  activeLead = { id: 22, temperature: "hot", is_closed: false };
+  const paymentQuestion = await reviewer(23, 203, "Do I need to pay a deposit?");
+  assert.equal(paymentQuestion.status, "unchanged");
+  assert.equal(applied.length, 2);
 });
 
 test("distance and different-state location stay Warm unless the customer withdraws", () => {
@@ -345,16 +402,18 @@ test("reviewer recovers Cold leads and only cools Hot leads for absolute rejecti
   assert.equal(applied[0].currentTemperature, "cold");
 
   activeLead = { id: 13, temperature: "hot", is_closed: false };
-  const ordinaryDecline = await reviewer(18, 105, "No thanks, I am not interested.");
-  assert.equal(ordinaryDecline.status, "unchanged");
-  assert.equal(ordinaryDecline.reason, "transition-not-allowed");
-  assert.equal(applied.length, 1);
+  const finalDecline = await reviewer(18, 105, "No thanks, I am not interested.");
+  assert.equal(finalDecline.status, "updated");
+  assert.equal(finalDecline.lead.temperature, "cold");
+  assert.equal(applied[1].currentTemperature, "hot");
+  assert.equal(applied[1].classification.rejectionStrength, "absolute");
 
+  activeLead = { id: 14, temperature: "hot", is_closed: false };
   const stopContact = await reviewer(18, 106, "Please stop messaging me.");
   assert.equal(stopContact.status, "updated");
   assert.equal(stopContact.lead.temperature, "cold");
-  assert.equal(applied[1].currentTemperature, "hot");
-  assert.equal(applied[1].classification.rejectionStrength, "absolute");
+  assert.equal(applied[2].currentTemperature, "hot");
+  assert.equal(applied[2].classification.rejectionStrength, "absolute");
 });
 
 test("reviewer uses recent clinic context for a short scheduling answer", async () => {
@@ -544,8 +603,7 @@ test("reviewer leaves unclear messages Warm and skips staff-set temperatures", a
     getBranchNames: () => [],
   });
 
-  const hotResult = await hotReviewer(15, 102, "No thanks, I am not interested.");
+  const hotResult = await hotReviewer(15, 102, "No thanks");
   assert.equal(hotResult.status, "unchanged");
-  assert.equal(hotResult.reason, "transition-not-allowed");
   assert.equal(historyCalls, 0);
 });
