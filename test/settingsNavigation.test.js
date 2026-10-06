@@ -74,6 +74,7 @@ test("notifications are reachable by every authenticated staff account", () => {
   const app = read("portal-frontend/src/App.jsx");
   const sidebar = read("portal-frontend/src/components/Sidebar.jsx");
   const notifications = read("portal-frontend/src/pages/Notifications.jsx");
+  const pushUtils = read("portal-frontend/src/utils/pushNotifications.js");
 
   assert.match(app, /path="\/notifications" element=\{<ProtectedRoute><Notifications \/><\/ProtectedRoute>\}/);
   assert.match(sidebar, /to: "\/notifications"/);
@@ -83,4 +84,6 @@ test("notifications are reachable by every authenticated staff account", () => {
   assert.match(notifications, /Android \/ HONOR notification reliability/);
   assert.match(notifications, /HONOR MagicOS can be especially aggressive/);
   assert.match(notifications, /Auto-launch, Secondary launch, and Run in background/);
+  assert.match(pushUtils, /export function isIosDevice/);
+  assert.match(notifications, /ios && !standalone && state\.supported/);
 });

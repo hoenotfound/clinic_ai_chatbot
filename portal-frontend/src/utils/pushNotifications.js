@@ -195,6 +195,15 @@ export function isAndroidDevice() {
   return /Android/i.test(navigator.userAgent || "");
 }
 
+export function isIosDevice() {
+  if (typeof navigator === "undefined") return false;
+  const userAgent = navigator.userAgent || "";
+  return (
+    /iPad|iPhone|iPod/i.test(userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  );
+}
+
 export function isStandaloneWebApp() {
   if (typeof window === "undefined") return false;
   return (

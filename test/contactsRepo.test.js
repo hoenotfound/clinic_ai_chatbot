@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const { pool } = require("../src/db/db");
 const telegramImmediateAlerts = require("../src/services/telegramImmediateAlertService");
+const webPushNotifications = require("../src/services/webPushNotificationService");
 const contactsRepo = require("../src/db/contactsRepo");
 
 function nextTick() {
@@ -98,9 +99,11 @@ test("keeps an existing canonical contact instead of destructively merging a leg
 test("human attention state triggers an immediate Telegram alert without blocking the database update", async (t) => {
   const originalQuery = pool.query;
   const originalAlert = telegramImmediateAlerts.sendHumanInterventionAlert;
+  const originalPush = webPushNotifications.sendContactAlertBestEffort;
   t.after(() => {
     pool.query = originalQuery;
     telegramImmediateAlerts.sendHumanInterventionAlert = originalAlert;
+    webPushNotifications.sendContactAlertBestEffort = originalPush;
   });
 
   pool.query = async (sql, params) => {
@@ -117,9 +120,13 @@ test("human attention state triggers an immediate Telegram alert without blockin
   };
 
   let alert = null;
+  let pushAlert = null;
   telegramImmediateAlerts.sendHumanInterventionAlert = async (input) => {
     alert = input;
     return { status: "sent" };
+  };
+  webPushNotifications.sendContactAlertBestEffort = (input) => {
+    pushAlert = input;
   };
 
   const updated = await contactsRepo.setAttention(12, true, "AI handed off this conversation.");
@@ -131,6 +138,59 @@ test("human attention state triggers an immediate Telegram alert without blockin
     messageId: 44,
     reason: "AI handed off this conversation.",
   });
+  assert.deepEqual(pushAlert, {
+    contactId: 12,
+    type: "human_intervention",
+  });
+});
+
+test("routine Staff-mode attention can suppress Web Push without suppressing Telegram", async (t) => {
+  const originalQuery = pool.query;
+  const originalAlert = telegramImmediateAlerts.sendHumanInterventionAlert;
+  const originalPush = webPushNotifications.sendContactAlertBestEffort;
+  t.after(() => {
+    pool.query = originalQuery;
+    telegramImmediateAlerts.sendHumanInterventionAlert = originalAlert;
+    webPushNotifications.sendContactAlertBestEffort = originalPush;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /SET needs_attention = \$1/);
+    assert.deepEqual(params, [
+      true,
+      "New message — conversation is staff-owned.",
+      12,
+    ]);
+    return {
+      rows: [{
+        id: 12,
+        attention_reason: "New message — conversation is staff-owned.",
+        attention_message_id: 45,
+      }],
+    };
+  };
+
+  let telegramCalls = 0;
+  let pushCalls = 0;
+  telegramImmediateAlerts.sendHumanInterventionAlert = async () => {
+    telegramCalls += 1;
+    return { status: "sent" };
+  };
+  webPushNotifications.sendContactAlertBestEffort = () => {
+    pushCalls += 1;
+  };
+
+  const updated = await contactsRepo.setAttention(
+    12,
+    true,
+    "New message — conversation is staff-owned.",
+    { notifyWebPush: false }
+  );
+  await nextTick();
+
+  assert.equal(updated.id, 12);
+  assert.equal(telegramCalls, 1);
+  assert.equal(pushCalls, 0);
 });
 
 test("strict cooldown has no application reset helper", () => {

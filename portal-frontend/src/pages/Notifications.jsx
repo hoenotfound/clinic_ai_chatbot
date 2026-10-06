@@ -6,6 +6,7 @@ import {
   enablePushNotifications,
   getPushNotificationState,
   isAndroidDevice,
+  isIosDevice,
   isStandaloneWebApp,
   sendPushTestNotification,
 } from "../utils/pushNotifications";
@@ -16,6 +17,7 @@ export default function Notifications() {
   const { toasts, showToast, dismissToast } = useToasts();
   const standalone = isStandaloneWebApp();
   const android = isAndroidDevice();
+  const ios = isIosDevice();
 
   async function refresh() {
     try {
@@ -118,7 +120,7 @@ export default function Notifications() {
                   </span>
                 </div>
 
-                {!standalone && state.supported && (
+                {ios && !standalone && state.supported && (
                   <p className="mt-3 rounded-xl bg-[var(--color-surface)] px-3 py-2.5 text-[11px] leading-5 text-[var(--color-text-muted)]">
                     On iPhone, install DA CHATBOT to the Home Screen first, open it from the Home Screen icon, then enable notifications here.
                   </p>

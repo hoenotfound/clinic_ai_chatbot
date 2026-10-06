@@ -25,3 +25,19 @@ test("Web Push requests refuse redirects", () => {
   const service = read("src/services/webPushNotificationService.js");
   assert.match(service, /redirect: "error"/);
 });
+
+
+test("routine Staff-owned inbound messages do not become Web Push spam", () => {
+  const server = read("src/server.js");
+  assert.match(
+    server,
+    /if \(contact\.mode === "human"\)[\s\S]*notifyWebPush: Boolean\(keywordReason\)/
+  );
+});
+
+test("Web Push deployment variables are documented", () => {
+  const envExample = read(".env.example");
+  assert.match(envExample, /WEB_PUSH_VAPID_PUBLIC_KEY=/);
+  assert.match(envExample, /WEB_PUSH_VAPID_PRIVATE_KEY=/);
+  assert.match(envExample, /WEB_PUSH_SUBJECT/);
+});
