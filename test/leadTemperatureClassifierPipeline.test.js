@@ -138,6 +138,27 @@ test("generic profile remains conservative through the same classifier pipeline"
   assert.equal(stop.classification.rejectionStrength, "absolute");
 });
 
+test("clinic evaluator exposes Warm recovery and cooling hints without changing direct classification", () => {
+  const interest = evaluate("How much is the treatment now?", clinicProfile);
+  assert.equal(interest.classification, null);
+  assert.equal(interest.warmClassification.temperature, "warm");
+  assert.equal(interest.warmClassification.warmStrength, "interest");
+  assert.equal(interest.warmClassification.matchedRule, "renewed_interest");
+
+  const cooling = evaluate("It is a bit expensive, let me think first.", clinicProfile);
+  assert.equal(cooling.classification, null);
+  assert.equal(cooling.warmClassification.temperature, "warm");
+  assert.equal(cooling.warmClassification.warmStrength, "cooling");
+  assert.equal(cooling.warmClassification.matchedRule, "explicit_hesitation");
+
+  const hypothetical = evaluate(
+    "If I decide next month, can I book online?",
+    clinicProfile
+  );
+  assert.equal(hypothetical.classification, null);
+  assert.ok(hypothetical.matchedSignals.includes("uncertaintyGuard"));
+});
+
 test("empty messages short-circuit before any rule stage", () => {
   const result = evaluate("   ", renovationProfile);
 
@@ -146,5 +167,6 @@ test("empty messages short-circuit before any rule stage", () => {
     shouldLoadContext: false,
     decision: "empty_message",
     matchedSignals: [],
+    warmClassification: null,
   });
 });
