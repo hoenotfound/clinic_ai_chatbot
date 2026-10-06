@@ -220,6 +220,47 @@ test("TCM assessment intent becomes Hot in English, BM and Chinese without promo
   assert.equal(chineseContext?.matchedRule, "scheduling_confirmation");
 });
 
+test("TCM commercial commitment becomes Hot while research and distance concerns stay Warm", () => {
+  const hotExamples = [
+    "I want this package.",
+    "How can I pay?",
+    "Saya nak ambil pakej ini.",
+    "Macam mana nak bayar?",
+    "我要这个配套。",
+    "怎么付款？",
+  ];
+  for (const messageText of hotExamples) {
+    assert.equal(
+      classifyTemperatureMessage({ messageText, businessType: "tcm_clinic" })?.temperature,
+      "hot",
+      messageText
+    );
+  }
+
+  const warmExamples = [
+    "Any discount for this package?",
+    "Do I need to pay deposit?",
+    "I am from Johor. PJ is far, let me think.",
+    "这个配套太贵，我考虑一下。",
+  ];
+  for (const messageText of warmExamples) {
+    assert.equal(
+      classifyTemperatureMessage({ messageText, businessType: "tcm_clinic" }),
+      null,
+      messageText
+    );
+  }
+
+  for (const messageText of [
+    "I've already booked another clinic.",
+    "我已经预约了别的诊所。",
+  ]) {
+    const result = classifyTemperatureMessage({ messageText, businessType: "tcm_clinic" });
+    assert.equal(result?.temperature, "cold", messageText);
+    assert.equal(result?.rejectionStrength, "absolute", messageText);
+  }
+});
+
 test("single-location TCM booking-ready automatically resolves the only configured branch", () => {
   withProfile(configuredTcmProfile(), () => {
     const valid = parseAiReplyResult(JSON.stringify({

@@ -399,7 +399,7 @@ test("rule-based temperature update atomically claims the expected current tempe
   assert.deepEqual(published, [{ event: "pipeline_changed", payload: { leadId: 81 } }]);
 });
 
-test("rule transitions recover Cold leads and only cool Hot leads for absolute rejection", async (t) => {
+test("rule transitions recover Cold leads, cool Hot leads to Warm, and keep final rejection protection", async (t) => {
   const originalConnect = pool.connect;
   const originalPublish = realtimeEvents.publish;
   t.after(() => {
@@ -432,17 +432,41 @@ test("rule transitions recover Cold leads and only cool Hot leads for absolute r
   assert.deepEqual(updates[0].params, [85, "hot", "cold"]);
   assert.match(activities[0].params[2], /from Cold to Hot/);
 
-  const ordinaryDecline = await pipelineRepo.applyRuleBasedTemperature(86, {
+  const warmRecovery = await pipelineRepo.applyRuleBasedTemperature(86, {
+    temperature: "warm",
+    matchedRule: "renewed_interest",
+    warmStrength: "interest",
+    reason: "The customer started asking about treatment pricing again.",
+    evidence: "How much is the treatment now?",
+  }, "cold");
+  assert.equal(warmRecovery.temperature, "warm");
+  assert.deepEqual(updates[1].params, [86, "warm", "cold"]);
+  assert.match(activities[1].params[2], /from Cold to Warm/);
+  assert.equal(activities[1].params[4].warmStrength, "interest");
+
+  const cooled = await pipelineRepo.applyRuleBasedTemperature(87, {
+    temperature: "warm",
+    matchedRule: "explicit_hesitation",
+    warmStrength: "cooling",
+    reason: "The customer wants to think first.",
+    evidence: "Let me think first.",
+  }, "hot");
+  assert.equal(cooled.temperature, "warm");
+  assert.deepEqual(updates[2].params, [87, "warm", "hot"]);
+  assert.match(activities[2].params[2], /from Hot to Warm/);
+  assert.equal(activities[2].params[4].warmStrength, "cooling");
+
+  const ordinaryDecline = await pipelineRepo.applyRuleBasedTemperature(88, {
     temperature: "cold",
     matchedRule: "explicit_rejection",
     rejectionStrength: "standard",
-    reason: "The customer declined.",
-    evidence: "No thanks.",
+    reason: "The customer declined one offer.",
+    evidence: "Not this one.",
   }, "hot");
   assert.equal(ordinaryDecline, null);
-  assert.equal(updates.length, 1);
+  assert.equal(updates.length, 3);
 
-  const stopped = await pipelineRepo.applyRuleBasedTemperature(86, {
+  const stopped = await pipelineRepo.applyRuleBasedTemperature(89, {
     temperature: "cold",
     matchedRule: "explicit_rejection",
     rejectionStrength: "absolute",
@@ -450,9 +474,9 @@ test("rule transitions recover Cold leads and only cool Hot leads for absolute r
     evidence: "Stop messaging me.",
   }, "hot");
   assert.equal(stopped.temperature, "cold");
-  assert.deepEqual(updates[1].params, [86, "cold", "hot"]);
-  assert.match(activities[1].params[2], /from Hot to Cold/);
-  assert.equal(activities[1].params[4].rejectionStrength, "absolute");
+  assert.deepEqual(updates[3].params, [89, "cold", "hot"]);
+  assert.match(activities[3].params[2], /from Hot to Cold/);
+  assert.equal(activities[3].params[4].rejectionStrength, "absolute");
 });
 
 test("a staff temperature change locks out automatic updates", async (t) => {
@@ -525,7 +549,7 @@ test("rule-based temperature update cannot overwrite a lead whose temperature ch
   assert.equal(activityWritten, false);
 });
 
-test("repository rejects a rule result that is not Hot or Cold", async (t) => {
+test("repository rejects a Warm rule result when there is no qualifying transition", async (t) => {
   const originalConnect = pool.connect;
   t.after(() => {
     pool.connect = originalConnect;

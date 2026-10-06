@@ -7,7 +7,7 @@ const { runWithGeminiKeys } = require("./geminiKeyPool");
 const PROVIDER = (process.env.AI_PROVIDER || "gemini").toLowerCase();
 const GEMINI_MODEL = process.env.LEAD_SCORING_GEMINI_MODEL || "gemini-3.6-flash";
 const CLAUDE_MODEL = process.env.LEAD_SCORING_CLAUDE_MODEL || "claude-sonnet-5";
-const PROMPT_VERSION = "lead-temperature-v4-industry-neutral";
+const PROMPT_VERSION = "lead-temperature-v6-recovery-and-hesitation";
 const MAX_REASON_CHARS = 240;
 const MAX_EVIDENCE_MESSAGES = 5;
 const GEMINI_TRANSIENT_RETRY_DELAYS_MS = [2000, 5000, 10000];
@@ -127,14 +127,21 @@ Business context:
 - Primary next sales step: ${context.conversionLabel}
 
 Temperature definitions:
-- hot: The customer currently shows clear intent to proceed, buy, book, visit, request a concrete quotation/site visit, asks for concrete availability or next-step instructions, or accepts/proposes specific scheduling or transaction details.
-- warm: The customer shows meaningful interest, asks about price, suitability, results, products/services, location, promotions, process, or options, but has not clearly committed. Mixed, uncertain, or insufficient evidence is warm.
-- cold: The customer explicitly rejects the business or service, withdraws their overall interest, says this is the wrong contact, or asks not to be contacted.
+- hot: The customer currently shows clear intent to take the next sales step. This includes explicitly choosing or accepting a package, promotion, service or quoted price; saying they want to proceed or buy; asking how to pay or requesting payment/deposit details; asking staff to arrange the next step; asking for concrete availability; booking or visiting intent; requesting a concrete quotation/site visit; or accepting/proposing specific scheduling or transaction details.
+- warm: The customer shows meaningful interest but has not clearly committed. This includes asking about price, discounts, suitability, results, products/services, location, promotions, process, options or payment terms; negotiating; saying something is expensive; needing to think or ask someone first; or expressing distance/location concerns without withdrawing.
+- cold: The customer explicitly rejects the overall business/service or clearly withdraws from proceeding. This includes choosing another provider, saying they will not proceed/book/visit, saying the location or price means they will not proceed, saying this is the wrong contact, or asking not to be contacted.
 
 Temperature rules:
 - Judge customer intent. Business assistant and staff messages are context only.
 - Silence or the absence of a customer reply is never evidence for cold.
-- Cancelling or rejecting one proposed date, option, service, product, or quote is not automatically cold.
+- Living in another city/state, being far away, or asking whether there is a nearer branch is never cold by itself.
+- Cancelling or rejecting one proposed date, option, service, product, package, promotion or quote is not automatically cold.
+- A price objection such as "too expensive" is warm unless the customer clearly says they will not proceed.
+- Questions such as "do I need to pay a deposit?", "is instalment available?", or "any discount?" are warm unless accompanied by a separate clear commitment to proceed.
+- A hypothetical future question such as "if I decide later, can I book online?" is warm, not hot.
+- A previously cold lead who starts asking meaningful price, treatment, promotion, suitability, branch, or process questions again should recover to warm even without a booking commitment.
+- A previously hot lead who explicitly steps back with "let me think", "not ready yet", "maybe later", comparison, family approval, or a clear hesitation should cool to warm unless a newer message restores concrete commitment.
+- Concrete arrival intent such as "I'll come tomorrow", "I'm on the way", "see you at 3pm", asking to reserve a slot, or asking staff to call/contact them is hot.
 - Prefer the customer's newest explicit intent when it conflicts with older messages.
 - If the evidence is ambiguous, choose warm with medium or low confidence.
 - Use high confidence only when the conversation contains direct, unambiguous evidence.
