@@ -2247,7 +2247,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       } else {
         await contactsRepo.setDeliveryAttention(
           currentContact.id,
-          `Delivery failed: ${errorText}`
+          `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${errorText}`
         );
       }
     } catch (attentionErr) {
@@ -2257,6 +2257,8 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
     res.status(201).json({
       ...finalMessage,
       delivered: sendResult.success,
+      delivery_unknown:
+        sendResult.unknown === true || sendResult.ambiguous === true,
       transcribed: !!transcript,
     });
   } catch (err) {
