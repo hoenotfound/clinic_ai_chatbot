@@ -91,7 +91,7 @@ function createBookingReadyOutcomeService({
   publish = realtimeEvents.publish,
   sendBookingReadyAlert = telegramImmediateAlerts.sendBookingReadyAlert,
   lockContactAlertQueue = telegramImmediateAlertRepo.lockContactAlertQueue,
-  sendBookingReadyPush = webPush.notifyBookingReady,
+  sendBookingReadyPush = null,
 } = {}) {
   return async function markBookingReadyForContact(
     contactId,
@@ -297,7 +297,7 @@ function createBookingReadyOutcomeService({
 
     if (bookingAlertQueued) telegramImmediateAlerts.wakeImmediateAlertQueue(0);
 
-    if (contactUpdated) {
+    if (contactUpdated && typeof sendBookingReadyPush === "function") {
       Promise.resolve(sendBookingReadyPush({ contactId })).catch((err) => {
         console.error(`Booking Ready Web Push failed for contact ${contactId}:`, err);
       });
@@ -312,7 +312,9 @@ function createBookingReadyOutcomeService({
   };
 }
 
-const markBookingReadyForContact = createBookingReadyOutcomeService();
+const markBookingReadyForContact = createBookingReadyOutcomeService({
+  sendBookingReadyPush: webPush.notifyBookingReady,
+});
 
 module.exports = {
   BOOKING_READY_REASON,
