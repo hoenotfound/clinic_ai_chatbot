@@ -388,6 +388,7 @@ async function listConversations() {
       c.whatsapp_marketing_opt_out_at,
       c.whatsapp_marketing_opt_out_source,
       current_lead.id AS lead_id,
+      CASE WHEN current_lead.is_closed = false THEN current_lead.temperature ELSE NULL END AS lead_temperature,
       current_lead.owner_username AS lead_owner_username,
       COALESCE(lead_owner.display_name, current_lead.owner_username) AS lead_owner_display_name,
       m.content AS last_message,
@@ -414,7 +415,7 @@ async function listConversations() {
       ) AS has_unreplied
     FROM contacts c
     LEFT JOIN LATERAL (
-      SELECT l.id, l.owner_username
+      SELECT l.id, l.owner_username, l.temperature, l.is_closed
       FROM leads l
       WHERE l.contact_id = c.id
       ORDER BY l.is_closed ASC, l.created_at DESC, l.id DESC

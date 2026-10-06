@@ -695,6 +695,7 @@ export default function Inbox() {
     const source = new EventSource("/api/conversations/events", { withCredentials: true });
     const pendingContactIds = new Set();
     let debounceTimer = null;
+    let pipelineListTimer = null;
 
     function scheduleRefresh(contactId = null) {
       if (contactId != null) pendingContactIds.add(Number(contactId));
@@ -717,6 +718,14 @@ export default function Inbox() {
             await reconcileLoadedDeliveryStatuses(currentId);
           }
         }
+      }, REALTIME_DEBOUNCE_MS);
+    }
+
+    function schedulePipelineListRefresh() {
+      if (pipelineListTimer) clearTimeout(pipelineListTimer);
+      pipelineListTimer = setTimeout(() => {
+        pipelineListTimer = null;
+        refreshConversations();
       }, REALTIME_DEBOUNCE_MS);
     }
 
@@ -779,6 +788,12 @@ export default function Inbox() {
     }
 
     function handlePipelineChanged(event) {
+      // Temperature, stage and ownership live on the lead, not the contact.
+      // Refresh the lightweight conversation list so its compact lead indicator
+      // stays current when AI/rules or staff update the pipeline. Debounce bursts
+      // of scoring events so several updates do not trigger overlapping list reads.
+      schedulePipelineListRefresh();
+
       const currentId = selectedIdRef.current;
       if (currentId == null) return;
       try {
@@ -819,6 +834,7 @@ export default function Inbox() {
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
+      if (pipelineListTimer) clearTimeout(pipelineListTimer);
       source.removeEventListener("conversation_changed", handleConversationChanged);
       source.removeEventListener("pipeline_changed", handlePipelineChanged);
       source.close();
@@ -1636,9 +1652,12 @@ function ConversationList({
                 <ContactAvatar src={conversation.photo_url} channel={conversation.channel} size={42} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
-                    <span className={`truncate text-sm ${conversation.is_unread ? "font-semibold" : "font-medium"}`}>
-                      {displayName(conversation)}
-                    </span>
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className={`min-w-0 truncate text-sm ${conversation.is_unread ? "font-semibold" : "font-medium"}`}>
+                        {displayName(conversation)}
+                      </span>
+                      <LeadTemperatureIndicator temperature={conversation.lead_temperature} />
+                    </div>
                     <span className={`shrink-0 text-[10px] ${conversation.is_unread ? "font-semibold text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}`}>
                       {formatConversationTime(conversation.last_message_at)}
                     </span>
@@ -1724,6 +1743,26 @@ function EmptyListState({ title, description, action }) {
       <p className="mx-auto mt-1 max-w-[15rem] text-xs leading-5 text-[var(--color-text-muted)]">{description}</p>
       {action}
     </div>
+  );
+}
+
+function LeadTemperatureIndicator({ temperature }) {
+  const normalized = String(temperature || "").toLowerCase();
+  if (normalized !== "hot" && normalized !== "cold") return null;
+
+  const label = normalized === "hot" ? "Hot lead" : "Cold lead";
+  const tone =
+    normalized === "hot"
+      ? "bg-red-500"
+      : "border border-blue-500 bg-white/70";
+
+  return (
+    <span
+      className={`inline-flex h-2 w-2 shrink-0 rounded-full ${tone}`}
+      title={label}
+      aria-label={label}
+      role="img"
+    />
   );
 }
 
