@@ -25,12 +25,18 @@ database purge still remains committed and the cleanup job retries with
 backoff. Completed purge jobs are retained for 30 days as a minimal operational
 audit and then pruned.
 
-The purge also retains only opaque provider message IDs and Meta comment IDs for
-30 days. These are replay tombstones: if Meta retries an exact deleted message
-after its normal Inbox dedupe row is gone, the webhook is ignored before a
-contact can be recreated; an exact deleted comment retry is also refused before
-comment automation can run again. A genuinely new provider message/comment ID
-is not blocked and may start a fresh customer journey normally.
+The purge also retains only opaque provider message IDs, standalone Meta
+referral-event IDs, and Meta comment IDs for 30 days. These are replay
+tombstones: if Meta retries an exact deleted message, staff echo, referral
+event, or comment after its normal dedupe row is gone, the retry is ignored
+before customer-linked data can be recreated. Standalone referral IDs are
+SHA-256 event fingerprints and do not contain the raw PSID/IGSID. A genuinely
+new provider event ID is not blocked and may start a fresh customer journey
+normally.
+
+Migration `042_customer_data_referral_replay_guard.sql` adds the pending
+referral event ID used for this exact-event replay protection. Migration 040 is
+historical and must not be edited.
 
 For namespaced R2 deployments (`CLIENT_SLUG` set), cleanup deletes both exact
 stored media keys and the customer's permanent/temporary prefixes. Legacy
