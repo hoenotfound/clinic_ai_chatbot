@@ -1,4 +1,5 @@
 const aiService = require("./aiService");
+const clinicConfig = require("../config/clinicConfig");
 const { parseFollowUpAiResult } = require("../utils/followUpAiResult");
 
 const MAX_CONTEXT_MESSAGES = 10;
@@ -150,6 +151,46 @@ function selectExplicitPackageFromLatestCustomerMessage(customerMessages, packag
   );
 
   return matches.length === 1 ? matches[0].name : null;
+}
+
+function recentConfiguredServiceNames(messages, maxServices = 2) {
+  const services = Array.isArray(clinicConfig.services) ? clinicConfig.services : [];
+  const aliases = Array.isArray(clinicConfig.serviceAliases) ? clinicConfig.serviceAliases : [];
+  const candidates = services
+    .map((service) => {
+      const name = cleanContent(service?.name);
+      if (!name) return null;
+      const nameKey = normalizedComparable(name);
+      const terms = [
+        name,
+        ...aliases
+          .filter((alias) => normalizedComparable(alias?.officialService) === nameKey)
+          .map((alias) => cleanContent(alias?.alias))
+          .filter(Boolean),
+      ]
+        .map((value) => ({ value, key: normalizedComparable(value) }))
+        .filter(({ key }) => {
+          if (!key || key.length < 2) return false;
+          return !/^[a-z0-9]+$/u.test(key) || key.length >= 3;
+        });
+      return { name, terms };
+    })
+    .filter(Boolean);
+
+  const recent = trimConversation(messages, { maxMessages: 8, maxChars: 3_500 });
+  const found = [];
+  for (let index = recent.length - 1; index >= 0; index -= 1) {
+    const contentKey = normalizedComparable(recent[index].content);
+    if (!contentKey) continue;
+    for (const candidate of candidates) {
+      if (found.includes(candidate.name)) continue;
+      if (candidate.terms.some(({ key }) => contentKey.includes(key))) {
+        found.push(candidate.name);
+        if (found.length >= maxServices) return found;
+      }
+    }
+  }
+  return found;
 }
 
 function bigrams(value) {
@@ -413,6 +454,7 @@ async function generatePersonalizedFollowUp({
     branchName,
     appointmentStatus,
   });
+  const recentServiceNames = recentConfiguredServiceNames(trimmed);
   let avoidMessage = "";
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -424,6 +466,7 @@ async function generatePersonalizedFollowUp({
         followUpContext: {
           stepNumber: Number(stepNumber) || 1,
           treatmentInterest: cleanContent(treatmentInterest),
+          recentServiceNames,
           stageName: cleanContent(stageName),
           branchName: cleanContent(branchName),
           appointmentStatus: meaningfulAppointmentStatus(appointmentStatus)
@@ -464,6 +507,7 @@ module.exports = {
   isSubstantiallySimilar,
   needsSchedulingContext,
   previousFollowUps,
+  recentConfiguredServiceNames,
   renderConversation,
   scopePackageSelectionConversation,
   selectExplicitPackageFromLatestCustomerMessage,
