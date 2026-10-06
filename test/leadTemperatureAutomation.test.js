@@ -203,18 +203,28 @@ test("reviewer recovers Cold leads to Warm on renewed interest and cools Hot lea
   assert.equal(promoRenewed.lead.temperature, "warm");
   assert.equal(promoRenewed.classification.matchedRule, "renewed_interest");
 
+  activeLead = { id: 20, temperature: "cold", is_closed: false };
+  const depositRenewed = await reviewer(21, 2013, "Do I need to pay a deposit?");
+  assert.equal(depositRenewed.status, "updated");
+  assert.equal(depositRenewed.lead.temperature, "warm");
+  assert.equal(depositRenewed.classification.warmStrength, "interest");
+
+  activeLead = { id: 20, temperature: "cold", is_closed: false };
+  const hesitantOnly = await reviewer(21, 2014, "Maybe later, not now.");
+  assert.equal(hesitantOnly.status, "unchanged");
+
   activeLead = { id: 21, temperature: "hot", is_closed: false };
   const cooled = await reviewer(22, 202, "RM388 is a bit expensive, let me think first.");
   assert.equal(cooled.status, "updated");
   assert.equal(cooled.lead.temperature, "warm");
   assert.equal(cooled.classification.matchedRule, "explicit_hesitation");
   assert.equal(cooled.classification.warmStrength, "cooling");
-  assert.equal(applied[2].currentTemperature, "hot");
+  assert.equal(applied[3].currentTemperature, "hot");
 
   activeLead = { id: 22, temperature: "hot", is_closed: false };
   const paymentQuestion = await reviewer(23, 203, "Do I need to pay a deposit?");
   assert.equal(paymentQuestion.status, "unchanged");
-  assert.equal(applied.length, 3);
+  assert.equal(applied.length, 4);
 });
 
 test("distance and different-state location stay Warm unless the customer withdraws", () => {
