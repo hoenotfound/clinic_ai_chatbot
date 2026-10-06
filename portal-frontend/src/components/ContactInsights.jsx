@@ -188,9 +188,25 @@ export default function ContactInsights({ contactId, className = "" }) {
     setTemperatureSaving(true);
     setTemperatureError(null);
     try {
-      await api.updateLead(lead.id, patch);
-      const refreshed = await api.getContactInsights(contactId);
-      setData(refreshed);
+      const updated = await api.updateLead(lead.id, patch);
+      setData((current) => {
+        if (!current?.lead || Number(current.lead.id) !== Number(lead.id)) return current;
+        return {
+          ...current,
+          lead: {
+            ...current.lead,
+            temperature: updated?.temperature ?? current.lead.temperature,
+            temperatureLocked:
+              updated?.temperature_locked ??
+              updated?.temperatureLocked ??
+              current.lead.temperatureLocked,
+            temperatureSource:
+              updated?.temperature_source ??
+              updated?.temperatureSource ??
+              current.lead.temperatureSource,
+          },
+        };
+      });
       setTemperatureEditorOpen(false);
     } catch (err) {
       console.error("Failed to update lead temperature:", err);
