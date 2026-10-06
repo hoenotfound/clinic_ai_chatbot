@@ -120,17 +120,45 @@ test(
         []
       );
 
+      // A previously failed normal summary must not keep waking the worker while
+      // a primary actionable alert still owns the episode.
+      await client.query(
+        "UPDATE telegram_summary_alerts SET attempts = 1, updated_at = now() - interval '2 minutes' WHERE id = 31"
+      );
+      assert.equal(
+        await telegramAlertRepo.findNextRetryAt({ inactivityMinutes: 10 }),
+        null
+      );
+
       // If the primary actionable alert ultimately fails, the normal summary is
       // allowed through as a fallback rather than being lost.
       await client.query(
         "UPDATE telegram_immediate_alerts SET status = 'failed' WHERE id = 80"
       );
+      const retryAt = await telegramAlertRepo.findNextRetryAt({
+        inactivityMinutes: 10,
+      });
+      assert.ok(retryAt instanceof Date);
+      assert.ok(retryAt.getTime() <= Date.now());
+
       const fallbackCandidates = await telegramAlertRepo.findReadySummaries({
         inactivityMinutes: 10,
         limit: 5,
       });
       assert.equal(fallbackCandidates.length, 1);
       assert.equal(fallbackCandidates[0].alert_id, 31);
+
+      // A newer staff message resets conversation inactivity even though it does
+      // not invalidate the summary snapshot like a newer customer message does.
+      await client.query(
+        "INSERT INTO messages (id, contact_id, role, created_at) VALUES (46, 12, 'assistant', now())"
+      );
+      const delayedRetryAt = await telegramAlertRepo.findNextRetryAt({
+        inactivityMinutes: 10,
+      });
+      assert.ok(delayedRetryAt instanceof Date);
+      assert.ok(delayedRetryAt.getTime() > Date.now() + 9 * 60 * 1000);
+      await client.query("DELETE FROM messages WHERE id = 46");
 
       // Once the actionable alert is actually delivered, the redundant normal
       // summary is permanently superseded.
