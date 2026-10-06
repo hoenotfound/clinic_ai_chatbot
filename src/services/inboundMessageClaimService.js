@@ -57,6 +57,11 @@ function createInboundMessageClaimService({
     return policy.isOptOutText(incoming?.text) ? "all" : null;
   }
 
+  async function wasDeletedProviderMessage(providerMessageId) {
+    if (typeof processing.isDeletedProviderMessageId !== "function") return false;
+    return processing.isDeletedProviderMessageId(providerMessageId);
+  }
+
   async function prepareStoredInbound({
     incoming,
     contact,
@@ -230,6 +235,10 @@ function createInboundMessageClaimService({
       if (!channel || !externalMessageId) {
         throw new Error("Meta resolution placeholder is missing channel/message id.");
       }
+      const storedMessageId = `${channel}:${externalMessageId}`;
+      if (await wasDeletedProviderMessage(storedMessageId)) {
+        return null;
+      }
       await processing.storeMetaResolutionClaim({
         channel,
         externalMessageId,
@@ -252,6 +261,18 @@ function createInboundMessageClaimService({
     }
 
     const channel = incoming.channel || "whatsapp";
+    const storedInboundId = channel === "whatsapp"
+      ? incoming.id
+      : `${channel}:${incoming.id}`;
+
+    // A privacy purge removes the normal message-id dedupe rows. Keep a short
+    // opaque tombstone so Meta retrying the exact deleted event cannot recreate
+    // the customer. A genuinely new provider message id still starts a fresh
+    // contact/journey normally.
+    if (await wasDeletedProviderMessage(storedInboundId)) {
+      return null;
+    }
+
     const contact = channel === "whatsapp"
       ? await contacts.getOrCreateContact(incoming.from, incoming.profileName)
       : await contacts.getOrCreateChannelContact(
@@ -260,10 +281,6 @@ function createInboundMessageClaimService({
           incoming.profileName,
           incoming.photoUrl || null
         );
-
-    const storedInboundId = channel === "whatsapp"
-      ? incoming.id
-      : `${channel}:${incoming.id}`;
 
     const durableClaim = await processing.storeInboundClaim({
       contactId: contact.id,
