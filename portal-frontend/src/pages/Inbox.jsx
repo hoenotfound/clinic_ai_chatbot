@@ -1004,7 +1004,12 @@ export default function Inbox() {
         setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [visibleResult]));
       }
       void refreshConversations();
-      if (result?.delivered === false) {
+      if (result?.delivery_unknown === true) {
+        showToast(
+          "Message send could not be confirmed. Check WhatsApp before retrying to avoid sending it twice.",
+          "warning"
+        );
+      } else if (result?.delivered === false) {
         showToast(`Message saved but WhatsApp delivery failed — the ${ui.customerSingular} may not have received it. Please try resending.`, "warning");
       }
     } catch (err) {
@@ -1093,7 +1098,12 @@ export default function Inbox() {
         setMessages((prev) => mergeMessages(prev, [{ ...visibleResult, has_media_attachment: true }]));
       }
       void refreshConversations();
-      if (result?.delivered === false) {
+      if (result?.delivery_unknown === true) {
+        showToast(
+          "Voice message send could not be confirmed. Check WhatsApp before recording it again to avoid duplicates.",
+          "warning"
+        );
+      } else if (result?.delivered === false) {
         showToast(`Voice message saved but WhatsApp delivery failed — the ${ui.customerSingular} may not have received it. Please try recording again.`, "warning");
       } else if (result?.transcribed === false) {
         showToast("Voice message sent. Its transcript couldn't be generated, but the recording was saved.", "info");
