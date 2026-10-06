@@ -230,7 +230,7 @@ test("recent assistant can anchor an unambiguous service after an ambiguous cust
       { role: "user", content: "你好！我想了解你们骨盆的疗程" },
       { role: "assistant", content: "骨盆调理主要看骨盆和整体体态。" },
       { role: "user", content: "你看见你的宣传有调整身体" },
-      { role: "assistant", content: "有的呀～我们的徒手体态调理主要是用手法看整体平衡。" },
+      { role: "assistant", content: "有的呀～我们的徒手体态调理主要是用手法看整体平衡，像骨盆、腰背、肩颈这些都会根据个人情况来看。" },
       { role: "user", content: "颈不舒服咯" },
     ]);
 
