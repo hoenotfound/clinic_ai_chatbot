@@ -46,6 +46,17 @@ function isIsoDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 }
 
+function formatPromotionDate(value) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return value || "";
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(date);
+}
+
 export default function Settings() {
   const { user, permissions } = useAuth();
   const navigate = useNavigate();
@@ -475,7 +486,7 @@ function ImageFieldEditor({
       </div>
       {allowUrl && (
         <details className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
-          <summary className="flex min-h-10 cursor-pointer items-center text-[11px] font-semibold text-[var(--color-text-muted)]">
+          <summary className="min-h-10 cursor-pointer py-2 text-[11px] font-semibold text-[var(--color-text-muted)]">
             Advanced · use image URL
           </summary>
           <input
@@ -573,7 +584,7 @@ function PromotionFollowUpTranslationsEditor({ value = {}, onChange }) {
   ];
   return (
     <details className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2">
-      <summary className="flex min-h-11 cursor-pointer items-center text-xs font-semibold text-[var(--color-primary)]">
+      <summary className="min-h-11 cursor-pointer py-3 text-xs font-semibold text-[var(--color-primary)]">
         Language-specific follow-up copy
       </summary>
       <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
@@ -662,7 +673,7 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
                 onClick={() => setOpenIndex(expanded ? null : index)}
                 className="col-span-2 h-11 w-full rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold sm:h-10 sm:w-auto sm:shrink-0"
               >
-                {expanded ? "Close" : "Edit"}
+                {expanded ? "Close package" : "Edit package"}
               </button>
             </div>
 
@@ -1825,9 +1836,13 @@ function PromotionsTab({ config, onSaved, onError }) {
           const offerSummary = packageMode
             ? `${item.packages.length} package${item.packages.length === 1 ? "" : "s"}`
             : "Single offer";
-          const dateSummary = item.validFrom || item.validUntil
-            ? `${item.validFrom || "Now"} – ${item.validUntil || "No end date"}`
-            : "No date limit";
+          const dateSummary = item.validFrom && item.validUntil
+            ? `${formatPromotionDate(item.validFrom)} to ${formatPromotionDate(item.validUntil)}`
+            : item.validFrom
+              ? `From ${formatPromotionDate(item.validFrom)}`
+              : item.validUntil
+                ? `Until ${formatPromotionDate(item.validUntil)}`
+                : "No date limit";
 
           return (
             <div key={index} className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -1856,7 +1871,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                   onClick={() => setOpenIndex(expanded ? null : index)}
                   className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold sm:h-10 sm:w-auto sm:shrink-0"
                 >
-                  {expanded ? "Close" : "Edit promotion"}
+                  {expanded ? "Close editor" : "Edit promotion"}
                 </button>
               </div>
 
@@ -1992,7 +2007,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                     )}
 
                     <details className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2">
-                      <summary className="flex min-h-11 cursor-pointer items-center text-xs font-semibold text-[var(--color-text-muted)]">Advanced details</summary>
+                      <summary className="min-h-11 cursor-pointer py-3 text-xs font-semibold text-[var(--color-text-muted)]">Advanced details</summary>
                       <div className="mt-3">
                         <label className={labelClass}>Internal campaign name</label>
                         <input
@@ -2270,7 +2285,7 @@ function ResultMediaSection({ config, onSaved, onError }) {
           Add approved result examples for each service and choose when the AI may send them.
         </p>
         <details className="mt-2 rounded-xl bg-[var(--color-bg)] px-3 py-1.5">
-          <summary className="flex min-h-10 cursor-pointer items-center text-[11px] font-semibold text-[var(--color-text-muted)]">
+          <summary className="min-h-10 cursor-pointer py-2 text-[11px] font-semibold text-[var(--color-text-muted)]">
             How automatic sending works
           </summary>
           <p className="pb-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
@@ -2335,7 +2350,7 @@ function ResultMediaSection({ config, onSaved, onError }) {
                   onClick={() => setOpenIndex(expanded ? null : index)}
                   className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold sm:h-10 sm:w-auto sm:shrink-0"
                 >
-                  {expanded ? "Close" : "Edit set"}
+                  {expanded ? "Close editor" : "Edit set"}
                 </button>
               </div>
 
