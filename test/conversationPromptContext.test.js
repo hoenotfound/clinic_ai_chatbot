@@ -389,6 +389,25 @@ test("relevant service promotion enquiry restores full matching promotion/packag
   });
 });
 
+test("day and time reply restores scheduling details even without booking keywords", () => {
+  withConfig(scopedConfig(), () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "骨盆调理" },
+      { role: "assistant", content: "Which day and time works for you?" },
+      { role: "user", content: "Saturday 3pm" },
+    ]);
+
+    assert.equal(context.schedulingIntent, true);
+
+    const prompt = buildSystemPrompt({
+      channel: "whatsapp",
+      conversationContext: context,
+    });
+    assert.match(prompt, /HOURS_SENTINEL/);
+    assert.match(prompt, /PJ_ADDRESS_SENTINEL/);
+  });
+});
+
 test("booking or location conversation restores branch addresses and hours", () => {
   withConfig(scopedConfig(), () => {
     const prompt = buildSystemPrompt({
