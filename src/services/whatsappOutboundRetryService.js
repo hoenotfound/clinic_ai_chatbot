@@ -445,7 +445,7 @@ async function runWhatsappOutboundRetryQueue({
         repository,
         contacts,
         inbound,
-      sendDeliveryFailurePush,
+        sendDeliveryFailurePush,
       });
       continue;
     }
@@ -461,6 +461,7 @@ async function runWhatsappOutboundRetryQueue({
         evidence,
         inbound,
         leaseToken: row.lease_token,
+        sendDeliveryFailurePush,
       }
     ).catch((err) => {
       console.error(
@@ -484,7 +485,7 @@ async function runWhatsappOutboundRetryQueue({
           repository,
           contacts,
           inbound,
-        sendDeliveryFailurePush,
+          sendDeliveryFailurePush,
         });
         continue;
       }
@@ -508,7 +509,7 @@ async function runWhatsappOutboundRetryQueue({
           contacts,
           inbound,
           leaseToken,
-        sendDeliveryFailurePush,
+          sendDeliveryFailurePush,
         });
         continue;
       }
@@ -560,7 +561,7 @@ async function runWhatsappOutboundRetryQueue({
           contacts,
           inbound,
           leaseToken,
-        sendDeliveryFailurePush,
+          sendDeliveryFailurePush,
         });
         continue;
       }
@@ -603,6 +604,7 @@ async function runWhatsappOutboundRetryQueue({
           evidence,
           inbound,
           leaseToken,
+          sendDeliveryFailurePush,
         });
         continue;
       }
@@ -638,6 +640,7 @@ async function runWhatsappOutboundRetryQueue({
         contacts,
         inbound,
         leaseToken,
+        sendDeliveryFailurePush,
       });
     } catch (err) {
       if (acceptedPersisted) {
@@ -686,6 +689,7 @@ async function runWhatsappOutboundRetryQueue({
           evidence,
           inbound,
           leaseToken,
+          sendDeliveryFailurePush,
         }
       ).catch((surfaceErr) => {
         console.error(
