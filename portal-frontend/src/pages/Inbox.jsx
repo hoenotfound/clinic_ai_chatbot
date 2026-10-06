@@ -38,6 +38,8 @@ const MAX_INCREMENTAL_MESSAGES = 100;
 const DELIVERY_STATUS_BATCH_SIZE = 500;
 const REALTIME_DEBOUNCE_MS = 100;
 const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
+const WHATSAPP_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const WHATSAPP_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
 const IMAGE_OPTIMIZE_THRESHOLD_BYTES = 1.5 * 1024 * 1024;
 const IMAGE_OPTIMIZE_MAX_DIMENSION = 1920;
 const IMAGE_JPEG_QUALITY = 0.82;
@@ -234,16 +236,9 @@ function canvasHasTransparency(context, width, height) {
 
 function optimizedImageFileName(name, outputType) {
   const fallbackName = name || "image";
-  if (outputType === "image/jpeg") {
-    return /\.(?:png|jpe?g)$/i.test(fallbackName)
-      ? fallbackName.replace(/\.(?:png|jpe?g)$/i, ".jpg")
-      : `${fallbackName}.jpg`;
-  }
-  if (outputType === "image/png") {
-    return /\.(?:png|jpe?g)$/i.test(fallbackName)
-      ? fallbackName.replace(/\.(?:png|jpe?g)$/i, ".png")
-      : `${fallbackName}.png`;
-  }
+  const withoutExtension = fallbackName.replace(/\.[^.]+$/, "");
+  if (outputType === "image/jpeg") return `${withoutExtension || "image"}.jpg`;
+  if (outputType === "image/png") return `${withoutExtension || "image"}.png`;
   return fallbackName;
 }
 
@@ -279,8 +274,15 @@ async function decodeImageForCanvas(file) {
   }
 }
 
-async function optimizeImageUpload(file, { normalizeProgressiveJpeg = false } = {}) {
-  if (!shouldOptimizeImageUpload(file) && !normalizeProgressiveJpeg) {
+async function optimizeImageUpload(
+  file,
+  { normalizeProgressiveJpeg = false, forceCompatibleFormat = false } = {}
+) {
+  if (
+    !shouldOptimizeImageUpload(file) &&
+    !normalizeProgressiveJpeg &&
+    !forceCompatibleFormat
+  ) {
     return file;
   }
 
@@ -305,10 +307,12 @@ async function optimizeImageUpload(file, { normalizeProgressiveJpeg = false } = 
       ? IMAGE_PROGRESSIVE_JPEG_QUALITY
       : IMAGE_JPEG_QUALITY;
 
-    if (inputType === "image/png") {
-      // Most promo graphics and screenshots are opaque PNGs. Sending those as
+    if (inputType === "image/png" || forceCompatibleFormat) {
+      // Most promo graphics and screenshots are opaque. Sending those as
       // high-quality JPEG dramatically reduces mobile upload time while keeping
-      // transparent artwork as PNG so logos/cut-outs are not damaged.
+      // transparent artwork as PNG so logos/cut-outs are not damaged. For
+      // WhatsApp, browser-native formats such as WebP are normalized here
+      // because normal image messages accept JPEG/PNG rather than sticker WebP.
       const hasTransparency = canvasHasTransparency(context, width, height);
       outputType = hasTransparency ? "image/png" : "image/jpeg";
       quality = hasTransparency ? undefined : IMAGE_PNG_TO_JPEG_QUALITY;
@@ -337,7 +341,9 @@ async function optimizeImageUpload(file, { normalizeProgressiveJpeg = false } = 
       }
     }
 
-    if (!normalizeProgressiveJpeg && blob.size >= file.size) return file;
+    if (!normalizeProgressiveJpeg && !forceCompatibleFormat && blob.size >= file.size) {
+      return file;
+    }
     if (blob.size > MAX_IMAGE_BYTES) return file;
     return new File([blob], optimizedImageFileName(file.name, outputType), {
       type: outputType,
@@ -1924,25 +1930,38 @@ function ThreadView({
       return;
     }
 
+    const isWhatsApp = (contact?.channel || "whatsapp") === "whatsapp";
+    const inputMimeType = String(file.type || "").toLowerCase();
+    const forceCompatibleFormat =
+      isWhatsApp && !WHATSAPP_IMAGE_MIME_TYPES.has(inputMimeType);
+
     const preparationId = imagePreparationIdRef.current + 1;
     imagePreparationIdRef.current = preparationId;
     if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    const nextPreviewUrl = URL.createObjectURL(file);
     setImageFile(file);
-    setImagePreviewUrl(URL.createObjectURL(file));
+    setImagePreviewUrl(nextPreviewUrl);
 
     const couldNeedPreparation =
-      shouldOptimizeImageUpload(file) || isJpegFile(file);
+      shouldOptimizeImageUpload(file) ||
+      isJpegFile(file) ||
+      forceCompatibleFormat ||
+      (isWhatsApp && file.size > WHATSAPP_IMAGE_MAX_BYTES);
     setImagePreparing(couldNeedPreparation);
     if (!couldNeedPreparation) return;
 
     try {
       const normalizeProgressiveJpeg = await isProgressiveJpeg(file);
       const shouldOptimize =
-        shouldOptimizeImageUpload(file) || normalizeProgressiveJpeg;
+        shouldOptimizeImageUpload(file) ||
+        normalizeProgressiveJpeg ||
+        forceCompatibleFormat ||
+        (isWhatsApp && file.size > WHATSAPP_IMAGE_MAX_BYTES);
       if (!shouldOptimize) return;
 
       const optimizedFile = await optimizeImageUpload(file, {
         normalizeProgressiveJpeg,
+        forceCompatibleFormat,
       });
       if (
         !mountedRef.current ||
@@ -1950,6 +1969,32 @@ function ThreadView({
       ) {
         return;
       }
+
+      const optimizedMimeType = String(optimizedFile.type || "").toLowerCase();
+      if (
+        isWhatsApp &&
+        !WHATSAPP_IMAGE_MIME_TYPES.has(optimizedMimeType)
+      ) {
+        URL.revokeObjectURL(nextPreviewUrl);
+        setImageFile(null);
+        setImagePreviewUrl(null);
+        onToast(
+          "WhatsApp images must be JPEG or PNG. This image could not be converted safely.",
+          "error"
+        );
+        return;
+      }
+      if (isWhatsApp && optimizedFile.size > WHATSAPP_IMAGE_MAX_BYTES) {
+        URL.revokeObjectURL(nextPreviewUrl);
+        setImageFile(null);
+        setImagePreviewUrl(null);
+        onToast(
+          "WhatsApp images must be 5MB or smaller. Please choose a smaller image.",
+          "error"
+        );
+        return;
+      }
+
       setImageFile(optimizedFile);
     } finally {
       if (
@@ -2904,10 +2949,16 @@ function MessageBubble({
         .map((reaction) => reaction?.emoji)
         .filter((emoji) => typeof emoji === "string" && emoji.length > 0)
     : [];
+  const quoteDeliveryConfirmed =
+    isPatient ||
+    !["failed", "unknown"].includes(
+      String(message.delivery_status || "").toLowerCase()
+    );
   const canQuote = Boolean(
     canReply &&
     message.whatsapp_message_id &&
-    !message._optimistic
+    !message._optimistic &&
+    quoteDeliveryConfirmed
   );
   const canCopy = Boolean(String(message.content || "").trim());
   const showActions = canQuote || canForward || canCopy;
