@@ -93,6 +93,7 @@ test("recent service hints preserve a two-service comparison when CRM interest i
     ];
 
     const names = recentConfiguredServiceNames([
+      { role: "assistant", content: "我们也有骨盆调理。" },
       { role: "user", content: "3D跟9D有什么不同？" },
       { role: "assistant", content: "主要看你比较在意脸型还是松弛。" },
     ]);
