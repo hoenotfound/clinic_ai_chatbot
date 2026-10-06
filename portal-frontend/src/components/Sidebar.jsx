@@ -12,6 +12,7 @@ const PRIMARY_NAV_ITEMS = [
   { to: "/analytics", label: "Analytics", icon: AnalyticsIcon, capabilities: ["view_analytics"] },
   { to: "/tools", label: "Tools", icon: ToolsIcon, capabilities: ["manage_tools"] },
 ];
+const NOTIFICATIONS_ITEM = { to: "/notifications", label: "Notifications", icon: BellIcon };
 const SETTINGS_ITEM = {
   to: "/settings",
   label: "Settings",
@@ -264,6 +265,15 @@ export default function Sidebar() {
         </nav>
 
         <div className="app-sidebar-utility border-t border-white/10">
+          <nav aria-label="Notification settings">
+            <SidebarNavLink
+              item={NOTIFICATIONS_ITEM}
+              onShowTooltip={showTooltip}
+              onHideTooltip={hideTooltip}
+              onNavigate={closeMobileSidebar}
+            />
+          </nav>
+
           {settingsVisible && (
             <nav aria-label="Utility navigation">
               <SidebarNavLink
@@ -374,6 +384,15 @@ function ToolsIcon(props) {
   return (
     <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M14.7 6.3a4 4 0 0 0-5-5L12 3.6 8.4 7.2 6.1 4.9a4 4 0 0 0 5 5L4 17a2.1 2.1 0 0 0 3 3l7.1-7.1a4 4 0 0 0 5-5l-2.3 2.3-3.6-3.6 1.5-1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function BellIcon(props) {
+  return (
+    <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10 21h4" strokeLinecap="round" />
     </svg>
   );
 }
