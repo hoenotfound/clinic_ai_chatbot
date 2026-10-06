@@ -807,7 +807,7 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
   });
   await expect(page.getByRole("button", { name: "Replace" }).last()).toBeVisible();
 
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save promotions" }).click();
   await expect.poll(() => savedPayload).not.toBeNull();
 
   expect(savedPayload.automatedFollowUp.quietHours).toEqual({
@@ -1552,7 +1552,7 @@ test("Promotions keeps package setup compact, saves packages, and stays mobile-s
     .locator("textarea")
     .fill("Package A promo caption");
 
-  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("button", { name: "Close package", exact: true }).click();
   await expect(page.getByText("Package A", { exact: true }).first()).toBeVisible();
   await expect(
     page.getByText("全身深层调理 + 骨盆全身体态调整（7合1）", { exact: true }).first()
