@@ -128,3 +128,28 @@ test("Messenger image policy and caption/image alias writes get separate short I
   assert.ok(database.checks.every(check => check.settings[0] === "10000ms" && check.settings[1] === "5000ms"));
   assert.ok(database.clients.every(client => client.released));
 });
+
+test("social URL-forward aliases called inside Meta keep Inbox deadlines", async (t) => {
+  const database = policyDatabase();
+  stubProviders(t, database);
+  const aliases = [];
+  t.mock.method(meta, "sendImage", async (_channel, _recipient, _url, _caption, options) => {
+    assert.ok(database.clients.every(client => client.released));
+    await options.onProviderMessageId("caption");
+    assert.ok(database.clients.every(client => client.released));
+    await options.onProviderMessageId("image");
+    return { success: true, externalMessageId: "image" };
+  });
+  const result = await messaging.sendImageByUrl(
+    { id: 3, channel: "facebook", channel_user_id: "test-recipient" },
+    "https://example.invalid/photo.jpg", "caption",
+    {
+      inboxMediaTimings: { requestId: "social-url-regression" },
+      onProviderMessageId: async id => { aliases.push(id); await database.pool.query("ALIAS_WRITE"); },
+    }
+  );
+  assert.equal(result.success, true);
+  assert.deepEqual(aliases, ["caption", "image"]);
+  assert.equal(database.clients.length, 3);
+  assert.ok(database.checks.every(check => check.settings[0] === "10000ms"));
+});

@@ -75,10 +75,7 @@ async function notifyProviderMessageId(options, result, channel) {
     return;
   }
   try {
-    const record = () => options.onProviderMessageId(String(result.externalMessageId));
-    if (options.inboxMediaTimings) {
-      await withInboxDatabaseTimeouts(record, options.inboxMediaTimings);
-    } else await record();
+    await options.onProviderMessageId(String(result.externalMessageId));
   } catch (err) {
     // The provider already accepted this send. Alias persistence is best-effort
     // here; the caller still stores the final provider id as a second guard.
@@ -159,9 +156,18 @@ async function freeformGuard(contact, purpose = "service", inboxTimings = null) 
 }
 
 function optionsForPolicy(options, policy) {
-  return policy?.humanAgentRequired === true
+  const sendOptions = policy?.humanAgentRequired === true
     ? { ...options, humanAgent: true }
     : options;
+  if (!options.inboxMediaTimings || typeof options.onProviderMessageId !== "function") return sendOptions;
+  // Meta's URL sender can invoke the recorder inside its caption/image flow.
+  // Wrap the callback itself so both provider layers get the short SQL scope.
+  return {
+    ...sendOptions,
+    onProviderMessageId: id => withInboxDatabaseTimeouts(
+      () => options.onProviderMessageId(id), options.inboxMediaTimings
+    ),
+  };
 }
 
 async function stillInStaffMode(contact) {
