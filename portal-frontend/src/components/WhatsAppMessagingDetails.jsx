@@ -36,6 +36,7 @@ function PolicyDetail({ label, value, className = "" }) {
 
 export default function WhatsAppMessagingDetails({ contact, className = "" }) {
   const [now, setNow] = useState(Date.now());
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60 * 1000);
@@ -65,61 +66,83 @@ export default function WhatsAppMessagingDetails({ contact, className = "" }) {
     : "border-amber-200 bg-amber-50 text-amber-900";
 
   return (
-    <section className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 sm:p-4 ${className}`}>
-      <div className="flex flex-col items-start gap-2 min-[400px]:flex-row min-[400px]:justify-between min-[400px]:gap-3">
+    <section className={`overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] ${className}`}>
+      <button
+        type="button"
+        onClick={() => setExpanded((current) => !current)}
+        aria-expanded={expanded}
+        aria-controls="messaging-policy-details"
+        className="flex w-full touch-manipulation items-center justify-between gap-3 px-3 py-3 text-left transition hover:bg-[var(--color-bg)]/45 sm:px-4 sm:py-4"
+      >
         <div className="min-w-0">
           <h3 className="text-sm font-bold">
             {isWhatsApp ? "WhatsApp messaging" : `${policy.channelLabel} reply window`}
           </h3>
-          <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
-            {isWhatsApp
-              ? "Reply-window status and WhatsApp-specific consent records"
-              : "Standard 24-hour reply-window status"}
+          <p className="mt-0.5 truncate text-[11px] text-[var(--color-text-muted)]">
+            {expanded
+              ? (isWhatsApp
+                ? "Reply-window status and WhatsApp-specific consent records"
+                : "Standard 24-hour reply-window status")
+              : "Tap to view reply window and consent details"}
           </p>
         </div>
-        <span className={`inline-flex shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${statusTone}`}>
-          {policy.freeformAllowed ? "Reply available" : "Sending restricted"}
-        </span>
-      </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold ${statusTone}`}>
+            {policy.freeformAllowed ? "Reply available" : "Sending restricted"}
+          </span>
+          <span
+            aria-hidden="true"
+            className={`text-sm text-[var(--color-text-muted)] transition-transform ${expanded ? "rotate-180" : ""}`}
+          >
+            ▾
+          </span>
+        </div>
+      </button>
 
-      <div className={`mt-3 rounded-xl border px-3 py-2.5 text-xs leading-5 ${statusTone}`}>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.08em] opacity-70">Current reply window</p>
-        <p className="font-semibold">{policy.label}</p>
-        {policy.explanation && (
-          <p className="mt-0.5 break-words text-[11px] opacity-80">{policy.explanation}</p>
-        )}
-      </div>
+      {expanded && (
+        <div id="messaging-policy-details" className="border-t border-[var(--color-border)] px-3 pb-3 pt-3 sm:px-4 sm:pb-4">
+          <div className={`rounded-xl border px-3 py-2.5 text-xs leading-5 ${statusTone}`}>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.08em] opacity-70">Current reply window</p>
+            <p className="font-semibold">{policy.label}</p>
+            {policy.explanation && (
+              <p className="mt-0.5 break-words text-[11px] opacity-80">{policy.explanation}</p>
+            )}
+          </div>
 
-      {marketingOptOutAt && !optOutAt && (
-        <p className="mt-3 break-words rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-5 text-amber-900">
-          Customer opted out of WhatsApp marketing on {formatDateTime(marketingOptOutAt)}.
-          Service replies and utility templates remain available; promotional messages stay blocked until new explicit marketing consent is recorded.
-        </p>
+          {marketingOptOutAt && !optOutAt && (
+            <p className="mt-3 break-words rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-5 text-amber-900">
+              Customer opted out of WhatsApp marketing on {formatDateTime(marketingOptOutAt)}.
+              Service replies and utility templates remain available; promotional messages stay blocked until new explicit marketing consent is recorded.
+            </p>
+          )}
+
+          {optOutAt && (
+            <p className="mt-3 break-words rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-5 text-amber-900">
+              Customer opted out of WhatsApp messages on {formatDateTime(optOutAt)}.
+              {policy.customerReinitiatedAfterOptOut
+                ? " You may reply to their current request while the reply window is open, but automated follow-ups remain blocked."
+                : " Normal replies and automated follow-ups are currently blocked."}
+            </p>
+          )}
+
+          <dl className="mt-3 grid grid-cols-2 gap-2">
+            <PolicyDetail label="Latest customer message" value={formatDateTime(policy.latestCustomerMessageAt) || "No customer message"} />
+            <PolicyDetail label="Reply window expires" value={formatDateTime(policy.replyWindowExpiresAt) || "Not available"} />
+            {isWhatsApp && (
+              <>
+                <PolicyDetail label="WhatsApp opt-in" value={optInAt ? "Recorded" : "Not recorded"} />
+                <PolicyDetail label="WhatsApp opt-out" value={optOutAt ? "Recorded" : "Not recorded"} />
+                <PolicyDetail label="Marketing opt-out" value={marketingOptOutAt ? "Recorded" : "Not recorded"} />
+                <PolicyDetail className="col-span-2" label="Opt-in date / source" value={optInAt ? `${formatDateTime(optInAt)} · ${sourceLabel(optInSource)}` : "Not recorded"} />
+                <PolicyDetail className="col-span-2" label="Opt-out date / source" value={optOutAt ? `${formatDateTime(optOutAt)} · ${sourceLabel(optOutSource)}` : "Not recorded"} />
+                <PolicyDetail className="col-span-2" label="Marketing opt-out date / source" value={marketingOptOutAt ? `${formatDateTime(marketingOptOutAt)} · ${sourceLabel(marketingOptOutSource)}` : "Not recorded"} />
+              </>
+            )}
+          </dl>
+        </div>
       )}
-
-      {optOutAt && (
-        <p className="mt-3 break-words rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-5 text-amber-900">
-          Customer opted out of WhatsApp messages on {formatDateTime(optOutAt)}.
-          {policy.customerReinitiatedAfterOptOut
-            ? " You may reply to their current request while the reply window is open, but automated follow-ups remain blocked."
-            : " Normal replies and automated follow-ups are currently blocked."}
-        </p>
-      )}
-
-      <dl className="mt-3 grid grid-cols-2 gap-2">
-        <PolicyDetail label="Latest customer message" value={formatDateTime(policy.latestCustomerMessageAt) || "No customer message"} />
-        <PolicyDetail label="Reply window expires" value={formatDateTime(policy.replyWindowExpiresAt) || "Not available"} />
-        {isWhatsApp && (
-          <>
-            <PolicyDetail label="WhatsApp opt-in" value={optInAt ? "Recorded" : "Not recorded"} />
-            <PolicyDetail label="WhatsApp opt-out" value={optOutAt ? "Recorded" : "Not recorded"} />
-            <PolicyDetail label="Marketing opt-out" value={marketingOptOutAt ? "Recorded" : "Not recorded"} />
-            <PolicyDetail className="col-span-2" label="Opt-in date / source" value={optInAt ? `${formatDateTime(optInAt)} · ${sourceLabel(optInSource)}` : "Not recorded"} />
-            <PolicyDetail className="col-span-2" label="Opt-out date / source" value={optOutAt ? `${formatDateTime(optOutAt)} · ${sourceLabel(optOutSource)}` : "Not recorded"} />
-            <PolicyDetail className="col-span-2" label="Marketing opt-out date / source" value={marketingOptOutAt ? `${formatDateTime(marketingOptOutAt)} · ${sourceLabel(marketingOptOutSource)}` : "Not recorded"} />
-          </>
-        )}
-      </dl>
     </section>
   );
+
+
 }
