@@ -37,11 +37,16 @@ function PolicyDetail({ label, value, className = "" }) {
 export default function WhatsAppMessagingDetails({ contact, className = "" }) {
   const [now, setNow] = useState(Date.now());
   const [expanded, setExpanded] = useState(false);
+  const contactId = contact?.contact_id || contact?.id || null;
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60 * 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [contactId]);
 
   const policy = messagingPolicyStatus(contact, now);
   if (!policy.applies) return null;
@@ -78,13 +83,13 @@ export default function WhatsAppMessagingDetails({ contact, className = "" }) {
           <h3 className="text-sm font-bold">
             {isWhatsApp ? "WhatsApp messaging" : `${policy.channelLabel} reply window`}
           </h3>
-          <p className="mt-0.5 truncate text-[11px] text-[var(--color-text-muted)]">
-            {expanded
-              ? (isWhatsApp
+          {expanded && (
+            <p className="mt-0.5 truncate text-[11px] text-[var(--color-text-muted)]">
+              {isWhatsApp
                 ? "Reply-window status and WhatsApp-specific consent records"
-                : "Standard 24-hour reply-window status")
-              : "Tap to view reply window and consent details"}
-          </p>
+                : "Standard 24-hour reply-window status"}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold ${statusTone}`}>
