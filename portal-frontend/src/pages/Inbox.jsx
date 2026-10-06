@@ -120,6 +120,21 @@ function mergeMessages(existing, incoming) {
   });
 }
 
+function buildReplyPreview(message) {
+  if (!message) return null;
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content || "",
+    sent_by_username: message.sent_by_username || null,
+    media_mime_type: message.media_mime_type || null,
+    has_media_attachment: Boolean(
+      message.has_media_attachment || message.media_base64 || message.previewUrl
+    ),
+    media_url: message.media_url || null,
+  };
+}
+
 function isJpegFile(file) {
   const type = String(file?.type || "").toLowerCase();
   return type === "image/jpeg" || type === "image/jpg";
@@ -934,12 +949,16 @@ export default function Inbox() {
     return `optimistic-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 
-  async function handleSend(text) {
+  async function handleSend(text, replyToMessageId = null) {
     if (selectedId == null || !text.trim()) return;
     const contactId = selectedId;
     setActionPending(true);
 
     const optimisticId = makeOptimisticId();
+    const replyTarget = replyToMessageId == null
+      ? null
+      : messagesRef.current.find((message) => Number(message.id) === Number(replyToMessageId));
+    const replyPreview = buildReplyPreview(replyTarget);
     setMessages((prev) => [
       ...prev,
       {
@@ -951,14 +970,17 @@ export default function Inbox() {
         media_url: null,
         media_base64: null,
         media_mime_type: null,
+        reply_to_provider_message_id: replyTarget?.whatsapp_message_id || null,
+        reply_preview: replyPreview,
         _optimistic: true,
       },
     ]);
 
     try {
-      const result = await api.sendMessage(contactId, text.trim());
+      const result = await api.sendMessage(contactId, text.trim(), replyToMessageId);
+      const visibleResult = replyPreview ? { ...result, reply_preview: replyPreview } : result;
       if (selectedIdRef.current === contactId) {
-        setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [result]));
+        setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [visibleResult]));
       }
       await refreshConversations();
       if (result?.delivered === false) {
@@ -976,13 +998,17 @@ export default function Inbox() {
     }
   }
 
-  async function handleSendImage(file, caption) {
+  async function handleSendImage(file, caption, replyToMessageId = null) {
     if (selectedId == null || !file) return;
     const contactId = selectedId;
     setActionPending(true);
 
     const optimisticId = makeOptimisticId();
     const previewUrl = URL.createObjectURL(file);
+    const replyTarget = replyToMessageId == null
+      ? null
+      : messagesRef.current.find((message) => Number(message.id) === Number(replyToMessageId));
+    const replyPreview = buildReplyPreview(replyTarget);
     setMessages((prev) => [
       ...prev,
       {
@@ -995,15 +1021,18 @@ export default function Inbox() {
         media_base64: null,
         media_mime_type: null,
         previewUrl,
+        reply_to_provider_message_id: replyTarget?.whatsapp_message_id || null,
+        reply_preview: replyPreview,
         _optimistic: true,
         _uploading: true,
       },
     ]);
 
     try {
-      const result = await api.sendImage(contactId, file, caption);
+      const result = await api.sendImage(contactId, file, caption, replyToMessageId);
+      const visibleResult = replyPreview ? { ...result, reply_preview: replyPreview } : result;
       if (selectedIdRef.current === contactId) {
-        setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [result]));
+        setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [visibleResult]));
       }
       await refreshConversations();
       if (result?.delivered === false) {
@@ -1022,15 +1051,20 @@ export default function Inbox() {
     }
   }
 
-  async function handleSendVoice(recording, mimeType) {
+  async function handleSendVoice(recording, mimeType, replyToMessageId = null) {
     if (selectedId == null || !recording) return;
     const contactId = selectedId;
     setActionPending(true);
+    const replyTarget = replyToMessageId == null
+      ? null
+      : messagesRef.current.find((message) => Number(message.id) === Number(replyToMessageId));
+    const replyPreview = buildReplyPreview(replyTarget);
 
     try {
-      const result = await api.sendVoice(contactId, recording, mimeType);
+      const result = await api.sendVoice(contactId, recording, mimeType, replyToMessageId);
+      const visibleResult = replyPreview ? { ...result, reply_preview: replyPreview } : result;
       if (selectedIdRef.current === contactId) {
-        setMessages((prev) => mergeMessages(prev, [{ ...result, has_media_attachment: true }]));
+        setMessages((prev) => mergeMessages(prev, [{ ...visibleResult, has_media_attachment: true }]));
       }
       await refreshConversations();
       if (result?.delivered === false) {
@@ -1045,6 +1079,20 @@ export default function Inbox() {
     } finally {
       if (selectedIdRef.current === contactId) setActionPending(false);
     }
+  }
+
+  async function handleForwardMessage(messageId, targetContactIds) {
+    if (selectedId == null || !Number.isInteger(Number(messageId))) return null;
+    const sourceContactId = selectedId;
+    const result = await api.forwardMessage(sourceContactId, messageId, targetContactIds);
+    const visibleMessages = (result?.results || [])
+      .filter((item) => Number(item.contactId) === Number(selectedIdRef.current) && item.message)
+      .map((item) => item.message);
+    if (visibleMessages.length) {
+      setMessages((current) => mergeMessages(current, visibleMessages));
+    }
+    await refreshConversations();
+    return result;
   }
 
   function handleBackToConversationList() {
@@ -1069,6 +1117,7 @@ export default function Inbox() {
       <ThreadView
         key={selectedId ?? "no-conversation"}
         contact={selectedContact}
+        conversations={conversations || []}
         currentUsername={username}
         canReplyToLeads={canReplyToLeads}
         showUnassignedAssignment={showUnassignedAssignment}
@@ -1090,6 +1139,7 @@ export default function Inbox() {
         onSend={handleSend}
         onSendImage={handleSendImage}
         onSendVoice={handleSendVoice}
+        onForwardMessage={handleForwardMessage}
         onOpenContactDetails={() => setContactDetailsOpen(true)}
         onOpenWhatsAppTemplates={() => setWhatsAppTemplateOpen(true)}
         onToast={showToast}
