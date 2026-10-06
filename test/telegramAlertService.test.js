@@ -496,7 +496,13 @@ test("Telegram send failure is recorded for retry without aborting the flush", a
         failure = { id, error };
         return { id, status: "pending", attempts: 1 };
       },
-      findNextRetryAt: async () => "2026-10-07T00:01:00.000Z",
+      findNextRetryAt: async (input) => {
+        assert.deepEqual(input, {
+          inactivityMinutes: 10,
+          suppressionMinutes: 60,
+        });
+        return "2026-10-07T00:01:00.000Z";
+      },
     },
     sendMessage: async () => {
       throw new Error("Telegram unavailable");
