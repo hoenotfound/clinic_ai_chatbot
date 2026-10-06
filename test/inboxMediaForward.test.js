@@ -89,3 +89,39 @@ test("closed messaging policy blocks forwarding before preparation or staff stat
   assert.equal(result.policyBlocked, true);
   assert.deepEqual(h.events, []);
 });
+
+test("failed fallback preparation is a definite failure when no provider call occurred", async () => {
+  const h = harness({ mediaStorage: {
+    copyStoredMediaToTemporary: async () => { throw new Error("copy unavailable"); },
+    downloadMedia: async () => { throw new Error("download unavailable"); },
+  } });
+  const result = await h.send();
+  assert.equal(result.delivered, false);
+  assert.equal(result.deliveryUnknown, false);
+  assert.equal(result.message.delivery_status, "failed");
+  assert.match(result.error, /No message was submitted/);
+  assert.equal(h.events.some(event => event.startsWith("provider")), false);
+});
+
+test("an interrupted provider helper remains unknown to avoid duplicate delivery", async () => {
+  const h = harness({ channelMessaging: { sendImageByUrl: async () => { throw new Error("provider interrupted"); } } });
+  const result = await h.send();
+  assert.equal(result.deliveryUnknown, true);
+  assert.equal(result.message.delivery_status, "unknown");
+});
+
+test("URL and normalized-buffer forwards pass Inbox deadlines to the fresh provider policy check", async () => {
+  for (const normalized of [false, true]) {
+    let options;
+    const h = harness({
+      prepareStoredInboxImage: async () => normalized ? { buffer: Buffer.from("prepared"), mimeType: "image/jpeg" } : null,
+      channelMessaging: {
+        sendImageByUrl: async (_contact, _url, _caption, supplied) => { options = supplied; return { success: true, wamid: "accepted" }; },
+        sendImageBuffer: async (_contact, _buffer, _mime, _caption, _filename, supplied) => { options = supplied; return { success: true, wamid: "accepted" }; },
+      },
+    });
+    assert.equal((await h.send()).delivered, true);
+    assert.equal(options.inboxMediaTimings.requestId, "test-request");
+    assert.equal(options.inboxMediaTimings.target, 2);
+  }
+});

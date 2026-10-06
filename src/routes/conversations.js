@@ -1491,7 +1491,7 @@ async function forwardStoredMessage(sourceMessage, targetContact, username, requ
   const providerPromise = (async () => {
     if (normalizedImage) {
       return timedMediaStage(timings, "providerMs", () => channelMessaging.sendImageBuffer(preparedContact, normalizedImage.buffer,
-        normalizedImage.mimeType, content || undefined, "image.jpg", { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId }));
+        normalizedImage.mimeType, content || undefined, "image.jpg", { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId, inboxMediaTimings: timings }));
     }
     let preparedTemporaryMedia;
     try {
@@ -1500,12 +1500,21 @@ async function forwardStoredMessage(sourceMessage, targetContact, username, requ
     } catch (err) {
       console.warn(`[Inbox forward] provider R2 copy failed for message ${sourceMessage.id}:`, err);
       if (mediaStorage.isR2RequestTimeoutError(err)) return { success: false, error: "Image preparation timed out before provider submission." };
-      const buffer = await fallbackBuffer();
+      let buffer;
+      try {
+        buffer = await fallbackBuffer();
+      } catch (preparationError) {
+        console.warn(`[Inbox forward] fallback preparation failed for message ${sourceMessage.id}:`, preparationError);
+        return {
+          success: false,
+          error: "The image could not be prepared for forwarding. No message was submitted. Please try again.",
+        };
+      }
       return timedMediaStage(timings, "providerMs", () => channelMessaging.sendImageBuffer(preparedContact, buffer,
-        sourceMessage.media_mime_type, content || undefined, "image", socialProviderSendOptions(saved, preparedContact, { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId })));
+        sourceMessage.media_mime_type, content || undefined, "image", socialProviderSendOptions(saved, preparedContact, { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId, inboxMediaTimings: timings })));
     }
     return timedMediaStage(timings, "providerMs", () => channelMessaging.sendImageByUrl(preparedContact, preparedTemporaryMedia.url,
-      content || undefined, socialProviderSendOptions(saved, preparedContact, { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId })));
+      content || undefined, socialProviderSendOptions(saved, preparedContact, { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId, inboxMediaTimings: timings })));
   })();
   const persistencePromise = (async () => {
     let targetMediaKey;
@@ -1993,6 +2002,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
         purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
         replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
         requestId: timings.requestId,
+        inboxMediaTimings: timings,
       });
 
       const r2StartedAt = Date.now();

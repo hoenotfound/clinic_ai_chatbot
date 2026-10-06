@@ -1,20 +1,87 @@
 const { spawn } = require("node:child_process");
 const ffmpegPath = require("ffmpeg-static");
 const mediaStorage = require("./mediaStorageService");
-const { jpegFrameEncoding } = require("../utils/jpegEncoding");
+const { jpegFrameEncoding, jpegFrameInfo } = require("../utils/jpegEncoding");
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_CACHE_ENTRIES = 4;
+const MAX_JPEG_PIXELS = 16_000_000;
+const MAX_JPEG_DIMENSION = 8192;
+const MAX_PENDING_PREPARATIONS = 5;
 const cache = new Map();
 const pending = new Map();
 
-function normalizeProgressiveJpeg(buffer, { timeoutMs = 8000, spawnFn = spawn } = {}) {
-  if (!ffmpegPath) return Promise.reject(new Error("Image conversion is unavailable on this server."));
-  return new Promise((resolve, reject) => {
-    const child = spawnFn(ffmpegPath, ["-hide_banner", "-loglevel", "error", "-threads", "1", "-i", "pipe:0",
+function preparationBusyError() {
+  return new Error("Image preparation is busy. Please try forwarding again shortly.");
+}
+
+// One decoder per instance protects memory and CPU needed by AI/webhooks. The
+// waiting list also has a size and time limit, so it cannot retain files forever.
+function createJpegConversionQueue({ maxWaiting = 4, waitTimeoutMs = 3000 } = {}) {
+  let active = false;
+  const waiting = [];
+  function lease() {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const next = waiting.shift();
+      if (next) {
+        clearTimeout(next.timer);
+        next.resolve(lease());
+      } else active = false;
+    };
+  }
+  return {
+    acquire() {
+      if (!active) {
+        active = true;
+        return Promise.resolve(lease());
+      }
+      if (waiting.length >= maxWaiting) return Promise.reject(preparationBusyError());
+      return new Promise((resolve, reject) => {
+        const entry = { resolve, timer: null };
+        entry.timer = setTimeout(() => {
+          const index = waiting.indexOf(entry);
+          if (index >= 0) waiting.splice(index, 1);
+          reject(preparationBusyError());
+        }, waitTimeoutMs);
+        waiting.push(entry);
+      });
+    },
+  };
+}
+
+const conversionQueue = createJpegConversionQueue();
+
+function validateJpegForConversion(buffer) {
+  const frame = jpegFrameInfo(buffer);
+  if (!frame || frame.precision !== 8 || ![1, 3].includes(frame.components) ||
+      !frame.width || !frame.height || frame.width > MAX_JPEG_DIMENSION ||
+      frame.height > MAX_JPEG_DIMENSION || frame.width * frame.height > MAX_JPEG_PIXELS) {
+    throw new Error("This stored JPEG is too large or unsupported for safe conversion. Please upload a smaller JPEG or PNG copy.");
+  }
+  if (buffer.length > MAX_IMAGE_BYTES) {
+    throw new Error("Stored JPEG exceeds WhatsApp's 5MB image limit.");
+  }
+}
+
+async function normalizeProgressiveJpeg(buffer, { timeoutMs = 8000, spawnFn = spawn, queue = conversionQueue } = {}) {
+  validateJpegForConversion(buffer);
+  if (!ffmpegPath) throw new Error("Image conversion is unavailable on this server.");
+  const release = await queue.acquire();
+  let child;
+  try {
+    child = spawnFn(ffmpegPath, ["-hide_banner", "-loglevel", "error", "-threads", "1",
+      "-filter_threads", "1", "-max_pixels", String(MAX_JPEG_PIXELS), "-i", "pipe:0",
       "-vf", "scale=w=min(1920\\,iw):h=min(1920\\,ih):force_original_aspect_ratio=decrease",
       "-frames:v", "1", "-q:v", "2", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"], { stdio: ["pipe", "pipe", "pipe"] });
+  } catch (error) {
+    release();
+    throw error;
+  }
+  return new Promise((resolve, reject) => {
     const chunks = [];
     let bytes = 0;
     let finished = false;
@@ -37,6 +104,9 @@ function normalizeProgressiveJpeg(buffer, { timeoutMs = 8000, spawnFn = spawn } 
       chunks.push(chunk);
     });
     child.on("close", (code) => {
+      // A timeout rejects promptly, but its slot stays occupied until SIGKILL
+      // actually closes the decoder. Do not overlap it with the next process.
+      release();
       if (finished) return;
       const result = Buffer.concat(chunks);
       if (code !== 0 || jpegFrameEncoding(result) !== "non-progressive") {
@@ -54,12 +124,14 @@ async function prepareStoredInboxImage(sourceMessage, { storage = mediaStorage, 
   for (const [cachedKey, item] of cache) if (item.expiresAt <= now) { clearTimeout(item.timer); cache.delete(cachedKey); }
   if (cache.has(key)) return cache.get(key).value;
   if (pending.has(key)) return pending.get(key);
+  if (pending.size >= MAX_PENDING_PREPARATIONS) throw preparationBusyError();
   const operation = (async () => {
     // Historical objects lack an encoding marker. Inspect only their header;
     // baseline files continue through R2 CopyObject without downloading pixels.
     const header = await storage.downloadMedia(key, { range: "bytes=0-1048575", maxBytes: 1024 * 1024, timeoutMs: 5000 });
     let value = null;
     if (jpegFrameEncoding(header) === "progressive") {
+      validateJpegForConversion(header);
       const original = await storage.downloadMedia(key, { maxBytes: MAX_IMAGE_BYTES, timeoutMs: 10000 });
       value = { buffer: await normalize(original), mimeType: "image/jpeg" };
     }
@@ -83,4 +155,4 @@ async function prepareStoredInboxImage(sourceMessage, { storage = mediaStorage, 
   finally { pending.delete(key); }
 }
 
-module.exports = { normalizeProgressiveJpeg, prepareStoredInboxImage };
+module.exports = { normalizeProgressiveJpeg, prepareStoredInboxImage, createJpegConversionQueue };
