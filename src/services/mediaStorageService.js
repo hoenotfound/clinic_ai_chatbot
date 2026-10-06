@@ -14,6 +14,7 @@ const crypto = require("crypto");
 const {
   S3Client,
   PutObjectCommand,
+  CopyObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
   ListObjectsV2Command,
@@ -284,6 +285,48 @@ async function uploadTemporaryMedia(
   };
 }
 
+/**
+ * Creates a disposable Meta-facing copy of an already persisted private media
+ * object entirely inside R2. This avoids sending the same bytes over the
+ * Render->R2 link twice while also keeping the permanent customer-media key
+ * out of third-party URLs/logs.
+ */
+async function copyStoredMediaToTemporary(
+  sourceKey,
+  mimeType,
+  {
+    contactId = "misc",
+    expiresSeconds = DEFAULT_META_SHARE_SECONDS,
+    env = process.env,
+  } = {}
+) {
+  if (!sourceKey) throw new Error("Stored media key is required.");
+
+  const bucket = getBucketName();
+  const key = buildMediaObjectKey({
+    kind: "meta-outbound",
+    contactId,
+    mimeType,
+    env,
+  });
+
+  await getClient().send(
+    new CopyObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      CopySource: `${bucket}/${sourceKey}`,
+      MetadataDirective: "REPLACE",
+      ContentType: mimeType || "application/octet-stream",
+    })
+  );
+
+  return {
+    key,
+    url: createPresignedGetUrl(key, { expiresSeconds }),
+    expiresSeconds,
+  };
+}
+
 function scheduleTemporaryMediaDelete(key, delayMs = DEFAULT_TEMP_DELETE_DELAY_MS) {
   if (!key) return null;
   const timer = setTimeout(() => {
@@ -417,6 +460,7 @@ module.exports = {
   getMediaIsolationStatus,
   uploadMedia,
   uploadTemporaryMedia,
+  copyStoredMediaToTemporary,
   createPresignedGetUrl,
   scheduleTemporaryMediaDelete,
   temporaryMediaPrefix,

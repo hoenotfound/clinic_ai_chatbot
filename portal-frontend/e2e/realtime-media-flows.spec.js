@@ -308,6 +308,7 @@ async function installApi(page, {
   initialConversations = [conversation()],
   initialMessagesByContact = new Map([[101, [inboundMessage()]]]),
   imageSendFailure = null,
+  imageSendDelayMs = 0,
   voiceSendFailure = null,
 } = {}) {
   await installRealtimeHarness(page);
@@ -494,6 +495,9 @@ async function installApi(page, {
         bodyBuffer,
       });
 
+      if (imageSendDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, imageSendDelayMs));
+      }
       if (imageSendFailure) {
         return fulfill(route, { error: imageSendFailure }, 500);
       }
@@ -906,6 +910,35 @@ test("progressive JPEG is normalized before upload", async ({ page }) => {
     expect(uploaded.name).toMatch(/\.png$/i);
   }
 
+  expectNoUnexpectedApi(apiState);
+});
+
+test("a delayed failed image send never overwrites a newer staff draft", async ({ page }) => {
+  const apiState = await installApi(page, {
+    imageSendFailure: "Image provider temporarily unavailable.",
+    imageSendDelayMs: 250,
+  });
+
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+
+  const input = page.locator('input[type="file"][accept="image/*"]');
+  await input.setInputFiles(imagePayload("slow-failure.png"));
+
+  const composer = page.getByPlaceholder("Add a caption…");
+  await composer.fill("Old image caption");
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  await expect(page.getByAltText("Selected attachment")).toHaveCount(0);
+  const nextDraft = page.locator("textarea").first();
+  await nextDraft.fill("New draft typed while the image is sending");
+
+  await expect(
+    page.getByText("Image provider temporarily unavailable.", { exact: true })
+  ).toBeVisible();
+  await expect(nextDraft).toHaveValue("New draft typed while the image is sending");
+  await expect(page.getByAltText("Selected attachment")).toHaveCount(0);
+  expect(apiState.mediaRequests).toHaveLength(1);
   expectNoUnexpectedApi(apiState);
 });
 
