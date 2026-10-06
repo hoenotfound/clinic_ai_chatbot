@@ -245,26 +245,54 @@ function followUpPromotionAuthorityRules() {
 function followUpRelevantGuidance(resolvedService) {
   const serviceName = promptContextText(resolvedService?.name, 240);
   const serviceKey = followUpLookupKey(serviceName);
-  const aliasKeys = serviceKey
+  const aliasTexts = serviceKey
     ? (config.serviceAliases || [])
         .filter((item) => followUpLookupKey(item?.officialService) === serviceKey)
-        .map((item) => followUpLookupKey(item?.alias))
+        .map((item) => promptContextText(item?.alias, 240))
         .filter(Boolean)
     : [];
-  const keys = [serviceKey, ...aliasKeys].filter(Boolean);
+  const keys = [serviceKey, ...aliasTexts.map((value) => followUpLookupKey(value))]
+    .filter(Boolean);
+  const rawTerms = [serviceName, ...aliasTexts].filter(Boolean);
 
   function relevantBlocks(value, maxLength) {
     const text = String(value || "").trim();
     if (!text || !keys.length) return "";
+
     const blocks = text
       .split(/\n\s*\n+/)
       .map((block) => block.trim())
       .filter(Boolean)
       .filter((block) => {
-        const blockKey = followUpLookupKey(block, 5_000);
+        const blockKey = followUpLookupKey(block, 8_000);
         return keys.some((key) => blockKey.includes(key));
       });
-    return promptContextText(blocks.join("\n\n"), maxLength) || "";
+
+    if (!blocks.length) return "";
+    const joined = blocks.join("\n\n");
+    if (joined.length <= maxLength) {
+      return promptContextText(joined, maxLength) || "";
+    }
+
+    // Some clients store the whole SOP as one large block. Center the bounded
+    // excerpt around the actual service name/alias instead of taking the first
+    // N characters and accidentally dropping the relevant section.
+    const lowered = joined.toLocaleLowerCase();
+    const positions = rawTerms
+      .map((term) => lowered.indexOf(String(term).toLocaleLowerCase()))
+      .filter((position) => position >= 0);
+    const matchAt = positions.length ? Math.min(...positions) : 0;
+    let excerptStart = Math.max(0, matchAt - Math.min(240, Math.floor(maxLength / 4)));
+
+    const nearbyBreak = joined.lastIndexOf("\n", matchAt);
+    if (nearbyBreak >= 0 && matchAt - nearbyBreak <= 240) {
+      excerptStart = nearbyBreak + 1;
+    }
+
+    return promptContextText(
+      joined.slice(excerptStart, excerptStart + maxLength),
+      maxLength
+    ) || "";
   }
 
   const serviceSop = relevantBlocks(config.sop, 1_600);
