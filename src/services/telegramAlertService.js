@@ -372,7 +372,10 @@ function createTelegramAlertService({
       let nextRetryAt = null;
       if (typeof repository.findNextRetryAt === "function") {
         try {
-          nextRetryAt = await repository.findNextRetryAt();
+          nextRetryAt = await repository.findNextRetryAt({
+            inactivityMinutes,
+            suppressionMinutes,
+          });
         } catch (err) {
           console.error("Failed to read next Telegram summary retry time:", err);
         }
