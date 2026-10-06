@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { S3Client, CopyObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client, CopyObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require("@aws-sdk/client-s3");
 const mediaStorage = require("../src/services/mediaStorageService");
 
 test("new permanent media keys are isolated by client slug", () => {
@@ -337,6 +337,71 @@ test("temporary media cleanup only considers objects older than the safety windo
   );
 });
 
+
+test("durable temporary-media sweep batches stale R2 deletes", async (t) => {
+  const originalSend = S3Client.prototype.send;
+  const original = {
+    accountId: process.env.R2_ACCOUNT_ID,
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    bucket: process.env.R2_BUCKET_NAME,
+  };
+
+  t.after(() => {
+    S3Client.prototype.send = originalSend;
+    if (original.accountId === undefined) delete process.env.R2_ACCOUNT_ID;
+    else process.env.R2_ACCOUNT_ID = original.accountId;
+    if (original.accessKeyId === undefined) delete process.env.R2_ACCESS_KEY_ID;
+    else process.env.R2_ACCESS_KEY_ID = original.accessKeyId;
+    if (original.secretAccessKey === undefined) delete process.env.R2_SECRET_ACCESS_KEY;
+    else process.env.R2_SECRET_ACCESS_KEY = original.secretAccessKey;
+    if (original.bucket === undefined) delete process.env.R2_BUCKET_NAME;
+    else process.env.R2_BUCKET_NAME = original.bucket;
+  });
+
+  process.env.R2_ACCOUNT_ID = "cleanup-test";
+  process.env.R2_ACCESS_KEY_ID = "AKIDCLEAN";
+  process.env.R2_SECRET_ACCESS_KEY = "SECRETCLEAN";
+  process.env.R2_BUCKET_NAME = "private-media";
+
+  const oldDate = new Date("2026-10-01T00:00:00.000Z");
+  const recentDate = new Date("2026-10-06T00:00:00.000Z");
+  const calls = [];
+  S3Client.prototype.send = async function send(command) {
+    calls.push(command);
+    if (command instanceof ListObjectsV2Command) {
+      return {
+        Contents: [
+          { Key: "clients/acme/meta-outbound/1/a.jpg", LastModified: oldDate },
+          { Key: "clients/acme/meta-outbound/1/b.jpg", LastModified: oldDate },
+          { Key: "clients/acme/meta-outbound/1/recent.jpg", LastModified: recentDate },
+        ],
+        IsTruncated: false,
+      };
+    }
+    if (command instanceof DeleteObjectsCommand) {
+      return { Errors: [] };
+    }
+    throw new Error(`Unexpected R2 command: ${command.constructor.name}`);
+  };
+
+  const deleted = await mediaStorage.pruneStaleTemporaryMedia({
+    now: new Date("2026-10-07T12:00:00.000Z").getTime(),
+    olderThanMs: 24 * 60 * 60 * 1000,
+    env: { CLIENT_SLUG: "acme" },
+  });
+
+  assert.equal(deleted, 2);
+  const deleteCalls = calls.filter((command) => command instanceof DeleteObjectsCommand);
+  assert.equal(deleteCalls.length, 1);
+  assert.deepEqual(
+    deleteCalls[0].input.Delete.Objects.map((item) => item.Key),
+    [
+      "clients/acme/meta-outbound/1/a.jpg",
+      "clients/acme/meta-outbound/1/b.jpg",
+    ]
+  );
+});
 
 test("durable temporary-media sweep fails closed without a client namespace", async () => {
   assert.equal(
