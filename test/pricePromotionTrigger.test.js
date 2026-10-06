@@ -576,3 +576,38 @@ test("short follow-up after multiple packages were named fails closed", async ()
 
   assert.equal(bundle, null);
 });
+
+test("promotion media uses the configured customer-language image and caption with per-field fallback", async () => {
+  const localizedPromo = {
+    ...nowActivePromo,
+    mediaTranslations: {
+      zh: {
+        imageUrl: "https://example.test/3d-zh.jpg",
+        caption: "3D 中文优惠",
+      },
+      ms: {
+        caption: "Promosi 3D BM",
+      },
+    },
+  };
+
+  const zhCalls = [];
+  const zh = await resolvePricePromotionForReply(base({
+    promotions: [localizedPromo],
+    language: "zh",
+    wasPromoRecentlySent: async (...args) => {
+      zhCalls.push(args);
+      return false;
+    },
+  }));
+  assert.equal(zh.packages[0].imageUrl, "https://example.test/3d-zh.jpg");
+  assert.equal(zh.packages[0].caption, "3D 中文优惠");
+  assert.deepEqual(zhCalls, [[42, "https://example.test/3d-zh.jpg", "3D 中文优惠", 24]]);
+
+  const ms = await resolvePricePromotionForReply(base({
+    promotions: [localizedPromo],
+    language: "ms",
+  }));
+  assert.equal(ms.packages[0].imageUrl, "https://example.test/3d.jpg");
+  assert.equal(ms.packages[0].caption, "Promosi 3D BM");
+});
