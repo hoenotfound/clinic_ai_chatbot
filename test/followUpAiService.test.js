@@ -231,6 +231,81 @@ test("manual staff promotion messages are labeled STAFF in AI follow-up context"
   assert.equal(received.options.surface, "follow_up");
 });
 
+test("promotion package selector skips AI when the latest customer message explicitly names one package", async () => {
+  let calls = 0;
+  aiService.getReplyWithEnv = async () => {
+    calls += 1;
+    throw new Error("AI should not be called for an explicit package choice");
+  };
+
+  const selected = await selectPromotionPackageForFollowUp({
+    conversation: [
+      { role: "user", content: "骨盆配套有什么选择？" },
+      { role: "assistant", content: "We have Package A and Package B." },
+      { role: "user", content: "Package A" },
+    ],
+    serviceName: "Pelvic Care",
+    packages: [
+      { name: "Package A", title: "Premium package", aliases: ["A配套"], caption: "A" },
+      { name: "Package B", title: "Women's package", aliases: ["B配套"], caption: "B" },
+    ],
+    channel: "whatsapp",
+  });
+
+  assert.equal(selected, "Package A");
+  assert.equal(calls, 0);
+});
+
+test("promotion package selector does not shortcut a negated package mention", async () => {
+  let calls = 0;
+  aiService.getReplyWithEnv = async () => {
+    calls += 1;
+    return JSON.stringify({
+      action: "skip",
+      message: "",
+      reason: "Customer rejected that package.",
+      topic: "",
+    });
+  };
+
+  const selected = await selectPromotionPackageForFollowUp({
+    conversation: [{ role: "user", content: "I don't want Package A" }],
+    serviceName: "Pelvic Care",
+    packages: [
+      { name: "Package A", aliases: ["A配套"], caption: "A" },
+      { name: "Package B", aliases: ["B配套"], caption: "B" },
+    ],
+  });
+
+  assert.equal(selected, null);
+  assert.equal(calls, 1);
+});
+
+test("promotion package selector keeps ambiguous multi-package messages on the AI path", async () => {
+  let calls = 0;
+  aiService.getReplyWithEnv = async () => {
+    calls += 1;
+    return JSON.stringify({
+      action: "skip",
+      message: "",
+      reason: "Customer is comparing more than one package.",
+      topic: "",
+    });
+  };
+
+  const selected = await selectPromotionPackageForFollowUp({
+    conversation: [{ role: "user", content: "Can you compare Package A and Package B?" }],
+    serviceName: "Pelvic Care",
+    packages: [
+      { name: "Package A", caption: "A" },
+      { name: "Package B", caption: "B" },
+    ],
+  });
+
+  assert.equal(selected, null);
+  assert.equal(calls, 1);
+});
+
 test("promotion package selector uses customer messages only and returns an exact configured package key", async () => {
   let received = null;
   aiService.getReplyWithEnv = async (messages, options) => {
