@@ -120,6 +120,57 @@ test("missing client slug keeps the historical unprefixed key shape", () => {
   );
 });
 
+test("R2 operations abort instead of hanging indefinitely", async (t) => {
+  const originalSend = S3Client.prototype.send;
+  const original = {
+    accountId: process.env.R2_ACCOUNT_ID,
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    bucket: process.env.R2_BUCKET_NAME,
+  };
+  t.after(() => {
+    S3Client.prototype.send = originalSend;
+    if (original.accountId === undefined) delete process.env.R2_ACCOUNT_ID;
+    else process.env.R2_ACCOUNT_ID = original.accountId;
+    if (original.accessKeyId === undefined) delete process.env.R2_ACCESS_KEY_ID;
+    else process.env.R2_ACCESS_KEY_ID = original.accessKeyId;
+    if (original.secretAccessKey === undefined) delete process.env.R2_SECRET_ACCESS_KEY;
+    else process.env.R2_SECRET_ACCESS_KEY = original.secretAccessKey;
+    if (original.bucket === undefined) delete process.env.R2_BUCKET_NAME;
+    else process.env.R2_BUCKET_NAME = original.bucket;
+  });
+
+  process.env.R2_ACCOUNT_ID = "timeout-test";
+  process.env.R2_ACCESS_KEY_ID = "AKIDTIMEOUT";
+  process.env.R2_SECRET_ACCESS_KEY = "SECRETTIMEOUT";
+  process.env.R2_BUCKET_NAME = "private-media";
+
+  S3Client.prototype.send = async function send(_command, options = {}) {
+    return await new Promise((_resolve, reject) => {
+      options.abortSignal?.addEventListener(
+        "abort",
+        () => {
+          const err = new Error("aborted");
+          err.name = "AbortError";
+          reject(err);
+        },
+        { once: true }
+      );
+    });
+  };
+
+  await assert.rejects(
+    mediaStorage.sendR2(new CopyObjectCommand({
+      Bucket: "private-media",
+      Key: "target.jpg",
+      CopySource: "private-media/source.jpg",
+    }), { timeoutMs: 5 }),
+    (err) =>
+      err?.code === "R2_REQUEST_TIMEOUT" &&
+      mediaStorage.isR2RequestTimeoutError(err)
+  );
+});
+
 test("forwarded media is copied server-side into a new permanent message object", async (t) => {
   const originalSend = S3Client.prototype.send;
   const original = {
