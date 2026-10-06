@@ -1743,7 +1743,7 @@ function LeadTemperatureIndicator({ temperature }) {
   const tone =
     normalized === "hot"
       ? "bg-red-500"
-      : "border border-sky-500 bg-white/70";
+      : "border border-blue-500 bg-white/70";
 
   return (
     <span
