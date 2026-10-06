@@ -13,6 +13,13 @@ const UNIVERSAL_ABSOLUTE_REJECTION_PATTERNS = frozenPatterns([
   /(?:号码错了|打错了|找错人了|不是本人|别再联系|不要再联系|别发信息|不要发信息)/,
 ]);
 
+const CLINIC_ABSOLUTE_REJECTION_PATTERNS = frozenPatterns([
+  ...UNIVERSAL_ABSOLUTE_REJECTION_PATTERNS,
+  /\b(?:i|we)(?:'ve| have)?\s+(?:already\s+)?(?:booked|chosen|gone with|decided on)\s+(?:another|a different)\s+(?:clinic|centre|center|provider|treatment provider)\b/,
+  /\b(?:saya|kami)\s+(?:dah|sudah)\s+(?:book|booking|pilih)\s+(?:klinik|pusat|provider)\s+lain\b/,
+  /(?:我|我们|我們)(?:已经|已經)(?:预约了|預約了|选了|選了|决定去|決定去)(?:别的|別的|其他)(?:诊所|診所|中心|机构|機構)/,
+]);
+
 const CONFIRMATION_PATTERNS = frozenPatterns([
   /^(?:yes|yes please|okay|ok|sure|please|confirm|confirmed|that works|sounds good)[.! ]*$/,
   /^(?:ya|ya boleh|boleh|ok boleh|setuju|baik|confirm|sahkan)[.! ]*$/,
@@ -42,7 +49,7 @@ const GENERIC_DECLINE_PATTERNS = frozenPatterns([
   /\b(?:not for me|i(?:'ll| will) pass)\b/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+berminat(?:\s+lagi)?(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
   /^(?:terima kasih,?\s*)?(?:saya\s+)?(?:tak|tidak)\s+nak(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
-  /^(?:我)?(?:不感兴趣|没兴趣|沒有興趣|没有兴趣|不要了|不需要了|不用了|谢谢不用了?|謝謝不用了?)(?:[,，]?(?:谢谢|謝謝))?[。.!！]*$/,
+  /^(?:我)?(?:不感兴趣|没兴趣|沒有興趣|没有兴趣|不要了|不需要了|不用了|不做了|不继续了|不繼續了|不考虑了|不考慮了|谢谢不用了?|謝謝不用了?)(?:[,，]?(?:谢谢|謝謝))?[。.!！]*$/,
 ]);
 
 const GENERIC_POSITIVE_CONTRAST_PATTERNS = frozenPatterns([
@@ -55,6 +62,8 @@ const CLINIC_DECLINE_PATTERNS = frozenPatterns([
   /\b(?:i\s+)?(?:don't|do not)\s+(?:want|plan|intend)\s+to\s+(?:come|visit|reserve)\b/,
   /\b(?:i(?:'m| am)?\s+)?(?:won't|will not|am not going to|not going to)\s+(?:book|schedule|make an appointment)\b/,
   /\b(?:i(?:'m| am)?\s+)?(?:won't|will not|am not going to|not going to)\s+(?:come|visit|reserve)\b/,
+  /\b(?:i|we)(?:'m| are| am)?\s+(?:not|no longer)\s+(?:proceeding|going ahead|moving forward)(?:\s+with\s+(?:this|it|the treatment|the package|the promotion|your services?))?\b/,
+  /\b(?:too far|too expensive|over budget).{0,50}\b(?:i|we)?\s*(?:won't|will not|can't|cannot|don't want to|do not want to)\s+(?:proceed|book|come|visit|go ahead)\b/,
   /\bno\s+thanks?(?:\s+you)?\b/,
   /\b(?:not for me|i(?:'ll| will) pass)\b/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+berminat(?:\s+(?:lagi|dengan\s+(?:servis|rawatan)(?:\s+(?:ini|anda|awak))?))?(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
@@ -72,10 +81,14 @@ const CLINIC_POSITIVE_CONTRAST_PATTERNS = frozenPatterns([
 ]);
 
 const CLINIC_UNCLEAR_HOT_PATTERNS = frozenPatterns([
-  /\b(?:maybe|perhaps|not ready|not yet|still thinking|just (?:asking|checking|browsing)|(?:don't|do not) want to book (?:yet|now)|not booking (?:yet|now))\b/,
-  /\bi\s+(?:may|might)\s+(?:want\s+to\s+)?(?:book|schedule|come|visit)\b/,
-  /\b(?:belum (?:bersedia|nak|mahu)|mungkin|masih fikir|tanya sahaja|tanya saja|survey dulu|(?:tak nak|tidak mahu) book (?:dulu|lagi|sekarang))\b/,
-  /(?:可能|也许|也許|还不想预约|還不想預約|暂时不预约|暫時不預約|还没决定|還沒決定|先看看|只是问问|只是問問|以后再说|以後再說)/,
+  /\b(?:maybe|perhaps|not ready|not yet|still thinking|need to think|let me think|think about it|just (?:asking|checking|browsing)|maybe later|later on|not now|too expensive|over budget|compare first|still comparing|(?:don't|do not) want to book (?:yet|now)|not booking (?:yet|now))\b/,
+  /\bi\s+(?:may|might)\s+(?:want\s+to\s+)?(?:book|schedule|come|visit|buy|take|proceed)\b/,
+  /\b(?:need|want)\s+to\s+(?:ask|check with)\s+(?:my\s+)?(?:husband|wife|partner|family)\s+first\b/,
+  /\b(?:do|would)\s+(?:i|we)\s+need\s+to\s+(?:pay\s+)?(?:a\s+)?deposit\b/,
+  /\b(?:is|are)\s+(?:a\s+)?deposit\s+(?:required|needed)\b/,
+  /\b(?:belum (?:bersedia|nak|mahu)|mungkin|masih fikir|nak fikir dulu|fikir dulu|tanya sahaja|tanya saja|survey dulu|nanti dulu|mahal sangat|terlalu mahal|banding dulu|(?:tak nak|tidak mahu) book (?:dulu|lagi|sekarang))\b/,
+  /\b(?:perlu|kena)\s+(?:saya|kami)?\s*(?:bayar\s+)?deposit\s*(?:ke|kah)?\b/,
+  /(?:可能|也许|也許|还不想预约|還不想預約|暂时不预约|暫時不預約|还没决定|還沒決定|先看看|只是问问|只是問問|以后再说|以後再說|再考虑|再考慮|考虑一下|考慮一下|先问家人|先問家人|太贵|太貴|先比较|先比較|还在比较|還在比較|需要付定金吗|需要付定金嗎|要付定金吗|要付定金嗎)/,
   /\b(?:visit|check|open)\s+(?:your\s+)?(?:website|site|page|instagram|facebook)\b/,
 ]);
 
@@ -89,6 +102,11 @@ const CLINIC_NEGATED_HOT_PATTERNS = frozenPatterns([
 
 const CLINIC_HOT_INTENT_PATTERNS = frozenPatterns([
   /\b(?:i\s+)?(?:want|wanna|would like|i'd like|need|ready)\s+(?:to\s+)?(?:book|schedule|reserve|make\s+an?\s+appointment|come|visit)\b/,
+  /\b(?:i|we)\s+(?:want|would like|need)\s+to\s+(?:take|buy|get|purchase|proceed with|go ahead with)\s+(?:this|that|the)?\s*(?:package|promo(?:tion)?|offer|treatment|service)\b/,
+  /\b(?:i'll|we'll|i will|we will)\s+(?:take|buy|get|purchase|go with|proceed with|go ahead with)\s+(?:this|that|the)?\s*(?:package|promo(?:tion)?|offer|treatment|service)\b/,
+  /\b(?:i|we)\s+(?:want|would like)\s+(?:this|that|the)\s+(?:package|promo(?:tion)?|offer|treatment|service)\b/,
+  /\b(?:how|where)\s+(?:do|can)\s+(?:i|we)\s+(?:pay|make\s+(?:the\s+)?payment|pay\s+(?:the\s+)?deposit)\b/,
+  /\b(?:can|could|please)\s+(?:you\s+)?(?:send|give)\s+(?:me|us)\s+(?:the\s+)?(?:payment|deposit)\s+(?:link|details?|qr)\b/,
   /\b(?:can|could|may)\s+(?:i|you)\s+(?:book|schedule|reserve|make\s+(?:me\s+)?an?\s+appointment)\b/,
   /\b(?:i\s+)?(?:want|would like|i'd like|need)\s+an?\s+(?:appointment|consultation|slot)\b/,
   /\b(?:can|could|may)\s+i\s+(?:come|visit\s+(?:the|your)?\s*(?:clinic|branch|centre|center))\b/,
@@ -99,12 +117,20 @@ const CLINIC_HOT_INTENT_PATTERNS = frozenPatterns([
   /\b(?:what|which)\s+(?:time|times|day|days|date|dates|slots?)\s+(?:is|are)?\s*(?:available|free)\b/,
   /\b(?:deposit|payment).{0,30}\b(?:book|booking|appointment|slot)\b/,
   /\b(?:saya\s+)?(?:nak|mahu|hendak)\s+(?:buat\s+)?(?:booking|book|appointment|temujanji|janji temu|datang|visit)\b/,
+  /\b(?:saya|kami)\s+(?:nak|mahu|hendak)\s+(?:ambil|beli|teruskan|proceed)\s+(?:package|pakej|promo|promosi|rawatan|treatment)\b/,
+  /\b(?:saya|kami)\s+(?:nak|mahu|hendak)\s+(?:package|pakej|promo|promosi|rawatan|treatment)\s+(?:ini|tu|itu)\b/,
+  /\b(?:macam mana|bagaimana)\s+(?:nak|mahu)?\s*(?:bayar|buat\s+payment|bayar\s+deposit)\b/,
+  /\b(?:boleh|tolong)\s+(?:hantar|bagi|beri)\s+(?:payment|bayaran|deposit)\s+(?:link|details?|qr)\b/,
   /\b(?:boleh|tolong)\s+(?:saya\s+)?(?:book|booking|buat\s+(?:appointment|temujanji|janji temu))\b/,
   /\b(?:boleh|dapatkah)\s+(?:saya|kami)\s+datang\b/,
   /\b(?:ada|masih ada)\s+(?:slot|appointment|temujanji|janji temu)\b/,
   /\b(?:macam mana|bagaimana)\s+(?:nak|mahu)?\s*(?:book|booking|buat\s+(?:appointment|temujanji|janji temu))\b/,
   /\b(?:bila|pukul berapa)\s+(?:ada\s+)?(?:slot|boleh datang|available)\b/,
   /(?:我)?(?:想|要|准备|準備)(?:预约|預約|预订|預訂|订位|訂位|去你们|去你們|过去|過去|到店)/,
+  /(?:我|我们|我們)(?:要|想要|想拿|要拿|选|選|选择|選擇)(?:这个|這個|那个|那個)?(?:配套|套餐|package|优惠|優惠|promo|疗程|療程)/,
+  /(?:我|我们|我們)(?:想|要|可以)(?:继续|繼續|进行下一步|進行下一步|付款|付钱|付錢|付定金)/,
+  /(?:怎么|怎麼|如何)(?:付款|付钱|付錢|付定金|交定金)/,
+  /(?:发|發|给我|給我).{0,8}(?:付款|payment|定金).{0,8}(?:链接|連結|link|二维码|二維碼)/,
   /(?:可以|能不能|能|请|請|帮我|幫我)(?:帮我|幫我)?(?:预约|預約|预订|預訂|订位|訂位)/,
   /(?:有|还有|還有).{0,8}(?:空位|预约时间|預約時間|时间段|時間段|名额|名額)/,
   /(?:怎么|怎麼|如何|怎样|怎樣)(?:预约|預約|预订|預訂|付定金)/,
@@ -267,7 +293,7 @@ const LEAD_TEMPERATURE_RULE_PROFILES = Object.freeze({
     hotIntentPatterns: CLINIC_HOT_INTENT_PATTERNS,
     unclearHotPatterns: CLINIC_UNCLEAR_HOT_PATTERNS,
     negatedHotPatterns: CLINIC_NEGATED_HOT_PATTERNS,
-    absoluteRejectionPatterns: UNIVERSAL_ABSOLUTE_REJECTION_PATTERNS,
+    absoluteRejectionPatterns: CLINIC_ABSOLUTE_REJECTION_PATTERNS,
     declinePatterns: CLINIC_DECLINE_PATTERNS,
     positiveContrastPatterns: CLINIC_POSITIVE_CONTRAST_PATTERNS,
     alternativeContextPatterns: ALTERNATIVE_SCHEDULING_PATTERNS,
@@ -279,7 +305,7 @@ const LEAD_TEMPERATURE_RULE_PROFILES = Object.freeze({
     allowConfiguredLocationAnswers: true,
     alternativeOverridesNonConfirming: false,
     hotMatchedRule: "booking_intent",
-    hotReason: "The customer showed clear booking or appointment intent.",
+    hotReason: "The customer showed clear intent to proceed, purchase, pay, book, or arrange an appointment.",
     contextMatchedRule: "scheduling_confirmation",
     contextReason: "The customer confirmed scheduling details after a booking question.",
   }),
@@ -289,7 +315,7 @@ const LEAD_TEMPERATURE_RULE_PROFILES = Object.freeze({
     hotIntentPatterns: TCM_HOT_INTENT_PATTERNS,
     unclearHotPatterns: TCM_UNCLEAR_HOT_PATTERNS,
     negatedHotPatterns: TCM_NEGATED_HOT_PATTERNS,
-    absoluteRejectionPatterns: UNIVERSAL_ABSOLUTE_REJECTION_PATTERNS,
+    absoluteRejectionPatterns: CLINIC_ABSOLUTE_REJECTION_PATTERNS,
     declinePatterns: CLINIC_DECLINE_PATTERNS,
     positiveContrastPatterns: CLINIC_POSITIVE_CONTRAST_PATTERNS,
     alternativeContextPatterns: ALTERNATIVE_SCHEDULING_PATTERNS,
@@ -301,7 +327,7 @@ const LEAD_TEMPERATURE_RULE_PROFILES = Object.freeze({
     allowConfiguredLocationAnswers: true,
     alternativeOverridesNonConfirming: false,
     hotMatchedRule: "booking_intent",
-    hotReason: "The patient showed clear assessment, booking, or appointment intent.",
+    hotReason: "The patient showed clear intent to proceed, purchase, pay, arrange an assessment, or book an appointment.",
     contextMatchedRule: "scheduling_confirmation",
     contextReason: "The patient confirmed an assessment or appointment next step after the clinic prompted them.",
   }),
