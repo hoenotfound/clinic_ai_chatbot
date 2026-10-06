@@ -1,6 +1,7 @@
 const { pool } = require("../db/db");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
+const webPush = require("./webPushService");
 
 const AI_HANDOFF_OWNER = "AI handoff";
 
@@ -16,6 +17,7 @@ function createAiHandoffService({
   database = pool,
   publish = realtimeEvents.publish,
   sendHumanInterventionAlert = telegramImmediateAlerts.sendHumanInterventionAlert,
+  sendHumanAttentionPush = webPush.notifyHumanAttention,
 } = {}) {
   return async function pauseAiForHumanHandoff(
     contactId,
@@ -54,6 +56,10 @@ function createAiHandoffService({
       })
     ).catch((err) => {
       console.error(`Telegram AI-handoff alert failed for contact ${updated.id}:`, err);
+    });
+
+    Promise.resolve(sendHumanAttentionPush({ contactId: updated.id })).catch((err) => {
+      console.error(`Human-attention Web Push failed for contact ${updated.id}:`, err);
     });
 
     return updated;
