@@ -35,7 +35,7 @@ const COLLECTION_DIFF_SPECS = Object.freeze({
   },
   promotions: {
     identity: "name",
-    fields: ["linkedService", "sendOnPriceQuery", "packages", "caption", "followUpMessage", "followUpImageUrl", "followUpTranslations", "validFrom", "validUntil", "imageUrl"],
+    fields: ["linkedService", "sendOnPriceQuery", "packages", "caption", "mediaTranslations", "followUpMessage", "followUpImageUrl", "followUpTranslations", "validFrom", "validUntil", "imageUrl"],
   },
   resultMedia: {
     identity: "service",
