@@ -711,7 +711,7 @@ BUSINESS INFO:
 - Services:
 ${servicesList}
 - Active promotions:
-${promotionsList}
+${activePromotionsList()}
 
 RULES:
 - Match the language or natural language mix used by the commenter.
@@ -1059,7 +1059,7 @@ ${terms.servicePlural.toUpperCase()}:
 ${servicesList}
 
 ACTIVE PROMOTIONS — this structured section is the ONLY authority for whether a promotion, discount, bundle, free add-on, or promotion deadline is currently active:
-${activePromotionsList()}
+${promotionsList}
 
 ${promotionAuthorityRules()}
 
