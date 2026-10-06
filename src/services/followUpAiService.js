@@ -36,8 +36,9 @@ function trimConversation(messages, {
       ...message,
       _sourceIndex: sourceIndex,
       // One unusually long message should not consume the whole follow-up
-      // context budget. Preserve the message itself while bounding its payload.
-      content: cleanContent(message.content).slice(0, Math.min(maxChars, 3_000)),
+      // context budget. 1,800 chars also leaves room to guarantee the outbound
+      // anchor plus the two most recent customer turns inside the 6k default.
+      content: cleanContent(message.content).slice(0, Math.min(maxChars, 1_800)),
     }))
     .filter((message) => message.content);
 
@@ -51,11 +52,12 @@ function trimConversation(messages, {
   source.forEach((message, index) => {
     if (protectedIds.has(Number(message.id))) mandatoryIndexes.add(index);
   });
+  let protectedCustomerTurns = 0;
   for (let index = source.length - 1; index >= 0; index -= 1) {
-    if (source[index].role === "user") {
-      mandatoryIndexes.add(index);
-      break;
-    }
+    if (source[index].role !== "user") continue;
+    mandatoryIndexes.add(index);
+    protectedCustomerTurns += 1;
+    if (protectedCustomerTurns >= 2) break;
   }
 
   const selectedIndexes = [];
