@@ -24,6 +24,8 @@ function collectSignals(text, locationNames, profile) {
   return {
     absoluteRejection: matchesAny(text, profile.absoluteRejectionPatterns),
     decline: matchesAny(text, profile.declinePatterns),
+    warmInterest: matchesAny(text, profile.warmInterestPatterns || []),
+    warmCooling: matchesAny(text, profile.warmCoolingPatterns || []),
     positiveContrast: matchesAny(text, profile.positiveContrastPatterns),
     uncertaintyGuard: matchesAny(text, profile.unclearHotPatterns),
     negatedHot: matchesAny(text, profile.negatedHotPatterns),
@@ -101,6 +103,7 @@ function evaluateLeadTemperatureMessage({
       shouldLoadContext: false,
       decision: "empty_message",
       matchedSignals: [],
+      warmClassification: null,
     };
   }
 
@@ -116,6 +119,23 @@ function evaluateLeadTemperatureMessage({
   );
   const matchedSignals = matchedSignalNames({ ...signals, contextPrompt });
   const evidence = String(messageText).trim().slice(0, MAX_EVIDENCE_CHARS);
+  const warmClassification = signals.warmCooling
+    ? {
+        temperature: "warm",
+        matchedRule: "explicit_hesitation",
+        warmStrength: "cooling",
+        reason: "The customer remains interested but explicitly stepped back from an immediate decision.",
+        evidence,
+      }
+    : signals.warmInterest
+      ? {
+          temperature: "warm",
+          matchedRule: "renewed_interest",
+          warmStrength: "interest",
+          reason: "The customer showed meaningful interest without a clear commitment yet.",
+          evidence,
+        }
+      : null;
 
   // Decision precedence is intentionally explicit. New industries should add
   // profile data, not reorder these stages inside their own regex collections.
@@ -125,6 +145,7 @@ function evaluateLeadTemperatureMessage({
       shouldLoadContext: contextAnswer && Boolean(ruleProfile.contextMatchedRule),
       decision: "conflicting_direct_signals",
       matchedSignals,
+      warmClassification,
     };
   }
 
@@ -140,6 +161,7 @@ function evaluateLeadTemperatureMessage({
       shouldLoadContext: false,
       decision: "explicit_rejection",
       matchedSignals,
+      warmClassification,
     };
   }
 
@@ -154,6 +176,7 @@ function evaluateLeadTemperatureMessage({
       shouldLoadContext: false,
       decision: "direct_hot",
       matchedSignals,
+      warmClassification,
     };
   }
 
@@ -168,6 +191,7 @@ function evaluateLeadTemperatureMessage({
       shouldLoadContext: false,
       decision: "context_hot",
       matchedSignals,
+      warmClassification,
     };
   }
 
@@ -177,6 +201,7 @@ function evaluateLeadTemperatureMessage({
       shouldLoadContext: true,
       decision: "needs_context",
       matchedSignals,
+      warmClassification,
     };
   }
 
@@ -185,6 +210,7 @@ function evaluateLeadTemperatureMessage({
     shouldLoadContext: false,
     decision: "unchanged",
     matchedSignals,
+    warmClassification,
   };
 }
 
