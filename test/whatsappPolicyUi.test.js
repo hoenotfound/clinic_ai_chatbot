@@ -388,3 +388,18 @@ test("messaging-policy surfaces keep responsive mobile affordances", () => {
   assert.match(scheduler, /max-h-\[92dvh\]/);
   assert.match(scheduler, /pb-\[env\(safe-area-inset-bottom\)\]/);
 });
+
+
+test("Inbox lead temperature indicator stays minimal and exception-only", () => {
+  const inbox = fs.readFileSync(
+    path.join(__dirname, "../portal-frontend/src/pages/Inbox.jsx"),
+    "utf8"
+  );
+
+  assert.match(inbox, /LeadTemperatureIndicator/);
+  assert.match(inbox, /conversation\.lead_temperature/);
+  assert.match(inbox, /normalized !== "hot" && normalized !== "cold"/);
+  assert.match(inbox, /Hot lead/);
+  assert.match(inbox, /Cold lead/);
+  assert.doesNotMatch(inbox, /Warm lead/);
+});
