@@ -37,7 +37,8 @@ async function lockContactAlertQueue(
 async function withContactAlertLock(
   contactId,
   work,
-  database = pool
+  database = pool,
+  timings = null
 ) {
   const numericContactId = Number(contactId);
   if (!Number.isSafeInteger(numericContactId) || numericContactId < 1) {
@@ -51,10 +52,15 @@ async function withContactAlertLock(
   let locked = false;
   let releaseError = null;
   try {
-    await client.query(
-      "SELECT pg_advisory_lock($1::integer, $2::integer)",
-      [HUMAN_ALERT_LOCK_NAMESPACE, numericContactId]
-    );
+    const lockStartedAt = performance.now();
+    try {
+      await client.query(
+        "SELECT pg_advisory_lock($1::integer, $2::integer)",
+        [HUMAN_ALERT_LOCK_NAMESPACE, numericContactId]
+      );
+    } finally {
+      if (timings) timings.alertLockWaitMs = Math.round(performance.now() - lockStartedAt);
+    }
     locked = true;
     return await work(client.query.bind(client));
   } finally {

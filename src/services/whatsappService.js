@@ -14,14 +14,57 @@ function requestTimeoutMs(rawValue, fallback) {
 async function fetchWithTimeout(
   url,
   options = {},
-  timeoutMs = DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS
+  timeoutMs = DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS,
+  diagnostics = null
 ) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const startedAt = performance.now();
+  let headersMs = null;
+  let status = null;
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      const error = new Error("WhatsApp request timed out.");
+      error.name = "AbortError";
+      reject(error);
+    }, timeoutMs);
+  });
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    // fetch resolves at headers. Read the complete body under the same deadline
+    // so a stalled JSON/error body cannot keep the Inbox queue blocked forever.
+    return await Promise.race([
+      (async () => {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        headersMs = Math.round(performance.now() - startedAt);
+        status = response.status;
+        const body = typeof response.text === "function"
+          ? await response.text()
+          : JSON.stringify(await response.json());
+        return {
+          ok: response.ok,
+          status: response.status,
+          headers: response.headers,
+          text: async () => body,
+          json: async () => JSON.parse(body),
+        };
+      })(),
+      deadline,
+    ]);
   } finally {
     clearTimeout(timer);
+    if (diagnostics) {
+      const totalMs = Math.round(performance.now() - startedAt);
+      console.info("[WhatsApp media timing]", JSON.stringify({
+        ...diagnostics,
+        headersMs,
+        bodyMs: headersMs == null ? null : totalMs - headersMs,
+        totalMs,
+        httpStatus: status,
+        timeoutMs,
+        timedOut: controller.signal.aborted,
+      }));
+    }
   }
 }
 
@@ -197,7 +240,8 @@ async function sendImage(to, imageUrl, caption, options = {}) {
       requestTimeoutMs(
         process.env.WHATSAPP_MESSAGE_TIMEOUT_MS,
         DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS
-      )
+      ),
+      { requestId: options.requestId || null, operation: "message_link", bytes: null }
     );
 
     if (!res.ok) {
@@ -226,7 +270,7 @@ async function sendImage(to, imageUrl, caption, options = {}) {
  * @param {string} [filename] - filename supplied to Meta (important for voice.ogg)
  * @returns {Promise<string|null>} the WhatsApp media ID, or null on failure
  */
-async function uploadMedia(buffer, mimeType, filename = "upload") {
+async function uploadMedia(buffer, mimeType, filename = "upload", options = {}) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/media`;
@@ -250,7 +294,8 @@ async function uploadMedia(buffer, mimeType, filename = "upload") {
       requestTimeoutMs(
         process.env.WHATSAPP_MEDIA_UPLOAD_TIMEOUT_MS,
         DEFAULT_META_MEDIA_UPLOAD_TIMEOUT_MS
-      )
+      ),
+      { requestId: options.requestId || null, operation: "upload", bytes: buffer.length }
     );
 
     if (!res.ok) {
@@ -302,7 +347,8 @@ async function sendImageById(to, mediaId, caption, options = {}) {
       requestTimeoutMs(
         process.env.WHATSAPP_MESSAGE_TIMEOUT_MS,
         DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS
-      )
+      ),
+      { requestId: options.requestId || null, operation: "message_id", bytes: null }
     );
 
     if (!res.ok) {

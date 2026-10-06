@@ -11,6 +11,7 @@
  */
 
 const crypto = require("crypto");
+const { jpegFrameEncoding } = require("../utils/jpegEncoding");
 const {
   S3Client,
   PutObjectCommand,
@@ -294,6 +295,7 @@ async function uploadMedia(
     contactId,
     mimeType,
     env,
+    id: `${crypto.randomUUID()}${jpegFrameEncoding(buffer) === "non-progressive" ? "-baseline" : ""}`,
   });
   try {
     await putObject(key, buffer, mimeType);
@@ -365,6 +367,7 @@ async function copyStoredMediaToMessage(
     contactId,
     mimeType,
     env,
+    id: `${crypto.randomUUID()}${/-baseline\.jpg$/.test(sourceKey) ? "-baseline" : ""}`,
   });
 
   try {
@@ -686,13 +689,46 @@ async function openMediaStream(key, { range = null } = {}) {
 }
 
 /** Downloads a media object fully. Keep this for AI image context and retries. */
-async function downloadMedia(key) {
-  const media = await openMediaStream(key);
-  const chunks = [];
-  for await (const chunk of media.body) {
-    chunks.push(chunk);
+async function downloadMedia(key, { timeoutMs = r2RequestTimeoutMs(), maxBytes = 32 * 1024 * 1024, range = null } = {}) {
+  let body;
+  let timer;
+  let expired = false;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      expired = true;
+      const error = new Error(`R2 download timed out after ${timeoutMs}ms.`);
+      error.name = "R2RequestTimeoutError";
+      error.code = "R2_REQUEST_TIMEOUT";
+      body?.destroy(error);
+      reject(error);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      (async () => {
+        const media = await openMediaStream(key, { range });
+        body = media.body;
+        if (expired) {
+          body.destroy();
+          return null;
+        }
+        const chunks = [];
+        let bytes = 0;
+        for await (const chunk of body) {
+          bytes += chunk.length;
+          if (bytes > maxBytes) {
+            throw new Error("Stored media exceeds the download size limit.");
+          }
+          chunks.push(chunk);
+        }
+        return Buffer.concat(chunks);
+      })(),
+      deadline,
+    ]);
+  } finally {
+    clearTimeout(timer);
+    if (body && !body.readableEnded) body.destroy();
   }
-  return Buffer.concat(chunks);
 }
 
 function isRangeNotSatisfiableError(err) {

@@ -221,8 +221,9 @@ test("Inbox WhatsApp reply and image routes fail closed on invalid provider medi
   assert.match(imageRoute, /for \(let attempt = 1; attempt <= 2 && !mediaAttached/);
   assert.match(imageRoute, /isR2RequestTimeoutError/);
   assert.match(imageRoute, /skipping immediate retry/);
-  assert.match(imageRoute, /for \(let attempt = 1; attempt <= 2 && !finalMessage/);
-  assert.match(imageRoute, /Meta may already have accepted the image/);
+  assert.match(imageRoute, /finishInboxMediaSend/);
+  assert.match(source, /for \(let attempt = 1; attempt <= 2 && !finalMessage/);
+  assert.match(source, /Provider send completed, but its delivery state could not be fully persisted/);
   assert.match(imageRoute, /delivery_unknown/);
   assert.match(imageRoute, /\[Inbox image timing\]/);
   assert.match(replyHelper, /target\.role !== "user"/);
@@ -344,8 +345,8 @@ test("Inbox outbound sends unlock the composer but stay ordered per conversation
   );
 
   assert.match(inbox, /outboundQueueByContactRef = useRef\(new Map\(\)\)/);
-  assert.match(inbox, /function enqueueOutbound\(contactId, task\)/);
-  assert.match(inbox, /previous\.catch\(\(\) => \{\}\)\.then\(task\)/);
+  assert.match(inbox, /function enqueueOutbound\(contactId, task, requestId = null\)/);
+  assert.match(inbox, /previous\.catch\(\(\) => \{\}\)\.then\(async \(\) =>/);
   assert.match(inbox, /enqueueOutbound\(\s*contactId,[\s\S]*api\.sendImage/);
   assert.match(inbox, /composerSendVersionRef/);
   assert.match(inbox, /await Promise\.resolve\(\);[\s\S]*setSending\(false\)/);

@@ -1022,3 +1022,31 @@ test("closed WhatsApp reply window blocks image selection and voice recording", 
   ).toBe(0);
   expectNoUnexpectedApi(apiState);
 });
+
+test("stalled mandatory JPEG preparation clears safely and leaves the composer usable", async ({ page }) => {
+  const apiState = await installApi(page);
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  await page.evaluate(() => { window.createImageBitmap = () => new Promise(() => {}); });
+  await page.locator('input[type="file"][accept="image/*"]').setInputFiles(progressiveJpegPayload("stalled.jpeg"));
+  await expect(page.getByText("Preparing for faster upload…", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Image preparation took too long/)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByAltText("Selected attachment")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Attach an image" })).toBeEnabled();
+  expect(apiState.mediaRequests).toHaveLength(0);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("optional compression can time out and send the valid original PNG", async ({ page }) => {
+  const apiState = await installApi(page);
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+  await page.evaluate(() => { window.createImageBitmap = () => new Promise(() => {}); });
+  await page.locator('input[type="file"][accept="image/*"]').setInputFiles({
+    name: "large.png", mimeType: "image/png", buffer: Buffer.concat([ONE_PIXEL_PNG, Buffer.alloc(1600000)]),
+  });
+  await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled({ timeout: 3000 });
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect.poll(() => apiState.mediaRequests.length).toBe(1);
+  expectNoUnexpectedApi(apiState);
+});

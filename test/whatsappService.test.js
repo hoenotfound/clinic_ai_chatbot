@@ -596,3 +596,29 @@ test("requires a WhatsApp message ID before treating HTTP acceptance as confirme
   assert.equal(unconfirmed.unknown, true);
   assert.match(unconfirmed.error, /did not return a message ID/i);
 });
+
+test("provider deadline includes a response body that stalls after headers", async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  let signal;
+  global.fetch = async (_url, options) => {
+    signal = options.signal;
+    return { ok: true, status: 200, text: () => new Promise(() => {}) };
+  };
+  await assert.rejects(fetchWithTimeout("https://graph.example.test/messages", {}, 15), { name: "AbortError" });
+  assert.equal(signal.aborted, true);
+});
+
+test("message body interruption returns unknown and never invites automatic retry", async (t) => {
+  const originalFetch = global.fetch;
+  const timeout = process.env.WHATSAPP_MESSAGE_TIMEOUT_MS;
+  t.after(() => { global.fetch = originalFetch;
+    if (timeout == null) delete process.env.WHATSAPP_MESSAGE_TIMEOUT_MS;
+    else process.env.WHATSAPP_MESSAGE_TIMEOUT_MS = timeout;
+  });
+  process.env.WHATSAPP_MESSAGE_TIMEOUT_MS = "15";
+  global.fetch = async () => ({ ok: true, status: 200, text: () => new Promise(() => {}) });
+  const result = await sendImageById("test-recipient", "test-media-id", "Caption");
+  assert.equal(result.unknown, true);
+  assert.equal(result.retryable, false);
+});

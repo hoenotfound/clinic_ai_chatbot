@@ -88,28 +88,33 @@ export const api = {
     }),
   retryMessage: (contactId, messageId) =>
     request(`/conversations/${contactId}/messages/${messageId}/retry`, { method: "POST" }),
-  forwardMessage: (contactId, messageId, targetContactIds) =>
+  forwardMessage: (contactId, messageId, targetContactIds, requestId = null) =>
     request(`/conversations/${contactId}/messages/${messageId}/forward`, {
       method: "POST",
       body: JSON.stringify({ targetContactIds }),
+      headers: { "Content-Type": "application/json", ...(requestId ? { "X-Inbox-Request-Id": requestId } : {}) },
     }),
   getMessageDeliveryStatuses: (contactId, messageIds) =>
     request(`/conversations/${contactId}/messages/delivery-statuses`, {
       method: "POST",
       body: JSON.stringify({ messageIds }),
     }),
-  sendImage: async (contactId, file, caption, replyToMessageId = null) => {
+  sendImage: async (contactId, file, caption, replyToMessageId = null, requestId = null) => {
     const form = new FormData();
     form.append("image", file);
     if (caption) form.append("caption", caption);
     if (replyToMessageId != null) form.append("replyToMessageId", String(replyToMessageId));
 
+    const startedAt = performance.now();
     const res = await fetch(`${BASE}/conversations/${contactId}/media`, {
       method: "POST",
       credentials: "include",
+      headers: requestId ? { "X-Inbox-Request-Id": requestId } : {},
       body: form,
     });
 
+    const headersMs = Math.round(performance.now() - startedAt);
+    console.info("[Inbox image request]", { requestId, headersMs, status: res.status });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       const error = new Error(body.error || `Request failed (${res.status})`);
@@ -118,7 +123,9 @@ export const api = {
       error.policyBlocked = body.policyBlocked === true;
       throw error;
     }
-    return res.json();
+    const result = await res.json();
+    console.info("[Inbox image request]", { requestId, headersMs, totalMs: Math.round(performance.now() - startedAt), status: res.status });
+    return result;
   },
   sendVoice: async (contactId, recording, mimeType, replyToMessageId = null) => {
     const form = new FormData();
