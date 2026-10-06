@@ -507,7 +507,7 @@ test("reviewer leaves unclear messages Warm and skips staff-set temperatures", a
     getBranchNames: () => [],
   });
 
-  const hotResult = await hotReviewer(15, 102, "No thanks");
+  const hotResult = await hotReviewer(15, 102, "No thanks, I am not interested.");
   assert.equal(hotResult.status, "unchanged");
   assert.equal(hotResult.reason, "transition-not-allowed");
   assert.equal(historyCalls, 0);
