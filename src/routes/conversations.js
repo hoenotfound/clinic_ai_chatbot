@@ -340,6 +340,22 @@ async function sendStoredMessage(contact, message, options = {}) {
     );
   }
 
+  const storedSticker =
+    mimeType === "image/webp" &&
+    /(?:sent a sticker|forwarded sticker|sticker sent from)/i.test(
+      String(message.content || "")
+    );
+
+  if (storedSticker && message.media_base64 && channel === "whatsapp") {
+    return channelMessaging.sendStickerBuffer(
+      contact,
+      Buffer.from(message.media_base64, "base64"),
+      mimeType,
+      "sticker.webp",
+      socialProviderSendOptions(message, contact, options)
+    );
+  }
+
   if (mimeType.startsWith("image/") && message.media_base64) {
     return channelMessaging.sendImageBuffer(
       contact,
@@ -1306,14 +1322,21 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
 
   const sourceMimeType = String(sourceMessage.media_mime_type || "").toLowerCase();
   const sourceContent = String(sourceMessage.content || "");
+  const sourceIsSticker =
+    sourceMimeType === "image/webp" &&
+    /(?:sent a sticker|sticker sent from)/i.test(sourceContent);
   let forwardedContent = sourceContent;
-  if (
+  if (sourceIsSticker) {
+    // Keep a small local marker so failed forwarded stickers can be retried
+    // through the sticker endpoint instead of being mistaken for normal images.
+    forwardedContent = "🙂 [Forwarded sticker]";
+  } else if (
     sourceMimeType.startsWith("image/") &&
-    /^(?:📷|🙂)\s*\[[^\]]+sent (?:a photo|a sticker)\]\s*$/iu.test(sourceContent.trim())
+    /^📷\s*\[[^\]]+sent a photo\]\s*$/iu.test(sourceContent.trim())
   ) {
     forwardedContent = "";
   } else if (sourceMimeType.startsWith("image/")) {
-    forwardedContent = sourceContent.replace(/^(?:📷|🙂)\s*/u, "");
+    forwardedContent = sourceContent.replace(/^📷\s*/u, "");
   }
 
   const mediaAttachment = sourceMessage.media_base64
