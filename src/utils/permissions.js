@@ -40,6 +40,12 @@ const CAPABILITY_DEFINITIONS = [
     defaults: { admin: true, sales: false },
   },
   {
+    key: "delete_customer_data",
+    label: "Delete customer data",
+    description: "Permanently delete a customer, their conversation, CRM journeys, operational records, and stored media.",
+    defaults: { admin: true, sales: false },
+  },
+  {
     key: "manage_lead_assignment",
     label: "Assign leads",
     description: "Assign or reassign leads between staff accounts.",

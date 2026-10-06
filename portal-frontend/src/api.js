@@ -255,6 +255,11 @@ export const api = {
   getContactInsights: (id) => request(`/contacts/${id}/insights`),
   createContact: (data) => request("/contacts", { method: "POST", body: JSON.stringify(data) }),
   updateContact: (id, data) => request(`/contacts/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteCustomerData: (id) =>
+    request(`/contacts/${id}`, {
+      method: "DELETE",
+      body: JSON.stringify({ confirm: "DELETE" }),
+    }),
   listContactNotes: (id) => request(`/contacts/${id}/notes`),
   addContactNote: (id, content) =>
     request(`/contacts/${id}/notes`, { method: "POST", body: JSON.stringify({ content }) }),

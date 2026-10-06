@@ -1,5 +1,6 @@
 const contactsRepo = require("../db/contactsRepo");
 const metaStaffEchoRepo = require("../db/metaStaffEchoRepo");
+const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const metaCommentAutomationRepo = require("../db/metaCommentAutomationRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
@@ -73,6 +74,11 @@ async function persistStaffEcho(echo, { pendingStarted = false } = {}) {
         messageId: echo.id,
       });
     if (pendingCommentReply) {
+      releasePendingAiForEcho(echo);
+      return null;
+    }
+
+    if (await inboundProcessingRepo.isDeletedProviderMessageId(providerMessageId)) {
       releasePendingAiForEcho(echo);
       return null;
     }

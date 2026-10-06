@@ -146,8 +146,8 @@ test("pending social referral is consumed by the next real inbound message", asy
   const calls = [];
   const pending = new Map();
   const repo = {
-    async savePending(channel, externalUserId, attribution) {
-      calls.push(["savePending", channel, externalUserId]);
+    async savePending(channel, externalUserId, attribution, eventId) {
+      calls.push(["savePending", channel, externalUserId, eventId]);
       pending.set(`${channel}:${externalUserId}`, attribution);
     },
     async takePending(channel, externalUserId) {
@@ -171,6 +171,7 @@ test("pending social referral is consumed by the next real inbound message", asy
 
   await service.rememberPendingReferral({
     attributionOnly: true,
+    id: "referral:opaque-event-1",
     channel: "facebook",
     from: "psid-1",
     attribution: referral,
@@ -188,6 +189,12 @@ test("pending social referral is consumed by the next real inbound message", asy
 
   assert.equal(result.attribution.source, "meta_ads");
   assert.equal(result.attribution.adId, "123456");
+  assert.deepEqual(calls[0], [
+    "savePending",
+    "facebook",
+    "psid-1",
+    "facebook:referral:opaque-event-1",
+  ]);
   assert.deepEqual(calls.map((call) => call[0]), [
     "savePending",
     "takePending",

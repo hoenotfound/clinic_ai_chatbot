@@ -12,7 +12,7 @@ function clampPositiveInteger(value, fallback, max) {
   return Math.min(parsed, max);
 }
 
-async function savePending(channel, externalUserId, attribution) {
+async function savePending(channel, externalUserId, attribution, eventId = null) {
   if (!channel || !externalUserId || !attribution) return null;
   const client = await pool.connect();
   try {
@@ -20,15 +20,21 @@ async function savePending(channel, externalUserId, attribution) {
     await client.query(`DELETE FROM pending_lead_attributions WHERE expires_at <= now()`);
     const result = await client.query(
       `INSERT INTO pending_lead_attributions (
-         channel, external_user_id, attribution, created_at, expires_at
+         channel, external_user_id, attribution, event_id, created_at, expires_at
        )
-       VALUES ($1, $2, $3::jsonb, now(), now() + interval '7 days')
+       VALUES ($1, $2, $3::jsonb, $4, now(), now() + interval '7 days')
        ON CONFLICT (channel, external_user_id) DO UPDATE SET
          attribution = EXCLUDED.attribution,
+         event_id = EXCLUDED.event_id,
          created_at = now(),
          expires_at = now() + interval '7 days'
        RETURNING *`,
-      [channel, String(externalUserId), toJson(attribution)]
+      [
+        channel,
+        String(externalUserId),
+        toJson(attribution),
+        eventId ? String(eventId) : null,
+      ]
     );
     await client.query("COMMIT");
     return result.rows[0] || null;

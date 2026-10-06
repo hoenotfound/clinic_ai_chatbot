@@ -31,7 +31,8 @@ function createLeadAttributionService(
     await repo.savePending(
       incoming.channel,
       incoming.from,
-      incoming.attribution
+      incoming.attribution,
+      incoming.id ? `${incoming.channel}:${incoming.id}` : null
     );
     return true;
   }

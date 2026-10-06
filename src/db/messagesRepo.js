@@ -1426,6 +1426,28 @@ async function reconcilePendingWhatsappReactionsForMessage(
  * provider timestamp lets us reject a delayed older webhook instead of
  * resurrecting a reaction the customer already removed or changed.
  */
+async function isDeletedWhatsappReactionEvent(
+  queryable,
+  { targetWhatsappMessageId, providerReactionMessageId = null } = {}
+) {
+  const ids = [
+    String(targetWhatsappMessageId || "").trim(),
+    String(providerReactionMessageId || "").trim(),
+  ].filter(Boolean);
+  if (!ids.length) return false;
+
+  const result = await queryable.query(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM customer_data_deleted_message_ids
+       WHERE provider_message_id = ANY($1::text[])
+         AND expires_at > now()
+     ) AS deleted`,
+    [ids]
+  );
+  return result.rows[0]?.deleted === true;
+}
+
 async function applyWhatsappReaction(reaction) {
   const targetWhatsappMessageId = String(reaction?.targetMessageId || "").trim();
   const reactorWhatsappId = String(reaction?.from || "").trim();
@@ -1450,6 +1472,15 @@ async function applyWhatsappReaction(reaction) {
     // visible locally. Whichever transaction wins first leaves durable state
     // that the second transaction is guaranteed to observe.
     await lockWhatsappMessageId(client, targetWhatsappMessageId);
+
+    if (await isDeletedWhatsappReactionEvent(client, {
+      targetWhatsappMessageId,
+      providerReactionMessageId,
+    })) {
+      await client.query("COMMIT");
+      transactionStarted = false;
+      return null;
+    }
 
     const target = await findWhatsappReactionTarget(
       client,
@@ -1578,6 +1609,7 @@ module.exports = {
   getMessageByProviderIdForContact,
   getMessageByAnyProviderIdForContact,
   hasStaffReplyAfter,
+  isDeletedWhatsappReactionEvent,
   applyWhatsappReaction,
   reconcilePendingWhatsappReactionsForMessage,
   registerSocialProviderMessageAlias,
