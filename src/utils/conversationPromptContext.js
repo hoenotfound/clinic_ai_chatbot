@@ -6,7 +6,9 @@ const CONTACT_PATTERN =
   /(phone|contact|call|whatsapp|instagram|facebook|tiktok|号码|電話|电话|联系|聯絡|hubungi|telefon|nombor|\big\b|\bfb\b)/iu;
 const PROMOTION_PATTERN =
   /(price|pricing|cost|fee|charge|rate|how\s+much|package|promo|promotion|offer|discount|voucher|多少钱|多少錢|价格|價格|價錢|价钱|价位|價位|费用|費用|收费|收費|几多|幾多|配套|优惠|優惠|促销|促銷|berapa|harga|pakej|promosi|diskaun|baucar|tawaran)/iu;
-const BARE_AMOUNT_PATTERN = /(?:\brm\s*)?\b\d{3,4}\b/iu;
+const BARE_AMOUNT_PATTERN = /(?:rm\s*)?\d{3,4}(?!\d)/iu;
+const NON_TREATMENT_ANCHOR_PATTERN =
+  /(assessment|consult(?:ation)?|evaluation|评估|評估|咨询|諮詢|面诊|面診)/iu;
 const SERVICE_DISCOVERY_PATTERN =
   /(what|which|show|list|any).{0,30}(treatments|services|options)|(other|more).{0,20}(treatments?|services?|options?)|(treatments|services).{0,30}(do you have|available|offer)|还有什么.{0,12}(疗程|療程|服务|服務)|其他.{0,12}(疗程|療程|服务|服務)|有什么.{0,12}(疗程|療程|服务|服務)|有哪些.{0,12}(疗程|療程|服务|服務)|rawatan apa|rawatan lain|servis apa|servis lain/iu;
 
@@ -140,6 +142,10 @@ function recentConversationServiceAnchor(messages, candidates, maxMessages = 8) 
     }
 
     if (matches.length === 1) {
+      if (NON_TREATMENT_ANCHOR_PATTERN.test(matches[0])) {
+        continue;
+      }
+
       let previousCustomerMatches = [];
       for (let previous = index - 1; previous >= 0; previous -= 1) {
         if (source[previous]?.role !== "user") continue;
@@ -256,6 +262,7 @@ function buildConversationPromptContext(
 module.exports = {
   BARE_AMOUNT_PATTERN,
   CONTACT_PATTERN,
+  NON_TREATMENT_ANCHOR_PATTERN,
   PROMOTION_PATTERN,
   SCHEDULING_PATTERN,
   SERVICE_DISCOVERY_PATTERN,
