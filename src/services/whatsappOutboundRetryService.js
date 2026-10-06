@@ -4,6 +4,7 @@ const contactsRepo = require("../db/contactsRepo");
 const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const outboundMessageEvidenceRepo = require("../db/outboundMessageEvidenceRepo");
 const channelMessaging = require("./channelMessagingService");
+const webPush = require("./webPushService");
 const {
   TRANSIENT_SEND_ERROR_CODES,
 } = require("./whatsappService");
@@ -193,6 +194,7 @@ async function finishAttention(
     contacts = contactsRepo,
     inbound = inboundProcessingRepo,
     leaseToken = row.lease_token,
+    sendDeliveryFailurePush = null,
   } = {}
 ) {
   const attentionReason = String(reason || "Delivery failed.").slice(0, 1000);
@@ -233,6 +235,15 @@ async function finishAttention(
   } else {
     await repository.markFailed(row.id, leaseToken, attentionReason);
   }
+
+  if (typeof sendDeliveryFailurePush === "function") {
+    Promise.resolve(sendDeliveryFailurePush({ contactId: row.contact_id })).catch((err) => {
+      console.error(
+        `Web Push delivery failure alert failed for contact ${row.contact_id}:`,
+        err
+      );
+    });
+  }
   return true;
 }
 
@@ -242,6 +253,7 @@ async function recoverAttentionOnly(
     repository = retryRepo,
     contacts = contactsRepo,
     inbound = inboundProcessingRepo,
+    sendDeliveryFailurePush = null,
   } = {}
 ) {
   const reason = String(
@@ -268,6 +280,14 @@ async function recoverAttentionOnly(
     inbound,
   });
   await repository.markFailed(row.id, row.lease_token, reason);
+  if (typeof sendDeliveryFailurePush === "function") {
+    Promise.resolve(sendDeliveryFailurePush({ contactId: row.contact_id })).catch((err) => {
+      console.error(
+        `Web Push delivery failure alert failed for contact ${row.contact_id}:`,
+        err
+      );
+    });
+  }
   return true;
 }
 
@@ -278,6 +298,7 @@ async function failClosedAmbiguous(row, reason, {
   evidence = outboundMessageEvidenceRepo,
   inbound = inboundProcessingRepo,
   leaseToken = row.lease_token,
+  sendDeliveryFailurePush = null,
 } = {}) {
   const errorText = String(reason || "WhatsApp delivery could not be confirmed.");
   let state;
@@ -322,6 +343,7 @@ async function failClosedAmbiguous(row, reason, {
     contacts,
     inbound,
     leaseToken,
+    sendDeliveryFailurePush,
   });
   return { accepted: false, message: state?.message || null };
 }
@@ -387,6 +409,7 @@ async function runWhatsappOutboundRetryQueue({
   isAutomationEnabled = automatedRepliesEnabled,
   sendText = channelMessaging.sendText,
   sendMessage = null,
+  sendDeliveryFailurePush = null,
 } = {}) {
   const deliverText = compatibleSender({ sendText, sendMessage });
 
@@ -422,6 +445,7 @@ async function runWhatsappOutboundRetryQueue({
         repository,
         contacts,
         inbound,
+      sendDeliveryFailurePush,
       });
       continue;
     }
@@ -460,6 +484,7 @@ async function runWhatsappOutboundRetryQueue({
           repository,
           contacts,
           inbound,
+        sendDeliveryFailurePush,
         });
         continue;
       }
@@ -483,6 +508,7 @@ async function runWhatsappOutboundRetryQueue({
           contacts,
           inbound,
           leaseToken,
+        sendDeliveryFailurePush,
         });
         continue;
       }
@@ -534,6 +560,7 @@ async function runWhatsappOutboundRetryQueue({
           contacts,
           inbound,
           leaseToken,
+        sendDeliveryFailurePush,
         });
         continue;
       }
@@ -688,7 +715,9 @@ function startWhatsappOutboundRetryWorker() {
     return () => retryWorker.stop();
   }
   retryWorker = createAdaptiveWorkerTimer({
-    run: runWhatsappOutboundRetryQueue,
+    run: () => runWhatsappOutboundRetryQueue({
+      sendDeliveryFailurePush: webPush.notifyDeliveryFailure,
+    }),
     delayForResult: delayUntilNextRetry,
     errorRetryDelayMs: WORKER_ERROR_RETRY_MS,
     label: "WhatsApp outbound retry worker",
