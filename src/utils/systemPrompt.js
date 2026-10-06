@@ -240,6 +240,51 @@ function followUpPromotionAuthorityRules() {
 - Do not use "human_review" only because a STAFF message contains an unconfigured offer. Use "human_review" if the customer asks to confirm its validity/terms, it conflicts with current configured information, or staff judgment is otherwise required.`;
 }
 
+function followUpRelevantGuidance(resolvedService) {
+  const serviceName = promptContextText(resolvedService?.name, 240);
+  const serviceKey = followUpLookupKey(serviceName);
+  const aliasKeys = serviceKey
+    ? (config.serviceAliases || [])
+        .filter((item) => followUpLookupKey(item?.officialService) === serviceKey)
+        .map((item) => followUpLookupKey(item?.alias))
+        .filter(Boolean)
+    : [];
+  const keys = [serviceKey, ...aliasKeys].filter(Boolean);
+
+  function relevantBlocks(value, maxLength) {
+    const text = String(value || "").trim();
+    if (!text || !keys.length) return "";
+    const blocks = text
+      .split(/\n\s*\n+/)
+      .map((block) => block.trim())
+      .filter(Boolean)
+      .filter((block) => {
+        const blockKey = followUpLookupKey(block);
+        return keys.some((key) => blockKey.includes(key));
+      });
+    return promptContextText(blocks.join("\n\n"), maxLength) || "";
+  }
+
+  const serviceSop = relevantBlocks(config.sop, 1_600);
+  const serviceClosing = relevantBlocks(config.closingPlaybook, 1_200);
+  const generalClosing = serviceClosing
+    ? ""
+    : promptContextText(config.closingPlaybook, 900) || "";
+
+  const sections = [
+    serviceSop ? `Relevant SOP:\n${serviceSop}` : null,
+    serviceClosing
+      ? `Relevant sales playbook:\n${serviceClosing}`
+      : generalClosing
+        ? `General sales guidance:\n${generalClosing}`
+        : null,
+  ].filter(Boolean);
+
+  return sections.length
+    ? sections.join("\n\n")
+    : "No additional service-specific sales guidance is required for this follow-up.";
+}
+
 function followUpConfiguredGuardrails() {
   const items = (config.guardrails || [])
     .map((item) => promptContextText(item, 420))
@@ -513,6 +558,7 @@ function buildFollowUpPrompt(options = {}) {
   const serviceContext = followUpServiceContext(followUp.treatmentInterest);
   const aliasContext = followUpAliasContext(serviceContext.resolved);
   const promotionContext = followUpPromotionContext(serviceContext.resolved);
+  const relevantGuidance = followUpRelevantGuidance(serviceContext.resolved);
   const includeSchedulingContext = followUp.includeSchedulingContext === true;
   const locationsList = includeSchedulingContext
     ? listOrNone(
@@ -565,6 +611,9 @@ ${followUpPromotionAuthorityRules()}
 
 WRITING STYLE:
 ${messagingStyle}
+
+RELEVANT SALES GUIDANCE:
+${relevantGuidance}
 
 FOLLOW-UP SALES RULES:
 - Continue the customer's unresolved topic. Do not introduce a different service just to have something to say.
