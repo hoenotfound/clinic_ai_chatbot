@@ -1,9 +1,9 @@
 const config = require("../config/clinicConfig");
 
 const SCHEDULING_PATTERN =
-  /(appointment|book(?:ing)?|slot|availability|available|date|time|branch|location|address|hours?|open|close|预约|预[订定]|时[间段]|几点|几时|分店|地点|地址|营业|开门|关门|temujanji|janji temu|slot|masa|pukul|cawangan|lokasi|alamat|buka|tutup)/iu;
+  /(appointment|book(?:ing)?|slot|availability|available|date|time|branch|location|address|hours?|open|close|today|tomorrow|morning|afternoon|evening|night|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|预约|预[订定]|时[间段]|几点|几时|分店|地点|地址|营业|开门|关门|今天|明天|后天|星期[一二三四五六日天]|礼拜[一二三四五六日天]|早上|上午|中午|下午|晚上|temujanji|janji temu|slot|masa|pukul|cawangan|lokasi|alamat|buka|tutup|hari ini|esok|pagi|petang|malam|isnin|selasa|rabu|khamis|jumaat|sabtu|ahad)/iu;
 const CONTACT_PATTERN =
-  /(phone|contact|call|whatsapp|instagram|facebook|tiktok|号码|電話|电话|联系|聯絡|whatsapp|ig|fb|hubungi|telefon|nombor)/iu;
+  /(phone|contact|call|whatsapp|instagram|facebook|tiktok|号码|電話|电话|联系|聯絡|hubungi|telefon|nombor|\big\b|\bfb\b)/iu;
 const PROMOTION_PATTERN =
   /(price|cost|fee|charge|package|promo|promotion|offer|discount|voucher|多少钱|多少錢|价格|價錢|价钱|配套|优惠|優惠|促销|促銷|berapa|harga|pakej|promosi|diskaun|baucar|tawaran)/iu;
 const SERVICE_DISCOVERY_PATTERN =
