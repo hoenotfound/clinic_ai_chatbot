@@ -1,8 +1,9 @@
 const aiService = require("./aiService");
+const clinicConfig = require("../config/clinicConfig");
 const { parseFollowUpAiResult } = require("../utils/followUpAiResult");
 
-const MAX_CONTEXT_MESSAGES = 20;
-const MAX_CONTEXT_CHARS = 14_000;
+const MAX_CONTEXT_MESSAGES = 10;
+const MAX_CONTEXT_CHARS = 6_000;
 const MAX_PREVIOUS_FOLLOW_UPS = 3;
 const PACKAGE_SELECTION_CONTEXT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -16,6 +17,8 @@ const GENUINE_HUMAN_REVIEW_REASON_PATTERN =
   /(medical|safety|suitab|pregnan|contraindicat|side effect|symptom|diagnos|complaint|refund|angry|upset|human request|requested (?:a )?(?:human|staff|agent|person)|wants? (?:a )?(?:human|staff|agent|person)|conflict(?:s|ing)? with (?:current )?(?:business information|active promotions?)|contradict|inconsisten|医疗|安全|适合|怀孕|副作用|症状|诊断|投诉|退款|要求人工|要求真人|转人工|冲突|矛盾|keselamatan|hamil|aduan|bayaran balik|minta (?:staf|manusia|ejen))/iu;
 const CUSTOMER_PROMO_CONFIRMATION_PATTERN =
   /((customer|client|patient|pelanggan|客户|顾客|客人).{0,60}(ask|asks|asked|request|requests|requested|wants? to (?:know|confirm|check)|confirm|verify|询问|问|确认|核实|tanya|sahkan).{0,80}(voucher|coupon|promo|promotion|offer|discount|优惠券|优惠|促销|活动|baucar|promosi|tawaran|diskaun)|(still valid|validity|valid through|expire|expiry|eligible|eligibility).{0,50}(voucher|coupon|promo|promotion|offer|discount|优惠券|优惠|促销|baucar|promosi))/iu;
+const SCHEDULING_CONTEXT_PATTERN =
+  /(appointment|book(?:ing)?|slot|availability|available|date|time|branch|location|address|hours?|open|close|预约|预[订定]|时[间段]|几点|几时|分店|地点|地址|营业|开门|关门|temujanji|janji temu|slot|masa|pukul|cawangan|lokasi|alamat|buka|tutup)/iu;
 
 function cleanContent(value) {
   return String(value || "")
@@ -26,25 +29,90 @@ function cleanContent(value) {
 function trimConversation(messages, {
   maxMessages = MAX_CONTEXT_MESSAGES,
   maxChars = MAX_CONTEXT_CHARS,
+  preserveMessageIds = [],
 } = {}) {
   const source = (Array.isArray(messages) ? messages : [])
     .filter((message) => ["user", "assistant"].includes(message?.role))
-    .map((message) => ({
+    .map((message, sourceIndex) => ({
       ...message,
-      content: cleanContent(message.content),
+      _sourceIndex: sourceIndex,
+      // One unusually long message should not consume the whole follow-up
+      // context budget. 1,800 chars also leaves room to guarantee the outbound
+      // anchor plus the two most recent customer turns inside the 6k default.
+      content: cleanContent(message.content).slice(0, Math.min(maxChars, 1_800)),
     }))
     .filter((message) => message.content);
 
-  const kept = [];
+  const protectedIds = new Set(
+    (Array.isArray(preserveMessageIds) ? preserveMessageIds : [preserveMessageIds])
+      .map(Number)
+      .filter((value) => Number.isSafeInteger(value) && value > 0)
+  );
+  const mandatoryIndexes = new Set();
+
+  source.forEach((message, index) => {
+    if (protectedIds.has(Number(message.id))) mandatoryIndexes.add(index);
+  });
+  let protectedCustomerTurns = 0;
+  for (let index = source.length - 1; index >= 0; index -= 1) {
+    if (source[index].role !== "user") continue;
+    mandatoryIndexes.add(index);
+    protectedCustomerTurns += 1;
+    if (protectedCustomerTurns >= 2) break;
+  }
+
+  const selectedIndexes = [];
   let chars = 0;
   for (let index = source.length - 1; index >= 0; index -= 1) {
     const message = source[index];
-    if (kept.length >= maxMessages) break;
-    if (kept.length > 0 && chars + message.content.length > maxChars) break;
-    kept.push(message);
+    if (selectedIndexes.length >= maxMessages) break;
+    if (selectedIndexes.length > 0 && chars + message.content.length > maxChars) break;
+    selectedIndexes.push(index);
     chars += message.content.length;
   }
-  return kept.reverse();
+
+  for (const index of mandatoryIndexes) {
+    if (!selectedIndexes.includes(index)) selectedIndexes.push(index);
+  }
+
+  selectedIndexes.sort((a, b) => a - b);
+  while (selectedIndexes.length > maxMessages) {
+    const removable = selectedIndexes.findIndex((index) => !mandatoryIndexes.has(index));
+    if (removable < 0) break;
+    selectedIndexes.splice(removable, 1);
+  }
+
+  const selectedChars = () => selectedIndexes.reduce(
+    (total, index) => total + source[index].content.length,
+    0
+  );
+  while (selectedChars() > maxChars) {
+    const removable = selectedIndexes.findIndex((index) => !mandatoryIndexes.has(index));
+    if (removable < 0) break;
+    selectedIndexes.splice(removable, 1);
+  }
+
+  return selectedIndexes.map((index) => {
+    const { _sourceIndex, ...message } = source[index];
+    return message;
+  });
+}
+
+function meaningfulAppointmentStatus(value) {
+  const normalized = cleanContent(value).toLocaleLowerCase();
+  return Boolean(
+    normalized &&
+    !["none", "unknown", "not captured", "not_captured", "n/a", "null"].includes(normalized)
+  );
+}
+
+function needsSchedulingContext(messages, {
+  branchName = null,
+  appointmentStatus = null,
+} = {}) {
+  if (cleanContent(branchName) || meaningfulAppointmentStatus(appointmentStatus)) return true;
+  return trimConversation(messages, { maxMessages: 6, maxChars: 2_500 })
+    .some((message) => SCHEDULING_CONTEXT_PATTERN.test(message.content));
 }
 
 function renderConversation(messages) {
@@ -83,6 +151,54 @@ function selectExplicitPackageFromLatestCustomerMessage(customerMessages, packag
   );
 
   return matches.length === 1 ? matches[0].name : null;
+}
+
+function recentConfiguredServiceNames(messages, maxServices = 2) {
+  const services = Array.isArray(clinicConfig.services) ? clinicConfig.services : [];
+  const aliases = Array.isArray(clinicConfig.serviceAliases) ? clinicConfig.serviceAliases : [];
+  const candidates = services
+    .map((service) => {
+      const name = cleanContent(service?.name);
+      if (!name) return null;
+      const nameKey = normalizedComparable(name);
+      const terms = [
+        name,
+        ...aliases
+          .filter((alias) => normalizedComparable(alias?.officialService) === nameKey)
+          .map((alias) => cleanContent(alias?.alias))
+          .filter(Boolean),
+      ]
+        .map((value) => ({ value, key: normalizedComparable(value) }))
+        .filter(({ key }) => {
+          if (!key || key.length < 2) return false;
+          if (!/^[a-z0-9]+$/u.test(key)) return true;
+          if (key.length >= 3) return true;
+          // Keep compact treatment labels such as 3D / 9D, while rejecting
+          // ambiguous single-letter package aliases and generic two-letter
+          // abbreviations that are too easy to match accidentally.
+          return /[a-z]/u.test(key) && /[0-9]/u.test(key);
+        });
+      return { name, terms };
+    })
+    .filter(Boolean);
+
+  const recent = trimConversation(
+    (Array.isArray(messages) ? messages : []).filter((message) => message?.role === "user"),
+    { maxMessages: 6, maxChars: 3_500 }
+  );
+  const found = [];
+  for (let index = recent.length - 1; index >= 0; index -= 1) {
+    const contentKey = normalizedComparable(recent[index].content);
+    if (!contentKey) continue;
+    for (const candidate of candidates) {
+      if (found.includes(candidate.name)) continue;
+      if (candidate.terms.some(({ key }) => contentKey.includes(key))) {
+        found.push(candidate.name);
+        if (found.length >= maxServices) return found;
+      }
+    }
+  }
+  return found;
 }
 
 function bigrams(value) {
@@ -331,15 +447,22 @@ async function generatePersonalizedFollowUp({
   channel = "whatsapp",
   env = process.env,
 } = {}) {
-  const trimmed = trimConversation(conversation);
+  const trimmed = trimConversation(conversation, {
+    preserveMessageIds: [triggerMessageId],
+  });
   if (!trimmed.some((message) => message.role === "user")) {
     const err = new Error("AI follow-up needs at least one customer message.");
     err.code = "FOLLOW_UP_CONTEXT_MISSING";
     throw err;
   }
 
-  const priorFollowUps = previousFollowUps(trimmed, triggerMessageId);
+  const priorFollowUps = previousFollowUps(conversation, triggerMessageId);
   const recentNormalAssistant = recentNormalAssistantMessages(trimmed);
+  const includeSchedulingContext = needsSchedulingContext(conversation, {
+    branchName,
+    appointmentStatus,
+  });
+  const recentServiceNames = recentConfiguredServiceNames(trimmed);
   let avoidMessage = "";
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -351,9 +474,13 @@ async function generatePersonalizedFollowUp({
         followUpContext: {
           stepNumber: Number(stepNumber) || 1,
           treatmentInterest: cleanContent(treatmentInterest),
+          recentServiceNames,
           stageName: cleanContent(stageName),
           branchName: cleanContent(branchName),
-          appointmentStatus: cleanContent(appointmentStatus),
+          appointmentStatus: meaningfulAppointmentStatus(appointmentStatus)
+            ? cleanContent(appointmentStatus)
+            : "",
+          includeSchedulingContext,
           instruction: cleanContent(instruction),
           previousFollowUps: priorFollowUps,
           avoidMessage,
@@ -386,7 +513,9 @@ module.exports = {
   MAX_CONTEXT_MESSAGES,
   generatePersonalizedFollowUp,
   isSubstantiallySimilar,
+  needsSchedulingContext,
   previousFollowUps,
+  recentConfiguredServiceNames,
   renderConversation,
   scopePackageSelectionConversation,
   selectExplicitPackageFromLatestCustomerMessage,

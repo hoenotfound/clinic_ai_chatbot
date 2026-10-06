@@ -1,10 +1,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const aiService = require("../src/services/aiService");
+const config = require("../src/config/clinicConfig");
 const {
   generatePersonalizedFollowUp,
   isSubstantiallySimilar,
+  needsSchedulingContext,
   previousFollowUps,
+  recentConfiguredServiceNames,
   scopePackageSelectionConversation,
   selectPromotionPackageForFollowUp,
   shouldSuppressStaffPromotionHumanReview,
@@ -31,6 +34,80 @@ test("follow-up context keeps the newest bounded conversation in chronological o
     "message-23",
     "message-24",
   ]);
+});
+
+
+test("default follow-up context is compact and preserves an explicit anchor", () => {
+  const input = Array.from({ length: 18 }, (_, index) => ({
+    id: index + 1,
+    role: index % 2 ? "assistant" : "user",
+    content: `message-${index}-${"x".repeat(700)}`,
+  }));
+  const trimmed = trimConversation(input, { preserveMessageIds: [2] });
+
+  assert.ok(trimmed.length <= 10);
+  assert.ok(trimmed.reduce((total, item) => total + item.content.length, 0) <= 6_000);
+  assert.ok(trimmed.some((item) => item.id === 2), "follow-up anchor should be preserved");
+  assert.ok(trimmed.some((item) => item.id === 17), "latest customer message should be preserved");
+  assert.ok(trimmed.some((item) => item.id === 15), "previous customer turn should be preserved");
+});
+
+test("booking, branch and timing language enables scheduling context", () => {
+  assert.equal(
+    needsSchedulingContext([{ role: "user", content: "Saturday 3pm can book吗？" }]),
+    true
+  );
+  assert.equal(
+    needsSchedulingContext([{ role: "user", content: "我主要想改善小腹凸" }]),
+    false
+  );
+  assert.equal(
+    needsSchedulingContext([], { branchName: "PJ" }),
+    true
+  );
+  assert.equal(
+    needsSchedulingContext([], { appointmentStatus: "none" }),
+    false
+  );
+  assert.equal(
+    needsSchedulingContext([], { appointmentStatus: "reschedule" }),
+    true
+  );
+});
+
+test("recent service hints preserve a two-service comparison when CRM interest is unset", () => {
+  const original = {
+    services: config.services,
+    serviceAliases: config.serviceAliases,
+  };
+
+  try {
+    config.services = [
+      { name: "3D 小颜术" },
+      { name: "9D 逆龄抗衰" },
+      { name: "骨盆调理" },
+    ];
+    config.serviceAliases = [
+      { alias: "3D", officialService: "3D 小颜术" },
+      { alias: "9D", officialService: "9D 逆龄抗衰" },
+      { alias: "A", officialService: "骨盆调理" },
+    ];
+
+    const names = recentConfiguredServiceNames([
+      { role: "assistant", content: "我们也有骨盆调理。" },
+      { role: "user", content: "3D跟9D有什么不同？" },
+      { role: "assistant", content: "主要看你比较在意脸型还是松弛。" },
+    ]);
+
+    assert.deepEqual(names, ["3D 小颜术", "9D 逆龄抗衰"]);
+    assert.deepEqual(
+      recentConfiguredServiceNames([{ role: "user", content: "I have a question" }]),
+      [],
+      "single-letter alias A must not match ordinary English text"
+    );
+  } finally {
+    Object.assign(config, original);
+  }
 });
 
 test("similarity catches near-duplicate Chinese follow-ups", () => {
