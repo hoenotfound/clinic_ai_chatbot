@@ -1,3 +1,7 @@
+const {
+  normalizeMediaTranslations,
+  resolveLocalizedMedia,
+} = require("./mediaLocalization");
 const DEFAULT_RESULT_MEDIA_DUPLICATE_HOURS = 7 * 24;
 const RESULT_MEDIA_TRIGGER_MODES = new Set(["off", "price_only", "service_enquiry"]);
 const SERVICE_QUERY_SOURCES = new Set(["customer_message", "conversation", "meta_ad"]);
@@ -27,14 +31,21 @@ function matchingResultMediaSet(resultMedia, treatment) {
   if (matches.length !== 1) return null;
 
   const [entry] = matches;
-  const items = (Array.isArray(entry.items) ? entry.items : []).filter(
-    (item) =>
-      item &&
-      typeof item.imageUrl === "string" &&
-      item.imageUrl.trim() &&
-      typeof item.caption === "string" &&
-      item.caption.trim()
-  );
+  const items = (Array.isArray(entry.items) ? entry.items : [])
+    .filter(
+      (item) =>
+        item &&
+        typeof item.imageUrl === "string" &&
+        item.imageUrl.trim() &&
+        typeof item.caption === "string" &&
+        item.caption.trim()
+    )
+    .map((item) => ({
+      ...item,
+      imageUrl: item.imageUrl.trim(),
+      caption: item.caption.trim(),
+      mediaTranslations: normalizeMediaTranslations(item.mediaTranslations),
+    }));
   if (!items.length) return null;
 
   const configuredCount = Number(entry.autoSendCount);
@@ -68,11 +79,19 @@ function mediaIdentity(value) {
   return match ? `stored:${match[1]}` : raw;
 }
 
+function itemImageUrls(item) {
+  const translations = normalizeMediaTranslations(item?.mediaTranslations);
+  return [...new Set([
+    String(item?.imageUrl || "").trim(),
+    ...Object.values(translations).map((entry) => String(entry.imageUrl || "").trim()),
+  ].filter(Boolean))];
+}
+
 function rotateAfter(items, lastImageUrl) {
   if (!Array.isArray(items) || items.length === 0 || !lastImageUrl) return items;
   const lastIdentity = mediaIdentity(lastImageUrl);
   const index = items.findIndex(
-    (item) => mediaIdentity(item.imageUrl) === lastIdentity
+    (item) => itemImageUrls(item).some((imageUrl) => mediaIdentity(imageUrl) === lastIdentity)
   );
   if (index < 0) return items;
   const start = (index + 1) % items.length;
@@ -92,6 +111,7 @@ async function resolveResultMediaForReply({
   needsAttention,
   textSendSucceeded,
   resultMedia,
+  language = "en",
   contactId,
   wasMediaRecentlySent,
   getMostRecentlySentMediaUrl,
@@ -144,18 +164,22 @@ async function resolveResultMediaForReply({
     return null;
   }
 
+  const allConfiguredImageUrls = [];
   for (const item of resultSet.items) {
-    const recentlySent = await wasMediaRecentlySent(
-      contactId,
-      item.imageUrl,
-      duplicateWindowHours
-    );
-    if (recentlySent) return null;
+    for (const imageUrl of itemImageUrls(item)) {
+      allConfiguredImageUrls.push(imageUrl);
+      const recentlySent = await wasMediaRecentlySent(
+        contactId,
+        imageUrl,
+        duplicateWindowHours
+      );
+      if (recentlySent) return null;
+    }
   }
 
   const lastImageUrl = await getMostRecentlySentMediaUrl(
     contactId,
-    resultSet.items.map((item) => item.imageUrl)
+    [...new Set(allConfiguredImageUrls)]
   );
   const rotatedItems = rotateAfter(resultSet.items, lastImageUrl);
 
@@ -163,7 +187,9 @@ async function resolveResultMediaForReply({
     service: resultSet.service,
     triggerMode: resultSet.triggerMode,
     serviceQuerySource: trustedServiceQuery ? serviceQuerySource : null,
-    items: rotatedItems.slice(0, resultSet.autoSendCount),
+    items: rotatedItems
+      .slice(0, resultSet.autoSendCount)
+      .map((item) => resolveLocalizedMedia(item, language)),
   };
 }
 
@@ -172,6 +198,7 @@ module.exports = {
   RESULT_MEDIA_TRIGGER_MODES,
   SERVICE_QUERY_SOURCES,
   normalizeResultMediaTriggerMode,
+  itemImageUrls,
   matchingResultMediaSet,
   mediaIdentity,
   rotateAfter,
