@@ -171,6 +171,8 @@ async function purgeContactData({
     let pendingAttributions = 0;
     let referralTombstones = 0;
     let commentJobs = 0;
+    let pendingReactions = 0;
+    let reactionTombstones = 0;
     const externalUserId =
       contact.channel === "whatsapp"
         ? null
@@ -254,6 +256,64 @@ async function purgeContactData({
       }
     }
 
+    if (contact.channel === "whatsapp") {
+      const whatsappNumber = String(contact.whatsapp_number || "").trim();
+      const pendingReactionDelete = await client.query(
+        `DELETE FROM pending_whatsapp_reactions pending
+         WHERE ($2 <> '' AND pending.reactor_whatsapp_id = $2)
+            OR EXISTS (
+              SELECT 1
+              FROM messages target
+              WHERE target.contact_id = $1
+                AND target.whatsapp_message_id IS NOT NULL
+                AND target.whatsapp_message_id = pending.target_whatsapp_message_id
+            )
+         RETURNING provider_reaction_message_id`,
+        [id, whatsappNumber]
+      );
+      pendingReactions = pendingReactionDelete.rowCount || 0;
+
+      const storedReactionResult = await client.query(
+        `SELECT DISTINCT provider_reaction_message_id
+         FROM message_reactions
+         WHERE contact_id = $1
+           AND provider_reaction_message_id IS NOT NULL
+           AND BTRIM(provider_reaction_message_id) <> ''`,
+        [id]
+      );
+
+      const reactionEventIds = normalizeJsonArray([
+        ...storedReactionResult.rows.map((row) => row.provider_reaction_message_id),
+        ...pendingReactionDelete.rows.map((row) => row.provider_reaction_message_id),
+      ]);
+      reactionTombstones = reactionEventIds.length;
+
+      if (reactionEventIds.length > 0) {
+        await client.query(
+          `INSERT INTO customer_data_deleted_message_ids (
+             provider_message_id,
+             deleted_at,
+             expires_at
+           )
+           SELECT
+             deleted.event_id,
+             now(),
+             now() + interval '30 days'
+           FROM jsonb_to_recordset($1::jsonb)
+             AS deleted(event_id TEXT)
+           WHERE deleted.event_id IS NOT NULL
+             AND BTRIM(deleted.event_id) <> ''
+           ON CONFLICT (provider_message_id) DO UPDATE
+           SET deleted_at = EXCLUDED.deleted_at,
+               expires_at = GREATEST(
+                 customer_data_deleted_message_ids.expires_at,
+                 EXCLUDED.expires_at
+               )`,
+          [JSON.stringify(reactionEventIds.map((eventId) => ({ event_id: eventId })))]
+        );
+      }
+    }
+
     const tombstoneResult = await client.query(
       `INSERT INTO customer_data_deleted_message_ids (
          provider_message_id,
@@ -287,6 +347,8 @@ async function purgeContactData({
       providerMessageTombstones: tombstoneResult.rowCount || 0,
       providerReferralTombstones: referralTombstones,
       providerCommentTombstones: commentJobs,
+      pendingReactions,
+      providerReactionTombstones: reactionTombstones,
     };
 
     const jobResult = await client.query(
