@@ -1697,12 +1697,16 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       // copy for Meta, then send a short-lived signed URL for that copy. This
       // avoids another Render->provider byte upload without exposing the
       // permanent customer-media object key.
-      const mediaReference =
-        await messagesRepo.getMessageMediaReferenceForContact(saved.contact_id, saved.id);
-      if (!mediaReference?.media_key) {
-        throw new Error("Saved image media reference is missing.");
-      }
       try {
+        const mediaReference =
+          await messagesRepo.getMessageMediaReferenceForContact(
+            saved.contact_id,
+            saved.id
+          );
+        if (!mediaReference?.media_key) {
+          throw new Error("Saved image media reference is missing.");
+        }
+
         const temporaryMedia = await mediaStorage.copyStoredMediaToTemporary(
           mediaReference.media_key,
           req.file.mimetype,
