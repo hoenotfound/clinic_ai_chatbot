@@ -54,12 +54,79 @@ test("outbound message writes take the conversation scoring lock", async (t) => 
   pool.query = async (sql, params) => {
     assert.match(sql, new RegExp(`pg_advisory_xact_lock\\(${CONVERSATION_LOCK_NAMESPACE}`));
     assert.match(sql, /FROM conversation_lock/);
-    assert.deepEqual(params, [7, "assistant", "Hello", null, null, null, null, null]);
+    assert.deepEqual(params, [7, "assistant", "Hello", null, null, null, null, null, null, false]);
     return { rows: [{ id: 42, contact_id: 7, content: "Hello" }] };
   };
 
   const saved = await messagesRepo.saveMessage(7, "assistant", "Hello");
   assert.equal(saved.id, 42);
+});
+
+test("stores quoted-reply and forwarded metadata atomically", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /reply_to_provider_message_id, is_forwarded/);
+    assert.equal(params[8], "wamid.quoted-original");
+    assert.equal(params[9], true);
+    return {
+      rows: [{
+        id: 45,
+        contact_id: 7,
+        content: "Forwarded reply",
+        reply_to_provider_message_id: params[8],
+        is_forwarded: params[9],
+      }],
+    };
+  };
+
+  const saved = await messagesRepo.saveMessage(
+    7,
+    "assistant",
+    "Forwarded reply",
+    null,
+    "staff",
+    null,
+    null,
+    null,
+    {
+      replyToProviderMessageId: "wamid.quoted-original",
+      isForwarded: true,
+    }
+  );
+
+  assert.equal(saved.reply_to_provider_message_id, "wamid.quoted-original");
+  assert.equal(saved.is_forwarded, true);
+});
+
+test("reply-target lookup exposes delivery status for server-side quote validation", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /delivery_status/);
+    assert.match(sql, /WHERE id = \$1 AND contact_id = \$2/);
+    assert.deepEqual(params, [81, 7]);
+    return {
+      rows: [{
+        id: 81,
+        contact_id: 7,
+        role: "assistant",
+        content: "Unconfirmed outbound",
+        whatsapp_message_id: "wamid-unconfirmed",
+        delivery_status: "unknown",
+      }],
+    };
+  };
+
+  const message = await messagesRepo.getMessageForReplyContext(7, 81);
+  assert.equal(message.delivery_status, "unknown");
+  assert.equal(message.whatsapp_message_id, "wamid-unconfirmed");
 });
 
 test("uploads Buffer attachments to R2 without a base64 round-trip", async (t) => {
@@ -89,6 +156,8 @@ test("uploads Buffer attachments to R2 without a base64 round-trip", async (t) =
       null,
       "messages/7/direct-buffer.jpg",
       "image/jpeg",
+      null,
+      false,
     ]);
     return { rows: [{ id: 43, contact_id: 7, content: "Photo" }] };
   };

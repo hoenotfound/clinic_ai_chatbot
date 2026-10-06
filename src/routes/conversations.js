@@ -1,6 +1,7 @@
 const express = require("express");
 const multer = require("multer");
 const { pipeline } = require("node:stream/promises");
+const { canAccessContact } = require("../utils/accessControl");
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
@@ -32,6 +33,8 @@ const SSE_HEARTBEAT_MS = 25 * 1000;
 const SEND_REJECTED_ERROR =
   "WhatsApp did not accept this message. Check the reply window or connection and try again.";
 const MAX_DELIVERY_STATUS_IDS = 500;
+const WHATSAPP_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const WHATSAPP_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -73,6 +76,49 @@ function parsePositiveInt(value) {
   if (value == null || value === "") return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function resolveReplyTarget(contact, rawMessageId, res) {
+  if (rawMessageId == null || rawMessageId === "") {
+    return { ok: true, target: null };
+  }
+
+  const messageId = parsePositiveInt(rawMessageId);
+  if (!messageId) {
+    res.status(400).json({ error: "Invalid reply message id." });
+    return { ok: false, target: null };
+  }
+
+  if ((contact.channel || "whatsapp") !== "whatsapp") {
+    res.status(400).json({
+      error: "Quoted replies are currently available for WhatsApp conversations only.",
+    });
+    return { ok: false, target: null };
+  }
+
+  const target = await messagesRepo.getMessageForReplyContext(contact.id, messageId);
+  if (!target) {
+    res.status(404).json({ error: "The message you are replying to could not be found." });
+    return { ok: false, target: null };
+  }
+  if (!target.whatsapp_message_id) {
+    res.status(409).json({ error: "That message is not available to quote on WhatsApp yet." });
+    return { ok: false, target: null };
+  }
+
+  const targetDeliveryStatus = String(target.delivery_status || "").toLowerCase();
+  if (
+    target.role !== "user" &&
+    ["failed", "unknown"].includes(targetDeliveryStatus)
+  ) {
+    res.status(409).json({
+      error:
+        "That outbound message was not confirmed delivered, so it cannot be used as a WhatsApp quote.",
+    });
+    return { ok: false, target: null };
+  }
+
+  return { ok: true, target };
 }
 
 function normalizeSingleByteRange(value) {
@@ -263,6 +309,12 @@ async function sendStoredMessage(contact, message, options = {}) {
   const mimeType = String(message.media_mime_type || "").toLowerCase();
   const channel = contact.channel || "whatsapp";
   const skipCaption = hasPartialCaptionMarker(message.delivery_error);
+  if (message.reply_to_provider_message_id) {
+    options = {
+      ...options,
+      replyToProviderMessageId: message.reply_to_provider_message_id,
+    };
+  }
 
   if (mimeType.startsWith("audio/") && message.media_base64) {
     const storedBuffer = Buffer.from(message.media_base64, "base64");
@@ -284,6 +336,22 @@ async function sendStoredMessage(contact, message, options = {}) {
       storedBuffer,
       mimeType,
       "voice.mp3",
+      socialProviderSendOptions(message, contact, options)
+    );
+  }
+
+  const storedSticker =
+    mimeType === "image/webp" &&
+    /(?:sent a sticker|forwarded sticker|sticker sent from)/i.test(
+      String(message.content || "")
+    );
+
+  if (storedSticker && message.media_base64 && channel === "whatsapp") {
+    return channelMessaging.sendStickerBuffer(
+      contact,
+      Buffer.from(message.media_base64, "base64"),
+      mimeType,
+      "sticker.webp",
       socialProviderSendOptions(message, contact, options)
     );
   }
@@ -1238,15 +1306,204 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
   }
 });
 
+async function forwardStoredMessage(sourceMessage, targetContact, username) {
+  const policy = await whatsappPolicy.checkFreeformAllowed(targetContact, new Date(), {
+    purpose: whatsappPolicy.manualStaffPurpose(targetContact),
+  });
+  if (!policy.allowed) {
+    return {
+      contactId: targetContact.id,
+      delivered: false,
+      policyBlocked: true,
+      code: policy.code || null,
+      error: policy.message || "Messaging is not currently allowed for this contact.",
+    };
+  }
+
+  const sourceMimeType = String(sourceMessage.media_mime_type || "").toLowerCase();
+  const sourceContent = String(sourceMessage.content || "");
+  const sourceIsSticker =
+    sourceMimeType === "image/webp" &&
+    /(?:sent a sticker|sticker sent from)/i.test(sourceContent);
+  let forwardedContent = sourceContent;
+  if (sourceIsSticker) {
+    // Keep a small local marker so failed forwarded stickers can be retried
+    // through the sticker endpoint instead of being mistaken for normal images.
+    forwardedContent = "🙂 [Forwarded sticker]";
+  } else if (
+    sourceMimeType.startsWith("image/") &&
+    /^📷\s*\[[^\]]+sent a photo\]\s*$/iu.test(sourceContent.trim())
+  ) {
+    forwardedContent = "";
+  } else if (sourceMimeType.startsWith("image/")) {
+    forwardedContent = sourceContent.replace(/^📷\s*/u, "");
+  }
+
+  const mediaAttachment = sourceMessage.media_base64
+    ? {
+        mimeType: sourceMessage.media_mime_type,
+        buffer: Buffer.from(sourceMessage.media_base64, "base64"),
+      }
+    : null;
+
+  const prepared = await telegramImmediateAlertRepo.withContactAlertLock(
+    targetContact.id,
+    async () => {
+      const preparedContact = await prepareStaffSend(targetContact, username);
+      const saved = await conversationStore.appendMessageForContact(
+        preparedContact.id,
+        "assistant",
+        forwardedContent,
+        null,
+        username,
+        sourceMessage.media_url || null,
+        mediaAttachment,
+        { isForwarded: true }
+      );
+      const finalContact =
+        await finalizeStaffSendState(preparedContact.id, username);
+      return { preparedContact: finalContact || preparedContact, saved };
+    }
+  );
+
+  const { preparedContact, saved } = prepared;
+  const messageForSend = {
+    ...sourceMessage,
+    id: saved.id,
+    contact_id: saved.contact_id,
+    content: forwardedContent,
+    delivery_error: null,
+    reply_to_provider_message_id: null,
+    is_forwarded: true,
+  };
+  const sendResult = await sendStoredMessage(preparedContact, messageForSend, {
+    purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+  });
+  const errorText = deliveryErrorForSend(
+    sendResult,
+    sendResult.error || rejectedErrorFor(preparedContact)
+  );
+  const finalMessage = await persistSendOutcome(
+    saved,
+    sendResult,
+    errorText,
+    preparedContact.channel || "whatsapp"
+  );
+
+  if (sendResult.success) {
+    await markLeadContacted(preparedContact.id, username, sendResult);
+  } else {
+    await contactsRepo.setDeliveryAttention(
+      preparedContact.id,
+      `Delivery failed: ${publicDeliveryError(errorText)}`
+    );
+  }
+
+  return {
+    contactId: preparedContact.id,
+    delivered: sendResult.success,
+    error: sendResult.success ? null : publicDeliveryError(errorText),
+    message: {
+      ...finalMessage,
+      delivery_error: publicDeliveryError(finalMessage.delivery_error),
+      is_forwarded: true,
+    },
+  };
+}
+
+router.post("/:contactId/messages/:messageId/forward", async (req, res) => {
+  try {
+    const sourceContactId = parsePositiveInt(req.params.contactId);
+    const sourceMessageId = parsePositiveInt(req.params.messageId);
+    if (!sourceContactId || !sourceMessageId) {
+      return res.status(400).json({ error: "Invalid message." });
+    }
+
+    const requestedTargets = Array.isArray(req.body?.targetContactIds)
+      ? req.body.targetContactIds
+      : [];
+    const targetContactIds = [
+      ...new Set(requestedTargets.map(parsePositiveInt).filter(Boolean)),
+    ];
+    if (!targetContactIds.length) {
+      return res.status(400).json({ error: "Choose at least one conversation to forward to." });
+    }
+    if (targetContactIds.length > 10) {
+      return res.status(400).json({ error: "You can forward to up to 10 conversations at a time." });
+    }
+
+    const sourceMessage = await messagesRepo.getMessageForRetry(
+      sourceContactId,
+      sourceMessageId
+    );
+    if (!sourceMessage) {
+      return res.status(404).json({ error: "Message not found." });
+    }
+    const hasForwardableContent =
+      Boolean(String(sourceMessage.content || "").trim()) ||
+      Boolean(sourceMessage.media_base64) ||
+      Boolean(sourceMessage.media_url);
+    if (!hasForwardableContent) {
+      return res.status(400).json({ error: "This message cannot be forwarded." });
+    }
+
+    const targets = [];
+    for (const contactId of targetContactIds) {
+      if (!(await canAccessContact(req.user, contactId))) {
+        return res.status(403).json({
+          error: "One of the selected conversations is not assigned to you.",
+        });
+      }
+      const target = await contactsRepo.getContactById(contactId);
+      if (!target) {
+        return res.status(404).json({ error: "One of the selected conversations no longer exists." });
+      }
+      targets.push(target);
+    }
+
+    const results = [];
+    for (const target of targets) {
+      try {
+        results.push(
+          await forwardStoredMessage(sourceMessage, target, req.session.username)
+        );
+      } catch (err) {
+        console.error(
+          `Failed to forward message ${sourceMessageId} to contact ${target.id}:`,
+          err
+        );
+        results.push({
+          contactId: target.id,
+          delivered: false,
+          error: "Something went wrong forwarding this message.",
+        });
+      }
+    }
+
+    const deliveredCount = results.filter((result) => result.delivered).length;
+    res.status(200).json({
+      deliveredCount,
+      requestedCount: results.length,
+      results,
+    });
+  } catch (err) {
+    console.error("Failed to forward Inbox message:", err);
+    res.status(500).json({ error: "Something went wrong forwarding this message." });
+  }
+});
+
 router.post("/:contactId/messages", async (req, res) => {
   try {
     const contact = await contactsRepo.getContactById(req.params.contactId);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
 
-    const { text } = req.body || {};
+    const { text, replyToMessageId } = req.body || {};
     if (!text || !text.trim()) {
       return res.status(400).json({ error: "Message text is required." });
     }
+    const reply = await resolveReplyTarget(contact, replyToMessageId, res);
+    if (!reply.ok) return;
+    const replyTarget = reply.target;
     if (!(await requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)))) return;
 
     const prepared = await telegramImmediateAlertRepo.withContactAlertLock(
@@ -1261,7 +1518,12 @@ router.post("/:contactId/messages", async (req, res) => {
           "assistant",
           text.trim(),
           null,
-          req.session.username
+          req.session.username,
+          null,
+          null,
+          {
+            replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+          }
         );
         const finalContact =
           await finalizeStaffSendState(preparedContact.id, req.session.username);
@@ -1275,6 +1537,7 @@ router.post("/:contactId/messages", async (req, res) => {
       text.trim(),
       socialProviderSendOptions(saved, preparedContact, {
         purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+        replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
       })
     );
     const errorText = deliveryErrorForSend(
@@ -1337,6 +1600,26 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "An image file is required." });
     }
+
+    if ((contact.channel || "whatsapp") === "whatsapp") {
+      const mimeType = String(req.file.mimetype || "").toLowerCase();
+      if (!WHATSAPP_IMAGE_MIME_TYPES.has(mimeType)) {
+        return res.status(400).json({
+          error: "WhatsApp images must be JPEG or PNG.",
+          code: "unsupported_whatsapp_image_type",
+        });
+      }
+      if (req.file.size > WHATSAPP_IMAGE_MAX_BYTES) {
+        return res.status(400).json({
+          error: "WhatsApp images must be 5MB or smaller.",
+          code: "whatsapp_image_too_large",
+        });
+      }
+    }
+
+    const reply = await resolveReplyTarget(contact, req.body?.replyToMessageId, res);
+    if (!reply.ok) return;
+    const replyTarget = reply.target;
     if (!(await requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)))) return;
 
     const caption = (req.body?.caption || "").trim();
@@ -1359,7 +1642,10 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
           null,
           req.session.username,
           null,
-          { mimeType: req.file.mimetype, buffer: req.file.buffer }
+          { mimeType: req.file.mimetype, buffer: req.file.buffer },
+          {
+            replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+          }
         );
         const finalContact =
           await finalizeStaffSendState(preparedContact.id, req.session.username);
@@ -1376,6 +1662,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       req.file.originalname || "image",
       socialProviderSendOptions(saved, preparedContact, {
         purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+        replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
       })
     );
     const errorText = deliveryErrorForSend(
@@ -1417,6 +1704,10 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "A voice recording is required." });
     }
+
+    const reply = await resolveReplyTarget(contact, req.body?.replyToMessageId, res);
+    if (!reply.ok) return;
+    const replyTarget = reply.target;
 
     // Stop an in-flight AI reply immediately; conversion/transcription below
     // can take several seconds. Ownership/attention state is changed only after
@@ -1462,6 +1753,9 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
           {
             mimeType: converted.playback.mimeType,
             buffer: converted.playback.buffer,
+          },
+          {
+            replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
           }
         );
         const finalContact =
@@ -1505,6 +1799,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       socialProviderSendOptions(saved, currentContact, {
         purpose: whatsappPolicy.manualStaffPurpose(currentContact),
         requireStaffMode: currentContact.mode === "human",
+        replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
       })
     );
     const errorText = sendResult.error || rejectedErrorFor(currentContact);

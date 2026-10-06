@@ -195,6 +195,28 @@ test("staff send routes check channel policy before Staff Assist", () => {
   assert.match(source, /channelMessaging\.sendText/);
   assert.match(source, /channelMessaging\.sendImageBuffer/);
 });
+test("Inbox WhatsApp reply and image routes fail closed on invalid provider media state", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/routes/conversations.js"),
+    "utf8"
+  );
+  const imageRoute = source.slice(
+    source.indexOf('router.post("/:contactId/media",'),
+    source.indexOf('router.post("/:contactId/voice",')
+  );
+  const replyHelper = source.slice(
+    source.indexOf("async function resolveReplyTarget"),
+    source.indexOf("function normalizeSingleByteRange")
+  );
+
+  assert.match(imageRoute, /WHATSAPP_IMAGE_MIME_TYPES/);
+  assert.match(imageRoute, /WHATSAPP_IMAGE_MAX_BYTES/);
+  assert.match(imageRoute, /unsupported_whatsapp_image_type/);
+  assert.match(imageRoute, /whatsapp_image_too_large/);
+  assert.match(replyHelper, /target\.role !== "user"/);
+  assert.match(replyHelper, /\["failed", "unknown"\]\.includes\(targetDeliveryStatus\)/);
+});
+
 test("staff voice sends keep Staff Waiting blocked until the voice reply is persisted", () => {
   const source = fs.readFileSync(
     path.join(__dirname, "../src/routes/conversations.js"),

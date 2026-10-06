@@ -38,6 +38,8 @@ const MAX_INCREMENTAL_MESSAGES = 100;
 const DELIVERY_STATUS_BATCH_SIZE = 500;
 const REALTIME_DEBOUNCE_MS = 100;
 const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
+const WHATSAPP_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const WHATSAPP_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
 const IMAGE_OPTIMIZE_THRESHOLD_BYTES = 1.5 * 1024 * 1024;
 const IMAGE_OPTIMIZE_MAX_DIMENSION = 1920;
 const IMAGE_JPEG_QUALITY = 0.82;
@@ -118,6 +120,35 @@ function mergeMessages(existing, incoming) {
     const bId = Number.isInteger(b.id) ? b.id : Number.MAX_SAFE_INTEGER;
     return aId - bId;
   });
+}
+
+function buildReplyPreview(message) {
+  if (!message) return null;
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content || "",
+    sent_by_username: message.sent_by_username || null,
+    media_mime_type: message.media_mime_type || null,
+    has_media_attachment: Boolean(
+      message.has_media_attachment || message.media_base64 || message.previewUrl
+    ),
+    media_url: message.media_url || null,
+  };
+}
+
+function replyPreviewText(message) {
+  if (!message) return "Original message unavailable";
+  const mimeType = String(message.media_mime_type || "").toLowerCase();
+  const content = String(message.content || "").trim();
+  if (mimeType.startsWith("audio/")) return content || "Voice message";
+  if (mimeType === "image/webp") return "Sticker";
+  if (mimeType.startsWith("image/")) {
+    const placeholder = /\[[^\]]+sent (?:a photo|a sticker)\]$/iu.test(content);
+    if (content && !placeholder) return content.replace(/^(?:📷|🙂)\s*/u, "");
+    return /sticker/i.test(content) ? "Sticker" : "Photo";
+  }
+  return content || "Message";
 }
 
 function isJpegFile(file) {
@@ -206,16 +237,9 @@ function canvasHasTransparency(context, width, height) {
 
 function optimizedImageFileName(name, outputType) {
   const fallbackName = name || "image";
-  if (outputType === "image/jpeg") {
-    return /\.(?:png|jpe?g)$/i.test(fallbackName)
-      ? fallbackName.replace(/\.(?:png|jpe?g)$/i, ".jpg")
-      : `${fallbackName}.jpg`;
-  }
-  if (outputType === "image/png") {
-    return /\.(?:png|jpe?g)$/i.test(fallbackName)
-      ? fallbackName.replace(/\.(?:png|jpe?g)$/i, ".png")
-      : `${fallbackName}.png`;
-  }
+  const withoutExtension = fallbackName.replace(/\.[^.]+$/, "");
+  if (outputType === "image/jpeg") return `${withoutExtension || "image"}.jpg`;
+  if (outputType === "image/png") return `${withoutExtension || "image"}.png`;
   return fallbackName;
 }
 
@@ -251,8 +275,15 @@ async function decodeImageForCanvas(file) {
   }
 }
 
-async function optimizeImageUpload(file, { normalizeProgressiveJpeg = false } = {}) {
-  if (!shouldOptimizeImageUpload(file) && !normalizeProgressiveJpeg) {
+async function optimizeImageUpload(
+  file,
+  { normalizeProgressiveJpeg = false, forceCompatibleFormat = false } = {}
+) {
+  if (
+    !shouldOptimizeImageUpload(file) &&
+    !normalizeProgressiveJpeg &&
+    !forceCompatibleFormat
+  ) {
     return file;
   }
 
@@ -277,10 +308,12 @@ async function optimizeImageUpload(file, { normalizeProgressiveJpeg = false } = 
       ? IMAGE_PROGRESSIVE_JPEG_QUALITY
       : IMAGE_JPEG_QUALITY;
 
-    if (inputType === "image/png") {
-      // Most promo graphics and screenshots are opaque PNGs. Sending those as
+    if (inputType === "image/png" || forceCompatibleFormat) {
+      // Most promo graphics and screenshots are opaque. Sending those as
       // high-quality JPEG dramatically reduces mobile upload time while keeping
-      // transparent artwork as PNG so logos/cut-outs are not damaged.
+      // transparent artwork as PNG so logos/cut-outs are not damaged. For
+      // WhatsApp, browser-native formats such as WebP are normalized here
+      // because normal image messages accept JPEG/PNG rather than sticker WebP.
       const hasTransparency = canvasHasTransparency(context, width, height);
       outputType = hasTransparency ? "image/png" : "image/jpeg";
       quality = hasTransparency ? undefined : IMAGE_PNG_TO_JPEG_QUALITY;
@@ -309,7 +342,9 @@ async function optimizeImageUpload(file, { normalizeProgressiveJpeg = false } = 
       }
     }
 
-    if (!normalizeProgressiveJpeg && blob.size >= file.size) return file;
+    if (!normalizeProgressiveJpeg && !forceCompatibleFormat && blob.size >= file.size) {
+      return file;
+    }
     if (blob.size > MAX_IMAGE_BYTES) return file;
     return new File([blob], optimizedImageFileName(file.name, outputType), {
       type: outputType,
@@ -934,12 +969,16 @@ export default function Inbox() {
     return `optimistic-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 
-  async function handleSend(text) {
+  async function handleSend(text, replyToMessageId = null) {
     if (selectedId == null || !text.trim()) return;
     const contactId = selectedId;
     setActionPending(true);
 
     const optimisticId = makeOptimisticId();
+    const replyTarget = replyToMessageId == null
+      ? null
+      : messagesRef.current.find((message) => Number(message.id) === Number(replyToMessageId));
+    const replyPreview = buildReplyPreview(replyTarget);
     setMessages((prev) => [
       ...prev,
       {
@@ -951,14 +990,17 @@ export default function Inbox() {
         media_url: null,
         media_base64: null,
         media_mime_type: null,
+        reply_to_provider_message_id: replyTarget?.whatsapp_message_id || null,
+        reply_preview: replyPreview,
         _optimistic: true,
       },
     ]);
 
     try {
-      const result = await api.sendMessage(contactId, text.trim());
+      const result = await api.sendMessage(contactId, text.trim(), replyToMessageId);
+      const visibleResult = replyPreview ? { ...result, reply_preview: replyPreview } : result;
       if (selectedIdRef.current === contactId) {
-        setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [result]));
+        setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [visibleResult]));
       }
       await refreshConversations();
       if (result?.delivered === false) {
@@ -976,13 +1018,17 @@ export default function Inbox() {
     }
   }
 
-  async function handleSendImage(file, caption) {
+  async function handleSendImage(file, caption, replyToMessageId = null) {
     if (selectedId == null || !file) return;
     const contactId = selectedId;
     setActionPending(true);
 
     const optimisticId = makeOptimisticId();
     const previewUrl = URL.createObjectURL(file);
+    const replyTarget = replyToMessageId == null
+      ? null
+      : messagesRef.current.find((message) => Number(message.id) === Number(replyToMessageId));
+    const replyPreview = buildReplyPreview(replyTarget);
     setMessages((prev) => [
       ...prev,
       {
@@ -995,15 +1041,18 @@ export default function Inbox() {
         media_base64: null,
         media_mime_type: null,
         previewUrl,
+        reply_to_provider_message_id: replyTarget?.whatsapp_message_id || null,
+        reply_preview: replyPreview,
         _optimistic: true,
         _uploading: true,
       },
     ]);
 
     try {
-      const result = await api.sendImage(contactId, file, caption);
+      const result = await api.sendImage(contactId, file, caption, replyToMessageId);
+      const visibleResult = replyPreview ? { ...result, reply_preview: replyPreview } : result;
       if (selectedIdRef.current === contactId) {
-        setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [result]));
+        setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [visibleResult]));
       }
       await refreshConversations();
       if (result?.delivered === false) {
@@ -1022,15 +1071,20 @@ export default function Inbox() {
     }
   }
 
-  async function handleSendVoice(recording, mimeType) {
+  async function handleSendVoice(recording, mimeType, replyToMessageId = null) {
     if (selectedId == null || !recording) return;
     const contactId = selectedId;
     setActionPending(true);
+    const replyTarget = replyToMessageId == null
+      ? null
+      : messagesRef.current.find((message) => Number(message.id) === Number(replyToMessageId));
+    const replyPreview = buildReplyPreview(replyTarget);
 
     try {
-      const result = await api.sendVoice(contactId, recording, mimeType);
+      const result = await api.sendVoice(contactId, recording, mimeType, replyToMessageId);
+      const visibleResult = replyPreview ? { ...result, reply_preview: replyPreview } : result;
       if (selectedIdRef.current === contactId) {
-        setMessages((prev) => mergeMessages(prev, [{ ...result, has_media_attachment: true }]));
+        setMessages((prev) => mergeMessages(prev, [{ ...visibleResult, has_media_attachment: true }]));
       }
       await refreshConversations();
       if (result?.delivered === false) {
@@ -1045,6 +1099,20 @@ export default function Inbox() {
     } finally {
       if (selectedIdRef.current === contactId) setActionPending(false);
     }
+  }
+
+  async function handleForwardMessage(messageId, targetContactIds) {
+    if (selectedId == null || !Number.isInteger(Number(messageId))) return null;
+    const sourceContactId = selectedId;
+    const result = await api.forwardMessage(sourceContactId, messageId, targetContactIds);
+    const visibleMessages = (result?.results || [])
+      .filter((item) => Number(item.contactId) === Number(selectedIdRef.current) && item.message)
+      .map((item) => item.message);
+    if (visibleMessages.length) {
+      setMessages((current) => mergeMessages(current, visibleMessages));
+    }
+    await refreshConversations();
+    return result;
   }
 
   function handleBackToConversationList() {
@@ -1069,6 +1137,7 @@ export default function Inbox() {
       <ThreadView
         key={selectedId ?? "no-conversation"}
         contact={selectedContact}
+        conversations={conversations || []}
         currentUsername={username}
         canReplyToLeads={canReplyToLeads}
         showUnassignedAssignment={showUnassignedAssignment}
@@ -1090,6 +1159,7 @@ export default function Inbox() {
         onSend={handleSend}
         onSendImage={handleSendImage}
         onSendVoice={handleSendVoice}
+        onForwardMessage={handleForwardMessage}
         onOpenContactDetails={() => setContactDetailsOpen(true)}
         onOpenWhatsAppTemplates={() => setWhatsAppTemplateOpen(true)}
         onToast={showToast}
@@ -1656,6 +1726,7 @@ function DateSeparator({ value }) {
 
 function ThreadView({
   contact,
+  conversations,
   currentUsername,
   canReplyToLeads,
   showUnassignedAssignment,
@@ -1677,6 +1748,7 @@ function ThreadView({
   onSend,
   onSendImage,
   onSendVoice,
+  onForwardMessage,
   onOpenContactDetails,
   onOpenWhatsAppTemplates,
   onToast,
@@ -1714,6 +1786,8 @@ function ThreadView({
   const [voiceDuration, setVoiceDuration] = useState(0);
   const [voicePreviewUrl, setVoicePreviewUrl] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [forwardingMessage, setForwardingMessage] = useState(null);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [attentionExpanded, setAttentionExpanded] = useState(false);
   const [policyNow, setPolicyNow] = useState(Date.now());
@@ -1764,6 +1838,11 @@ function ThreadView({
   useEffect(() => {
     setAttentionExpanded(false);
   }, [contact?.contact_id, contact?.attention_reason]);
+
+  useEffect(() => {
+    setReplyingTo(null);
+    setForwardingMessage(null);
+  }, [contact?.contact_id]);
 
   useEffect(() => {
     if (!loading && messages.length > 0 && shouldStickToBottomRef.current) {
@@ -1833,12 +1912,14 @@ function ThreadView({
     shouldStickToBottomRef.current = distanceFromBottom < 120;
   }
 
-  async function handleFilePicked(e) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
+  async function selectImageFile(file) {
     if (!file) return;
     if (policyBlocksComposer) {
       onToast(messagingPolicy.explanation, "warning");
+      return;
+    }
+    if (isStartingRecording || isRecording || voiceBlob) {
+      onToast("Finish or remove the voice message before adding an image.", "warning");
       return;
     }
     if (!file.type.startsWith("image/")) {
@@ -1850,25 +1931,38 @@ function ThreadView({
       return;
     }
 
+    const isWhatsApp = (contact?.channel || "whatsapp") === "whatsapp";
+    const inputMimeType = String(file.type || "").toLowerCase();
+    const forceCompatibleFormat =
+      isWhatsApp && !WHATSAPP_IMAGE_MIME_TYPES.has(inputMimeType);
+
     const preparationId = imagePreparationIdRef.current + 1;
     imagePreparationIdRef.current = preparationId;
     if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    const nextPreviewUrl = URL.createObjectURL(file);
     setImageFile(file);
-    setImagePreviewUrl(URL.createObjectURL(file));
+    setImagePreviewUrl(nextPreviewUrl);
 
     const couldNeedPreparation =
-      shouldOptimizeImageUpload(file) || isJpegFile(file);
+      shouldOptimizeImageUpload(file) ||
+      isJpegFile(file) ||
+      forceCompatibleFormat ||
+      (isWhatsApp && file.size > WHATSAPP_IMAGE_MAX_BYTES);
     setImagePreparing(couldNeedPreparation);
     if (!couldNeedPreparation) return;
 
     try {
       const normalizeProgressiveJpeg = await isProgressiveJpeg(file);
       const shouldOptimize =
-        shouldOptimizeImageUpload(file) || normalizeProgressiveJpeg;
+        shouldOptimizeImageUpload(file) ||
+        normalizeProgressiveJpeg ||
+        forceCompatibleFormat ||
+        (isWhatsApp && file.size > WHATSAPP_IMAGE_MAX_BYTES);
       if (!shouldOptimize) return;
 
       const optimizedFile = await optimizeImageUpload(file, {
         normalizeProgressiveJpeg,
+        forceCompatibleFormat,
       });
       if (
         !mountedRef.current ||
@@ -1876,6 +1970,32 @@ function ThreadView({
       ) {
         return;
       }
+
+      const optimizedMimeType = String(optimizedFile.type || "").toLowerCase();
+      if (
+        isWhatsApp &&
+        !WHATSAPP_IMAGE_MIME_TYPES.has(optimizedMimeType)
+      ) {
+        URL.revokeObjectURL(nextPreviewUrl);
+        setImageFile(null);
+        setImagePreviewUrl(null);
+        onToast(
+          "WhatsApp images must be JPEG or PNG. This image could not be converted safely.",
+          "error"
+        );
+        return;
+      }
+      if (isWhatsApp && optimizedFile.size > WHATSAPP_IMAGE_MAX_BYTES) {
+        URL.revokeObjectURL(nextPreviewUrl);
+        setImageFile(null);
+        setImagePreviewUrl(null);
+        onToast(
+          "WhatsApp images must be 5MB or smaller. Please choose a smaller image.",
+          "error"
+        );
+        return;
+      }
+
       setImageFile(optimizedFile);
     } finally {
       if (
@@ -1885,6 +2005,32 @@ function ThreadView({
         setImagePreparing(false);
       }
     }
+  }
+
+  async function handleFilePicked(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    await selectImageFile(file);
+  }
+
+  async function handleComposerPaste(event) {
+    const imageItem = Array.from(event.clipboardData?.items || []).find((item) =>
+      String(item.type || "").startsWith("image/")
+    );
+    const pasted =
+      imageItem?.getAsFile?.() ||
+      Array.from(event.clipboardData?.files || []).find((file) =>
+        String(file.type || "").startsWith("image/")
+      );
+    if (!pasted) return;
+    event.preventDefault();
+    const extension = pasted.type === "image/png" ? "png" : pasted.type === "image/webp" ? "webp" : "jpg";
+    const namedFile = new File(
+      [pasted],
+      `pasted-image-${Date.now()}.${extension}`,
+      { type: pasted.type || "image/jpeg", lastModified: Date.now() }
+    );
+    await selectImageFile(namedFile);
   }
 
   function clearImage() {
@@ -2055,12 +2201,56 @@ function ThreadView({
     }
     setSending(true);
     try {
-      await onSendVoice(voiceBlob, voiceMimeType);
-      if (mountedRef.current) clearVoice();
+      await onSendVoice(voiceBlob, voiceMimeType, replyingTo?.id || null);
+      if (mountedRef.current) {
+        clearVoice();
+        setReplyingTo(null);
+      }
     } catch {
     } finally {
       if (mountedRef.current) setSending(false);
     }
+  }
+
+  function handleReply(message) {
+    if (!message || !canReplyToLeads || (contact?.channel || "whatsapp") !== "whatsapp") return;
+    if (!message.whatsapp_message_id) {
+      onToast("This message cannot be quoted on WhatsApp.", "warning");
+      return;
+    }
+    setReplyingTo(message);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
+  async function handleCopyMessage(message) {
+    const text = String(message?.content || "").trim();
+    if (!text) {
+      onToast("This message has no text to copy.", "info");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      onToast("Message copied.", "info");
+    } catch {
+      onToast("Couldn't copy the message in this browser.", "error");
+    }
+  }
+
+  async function handleForwardConfirm(targetContactIds) {
+    if (!forwardingMessage || !targetContactIds?.length) return;
+    const result = await onForwardMessage(forwardingMessage.id, targetContactIds);
+    const delivered = Number(result?.deliveredCount || 0);
+    const requested = Number(result?.requestedCount || targetContactIds.length);
+    if (delivered === requested) {
+      onToast(`Forwarded to ${delivered} conversation${delivered === 1 ? "" : "s"}.`, "info");
+    } else if (delivered > 0) {
+      onToast(`Forwarded to ${delivered} of ${requested} conversations. Some sends were blocked or failed.`, "warning");
+    } else {
+      const firstError = result?.results?.find((item) => item.error)?.error;
+      onToast(firstError || "The message could not be forwarded.", "warning");
+    }
+    if (delivered > 0) setForwardingMessage(null);
+    return result;
   }
 
   function handleBackToConversations() {
@@ -2099,12 +2289,15 @@ function ThreadView({
     setSending(true);
     try {
       if (imageFile) {
-        await onSendImage(imageFile, text);
+        await onSendImage(imageFile, text, replyingTo?.id || null);
         if (mountedRef.current) clearImage();
       } else {
-        await onSend(text);
+        await onSend(text, replyingTo?.id || null);
       }
-      if (mountedRef.current) setDraft("");
+      if (mountedRef.current) {
+        setDraft("");
+        setReplyingTo(null);
+      }
     } catch {
     } finally {
       if (mountedRef.current) setSending(false);
@@ -2362,6 +2555,15 @@ function ThreadView({
                 message={message}
                 onImageClick={setLightboxSrc}
                 onRetry={onRetryMessage}
+                onReply={handleReply}
+                onForward={(selectedMessage) => setForwardingMessage(selectedMessage)}
+                onCopy={handleCopyMessage}
+                canReply={
+                  canReplyToLeads &&
+                  (contact.channel || "whatsapp") === "whatsapp" &&
+                  !policyBlocksComposer
+                }
+                canForward={canReplyToLeads && !message._optimistic}
               />
             </div>
           ))}
@@ -2375,6 +2577,29 @@ function ThreadView({
         style={{ paddingBottom: "max(0.625rem, env(safe-area-inset-bottom))" }}
       >
         <div className="mx-auto w-full max-w-4xl">
+          {replyingTo && (
+            <div className="mb-2 flex min-h-12 items-stretch overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]">
+              <span className="w-1 shrink-0 bg-[var(--color-primary)]" aria-hidden="true" />
+              <div className="min-w-0 flex-1 px-3 py-2">
+                <p className="text-[10px] font-semibold text-[var(--color-primary)]">
+                  Replying to {replyingTo.role === "user" ? customerSingular : (replyingTo.sent_by_username || "AI")}
+                </p>
+                <p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">
+                  {replyPreviewText(replyingTo)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReplyingTo(null)}
+                disabled={sending}
+                className="flex h-12 w-12 shrink-0 touch-manipulation items-center justify-center text-xl text-[var(--color-text-muted)] active:bg-white hover:bg-white disabled:opacity-50"
+                aria-label="Cancel reply"
+                title="Cancel reply"
+              >
+                ×
+              </button>
+            </div>
+          )}
           {isStartingRecording && (
             <div className="mb-2.5 flex items-center gap-3 rounded-xl bg-[var(--color-primary-light)] px-3 py-2.5">
               <Spinner className="text-[var(--color-primary)]" />
@@ -2430,6 +2655,7 @@ function ThreadView({
               ref={textareaRef}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
+              onPaste={handleComposerPaste}
               disabled={isStartingRecording || isRecording || !!voiceBlob}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
@@ -2451,7 +2677,178 @@ function ThreadView({
       </form>
 
       <Lightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
+      <ForwardMessageModal
+        message={forwardingMessage}
+        conversations={conversations}
+        currentContactId={contact.contact_id}
+        onClose={() => setForwardingMessage(null)}
+        onConfirm={handleForwardConfirm}
+      />
     </section>
+  );
+}
+
+function ForwardMessageModal({ message, conversations, currentContactId, onClose, onConfirm }) {
+  const [query, setQuery] = useState("");
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setQuery("");
+    setSelectedIds([]);
+    setSending(false);
+    setError("");
+  }, [message?.id]);
+
+  useEffect(() => {
+    if (!message) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    function handleKeyDown(event) {
+      if (event.key === "Escape" && !sending) onClose();
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [message, onClose, sending]);
+
+  if (!message) return null;
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const choices = (conversations || []).filter((item) => {
+    if (!normalizedQuery) return true;
+    return [
+      displayName(item),
+      item.whatsapp_number,
+      item.last_message,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedQuery);
+  });
+
+  function toggleContact(contactId) {
+    setError("");
+    setSelectedIds((current) => {
+      if (current.includes(contactId)) return current.filter((id) => id !== contactId);
+      if (current.length >= 10) {
+        setError("You can forward to up to 10 conversations at a time.");
+        return current;
+      }
+      return [...current, contactId];
+    });
+  }
+
+  async function submitForward() {
+    if (!selectedIds.length || sending) return;
+    setSending(true);
+    setError("");
+    try {
+      await onConfirm(selectedIds);
+    } catch (err) {
+      setError(err?.message || "Couldn't forward this message. Please try again.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Forward message"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !sending) onClose();
+      }}
+    >
+      <div className="flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-[24px] bg-white shadow-2xl sm:max-h-[82vh] sm:max-w-md sm:rounded-2xl">
+        <div className="flex h-5 shrink-0 items-center justify-center sm:hidden" aria-hidden="true">
+          <span className="h-1 w-10 rounded-full bg-slate-300" />
+        </div>
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] px-4 pb-3 pt-1 sm:py-3.5">
+          <div className="min-w-0 pr-3">
+            <h3 className="text-base font-bold sm:text-sm">Forward message</h3>
+            <p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)] sm:text-[11px]">{replyPreviewText(message)}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={sending}
+            className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-full text-2xl text-[var(--color-text-muted)] active:bg-[var(--color-bg)] hover:bg-[var(--color-bg)] disabled:opacity-50"
+            aria-label="Close forward message"
+          >
+            ×
+          </button>
+        </div>
+        <div className="shrink-0 px-4 pt-3">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search conversations…"
+            aria-label="Search conversations to forward"
+            className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)] sm:text-sm"
+          />
+          <div className="mt-2 flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+            <span>Select up to 10 conversations</span>
+            <span className="font-semibold text-[var(--color-primary)]">{selectedIds.length} selected</span>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto px-2 py-2">
+          {choices.length === 0 ? (
+            <p className="px-3 py-10 text-center text-sm text-[var(--color-text-muted)]">No conversations found.</p>
+          ) : choices.map((item) => {
+            const id = Number(item.contact_id);
+            const selected = selectedIds.includes(id);
+            return (
+              <button
+                key={item.contact_id}
+                type="button"
+                onClick={() => toggleContact(id)}
+                aria-pressed={selected}
+                className={`flex min-h-14 w-full touch-manipulation items-center gap-3 rounded-xl px-3 py-2.5 text-left transition active:bg-[var(--color-bg)] ${selected ? "bg-[var(--color-primary-light)]" : "hover:bg-[var(--color-bg)]"}`}
+              >
+                <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-xs font-bold ${selected ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white" : "border-[var(--color-border)] bg-white text-transparent"}`}>✓</span>
+                <ContactAvatar src={item.photo_url} channel={item.channel} size={40} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold">
+                    {displayName(item)}{Number(item.contact_id) === Number(currentContactId) ? " (current)" : ""}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[11px] text-[var(--color-text-muted)]">{contactMeta(item)}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {error && <p className="mx-4 mb-2 shrink-0 rounded-lg bg-[var(--color-danger-light)] px-3 py-2.5 text-xs text-[var(--color-danger)]">{error}</p>}
+        <div
+          className="flex shrink-0 items-center gap-2 border-t border-[var(--color-border)] bg-white px-4 pt-3 sm:justify-end sm:pb-3"
+          style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+        >
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={sending}
+            className="h-11 flex-1 touch-manipulation rounded-xl border border-[var(--color-border)] px-4 text-sm font-semibold active:bg-[var(--color-bg)] hover:bg-[var(--color-bg)] disabled:opacity-50 sm:flex-none"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submitForward}
+            disabled={!selectedIds.length || sending}
+            className="inline-flex h-11 flex-[1.35] touch-manipulation items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 text-sm font-semibold text-white active:bg-[var(--color-primary-hover)] hover:bg-[var(--color-primary-hover)] disabled:opacity-40 sm:flex-none sm:min-w-28"
+          >
+            {sending && <Spinner />}{sending ? "Forwarding…" : selectedIds.length ? `Forward (${selectedIds.length})` : "Forward"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2507,7 +2904,24 @@ function Spinner({ className = "" }) {
   );
 }
 
-function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
+function MessageBubble({
+  contactId,
+  channel,
+  message,
+  onImageClick,
+  onRetry,
+  onReply,
+  onForward,
+  onCopy,
+  canReply,
+  canForward,
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
+  const swipeStartRef = useRef(null);
+  const swipeOffsetRef = useRef(0);
+  const suppressClickRef = useRef(false);
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
   const isWhatsAppTemplate = !!message.whatsapp_template;
@@ -2518,8 +2932,10 @@ function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
     : "AI";
   const isAudio = message.media_mime_type?.startsWith("audio/");
   const isSticker =
-    isPatient &&
-    /sent a sticker\]$/i.test(String(message.content || "").trim());
+    String(message.media_mime_type || "").toLowerCase() === "image/webp" &&
+    /(?:sent a sticker|forwarded sticker|sticker sent from)/i.test(
+      String(message.content || "")
+    );
   const deliveryFailed = !isPatient && message.delivery_status === "failed";
   const deliveryUnconfirmed = !isPatient && message.delivery_status === "unknown";
   const deliveryNeedsAction = deliveryFailed || deliveryUnconfirmed;
@@ -2536,15 +2952,177 @@ function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
         .map((reaction) => reaction?.emoji)
         .filter((emoji) => typeof emoji === "string" && emoji.length > 0)
     : [];
+  const quoteDeliveryConfirmed =
+    isPatient ||
+    !["failed", "unknown"].includes(
+      String(message.delivery_status || "").toLowerCase()
+    );
+  const canQuote = Boolean(
+    canReply &&
+    message.whatsapp_message_id &&
+    !message._optimistic &&
+    quoteDeliveryConfirmed
+  );
+  const canCopy = Boolean(String(message.content || "").trim());
+  const showActions = canQuote || canForward || canCopy;
+  const replyPreview = message.reply_preview || null;
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("keydown", handleKeyDown);
+
+    const isMobile = window.matchMedia("(max-width: 639px)").matches;
+    const previousOverflow = document.body.style.overflow;
+    if (isMobile) document.body.style.overflow = "hidden";
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      if (isMobile) document.body.style.overflow = previousOverflow;
+    };
+  }, [menuOpen]);
+
+  function closeAndReply() {
+    setMenuOpen(false);
+    onReply?.(message);
+  }
+
+  function closeAndForward() {
+    setMenuOpen(false);
+    onForward?.(message);
+  }
+
+  function closeAndCopy() {
+    setMenuOpen(false);
+    onCopy?.(message);
+  }
+
+  function handleSwipeStart(event) {
+    if (!canQuote || event.touches?.length !== 1) return;
+    if (event.target?.closest?.("button, audio, video, input, textarea, a")) return;
+    const touch = event.touches[0];
+    swipeStartRef.current = { x: touch.clientX, y: touch.clientY };
+    swipeOffsetRef.current = 0;
+    setIsSwiping(true);
+  }
+
+  function handleSwipeMove(event) {
+    const start = swipeStartRef.current;
+    const touch = event.touches?.[0];
+    if (!start || !touch) return;
+
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (dx <= 0 || Math.abs(dx) <= Math.abs(dy) * 1.15) {
+      if (swipeOffsetRef.current !== 0) {
+        swipeOffsetRef.current = 0;
+        setSwipeOffset(0);
+      }
+      return;
+    }
+
+    const nextOffset = Math.min(64, Math.max(0, dx * 0.72));
+    swipeOffsetRef.current = nextOffset;
+    setSwipeOffset(nextOffset);
+  }
+
+  function resetSwipe() {
+    swipeStartRef.current = null;
+    swipeOffsetRef.current = 0;
+    setSwipeOffset(0);
+    setIsSwiping(false);
+  }
+
+  function finishSwipe() {
+    if (!swipeStartRef.current) return;
+    const shouldReply = swipeOffsetRef.current >= 44;
+    resetSwipe();
+    if (shouldReply) {
+      suppressClickRef.current = true;
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 500);
+      onReply?.(message);
+    }
+  }
+
+  function cancelSwipe() {
+    resetSwipe();
+  }
+
+  function handleClickCapture(event) {
+    if (!suppressClickRef.current) return;
+    suppressClickRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+  }
 
   return (
-    <div className={`flex ${isPatient ? "justify-start" : "justify-end"} ${reactionEmojis.length ? "mb-2" : ""}`}>
-      <div className={`relative max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryNeedsAction ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}>
-        {!isPatient && <p className="mb-1 text-[10px] font-semibold text-white/65">{senderLabel}</p>}
+    <div className={`relative flex ${isPatient ? "justify-start" : "justify-end"} ${reactionEmojis.length ? "mb-2" : ""}`}>
+      {canQuote && (
+        <div
+          className={`pointer-events-none absolute left-1 top-1/2 z-0 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-lg font-bold text-[var(--color-primary)] transition-opacity sm:hidden ${swipeOffset > 12 ? "opacity-100" : "opacity-0"}`}
+          style={{ transform: `translateY(-50%) scale(${Math.min(1, 0.75 + swipeOffset / 160)})` }}
+          aria-hidden="true"
+        >
+          ↩
+        </div>
+      )}
+
+      <div
+        className={`group relative z-10 max-w-[88%] touch-pan-y rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm transition-transform ${isSwiping ? "duration-0" : "duration-150"} sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryNeedsAction ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}
+        style={{ transform: swipeOffset ? `translateX(${swipeOffset}px)` : undefined }}
+        onTouchStart={handleSwipeStart}
+        onTouchMove={handleSwipeMove}
+        onTouchEnd={finishSwipe}
+        onTouchCancel={cancelSwipe}
+        onClickCapture={handleClickCapture}
+      >
+        {showActions && (
+          <div className="absolute -right-1 -top-1 z-20 sm:right-1.5 sm:top-1.5">
+            <button
+              type="button"
+              onClick={() => setMenuOpen((open) => !open)}
+              className={`flex h-11 w-11 touch-manipulation items-center justify-center rounded-full text-xl leading-none transition sm:h-7 sm:w-7 sm:text-lg ${isPatient ? "text-[var(--color-text-muted)] active:bg-[var(--color-bg)] hover:bg-[var(--color-bg)]" : "text-white/80 active:bg-white/15 hover:bg-white/15"} ${menuOpen ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100"}`}
+              aria-label="Message actions"
+              aria-expanded={menuOpen}
+              aria-haspopup="menu"
+              title="Message actions"
+            >
+              ⋮
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 top-8 z-30 hidden min-w-36 rounded-xl border border-[var(--color-border)] bg-white p-1.5 text-[var(--color-text)] shadow-lg sm:block" role="menu">
+                {canQuote && <button type="button" role="menuitem" onClick={closeAndReply} className="block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">↩&nbsp;&nbsp;Reply</button>}
+                {canForward && <button type="button" role="menuitem" onClick={closeAndForward} className="block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">↪&nbsp;&nbsp;Forward</button>}
+                {canCopy && <button type="button" role="menuitem" onClick={closeAndCopy} className="block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">⧉&nbsp;&nbsp;Copy</button>}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!isPatient && <p className="mb-1 pr-9 text-[10px] font-semibold text-white/65 sm:pr-7">{senderLabel}</p>}
+        {isPatient && showActions && <div className="h-5 sm:h-3" aria-hidden="true" />}
+        {message.is_forwarded && (
+          <p className={`mb-1 text-[10px] italic ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/65"}`}>↪ Forwarded</p>
+        )}
         {isWhatsAppTemplate && (
           <p className="mb-1.5 inline-flex rounded-full bg-white/15 px-2 py-0.5 text-[9px] font-semibold text-white/80">
             Template · {message.whatsapp_template.name}
           </p>
+        )}
+        {message.reply_to_provider_message_id && (
+          <div className={`mb-2 overflow-hidden rounded-lg border-l-[3px] px-2.5 py-2 ${isPatient ? "border-[var(--color-primary)] bg-[var(--color-bg)]" : "border-white/70 bg-white/12"}`}>
+            <p className={`text-[10px] font-semibold ${isPatient ? "text-[var(--color-primary)]" : "text-white/80"}`}>
+              {replyPreview?.role === "user" ? "Customer" : (replyPreview?.sent_by_username || (replyPreview ? "AI" : "Original message"))}
+            </p>
+            <p className={`mt-0.5 truncate text-[11px] ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/75"}`}>
+              {replyPreviewText(replyPreview)}
+            </p>
+          </div>
         )}
         {isAudio && storedMediaSrc ? (
           <audio controls preload="none" src={storedMediaSrc} className="mb-1.5 max-w-full" style={{ height: "36px" }} />
@@ -2593,7 +3171,7 @@ function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
                   type="button"
                   onClick={() => onRetry?.(message.id)}
                   disabled={message._retrying}
-                  className="inline-flex items-center gap-1 rounded-md border border-[var(--color-danger)]/30 px-2 py-1 text-[10px] font-semibold transition-colors hover:bg-[var(--color-danger-light)] disabled:opacity-60"
+                  className="inline-flex min-h-10 touch-manipulation items-center gap-1 rounded-md border border-[var(--color-danger)]/30 px-3 py-1 text-[10px] font-semibold transition-colors active:bg-[var(--color-danger-light)] hover:bg-[var(--color-danger-light)] disabled:opacity-60"
                 >
                   {message._retrying && <Spinner className="h-2.5 w-2.5" />}
                   {message._retrying ? "Retrying…" : "Retry"}
@@ -2616,6 +3194,36 @@ function MessageBubble({ contactId, channel, message, onImageClick, onRetry }) {
           </div>
         )}
       </div>
+
+      {menuOpen && (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-[80] bg-black/40 sm:hidden"
+            onClick={() => setMenuOpen(false)}
+            aria-label="Close message actions"
+          />
+          <div
+            className="fixed inset-x-0 bottom-0 z-[81] overflow-hidden rounded-t-[24px] bg-white text-[var(--color-text)] shadow-2xl sm:hidden"
+            role="menu"
+            aria-label="Message options"
+            style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+          >
+            <div className="flex h-5 items-center justify-center" aria-hidden="true">
+              <span className="h-1 w-10 rounded-full bg-slate-300" />
+            </div>
+            <div className="border-b border-[var(--color-border)] px-4 pb-3 pt-1">
+              <p className="text-sm font-bold">Message actions</p>
+              <p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">{replyPreviewText(message)}</p>
+            </div>
+            <div className="p-2">
+              {canQuote && <button type="button" role="menuitem" onClick={closeAndReply} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-xl px-4 text-left text-sm font-semibold active:bg-[var(--color-bg)]"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-lg text-[var(--color-primary)]">↩</span>Reply</button>}
+              {canForward && <button type="button" role="menuitem" onClick={closeAndForward} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-xl px-4 text-left text-sm font-semibold active:bg-[var(--color-bg)]"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-bg)] text-lg text-[var(--color-text-muted)]">↪</span>Forward</button>}
+              {canCopy && <button type="button" role="menuitem" onClick={closeAndCopy} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-xl px-4 text-left text-sm font-semibold active:bg-[var(--color-bg)]"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-bg)] text-base text-[var(--color-text-muted)]">⧉</span>Copy</button>}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

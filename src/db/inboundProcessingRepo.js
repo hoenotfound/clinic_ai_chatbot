@@ -18,7 +18,9 @@ const MESSAGE_COLUMNS = `
   created_at,
   delivery_status,
   delivery_error,
-  is_automated_follow_up
+  is_automated_follow_up,
+  reply_to_provider_message_id,
+  is_forwarded
 `;
 
 const JOB_COLUMNS = `
@@ -107,9 +109,10 @@ async function storeInboundClaim({
        SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
      ), inserted_message AS (
        INSERT INTO messages (
-         contact_id, role, content, whatsapp_message_id, source_created_at
+         contact_id, role, content, whatsapp_message_id, source_created_at,
+         reply_to_provider_message_id, is_forwarded
        )
-       SELECT $1, 'user', $2, $3, $6::timestamptz
+       SELECT $1, 'user', $2, $3, $6::timestamptz, $7, $8
        FROM conversation_lock
        ON CONFLICT (whatsapp_message_id) DO NOTHING
        RETURNING ${MESSAGE_COLUMNS}
@@ -132,7 +135,16 @@ async function storeInboundClaim({
        ) AS derived_first_message
      FROM inserted_message m
      JOIN inserted_job j ON j.message_id = m.id`,
-    [contactId, content, storedMessageId, channel, payload, sourceCreatedAt]
+    [
+      contactId,
+      content,
+      storedMessageId,
+      channel,
+      payload,
+      sourceCreatedAt,
+      incoming?.replyToProviderMessageId || null,
+      incoming?.isForwarded === true,
+    ]
   );
 
   const row = result.rows[0];

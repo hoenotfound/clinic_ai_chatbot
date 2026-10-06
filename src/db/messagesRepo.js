@@ -73,7 +73,9 @@ const LIGHTWEIGHT_MESSAGE_COLUMNS = `
   created_at,
   delivery_status,
   delivery_error,
-  is_automated_follow_up
+  is_automated_follow_up,
+  reply_to_provider_message_id,
+  is_forwarded
 `;
 const PORTAL_REACTIONS_COLUMN = `
   COALESCE(
@@ -88,6 +90,23 @@ const PORTAL_REACTIONS_COLUMN = `
     ),
     '[]'::jsonb
   ) AS reactions
+`;
+const PORTAL_REPLY_PREVIEW_COLUMN = `
+  (
+    SELECT jsonb_build_object(
+      'id', quoted.id,
+      'role', quoted.role,
+      'content', quoted.content,
+      'sent_by_username', quoted.sent_by_username,
+      'media_mime_type', quoted.media_mime_type,
+      'has_media_attachment', (quoted.media_key IS NOT NULL),
+      'media_url', quoted.media_url
+    )
+    FROM messages quoted
+    WHERE quoted.contact_id = messages.contact_id
+      AND quoted.whatsapp_message_id = messages.reply_to_provider_message_id
+    LIMIT 1
+  ) AS reply_preview
 `;
 
 
@@ -111,6 +130,8 @@ async function saveMessage(
   const whatsappTemplate = options?.whatsappTemplate || null;
   const initialDeliveryStatus = options?.initialDeliveryStatus || null;
   const initialDeliveryError = options?.initialDeliveryError || null;
+  const replyToProviderMessageId = options?.replyToProviderMessageId || null;
+  const isForwarded = options?.isForwarded === true;
 
   if (!whatsappTemplate) {
     const result = await pool.query(
@@ -119,9 +140,10 @@ async function saveMessage(
        )
        INSERT INTO messages (
          contact_id, role, content, whatsapp_message_id, sent_by_username,
-         media_url, media_key, media_mime_type
+         media_url, media_key, media_mime_type,
+         reply_to_provider_message_id, is_forwarded
        )
-       SELECT $1, $2, $3, $4, $5, $6, $7, $8
+       SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
        FROM conversation_lock
        RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
       [
@@ -133,6 +155,8 @@ async function saveMessage(
         mediaUrl,
         mediaKey,
         mediaMimeType,
+        replyToProviderMessageId,
+        isForwarded,
       ]
     );
     return result.rows[0];
@@ -145,9 +169,9 @@ async function saveMessage(
      INSERT INTO messages (
        contact_id, role, content, whatsapp_message_id, sent_by_username,
        media_url, media_key, media_mime_type, whatsapp_template,
-       delivery_status, delivery_error
+       delivery_status, delivery_error, reply_to_provider_message_id, is_forwarded
      )
-     SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11
+     SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13
      FROM conversation_lock
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}, whatsapp_template`,
     [
@@ -162,6 +186,8 @@ async function saveMessage(
       JSON.stringify(whatsappTemplate),
       initialDeliveryStatus,
       initialDeliveryError,
+      replyToProviderMessageId,
+      isForwarded,
     ]
   );
   return result.rows[0];
@@ -479,7 +505,9 @@ async function getMessagePageForContact(
     const result = await pool.query(
       `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
               delivery_status, delivery_error, is_automated_follow_up, whatsapp_template,
-              ${PORTAL_REACTIONS_COLUMN}
+              reply_to_provider_message_id, is_forwarded,
+              ${PORTAL_REACTIONS_COLUMN},
+              ${PORTAL_REPLY_PREVIEW_COLUMN}
        FROM messages
        WHERE contact_id = $1 AND id > $2
        ORDER BY id ASC`,
@@ -499,7 +527,9 @@ async function getMessagePageForContact(
   const result = await pool.query(
     `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
             delivery_status, delivery_error, is_automated_follow_up, whatsapp_template,
-            ${PORTAL_REACTIONS_COLUMN}
+            reply_to_provider_message_id, is_forwarded,
+            ${PORTAL_REACTIONS_COLUMN},
+            ${PORTAL_REPLY_PREVIEW_COLUMN}
      FROM messages
      WHERE contact_id = $1${cursorClause}
      ORDER BY id DESC
@@ -543,6 +573,7 @@ async function getMessageForRetry(contactId, messageId) {
             m.sent_by_username, m.media_url, m.media_key, m.media_mime_type,
             m.created_at, m.delivery_status, m.delivery_error,
             m.is_automated_follow_up, m.whatsapp_template,
+            m.reply_to_provider_message_id, m.is_forwarded,
             EXISTS (
               SELECT 1
               FROM scheduled_messages sm
@@ -559,6 +590,20 @@ async function getMessageForRetry(contactId, messageId) {
   delete row.media_key;
   row.media_base64 = key ? (await mediaStorage.downloadMedia(key)).toString("base64") : null;
   return row;
+}
+
+async function getMessageForReplyContext(contactId, messageId) {
+  const result = await pool.query(
+    `SELECT id, contact_id, role, content, whatsapp_message_id,
+            sent_by_username, media_url,
+            (media_key IS NOT NULL) AS has_media_attachment,
+            media_mime_type, created_at, delivery_status
+     FROM messages
+     WHERE id = $1 AND contact_id = $2
+     LIMIT 1`,
+    [messageId, contactId]
+  );
+  return result.rows[0] || null;
 }
 
 // Resyncs the delivery state for messages that are already visible in an
@@ -1483,6 +1528,7 @@ module.exports = {
   getMessageMediaReferenceForContact,
   getMessageMediaForContact,
   getMessageForRetry,
+  getMessageForReplyContext,
   getMessageByProviderIdForContact,
   getMessageByAnyProviderIdForContact,
   hasStaffReplyAfter,

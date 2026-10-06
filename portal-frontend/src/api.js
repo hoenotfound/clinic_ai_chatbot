@@ -64,8 +64,14 @@ export const api = {
   },
   messageMediaUrl: (contactId, messageId) =>
     `${BASE}/conversations/${contactId}/messages/${messageId}/media`,
-  sendMessage: (contactId, text) =>
-    request(`/conversations/${contactId}/messages`, { method: "POST", body: JSON.stringify({ text }) }),
+  sendMessage: (contactId, text, replyToMessageId = null) =>
+    request(`/conversations/${contactId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        text,
+        ...(replyToMessageId != null ? { replyToMessageId } : {}),
+      }),
+    }),
   listWhatsAppTemplates: (contactId, { force = false } = {}) =>
     request(
       `/conversations/${contactId}/whatsapp-templates${force ? "?refresh=true" : ""}`
@@ -82,15 +88,21 @@ export const api = {
     }),
   retryMessage: (contactId, messageId) =>
     request(`/conversations/${contactId}/messages/${messageId}/retry`, { method: "POST" }),
+  forwardMessage: (contactId, messageId, targetContactIds) =>
+    request(`/conversations/${contactId}/messages/${messageId}/forward`, {
+      method: "POST",
+      body: JSON.stringify({ targetContactIds }),
+    }),
   getMessageDeliveryStatuses: (contactId, messageIds) =>
     request(`/conversations/${contactId}/messages/delivery-statuses`, {
       method: "POST",
       body: JSON.stringify({ messageIds }),
     }),
-  sendImage: async (contactId, file, caption) => {
+  sendImage: async (contactId, file, caption, replyToMessageId = null) => {
     const form = new FormData();
     form.append("image", file);
     if (caption) form.append("caption", caption);
+    if (replyToMessageId != null) form.append("replyToMessageId", String(replyToMessageId));
 
     const res = await fetch(`${BASE}/conversations/${contactId}/media`, {
       method: "POST",
@@ -108,10 +120,11 @@ export const api = {
     }
     return res.json();
   },
-  sendVoice: async (contactId, recording, mimeType) => {
+  sendVoice: async (contactId, recording, mimeType, replyToMessageId = null) => {
     const form = new FormData();
     const extension = mimeType?.includes("mp4") ? "m4a" : mimeType?.includes("ogg") ? "ogg" : "webm";
     form.append("voice", recording, `voice-recording.${extension}`);
+    if (replyToMessageId != null) form.append("replyToMessageId", String(replyToMessageId));
 
     const res = await fetch(`${BASE}/conversations/${contactId}/voice`, {
       method: "POST",
