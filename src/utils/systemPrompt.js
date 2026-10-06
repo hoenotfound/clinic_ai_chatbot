@@ -12,6 +12,7 @@ function normalizeOptions(optionsOrFirstMessage = false) {
       privateReplyEnabled: true,
       metaAdContext: null,
       followUpContext: null,
+      conversationContext: null,
     };
   }
   return {
@@ -22,6 +23,7 @@ function normalizeOptions(optionsOrFirstMessage = false) {
     privateReplyEnabled: optionsOrFirstMessage?.privateReplyEnabled !== false,
     metaAdContext: optionsOrFirstMessage?.metaAdContext || null,
     followUpContext: optionsOrFirstMessage?.followUpContext || null,
+    conversationContext: optionsOrFirstMessage?.conversationContext || null,
   };
 }
 
@@ -108,6 +110,203 @@ function activePromotionsList() {
       return `- ${promotion.name}${linkedService}${autoSend}${dates ? ` | ${dates}` : ""}\n  package options:\n${packageLines}`;
     })
     .join("\n");
+}
+
+
+function configuredServiceByExactName(value) {
+  const key = followUpLookupKey(value);
+  if (!key) return null;
+  return (config.services || []).find(
+    (service) => followUpLookupKey(service?.name) === key
+  ) || null;
+}
+
+function conversationSelectedServices(conversationContext) {
+  const names = Array.isArray(conversationContext?.relevantServiceNames)
+    ? conversationContext.relevantServiceNames
+    : [];
+  const selected = [];
+  for (const name of names) {
+    const service = configuredServiceByExactName(name);
+    if (!service || selected.some((item) => item.name === service.name)) continue;
+    selected.push(service);
+    if (selected.length >= 2) break;
+  }
+  return selected;
+}
+
+function renderCompactService(service) {
+  const description = promptContextText(service?.description, 240);
+  return `- ${promptContextText(service?.name, 180) || "Unnamed service"}${description ? `: ${description}` : ""}`;
+}
+
+function conversationServicesList(conversationContext, terms) {
+  const selected = conversationSelectedServices(conversationContext);
+  if (selected.length) {
+    return selected
+      .map((service) => {
+        const description = promptContextText(service?.description, 1_600) || "No description configured.";
+        const price = promptContextText(service?.priceRange, 500) || "Not configured";
+        const duration = promptContextText(service?.duration, 300) || "Not configured";
+        return `- ${service.name}: ${description} | Price: ${price} | Duration: ${duration}`;
+      })
+      .join("\n");
+  }
+
+  const configured = Array.isArray(config.services) ? config.services : [];
+  if (!configured.length) {
+    return `No ${terms.servicePlural} are configured yet. Do not invent any; hand off business-specific questions that require missing information.`;
+  }
+  return [
+    "- No single current service is established yet. Use this compact catalog for discovery; ask a short clarifying question instead of guessing when needed.",
+    ...configured.slice(0, 30).map(renderCompactService),
+  ].join("\n");
+}
+
+function conversationAliasList(conversationContext) {
+  const selected = conversationSelectedServices(conversationContext);
+  if (!selected.length) {
+    return "- Full alias catalog omitted because no single configured service is established. The application has already used configured aliases to select any unambiguous relevant service.";
+  }
+
+  const selectedKeys = new Set(selected.map((service) => followUpLookupKey(service.name)));
+  const aliases = (config.serviceAliases || [])
+    .filter((alias) => selectedKeys.has(followUpLookupKey(alias?.officialService)))
+    .map((alias) => {
+      const aliasText = promptContextText(alias?.alias, 240);
+      const official = promptContextText(alias?.officialService, 240);
+      return aliasText && official ? `- "${aliasText}" → ${official}` : null;
+    })
+    .filter(Boolean)
+    .slice(0, 30);
+
+  return aliases.length
+    ? aliases.join("\n")
+    : "- No alternate terms configured for the currently relevant service.";
+}
+
+function renderCompactPromotion(promotion) {
+  const dates = [
+    promotion.validFrom ? `from ${promotion.validFrom}` : null,
+    promotion.validUntil ? `until ${promotion.validUntil}` : null,
+  ].filter(Boolean).join(" ");
+  const linkedService = promotion.linkedService
+    ? ` | service: ${promptContextText(promotion.linkedService, 200)}`
+    : "";
+  const autoSend = promotion.sendOnPriceQuery === true
+    ? " | auto-send on price/package enquiry: yes"
+    : " | auto-send on price/package enquiry: no";
+  return `- ${promptContextText(promotion.name, 240) || "Active promotion"}${linkedService}${autoSend}${dates ? ` | ${dates}` : ""}`;
+}
+
+function conversationPromotionsList(conversationContext) {
+  const active = getActivePromotions(config.promotions || []);
+  if (!active.length) return "- None currently configured as active.";
+
+  const selected = conversationSelectedServices(conversationContext);
+  if (!selected.length) {
+    if (conversationContext?.promotionIntent === true) {
+      return activePromotionsList();
+    }
+    return [
+      "- Detailed promotion/package copy is omitted until a relevant service or promotion enquiry is established.",
+      ...active.slice(0, 20).map(renderCompactPromotion),
+    ].join("\n");
+  }
+
+  const selectedKeys = new Set(selected.map((service) => followUpLookupKey(service.name)));
+  const relevant = active.filter((promotion) => {
+    const linked = followUpLookupKey(promotion?.linkedService);
+    return !linked || selectedKeys.has(linked);
+  });
+  if (!relevant.length) return "- None currently configured for the relevant service.";
+  return relevant.map((promotion) => {
+    const dates = [
+      promotion.validFrom ? `from ${promotion.validFrom}` : null,
+      promotion.validUntil ? `until ${promotion.validUntil}` : null,
+    ].filter(Boolean).join(" ");
+    const linkedService = promotion.linkedService ? ` | service: ${promotion.linkedService}` : "";
+    const autoSend = promotion.sendOnPriceQuery === true
+      ? " | auto-send on price/package enquiry: yes"
+      : " | auto-send on price/package enquiry: no";
+    const packages = Array.isArray(promotion.packages)
+      ? promotion.packages.filter((item) => item && typeof item === "object")
+      : [];
+    if (!packages.length) {
+      return `- ${promotion.name}: ${promotion.caption || "No additional caption configured."}${linkedService}${autoSend}${dates ? ` | ${dates}` : ""}`;
+    }
+    const packageLines = packages.map((item) => {
+      const aliases = Array.isArray(item.aliases)
+        ? item.aliases.map((alias) => String(alias || "").trim()).filter(Boolean)
+        : [];
+      const parts = [
+        item.title ? `title: ${item.title}` : null,
+        aliases.length ? `aliases: ${aliases.join(", ")}` : null,
+        item.caption ? `caption: ${item.caption}` : null,
+      ].filter(Boolean).join(" | ");
+      return `  - ${item.name || "Unnamed package"}${parts ? ` | ${parts}` : ""}`;
+    }).join("\n");
+    return `- ${promotion.name}${linkedService}${autoSend}${dates ? ` | ${dates}` : ""}\n  package options:\n${packageLines}`;
+  }).join("\n");
+}
+
+function blockLeadingServiceNames(block) {
+  const firstLine = String(block || "").split("\n").find((line) => line.trim()) || "";
+  const heading = firstLine.slice(0, 260);
+  const headingKey = followUpLookupKey(heading, 1_000);
+  if (!headingKey) return [];
+
+  const names = [];
+  for (const service of config.services || []) {
+    const serviceKey = followUpLookupKey(service?.name);
+    if (serviceKey && headingKey.includes(serviceKey)) {
+      names.push(service.name);
+      continue;
+    }
+    const aliases = (config.serviceAliases || [])
+      .filter(
+        (alias) =>
+          followUpLookupKey(alias?.officialService) === serviceKey
+      )
+      .map((alias) => followUpLookupKey(alias?.alias))
+      .filter((aliasKey) => aliasKey && aliasKey.length >= 2);
+    if (aliases.some((aliasKey) => headingKey.includes(aliasKey))) {
+      names.push(service.name);
+    }
+  }
+  return [...new Set(names)];
+}
+
+function filterServiceScopedGuidance(value, conversationContext) {
+  const text = String(value || "").trim();
+  const selected = conversationSelectedServices(conversationContext);
+  if (!text || !selected.length) return text;
+
+  const selectedKeys = new Set(selected.map((service) => followUpLookupKey(service.name)));
+  const blocks = text.split(/\n\s*\n+/).map((block) => block.trim()).filter(Boolean);
+  const kept = blocks.filter((block) => {
+    const headingServices = blockLeadingServiceNames(block);
+    if (!headingServices.length) return true;
+    return headingServices.some((name) => selectedKeys.has(followUpLookupKey(name)));
+  });
+  return kept.join("\n\n");
+}
+
+function conversationLocationsList(conversationContext, terms) {
+  const locations = Array.isArray(config.branches) ? config.branches : [];
+  if (!locations.length) {
+    return `No ${terms.locationPlural} configured. Do not invent a location.`;
+  }
+  const detailed =
+    conversationContext?.schedulingIntent === true ||
+    conversationContext?.contactIntent === true;
+  return locations.map((location) => {
+    const name = promptContextText(location?.name, 180) || "Unnamed location";
+    if (!detailed) return `- ${name}`;
+    const address = promptContextText(location?.address, 500) || "Address not configured";
+    const phone = promptContextText(location?.phone, 180);
+    return `- ${name}: ${address}${phone ? ` | Phone: ${phone}` : ""}`;
+  }).join("\n");
 }
 
 
