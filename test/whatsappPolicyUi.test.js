@@ -400,6 +400,7 @@ test("Inbox lead temperature indicator stays minimal and exception-only", () => 
 
   assert.match(inbox, /LeadTemperatureIndicator/);
   assert.match(inbox, /conversation\.lead_temperature/);
+  assert.match(inbox, /schedulePipelineListRefresh/);
   assert.match(inbox, /normalized !== "hot" && normalized !== "cold"/);
   assert.match(inbox, /Hot lead/);
   assert.match(inbox, /Cold lead/);
