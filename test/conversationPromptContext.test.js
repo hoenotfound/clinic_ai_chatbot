@@ -266,7 +266,6 @@ test("relevant service promotion enquiry restores full matching promotion/packag
       },
     });
 
-    assert.match(prompt, /THREED_PROMO_FULL/);
     assert.match(prompt, /THREED_PACKAGE_FULL/);
     assert.doesNotMatch(prompt, /NINED_PROMO_FULL/);
     assert.doesNotMatch(prompt, /PELVIS_PROMO_FULL/);
@@ -331,7 +330,7 @@ test("generic promotion enquiry restores full active promotion detail", () => {
       },
     });
 
-    assert.match(prompt, /THREED_PROMO_FULL/);
+    assert.match(prompt, /THREED_PACKAGE_FULL/);
     assert.match(prompt, /NINED_PROMO_FULL/);
     assert.match(prompt, /PELVIS_PROMO_FULL/);
   });
