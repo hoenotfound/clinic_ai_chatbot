@@ -26,6 +26,7 @@ const {
 const {
   applyPortalSecurityHeaders,
   buildPortalSessionOptions,
+  enforcePortalRequestOrigin,
 } = require("./middleware/portalSecurity");
 const { requireAuth } = require("./middleware/requireAuth");
 const { resolveTrustProxy } = require("./utils/proxyTrust");
@@ -78,9 +79,11 @@ function createApp({
   const portalJsonParser = createPortalJsonParser();
   const advancedConfigJsonParser = createAdvancedConfigJsonParser();
 
-  // Portal API: normal JSON parsing + signed session cookie for staff login.
+  // Portal API: reject browser cross-origin mutations before parsing bodies,
+  // then apply normal JSON parsing + signed session cookies for staff login.
   // Advanced Config alone gets a larger body budget because detailed service,
   // FAQ and AI instruction JSON can legitimately exceed the normal portal cap.
+  app.use("/api", enforcePortalRequestOrigin);
   app.use("/api", (req, res, next) => {
     const parser = req.path === "/advanced-config" || req.path.startsWith("/advanced-config/")
       ? advancedConfigJsonParser
