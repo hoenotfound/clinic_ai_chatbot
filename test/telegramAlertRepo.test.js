@@ -199,9 +199,12 @@ test("next Telegram retry time follows the persisted 1-minute and 5-minute backo
     assert.match(sql, /SELECT MIN/);
     assert.match(sql, /WHEN 1 THEN interval '1 minute'/);
     assert.match(sql, /WHEN 2 THEN interval '5 minutes'/);
-    assert.match(sql, /status = 'pending'/);
-    assert.match(sql, /attempts > 0/);
-    assert.match(sql, /attempts < 3/);
+    assert.match(sql, /a\.status = 'pending'/);
+    assert.match(sql, /a\.attempts > 0/);
+    assert.match(sql, /a\.attempts < 3/);
+    assert.match(sql, /JOIN leads l ON l\.id = a\.lead_id/);
+    assert.match(sql, /newer_customer\.role = 'user'/);
+    assert.match(sql, /newer_customer\.id > a\.through_message_id/);
     return { rows: [{ next_retry_at: "2026-10-07T00:01:00.000Z" }] };
   };
 
