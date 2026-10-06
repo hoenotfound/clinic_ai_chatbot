@@ -238,3 +238,66 @@ test("durable temporary-media sweep fails closed without a client namespace", as
     0
   );
 });
+
+
+test("customer purge prefixes stay inside the current client namespace", () => {
+  assert.deepEqual(
+    mediaStorage.customerMediaPrefixes(42, { CLIENT_SLUG: "Neutro Sense TCM" }),
+    [
+      "clients/neutro-sense-tcm/messages/42/",
+      "clients/neutro-sense-tcm/meta-outbound/42/",
+    ]
+  );
+  assert.equal(
+    mediaStorage.isOwnedCustomerMediaPrefix(
+      "clients/neutro-sense-tcm/messages/42/",
+      { CLIENT_SLUG: "Neutro Sense TCM" }
+    ),
+    true
+  );
+  assert.equal(
+    mediaStorage.isOwnedCustomerMediaPrefix(
+      "clients/other-client/messages/42/",
+      { CLIENT_SLUG: "Neutro Sense TCM" }
+    ),
+    false
+  );
+});
+
+test("legacy media mode fails closed for customer prefix deletion", () => {
+  assert.deepEqual(mediaStorage.customerMediaPrefixes(42, {}), []);
+  assert.equal(
+    mediaStorage.isOwnedCustomerMediaPrefix("messages/42/", {}),
+    false
+  );
+});
+
+
+test("stored customer media keys reject another client's namespace", () => {
+  const env = { CLIENT_SLUG: "neutro-sense-tcm" };
+  assert.equal(
+    mediaStorage.isOwnedStoredMediaKey(
+      "clients/neutro-sense-tcm/messages/42/photo.jpg",
+      env
+    ),
+    true
+  );
+  assert.equal(
+    mediaStorage.isOwnedStoredMediaKey("messages/42/legacy.jpg", env),
+    true
+  );
+  assert.equal(
+    mediaStorage.isOwnedStoredMediaKey(
+      "clients/other-client/messages/42/photo.jpg",
+      env
+    ),
+    false
+  );
+  assert.equal(
+    mediaStorage.isOwnedStoredMediaKey(
+      "clients/neutro-sense-tcm/messages/42/photo.jpg",
+      {}
+    ),
+    false
+  );
+});
