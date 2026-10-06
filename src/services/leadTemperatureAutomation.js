@@ -117,6 +117,17 @@ function createLeadTemperatureReviewer({
       classification = evaluation.classification;
     }
 
+    if (
+      !classification &&
+      evaluation.warmClassification &&
+      isAllowedRuleTemperatureTransition(
+        lead.temperature,
+        evaluation.warmClassification
+      )
+    ) {
+      classification = evaluation.warmClassification;
+    }
+
     if (!classification) {
       return { status: "unchanged" };
     }

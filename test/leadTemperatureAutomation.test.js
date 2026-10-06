@@ -17,6 +17,52 @@ test("clear booking intent becomes Hot in English, Bahasa Malaysia, and Chinese"
     "Macam mana nak booking?",
     "Boleh saya datang hari Sabtu?",
     "还有空位吗？",
+    "I'll come tomorrow.",
+    "I'm on my way.",
+    "See you at 3pm.",
+    "Can you reserve first?",
+    "Ask your staff to call me.",
+    "Saya akan datang esok.",
+    "Saya dah on the way.",
+    "Boleh reserve dulu?",
+    "Tolong suruh staff call saya.",
+    "我明天会过去。",
+    "我已经在路上了。",
+    "明天见。",
+    "可以先帮我留位吗？",
+    "叫客服联系我。",
+  ];
+
+  for (const messageText of examples) {
+    const result = classifyTemperatureMessage({ messageText });
+    assert.equal(result?.temperature, "hot", messageText);
+    assert.equal(result?.matchedRule, "booking_intent", messageText);
+  }
+});
+
+test("clear purchase, package acceptance, and payment intent becomes Hot", () => {
+  const examples = [
+    "I want this package.",
+    "I want Package A.",
+    "I want the RM388 promo.",
+    "I want to take this promotion.",
+    "I'll go with this package.",
+    "How can I make payment?",
+    "Please send me the payment link.",
+    "Saya nak ambil pakej ini.",
+    "Saya nak pakej A.",
+    "Saya nak promo RM388.",
+    "Saya mahu teruskan rawatan ini.",
+    "Macam mana nak bayar?",
+    "Boleh bagi payment link?",
+    "我要这个配套。",
+    "我要A配套。",
+    "我想要这个优惠。",
+    "我想付款。",
+    "怎么付定金？",
+    "发给我付款链接。",
+    "This is expensive, but I'll take this package.",
+    "这个有点贵，不过我要这个配套。",
   ];
 
   for (const messageText of examples) {
@@ -45,6 +91,13 @@ test("explicit rejection becomes Cold in English, Bahasa Malaysia, and Chinese",
     "我不想去你们诊所。",
     "我不要到店。",
     "不要再联系我。",
+    "I've already booked another clinic.",
+    "I am not proceeding with this treatment anymore.",
+    "I will not proceed with your clinic.",
+    "It is too far, so I won't come.",
+    "Saya tak mahu teruskan rawatan ini.",
+    "我已经预约了别的诊所。",
+    "我不继续了。",
   ];
 
   for (const messageText of examples) {
@@ -69,7 +122,7 @@ test("explicit rejection becomes Cold in English, Bahasa Malaysia, and Chinese",
   assert.equal(
     classifyTemperatureMessage({ messageText: "No thanks, I am not interested." })
       ?.rejectionStrength,
-    "standard"
+    "absolute"
   );
 });
 
@@ -90,12 +143,155 @@ test("general interest, uncertainty, cancellation, and silence remain Warm", () 
     "这个疗程多少钱？",
     "暂时不预约。",
     "可能想预约下周。",
+    "This package is too expensive, let me think about it.",
+    "Do I need to pay a deposit?",
+    "Is a deposit required?",
+    "Any discount if I take Package A?",
+    "I live in Johor. Do you only have a PJ branch?",
+    "Saya nak fikir dulu sebab agak mahal.",
+    "Perlu saya bayar deposit ke?",
+    "这个配套太贵，我考虑一下。",
+    "需要付定金吗？",
+    "No thanks.",
+    "If you can give a discount, I will take Package A.",
+    "Kalau ada diskaun saya nak ambil pakej A.",
+    "如果有折扣我就要这个配套。",
+    "I don't want this package.",
+    "Saya tak nak pakej ini.",
+    "我不要这个套餐，但我想了解另一个。",
+    "If I decide next month, can I book online?",
+    "If I want to book later, how do I do it?",
+    "I'm coming to KL next month, do you have a branch there?",
+    "我来了解一下。",
+    "Just asking how booking works.",
+    "Kalau saya nanti nak book, boleh buat online?",
+    "如果我之后想预约，可以线上预约吗？",
     "",
   ];
 
   for (const messageText of examples) {
     assert.equal(classifyTemperatureMessage({ messageText }), null, messageText);
   }
+});
+
+test("reviewer recovers Cold leads to Warm on renewed interest and cools Hot leads on explicit hesitation", async () => {
+  let activeLead = { id: 20, temperature: "cold", is_closed: false };
+  const applied = [];
+  const reviewer = createLeadTemperatureReviewer({
+    pipelineRepository: {
+      getActiveLeadForContact: async () => activeLead,
+      applyRuleBasedTemperature: async (leadId, classification, currentTemperature) => {
+        applied.push({ leadId, classification, currentTemperature });
+        return { id: leadId, temperature: classification.temperature };
+      },
+    },
+    messagesRepository: {
+      getMessagesForContact: async () => [],
+    },
+    getBranchNames: () => [],
+  });
+
+  const renewed = await reviewer(21, 201, "How much is the pelvis treatment now?");
+  assert.equal(renewed.status, "updated");
+  assert.equal(renewed.lead.temperature, "warm");
+  assert.equal(renewed.classification.matchedRule, "renewed_interest");
+  assert.equal(renewed.classification.warmStrength, "interest");
+  assert.equal(applied[0].currentTemperature, "cold");
+
+  activeLead = { id: 20, temperature: "cold", is_closed: false };
+  const promoRenewed = await reviewer(21, 2012, "Any promo now?");
+  assert.equal(promoRenewed.status, "updated");
+  assert.equal(promoRenewed.lead.temperature, "warm");
+  assert.equal(promoRenewed.classification.matchedRule, "renewed_interest");
+
+  activeLead = { id: 20, temperature: "cold", is_closed: false };
+  const depositRenewed = await reviewer(21, 2013, "Do I need to pay a deposit?");
+  assert.equal(depositRenewed.status, "updated");
+  assert.equal(depositRenewed.lead.temperature, "warm");
+  assert.equal(depositRenewed.classification.warmStrength, "interest");
+
+  activeLead = { id: 20, temperature: "cold", is_closed: false };
+  const hesitantInterest = await reviewer(21, 20135, "I want to book, but I am not ready yet.");
+  assert.equal(hesitantInterest.status, "updated");
+  assert.equal(hesitantInterest.lead.temperature, "warm");
+  assert.equal(hesitantInterest.classification.warmStrength, "cooling_interest");
+
+  activeLead = { id: 20, temperature: "cold", is_closed: false };
+  const hesitantOnly = await reviewer(21, 2014, "Maybe later, not now.");
+  assert.equal(hesitantOnly.status, "unchanged");
+
+  activeLead = { id: 20, temperature: "cold", is_closed: false };
+  const rejectedTreatmentOnly = await reviewer(21, 2015, "Saya tak nak rawatan ini.");
+  assert.equal(rejectedTreatmentOnly.status, "unchanged");
+
+  activeLead = { id: 21, temperature: "hot", is_closed: false };
+  const cooled = await reviewer(22, 202, "RM388 is a bit expensive, let me think first.");
+  assert.equal(cooled.status, "updated");
+  assert.equal(cooled.lead.temperature, "warm");
+  assert.equal(cooled.classification.matchedRule, "explicit_hesitation");
+  assert.equal(cooled.classification.warmStrength, "cooling");
+  assert.equal(applied[4].currentTemperature, "hot");
+
+  activeLead = { id: 22, temperature: "hot", is_closed: false };
+  const paymentQuestion = await reviewer(23, 203, "Do I need to pay a deposit?");
+  assert.equal(paymentQuestion.status, "unchanged");
+  assert.equal(applied.length, 5);
+});
+
+test("distance and different-state location stay Warm unless the customer withdraws", () => {
+  for (const messageText of [
+    "I live in Johor. Is your clinic only in PJ?",
+    "I'm from Penang, PJ is quite far.",
+    "Saya di Melaka, ada branch dekat sini?",
+    "我住在槟城，PJ有点远。",
+  ]) {
+    assert.equal(classifyTemperatureMessage({ messageText }), null, messageText);
+  }
+
+  for (const messageText of [
+    "I'm from Johor but I want to book Saturday.",
+    "Saya dari Melaka tapi saya nak buat appointment Sabtu.",
+    "我住在槟城，不过我想预约星期六。",
+  ]) {
+    assert.equal(classifyTemperatureMessage({ messageText })?.temperature, "hot", messageText);
+  }
+});
+
+test("package acceptance becomes Hot when it directly answers a sales next-step prompt", () => {
+  const examples = [
+    {
+      messageText: "Yes please",
+      previousClinicMessage: "Would you like to proceed with Package A?",
+    },
+    {
+      messageText: "Package A",
+      previousClinicMessage: "Which package would you like to proceed with?",
+    },
+    {
+      messageText: "A",
+      previousClinicMessage: "Which package would you like to proceed with?",
+    },
+    {
+      messageText: "可以",
+      previousClinicMessage: "要不要继续这个配套？",
+    },
+  ];
+
+  for (const example of examples) {
+    const result = classifyTemperatureMessage(example);
+    assert.equal(result?.temperature, "hot", example.messageText);
+    assert.equal(result?.matchedRule, "scheduling_confirmation", example.messageText);
+  }
+
+  assert.equal(classifyTemperatureMessage({ messageText: "Package A" }), null);
+  assert.equal(classifyTemperatureMessage({
+    messageText: "Package A",
+    previousClinicMessage: "Which package would you like to know more about?",
+  }), null);
+  assert.equal(classifyTemperatureMessage({
+    messageText: "Maybe later",
+    previousClinicMessage: "Would you like to proceed with Package A?",
+  }), null);
 });
 
 test("declining one date while offering another is not a Cold rejection", () => {
@@ -234,16 +430,18 @@ test("reviewer recovers Cold leads and only cools Hot leads for absolute rejecti
   assert.equal(applied[0].currentTemperature, "cold");
 
   activeLead = { id: 13, temperature: "hot", is_closed: false };
-  const ordinaryDecline = await reviewer(18, 105, "No thanks, I am not interested.");
-  assert.equal(ordinaryDecline.status, "unchanged");
-  assert.equal(ordinaryDecline.reason, "transition-not-allowed");
-  assert.equal(applied.length, 1);
+  const finalDecline = await reviewer(18, 105, "No thanks, I am not interested.");
+  assert.equal(finalDecline.status, "updated");
+  assert.equal(finalDecline.lead.temperature, "cold");
+  assert.equal(applied[1].currentTemperature, "hot");
+  assert.equal(applied[1].classification.rejectionStrength, "absolute");
 
+  activeLead = { id: 14, temperature: "hot", is_closed: false };
   const stopContact = await reviewer(18, 106, "Please stop messaging me.");
   assert.equal(stopContact.status, "updated");
   assert.equal(stopContact.lead.temperature, "cold");
-  assert.equal(applied[1].currentTemperature, "hot");
-  assert.equal(applied[1].classification.rejectionStrength, "absolute");
+  assert.equal(applied[2].currentTemperature, "hot");
+  assert.equal(applied[2].classification.rejectionStrength, "absolute");
 });
 
 test("reviewer uses recent clinic context for a short scheduling answer", async () => {
@@ -435,6 +633,5 @@ test("reviewer leaves unclear messages Warm and skips staff-set temperatures", a
 
   const hotResult = await hotReviewer(15, 102, "No thanks");
   assert.equal(hotResult.status, "unchanged");
-  assert.equal(hotResult.reason, "transition-not-allowed");
   assert.equal(historyCalls, 0);
 });
