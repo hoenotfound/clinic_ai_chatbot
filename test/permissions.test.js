@@ -21,6 +21,7 @@ test("sales defaults include clinic-wide visibility while keeping admin capabili
   assert.equal(defaults.manage_assigned_leads, true);
   assert.equal(defaults.view_all_leads, true);
   assert.equal(defaults.export_customer_data, false);
+  assert.equal(defaults.delete_customer_data, false);
   assert.equal(defaults.manage_users, false);
   assert.equal(defaults.manage_settings, false);
 });

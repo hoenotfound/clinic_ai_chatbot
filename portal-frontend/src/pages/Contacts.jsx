@@ -28,6 +28,7 @@ export default function Contacts() {
   const canCreateContacts = permissions.create_leads === true;
   const canManageContacts = permissions.manage_assigned_leads === true;
   const canExportCustomerData = permissions.export_customer_data === true;
+  const canDeleteCustomerData = permissions.delete_customer_data === true;
 
   const [contacts, setContacts] = useState(null);
   const [searchInput, setSearchInput] = useState("");
@@ -36,6 +37,7 @@ export default function Contacts() {
   const [selectedId, setSelectedId] = useState(null);
   const [panelMode, setPanelMode] = useState("view");
   const [showExport, setShowExport] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const searchInputRef = useRef(searchInput);
   const contactsRequestIdRef = useRef(0);
   searchInputRef.current = searchInput;
@@ -129,6 +131,22 @@ export default function Contacts() {
     showToast(isNew ? "Contact added." : "Contact updated.", "info");
   }
 
+  async function handleCustomerDeleted(result) {
+    const deletedId = Number(result?.contactId || deleteTarget?.id);
+    setDeleteTarget(null);
+    if (selectedId === deletedId) {
+      setSelectedId(null);
+      setPanelMode("view");
+    }
+    await refreshContacts(searchInput);
+    showToast(
+      result?.mediaCleanupPending
+        ? "Customer data deleted. Stored media cleanup is queued and will retry automatically."
+        : "Customer data permanently deleted.",
+      "info"
+    );
+  }
+
   const selectedContact = contacts?.find((c) => c.id === selectedId) || null;
   const mobilePanelOpen = panelMode !== "view" || Boolean(selectedContact);
   const exportViewReady = contacts !== null && loadedSearch === searchInput;
@@ -189,7 +207,9 @@ export default function Contacts() {
               showUnassignedAssignment={showUnassignedAssignment}
               canManage={canManageContacts}
               canCreateLeads={canCreateContacts}
+              canDeleteCustomerData={canDeleteCustomerData}
               onEdit={() => canManageContacts && setPanelMode("edit")}
+              onDeleteCustomer={() => setDeleteTarget(selectedContact)}
               onBack={handleBackToList}
               onToast={showToast}
             />
@@ -203,6 +223,14 @@ export default function Contacts() {
             </div>
           ))}
       </div>
+      {deleteTarget && canDeleteCustomerData && (
+        <DeleteCustomerModal
+          contact={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={handleCustomerDeleted}
+          onToast={showToast}
+        />
+      )}
       {showExport && canExportCustomerData && (
         <ExportCustomerModal
           currentCount={currentViewCount}
@@ -570,7 +598,9 @@ function ContactProfile({
   showUnassignedAssignment,
   canManage,
   canCreateLeads,
+  canDeleteCustomerData,
   onEdit,
+  onDeleteCustomer,
   onBack,
   onToast,
 }) {
@@ -773,6 +803,83 @@ function ContactProfile({
             ))}
           </div>
         )}
+      </div>
+
+      {canDeleteCustomerData && (
+        <div className="mt-8 rounded-xl border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 p-4">
+          <h3 className="text-sm font-semibold text-[var(--color-danger)]">Danger zone</h3>
+          <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">
+            Permanently delete this customer, their conversation, CRM journeys, notes, operational records, and stored media.
+          </p>
+          <button
+            type="button"
+            onClick={onDeleteCustomer}
+            className="mt-3 rounded-lg border border-[var(--color-danger)] px-3 py-2 text-xs font-semibold text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger)] hover:text-white"
+          >
+            Delete customer data
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeleteCustomerModal({ contact, onClose, onDeleted, onToast }) {
+  const [confirmation, setConfirmation] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const ready = confirmation.trim() === "DELETE";
+
+  async function handleDelete() {
+    if (!ready || deleting) return;
+    setDeleting(true);
+    try {
+      const result = await api.deleteCustomerData(contact.id);
+      await onDeleted(result);
+    } catch (err) {
+      console.error("Failed to permanently delete customer data:", err);
+      onToast(err.message || "Couldn't delete this customer data.", "error");
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" role="dialog" aria-modal="true" aria-label="Delete customer data">
+      <div className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-xl">
+        <h2 className="font-display text-lg font-bold text-[var(--color-danger)]">Permanently delete customer data?</h2>
+        <p className="mt-2 text-sm leading-relaxed text-[var(--color-text-muted)]">
+          This removes {displayName(contact)}'s conversation, CRM journeys, notes, follow-ups, alerts, operational records, and stored customer media. This cannot be undone.
+        </p>
+        <label className="mt-4 block text-xs font-semibold text-[var(--color-text)]" htmlFor="delete-customer-confirmation">
+          Type DELETE to confirm
+        </label>
+        <input
+          id="delete-customer-confirmation"
+          className={`${inputClass} mt-1`}
+          value={confirmation}
+          onChange={(event) => setConfirmation(event.target.value)}
+          autoComplete="off"
+          autoCapitalize="characters"
+          disabled={deleting}
+        />
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={deleting}
+            className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-medium disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={!ready || deleting}
+            className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-danger)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"
+          >
+            {deleting && <Spinner className="h-3 w-3" />}
+            {deleting ? "Deleting…" : "Delete permanently"}
+          </button>
+        </div>
       </div>
     </div>
   );

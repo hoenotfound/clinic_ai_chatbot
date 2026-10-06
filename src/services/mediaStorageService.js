@@ -29,6 +29,15 @@ const CLIENT_MEDIA_ROOT = "clients";
 const MAX_CLIENT_SLUG_LENGTH = 80;
 let cachedClient = null;
 
+function isStorageConfigured(env = process.env) {
+  return Boolean(
+    env.R2_ACCOUNT_ID &&
+    env.R2_ACCESS_KEY_ID &&
+    env.R2_SECRET_ACCESS_KEY &&
+    env.R2_BUCKET_NAME
+  );
+}
+
 function getStorageConfig() {
   const accountId = process.env.R2_ACCOUNT_ID;
   const accessKeyId = process.env.R2_ACCESS_KEY_ID;
@@ -433,6 +442,140 @@ function temporaryMediaPrefix(env = process.env) {
   return applyClientNamespace("meta-outbound/", env);
 }
 
+function customerMediaPrefixes(contactId, env = process.env) {
+  if (!isStorageConfigured(env)) return [];
+  const isolation = getMediaIsolationStatus(env);
+  if (!isolation.prefix) return [];
+  const segment = safeObjectSegment(contactId);
+  return [
+    `${isolation.prefix}/messages/${segment}/`,
+    `${isolation.prefix}/meta-outbound/${segment}/`,
+  ];
+}
+
+function isOwnedCustomerMediaPrefix(prefix, env = process.env) {
+  const isolation = getMediaIsolationStatus(env);
+  if (!isolation.prefix) return false;
+  const normalized = String(prefix || "");
+  return (
+    normalized.startsWith(`${isolation.prefix}/messages/`) ||
+    normalized.startsWith(`${isolation.prefix}/meta-outbound/`)
+  );
+}
+
+async function deleteMediaPrefix(prefix, { env = process.env } = {}) {
+  if (!isOwnedCustomerMediaPrefix(prefix, env)) {
+    const err = new Error(
+      "Refusing to delete a customer-media prefix outside this client namespace."
+    );
+    err.code = "CUSTOMER_MEDIA_PREFIX_NOT_OWNED";
+    throw err;
+  }
+
+  const bucket = getBucketName();
+  const keys = [];
+  let continuationToken;
+
+  do {
+    const page = await sendR2(new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: prefix,
+      ContinuationToken: continuationToken,
+    }));
+    keys.push(
+      ...(page.Contents || [])
+        .map((object) => object?.Key)
+        .filter(Boolean)
+    );
+    continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  let deleted = 0;
+  for (let offset = 0; offset < keys.length; offset += 500) {
+    const batch = keys.slice(offset, offset + 500);
+    const result = await sendR2(new DeleteObjectsCommand({
+      Bucket: bucket,
+      Delete: {
+        Objects: batch.map((Key) => ({ Key })),
+        Quiet: true,
+      },
+    }));
+    const failures = (result.Errors || []).filter((item) => item?.Key);
+    if (failures.length > 0) {
+      const err = new Error(
+        `Failed to delete ${failures.length} customer media object(s) from R2.`
+      );
+      err.code = "CUSTOMER_MEDIA_DELETE_PARTIAL";
+      err.failedKeys = failures.map((item) => item.Key);
+      throw err;
+    }
+    deleted += batch.length;
+  }
+
+  return deleted;
+}
+
+/**
+ * Exact stored keys come from this client's own database. Namespaced keys must
+ * still belong to this client; legacy permanent keys retain the historical
+ * messages/<contact>/... shape so old clients remain deletable after enabling
+ * CLIENT_SLUG.
+ */
+function isOwnedStoredMediaKey(key, env = process.env) {
+  const normalized = String(key || "").trim();
+  if (!normalized) return false;
+
+  const isolation = getMediaIsolationStatus(env);
+  if (normalized.startsWith(`${CLIENT_MEDIA_ROOT}/`)) {
+    return Boolean(
+      isolation.prefix &&
+      normalized.startsWith(`${isolation.prefix}/`)
+    );
+  }
+
+  return normalized.startsWith("messages/");
+}
+
+/**
+ * Deletes all customer media known at purge time. Exact keys are deleted first.
+ * Namespaced prefix cleanup then catches temporary/unreferenced objects. Legacy
+ * shared-bucket deployments deliberately skip prefix deletion because ownership
+ * of a bare messages/<contact>/ prefix cannot be proven across clients.
+ */
+async function deleteCustomerMediaObjects({
+  mediaKeys = [],
+  mediaPrefixes = [],
+  env = process.env,
+} = {}) {
+  const keys = [...new Set(
+    (Array.isArray(mediaKeys) ? mediaKeys : [])
+      .map((key) => String(key || "").trim())
+      .filter(Boolean)
+  )];
+  const prefixes = [...new Set(
+    (Array.isArray(mediaPrefixes) ? mediaPrefixes : [])
+      .map((prefix) => String(prefix || "").trim())
+      .filter(Boolean)
+  )];
+
+  let deleted = 0;
+  for (const key of keys) {
+    if (!isOwnedStoredMediaKey(key, env)) {
+      const err = new Error(
+        "Refusing to delete a stored media key outside this client's media namespace."
+      );
+      err.code = "CUSTOMER_MEDIA_KEY_NOT_OWNED";
+      throw err;
+    }
+    await deleteMedia(key);
+    deleted += 1;
+  }
+  for (const prefix of prefixes) {
+    deleted += await deleteMediaPrefix(prefix, { env });
+  }
+  return deleted;
+}
+
 function isStaleTemporaryObject(object, {
   now = Date.now(),
   olderThanMs = DEFAULT_STALE_TEMP_MEDIA_AGE_MS,
@@ -573,6 +716,7 @@ module.exports = {
   buildMediaObjectKey,
   sanitizeClientSlug,
   getMediaIsolationStatus,
+  isStorageConfigured,
   r2RequestTimeoutMs,
   sendR2,
   isR2RequestTimeoutError,
@@ -583,6 +727,11 @@ module.exports = {
   createPresignedGetUrl,
   scheduleTemporaryMediaDelete,
   temporaryMediaPrefix,
+  customerMediaPrefixes,
+  deleteCustomerMediaObjects,
+  deleteMediaPrefix,
+  isOwnedCustomerMediaPrefix,
+  isOwnedStoredMediaKey,
   isStaleTemporaryObject,
   pruneStaleTemporaryMedia,
   openMediaStream,

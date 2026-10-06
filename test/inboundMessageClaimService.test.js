@@ -7,6 +7,7 @@ const {
 
 function makeService({
   duplicate = false,
+  deletedProviderMessage = undefined,
   policy = undefined,
   reengagement = undefined,
 } = {}) {
@@ -84,6 +85,13 @@ function makeService({
       };
     },
   };
+  if (deletedProviderMessage !== undefined) {
+    processing.isDeletedProviderMessageId = async (providerMessageId) => {
+      calls.push(["deleted-message-check", providerMessageId]);
+      return deletedProviderMessage === true;
+    };
+  }
+
   const pipeline = {
     async ensureLeadForContact(contactId, actor, messageId) {
       calls.push(["lead", contactId, actor, messageId]);
@@ -236,6 +244,21 @@ test("lead re-engagement alert failures never fail inbound preparation", async (
 
   assert.equal(prepared.savedInbound.id, 777);
   assert.equal(prepared.processingJobId, 91);
+});
+
+test("privacy-deleted provider message retries are suppressed before recreating a contact", async () => {
+  const { calls, claim } = makeService({ deletedProviderMessage: true });
+  const result = await claim.storeIncomingMessage({
+    id: "wamid-deleted-retry",
+    from: "60123456789",
+    text: "old webhook retry",
+    channel: "whatsapp",
+  });
+
+  assert.equal(result, null);
+  assert.deepEqual(calls, [
+    ["deleted-message-check", "wamid-deleted-retry"],
+  ]);
 });
 
 test("duplicate webhook claims stop before later side effects", async () => {
