@@ -102,6 +102,33 @@ test("stores quoted-reply and forwarded metadata atomically", async (t) => {
   assert.equal(saved.is_forwarded, true);
 });
 
+test("reply-target lookup exposes delivery status for server-side quote validation", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /delivery_status/);
+    assert.match(sql, /WHERE id = \$1 AND contact_id = \$2/);
+    assert.deepEqual(params, [81, 7]);
+    return {
+      rows: [{
+        id: 81,
+        contact_id: 7,
+        role: "assistant",
+        content: "Unconfirmed outbound",
+        whatsapp_message_id: "wamid-unconfirmed",
+        delivery_status: "unknown",
+      }],
+    };
+  };
+
+  const message = await messagesRepo.getMessageForReplyContext(7, 81);
+  assert.equal(message.delivery_status, "unknown");
+  assert.equal(message.whatsapp_message_id, "wamid-unconfirmed");
+});
+
 test("uploads Buffer attachments to R2 without a base64 round-trip", async (t) => {
   const originalQuery = pool.query;
   const originalUploadMedia = mediaStorage.uploadMedia;
