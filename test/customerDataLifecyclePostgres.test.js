@@ -7,6 +7,7 @@ const { Client } = require("pg");
 const lifecycleRepo = require("../src/db/customerDataLifecycleRepo");
 const inboundProcessingRepo = require("../src/db/inboundProcessingRepo");
 const metaCommentAutomationRepo = require("../src/db/metaCommentAutomationRepo");
+const messagesRepo = require("../src/db/messagesRepo");
 
 const connectionString = process.env.TEST_DATABASE_URL;
 const migration040Sql = fs.readFileSync(
@@ -90,6 +91,26 @@ async function createLifecycleSchema(client) {
       PRIMARY KEY (channel, external_user_id)
     );
 
+    CREATE TABLE message_reactions (
+      id BIGSERIAL PRIMARY KEY,
+      target_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+      reactor_key TEXT NOT NULL,
+      emoji TEXT NOT NULL,
+      provider_reaction_message_id TEXT,
+      UNIQUE (target_message_id, reactor_key)
+    );
+
+    CREATE TABLE pending_whatsapp_reactions (
+      id BIGSERIAL PRIMARY KEY,
+      target_whatsapp_message_id TEXT NOT NULL,
+      reactor_key TEXT NOT NULL,
+      reactor_whatsapp_id TEXT NOT NULL,
+      emoji TEXT NOT NULL,
+      provider_reaction_message_id TEXT,
+      UNIQUE (target_whatsapp_message_id, reactor_key)
+    );
+
     CREATE TABLE meta_comment_automation_jobs (
       id BIGSERIAL PRIMARY KEY,
       channel TEXT NOT NULL,
@@ -162,6 +183,24 @@ test(
         [contactId, parent.rows[0].id]
       );
       await client.query(
+        `INSERT INTO message_reactions (
+           target_message_id, contact_id, reactor_key, emoji,
+           provider_reaction_message_id
+         )
+         VALUES ($1, $2, 'whatsapp:60120001111', '👍', 'wamid.reaction.saved')`,
+        [parent.rows[0].id, contactId]
+      );
+      await client.query(
+        `INSERT INTO pending_whatsapp_reactions (
+           target_whatsapp_message_id, reactor_key, reactor_whatsapp_id,
+           emoji, provider_reaction_message_id
+         )
+         VALUES (
+           'facebook:mid-deleted-1', 'whatsapp:60120001111',
+           'social-1', '❤️', 'wamid.reaction.pending'
+         )`
+      );
+      await client.query(
         `INSERT INTO leads (contact_id, updated_at)
          VALUES ($1, NOW() - INTERVAL '99 days')`,
         [contactId]
@@ -203,9 +242,18 @@ test(
         providerMessageTombstones: 1,
         providerReferralTombstones: 1,
         providerCommentTombstones: 1,
+        pendingReactions: 1,
+        providerReactionTombstones: 2,
       });
 
-      for (const table of ["contacts", "messages", "leads", "contact_notes"]) {
+      for (const table of [
+        "contacts",
+        "messages",
+        "leads",
+        "contact_notes",
+        "message_reactions",
+        "pending_whatsapp_reactions",
+      ]) {
         const rows = await client.query(`SELECT COUNT(*)::int AS count FROM ${table}`);
         assert.equal(rows.rows[0].count, 0, table);
       }
@@ -235,6 +283,8 @@ test(
         [
           "facebook:mid-deleted-1",
           "facebook:referral:deleted-event-1",
+          "wamid.reaction.saved",
+          "wamid.reaction.pending",
         ].sort()
       );
 
@@ -258,6 +308,13 @@ test(
           "facebook:referral:deleted-event-1",
           client
         ),
+        true
+      );
+      assert.equal(
+        await messagesRepo.isDeletedWhatsappReactionEvent(client, {
+          targetWhatsappMessageId: "facebook:mid-deleted-1",
+          providerReactionMessageId: "wamid.new-reaction-retry",
+        }),
         true
       );
       const replayedComment = await metaCommentAutomationRepo.storeIncomingComment({
