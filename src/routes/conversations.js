@@ -2086,7 +2086,9 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
                 mediaKey,
                 req.file.mimetype
               ), true)) || saved;
-            mediaAttached = Boolean(saved.media_key);
+            // Attachment updates return a lightweight portal row. The R2 key
+            // is deliberately omitted; this flag confirms it was persisted.
+            mediaAttached = saved.has_media_attachment === true;
           } catch (attachErr) {
             console.error(
               `[Inbox image] failed to attach R2 media key to message ${saved.id} (attempt ${attempt}/2):`,
