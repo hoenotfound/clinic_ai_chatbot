@@ -1693,10 +1693,10 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     let sendResult;
     if ((preparedContact.channel || "whatsapp") === "whatsapp") {
       // The image has already been durably written to private R2 by
-      // appendMessageForContact(). Reuse that exact object through a short-lived
-      // signed GET URL instead of uploading the same bytes to Meta a second time.
-      // This keeps retries durable while removing one full file upload from the
-      // critical path of every manual WhatsApp photo send.
+      // appendMessageForContact(). Ask R2 to create a disposable server-side
+      // copy for Meta, then send a short-lived signed URL for that copy. This
+      // avoids another Render->provider byte upload without exposing the
+      // permanent customer-media object key.
       const mediaReference =
         await messagesRepo.getMessageMediaReferenceForContact(saved.contact_id, saved.id);
       if (!mediaReference?.media_key) {
@@ -1708,7 +1708,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
           req.file.mimetype,
           {
             contactId: preparedContact.id,
-            expiresSeconds: 5 * 60,
+            expiresSeconds: 10 * 60,
           }
         );
         mediaStorage.scheduleTemporaryMediaDelete(temporaryMedia.key);
