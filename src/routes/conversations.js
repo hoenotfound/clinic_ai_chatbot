@@ -1,4 +1,6 @@
 const express = require("express");
+const { randomUUID } = require("node:crypto");
+const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
 const multer = require("multer");
 const { pipeline } = require("node:stream/promises");
 const { canAccessContact } = require("../utils/accessControl");
@@ -12,6 +14,7 @@ const realtimeEvents = require("../utils/realtimeEvents");
 const whatsapp = require("../services/whatsappService");
 const channelMessaging = require("../services/channelMessagingService");
 const mediaStorage = require("../services/mediaStorageService");
+const { prepareStoredInboxImage } = require("../services/inboxImagePreparationService");
 const { convertToWhatsAppVoice } = require("../services/audioConvertService");
 const { transcribeStaffAudio } = require("../services/transcriptionService");
 const whatsappPolicy = require("../services/whatsappPolicyService");
@@ -57,6 +60,76 @@ const voiceUpload = multer({
     cb(null, true);
   },
 });
+
+function inboxMediaTimings(req = null) {
+  const suppliedId = String(req?.headers?.["x-inbox-request-id"] || "");
+  return { requestId: /^[A-Za-z0-9_-]{1,80}$/.test(suppliedId) ? suppliedId : randomUUID() };
+}
+
+async function timedMediaStage(timings, stage, work, database = false) {
+  const startedAt = performance.now();
+  console.info("[Inbox media stage]", JSON.stringify({ requestId: timings.requestId, stage, status: "started" }));
+  try {
+    return await (database ? withInboxDatabaseTimeouts(work, timings) : work());
+  } finally {
+    timings[stage] = Math.round(performance.now() - startedAt);
+    console.info("[Inbox media stage]", JSON.stringify({ requestId: timings.requestId, stage, status: "finished", elapsedMs: timings[stage] }));
+  }
+}
+
+async function finishInboxMediaSend(saved, sendResult, contact, username, timings) {
+  const errorText = deliveryErrorForSend(sendResult, sendResult.error || rejectedErrorFor(contact));
+  let finalMessage = null;
+  await timedMediaStage(timings, "outcomeSaveMs", async () => {
+    for (let attempt = 1; attempt <= 2 && !finalMessage; attempt += 1) {
+      try {
+        finalMessage = await withInboxDatabaseTimeouts(
+          () => persistSendOutcome(saved, sendResult, errorText, contact.channel || "whatsapp"), timings
+        );
+      } catch (err) {
+        console.error(`[Inbox image] failed to persist provider outcome for message ${saved.id} (attempt ${attempt}/2):`, err);
+      }
+    }
+  });
+  if (!finalMessage) {
+    const unknown = sendResult.unknown === true || sendResult.ambiguous === true;
+    finalMessage = { ...saved, whatsapp_message_id: sendResult.wamid || saved.whatsapp_message_id || null,
+      delivery_status: unknown ? "unknown" : sendResult.success ? "pending" : "failed", delivery_error: errorText };
+    await flagInboxMediaAttention(contact.id,
+      "Provider send completed, but its delivery state could not be fully persisted. Please verify this conversation before retrying.", timings);
+  }
+  if (sendResult.success) {
+    await timedMediaStage(timings, "pipelineMs", () => markLeadContacted(contact.id, username, sendResult), true);
+  } else {
+    await flagInboxMediaAttention(contact.id,
+      `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`, timings);
+  }
+  return finalMessage;
+}
+
+async function flagInboxMediaAttention(contactId, reason, timings) {
+  try {
+    await withInboxDatabaseTimeouts(() => contactsRepo.setDeliveryAttention(contactId, reason), timings);
+  } catch (err) {
+    console.error(`[Inbox image] failed to flag attention for contact ${contactId}:`, err);
+  }
+}
+
+async function attachInboxMedia(contactId, saved, key, mimeType, timings) {
+  let updated = null;
+  await timedMediaStage(timings, "mediaAttachMs", async () => {
+    for (let attempt = 1; attempt <= 2 && !updated; attempt += 1) {
+      try {
+        updated = await withInboxDatabaseTimeouts(
+          () => conversationStore.attachStoredMediaForContact(contactId, saved.id, key, mimeType), timings
+        );
+      } catch (err) {
+        console.error(`[Inbox image] failed to attach media for message ${saved.id} (attempt ${attempt}/2):`, err);
+      }
+    }
+  });
+  return updated;
+}
 
 async function resolveWithin(promise, timeoutMs, fallbackValue) {
   let timer;
@@ -1380,7 +1453,106 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
   }
 });
 
-async function forwardStoredMessage(sourceMessage, targetContact, username) {
+async function forwardStoredMessage(sourceMessage, targetContact, username, requestTimings = null) {
+  const mimeType = String(sourceMessage.media_mime_type || "").toLowerCase();
+  const isSticker = mimeType === "image/webp" && /(?:sent a sticker|forwarded sticker|sticker sent from)/i.test(String(sourceMessage.content || ""));
+  if (!sourceMessage.media_key || !mimeType.startsWith("image/") || isSticker) {
+    return forwardOtherStoredMessage(sourceMessage, targetContact, username);
+  }
+  const timings = { ...(requestTimings || inboxMediaTimings()), target: targetContact.id };
+  const startedAt = performance.now();
+  const policy = await timedMediaStage(timings, "preflightMs", () =>
+    whatsappPolicy.checkFreeformAllowed(targetContact, new Date(), { purpose: whatsappPolicy.manualStaffPurpose(targetContact) }), true);
+  if (!policy.allowed) return { contactId: targetContact.id, delivered: false, policyBlocked: true, code: policy.code || null, error: policy.message };
+  const normalizedImage = (targetContact.channel || "whatsapp") === "whatsapp"
+    ? await timedMediaStage(timings, "imagePreparationMs", () => prepareStoredInboxImage(sourceMessage))
+    : null;
+  const sourceContent = String(sourceMessage.content || "");
+  const content = /^📷\s*\[[^\]]+sent a photo\]\s*$/iu.test(sourceContent.trim()) ? "" : sourceContent.replace(/^📷\s*/u, "");
+  const { preparedContact, saved: initialSaved } = await timedMediaStage(timings, "initialSaveMs", () =>
+    telegramImmediateAlertRepo.withContactAlertLock(targetContact.id, async () => {
+      const preparedContact = await prepareStaffSend(targetContact, username);
+      const saved = await conversationStore.appendMessageForContact(preparedContact.id, "assistant", content, null, username, null,
+        { mimeType: sourceMessage.media_mime_type }, { isForwarded: true, publish: false });
+      const finalContact = await finalizeStaffSendState(preparedContact.id, username);
+      return { preparedContact: finalContact || preparedContact, saved };
+    }, undefined, timings), true);
+  let saved = initialSaved;
+  // One buffered fallback shared by the two operations. Normal image forwards
+  // never download bytes, and a copy timeout does not trigger another 10s copy.
+  let bufferPromise;
+  const fallbackBuffer = () => {
+    bufferPromise ||= timedMediaStage(timings, "fallbackDownloadMs", () => mediaStorage.downloadMedia(sourceMessage.media_key));
+    return bufferPromise;
+  };
+  const providerTempPromise = normalizedImage ? Promise.resolve(null) : timedMediaStage(timings, "temporaryCopyMs", () =>
+    mediaStorage.copyStoredMediaToTemporary(sourceMessage.media_key, sourceMessage.media_mime_type,
+      { contactId: preparedContact.id, expiresSeconds: 10 * 60 }));
+  const providerPromise = (async () => {
+    if (normalizedImage) {
+      return timedMediaStage(timings, "providerMs", () => channelMessaging.sendImageBuffer(preparedContact, normalizedImage.buffer,
+        normalizedImage.mimeType, content || undefined, "image.jpg", { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId, inboxMediaTimings: timings }));
+    }
+    let preparedTemporaryMedia;
+    try {
+      preparedTemporaryMedia = await providerTempPromise;
+      mediaStorage.scheduleTemporaryMediaDelete(preparedTemporaryMedia.key);
+    } catch (err) {
+      console.warn(`[Inbox forward] provider R2 copy failed for message ${sourceMessage.id}:`, err);
+      if (mediaStorage.isR2RequestTimeoutError(err)) return { success: false, error: "Image preparation timed out before provider submission." };
+      let buffer;
+      try {
+        buffer = await fallbackBuffer();
+      } catch (preparationError) {
+        console.warn(`[Inbox forward] fallback preparation failed for message ${sourceMessage.id}:`, preparationError);
+        return {
+          success: false,
+          error: "The image could not be prepared for forwarding. No message was submitted. Please try again.",
+        };
+      }
+      return timedMediaStage(timings, "providerMs", () => channelMessaging.sendImageBuffer(preparedContact, buffer,
+        sourceMessage.media_mime_type, content || undefined, "image", socialProviderSendOptions(saved, preparedContact, { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId, inboxMediaTimings: timings })));
+    }
+    return timedMediaStage(timings, "providerMs", () => channelMessaging.sendImageByUrl(preparedContact, preparedTemporaryMedia.url,
+      content || undefined, socialProviderSendOptions(saved, preparedContact, { purpose: whatsappPolicy.manualStaffPurpose(preparedContact), requestId: timings.requestId, inboxMediaTimings: timings })));
+  })();
+  const persistencePromise = (async () => {
+    let targetMediaKey;
+    try {
+      targetMediaKey = await timedMediaStage(timings, "permanentCopyMs", () => normalizedImage
+        ? mediaStorage.uploadMedia(normalizedImage.buffer, normalizedImage.mimeType, { contactId: preparedContact.id })
+        : mediaStorage.copyStoredMediaToMessage(sourceMessage.media_key, sourceMessage.media_mime_type, { contactId: preparedContact.id }));
+    } catch (err) {
+      console.warn(`[Inbox forward] permanent R2 copy failed for message ${sourceMessage.id}:`, err);
+      if (mediaStorage.isR2RequestTimeoutError(err)) throw err;
+      targetMediaKey = await timedMediaStage(timings, "fallbackUploadMs", async () => mediaStorage.uploadMedia(
+        normalizedImage?.buffer || await fallbackBuffer(), sourceMessage.media_mime_type, { contactId: preparedContact.id }));
+    }
+    const updated = await attachInboxMedia(preparedContact.id, saved, targetMediaKey, sourceMessage.media_mime_type, timings);
+    if (!updated) {
+      // Do not delete on an ambiguous DB update: the key may have committed.
+      // Customer lifecycle cleanup also covers unreferenced per-contact objects.
+      throw new Error("Forwarded attachment could not be linked to its saved message.");
+    }
+    return updated;
+  })();
+  const [persistOutcome, providerOutcome] = await Promise.allSettled([persistencePromise, providerPromise]);
+  if (persistOutcome.status === "fulfilled") saved = persistOutcome.value;
+  else {
+    console.error(`[Inbox forward] attachment persistence failed for message ${saved.id}:`, persistOutcome.reason);
+    await flagInboxMediaAttention(preparedContact.id, "Forward send attempted, but attachment history/retry may be unavailable.", timings);
+  }
+  const sendResult = providerOutcome.status === "fulfilled" ? providerOutcome.value : { success: false, unknown: true,
+    error: "Forward delivery could not be confirmed. Check the customer chat before retrying." };
+  const finalMessage = await finishInboxMediaSend(saved, sendResult, preparedContact, username, timings);
+  timings.totalMs = Math.round(performance.now() - startedAt);
+  console.info("[Inbox forward timing]", JSON.stringify({ ...timings, source: sourceMessage.id, target: preparedContact.id,
+    persistence: persistOutcome.status, outcome: sendResult.success ? "accepted" : sendResult.unknown ? "unknown" : "failed" }));
+  return { contactId: preparedContact.id, delivered: sendResult.success, deliveryUnknown: sendResult.unknown === true || sendResult.ambiguous === true,
+    error: sendResult.success ? null : publicDeliveryError(sendResult.error), message: { ...finalMessage, delivery_error: publicDeliveryError(finalMessage.delivery_error), is_forwarded: true } };
+}
+
+async function forwardOtherStoredMessage(sourceMessage, targetContact, username) {
   const forwardStartedAt = Date.now();
   const policy = await whatsappPolicy.checkFreeformAllowed(targetContact, new Date(), {
     purpose: whatsappPolicy.manualStaffPurpose(targetContact),
@@ -1399,7 +1571,7 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
   const sourceContent = String(sourceMessage.content || "");
   const sourceIsSticker =
     sourceMimeType === "image/webp" &&
-    /(?:sent a sticker|sticker sent from)/i.test(sourceContent);
+    /(?:sent a sticker|forwarded sticker|sticker sent from)/i.test(sourceContent);
   let forwardedContent = sourceContent;
   if (sourceIsSticker) {
     forwardedContent = "🙂 [Forwarded sticker]";
@@ -1415,33 +1587,6 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
   let targetMediaKey = null;
   let fallbackMediaAttachment = null;
   let mediaCopyMs = null;
-  const canUseZeroCopyImageForward =
-    Boolean(sourceMessage.media_key) &&
-    sourceMimeType.startsWith("image/") &&
-    !sourceIsSticker;
-  const providerTempPromise = canUseZeroCopyImageForward
-    ? mediaStorage
-        .copyStoredMediaToTemporary(
-          sourceMessage.media_key,
-          sourceMessage.media_mime_type,
-          {
-            contactId: targetContact.id,
-            expiresSeconds: 10 * 60,
-          }
-        )
-        .then((temporaryMedia) => {
-          mediaStorage.scheduleTemporaryMediaDelete(temporaryMedia.key);
-          return temporaryMedia;
-        })
-        .catch((err) => {
-          console.warn(
-            `[Inbox forward] provider R2 copy failed for message ${sourceMessage.id}; falling back to stored-media send:`,
-            err
-          );
-          return null;
-        })
-    : null;
-
   if (sourceMessage.media_key) {
     const copyStartedAt = Date.now();
     try {
@@ -1522,22 +1667,10 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
     is_forwarded: true,
   };
 
-  const preparedTemporaryMedia = providerTempPromise
-    ? await providerTempPromise
-    : null;
   const providerStartedAt = Date.now();
-  const sendResult = preparedTemporaryMedia
-    ? await channelMessaging.sendImageByUrl(
-        preparedContact,
-        preparedTemporaryMedia.url,
-        forwardedContent || undefined,
-        socialProviderSendOptions(saved, preparedContact, {
-          purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
-        })
-      )
-    : await sendStoredMessage(preparedContact, messageForSend, {
-        purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
-      });
+  const sendResult = await sendStoredMessage(preparedContact, messageForSend, {
+    purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+  });
   const providerMs = Date.now() - providerStartedAt;
 
   const errorText = deliveryErrorForSend(
@@ -1584,6 +1717,8 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
 }
 
 router.post("/:contactId/messages/:messageId/forward", async (req, res) => {
+  const requestTimings = inboxMediaTimings(req);
+  res.set("X-Inbox-Request-Id", requestTimings.requestId);
   try {
     const sourceContactId = parsePositiveInt(req.params.contactId);
     const sourceMessageId = parsePositiveInt(req.params.messageId);
@@ -1604,10 +1739,10 @@ router.post("/:contactId/messages/:messageId/forward", async (req, res) => {
       return res.status(400).json({ error: "You can forward to up to 10 conversations at a time." });
     }
 
-    const sourceMessage = await messagesRepo.getMessageForForward(
+    const sourceMessage = await timedMediaStage(requestTimings, "sourceLookupMs", () => messagesRepo.getMessageForForward(
       sourceContactId,
       sourceMessageId
-    );
+    ), true);
     if (!sourceMessage) {
       return res.status(404).json({ error: "Message not found." });
     }
@@ -1643,12 +1778,14 @@ router.post("/:contactId/messages/:messageId/forward", async (req, res) => {
     }
 
     const targets = targetChecks.map((item) => item.target);
+    const queuedAt = performance.now();
     const results = await mapWithConcurrency(targets, 3, async (target) => {
       try {
         return await forwardStoredMessage(
           sourceMessage,
           target,
-          req.session.username
+          req.session.username,
+          { ...requestTimings, targetQueueWaitMs: Math.round(performance.now() - queuedAt) }
         );
       } catch (err) {
         console.error(
@@ -1756,9 +1893,13 @@ router.post("/:contactId/messages", async (req, res) => {
 });
 
 function handleImageUpload(req, res, next) {
+  req.inboxMediaTimings = inboxMediaTimings(req);
+  res.set("X-Inbox-Request-Id", req.inboxMediaTimings.requestId);
+  console.info("[Inbox media stage]", JSON.stringify({ requestId: req.inboxMediaTimings.requestId, stage: "receiveMs", status: "started" }));
   const receiveStartedAt = Date.now();
   upload.single("image")(req, res, (err) => {
     req.inboxImageReceiveMs = Date.now() - receiveStartedAt;
+    req.inboxMediaTimings.receiveMs = req.inboxImageReceiveMs;
     if (!err) return next();
 
     if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
@@ -1781,9 +1922,10 @@ function handleVoiceUpload(req, res, next) {
 
 router.post("/:contactId/media", handleImageUpload, async (req, res) => {
   const routeStartedAt = Date.now();
+  const timings = req.inboxMediaTimings || inboxMediaTimings(req);
 
   try {
-    const contact = await contactsRepo.getContactById(req.params.contactId);
+    const contact = await timedMediaStage(timings, "contactLookupMs", () => contactsRepo.getContactById(req.params.contactId), true);
     if (!contact) return res.status(404).json({ error: "Contact not found." });
 
     if (!req.file) {
@@ -1809,10 +1951,10 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       }
     }
 
-    const reply = await resolveReplyTarget(contact, req.body?.replyToMessageId, res);
+    const reply = await timedMediaStage(timings, "replyLookupMs", () => resolveReplyTarget(contact, req.body?.replyToMessageId, res), true);
     if (!reply.ok) return;
     const replyTarget = reply.target;
-    if (!(await requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)))) return;
+    if (!(await timedMediaStage(timings, "policyMs", () => requireFreeformPolicy(contact, res, whatsappPolicy.manualStaffPurpose(contact)), true))) return;
 
     const caption = (req.body?.caption || "").trim();
     let preparedContact;
@@ -1825,7 +1967,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       // Save a lightweight message row before any provider call so a successful
       // WhatsApp send can never become an orphaned conversation event. The
       // expensive R2 write and Meta media upload then run in parallel.
-      const prepared = await telegramImmediateAlertRepo.withContactAlertLock(
+      const prepared = await timedMediaStage(timings, "initialSaveMs", () => telegramImmediateAlertRepo.withContactAlertLock(
         contact.id,
         async () => {
           const initialContact = await prepareStaffSend(
@@ -1851,21 +1993,22 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
             preparedContact: finalContact || initialContact,
             saved: initialSaved,
           };
-        }
-      );
+        }, undefined, timings
+      ), true);
 
       preparedContact = prepared.preparedContact;
       saved = prepared.saved;
       const sendOptions = socialProviderSendOptions(saved, preparedContact, {
         purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
         replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+        requestId: timings.requestId,
+        inboxMediaTimings: timings,
       });
 
       const r2StartedAt = Date.now();
-      const persistPromise = mediaStorage
-        .uploadMedia(req.file.buffer, req.file.mimetype, {
+      const persistPromise = timedMediaStage(timings, "r2Ms", () => mediaStorage.uploadMedia(req.file.buffer, req.file.mimetype, {
           contactId: preparedContact.id,
-        })
+        }))
         .then(
           (mediaKey) => {
             r2PersistMs = Date.now() - r2StartedAt;
@@ -1878,15 +2021,14 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
         );
 
       const providerStartedAt = Date.now();
-      const providerPromise = channelMessaging
-        .sendImageBuffer(
+      const providerPromise = timedMediaStage(timings, "providerMs", () => channelMessaging.sendImageBuffer(
           preparedContact,
           req.file.buffer,
           req.file.mimetype,
           caption || undefined,
           req.file.originalname || "image",
           sendOptions
-        )
+        ))
         .then(
           (result) => {
             providerSendMs = Date.now() - providerStartedAt;
@@ -1938,13 +2080,13 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
         for (let attempt = 1; attempt <= 2 && !mediaAttached; attempt += 1) {
           try {
             saved =
-              (await conversationStore.attachStoredMediaForContact(
+              (await timedMediaStage(timings, "mediaAttachMs", () => conversationStore.attachStoredMediaForContact(
                 preparedContact.id,
                 saved.id,
                 mediaKey,
                 req.file.mimetype
-              )) || saved;
-            mediaAttached = true;
+              ), true)) || saved;
+            mediaAttached = Boolean(saved.media_key);
           } catch (attachErr) {
             console.error(
               `[Inbox image] failed to attach R2 media key to message ${saved.id} (attempt ${attempt}/2):`,
@@ -1971,6 +2113,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
           ? providerOutcome.value
           : {
               success: false,
+              unknown: true,
               wamid: null,
               error:
                 providerOutcome.reason?.message ||
@@ -1979,11 +2122,11 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
 
       if (!mediaKey || !mediaAttached) {
         try {
-          await contactsRepo.setDeliveryAttention(
+          await flagInboxMediaAttention(
             preparedContact.id,
             mediaKey
               ? "Image was sent, but its stored attachment could not be linked to the message. History/retry may be unavailable."
-              : "Image storage failed after send attempt; attachment history/retry may be unavailable."
+              : "Image storage failed after send attempt; attachment history/retry may be unavailable.", timings
           );
         } catch (attentionErr) {
           console.error(
@@ -1995,7 +2138,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
     } else {
       // Keep the existing social-channel path unchanged. Those providers have
       // different attachment semantics and already rely on stored media.
-      const prepared = await telegramImmediateAlertRepo.withContactAlertLock(
+      const prepared = await timedMediaStage(timings, "initialSaveMs", () => telegramImmediateAlertRepo.withContactAlertLock(
         contact.id,
         async () => {
           const initialContact = await prepareStaffSend(
@@ -2020,8 +2163,8 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
             preparedContact: finalContact || initialContact,
             saved: initialSaved,
           };
-        }
-      );
+        }, undefined, timings
+      ), true);
 
       preparedContact = prepared.preparedContact;
       saved = prepared.saved;
@@ -2035,71 +2178,14 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
         socialProviderSendOptions(saved, preparedContact, {
           purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
           replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+          requestId: timings.requestId,
+          inboxMediaTimings: timings,
         })
       );
       providerSendMs = Date.now() - providerStartedAt;
     }
 
-    const errorText = deliveryErrorForSend(
-      sendResult,
-      sendResult.error || rejectedErrorFor(preparedContact)
-    );
-
-    let finalMessage = null;
-    for (let attempt = 1; attempt <= 2 && !finalMessage; attempt += 1) {
-      try {
-        finalMessage = await persistSendOutcome(
-          saved,
-          sendResult,
-          errorText,
-          preparedContact.channel || "whatsapp"
-        );
-      } catch (outcomeErr) {
-        console.error(
-          `[Inbox image] failed to persist provider outcome for message ${saved.id} (attempt ${attempt}/2):`,
-          outcomeErr
-        );
-      }
-    }
-
-    if (!finalMessage) {
-      // Meta may already have accepted the image. Return the provider truth
-      // instead of a misleading 500 that encourages a duplicate manual resend.
-      finalMessage = {
-        ...saved,
-        whatsapp_message_id:
-          sendResult.wamid || saved.whatsapp_message_id || null,
-        delivery_status: sendResult.success ? "sent" : "failed",
-        delivery_error: sendResult.success ? null : errorText,
-      };
-      try {
-        await contactsRepo.setDeliveryAttention(
-          preparedContact.id,
-          "Provider send completed, but its delivery state could not be fully persisted. Please verify this conversation before retrying."
-        );
-      } catch (attentionErr) {
-        console.error(
-          `[Inbox image] failed to flag provider-persistence attention for contact ${preparedContact.id}:`,
-          attentionErr
-        );
-      }
-    }
-
-    if (!sendResult.success) {
-      try {
-        await contactsRepo.setDeliveryAttention(
-          preparedContact.id,
-          `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
-        );
-      } catch (attentionErr) {
-        console.error(
-          `[Inbox image] failed to update delivery attention for contact ${preparedContact.id}:`,
-          attentionErr
-        );
-      }
-    } else {
-      await markLeadContacted(preparedContact.id, req.session.username, sendResult);
-    }
+    const finalMessage = await finishInboxMediaSend(saved, sendResult, preparedContact, req.session.username, timings);
 
     const totalRouteMs = Date.now() - routeStartedAt;
     if (
@@ -2109,7 +2195,8 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       Number(providerSendMs || 0) >= 1500
     ) {
       console.info(
-        `[Inbox image timing] contact=${preparedContact.id} bytes=${req.file.size} receive=${req.inboxImageReceiveMs ?? "n/a"}ms r2=${r2PersistMs ?? "n/a"}ms provider=${providerSendMs ?? "n/a"}ms route=${totalRouteMs}ms`
+        "[Inbox image timing]", JSON.stringify({ ...timings, contact: preparedContact.id, bytes: req.file.size,
+          r2Ms: r2PersistMs, providerMs: providerSendMs, routeMs: totalRouteMs })
       );
     }
 

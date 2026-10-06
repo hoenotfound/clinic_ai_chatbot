@@ -1,4 +1,5 @@
 const { Pool } = require("pg");
+const { createScopedPool } = require("./inboxDatabaseScope");
 const {
   DEFAULT_MIGRATION_LOCK_RETRY_MS,
   DEFAULT_MIGRATION_LOCK_TIMEOUT_MS,
@@ -27,7 +28,7 @@ function databasePoolOptions(env = process.env) {
 // strings work with the default `ssl: { rejectUnauthorized: false }` — no
 // need to fuss with CA certs for this use case.
 const poolOptions = databasePoolOptions();
-const pool = new Pool(poolOptions);
+const pool = createScopedPool(new Pool(poolOptions));
 
 pool.on("error", (err) => {
   // Fired on idle client errors (e.g. a dropped connection) — log instead of

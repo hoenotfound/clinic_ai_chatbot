@@ -537,3 +537,19 @@ test("stored customer media keys reject another client's namespace", () => {
     false
   );
 });
+
+test("R2 download deadline destroys a body stalled after headers", async (t) => {
+  const { PassThrough } = require("node:stream");
+  const originalSend = S3Client.prototype.send;
+  const before = { ...process.env };
+  t.after(() => { S3Client.prototype.send = originalSend;
+    for (const name of ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME"]) {
+      if (before[name] == null) delete process.env[name]; else process.env[name] = before[name];
+    }
+  });
+  Object.assign(process.env, { R2_ACCOUNT_ID: "body-test", R2_ACCESS_KEY_ID: "key", R2_SECRET_ACCESS_KEY: "secret", R2_BUCKET_NAME: "test" });
+  const body = new PassThrough();
+  S3Client.prototype.send = async () => ({ Body: body });
+  await assert.rejects(mediaStorage.downloadMedia("test.jpg", { timeoutMs: 15 }), { code: "R2_REQUEST_TIMEOUT" });
+  assert.equal(body.destroyed, true);
+});

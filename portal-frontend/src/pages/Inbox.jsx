@@ -46,6 +46,9 @@ const IMAGE_JPEG_QUALITY = 0.82;
 const IMAGE_PROGRESSIVE_JPEG_QUALITY = 0.92;
 const IMAGE_PNG_TO_JPEG_QUALITY = 0.9;
 const OPTIONAL_IMAGE_PREPARATION_BUDGET_MS = 1200;
+const REQUIRED_IMAGE_PREPARATION_BUDGET_MS = 12000;
+const imagePreparationTraces = new WeakMap();
+const inboxRequestId = () => globalThis.crypto?.randomUUID?.() || `image-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const JPEG_INSPECTION_BYTES = 1024 * 1024;
 const MAX_VOICE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_SECONDS = 120;
@@ -224,10 +227,6 @@ async function inspectJpegEncoding(file) {
   }
 }
 
-async function isProgressiveJpeg(file) {
-  return (await inspectJpegEncoding(file)) === "progressive";
-}
-
 function canvasHasTransparency(context, width, height) {
   const pixels = context.getImageData(0, 0, width, height).data;
   for (let index = 3; index < pixels.length; index += 4) {
@@ -244,9 +243,29 @@ function optimizedImageFileName(name, outputType) {
   return fallbackName;
 }
 
-async function decodeImageForCanvas(file) {
+async function prepareImageWithin(promise, timeoutMs, controller) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = window.setTimeout(() => {
+          controller.abort();
+          const error = new Error("Image preparation took too long. Please choose a smaller JPEG or PNG and try again.");
+          error.name = "ImagePreparationTimeoutError";
+          reject(error);
+        }, Math.max(1, timeoutMs));
+      }),
+    ]);
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+async function decodeImageForCanvas(file, signal) {
   if (typeof createImageBitmap === "function") {
     const bitmap = await createImageBitmap(file);
+    if (signal?.aborted) { bitmap.close?.(); signal.throwIfAborted(); }
     return {
       source: bitmap,
       width: bitmap.width,
@@ -260,8 +279,12 @@ async function decodeImageForCanvas(file) {
     const image = new Image();
     image.decoding = "async";
     await new Promise((resolve, reject) => {
-      image.onload = resolve;
-      image.onerror = () => reject(new Error("Browser could not decode the selected image."));
+      const abort = () => { image.src = ""; reject(new DOMException("Image preparation cancelled.", "AbortError")); };
+      const cleanup = () => signal?.removeEventListener("abort", abort);
+      image.onload = () => { cleanup(); resolve(); };
+      image.onerror = () => { cleanup(); reject(new Error("Browser could not decode the selected image.")); };
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) { abort(); return; }
       image.src = objectUrl;
     });
     return {
@@ -278,7 +301,7 @@ async function decodeImageForCanvas(file) {
 
 async function optimizeImageUpload(
   file,
-  { normalizeProgressiveJpeg = false, forceCompatibleFormat = false } = {}
+  { normalizeProgressiveJpeg = false, forceCompatibleFormat = false, signal, trace } = {}
 ) {
   if (
     !shouldOptimizeImageUpload(file) &&
@@ -290,7 +313,10 @@ async function optimizeImageUpload(
 
   let decoded = null;
   try {
-    decoded = await decodeImageForCanvas(file);
+    const decodeStartedAt = performance.now();
+    decoded = await decodeImageForCanvas(file, signal);
+    if (trace) { trace.decodeMs = Math.round(performance.now() - decodeStartedAt); trace.width = decoded.width; trace.height = decoded.height; }
+    signal?.throwIfAborted();
     const largestSide = Math.max(decoded.width, decoded.height);
     const scale = Math.min(1, IMAGE_OPTIMIZE_MAX_DIMENSION / largestSide);
     const width = Math.max(1, Math.round(decoded.width * scale));
@@ -320,10 +346,13 @@ async function optimizeImageUpload(
       quality = hasTransparency ? undefined : IMAGE_PNG_TO_JPEG_QUALITY;
     }
 
+    const encodeStartedAt = performance.now();
     let blob = await new Promise((resolve) => {
       canvas.toBlob(resolve, outputType, quality);
     });
 
+    if (trace) trace.encodeMs = Math.round(performance.now() - encodeStartedAt);
+    signal?.throwIfAborted();
     if (!blob || !blob.size) return file;
 
     if (normalizeProgressiveJpeg && outputType === "image/jpeg") {
@@ -354,6 +383,7 @@ async function optimizeImageUpload(
   } catch (err) {
     // Optimization is best-effort. A browser that cannot decode the selected
     // image should still be allowed to send the original file.
+    if (signal?.aborted) throw err;
     console.warn("Image optimization skipped:", err);
     return file;
   } finally {
@@ -984,13 +1014,19 @@ export default function Inbox() {
     });
   }
 
-  function enqueueOutbound(contactId, task) {
+  function enqueueOutbound(contactId, task, requestId = null) {
     const key = String(contactId);
     const previous =
       outboundQueueByContactRef.current.get(key) || Promise.resolve();
 
     adjustOutboundPending(contactId, 1);
-    const run = previous.catch(() => {}).then(task);
+    const queuedAt = performance.now();
+    const run = previous.catch(() => {}).then(async () => {
+      const requestStartedAt = performance.now();
+      if (requestId) console.info("[Inbox outbound queue]", { requestId, contactId, queueWaitMs: Math.round(requestStartedAt - queuedAt), status: "started" });
+      try { return await task(); }
+      finally { if (requestId) console.info("[Inbox outbound queue]", { requestId, contactId, requestMs: Math.round(performance.now() - requestStartedAt), status: "finished" }); }
+    });
     const tail = run.catch(() => {});
     outboundQueueByContactRef.current.set(key, tail);
 
@@ -1059,6 +1095,8 @@ export default function Inbox() {
   async function handleSendImage(file, caption, replyToMessageId = null) {
     if (selectedId == null || !file) return;
     const contactId = selectedId;
+    const requestId = imagePreparationTraces.get(file)?.requestId || inboxRequestId();
+    let previewRetained = false;
 
     const optimisticId = makeOptimisticId();
     const previewUrl = URL.createObjectURL(file);
@@ -1088,10 +1126,12 @@ export default function Inbox() {
     try {
       const result = await enqueueOutbound(
         contactId,
-        () => api.sendImage(contactId, file, caption, replyToMessageId)
+        () => api.sendImage(contactId, file, caption, replyToMessageId, requestId),
+        requestId
       );
-      const visibleResult = replyPreview ? { ...result, reply_preview: replyPreview } : result;
+      const visibleResult = { ...result, ...(replyPreview ? { reply_preview: replyPreview } : {}), previewUrl, _requestId: requestId, _responseAt: performance.now() };
       if (selectedIdRef.current === contactId) {
+        previewRetained = true;
         setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [visibleResult]));
       }
       void refreshConversations();
@@ -1111,7 +1151,7 @@ export default function Inbox() {
       showToast(err.message || "Couldn't send that image — please try again.", "error");
       throw err;
     } finally {
-      URL.revokeObjectURL(previewUrl);
+      if (!previewRetained) URL.revokeObjectURL(previewUrl);
     }
   }
 
@@ -1153,7 +1193,10 @@ export default function Inbox() {
   async function handleForwardMessage(messageId, targetContactIds) {
     if (selectedId == null || !Number.isInteger(Number(messageId))) return null;
     const sourceContactId = selectedId;
-    const result = await api.forwardMessage(sourceContactId, messageId, targetContactIds);
+    const requestId = inboxRequestId();
+    const startedAt = performance.now();
+    const result = await api.forwardMessage(sourceContactId, messageId, targetContactIds, requestId);
+    console.info("[Inbox forward request]", { requestId, totalMs: Math.round(performance.now() - startedAt), targets: targetContactIds.length });
     const visibleMessages = (result?.results || [])
       .filter((item) => Number(item.contactId) === Number(selectedIdRef.current) && item.message)
       .map((item) => item.message);
@@ -2013,8 +2056,17 @@ function ThreadView({
     setImagePreparing(couldNeedPreparation);
     if (!couldNeedPreparation) return;
 
+    const preparationStartedAt = performance.now();
+    const controller = new AbortController();
+    const remainingBudget = () => REQUIRED_IMAGE_PREPARATION_BUDGET_MS - (performance.now() - preparationStartedAt);
+    const trace = { requestId: inboxRequestId(), inputBytes: file.size, inputType: file.type };
+    imagePreparationTraces.set(file, trace);
     try {
-      const normalizeProgressiveJpeg = await isProgressiveJpeg(file);
+      const inspectStartedAt = performance.now();
+      const inputEncoding = await prepareImageWithin(inspectJpegEncoding(file), remainingBudget(), controller);
+      trace.inspectMs = Math.round(performance.now() - inspectStartedAt);
+      trace.inputEncoding = inputEncoding;
+      const normalizeProgressiveJpeg = inputEncoding === "progressive";
       const shouldOptimize =
         shouldOptimizeImageUpload(file) ||
         normalizeProgressiveJpeg ||
@@ -2029,21 +2081,17 @@ function ThreadView({
       const optimizationPromise = optimizeImageUpload(file, {
         normalizeProgressiveJpeg,
         forceCompatibleFormat,
+        signal: controller.signal,
+        trace,
       });
+      trace.mandatory = mandatoryPreparation;
 
       let optimizedFile;
       if (mandatoryPreparation) {
-        optimizedFile = await optimizationPromise;
+        optimizedFile = await prepareImageWithin(optimizationPromise, remainingBudget(), controller);
       } else {
-        const prepared = await Promise.race([
-          optimizationPromise.then((value) => ({ completed: true, value })),
-          new Promise((resolve) => {
-            window.setTimeout(
-              () => resolve({ completed: false, value: null }),
-              OPTIONAL_IMAGE_PREPARATION_BUDGET_MS
-            );
-          }),
-        ]);
+        const prepared = await prepareImageWithin(optimizationPromise, OPTIONAL_IMAGE_PREPARATION_BUDGET_MS, controller)
+          .then((value) => ({ completed: true, value }), () => ({ completed: false, value: null }));
         if (!prepared.completed) {
           // Optional compression must never make a valid image feel stuck.
           // Keep the already-selected original and ignore the late optimizer.
@@ -2055,6 +2103,7 @@ function ThreadView({
             setImagePreparing(false);
           }
           optimizationPromise.catch(() => {});
+          trace.fallback = "original";
           return;
         }
         optimizedFile = prepared.value;
@@ -2092,8 +2141,28 @@ function ThreadView({
         return;
       }
 
+      if (normalizeProgressiveJpeg) {
+        trace.outputEncoding = await prepareImageWithin(inspectJpegEncoding(optimizedFile), remainingBudget(), controller);
+        if (optimizedMimeType === "image/jpeg" && trace.outputEncoding !== "non-progressive") {
+          throw new Error("This JPEG could not be prepared safely. Please save a smaller JPEG or PNG and try again.");
+        }
+      }
+      if (!mountedRef.current || imagePreparationIdRef.current !== preparationId) return;
+      trace.outputBytes = optimizedFile.size;
+      imagePreparationTraces.set(optimizedFile, trace);
       setImageFile(optimizedFile);
+    } catch (err) {
+      controller.abort();
+      trace.failed = true;
+      if (mountedRef.current && imagePreparationIdRef.current === preparationId) {
+        URL.revokeObjectURL(nextPreviewUrl);
+        setImageFile(null);
+        setImagePreviewUrl(null);
+        onToast(err.message || "The image could not be prepared. Please choose another JPEG or PNG.", "error");
+      }
     } finally {
+      trace.totalMs = Math.round(performance.now() - preparationStartedAt);
+      console.info("[Inbox image preparation]", trace);
       if (
         mountedRef.current &&
         imagePreparationIdRef.current === preparationId
@@ -3086,6 +3155,7 @@ function MessageBubble({
   canForward,
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [storedImageLoaded, setStoredImageLoaded] = useState(false);
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
   const swipeStartRef = useRef(null);
@@ -3114,7 +3184,11 @@ function MessageBubble({
     : message.has_media_attachment
     ? api.messageMediaUrl(contactId, message.id)
     : null;
-  const imageSrc = message.previewUrl || message.media_url || (!isAudio ? storedMediaSrc : null);
+  const permanentImageSrc = message.media_url || (!isAudio ? storedMediaSrc : null);
+  const imageSrc = message.previewUrl && !storedImageLoaded ? message.previewUrl : permanentImageSrc || message.previewUrl;
+  useEffect(() => () => {
+    if (message.previewUrl && !message._optimistic) URL.revokeObjectURL(message.previewUrl);
+  }, [message.previewUrl, message._optimistic]);
   const hasImage = !!imageSrc;
   const reactionEmojis = Array.isArray(message.reactions)
     ? message.reactions
@@ -3304,6 +3378,12 @@ function MessageBubble({
                 onClick={() => !message._uploading && onImageClick?.(imageSrc)}
                 className={`${isSticker ? "max-h-36 max-w-[9rem] object-contain" : "max-h-64 max-w-full rounded-lg object-cover"} ${message._uploading ? "" : "cursor-zoom-in"}`}
               />
+              {message.previewUrl && permanentImageSrc && !storedImageLoaded && (
+                <img src={permanentImageSrc} alt="" className="hidden" onLoad={() => {
+                  setStoredImageLoaded(true);
+                  console.info("[Inbox image display]", { requestId: message._requestId, responseToImageLoadMs: Math.round(performance.now() - (message._responseAt || performance.now())) });
+                }} onError={() => console.info("[Inbox image display]", { requestId: message._requestId, imageLoadFailed: true })} />
+              )}
               {message._uploading && <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/30"><Spinner className="h-6 w-6 text-white" /></div>}
             </div>
           )

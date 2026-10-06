@@ -7,6 +7,7 @@ const metaAttachments = require("./metaAttachmentService");
 const mediaStorage = require("./mediaStorageService");
 const audioConvert = require("./audioConvertService");
 const messagingPolicy = require("./whatsappPolicyService");
+const { withInboxDatabaseTimeouts } = require("../db/inboxDatabaseScope");
 
 function channelOf(contactOrIncoming) {
   return contactOrIncoming?.channel || "whatsapp";
@@ -108,11 +109,20 @@ async function trackSocialOutbound(channel, operation) {
   return recordAcceptedSocialOutbound(channel, result);
 }
 
-async function freeformGuard(contact, purpose = "service") {
+async function freeformGuard(contact, purpose = "service", inboxTimings = null) {
+  const startedAt = performance.now();
+  if (inboxTimings) console.info("[Inbox media stage]", JSON.stringify({
+    requestId: inboxTimings.requestId, target: contact?.id,
+    stage: "providerPolicyMs", status: "started",
+  }));
   try {
-    const policy = await messagingPolicy.checkFreeformAllowed(contact, new Date(), {
-      purpose,
-    });
+    const check = () => messagingPolicy.checkFreeformAllowed(contact, new Date(), { purpose });
+    // Only the fresh SQL check inherits Inbox deadlines. Release its connection
+    // before uploading or delivering media; background AI callers retain their
+    // existing policy-query settings.
+    const policy = inboxTimings
+      ? await withInboxDatabaseTimeouts(check, inboxTimings)
+      : await check();
     return {
       blocked: policy.allowed ? null : messagingPolicy.blockedSendResult(policy),
       policy,
@@ -134,13 +144,30 @@ async function freeformGuard(contact, purpose = "service") {
       blocked: messagingPolicy.blockedSendResult(policy),
       policy,
     };
+  } finally {
+    if (inboxTimings) {
+      inboxTimings.providerPolicyMs = Math.round(performance.now() - startedAt);
+      console.info("[Inbox media stage]", JSON.stringify({
+        requestId: inboxTimings.requestId, target: contact?.id,
+        stage: "providerPolicyMs", status: "finished", elapsedMs: inboxTimings.providerPolicyMs,
+      }));
+    }
   }
 }
 
 function optionsForPolicy(options, policy) {
-  return policy?.humanAgentRequired === true
+  const sendOptions = policy?.humanAgentRequired === true
     ? { ...options, humanAgent: true }
     : options;
+  if (!options.inboxMediaTimings || typeof options.onProviderMessageId !== "function") return sendOptions;
+  // Meta's URL sender can invoke the recorder inside its caption/image flow.
+  // Wrap the callback itself so both provider layers get the short SQL scope.
+  return {
+    ...sendOptions,
+    onProviderMessageId: id => withInboxDatabaseTimeouts(
+      () => options.onProviderMessageId(id), options.inboxMediaTimings
+    ),
+  };
 }
 
 async function stillInStaffMode(contact) {
@@ -299,7 +326,7 @@ async function sendStoredFacebookImage(contact, imageUrl, caption, options = {})
 
 async function sendText(contact, text, options = {}) {
   const channel = channelOf(contact);
-  const guard = await freeformGuard(contact, options.purpose);
+  const guard = await freeformGuard(contact, options.purpose, options.inboxMediaTimings);
   if (guard.blocked) return guard.blocked;
   const sendOptions = optionsForPolicy(options, guard.policy);
 
@@ -309,6 +336,7 @@ async function sendText(contact, text, options = {}) {
   if (channel === "whatsapp") {
     return whatsapp.sendMessage(contact.whatsapp_number, text, {
       replyToProviderMessageId: sendOptions.replyToProviderMessageId,
+      ...(options.requestId ? { requestId: options.requestId } : {}),
     });
   }
   const result = await trackSocialOutbound(
@@ -353,7 +381,7 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
     );
   }
 
-  const guard = await freeformGuard(contact, options.purpose);
+  const guard = await freeformGuard(contact, options.purpose, options.inboxMediaTimings);
   if (guard.blocked) return guard.blocked;
   const sendOptions = optionsForPolicy(options, guard.policy);
   if (channel === "whatsapp") {
@@ -361,6 +389,7 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
     if (cancelled) return cancelled;
     return whatsapp.sendImage(contact.whatsapp_number, imageUrl, caption, {
       replyToProviderMessageId: sendOptions.replyToProviderMessageId,
+      ...(options.requestId ? { requestId: options.requestId } : {}),
     });
   }
 
@@ -386,14 +415,14 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
 async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "image", options = {}) {
   const channel = channelOf(contact);
   // Check policy before uploading bytes or sending a separate social caption.
-  const guard = await freeformGuard(contact, options.purpose);
+  const guard = await freeformGuard(contact, options.purpose, options.inboxMediaTimings);
   if (guard.blocked) return guard.blocked;
   const sendOptions = optionsForPolicy(options, guard.policy);
   const initialCancellation = await preSendCancelled(sendOptions);
   if (initialCancellation) return initialCancellation;
 
   if (channel === "whatsapp") {
-    const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename);
+    const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename, options);
     if (!mediaId) {
       return {
         success: false,
@@ -407,7 +436,7 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
       contact.whatsapp_number,
       mediaId,
       caption || undefined,
-      { replyToProviderMessageId: sendOptions.replyToProviderMessageId }
+      { replyToProviderMessageId: sendOptions.replyToProviderMessageId, ...(options.requestId ? { requestId: options.requestId } : {}) }
     );
   }
 
@@ -506,7 +535,7 @@ async function sendStickerBuffer(
     return sendImageBuffer(contact, buffer, mimeType, undefined, filename, options);
   }
 
-  const guard = await freeformGuard(contact, options.purpose);
+  const guard = await freeformGuard(contact, options.purpose, options.inboxMediaTimings);
   if (guard.blocked) return guard.blocked;
   const sendOptions = optionsForPolicy(options, guard.policy);
   const initialCancellation = await preSendCancelled(sendOptions);
@@ -520,7 +549,7 @@ async function sendStickerBuffer(
     };
   }
 
-  const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename);
+  const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename, options);
   if (!mediaId) {
     return {
       success: false,
@@ -533,6 +562,7 @@ async function sendStickerBuffer(
   if (cancelled) return cancelled;
   return whatsapp.sendStickerById(contact.whatsapp_number, mediaId, {
     replyToProviderMessageId: sendOptions.replyToProviderMessageId,
+      ...(options.requestId ? { requestId: options.requestId } : {}),
   });
 }
 
@@ -541,14 +571,14 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
   const requireStaffMode = options.requireStaffMode !== false;
 
   // Check policy before conversion or upload work on every supported channel.
-  const guard = await freeformGuard(contact, options.purpose);
+  const guard = await freeformGuard(contact, options.purpose, options.inboxMediaTimings);
   if (guard.blocked) return guard.blocked;
   const sendOptions = optionsForPolicy(options, guard.policy);
   const initialCancellation = await preSendCancelled(sendOptions);
   if (initialCancellation) return initialCancellation;
 
   if (channel === "whatsapp") {
-    const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename);
+    const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename, options);
     if (!mediaId) {
       return {
         success: false,
@@ -565,6 +595,7 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
 
     return whatsapp.sendVoiceById(contact.whatsapp_number, mediaId, {
       replyToProviderMessageId: sendOptions.replyToProviderMessageId,
+      ...(options.requestId ? { requestId: options.requestId } : {}),
     });
   }
 
