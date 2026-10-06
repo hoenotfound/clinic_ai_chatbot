@@ -241,8 +241,16 @@ test("durable temporary-media sweep fails closed without a client namespace", as
 
 
 test("customer purge prefixes stay inside the current client namespace", () => {
+  const env = {
+    CLIENT_SLUG: "Neutro Sense TCM",
+    R2_ACCOUNT_ID: "account",
+    R2_ACCESS_KEY_ID: "key",
+    R2_SECRET_ACCESS_KEY: "secret",
+    R2_BUCKET_NAME: "bucket",
+  };
+  assert.equal(mediaStorage.isStorageConfigured(env), true);
   assert.deepEqual(
-    mediaStorage.customerMediaPrefixes(42, { CLIENT_SLUG: "Neutro Sense TCM" }),
+    mediaStorage.customerMediaPrefixes(42, env),
     [
       "clients/neutro-sense-tcm/messages/42/",
       "clients/neutro-sense-tcm/meta-outbound/42/",
@@ -266,6 +274,14 @@ test("customer purge prefixes stay inside the current client namespace", () => {
 
 test("legacy media mode fails closed for customer prefix deletion", () => {
   assert.deepEqual(mediaStorage.customerMediaPrefixes(42, {}), []);
+  assert.deepEqual(
+    mediaStorage.customerMediaPrefixes(42, { CLIENT_SLUG: "client-without-r2" }),
+    []
+  );
+  assert.equal(
+    mediaStorage.isStorageConfigured({ CLIENT_SLUG: "client-without-r2" }),
+    false
+  );
   assert.equal(
     mediaStorage.isOwnedCustomerMediaPrefix("messages/42/", {}),
     false
