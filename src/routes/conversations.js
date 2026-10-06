@@ -1702,16 +1702,39 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       if (!mediaReference?.media_key) {
         throw new Error("Saved image media reference is missing.");
       }
-      const signedImageUrl = mediaStorage.createPresignedGetUrl(
-        mediaReference.media_key,
-        { expiresSeconds: 5 * 60 }
-      );
-      sendResult = await channelMessaging.sendImageByUrl(
-        preparedContact,
-        signedImageUrl,
-        caption || undefined,
-        sendOptions
-      );
+      try {
+        const temporaryMedia = await mediaStorage.copyStoredMediaToTemporary(
+          mediaReference.media_key,
+          req.file.mimetype,
+          {
+            contactId: preparedContact.id,
+            expiresSeconds: 5 * 60,
+          }
+        );
+        mediaStorage.scheduleTemporaryMediaDelete(temporaryMedia.key);
+        sendResult = await channelMessaging.sendImageByUrl(
+          preparedContact,
+          temporaryMedia.url,
+          caption || undefined,
+          sendOptions
+        );
+      } catch (copyErr) {
+        // A temporary R2 copy failure must not block staff from replying.
+        // Fall back to the existing direct WhatsApp upload path; this is slower
+        // but preserves delivery availability.
+        console.warn(
+          `[Inbox image] temporary R2 copy failed for contact ${preparedContact.id}; falling back to direct provider upload:`,
+          copyErr
+        );
+        sendResult = await channelMessaging.sendImageBuffer(
+          preparedContact,
+          req.file.buffer,
+          req.file.mimetype,
+          caption || undefined,
+          req.file.originalname || "image",
+          sendOptions
+        );
+      }
     } else {
       sendResult = await channelMessaging.sendImageBuffer(
         preparedContact,
