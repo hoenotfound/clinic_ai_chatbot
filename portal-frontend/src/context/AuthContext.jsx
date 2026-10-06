@@ -1,5 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import {
+  getCurrentPushEndpoint,
+  unsubscribeCurrentPushLocally,
+} from "../utils/pushNotifications";
 
 const AuthContext = createContext(null);
 
@@ -55,7 +59,9 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(async () => {
-    await api.logout().catch(() => {});
+    const pushEndpoint = await getCurrentPushEndpoint().catch(() => null);
+    await api.logout(pushEndpoint).catch(() => {});
+    await unsubscribeCurrentPushLocally().catch(() => false);
     setUser(null);
   }, []);
 

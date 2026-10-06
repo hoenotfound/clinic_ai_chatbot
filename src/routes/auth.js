@@ -1,6 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const usersRepo = require("../db/usersRepo");
+const pushSubscriptionsRepo = require("../db/pushSubscriptionsRepo");
 const clinicConfig = require("../config/clinicConfig");
 const realtimeEvents = require("../utils/realtimeEvents");
 const {
@@ -180,7 +181,20 @@ router.post("/login", loginRateLimit, async (req, res) => {
   }
 });
 
-router.post("/logout", (req, res) => {
+router.post("/logout", async (req, res) => {
+  const userId = Number(req.session?.userId);
+  const pushEndpoint = String(req.body?.pushEndpoint || "").trim();
+
+  if (Number.isSafeInteger(userId) && userId > 0 && pushEndpoint) {
+    try {
+      await pushSubscriptionsRepo.removeSubscription(userId, pushEndpoint);
+    } catch (err) {
+      // Logout must still succeed. The browser also unsubscribes locally, and a
+      // later 404/410 from the push service disables any stale server row.
+      console.warn("Failed to remove Web Push subscription during logout:", err?.message || err);
+    }
+  }
+
   req.session = null;
   res.json({ ok: true });
 });
@@ -328,7 +342,18 @@ router.patch("/users/:userId", requireAuth, requireCapability("manage_users"), a
         if (continuityError) throw mutationError("OWNED_LEADS", continuityError);
       }
 
-      return usersRepo.updateUser(userId, updates, queryable);
+      const savedUser = await usersRepo.updateUser(userId, updates, queryable);
+      const credentialsChanged = Object.prototype.hasOwnProperty.call(updates, "passwordHash");
+      const accessDisabled =
+        Object.prototype.hasOwnProperty.call(updates, "isActive") &&
+        updates.isActive === false;
+      if (credentialsChanged || accessDisabled) {
+        // Revoke remembered push endpoints atomically with credential changes
+        // or access removal. Re-enabling a staff account must require each
+        // device to opt in again instead of reviving an old personal phone.
+        await pushSubscriptionsRepo.removeAllForUser(userId, queryable);
+      }
+      return savedUser;
     });
 
     if (
@@ -397,7 +422,9 @@ router.delete("/users/:userId", requireAuth, requireCapability("manage_users"), 
       );
       if (continuityError) throw mutationError("OWNED_LEADS", continuityError);
 
-      return usersRepo.deactivateUser(userId, queryable);
+      const deactivated = await usersRepo.deactivateUser(userId, queryable);
+      await pushSubscriptionsRepo.removeAllForUser(userId, queryable);
+      return deactivated;
     });
 
     realtimeEvents.disconnectUser(userId);

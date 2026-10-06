@@ -1,6 +1,7 @@
 const { pool } = require("../db/db");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
+const webPushNotifications = require("./webPushNotificationService");
 
 const AI_HANDOFF_OWNER = "AI handoff";
 
@@ -54,6 +55,10 @@ function createAiHandoffService({
       })
     ).catch((err) => {
       console.error(`Telegram AI-handoff alert failed for contact ${updated.id}:`, err);
+    });
+    webPushNotifications.sendContactAlertBestEffort({
+      contactId: updated.id,
+      type: "human_intervention",
     });
 
     return updated;

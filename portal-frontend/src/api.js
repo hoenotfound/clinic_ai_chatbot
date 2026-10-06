@@ -46,7 +46,11 @@ async function download(path) {
 export const api = {
   login: (username, password) =>
     request("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
-  logout: () => request("/auth/logout", { method: "POST" }),
+  logout: (pushEndpoint = null) =>
+    request("/auth/logout", {
+      method: "POST",
+      body: JSON.stringify({ pushEndpoint }),
+    }),
   me: () => request("/auth/me"),
   listConversations: () => request("/conversations"),
   getConversationAttribution: (contactId) =>

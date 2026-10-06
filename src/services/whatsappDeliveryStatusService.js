@@ -1,6 +1,7 @@
 const messagesRepo = require("../db/messagesRepo");
 const repository = require("../db/whatsappDeliveryStatusRepo");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
+const webPushNotifications = require("./webPushNotificationService");
 const whatsappOutboundRetry = require("./whatsappOutboundRetryService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
@@ -86,6 +87,10 @@ function createWhatsAppDeliveryStatusService({
     } catch (err) {
       logger.error(`Telegram delivery failure alert failed for contact ${contactId}:`, err);
     }
+    webPushNotifications.sendContactAlertBestEffort(
+      { contactId, type: "delivery_failure" },
+      logger
+    );
   }
 
   async function restoreFailureAttention(job, updatedMessage) {
