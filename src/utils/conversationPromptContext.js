@@ -6,6 +6,8 @@ const CONTACT_PATTERN =
   /(phone|contact|call|whatsapp|instagram|facebook|tiktok|号码|電話|电话|联系|聯絡|whatsapp|ig|fb|hubungi|telefon|nombor)/iu;
 const PROMOTION_PATTERN =
   /(price|cost|fee|charge|package|promo|promotion|offer|discount|voucher|多少钱|多少錢|价格|價錢|价钱|配套|优惠|優惠|促销|促銷|berapa|harga|pakej|promosi|diskaun|baucar|tawaran)/iu;
+const SERVICE_DISCOVERY_PATTERN =
+  /(what|which|show|list|any|other|more).{0,30}(treatments?|services?|options?)|(treatments?|services?).{0,30}(do you have|available|offer)|还有什么.{0,12}(疗程|療程|服务|服務)|其他.{0,12}(疗程|療程|服务|服務)|有什么.{0,12}(疗程|療程|服务|服務)|有哪些.{0,12}(疗程|療程|服务|服務)|rawatan apa|rawatan lain|servis apa|servis lain/iu;
 
 function cleanText(value) {
   return String(value || "")
@@ -116,15 +118,22 @@ function buildConversationPromptContext(
   const customerMessages = latestCustomerMessages(messages, 8);
   const currentCustomerText = messageText(customerMessages.at(-1));
   const currentMatches = unique(findServicesInText(currentCustomerText, candidates));
+  const serviceDiscoveryIntent = SERVICE_DISCOVERY_PATTERN.test(currentCustomerText);
 
   let relevantServiceNames = currentMatches.length <= 2 ? currentMatches : [];
   let serviceSource = currentMatches.length > 2
     ? "multi_service_broad"
     : relevantServiceNames.length
       ? "current_customer"
-      : null;
+      : serviceDiscoveryIntent
+        ? "broad_discovery"
+        : null;
 
-  if (!relevantServiceNames.length && currentMatches.length <= 2) {
+  if (
+    !relevantServiceNames.length &&
+    currentMatches.length <= 2 &&
+    !serviceDiscoveryIntent
+  ) {
     for (let index = customerMessages.length - 2; index >= 0; index -= 1) {
       const matches = unique(
         findServicesInText(messageText(customerMessages[index]), candidates)
@@ -166,6 +175,7 @@ function buildConversationPromptContext(
     schedulingIntent: SCHEDULING_PATTERN.test(recentCustomerText),
     contactIntent: CONTACT_PATTERN.test(recentCustomerText),
     promotionIntent: PROMOTION_PATTERN.test(currentCustomerText),
+    serviceDiscoveryIntent,
   };
 }
 
@@ -173,6 +183,7 @@ module.exports = {
   CONTACT_PATTERN,
   PROMOTION_PATTERN,
   SCHEDULING_PATTERN,
+  SERVICE_DISCOVERY_PATTERN,
   buildConversationPromptContext,
   cleanText,
   findServicesInText,
