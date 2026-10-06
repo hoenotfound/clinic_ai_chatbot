@@ -673,7 +673,7 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
                 onClick={() => setOpenIndex(expanded ? null : index)}
                 className="col-span-2 h-11 w-full rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold sm:h-10 sm:w-auto sm:shrink-0"
               >
-                {expanded ? "Close package" : "Edit package"}
+                {expanded ? "Collapse package" : "Edit package"}
               </button>
             </div>
 
