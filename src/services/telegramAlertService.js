@@ -34,7 +34,7 @@ function buildWhatsappChatUrl(contact) {
 }
 
 function shouldShowBranch(config) {
-  return Array.isArray(config?.branches) ? config.branches.length > 1 : true;
+  return !Array.isArray(config?.branches) || config.branches.length !== 1;
 }
 
 function shouldShowAssignedOwner(config) {
