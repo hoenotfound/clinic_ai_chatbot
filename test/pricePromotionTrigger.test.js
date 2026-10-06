@@ -602,7 +602,11 @@ test("promotion media uses the configured customer-language image and caption wi
   }));
   assert.equal(zh.packages[0].imageUrl, "https://example.test/3d-zh.jpg");
   assert.equal(zh.packages[0].caption, "3D 中文优惠");
-  assert.deepEqual(zhCalls, [[42, "https://example.test/3d-zh.jpg", "3D 中文优惠", 24]]);
+  assert.deepEqual(zhCalls, [
+    [42, "https://example.test/3d.jpg", "3D promo", 24],
+    [42, "https://example.test/3d-zh.jpg", "3D 中文优惠", 24],
+    [42, "https://example.test/3d.jpg", "Promosi 3D BM", 24],
+  ]);
 
   const ms = await resolvePricePromotionForReply(base({
     promotions: [localizedPromo],
@@ -610,4 +614,23 @@ test("promotion media uses the configured customer-language image and caption wi
   }));
   assert.equal(ms.packages[0].imageUrl, "https://example.test/3d.jpg");
   assert.equal(ms.packages[0].caption, "Promosi 3D BM");
+});
+
+test("promotion duplicate guard treats translated versions as the same package", async () => {
+  const localizedPromo = {
+    ...nowActivePromo,
+    mediaTranslations: {
+      zh: {
+        imageUrl: "https://example.test/3d-zh.jpg",
+        caption: "3D 中文优惠",
+      },
+    },
+  };
+  const result = await resolvePricePromotionForReply(base({
+    promotions: [localizedPromo],
+    language: "zh",
+    wasPromoRecentlySent: async (_contactId, imageUrl, caption) =>
+      imageUrl === "https://example.test/3d.jpg" && caption === "3D promo",
+  }));
+  assert.equal(result, null);
 });
