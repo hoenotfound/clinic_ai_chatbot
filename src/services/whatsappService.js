@@ -261,6 +261,40 @@ async function sendImageById(to, mediaId, caption, options = {}) {
   }
 }
 
+async function sendStickerById(to, mediaId, options = {}) {
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const token = process.env.WHATSAPP_TOKEN;
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "sticker",
+        sticker: { id: mediaId },
+        ...replyContext(options),
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error("WhatsApp sticker send failed:", res.status, errBody);
+      return { success: false, wamid: null };
+    }
+    const data = await res.json();
+    return { success: true, wamid: extractWamid(data) };
+  } catch (err) {
+    console.error("WhatsApp sticker send threw an error:", err);
+    return { success: false, wamid: null };
+  }
+}
+
 /**
  * Sends an uploaded Ogg/Opus file as a native WhatsApp voice note. The
  * `voice: true` flag is what makes WhatsApp render the recording as a voice
@@ -608,6 +642,7 @@ module.exports = {
   sendImage,
   uploadMedia,
   sendImageById,
+  sendStickerById,
   sendVoiceById,
   downloadMedia,
   parseIncomingMessages,
