@@ -223,14 +223,10 @@ function startCustomerDataLifecycle({
     });
   };
 
-  // Recovery starts immediately so a previous R2 outage/restart cannot strand
-  // a committed customer purge.
-  runCleanup();
-
-  // Retention is safe to probe at startup because it is disabled by default
-  // and each candidate is revalidated transactionally before deletion.
-  runRetention();
-
+  // Do not run R2 cleanup or retention immediately during deploy/startup.
+  // PR #236 deliberately keeps the hot-deploy window free for live customer
+  // media traffic. Manual customer deletion still attempts its own cleanup
+  // immediately; durable recovery begins on the normal cleanup interval.
   const cleanupTimer = setIntervalFn(runCleanup, MEDIA_CLEANUP_INTERVAL_MS);
   cleanupTimer?.unref?.();
   const retentionTimer = setIntervalFn(runRetention, RETENTION_SWEEP_INTERVAL_MS);
