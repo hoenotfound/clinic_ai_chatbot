@@ -1570,6 +1570,8 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
   return {
     contactId: preparedContact.id,
     delivered: sendResult.success,
+    deliveryUnknown:
+      sendResult.unknown === true || sendResult.ambiguous === true,
     error: sendResult.success ? null : publicDeliveryError(errorText),
     message: {
       ...finalMessage,
@@ -1742,6 +1744,8 @@ router.post("/:contactId/messages", async (req, res) => {
       ...finalMessage,
       delivery_error: publicDeliveryError(finalMessage.delivery_error),
       delivered: sendResult.success,
+      delivery_unknown:
+        sendResult.unknown === true || sendResult.ambiguous === true,
     });
   } catch (err) {
     console.error("Failed to send staff message:", err);
@@ -1900,6 +1904,13 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       let mediaKey = null;
       if (persistOutcome.status === "fulfilled") {
         mediaKey = persistOutcome.value;
+      } else if (mediaStorage.isR2RequestTimeoutError(persistOutcome.reason)) {
+        // A timed-out R2 write is already a bounded 10s wait. Do not
+        // immediately perform the same slow operation again while the staff
+        // member is waiting for the send result.
+        console.warn(
+          `[Inbox image] R2 persistence timed out for contact ${preparedContact.id}; skipping immediate retry.`
+        );
       } else {
         console.warn(
           `[Inbox image] initial R2 persistence failed for contact ${preparedContact.id}; retrying once:`,
