@@ -144,7 +144,7 @@ test("Inbox and contact details expose policy guidance for standard-window chann
   assert.match(details, /Opt-in date \/ source/);
   assert.match(details, /Opt-out date \/ source/);
   assert.match(details, /aria-expanded=\{expanded\}/);
-  assert.match(details, /Tap to view reply window and consent details/);
+  assert.match(details, /setExpanded\(false\)/);
   assert.match(contactInsights, /api\.updateLead\(lead\.id, patch\)/);
   assert.match(contactInsights, /temperatureLocked: true/);
   assert.match(contactInsights, /Allow AI updates/);
