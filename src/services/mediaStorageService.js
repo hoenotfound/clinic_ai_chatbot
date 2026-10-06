@@ -71,7 +71,6 @@ function r2RequestTimeoutMs(env = process.env) {
 async function sendR2(command, { timeoutMs = r2RequestTimeoutMs() } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  timer.unref?.();
   try {
     return await getClient().send(command, { abortSignal: controller.signal });
   } catch (err) {
@@ -287,8 +286,23 @@ async function uploadMedia(
     mimeType,
     env,
   });
-  await putObject(key, buffer, mimeType);
-  return key;
+  try {
+    await putObject(key, buffer, mimeType);
+    return key;
+  } catch (err) {
+    if (isR2RequestTimeoutError(err)) {
+      // The client aborted before it learned whether R2 committed the write.
+      // Best-effort deletion prevents an untracked permanent customer-media
+      // object if the server finished just before the response was lost.
+      deleteMedia(key).catch((cleanupErr) => {
+        console.error(
+          `Failed to clean up timed-out R2 media write ${key}:`,
+          cleanupErr
+        );
+      });
+    }
+    throw err;
+  }
 }
 
 /**
@@ -344,17 +358,28 @@ async function copyStoredMediaToMessage(
     env,
   });
 
-  await sendR2(
-    new CopyObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      CopySource: `${bucket}/${sourceKey}`,
-      MetadataDirective: "REPLACE",
-      ContentType: mimeType || "application/octet-stream",
-    })
-  );
-
-  return key;
+  try {
+    await sendR2(
+      new CopyObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        CopySource: `${bucket}/${sourceKey}`,
+        MetadataDirective: "REPLACE",
+        ContentType: mimeType || "application/octet-stream",
+      })
+    );
+    return key;
+  } catch (err) {
+    if (isR2RequestTimeoutError(err)) {
+      deleteMedia(key).catch((cleanupErr) => {
+        console.error(
+          `Failed to clean up timed-out R2 media copy ${key}:`,
+          cleanupErr
+        );
+      });
+    }
+    throw err;
+  }
 }
 
 async function copyStoredMediaToTemporary(
