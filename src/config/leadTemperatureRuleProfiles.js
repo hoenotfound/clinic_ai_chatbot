@@ -17,7 +17,7 @@ const CLINIC_ABSOLUTE_REJECTION_PATTERNS = frozenPatterns([
   ...UNIVERSAL_ABSOLUTE_REJECTION_PATTERNS,
   /\b(?:i|we)(?:'ve| have)?\s+(?:already\s+)?(?:booked|chosen|gone with|decided on|found)\s+(?:another|a different)\s+(?:clinic|centre|center|provider|treatment provider)\b/,
   /\b(?:i|we)(?:'ve| have)?\s+(?:already\s+)?(?:done|had|completed)\s+(?:it|this|the treatment)\s+(?:at|with)\s+(?:another|a different)\s+(?:clinic|centre|center|provider)\b/,
-  /^(?:sorry[, ]*)?(?:i|we)(?:'m| are| am)?\s+(?:not|no longer)\s+interested(?:\s+anymore)?(?:[, ]*(?:thanks|thank you))?[.!? ]*$/,
+  /^(?:(?:sorry|no thanks|no thank you|thanks|thank you)[, ]*)?(?:i|we)(?:'m| are| am)?\s+(?:not|no longer)\s+interested(?:\s+anymore)?(?:[, ]*(?:thanks|thank you))?[.!? ]*$/,
   /^(?:sorry[, ]*)?(?:i|we)(?:'m| are| am)?\s+(?:not|no longer)\s+(?:proceeding|going ahead|moving forward)(?:\s+(?:anymore|with this))?(?:[, ]*(?:thanks|thank you))?[.!? ]*$/,
   /^(?:sorry[, ]*)?(?:i|we)\s+(?:changed my mind|don't want to proceed|do not want to proceed|won't proceed|will not proceed)(?:\s+anymore)?(?:[, ]*(?:thanks|thank you))?[.!? ]*$/,
   /^(?:i\s+)?(?:don't|do not|won't|will not)\s+(?:want\s+to\s+)?(?:book|come|visit|proceed|go ahead)(?:\s+(?:anymore|at all))?[.!? ]*$/,
