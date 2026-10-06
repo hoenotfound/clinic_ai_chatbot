@@ -577,6 +577,118 @@ test("relevant service promotion enquiry restores full matching promotion/packag
   });
 });
 
+test("configured A/B package comparison is recognized as promo intent without price wording", () => {
+  const base = scopedConfig();
+  withConfig({
+    ...base,
+    promotions: [{
+      name: "骨盆调理套餐",
+      linkedService: "骨盆调理",
+      sendOnPriceQuery: true,
+      validFrom: "2026-10-01",
+      validUntil: "2026-10-31",
+      packages: [
+        {
+          name: "Package A",
+          title: "尊享护理配套",
+          aliases: ["A", "A套餐", "RM488配套"],
+          imageUrl: "https://example.test/a.jpg",
+          caption: "A details RM388",
+        },
+        {
+          name: "Package B",
+          title: "女性护理配套",
+          aliases: ["B", "B套餐", "RM288配套"],
+          imageUrl: "https://example.test/b.jpg",
+          caption: "B details RM288",
+        },
+      ],
+    }],
+  }, () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "想了解骨盆调理" },
+      { role: "assistant", content: "有A和B两个配套。" },
+      { role: "user", content: "A跟B有什么不同？" },
+    ]);
+
+    assert.deepEqual(context.relevantServiceNames, ["骨盆调理"]);
+    assert.equal(context.promotionIntent, true);
+
+    const prompt = buildSystemPrompt({
+      channel: "whatsapp",
+      conversationContext: context,
+    });
+    assert.match(prompt, /Package A/);
+    assert.match(prompt, /A details RM388/);
+    assert.match(prompt, /Package B/);
+    assert.match(prompt, /B details RM288/);
+  });
+});
+
+test("short package follow-up carries promo context from the immediately previous customer turn", () => {
+  const base = scopedConfig();
+  withConfig({
+    ...base,
+    promotions: [{
+      name: "骨盆调理套餐",
+      linkedService: "骨盆调理",
+      sendOnPriceQuery: true,
+      validFrom: "2026-10-01",
+      validUntil: "2026-10-31",
+      packages: [
+        {
+          name: "Package A",
+          aliases: ["A", "A套餐"],
+          imageUrl: "https://example.test/a.jpg",
+          caption: "A details RM388",
+        },
+        {
+          name: "Package B",
+          aliases: ["B", "B套餐"],
+          imageUrl: "https://example.test/b.jpg",
+          caption: "B details RM288",
+        },
+      ],
+    }],
+  }, () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "A套餐跟B套餐" },
+      { role: "assistant", content: "主要是护理内容和时长不同。" },
+      { role: "user", content: "有什么不同？" },
+    ]);
+
+    assert.equal(context.promotionIntent, true);
+  });
+});
+
+test("ordinary lowercase English article does not falsely trigger Package A promo context", () => {
+  const base = scopedConfig();
+  withConfig({
+    ...base,
+    promotions: [{
+      name: "骨盆调理套餐",
+      linkedService: "骨盆调理",
+      sendOnPriceQuery: true,
+      validFrom: "2026-10-01",
+      validUntil: "2026-10-31",
+      packages: [
+        {
+          name: "Package A",
+          aliases: ["A"],
+          imageUrl: "https://example.test/a.jpg",
+          caption: "A details RM388",
+        },
+      ],
+    }],
+  }, () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "do you have a treatment for this?" },
+    ]);
+
+    assert.equal(context.promotionIntent, false);
+  });
+});
+
 test("long promo ad copy is compacted while all commercial terms remain available to the AI", () => {
   const base = scopedConfig();
   withConfig({
