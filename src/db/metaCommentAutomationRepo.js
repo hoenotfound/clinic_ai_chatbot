@@ -38,7 +38,15 @@ async function storeIncomingComment(event, database = pool) {
     `INSERT INTO meta_comment_automation_jobs (
        channel, comment_id, entry_id, author_id, author_name, comment_text,
        post_id, media_id, parent_comment_id, source_created_at, raw_event
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     )
+     SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM customer_data_deleted_comment_ids deleted
+       WHERE deleted.channel = $1
+         AND deleted.comment_id = $2
+         AND deleted.expires_at > now()
+     )
      ON CONFLICT (channel, comment_id) DO NOTHING
      RETURNING *`,
     [
