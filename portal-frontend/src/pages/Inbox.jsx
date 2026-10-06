@@ -1706,6 +1706,7 @@ function DateSeparator({ value }) {
 
 function ThreadView({
   contact,
+  conversations,
   currentUsername,
   canReplyToLeads,
   showUnassignedAssignment,
@@ -1727,6 +1728,7 @@ function ThreadView({
   onSend,
   onSendImage,
   onSendVoice,
+  onForwardMessage,
   onOpenContactDetails,
   onOpenWhatsAppTemplates,
   onToast,
@@ -1764,6 +1766,8 @@ function ThreadView({
   const [voiceDuration, setVoiceDuration] = useState(0);
   const [voicePreviewUrl, setVoicePreviewUrl] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [forwardingMessage, setForwardingMessage] = useState(null);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [attentionExpanded, setAttentionExpanded] = useState(false);
   const [policyNow, setPolicyNow] = useState(Date.now());
@@ -1883,12 +1887,14 @@ function ThreadView({
     shouldStickToBottomRef.current = distanceFromBottom < 120;
   }
 
-  async function handleFilePicked(e) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
+  async function selectImageFile(file) {
     if (!file) return;
     if (policyBlocksComposer) {
       onToast(messagingPolicy.explanation, "warning");
+      return;
+    }
+    if (isStartingRecording || isRecording || voiceBlob) {
+      onToast("Finish or remove the voice message before adding an image.", "warning");
       return;
     }
     if (!file.type.startsWith("image/")) {
@@ -1935,6 +1941,30 @@ function ThreadView({
         setImagePreparing(false);
       }
     }
+  }
+
+  async function handleFilePicked(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    await selectImageFile(file);
+  }
+
+  async function handleComposerPaste(event) {
+    const imageItem = Array.from(event.clipboardData?.items || []).find((item) =>
+      String(item.type || "").startsWith("image/")
+    );
+    if (!imageItem) return;
+
+    const pasted = imageItem.getAsFile();
+    if (!pasted) return;
+    event.preventDefault();
+    const extension = pasted.type === "image/png" ? "png" : pasted.type === "image/webp" ? "webp" : "jpg";
+    const namedFile = new File(
+      [pasted],
+      `pasted-image-${Date.now()}.${extension}`,
+      { type: pasted.type || "image/jpeg", lastModified: Date.now() }
+    );
+    await selectImageFile(namedFile);
   }
 
   function clearImage() {
@@ -2105,12 +2135,56 @@ function ThreadView({
     }
     setSending(true);
     try {
-      await onSendVoice(voiceBlob, voiceMimeType);
-      if (mountedRef.current) clearVoice();
+      await onSendVoice(voiceBlob, voiceMimeType, replyingTo?.id || null);
+      if (mountedRef.current) {
+        clearVoice();
+        setReplyingTo(null);
+      }
     } catch {
     } finally {
       if (mountedRef.current) setSending(false);
     }
+  }
+
+  function handleReply(message) {
+    if (!message || !canReplyToLeads || (contact?.channel || "whatsapp") !== "whatsapp") return;
+    if (!message.whatsapp_message_id) {
+      onToast("This message cannot be quoted on WhatsApp.", "warning");
+      return;
+    }
+    setReplyingTo(message);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
+  async function handleCopyMessage(message) {
+    const text = String(message?.content || "").trim();
+    if (!text) {
+      onToast("This message has no text to copy.", "info");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      onToast("Message copied.", "info");
+    } catch {
+      onToast("Couldn't copy the message in this browser.", "error");
+    }
+  }
+
+  async function handleForwardConfirm(targetContactIds) {
+    if (!forwardingMessage || !targetContactIds?.length) return;
+    const result = await onForwardMessage(forwardingMessage.id, targetContactIds);
+    const delivered = Number(result?.deliveredCount || 0);
+    const requested = Number(result?.requestedCount || targetContactIds.length);
+    if (delivered === requested) {
+      onToast(`Forwarded to ${delivered} conversation${delivered === 1 ? "" : "s"}.`, "info");
+    } else if (delivered > 0) {
+      onToast(`Forwarded to ${delivered} of ${requested} conversations. Some sends were blocked or failed.`, "warning");
+    } else {
+      const firstError = result?.results?.find((item) => item.error)?.error;
+      onToast(firstError || "The message could not be forwarded.", "warning");
+    }
+    if (delivered > 0) setForwardingMessage(null);
+    return result;
   }
 
   function handleBackToConversations() {
@@ -2149,12 +2223,15 @@ function ThreadView({
     setSending(true);
     try {
       if (imageFile) {
-        await onSendImage(imageFile, text);
+        await onSendImage(imageFile, text, replyingTo?.id || null);
         if (mountedRef.current) clearImage();
       } else {
-        await onSend(text);
+        await onSend(text, replyingTo?.id || null);
       }
-      if (mountedRef.current) setDraft("");
+      if (mountedRef.current) {
+        setDraft("");
+        setReplyingTo(null);
+      }
     } catch {
     } finally {
       if (mountedRef.current) setSending(false);
