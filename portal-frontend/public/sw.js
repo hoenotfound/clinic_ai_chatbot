@@ -18,7 +18,14 @@ self.addEventListener("push", (event) => {
     },
   };
 
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil(
+    Promise.all([
+      self.registration.showNotification(title, options),
+      self.navigator?.setAppBadge
+        ? self.navigator.setAppBadge().catch(() => {})
+        : Promise.resolve(),
+    ])
+  );
 });
 
 self.addEventListener("notificationclick", (event) => {
