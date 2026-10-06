@@ -591,14 +591,14 @@ test("configured A/B package comparison is recognized as promo intent without pr
         {
           name: "Package A",
           title: "尊享护理配套",
-          aliases: ["A", "A套餐", "RM488配套"],
+          aliases: ["A套餐", "A配套", "RM488配套"],
           imageUrl: "https://example.test/a.jpg",
           caption: "A details RM388",
         },
         {
           name: "Package B",
           title: "女性护理配套",
-          aliases: ["B", "B套餐", "RM288配套"],
+          aliases: ["B套餐", "B配套", "RM288配套"],
           imageUrl: "https://example.test/b.jpg",
           caption: "B details RM288",
         },
@@ -638,13 +638,13 @@ test("short package follow-up carries promo context from the immediately previou
       packages: [
         {
           name: "Package A",
-          aliases: ["A", "A套餐"],
+          aliases: ["A套餐", "A配套"],
           imageUrl: "https://example.test/a.jpg",
           caption: "A details RM388",
         },
         {
           name: "Package B",
-          aliases: ["B", "B套餐"],
+          aliases: ["B套餐", "B配套"],
           imageUrl: "https://example.test/b.jpg",
           caption: "B details RM288",
         },
@@ -674,7 +674,7 @@ test("ordinary lowercase English article does not falsely trigger Package A prom
       packages: [
         {
           name: "Package A",
-          aliases: ["A"],
+          aliases: ["A套餐", "A配套"],
           imageUrl: "https://example.test/a.jpg",
           caption: "A details RM388",
         },
