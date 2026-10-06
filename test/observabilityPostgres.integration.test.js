@@ -38,7 +38,9 @@ test(
           source_created_at TIMESTAMPTZ,
           delivery_status TEXT,
           delivery_error TEXT,
-          is_automated_follow_up BOOLEAN NOT NULL DEFAULT false
+          is_automated_follow_up BOOLEAN NOT NULL DEFAULT false,
+          reply_to_provider_message_id TEXT,
+          is_forwarded BOOLEAN NOT NULL DEFAULT false
         );
       `);
       await client.query(read("src/db/inboundProcessingSchema.sql"));
