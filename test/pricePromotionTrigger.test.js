@@ -604,8 +604,8 @@ test("promotion media uses the configured customer-language image and caption wi
   assert.equal(zh.packages[0].caption, "3D 中文优惠");
   assert.deepEqual(zhCalls, [
     [42, "https://example.test/3d.jpg", "3D promo", 24],
-    [42, "https://example.test/3d-zh.jpg", "3D 中文优惠", 24],
     [42, "https://example.test/3d.jpg", "Promosi 3D BM", 24],
+    [42, "https://example.test/3d-zh.jpg", "3D 中文优惠", 24],
   ]);
 
   const ms = await resolvePricePromotionForReply(base({
