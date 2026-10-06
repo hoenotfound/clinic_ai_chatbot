@@ -80,6 +80,7 @@ const VALIDATORS = {
         ) &&
         (p.followUpImageUrl === undefined || isString(p.followUpImageUrl)) &&
         isPromotionFollowUpTranslations(p.followUpTranslations) &&
+        isMediaTranslations(p.mediaTranslations) &&
         (
           p.packages === undefined ||
           (
@@ -122,6 +123,23 @@ function isPlainObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+function isMediaTranslations(value) {
+  if (value === undefined) return true;
+  if (!isPlainObject(value)) return false;
+  return ["en", "ms", "zh"].every((key) => {
+    const entry = value[key];
+    if (entry === undefined) return true;
+    return (
+      isPlainObject(entry) &&
+      (entry.imageUrl === undefined || isString(entry.imageUrl)) &&
+      (
+        entry.caption === undefined ||
+        (isString(entry.caption) && entry.caption.trim().length <= 1000)
+      )
+    );
+  });
+}
+
 function isPromotionFollowUpTranslations(value) {
   if (value === undefined) return true;
   if (!isPlainObject(value)) return false;
@@ -156,7 +174,8 @@ function isPromotionPackage(value) {
       (isString(value.followUpMessage) && value.followUpMessage.trim().length <= 1000)
     ) &&
     (value.followUpImageUrl === undefined || isString(value.followUpImageUrl)) &&
-    isPromotionFollowUpTranslations(value.followUpTranslations)
+    isPromotionFollowUpTranslations(value.followUpTranslations) &&
+    isMediaTranslations(value.mediaTranslations)
   );
 }
 
@@ -164,7 +183,8 @@ function isResultMediaItem(value) {
   return (
     isPlainObject(value) &&
     isNonEmptyString(value.imageUrl) &&
-    isNonEmptyString(value.caption)
+    isNonEmptyString(value.caption) &&
+    isMediaTranslations(value.mediaTranslations)
   );
 }
 
