@@ -319,6 +319,7 @@ async function listContacts(search) {
       c.whatsapp_marketing_opt_out_at, c.whatsapp_marketing_opt_out_source,
       c.channel, c.channel_user_id, c.photo_url,
       current_lead.id AS lead_id,
+      current_lead.temperature AS lead_temperature,
       current_lead.owner_username AS lead_owner_username,
       COALESCE(lead_owner.display_name, current_lead.owner_username) AS lead_owner_display_name,
       COUNT(m.id)::int AS message_count,
@@ -414,7 +415,7 @@ async function listConversations() {
       ) AS has_unreplied
     FROM contacts c
     LEFT JOIN LATERAL (
-      SELECT l.id, l.owner_username
+      SELECT l.id, l.owner_username, l.temperature
       FROM leads l
       WHERE l.contact_id = c.id
       ORDER BY l.is_closed ASC, l.created_at DESC, l.id DESC
