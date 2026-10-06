@@ -1441,7 +1441,7 @@ router.post("/:contactId/messages/:messageId/forward", async (req, res) => {
     }
 
     const deliveredCount = results.filter((result) => result.delivered).length;
-    res.status(deliveredCount > 0 ? 201 : 422).json({
+    res.status(200).json({
       deliveredCount,
       requestedCount: results.length,
       results,
