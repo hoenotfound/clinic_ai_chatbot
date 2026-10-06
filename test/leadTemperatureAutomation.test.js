@@ -161,6 +161,7 @@ test("general interest, uncertainty, cancellation, and silence remain Warm", () 
     "我不要这个套餐，但我想了解另一个。",
     "If I decide next month, can I book online?",
     "If I want to book later, how do I do it?",
+    "I'm coming to KL next month, do you have a branch there?",
     "我来了解一下。",
     "Just asking how booking works.",
     "Kalau saya nanti nak book, boleh buat online?",
@@ -212,6 +213,10 @@ test("reviewer recovers Cold leads to Warm on renewed interest and cools Hot lea
   activeLead = { id: 20, temperature: "cold", is_closed: false };
   const hesitantOnly = await reviewer(21, 2014, "Maybe later, not now.");
   assert.equal(hesitantOnly.status, "unchanged");
+
+  activeLead = { id: 20, temperature: "cold", is_closed: false };
+  const rejectedTreatmentOnly = await reviewer(21, 2015, "Saya tak nak rawatan ini.");
+  assert.equal(rejectedTreatmentOnly.status, "unchanged");
 
   activeLead = { id: 21, temperature: "hot", is_closed: false };
   const cooled = await reviewer(22, 202, "RM388 is a bit expensive, let me think first.");
