@@ -81,7 +81,7 @@ function TemperatureBadge({
   return (
     <Component
       {...interactiveProps}
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${TEMPERATURE_STYLES[normalized]} ${onClick ? "touch-manipulation transition hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/25 disabled:opacity-60" : ""}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${TEMPERATURE_STYLES[normalized]} ${onClick ? "min-h-10 touch-manipulation px-3 transition hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/25 disabled:opacity-60" : ""}`}
     >
       <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${TEMPERATURE_DOTS[normalized]}`} />
       <span>{label}</span>
