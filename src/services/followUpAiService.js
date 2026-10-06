@@ -35,7 +35,9 @@ function trimConversation(messages, {
     .map((message, sourceIndex) => ({
       ...message,
       _sourceIndex: sourceIndex,
-      content: cleanContent(message.content).slice(0, maxChars),
+      // One unusually long message should not consume the whole follow-up
+      // context budget. Preserve the message itself while bounding its payload.
+      content: cleanContent(message.content).slice(0, Math.min(maxChars, 3_000)),
     }))
     .filter((message) => message.content);
 
