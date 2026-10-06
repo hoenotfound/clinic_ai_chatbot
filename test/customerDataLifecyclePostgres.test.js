@@ -9,8 +9,12 @@ const inboundProcessingRepo = require("../src/db/inboundProcessingRepo");
 const metaCommentAutomationRepo = require("../src/db/metaCommentAutomationRepo");
 
 const connectionString = process.env.TEST_DATABASE_URL;
-const migrationSql = fs.readFileSync(
+const migration040Sql = fs.readFileSync(
   path.join(__dirname, "../src/db/migrations/040_customer_data_lifecycle.sql"),
+  "utf8"
+);
+const migration042Sql = fs.readFileSync(
+  path.join(__dirname, "../src/db/migrations/042_customer_data_referral_replay_guard.sql"),
   "utf8"
 );
 
@@ -114,7 +118,8 @@ async function createLifecycleSchema(client) {
       UNIQUE (channel, comment_id)
     );
   `);
-  await client.query(migrationSql);
+  await client.query(migration040Sql);
+  await client.query(migration042Sql);
 }
 
 test(
@@ -167,8 +172,8 @@ test(
         [contactId]
       );
       await client.query(
-        `INSERT INTO pending_lead_attributions (channel, external_user_id)
-         VALUES ('facebook', 'psid-1')`
+        `INSERT INTO pending_lead_attributions (channel, external_user_id, event_id)
+         VALUES ('facebook', 'psid-1', 'facebook:referral:deleted-event-1')`
       );
       await client.query(
         `INSERT INTO meta_comment_automation_jobs (
@@ -192,6 +197,7 @@ test(
         pendingAttributions: 1,
         commentJobs: 1,
         providerMessageTombstones: 1,
+        providerReferralTombstones: 1,
         providerCommentTombstones: 1,
       });
 
@@ -221,8 +227,11 @@ test(
         "SELECT provider_message_id FROM customer_data_deleted_message_ids"
       );
       assert.deepEqual(
-        tombstones.rows.map((row) => row.provider_message_id),
-        ["facebook:mid-deleted-1"]
+        tombstones.rows.map((row) => row.provider_message_id).sort(),
+        [
+          "facebook:mid-deleted-1",
+          "facebook:referral:deleted-event-1",
+        ].sort()
       );
 
       const commentTombstones = await client.query(
@@ -236,6 +245,13 @@ test(
       assert.equal(
         await inboundProcessingRepo.isDeletedProviderMessageId(
           "facebook:mid-deleted-1",
+          client
+        ),
+        true
+      );
+      assert.equal(
+        await inboundProcessingRepo.isDeletedProviderMessageId(
+          "facebook:referral:deleted-event-1",
           client
         ),
         true
