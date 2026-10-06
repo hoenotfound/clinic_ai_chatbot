@@ -2,6 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const whatsapp = require("../src/services/whatsappService");
+const contactsRepo = require("../src/db/contactsRepo");
+const inboundProcessingRepo = require("../src/db/inboundProcessingRepo");
 const aiReplyCancellation = require("../src/services/aiReplyCancellationService");
 const coexistence = require("../src/services/whatsappCoexistenceService");
 
@@ -51,6 +53,39 @@ test("Business App echo cancellation invalidates an in-flight AI token", () => {
   const token = aiReplyCancellation.snapshot(key);
   coexistence.cancelPendingAiForEcho({ to: "60135550000" });
   assert.equal(aiReplyCancellation.cancelledSince(key, token), true);
+});
+
+test("deleted Business App echo retry is ignored before recreating the contact", async (t) => {
+  const originalDeletedCheck = inboundProcessingRepo.isDeletedProviderMessageId;
+  const originalGetOrCreate = contactsRepo.getOrCreateContact;
+  t.after(() => {
+    inboundProcessingRepo.isDeletedProviderMessageId = originalDeletedCheck;
+    contactsRepo.getOrCreateContact = originalGetOrCreate;
+  });
+
+  const echo = {
+    id: "wamid.deleted-staff-echo",
+    to: "60135550000",
+    type: "text",
+    text: "Old staff retry",
+  };
+  const key = aiReplyCancellation.keyForWhatsAppNumber(echo.to);
+  coexistence.beginPendingAiForEcho(echo);
+
+  inboundProcessingRepo.isDeletedProviderMessageId = async (providerMessageId) => {
+    assert.equal(providerMessageId, echo.id);
+    return true;
+  };
+  contactsRepo.getOrCreateContact = async () => {
+    assert.fail("deleted Business App echo retry must not recreate a contact");
+  };
+
+  const result = await coexistence.persistBusinessAppEcho(echo, {
+    pendingStarted: true,
+  });
+
+  assert.equal(result, null);
+  assert.equal(aiReplyCancellation.hasPendingEcho(key), false);
 });
 
 test("Cloud API message_echoes do not enter the Business App coexistence path", () => {
