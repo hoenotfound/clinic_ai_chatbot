@@ -45,6 +45,7 @@ const IMAGE_OPTIMIZE_MAX_DIMENSION = 1920;
 const IMAGE_JPEG_QUALITY = 0.82;
 const IMAGE_PROGRESSIVE_JPEG_QUALITY = 0.92;
 const IMAGE_PNG_TO_JPEG_QUALITY = 0.9;
+const OPTIONAL_IMAGE_PREPARATION_BUDGET_MS = 1200;
 const JPEG_INSPECTION_BYTES = 1024 * 1024;
 const MAX_VOICE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_SECONDS = 120;
@@ -1966,10 +1967,44 @@ function ThreadView({
         (isWhatsApp && file.size > WHATSAPP_IMAGE_MAX_BYTES);
       if (!shouldOptimize) return;
 
-      const optimizedFile = await optimizeImageUpload(file, {
+      const mandatoryPreparation =
+        normalizeProgressiveJpeg ||
+        forceCompatibleFormat ||
+        (isWhatsApp && file.size > WHATSAPP_IMAGE_MAX_BYTES);
+      const optimizationPromise = optimizeImageUpload(file, {
         normalizeProgressiveJpeg,
         forceCompatibleFormat,
       });
+
+      let optimizedFile;
+      if (mandatoryPreparation) {
+        optimizedFile = await optimizationPromise;
+      } else {
+        const prepared = await Promise.race([
+          optimizationPromise.then((value) => ({ completed: true, value })),
+          new Promise((resolve) => {
+            window.setTimeout(
+              () => resolve({ completed: false, value: null }),
+              OPTIONAL_IMAGE_PREPARATION_BUDGET_MS
+            );
+          }),
+        ]);
+        if (!prepared.completed) {
+          // Optional compression must never make a valid image feel stuck.
+          // Keep the already-selected original and ignore the late optimizer.
+          if (
+            mountedRef.current &&
+            imagePreparationIdRef.current === preparationId
+          ) {
+            imagePreparationIdRef.current += 1;
+            setImagePreparing(false);
+          }
+          optimizationPromise.catch(() => {});
+          return;
+        }
+        optimizedFile = prepared.value;
+      }
+
       if (
         !mountedRef.current ||
         imagePreparationIdRef.current !== preparationId
