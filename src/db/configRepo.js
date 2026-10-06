@@ -69,6 +69,30 @@ function privateResultMediaUrl(url) {
   return id ? `/api/config/result-media/image/${id}` : url;
 }
 
+function mediaTranslationImageUrls(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  return ["en", "ms", "zh"]
+    .map((language) => value?.[language]?.imageUrl)
+    .filter((imageUrl) => typeof imageUrl === "string" && imageUrl.trim());
+}
+
+function normalizeResultMediaTranslations(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([language, entry]) => [
+      language,
+      entry && typeof entry === "object" && !Array.isArray(entry)
+        ? {
+            ...entry,
+            ...(typeof entry.imageUrl === "string" && entry.imageUrl.trim()
+              ? { imageUrl: privateResultMediaUrl(entry.imageUrl) }
+              : {}),
+          }
+        : entry,
+    ])
+  );
+}
+
 function normalizeResultMediaUrls(resultMedia) {
   if (!Array.isArray(resultMedia)) return [];
   return resultMedia.map((entry) => {
@@ -86,6 +110,9 @@ function normalizeResultMediaUrls(resultMedia) {
         ? entry.items.map((item) => ({
             ...item,
             imageUrl: privateResultMediaUrl(item?.imageUrl),
+            ...(item?.mediaTranslations
+              ? { mediaTranslations: normalizeResultMediaTranslations(item.mediaTranslations) }
+              : {}),
           }))
         : [],
     };
@@ -131,8 +158,12 @@ async function pruneOrphanedPromoImages(force = false, now = Date.now()) {
     const promotionIds = (clinicConfig.promotions || [])
       .flatMap((promotion) => [
         promotion?.imageUrl,
+        ...mediaTranslationImageUrls(promotion?.mediaTranslations),
         ...(Array.isArray(promotion?.packages)
-          ? promotion.packages.map((item) => item?.imageUrl)
+          ? promotion.packages.flatMap((item) => [
+              item?.imageUrl,
+              ...mediaTranslationImageUrls(item?.mediaTranslations),
+            ])
           : []),
       ])
       .map(extractPromoImageId)
@@ -140,7 +171,10 @@ async function pruneOrphanedPromoImages(force = false, now = Date.now()) {
     const resultMediaIds = (clinicConfig.resultMedia || [])
       .flatMap((entry) =>
         Array.isArray(entry?.items)
-          ? entry.items.map((item) => item?.imageUrl)
+          ? entry.items.flatMap((item) => [
+              item?.imageUrl,
+              ...mediaTranslationImageUrls(item?.mediaTranslations),
+            ])
           : []
       )
       .map(extractPromoImageId)
@@ -278,7 +312,10 @@ async function updateConfig(updates, database = pool) {
       const resultImageIds = (nextConfig.resultMedia || [])
         .flatMap((entry) =>
           Array.isArray(entry?.items)
-            ? entry.items.map((item) => item?.imageUrl)
+            ? entry.items.flatMap((item) => [
+                item?.imageUrl,
+                ...mediaTranslationImageUrls(item?.mediaTranslations),
+              ])
             : []
         )
         .map(extractPromoImageId)
