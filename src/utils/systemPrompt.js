@@ -157,6 +157,17 @@ function conversationServicesList(conversationContext, terms) {
   if (!configured.length) {
     return `No ${terms.servicePlural} are configured yet. Do not invent any; hand off business-specific questions that require missing information.`;
   }
+  if (conversationContext?.promotionIntent === true) {
+    return [
+      "- No single current service is established. The customer is asking about price/package/promotion information, so full configured service pricing is included for this turn.",
+      ...configured.slice(0, 30).map((service) => {
+        const description = promptContextText(service?.description, 1_200) || "No description configured.";
+        const price = promptContextText(service?.priceRange, 500) || "Not configured";
+        const duration = promptContextText(service?.duration, 300) || "Not configured";
+        return `- ${service.name}: ${description} | Price: ${price} | Duration: ${duration}`;
+      }),
+    ].join("\n");
+  }
   return [
     "- No single current service is established yet. Use this compact catalog for discovery; ask a short clarifying question instead of guessing when needed.",
     ...configured.slice(0, 30).map(renderCompactService),
