@@ -228,6 +228,10 @@ test("Inbox image forwarding keeps normal photos inside R2", () => {
     path.join(__dirname, "../src/routes/conversations.js"),
     "utf8"
   );
+  const storedSend = source.slice(
+    source.indexOf("async function sendStoredMessage"),
+    source.indexOf('router.get("/",')
+  );
   const forwardRoute = source.slice(
     source.indexOf("async function forwardStoredMessage"),
     source.indexOf('router.post("/:contactId/messages",')
@@ -237,8 +241,10 @@ test("Inbox image forwarding keeps normal photos inside R2", () => {
   assert.doesNotMatch(forwardRoute, /getMessageForRetry/);
   assert.match(forwardRoute, /copyStoredMediaToMessage/);
   assert.match(forwardRoute, /media_key: targetMediaKey/);
-  assert.match(forwardRoute, /copyStoredMediaToTemporary/);
   assert.match(forwardRoute, /\[Inbox forward timing\]/);
+  assert.match(storedSend, /message\.media_key/);
+  assert.match(storedSend, /copyStoredMediaToTemporary/);
+  assert.match(storedSend, /channelMessaging\.sendImageByUrl/);
 });
 
 test("staff voice sends keep Staff Waiting blocked until the voice reply is persisted", () => {
