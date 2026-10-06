@@ -337,6 +337,21 @@ test("Staff Assist cancellation epochs are bounded in memory", () => {
   assert.match(source, /!pendingEchoes\.has\(key\)/);
 });
 
+test("Inbox outbound sends unlock the composer but stay ordered per conversation", () => {
+  const inbox = fs.readFileSync(
+    path.join(__dirname, "../portal-frontend/src/pages/Inbox.jsx"),
+    "utf8"
+  );
+
+  assert.match(inbox, /outboundQueueByContactRef = useRef\(new Map\(\)\)/);
+  assert.match(inbox, /function enqueueOutbound\(contactId, task\)/);
+  assert.match(inbox, /previous\.catch\(\(\) => \{\}\)\.then\(task\)/);
+  assert.match(inbox, /enqueueOutbound\(\s*contactId,[\s\S]*api\.sendImage/);
+  assert.match(inbox, /composerSendVersionRef/);
+  assert.match(inbox, /await Promise\.resolve\(\);[\s\S]*setSending\(false\)/);
+  assert.match(inbox, /composerSendVersionRef\.current === sendVersion/);
+});
+
 test("Inbox optional image optimization has a strict mobile latency budget", () => {
   const inbox = fs.readFileSync(
     path.join(__dirname, "../portal-frontend/src/pages/Inbox.jsx"),
