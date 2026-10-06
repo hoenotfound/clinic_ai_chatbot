@@ -52,6 +52,7 @@ const ALTERNATIVE_SCHEDULING_PATTERNS = frozenPatterns([
 const GENERIC_DECLINE_PATTERNS = frozenPatterns([
   /\b(?:i(?:'m| am)?\s+)?(?:not|no longer)\s+interested(?:\s+anymore)?(?:,?\s*(?:thanks?|thank you))?\s*[.!?]*$/,
   /\b(?:i\s+)?(?:don't|do not)\s+(?:want|need)\s+(?:this|it|that|your services?)\b/,
+  /\bno\s+thanks?(?:\s+you)?\b/,
   /\b(?:not for me|i(?:'ll| will) pass)\b/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+berminat(?:\s+lagi)?(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
   /^(?:terima kasih,?\s*)?(?:saya\s+)?(?:tak|tidak)\s+nak(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
@@ -70,7 +71,6 @@ const CLINIC_DECLINE_PATTERNS = frozenPatterns([
   /\b(?:i(?:'m| am)?\s+)?(?:won't|will not|am not going to|not going to)\s+(?:come|visit|reserve)\b/,
   /\b(?:i|we)(?:'m| are| am)?\s+(?:not|no longer)\s+(?:proceeding|going ahead|moving forward)(?:\s+with\s+(?:this|it|the treatment|the package|the promotion|your services?))?\b/,
   /\b(?:too far|too expensive|over budget).{0,50}\b(?:i|we)?\s*(?:won't|will not|can't|cannot|don't want to|do not want to)\s+(?:proceed|book|come|visit|go ahead)\b/,
-  /\bno\s+thanks?(?:\s+you)?\b/,
   /\b(?:not for me|i(?:'ll| will) pass)\b/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+berminat(?:\s+(?:lagi|dengan\s+(?:servis|rawatan)(?:\s+(?:ini|anda|awak))?))?(?:,?\s*(?:terima kasih|thanks?))?\s*[.!?]*$/,
   /\b(?:saya\s+)?(?:tak|tidak)\s+(?:nak|mahu)\s+(?:rawatan\s+ini|servis\s+(?:ini|anda)|book|booking|reserve|datang|visit|buat\s+(?:appointment|temujanji|janji temu))\b/,
