@@ -153,8 +153,12 @@ test("post-reply runtime keeps text then promo then result-media ordering and fo
 
   const promoCall = serverSource.slice(promoResolveAt, resultResolveAt);
   const resultCall = serverSource.slice(resultResolveAt, resultResolveAt + 1200);
-  assert.match(serverSource, /const mediaLanguage = detectConversationLanguage\(/);
+  assert.match(serverSource, /const customerMediaLanguage = detectConversationLanguage\(/);
   assert.match(serverSource, /\.reverse\(\)[\s\S]*?message\?\.role === "user"/);
+  assert.match(
+    serverSource,
+    /const mediaLanguage = detectConversationLanguage\([\s\S]*?\[aiReply\],[\s\S]*?customerMediaLanguage/
+  );
   assert.match(promoCall, /language: mediaLanguage/);
   assert.match(resultCall, /serviceQuery,/);
   assert.match(resultCall, /serviceQuerySource,/);
