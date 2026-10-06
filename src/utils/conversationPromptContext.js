@@ -109,6 +109,33 @@ function findServicesInText(text, candidates) {
   return matches;
 }
 
+function strongServiceMatchesInText(text, candidates) {
+  const normalized = normalizeComparable(text);
+  if (!normalized) return [];
+
+  const matches = [];
+  for (const candidate of candidates) {
+    const canonicalKey = normalizeComparable(candidate.name);
+    if (canonicalKey && normalized.includes(canonicalKey)) {
+      matches.push(candidate.name);
+      continue;
+    }
+
+    const hasStrongAlias = candidate.terms.some(({ key }) => {
+      if (!normalized.includes(key)) return false;
+      if (key.length >= 3) return true;
+      return (
+        /^[a-z0-9]+$/u.test(key) &&
+        /[a-z]/u.test(key) &&
+        /[0-9]/u.test(key)
+      );
+    });
+    if (hasStrongAlias) matches.push(candidate.name);
+  }
+  return matches;
+}
+
+
 function recentConversationServiceAnchor(messages, candidates, maxMessages = 8) {
   const source = Array.isArray(messages) ? messages : [];
   let skippedCurrentCustomer = false;
@@ -141,8 +168,15 @@ function recentConversationServiceAnchor(messages, candidates, maxMessages = 8) 
       };
     }
 
-    if (matches.length === 1) {
-      if (NON_TREATMENT_ANCHOR_PATTERN.test(matches[0])) {
+    if (/(package|套餐|配套|包含|includes?|options?|方案)/iu.test(messageText(message))) {
+      continue;
+    }
+
+    const strongMatches = unique(
+      strongServiceMatchesInText(messageText(message), candidates)
+    );
+    if (strongMatches.length === 1) {
+      if (NON_TREATMENT_ANCHOR_PATTERN.test(strongMatches[0])) {
         continue;
       }
 
@@ -161,14 +195,14 @@ function recentConversationServiceAnchor(messages, candidates, maxMessages = 8) 
       // customer explicitly named in the message being answered.
       if (!previousCustomerMatches.length) {
         return {
-          relevantServiceNames: matches,
+          relevantServiceNames: strongMatches,
           serviceSource: "recent_assistant",
         };
       }
       continue;
     }
-    // Assistant replies that mention several services are usually comparisons
-    // or menus. They are useful context, but too ambiguous to choose one.
+    // Assistant replies that mention several strong services are usually
+    // comparisons or menus. They are too ambiguous to choose one.
   }
 
   return null;
@@ -224,6 +258,23 @@ function buildConversationPromptContext(
     if (recentAnchor) {
       relevantServiceNames = recentAnchor.relevantServiceNames;
       serviceSource = recentAnchor.serviceSource;
+    } else {
+      // Preserve the original customer-only memory window as a fallback.
+      // Assistant/result-media rows can be numerous, so an 8-message mixed
+      // window must not make the selector forget a still-active customer topic.
+      for (let index = customerMessages.length - 2; index >= 0; index -= 1) {
+        const matches = unique(
+          findServicesInText(messageText(customerMessages[index]), candidates)
+        );
+        if (!matches.length) continue;
+        if (matches.length > 2) {
+          serviceSource = "multi_service_broad";
+          break;
+        }
+        relevantServiceNames = matches;
+        serviceSource = "recent_customer";
+        break;
+      }
     }
   }
 
@@ -275,4 +326,5 @@ module.exports = {
   recentConversationServiceAnchor,
   serviceCandidates,
   splitAliasTerms,
+  strongServiceMatchesInText,
 };
