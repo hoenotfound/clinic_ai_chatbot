@@ -93,7 +93,9 @@ async function startApplication({
       configRepo.pruneOrphanedPromoImages,
       PROMO_IMAGE_PRUNE_INTERVAL_MS
     );
-    pruneStaleTemporaryMediaSafely();
+    // Do not sweep R2 immediately after every deploy. The first periodic sweep
+    // happens after the interval, keeping the startup/hot-deploy window free
+    // for live customer media traffic.
     const tempMediaPruneTimer = setIntervalFn(
       pruneStaleTemporaryMediaSafely,
       TEMP_MEDIA_PRUNE_INTERVAL_MS
