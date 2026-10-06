@@ -8,6 +8,7 @@ const {
   parseReactionEvents,
   parseStatusUpdates,
   sendMessage,
+  sendStickerById,
 } = require("../src/services/whatsappService");
 const whatsappPolicy = require("../src/services/whatsappPolicyService");
 
@@ -121,6 +122,38 @@ test("outbound WhatsApp quoted reply sends context.message_id", async (t) => {
   assert.equal(result.wamid, "wamid.reply-sent");
   assert.deepEqual(requestBody.context, { message_id: "wamid.original-2" });
   assert.equal(requestBody.text.body, "Reply text");
+});
+
+test("outbound WhatsApp sticker uses the sticker message type", async (t) => {
+  const originalFetch = global.fetch;
+  const oldPhone = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const oldToken = process.env.WHATSAPP_TOKEN;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (oldPhone === undefined) delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    else process.env.WHATSAPP_PHONE_NUMBER_ID = oldPhone;
+    if (oldToken === undefined) delete process.env.WHATSAPP_TOKEN;
+    else process.env.WHATSAPP_TOKEN = oldToken;
+  });
+
+  process.env.WHATSAPP_PHONE_NUMBER_ID = "phone-test";
+  process.env.WHATSAPP_TOKEN = "token-test";
+  let requestBody = null;
+  global.fetch = async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      json: async () => ({ messages: [{ id: "wamid.sticker-sent" }] }),
+    };
+  };
+
+  const result = await sendStickerById("60112223333", "media-sticker-1");
+
+  assert.equal(result.success, true);
+  assert.equal(result.wamid, "wamid.sticker-sent");
+  assert.equal(requestBody.type, "sticker");
+  assert.deepEqual(requestBody.sticker, { id: "media-sticker-1" });
+  assert.equal(requestBody.image, undefined);
 });
 
 test("parses delivery statuses from every webhook entry and change", () => {
