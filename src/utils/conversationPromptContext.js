@@ -7,7 +7,7 @@ const CONTACT_PATTERN =
 const PROMOTION_PATTERN =
   /(price|cost|fee|charge|package|promo|promotion|offer|discount|voucher|多少钱|多少錢|价格|價錢|价钱|配套|优惠|優惠|促销|促銷|berapa|harga|pakej|promosi|diskaun|baucar|tawaran)/iu;
 const SERVICE_DISCOVERY_PATTERN =
-  /(what|which|show|list|any|other|more).{0,30}(treatments?|services?|options?)|(treatments?|services?).{0,30}(do you have|available|offer)|还有什么.{0,12}(疗程|療程|服务|服務)|其他.{0,12}(疗程|療程|服务|服務)|有什么.{0,12}(疗程|療程|服务|服務)|有哪些.{0,12}(疗程|療程|服务|服務)|rawatan apa|rawatan lain|servis apa|servis lain/iu;
+  /(what|which|show|list|any).{0,30}(treatments|services|options)|(other|more).{0,20}(treatments?|services?|options?)|(treatments|services).{0,30}(do you have|available|offer)|还有什么.{0,12}(疗程|療程|服务|服務)|其他.{0,12}(疗程|療程|服务|服務)|有什么.{0,12}(疗程|療程|服务|服務)|有哪些.{0,12}(疗程|療程|服务|服務)|rawatan apa|rawatan lain|servis apa|servis lain/iu;
 
 function cleanText(value) {
   return String(value || "")
@@ -120,13 +120,17 @@ function buildConversationPromptContext(
   const currentMatches = unique(findServicesInText(currentCustomerText, candidates));
   const serviceDiscoveryIntent = SERVICE_DISCOVERY_PATTERN.test(currentCustomerText);
 
-  let relevantServiceNames = currentMatches.length <= 2 ? currentMatches : [];
-  let serviceSource = currentMatches.length > 2
-    ? "multi_service_broad"
-    : relevantServiceNames.length
-      ? "current_customer"
-      : serviceDiscoveryIntent
-        ? "broad_discovery"
+  let relevantServiceNames = serviceDiscoveryIntent
+    ? []
+    : currentMatches.length <= 2
+      ? currentMatches
+      : [];
+  let serviceSource = serviceDiscoveryIntent
+    ? "broad_discovery"
+    : currentMatches.length > 2
+      ? "multi_service_broad"
+      : relevantServiceNames.length
+        ? "current_customer"
         : null;
 
   if (
