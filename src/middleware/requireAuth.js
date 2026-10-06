@@ -79,7 +79,7 @@ async function enforceConversationsPolicy(req, res, user) {
         action === "voice" ||
         action === "whatsapp-opt-in" ||
         (action === "whatsapp-templates" && subAction === "send") ||
-        (action === "messages" && fourth === "retry")
+        (action === "messages" && ["retry", "forward"].includes(fourth))
       )) ||
     isScheduledMessageWrite;
 
