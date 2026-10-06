@@ -124,6 +124,21 @@ function buildConversationSummaryMessage({
   const whatsappChatUrl = buildWhatsappChatUrl(lead);
   const showBranch = shouldShowBranch(config);
   const showAssignedOwner = shouldShowAssignedOwner(config);
+  const currentTemperatureValue = String(lead.current_temperature || "").toLowerCase();
+  const aiTemperatureValue = String(score?.temperature || "").toLowerCase();
+  const aiTemperature = ["hot", "warm", "cold"].includes(aiTemperatureValue)
+    ? temperatureLabel(aiTemperatureValue)
+    : null;
+  const aiConfidenceValue = String(score?.confidence || "").toLowerCase();
+  const aiSuggestion =
+    aiTemperature &&
+    aiTemperatureValue !== currentTemperatureValue
+      ? `AI suggests: ${aiTemperature}${
+          ["high", "medium", "low"].includes(aiConfidenceValue)
+            ? ` (${aiConfidenceValue} confidence)`
+            : ""
+        }`
+      : null;
 
   if (score?.summaryUnavailable === true || score?.alertType === "ai_scoring_failed") {
     const lines = [
@@ -165,14 +180,17 @@ function buildConversationSummaryMessage({
   const treatment = clean(summary.treatmentInterest || lead.treatment_interest);
   const branch = clean(summary.preferredBranch || lead.branch_name);
   const appointment = formatAppointmentForLead(lead, summary.preferredAppointment);
-  const lines = [
-    `${currentTemperature} Conversation Summary`,
+  const lines = [`${currentTemperature} Conversation Summary`];
+  if (aiSuggestion) {
+    lines.push(aiSuggestion);
+  }
+  lines.push(
     "",
     `${name} (${contactIdentifier})`,
     "",
     `Stage: ${clean(lead.stage_name)}`,
-    `${labels.serviceInterestLabel}: ${treatment}`,
-  ];
+    `${labels.serviceInterestLabel}: ${treatment}`
+  );
 
   if (showBranch) {
     lines.push(`${labels.locationLabel}: ${branch}`);
