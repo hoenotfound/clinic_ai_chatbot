@@ -55,6 +55,7 @@ function allowedPushEndpoint(endpoint) {
   return (
     host === "fcm.googleapis.com" ||
     host === "web.push.apple.com" ||
+    host.endsWith(".push.apple.com") ||
     host === "updates.push.services.mozilla.com" ||
     host === "push.services.mozilla.com" ||
     host.endsWith(".push.services.mozilla.com") ||
@@ -220,13 +221,17 @@ function createWebPushService({
     return { enabled: false };
   }
 
-  async function sendTestToUser(userId) {
+  async function sendTestToUser(userId, endpoint = null) {
     const config = configureClient();
     if (!config.configured) {
       return { configured: false, sent: 0, reason: config.reason };
     }
 
-    const rows = await repository.listForUser(userId);
+    const allRows = await repository.listForUser(userId);
+    const cleanedEndpoint = safeText(endpoint, MAX_ENDPOINT_LENGTH);
+    const rows = cleanedEndpoint
+      ? allRows.filter((row) => row.endpoint === cleanedEndpoint)
+      : allRows;
     let sent = 0;
     for (const row of rows) {
       if (
