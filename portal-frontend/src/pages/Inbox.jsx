@@ -1770,6 +1770,7 @@ function ThreadView({
   const recordingStartingRef = useRef(false);
   const recordingRequestIdRef = useRef(0);
   const imagePreparationIdRef = useRef(0);
+  const draftEditVersionRef = useRef(0);
   const actionsMenuRef = useRef(null);
   const mountedRef = useRef(true);
   const activeContactIdRef = useRef(contact?.contact_id);
@@ -1910,6 +1911,11 @@ function ThreadView({
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     shouldStickToBottomRef.current = distanceFromBottom < 120;
+  }
+
+  function handleDraftChange(event) {
+    draftEditVersionRef.current += 1;
+    setDraft(event.target.value);
   }
 
   async function selectImageFile(file) {
@@ -2303,6 +2309,8 @@ function ThreadView({
 
     const selectedImage = imageFile;
     const selectedReply = replyingTo;
+    const contactIdAtSend = contact?.contact_id;
+    const draftEditVersionAtSend = draftEditVersionRef.current;
     setSending(true);
 
     try {
@@ -2321,14 +2329,24 @@ function ThreadView({
 
       await sendPromise;
     } catch {
-      // Restore the draft on a hard request failure. Provider-level delivery
-      // failures still return a saved message and are handled by the bubble.
-      if (mountedRef.current) {
-        setDraft(text);
-        setReplyingTo(selectedReply);
-        if (selectedImage) {
-          setImageFile(selectedImage);
-          setImagePreviewUrl(URL.createObjectURL(selectedImage));
+      // Restore the failed send only if staff has not already started composing
+      // something new. Never overwrite a newer draft or reply target while an
+      // older request is finishing in the background.
+      if (
+        mountedRef.current &&
+        activeContactIdRef.current === contactIdAtSend
+      ) {
+        const draftUntouched =
+          draftEditVersionRef.current === draftEditVersionAtSend;
+        if (draftUntouched) {
+          setDraft(text);
+          setReplyingTo((current) => current || selectedReply);
+          if (selectedImage) {
+            setImageFile((current) => current || selectedImage);
+            setImagePreviewUrl(
+              (current) => current || URL.createObjectURL(selectedImage)
+            );
+          }
         }
       }
     } finally {
@@ -2686,7 +2704,7 @@ function ThreadView({
             <textarea
               ref={textareaRef}
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={handleDraftChange}
               onPaste={handleComposerPaste}
               disabled={isStartingRecording || isRecording || !!voiceBlob}
               onKeyDown={(e) => {
