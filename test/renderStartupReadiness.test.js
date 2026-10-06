@@ -138,6 +138,28 @@ test("HTTP listener binds on 0.0.0.0 and can accept a local request", async () =
   }
 });
 
+test("startup schedules R2 temp cleanup without running an immediate sweep", () => {
+  const startupSource = fs.readFileSync(
+    path.join(__dirname, "../src/services/applicationStartup.js"),
+    "utf8"
+  );
+
+  const workerBlockStart = startupSource.indexOf(
+    'console.log("[Startup] Starting maintenance and recovery workers...")'
+  );
+  const workerBlockEnd = startupSource.indexOf(
+    "startInboundProcessingRecovery",
+    workerBlockStart
+  );
+  const workerBlock = startupSource.slice(workerBlockStart, workerBlockEnd);
+
+  assert.match(workerBlock, /setIntervalFn\(\s*pruneStaleTemporaryMediaSafely/);
+  assert.doesNotMatch(
+    workerBlock,
+    /(?:^|\n)\s*pruneStaleTemporaryMediaSafely\(\);/
+  );
+});
+
 test("application startup opens the Render port before initialization and marks ready last", () => {
   const startupSource = fs.readFileSync(
     path.join(__dirname, "../src/services/applicationStartup.js"),

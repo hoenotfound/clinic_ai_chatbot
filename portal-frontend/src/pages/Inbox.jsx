@@ -40,11 +40,12 @@ const REALTIME_DEBOUNCE_MS = 100;
 const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
 const WHATSAPP_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const WHATSAPP_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
-const IMAGE_OPTIMIZE_THRESHOLD_BYTES = 3.5 * 1024 * 1024;
+const IMAGE_OPTIMIZE_THRESHOLD_BYTES = 1.5 * 1024 * 1024;
 const IMAGE_OPTIMIZE_MAX_DIMENSION = 1920;
 const IMAGE_JPEG_QUALITY = 0.82;
 const IMAGE_PROGRESSIVE_JPEG_QUALITY = 0.92;
 const IMAGE_PNG_TO_JPEG_QUALITY = 0.9;
+const OPTIONAL_IMAGE_PREPARATION_BUDGET_MS = 1200;
 const JPEG_INSPECTION_BYTES = 1024 * 1024;
 const MAX_VOICE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_SECONDS = 120;
@@ -398,6 +399,7 @@ export default function Inbox() {
   const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
   const [hasMoreOlderMessages, setHasMoreOlderMessages] = useState(false);
   const [actionPending, setActionPending] = useState(false);
+  const [outboundPendingByContact, setOutboundPendingByContact] = useState({});
   const [conversationStatePending, setConversationStatePending] = useState(false);
   const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
   const [contactDetailsOpen, setContactDetailsOpen] = useState(false);
@@ -409,6 +411,7 @@ export default function Inbox() {
   const messagesRef = useRef(messages);
   const latestMessageIdRef = useRef(null);
   const threadRequestVersionRef = useRef(0);
+  const outboundQueueByContactRef = useRef(new Map());
 
   selectedIdRef.current = selectedId;
   acquisitionContextRef.current = acquisitionContext;
@@ -969,10 +972,39 @@ export default function Inbox() {
     return `optimistic-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 
+  function adjustOutboundPending(contactId, delta) {
+    setOutboundPendingByContact((current) => {
+      const key = String(contactId);
+      const nextCount = Math.max(0, Number(current[key] || 0) + delta);
+      if (nextCount === Number(current[key] || 0)) return current;
+      const next = { ...current };
+      if (nextCount > 0) next[key] = nextCount;
+      else delete next[key];
+      return next;
+    });
+  }
+
+  function enqueueOutbound(contactId, task) {
+    const key = String(contactId);
+    const previous =
+      outboundQueueByContactRef.current.get(key) || Promise.resolve();
+
+    adjustOutboundPending(contactId, 1);
+    const run = previous.catch(() => {}).then(task);
+    const tail = run.catch(() => {});
+    outboundQueueByContactRef.current.set(key, tail);
+
+    return run.finally(() => {
+      adjustOutboundPending(contactId, -1);
+      if (outboundQueueByContactRef.current.get(key) === tail) {
+        outboundQueueByContactRef.current.delete(key);
+      }
+    });
+  }
+
   async function handleSend(text, replyToMessageId = null) {
     if (selectedId == null || !text.trim()) return;
     const contactId = selectedId;
-    setActionPending(true);
 
     const optimisticId = makeOptimisticId();
     const replyTarget = replyToMessageId == null
@@ -997,13 +1029,21 @@ export default function Inbox() {
     ]);
 
     try {
-      const result = await api.sendMessage(contactId, text.trim(), replyToMessageId);
+      const result = await enqueueOutbound(
+        contactId,
+        () => api.sendMessage(contactId, text.trim(), replyToMessageId)
+      );
       const visibleResult = replyPreview ? { ...result, reply_preview: replyPreview } : result;
       if (selectedIdRef.current === contactId) {
         setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [visibleResult]));
       }
       void refreshConversations();
-      if (result?.delivered === false) {
+      if (result?.delivery_unknown === true) {
+        showToast(
+          "Message send could not be confirmed. Check WhatsApp before retrying to avoid sending it twice.",
+          "warning"
+        );
+      } else if (result?.delivered === false) {
         showToast(`Message saved but WhatsApp delivery failed — the ${ui.customerSingular} may not have received it. Please try resending.`, "warning");
       }
     } catch (err) {
@@ -1013,15 +1053,12 @@ export default function Inbox() {
       }
       showToast(err.message || "Couldn't send that message — please try again.", "error");
       throw err;
-    } finally {
-      if (selectedIdRef.current === contactId) setActionPending(false);
     }
   }
 
   async function handleSendImage(file, caption, replyToMessageId = null) {
     if (selectedId == null || !file) return;
     const contactId = selectedId;
-    setActionPending(true);
 
     const optimisticId = makeOptimisticId();
     const previewUrl = URL.createObjectURL(file);
@@ -1049,13 +1086,21 @@ export default function Inbox() {
     ]);
 
     try {
-      const result = await api.sendImage(contactId, file, caption, replyToMessageId);
+      const result = await enqueueOutbound(
+        contactId,
+        () => api.sendImage(contactId, file, caption, replyToMessageId)
+      );
       const visibleResult = replyPreview ? { ...result, reply_preview: replyPreview } : result;
       if (selectedIdRef.current === contactId) {
         setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [visibleResult]));
       }
       void refreshConversations();
-      if (result?.delivered === false) {
+      if (result?.delivery_unknown === true) {
+        showToast(
+          "Image send could not be confirmed. Check WhatsApp before retrying to avoid sending it twice.",
+          "warning"
+        );
+      } else if (result?.delivered === false) {
         showToast(`Image saved but WhatsApp delivery failed — the ${ui.customerSingular} may not have received it. Please try resending.`, "warning");
       }
     } catch (err) {
@@ -1067,27 +1112,33 @@ export default function Inbox() {
       throw err;
     } finally {
       URL.revokeObjectURL(previewUrl);
-      if (selectedIdRef.current === contactId) setActionPending(false);
     }
   }
 
   async function handleSendVoice(recording, mimeType, replyToMessageId = null) {
     if (selectedId == null || !recording) return;
     const contactId = selectedId;
-    setActionPending(true);
     const replyTarget = replyToMessageId == null
       ? null
       : messagesRef.current.find((message) => Number(message.id) === Number(replyToMessageId));
     const replyPreview = buildReplyPreview(replyTarget);
 
     try {
-      const result = await api.sendVoice(contactId, recording, mimeType, replyToMessageId);
+      const result = await enqueueOutbound(
+        contactId,
+        () => api.sendVoice(contactId, recording, mimeType, replyToMessageId)
+      );
       const visibleResult = replyPreview ? { ...result, reply_preview: replyPreview } : result;
       if (selectedIdRef.current === contactId) {
         setMessages((prev) => mergeMessages(prev, [{ ...visibleResult, has_media_attachment: true }]));
       }
       void refreshConversations();
-      if (result?.delivered === false) {
+      if (result?.delivery_unknown === true) {
+        showToast(
+          "Voice message send could not be confirmed. Check WhatsApp before recording it again to avoid duplicates.",
+          "warning"
+        );
+      } else if (result?.delivered === false) {
         showToast(`Voice message saved but WhatsApp delivery failed — the ${ui.customerSingular} may not have received it. Please try recording again.`, "warning");
       } else if (result?.transcribed === false) {
         showToast("Voice message sent. Its transcript couldn't be generated, but the recording was saved.", "info");
@@ -1096,8 +1147,6 @@ export default function Inbox() {
       console.error("Failed to send voice message:", err);
       showToast(err.message || "Couldn't send that voice message — please try again.", "error");
       throw err;
-    } finally {
-      if (selectedIdRef.current === contactId) setActionPending(false);
     }
   }
 
@@ -1145,7 +1194,10 @@ export default function Inbox() {
         loading={messagesLoading}
         olderMessagesLoading={olderMessagesLoading}
         hasMoreOlderMessages={hasMoreOlderMessages}
-        actionPending={actionPending}
+        actionPending={
+          actionPending ||
+          Boolean(outboundPendingByContact[String(selectedId)] || 0)
+        }
         conversationStatePending={conversationStatePending}
         acquisitionContext={acquisitionContext}
         acquisitionLoading={acquisitionLoading}
@@ -1771,6 +1823,7 @@ function ThreadView({
   const recordingRequestIdRef = useRef(0);
   const imagePreparationIdRef = useRef(0);
   const draftEditVersionRef = useRef(0);
+  const composerSendVersionRef = useRef(0);
   const actionsMenuRef = useRef(null);
   const mountedRef = useRef(true);
   const activeContactIdRef = useRef(contact?.contact_id);
@@ -1932,6 +1985,9 @@ function ThreadView({
       onToast("Please choose an image file.", "error");
       return;
     }
+    // Selecting a new attachment is a user composer edit. An older queued
+    // send that fails later must not restore its caption onto this new photo.
+    draftEditVersionRef.current += 1;
     if (file.size > MAX_IMAGE_BYTES) {
       onToast("That image is larger than 16MB — please choose a smaller file.", "error");
       return;
@@ -1966,10 +2022,44 @@ function ThreadView({
         (isWhatsApp && file.size > WHATSAPP_IMAGE_MAX_BYTES);
       if (!shouldOptimize) return;
 
-      const optimizedFile = await optimizeImageUpload(file, {
+      const mandatoryPreparation =
+        normalizeProgressiveJpeg ||
+        forceCompatibleFormat ||
+        (isWhatsApp && file.size > WHATSAPP_IMAGE_MAX_BYTES);
+      const optimizationPromise = optimizeImageUpload(file, {
         normalizeProgressiveJpeg,
         forceCompatibleFormat,
       });
+
+      let optimizedFile;
+      if (mandatoryPreparation) {
+        optimizedFile = await optimizationPromise;
+      } else {
+        const prepared = await Promise.race([
+          optimizationPromise.then((value) => ({ completed: true, value })),
+          new Promise((resolve) => {
+            window.setTimeout(
+              () => resolve({ completed: false, value: null }),
+              OPTIONAL_IMAGE_PREPARATION_BUDGET_MS
+            );
+          }),
+        ]);
+        if (!prepared.completed) {
+          // Optional compression must never make a valid image feel stuck.
+          // Keep the already-selected original and ignore the late optimizer.
+          if (
+            mountedRef.current &&
+            imagePreparationIdRef.current === preparationId
+          ) {
+            imagePreparationIdRef.current += 1;
+            setImagePreparing(false);
+          }
+          optimizationPromise.catch(() => {});
+          return;
+        }
+        optimizedFile = prepared.value;
+      }
+
       if (
         !mountedRef.current ||
         imagePreparationIdRef.current !== preparationId
@@ -2224,6 +2314,7 @@ function ThreadView({
       onToast("This message cannot be quoted on WhatsApp.", "warning");
       return;
     }
+    draftEditVersionRef.current += 1;
     setReplyingTo(message);
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
@@ -2258,8 +2349,16 @@ function ThreadView({
       const result = await onForwardMessage(messageId, targetContactIds);
       const delivered = Number(result?.deliveredCount || 0);
       const requested = Number(result?.requestedCount || targetContactIds.length);
+      const unknownCount = (result?.results || []).filter(
+        (item) => item.deliveryUnknown === true
+      ).length;
       if (delivered === requested) {
         onToast(`Forwarded to ${delivered} conversation${delivered === 1 ? "" : "s"}.`, "info");
+      } else if (unknownCount > 0) {
+        onToast(
+          `${unknownCount} forward${unknownCount === 1 ? "" : "s"} could not be confirmed. Check the customer chat before retrying to avoid duplicates.`,
+          "warning"
+        );
       } else if (delivered > 0) {
         onToast(`Forwarded to ${delivered} of ${requested} conversations. Some sends were blocked or failed.`, "warning");
       } else {
@@ -2311,12 +2410,15 @@ function ThreadView({
     const selectedReply = replyingTo;
     const contactIdAtSend = contact?.contact_id;
     const draftEditVersionAtSend = draftEditVersionRef.current;
+    const sendVersion = composerSendVersionRef.current + 1;
+    composerSendVersionRef.current = sendVersion;
     setSending(true);
 
     try {
-      // onSend/onSendImage add their optimistic bubble synchronously before
-      // awaiting the network. Clear the composer immediately after that bubble
-      // exists so staff can keep working instead of staring at a blocked draft.
+      // The parent handlers add an optimistic bubble synchronously and enqueue
+      // the actual request in per-conversation order. Clear and unlock this
+      // composer immediately so staff can keep chatting while the bubble shows
+      // its own upload/send progress, just like a native messaging app.
       const sendPromise = selectedImage
         ? onSendImage(selectedImage, text, selectedReply?.id || null)
         : onSend(text, selectedReply?.id || null);
@@ -2327,14 +2429,23 @@ function ThreadView({
         if (selectedImage) clearImage();
       }
 
-      await sendPromise;
-    } catch {
-      // Restore the failed send only if staff has not already started composing
-      // something new. Never overwrite a newer draft or reply target while an
-      // older request is finishing in the background.
+      // Yield once so React paints the cleared composer/optimistic bubble before
+      // re-enabling submit. Network completion remains serialized by the parent.
+      await Promise.resolve();
       if (
         mountedRef.current &&
-        activeContactIdRef.current === contactIdAtSend
+        composerSendVersionRef.current === sendVersion
+      ) {
+        setSending(false);
+      }
+
+      await sendPromise;
+    } catch {
+      // Restore the failed send only if no newer send or draft edit has happened.
+      if (
+        mountedRef.current &&
+        activeContactIdRef.current === contactIdAtSend &&
+        composerSendVersionRef.current === sendVersion
       ) {
         const draftUntouched =
           draftEditVersionRef.current === draftEditVersionAtSend;
@@ -2350,7 +2461,12 @@ function ThreadView({
         }
       }
     } finally {
-      if (mountedRef.current) setSending(false);
+      if (
+        mountedRef.current &&
+        composerSendVersionRef.current === sendVersion
+      ) {
+        setSending(false);
+      }
     }
   }
 
@@ -2640,7 +2756,10 @@ function ThreadView({
               </div>
               <button
                 type="button"
-                onClick={() => setReplyingTo(null)}
+                onClick={() => {
+                  draftEditVersionRef.current += 1;
+                  setReplyingTo(null);
+                }}
                 disabled={sending}
                 className="flex h-12 w-12 shrink-0 touch-manipulation items-center justify-center text-xl text-[var(--color-text-muted)] active:bg-white hover:bg-white disabled:opacity-50"
                 aria-label="Cancel reply"

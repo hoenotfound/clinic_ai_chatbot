@@ -1,8 +1,44 @@
 const GRAPH_API_VERSION = "v26.0";
+const DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS = 10 * 1000;
+const DEFAULT_META_MEDIA_UPLOAD_TIMEOUT_MS = 15 * 1000;
 const { normalizeWhatsAppReferral } = require("../utils/leadAttribution");
 
 const TRANSIENT_SEND_HTTP_STATUSES = new Set([429]);
 const TRANSIENT_SEND_ERROR_CODES = new Set([131000, 131016]);
+
+function requestTimeoutMs(rawValue, fallback) {
+  const parsed = Number(rawValue);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function fetchWithTimeout(
+  url,
+  options = {},
+  timeoutMs = DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS
+) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function interruptedDeliveryResult(err) {
+  const timedOut = err?.name === "AbortError";
+  return {
+    success: false,
+    wamid: null,
+    error: timedOut
+      ? "WhatsApp delivery could not be confirmed because the provider request timed out."
+      : "WhatsApp delivery could not be confirmed because the provider request was interrupted.",
+    retryable: false,
+    ambiguous: true,
+    unknown: true,
+    networkErrorCode: err?.code ? String(err.code) : null,
+  };
+}
 
 function parseWhatsappApiError(rawBody) {
   try {
@@ -58,6 +94,7 @@ function classifyWhatsappAcceptedResponse(data) {
       "WhatsApp accepted the HTTP request but did not return a message ID, so delivery cannot be confirmed.",
     retryable: false,
     ambiguous: true,
+    unknown: true,
   };
 }
 
@@ -91,20 +128,27 @@ async function sendMessage(to, text, options = {}) {
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
 
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to,
+          type: "text",
+          text: { body: text },
+          ...replyContext(options),
+        }),
       },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to,
-        type: "text",
-        text: { body: text },
-        ...replyContext(options),
-      }),
-    });
+      requestTimeoutMs(
+        process.env.WHATSAPP_MESSAGE_TIMEOUT_MS,
+        DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS
+      )
+    );
 
     if (!res.ok) {
       const errBody = await res.text();
@@ -115,15 +159,7 @@ async function sendMessage(to, text, options = {}) {
     return classifyWhatsappAcceptedResponse(data);
   } catch (err) {
     console.error("WhatsApp send threw an error:", err);
-    return {
-      success: false,
-      wamid: null,
-      error:
-        "WhatsApp delivery could not be confirmed because the provider request was interrupted.",
-      retryable: false,
-      ambiguous: true,
-      networkErrorCode: err?.code ? String(err.code) : null,
-    };
+    return interruptedDeliveryResult(err);
   }
 }
 
@@ -142,31 +178,38 @@ async function sendImage(to, imageUrl, caption, options = {}) {
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
 
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to,
+          type: "image",
+          image: caption ? { link: imageUrl, caption } : { link: imageUrl },
+          ...replyContext(options),
+        }),
       },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to,
-        type: "image",
-        image: caption ? { link: imageUrl, caption } : { link: imageUrl },
-        ...replyContext(options),
-      }),
-    });
+      requestTimeoutMs(
+        process.env.WHATSAPP_MESSAGE_TIMEOUT_MS,
+        DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS
+      )
+    );
 
     if (!res.ok) {
       const errBody = await res.text();
       console.error("WhatsApp image send failed:", res.status, errBody);
-      return { success: false, wamid: null };
+      return classifyWhatsappSendFailure(res.status, errBody);
     }
     const data = await res.json();
-    return { success: true, wamid: extractWamid(data) };
+    return classifyWhatsappAcceptedResponse(data);
   } catch (err) {
     console.error("WhatsApp image send threw an error:", err);
-    return { success: false, wamid: null };
+    return interruptedDeliveryResult(err);
   }
 }
 
@@ -197,11 +240,18 @@ async function uploadMedia(buffer, mimeType, filename = "upload") {
     form.append("messaging_product", "whatsapp");
     form.append("file", new Blob([buffer], { type: mimeType }), filename);
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      body: form,
-    });
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      },
+      requestTimeoutMs(
+        process.env.WHATSAPP_MEDIA_UPLOAD_TIMEOUT_MS,
+        DEFAULT_META_MEDIA_UPLOAD_TIMEOUT_MS
+      )
+    );
 
     if (!res.ok) {
       const errBody = await res.text();
@@ -233,31 +283,38 @@ async function sendImageById(to, mediaId, caption, options = {}) {
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
 
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to,
+          type: "image",
+          image: caption ? { id: mediaId, caption } : { id: mediaId },
+          ...replyContext(options),
+        }),
       },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to,
-        type: "image",
-        image: caption ? { id: mediaId, caption } : { id: mediaId },
-        ...replyContext(options),
-      }),
-    });
+      requestTimeoutMs(
+        process.env.WHATSAPP_MESSAGE_TIMEOUT_MS,
+        DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS
+      )
+    );
 
     if (!res.ok) {
       const errBody = await res.text();
       console.error("WhatsApp image (by id) send failed:", res.status, errBody);
-      return { success: false, wamid: null };
+      return classifyWhatsappSendFailure(res.status, errBody);
     }
     const data = await res.json();
-    return { success: true, wamid: extractWamid(data) };
+    return classifyWhatsappAcceptedResponse(data);
   } catch (err) {
     console.error("WhatsApp image (by id) send threw an error:", err);
-    return { success: false, wamid: null };
+    return interruptedDeliveryResult(err);
   }
 }
 
@@ -267,31 +324,38 @@ async function sendStickerById(to, mediaId, options = {}) {
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
 
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
         messaging_product: "whatsapp",
         to,
         type: "sticker",
         sticker: { id: mediaId },
         ...replyContext(options),
       }),
-    });
+      },
+      requestTimeoutMs(
+        process.env.WHATSAPP_MESSAGE_TIMEOUT_MS,
+        DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS
+      )
+    );
 
     if (!res.ok) {
       const errBody = await res.text();
       console.error("WhatsApp sticker send failed:", res.status, errBody);
-      return { success: false, wamid: null };
+      return classifyWhatsappSendFailure(res.status, errBody);
     }
     const data = await res.json();
-    return { success: true, wamid: extractWamid(data) };
+    return classifyWhatsappAcceptedResponse(data);
   } catch (err) {
     console.error("WhatsApp sticker send threw an error:", err);
-    return { success: false, wamid: null };
+    return interruptedDeliveryResult(err);
   }
 }
 
@@ -313,31 +377,38 @@ async function sendVoiceById(to, mediaId, options = {}) {
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
 
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
         messaging_product: "whatsapp",
         to,
         type: "audio",
         audio: { id: mediaId, voice: true },
         ...replyContext(options),
       }),
-    });
+      },
+      requestTimeoutMs(
+        process.env.WHATSAPP_MESSAGE_TIMEOUT_MS,
+        DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS
+      )
+    );
 
     if (!res.ok) {
       const errBody = await res.text();
       console.error("WhatsApp voice send failed:", res.status, errBody);
-      return { success: false, wamid: null };
+      return classifyWhatsappSendFailure(res.status, errBody);
     }
     const data = await res.json();
-    return { success: true, wamid: extractWamid(data) };
+    return classifyWhatsappAcceptedResponse(data);
   } catch (err) {
     console.error("WhatsApp voice send threw an error:", err);
-    return { success: false, wamid: null };
+    return interruptedDeliveryResult(err);
   }
 }
 
@@ -633,10 +704,14 @@ function parseStatusUpdates(body) {
 }
 
 module.exports = {
+  DEFAULT_META_MEDIA_UPLOAD_TIMEOUT_MS,
+  DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS,
   TRANSIENT_SEND_ERROR_CODES,
   TRANSIENT_SEND_HTTP_STATUSES,
   classifyWhatsappAcceptedResponse,
   classifyWhatsappSendFailure,
+  fetchWithTimeout,
+  interruptedDeliveryResult,
   parseWhatsappApiError,
   sendMessage,
   sendImage,

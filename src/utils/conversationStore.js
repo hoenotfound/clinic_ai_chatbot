@@ -138,6 +138,7 @@ async function appendMessageForContact(
       initialDeliveryError: options.initialDeliveryError || null,
       replyToProviderMessageId: options.replyToProviderMessageId || null,
       isForwarded: options.isForwarded === true,
+      mediaKey: options.mediaKey || null,
     }
   );
 
@@ -178,6 +179,30 @@ async function appendInboundMessageIfNew(contactId, content, whatsappMessageId) 
   return saved;
 }
 
+async function attachStoredMediaForContact(
+  contactId,
+  messageId,
+  mediaKey,
+  mediaMimeType,
+  { publish = true } = {}
+) {
+  const updated = await messagesRepo.setMessageMediaKeyById(
+    messageId,
+    contactId,
+    mediaKey,
+    mediaMimeType
+  );
+  if (updated && publish) {
+    realtimeEvents.publish("conversation_changed", {
+      contactId,
+      messageId: updated.id,
+      message: updated,
+      reason: "message_updated",
+    });
+  }
+  return updated;
+}
+
 async function updateInboundMessage(contactId, messageId, content, mediaAttachment = null) {
   const updated = await messagesRepo.updateInboundMessage(
     messageId,
@@ -206,5 +231,6 @@ module.exports = {
   appendMessage,
   appendMessageForContact,
   appendInboundMessageIfNew,
+  attachStoredMediaForContact,
   updateInboundMessage,
 };

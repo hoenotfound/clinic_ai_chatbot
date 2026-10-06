@@ -213,16 +213,52 @@ test("Inbox WhatsApp reply and image routes fail closed on invalid provider medi
   assert.match(imageRoute, /WHATSAPP_IMAGE_MAX_BYTES/);
   assert.match(imageRoute, /unsupported_whatsapp_image_type/);
   assert.match(imageRoute, /whatsapp_image_too_large/);
-  assert.match(imageRoute, /getMessageMediaReferenceForContact/);
-  assert.match(imageRoute, /copyStoredMediaToTemporary/);
-  assert.match(imageRoute, /scheduleTemporaryMediaDelete/);
-  assert.match(imageRoute, /channelMessaging\.sendImageByUrl/);
-  assert.match(
-    imageRoute,
-    /try \{[\s\S]*getMessageMediaReferenceForContact[\s\S]*copyStoredMediaToTemporary[\s\S]*\} catch \(copyErr\) \{[\s\S]*channelMessaging\.sendImageBuffer/
-  );
+  assert.match(imageRoute, /publish: false/);
+  assert.match(imageRoute, /mediaStorage\.uploadMedia/);
+  assert.match(imageRoute, /channelMessaging[\s\S]*\.sendImageBuffer/);
+  assert.match(imageRoute, /Promise\.allSettled/);
+  assert.match(imageRoute, /attachStoredMediaForContact/);
+  assert.match(imageRoute, /for \(let attempt = 1; attempt <= 2 && !mediaAttached/);
+  assert.match(imageRoute, /isR2RequestTimeoutError/);
+  assert.match(imageRoute, /skipping immediate retry/);
+  assert.match(imageRoute, /for \(let attempt = 1; attempt <= 2 && !finalMessage/);
+  assert.match(imageRoute, /Meta may already have accepted the image/);
+  assert.match(imageRoute, /delivery_unknown/);
+  assert.match(imageRoute, /\[Inbox image timing\]/);
   assert.match(replyHelper, /target\.role !== "user"/);
   assert.match(replyHelper, /\["failed", "unknown"\]\.includes\(targetDeliveryStatus\)/);
+});
+
+test("Inbox image forwarding keeps normal photos inside R2", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/routes/conversations.js"),
+    "utf8"
+  );
+  const storedSend = source.slice(
+    source.indexOf("async function sendStoredMessage"),
+    source.indexOf('router.get("/",')
+  );
+  const forwardRoute = source.slice(
+    source.indexOf("async function forwardStoredMessage"),
+    source.indexOf('router.post("/:contactId/messages",')
+  );
+
+  assert.match(forwardRoute, /getMessageForForward/);
+  assert.doesNotMatch(forwardRoute, /getMessageForRetry/);
+  assert.match(forwardRoute, /providerTempPromise/);
+  assert.match(forwardRoute, /copyStoredMediaToTemporary/);
+  assert.match(forwardRoute, /copyStoredMediaToMessage/);
+  assert.ok(
+    forwardRoute.indexOf("providerTempPromise") <
+      forwardRoute.indexOf("copyStoredMediaToMessage"),
+    "provider-facing R2 copy should start before waiting on the permanent target copy"
+  );
+  assert.match(forwardRoute, /preparedTemporaryMedia/);
+  assert.match(forwardRoute, /media_key: targetMediaKey/);
+  assert.match(forwardRoute, /\[Inbox forward timing\]/);
+  assert.match(storedSend, /message\.media_key/);
+  assert.match(storedSend, /copyStoredMediaToTemporary/);
+  assert.match(storedSend, /channelMessaging\.sendImageByUrl/);
 });
 
 test("staff voice sends keep Staff Waiting blocked until the voice reply is persisted", () => {
@@ -299,6 +335,35 @@ test("Staff Assist cancellation epochs are bounded in memory", () => {
   assert.match(source, /MAX_EPOCH_KEYS/);
   assert.match(source, /function pruneEpochs/);
   assert.match(source, /!pendingEchoes\.has\(key\)/);
+});
+
+test("Inbox outbound sends unlock the composer but stay ordered per conversation", () => {
+  const inbox = fs.readFileSync(
+    path.join(__dirname, "../portal-frontend/src/pages/Inbox.jsx"),
+    "utf8"
+  );
+
+  assert.match(inbox, /outboundQueueByContactRef = useRef\(new Map\(\)\)/);
+  assert.match(inbox, /function enqueueOutbound\(contactId, task\)/);
+  assert.match(inbox, /previous\.catch\(\(\) => \{\}\)\.then\(task\)/);
+  assert.match(inbox, /enqueueOutbound\(\s*contactId,[\s\S]*api\.sendImage/);
+  assert.match(inbox, /composerSendVersionRef/);
+  assert.match(inbox, /await Promise\.resolve\(\);[\s\S]*setSending\(false\)/);
+  assert.match(inbox, /composerSendVersionRef\.current === sendVersion/);
+});
+
+test("Inbox optional image optimization has a strict mobile latency budget", () => {
+  const inbox = fs.readFileSync(
+    path.join(__dirname, "../portal-frontend/src/pages/Inbox.jsx"),
+    "utf8"
+  );
+
+  assert.match(inbox, /OPTIONAL_IMAGE_PREPARATION_BUDGET_MS = 1200/);
+  assert.match(inbox, /const mandatoryPreparation =/);
+  assert.match(inbox, /Promise\.race/);
+  assert.match(inbox, /Optional compression must never make a valid image feel stuck/);
+  assert.match(inbox, /delivery_unknown === true/);
+  assert.match(inbox, /Check WhatsApp before retrying to avoid sending it twice/);
 });
 
 test("messaging-policy surfaces keep responsive mobile affordances", () => {

@@ -916,7 +916,7 @@ test("progressive JPEG is normalized before upload", async ({ page }) => {
 test("a delayed failed image send never overwrites a newer staff draft", async ({ page }) => {
   const apiState = await installApi(page, {
     imageSendFailure: "Image provider temporarily unavailable.",
-    imageSendDelayMs: 250,
+    imageSendDelayMs: 600,
   });
 
   await page.goto("/inbox");
@@ -932,6 +932,7 @@ test("a delayed failed image send never overwrites a newer staff draft", async (
   await expect(page.getByAltText("Selected attachment")).toHaveCount(0);
   const nextDraft = page.locator("textarea").first();
   await nextDraft.fill("New draft typed while the image is sending");
+  await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
 
   await expect(
     page.getByText("Image provider temporarily unavailable.", { exact: true })
