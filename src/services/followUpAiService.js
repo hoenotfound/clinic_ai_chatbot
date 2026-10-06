@@ -171,7 +171,12 @@ function recentConfiguredServiceNames(messages, maxServices = 2) {
         .map((value) => ({ value, key: normalizedComparable(value) }))
         .filter(({ key }) => {
           if (!key || key.length < 2) return false;
-          return !/^[a-z0-9]+$/u.test(key) || key.length >= 3;
+          if (!/^[a-z0-9]+$/u.test(key)) return true;
+          if (key.length >= 3) return true;
+          // Keep compact treatment labels such as 3D / 9D, while rejecting
+          // ambiguous single-letter package aliases and generic two-letter
+          // abbreviations that are too easy to match accidentally.
+          return /[a-z]/u.test(key) && /[0-9]/u.test(key);
         });
       return { name, terms };
     })
