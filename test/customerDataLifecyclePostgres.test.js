@@ -177,9 +177,13 @@ test(
       );
       await client.query(
         `INSERT INTO meta_comment_automation_jobs (
-           channel, comment_id, author_id, private_reply_recipient_id
+           channel, comment_id, entry_id, author_id, comment_text,
+           private_reply_recipient_id
          )
-         VALUES ('facebook', 'comment-deleted-1', 'psid-1', 'psid-1')`
+         VALUES (
+           'facebook', 'comment-deleted-1', 'page-1', 'psid-1',
+           'old comment', 'psid-1'
+         )`
       );
 
       const result = await lifecycleRepo.purgeContactData({
