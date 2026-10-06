@@ -118,6 +118,73 @@ test("AI follow-up prompt includes only the relevant service and matching promot
   }
 });
 
+test("follow-up prompt preserves two recently discussed services without choosing a promotion", () => {
+  const original = {
+    services: config.services,
+    serviceAliases: config.serviceAliases,
+    promotions: config.promotions,
+    sop: config.sop,
+    closingPlaybook: config.closingPlaybook,
+  };
+
+  try {
+    config.services = [
+      {
+        name: "3D 小颜术",
+        description: "3D focuses on face shape and contour.",
+        priceRange: "RM488",
+        duration: "90 minutes",
+      },
+      {
+        name: "9D 逆龄抗衰",
+        description: "9D focuses on laxity and ageing concerns.",
+        priceRange: "RM588",
+        duration: "90 minutes",
+      },
+      {
+        name: "骨盆调理",
+        description: "UNRELATED_PELVIC_DETAILS",
+        priceRange: "RM388",
+        duration: "60 minutes",
+      },
+    ];
+    config.serviceAliases = [
+      { alias: "3D", officialService: "3D 小颜术" },
+      { alias: "9D", officialService: "9D 逆龄抗衰" },
+    ];
+    config.promotions = [
+      { name: "3D Promo", linkedService: "3D 小颜术", caption: "SHOULD_NOT_PICK_3D_PROMO" },
+      { name: "9D Promo", linkedService: "9D 逆龄抗衰", caption: "SHOULD_NOT_PICK_9D_PROMO" },
+    ];
+    config.sop = [
+      "3D 小颜术:",
+      "3D_RELEVANT_GUIDANCE",
+      "",
+      "9D 逆龄抗衰:",
+      "9D_RELEVANT_GUIDANCE",
+    ].join("\n");
+    config.closingPlaybook = "Keep comparisons low pressure and ask what the customer wants to improve first.";
+
+    const prompt = buildFollowUpPrompt({
+      channel: "whatsapp",
+      followUpContext: {
+        recentServiceNames: ["3D 小颜术", "9D 逆龄抗衰"],
+      },
+    });
+
+    assert.match(prompt, /3D focuses on face shape and contour/);
+    assert.match(prompt, /9D focuses on laxity and ageing concerns/);
+    assert.match(prompt, /3D_RELEVANT_GUIDANCE/);
+    assert.match(prompt, /9D_RELEVANT_GUIDANCE/);
+    assert.doesNotMatch(prompt, /UNRELATED_PELVIC_DETAILS/);
+    assert.match(prompt, /Multiple services are being compared/);
+    assert.doesNotMatch(prompt, /SHOULD_NOT_PICK_3D_PROMO/);
+    assert.doesNotMatch(prompt, /SHOULD_NOT_PICK_9D_PROMO/);
+  } finally {
+    Object.assign(config, original);
+  }
+});
+
 test("compact sales guidance keeps a relevant service section even inside one long SOP block", () => {
   const original = {
     services: config.services,
