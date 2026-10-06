@@ -180,11 +180,11 @@ test("package acceptance becomes Hot when it directly answers a sales next-step 
     },
     {
       messageText: "Package A",
-      previousClinicMessage: "Which package would you like?",
+      previousClinicMessage: "Which package would you like to proceed with?",
     },
     {
       messageText: "A",
-      previousClinicMessage: "Which package would you like?",
+      previousClinicMessage: "Which package would you like to proceed with?",
     },
     {
       messageText: "可以",
@@ -199,6 +199,10 @@ test("package acceptance becomes Hot when it directly answers a sales next-step 
   }
 
   assert.equal(classifyTemperatureMessage({ messageText: "Package A" }), null);
+  assert.equal(classifyTemperatureMessage({
+    messageText: "Package A",
+    previousClinicMessage: "Which package would you like to know more about?",
+  }), null);
   assert.equal(classifyTemperatureMessage({
     messageText: "Maybe later",
     previousClinicMessage: "Would you like to proceed with Package A?",
