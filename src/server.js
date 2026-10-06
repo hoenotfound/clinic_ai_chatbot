@@ -785,7 +785,7 @@ async function processIncomingMessage(
     const history = await conversationStore.getHistoryForContact(contact.id, {
       throughMessageId: savedInbound.id,
     });
-    const mediaLanguage = detectConversationLanguage(
+    const customerMediaLanguage = detectConversationLanguage(
       history
         .slice()
         .reverse()
@@ -863,6 +863,10 @@ async function processIncomingMessage(
       }
     }
 
+    const mediaLanguage = detectConversationLanguage(
+      [aiReply],
+      customerMediaLanguage
+    );
     const reply = isFirstMessage && !urgentSafety
       ? `${clinicConfig.introMessage}\n\n${aiReply}`
       : aiReply;
