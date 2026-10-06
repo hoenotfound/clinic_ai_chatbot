@@ -6,13 +6,14 @@ const PORTAL_CSP = [
   "object-src 'none'",
   "frame-ancestors 'none'",
   "form-action 'self'",
-  "script-src 'self'",
+  "script-src 'self' https://connect.facebook.net",
   "script-src-attr 'none'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "media-src 'self' blob: https:",
   "font-src 'self' data:",
-  "connect-src 'self'",
+  "connect-src 'self' https://connect.facebook.net https://www.facebook.com https://web.facebook.com https://business.facebook.com https://graph.facebook.com",
+  "frame-src 'self' https://www.facebook.com https://web.facebook.com https://business.facebook.com",
   "manifest-src 'self'",
 ].join("; ");
 
