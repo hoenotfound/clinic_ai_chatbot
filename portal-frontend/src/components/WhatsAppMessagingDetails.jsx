@@ -66,9 +66,23 @@ export default function WhatsAppMessagingDetails({ contact, className = "" }) {
     "whatsapp_marketing_opt_out_source",
     "whatsappMarketingOptOutSource"
   );
-  const statusTone = policy.freeformAllowed
+  const replyStatusTone = policy.freeformAllowed
     ? "border-emerald-200 bg-emerald-50 text-emerald-800"
     : "border-amber-200 bg-amber-50 text-amber-900";
+  const headerStatus = optOutAt
+    ? {
+        label: policy.freeformAllowed ? "Opt-out recorded" : "Sending restricted",
+        tone: "border-amber-200 bg-amber-50 text-amber-900",
+      }
+    : marketingOptOutAt
+      ? {
+          label: "Marketing opt-out",
+          tone: "border-amber-200 bg-amber-50 text-amber-900",
+        }
+      : {
+          label: policy.freeformAllowed ? "Reply available" : "Sending restricted",
+          tone: replyStatusTone,
+        };
 
   return (
     <section className={`overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] ${className}`}>
@@ -92,8 +106,8 @@ export default function WhatsAppMessagingDetails({ contact, className = "" }) {
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold ${statusTone}`}>
-            {policy.freeformAllowed ? "Reply available" : "Sending restricted"}
+          <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold ${headerStatus.tone}`}>
+            {headerStatus.label}
           </span>
           <span
             aria-hidden="true"
@@ -106,7 +120,7 @@ export default function WhatsAppMessagingDetails({ contact, className = "" }) {
 
       {expanded && (
         <div id="messaging-policy-details" className="border-t border-[var(--color-border)] px-3 pb-3 pt-3 sm:px-4 sm:pb-4">
-          <div className={`rounded-xl border px-3 py-2.5 text-xs leading-5 ${statusTone}`}>
+          <div className={`rounded-xl border px-3 py-2.5 text-xs leading-5 ${replyStatusTone}`}>
             <p className="text-[10px] font-semibold uppercase tracking-[0.08em] opacity-70">Current reply window</p>
             <p className="font-semibold">{policy.label}</p>
             {policy.explanation && (
