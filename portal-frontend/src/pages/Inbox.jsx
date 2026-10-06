@@ -2872,8 +2872,10 @@ function MessageBubble({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [swipeOffset, setSwipeOffset] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
   const swipeStartRef = useRef(null);
   const swipeOffsetRef = useRef(0);
+  const suppressClickRef = useRef(false);
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
   const isWhatsAppTemplate = !!message.whatsapp_template;
@@ -2946,9 +2948,11 @@ function MessageBubble({
 
   function handleSwipeStart(event) {
     if (!canQuote || event.touches?.length !== 1) return;
+    if (event.target?.closest?.("button, audio, video, input, textarea, a")) return;
     const touch = event.touches[0];
     swipeStartRef.current = { x: touch.clientX, y: touch.clientY };
     swipeOffsetRef.current = 0;
+    setIsSwiping(true);
   }
 
   function handleSwipeMove(event) {
@@ -2971,13 +2975,35 @@ function MessageBubble({
     setSwipeOffset(nextOffset);
   }
 
-  function finishSwipe() {
-    if (!swipeStartRef.current) return;
-    const shouldReply = swipeOffsetRef.current >= 44;
+  function resetSwipe() {
     swipeStartRef.current = null;
     swipeOffsetRef.current = 0;
     setSwipeOffset(0);
-    if (shouldReply) onReply?.(message);
+    setIsSwiping(false);
+  }
+
+  function finishSwipe() {
+    if (!swipeStartRef.current) return;
+    const shouldReply = swipeOffsetRef.current >= 44;
+    resetSwipe();
+    if (shouldReply) {
+      suppressClickRef.current = true;
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 500);
+      onReply?.(message);
+    }
+  }
+
+  function cancelSwipe() {
+    resetSwipe();
+  }
+
+  function handleClickCapture(event) {
+    if (!suppressClickRef.current) return;
+    suppressClickRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
   }
 
   return (
@@ -2993,12 +3019,13 @@ function MessageBubble({
       )}
 
       <div
-        className={`group relative z-10 max-w-[88%] touch-pan-y rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm transition-transform duration-150 sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryNeedsAction ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}
+        className={`group relative z-10 max-w-[88%] touch-pan-y rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm transition-transform ${isSwiping ? "duration-0" : "duration-150"} sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryNeedsAction ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}
         style={{ transform: swipeOffset ? `translateX(${swipeOffset}px)` : undefined }}
         onTouchStart={handleSwipeStart}
         onTouchMove={handleSwipeMove}
         onTouchEnd={finishSwipe}
-        onTouchCancel={finishSwipe}
+        onTouchCancel={cancelSwipe}
+        onClickCapture={handleClickCapture}
       >
         {showActions && (
           <div className="absolute -right-1 -top-1 z-20 sm:right-1.5 sm:top-1.5">
