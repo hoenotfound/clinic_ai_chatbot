@@ -1,11 +1,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const aiService = require("../src/services/aiService");
+const config = require("../src/config/clinicConfig");
 const {
   generatePersonalizedFollowUp,
   isSubstantiallySimilar,
   needsSchedulingContext,
   previousFollowUps,
+  recentConfiguredServiceNames,
   scopePackageSelectionConversation,
   selectPromotionPackageForFollowUp,
   shouldSuppressStaffPromotionHumanReview,
@@ -71,6 +73,34 @@ test("booking, branch and timing language enables scheduling context", () => {
     needsSchedulingContext([], { appointmentStatus: "reschedule" }),
     true
   );
+});
+
+test("recent service hints preserve a two-service comparison when CRM interest is unset", () => {
+  const original = {
+    services: config.services,
+    serviceAliases: config.serviceAliases,
+  };
+
+  try {
+    config.services = [
+      { name: "3D 小颜术" },
+      { name: "9D 逆龄抗衰" },
+      { name: "骨盆调理" },
+    ];
+    config.serviceAliases = [
+      { alias: "3D", officialService: "3D 小颜术" },
+      { alias: "9D", officialService: "9D 逆龄抗衰" },
+    ];
+
+    const names = recentConfiguredServiceNames([
+      { role: "user", content: "3D跟9D有什么不同？" },
+      { role: "assistant", content: "主要看你比较在意脸型还是松弛。" },
+    ]);
+
+    assert.deepEqual(names, ["3D 小颜术", "9D 逆龄抗衰"]);
+  } finally {
+    Object.assign(config, original);
+  }
 });
 
 test("similarity catches near-duplicate Chinese follow-ups", () => {
