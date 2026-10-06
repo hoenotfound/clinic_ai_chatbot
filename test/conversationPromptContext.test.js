@@ -233,6 +233,25 @@ test("broad treatment price request restores configured prices instead of using 
   });
 });
 
+test("broad discovery overrides a treatment name when customer asks for other treatments", () => {
+  withConfig(scopedConfig(), () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "Besides 3D, what other treatments do you have?" },
+    ]);
+
+    assert.deepEqual(context.relevantServiceNames, []);
+    assert.equal(context.serviceSource, "broad_discovery");
+
+    const prompt = buildSystemPrompt({
+      channel: "whatsapp",
+      conversationContext: context,
+    });
+    assert.match(prompt, /THREED_FULL_DETAILS/);
+    assert.match(prompt, /NINED_FULL_DETAILS/);
+    assert.match(prompt, /PELVIS_FULL_DETAILS/);
+  });
+});
+
 test("three-service customer comparison falls back to the broad compact catalog instead of dropping a service", () => {
   withConfig(scopedConfig(), () => {
     const context = buildConversationPromptContext([
