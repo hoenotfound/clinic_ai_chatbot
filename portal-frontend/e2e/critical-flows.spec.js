@@ -81,6 +81,7 @@ function inboundMessages() {
     media_url: null,
     media_base64: null,
     media_mime_type: null,
+    whatsapp_message_id: "wamid.customer.1",
   }];
 }
 
@@ -326,6 +327,21 @@ async function installApi(page, {
           : item
       ));
       return fulfill(route, message);
+    }
+
+    const forwardMatch = path.match(/^\/api\/conversations\/(\d+)\/messages\/(\d+)\/forward$/);
+    if (forwardMatch && method === "POST") {
+      const body = request.postDataJSON();
+      record(request, body);
+      return fulfill(route, {
+        deliveredCount: body.targetContactIds?.length || 0,
+        requestedCount: body.targetContactIds?.length || 0,
+        results: (body.targetContactIds || []).map((contactId) => ({
+          contactId,
+          delivered: true,
+          error: null,
+        })),
+      });
     }
 
     const templateListMatch = path.match(/^\/api\/conversations\/(\d+)\/whatsapp-templates$/);
@@ -575,6 +591,145 @@ async function openInboxConversation(page, name = "Alex Customer") {
     page.locator(`section[aria-label="Conversation with ${name}"]`)
   ).toBeVisible();
 }
+
+test("Inbox message actions are mobile-friendly and preserve quoted reply targets", async ({ page }, testInfo) => {
+  const secondConversation = conversation({
+    contact_id: 202,
+    name: "Bella Customer",
+    whatsapp_profile_name: "Bella Customer",
+    whatsapp_number: "+60199887766",
+    last_message_content: "Bella enquiry",
+  });
+  const apiState = await installApi(page, {
+    initialConversations: [conversation(), secondConversation],
+  });
+
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+
+  const actionsButton = page.getByRole("button", { name: "Message actions" }).first();
+  await expect(actionsButton).toBeVisible();
+
+  if (testInfo.project.name === "iphone-portrait") {
+    const target = await actionsButton.boundingBox();
+    expect(target).not.toBeNull();
+    expect(target.width).toBeGreaterThanOrEqual(44);
+    expect(target.height).toBeGreaterThanOrEqual(44);
+  }
+
+  await actionsButton.click();
+
+  if (testInfo.project.name === "iphone-portrait") {
+    const sheet = page.getByRole("menu", { name: "Message options" });
+    await expect(sheet).toBeVisible();
+    const viewport = page.viewportSize();
+    const box = await sheet.boundingBox();
+    expect(viewport).not.toBeNull();
+    expect(box).not.toBeNull();
+    expect(Math.abs(box.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(box.width - viewport.width)).toBeLessThanOrEqual(1);
+    expect(Math.abs(box.y + box.height - viewport.height)).toBeLessThanOrEqual(2);
+
+    const replyAction = sheet.getByRole("menuitem", { name: /Reply/ });
+    const replyBox = await replyAction.boundingBox();
+    expect(replyBox).not.toBeNull();
+    expect(replyBox.height).toBeGreaterThanOrEqual(48);
+    await replyAction.click();
+  } else {
+    await page.getByRole("menuitem", { name: /Reply/ }).click();
+  }
+
+  await expect(page.getByText(/Replying to/i)).toBeVisible();
+  const composer = page.locator("textarea").first();
+  await composer.fill("Quoted reply from staff");
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  const replyCall = findCall(apiState, "POST", "/api/conversations/101/messages");
+  expect(replyCall).toBeTruthy();
+  expect(replyCall.body.replyToMessageId).toBe(1);
+
+  await actionsButton.click();
+  const forwardAction = page.getByRole("menuitem", { name: /Forward/ });
+  await forwardAction.click();
+
+  const dialog = page.getByRole("dialog", { name: "Forward message" });
+  await expect(dialog).toBeVisible();
+  const search = dialog.getByRole("textbox", { name: "Search conversations to forward" });
+
+  if (testInfo.project.name === "iphone-portrait") {
+    const viewport = page.viewportSize();
+    const box = await dialog.locator("> div").boundingBox();
+    expect(viewport).not.toBeNull();
+    expect(box).not.toBeNull();
+    expect(Math.abs(box.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(box.width - viewport.width)).toBeLessThanOrEqual(1);
+    expect(Math.abs(box.y + box.height - viewport.height)).toBeLessThanOrEqual(2);
+    expect(await search.evaluate((element) => document.activeElement === element)).toBe(false);
+  }
+
+  await dialog.getByRole("button").filter({ hasText: "Bella Customer" }).click();
+  await dialog.getByRole("button", { name: "Forward (1)" }).click();
+
+  const forwardCall = findCall(
+    apiState,
+    "POST",
+    "/api/conversations/101/messages/1/forward"
+  );
+  expect(forwardCall).toBeTruthy();
+  expect(forwardCall.body.targetContactIds).toEqual([202]);
+  expectNoUnexpectedApi(apiState);
+});
+
+test("mobile swipe right starts a quoted reply", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "iphone-portrait", "Swipe gesture is a phone interaction.");
+
+  const apiState = await installApi(page);
+  await page.goto("/inbox");
+  await openInboxConversation(page);
+
+  const actionsButton = page.getByRole("button", { name: "Message actions" }).first();
+  const bubble = actionsButton.locator("xpath=../..");
+  await bubble.evaluate((element) => {
+    const touch = (x, y) => new Touch({
+      identifier: 1,
+      target: element,
+      clientX: x,
+      clientY: y,
+      screenX: x,
+      screenY: y,
+      pageX: x,
+      pageY: y,
+      radiusX: 2,
+      radiusY: 2,
+      rotationAngle: 0,
+      force: 0.5,
+    });
+    element.dispatchEvent(new TouchEvent("touchstart", {
+      bubbles: true,
+      cancelable: true,
+      touches: [touch(40, 160)],
+      targetTouches: [touch(40, 160)],
+      changedTouches: [touch(40, 160)],
+    }));
+    element.dispatchEvent(new TouchEvent("touchmove", {
+      bubbles: true,
+      cancelable: true,
+      touches: [touch(120, 162)],
+      targetTouches: [touch(120, 162)],
+      changedTouches: [touch(120, 162)],
+    }));
+    element.dispatchEvent(new TouchEvent("touchend", {
+      bubbles: true,
+      cancelable: true,
+      touches: [],
+      targetTouches: [],
+      changedTouches: [touch(120, 162)],
+    }));
+  });
+
+  await expect(page.getByText(/Replying to/i)).toBeVisible();
+  expectNoUnexpectedApi(apiState);
+});
 
 test("login submits credentials and reaches Inbox", async ({ page }) => {
   const apiState = await installApi(page, { loggedIn: false });
