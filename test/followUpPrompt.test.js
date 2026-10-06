@@ -118,6 +118,39 @@ test("AI follow-up prompt includes only the relevant service and matching promot
   }
 });
 
+test("compact sales guidance keeps a relevant service section even inside one long SOP block", () => {
+  const original = {
+    services: config.services,
+    serviceAliases: config.serviceAliases,
+    sop: config.sop,
+    closingPlaybook: config.closingPlaybook,
+  };
+
+  try {
+    config.services = [{
+      name: "Pelvic Care",
+      description: "Pelvic service",
+      priceRange: "RM388",
+      duration: "60 minutes",
+    }];
+    config.serviceAliases = [{ alias: "骨盆调理", officialService: "Pelvic Care" }];
+    config.sop = `${"UNRELATED_PREFIX ".repeat(180)} Pelvic Care RELEVANT_LATE_SOP_GUIDANCE keep the 1-to-1 assessment wording.`;
+    config.closingPlaybook = "General low-pressure sales flow.";
+
+    const prompt = buildFollowUpPrompt({
+      channel: "whatsapp",
+      followUpContext: {
+        treatmentInterest: "骨盆调理",
+      },
+    });
+
+    assert.match(prompt, /RELEVANT_LATE_SOP_GUIDANCE/);
+    assert.match(prompt, /1-to-1 assessment wording/);
+  } finally {
+    Object.assign(config, original);
+  }
+});
+
 test("follow-up prompt only includes branch and hours detail when scheduling is relevant", () => {
   const original = {
     branches: config.branches,
