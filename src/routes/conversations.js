@@ -1,6 +1,7 @@
 const express = require("express");
 const multer = require("multer");
 const { pipeline } = require("node:stream/promises");
+const { canAccessContact } = require("../utils/accessControl");
 const contactsRepo = require("../db/contactsRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
@@ -73,6 +74,37 @@ function parsePositiveInt(value) {
   if (value == null || value === "") return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function resolveReplyTarget(contact, rawMessageId, res) {
+  if (rawMessageId == null || rawMessageId === "") {
+    return { ok: true, target: null };
+  }
+
+  const messageId = parsePositiveInt(rawMessageId);
+  if (!messageId) {
+    res.status(400).json({ error: "Invalid reply message id." });
+    return { ok: false, target: null };
+  }
+
+  if ((contact.channel || "whatsapp") !== "whatsapp") {
+    res.status(400).json({
+      error: "Quoted replies are currently available for WhatsApp conversations only.",
+    });
+    return { ok: false, target: null };
+  }
+
+  const target = await messagesRepo.getMessageForReplyContext(contact.id, messageId);
+  if (!target) {
+    res.status(404).json({ error: "The message you are replying to could not be found." });
+    return { ok: false, target: null };
+  }
+  if (!target.whatsapp_message_id) {
+    res.status(409).json({ error: "That message is not available to quote on WhatsApp yet." });
+    return { ok: false, target: null };
+  }
+
+  return { ok: true, target };
 }
 
 function normalizeSingleByteRange(value) {
@@ -263,6 +295,9 @@ async function sendStoredMessage(contact, message, options = {}) {
   const mimeType = String(message.media_mime_type || "").toLowerCase();
   const channel = contact.channel || "whatsapp";
   const skipCaption = hasPartialCaptionMarker(message.delivery_error);
+  const sendOptions = message.reply_to_provider_message_id
+    ? { ...options, replyToProviderMessageId: message.reply_to_provider_message_id }
+    : options;
 
   if (mimeType.startsWith("audio/") && message.media_base64) {
     const storedBuffer = Buffer.from(message.media_base64, "base64");
@@ -276,7 +311,7 @@ async function sendStoredMessage(contact, message, options = {}) {
         converted.whatsapp.buffer,
         converted.whatsapp.mimeType,
         converted.whatsapp.filename,
-        socialProviderSendOptions(message, contact, options)
+        socialProviderSendOptions(message, contact, sendOptions)
       );
     }
     return channelMessaging.sendAudioBuffer(
@@ -284,7 +319,7 @@ async function sendStoredMessage(contact, message, options = {}) {
       storedBuffer,
       mimeType,
       "voice.mp3",
-      socialProviderSendOptions(message, contact, options)
+      socialProviderSendOptions(message, contact, sendOptions)
     );
   }
 
@@ -295,7 +330,7 @@ async function sendStoredMessage(contact, message, options = {}) {
       mimeType,
       skipCaption ? undefined : (message.content || undefined),
       "image",
-      socialProviderSendOptions(message, contact, { ...options, skipCaption })
+      socialProviderSendOptions(message, contact, { ...sendOptions, skipCaption })
     );
   }
 
@@ -304,7 +339,7 @@ async function sendStoredMessage(contact, message, options = {}) {
       contact,
       message.media_url,
       skipCaption ? undefined : (message.content || undefined),
-      socialProviderSendOptions(message, contact, { ...options, skipCaption })
+      socialProviderSendOptions(message, contact, { ...sendOptions, skipCaption })
     );
   }
 
@@ -312,7 +347,7 @@ async function sendStoredMessage(contact, message, options = {}) {
     return channelMessaging.sendText(
       contact,
       message.content.trim(),
-      socialProviderSendOptions(message, contact, options)
+      socialProviderSendOptions(message, contact, sendOptions)
     );
   }
 
