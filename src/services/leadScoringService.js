@@ -127,6 +127,13 @@ function trimTranscript(messages) {
   return kept.reverse();
 }
 
+function delayUntilTelegramRetry(nextRetryAt, nowMs = Date.now()) {
+  if (!nextRetryAt) return null;
+  const dueAt = Date.parse(nextRetryAt);
+  if (!Number.isFinite(dueAt)) return null;
+  return Math.max(1000, dueAt - nowMs);
+}
+
 function buildScoringFailureFallback(failure = {}) {
   const attempts = Number(failure.attempts);
   return {
@@ -160,6 +167,8 @@ function createLeadScoringRunner({
   recoverStaleTerminalFailures = repository === leadScoringRepo
     ? leadScoringFailureRecoveryRepo.recoverStaleTerminalProcessingFailures
     : null,
+  scheduleWake = wakeLeadScoring,
+  clock = Date.now,
 } = {}) {
   let sweepRunning = false;
 
@@ -355,9 +364,16 @@ function createLeadScoringRunner({
       const liveSettings = settingsGetter();
       if (liveSettings?.activatedAt === settings.activatedAt) {
         try {
-          await flushConversationSummaries({
+          const telegramFlush = await flushConversationSummaries({
             inactivityMinutes: liveSettings.inactivityMinutes,
           });
+          const retryDelayMs = delayUntilTelegramRetry(
+            telegramFlush?.nextRetryAt,
+            clock()
+          );
+          if (retryDelayMs !== null) {
+            scheduleWake(retryDelayMs);
+          }
         } catch (telegramFlushErr) {
           console.error("Telegram summary sweep failed:", telegramFlushErr);
         }
@@ -483,6 +499,7 @@ module.exports = {
   STALE_RECOVERY_GRACE_MS,
   buildScoringFailureFallback,
   createLeadScoringRunner,
+  delayUntilTelegramRetry,
   ensureConversationAnalysisActivation,
   getActiveSettings,
   noteLeadScoringActivity,

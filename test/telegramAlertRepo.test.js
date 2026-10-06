@@ -14,6 +14,9 @@ test("ready Telegram summaries wait for inactivity and are invalidated only by a
     assert.match(sql, /latest\.created_at <= now\(\) - \(\$1::integer \* interval '1 minute'\)/);
     assert.match(sql, /a\.status IN \('pending', 'sending'\)/);
     assert.match(sql, /a\.attempts < 3/);
+    assert.match(sql, /a\.attempts = 0/);
+    assert.match(sql, /WHEN 1 THEN interval '1 minute'/);
+    assert.match(sql, /WHEN 2 THEN interval '5 minutes'/);
     assert.match(sql, /newer_customer\.role = 'user'/);
     assert.match(sql, /newer_customer\.id > a\.through_message_id/);
     assert.doesNotMatch(sql, /a\.through_message_id = latest\.id/);
@@ -46,6 +49,9 @@ test("claim rechecks inactivity and newer customer messages atomically", async (
     assert.match(sql, /newer_customer\.id > a\.through_message_id/);
     assert.match(sql, /latest\.created_at/);
     assert.match(sql, /\$2::integer \* interval '1 minute'/);
+    assert.match(sql, /a\.attempts = 0/);
+    assert.match(sql, /WHEN 1 THEN interval '1 minute'/);
+    assert.match(sql, /WHEN 2 THEN interval '5 minutes'/);
     assert.match(sql, /l\.temperature AS current_temperature/);
     assert.match(sql, /telegram_immediate_alerts immediate/);
     assert.deepEqual(params, [31, 10, telegramAlertRepo.ACTIONABLE_SUMMARY_SUPPRESSION_MINUTES]);
@@ -181,6 +187,41 @@ test("an older recovered snapshot is not inserted when a newer Telegram snapshot
   assert.match(calls[2].sql, /through_message_id < \$2/);
   assert.match(calls[3].sql, /WHERE NOT EXISTS/);
   assert.match(calls[3].sql, /newer\.through_message_id > \$2/);
+});
+
+test("next Telegram retry time respects backoff, inactivity, and actionable-alert suppression", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /SELECT MIN/);
+    assert.match(sql, /GREATEST/);
+    assert.match(sql, /WHEN 1 THEN interval '1 minute'/);
+    assert.match(sql, /WHEN 2 THEN interval '5 minutes'/);
+    assert.match(sql, /latest\.created_at \+ \(\$1::integer \* interval '1 minute'\)/);
+    assert.match(sql, /a\.status = 'pending'/);
+    assert.match(sql, /a\.attempts > 0/);
+    assert.match(sql, /a\.attempts < 3/);
+    assert.match(sql, /JOIN leads l ON l\.id = a\.lead_id/);
+    assert.match(sql, /newer_customer\.role = 'user'/);
+    assert.match(sql, /newer_customer\.id > a\.through_message_id/);
+    assert.match(sql, /telegram_immediate_alerts immediate/);
+    assert.match(sql, /immediate\.status IN \('pending', 'sending', 'sent'\)/);
+    assert.match(sql, /COALESCE\(a\.score_data->>'alertType', ''\) = 'ai_scoring_failed'/);
+    assert.deepEqual(params, [
+      10,
+      telegramAlertRepo.ACTIONABLE_SUMMARY_SUPPRESSION_MINUTES,
+    ]);
+    return { rows: [{ next_retry_at: "2026-10-07T00:01:00.000Z" }] };
+  };
+
+  assert.equal(
+    await telegramAlertRepo.findNextRetryAt({ inactivityMinutes: 10 }),
+    "2026-10-07T00:01:00.000Z"
+  );
+  assert.deepEqual(telegramAlertRepo.RETRY_DELAY_MINUTES, [1, 5]);
 });
 
 test("failed Telegram sends become terminal after the final attempt", async (t) => {
