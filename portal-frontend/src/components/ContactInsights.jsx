@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { useAuth } from "../context/AuthContext";
 import { useBusinessConfig } from "../context/BusinessConfigContext";
 import { getBusinessTerminology } from "../utils/businessTerminology";
 import Spinner from "./Spinner";
@@ -55,14 +56,42 @@ function conversionDisplay(summaryPreferred, lead, ui) {
   return summaryPreferred || "";
 }
 
-function TemperatureBadge({ temperature }) {
+function TemperatureBadge({
+  temperature,
+  onClick = null,
+  manual = false,
+  busy = false,
+  expanded = false,
+}) {
   const normalized = String(temperature || "").toLowerCase();
-  if (!TEMPERATURE_LABELS[normalized]) return null;
+  const label = TEMPERATURE_LABELS[normalized];
+  if (!label) return null;
+
+  const interactiveProps = onClick
+    ? {
+        type: "button",
+        onClick,
+        disabled: busy,
+        "aria-expanded": expanded,
+        "aria-label": `Change lead temperature. Current temperature: ${label}`,
+      }
+    : {};
+  const Component = onClick ? "button" : "span";
+
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${TEMPERATURE_STYLES[normalized]}`}>
+    <Component
+      {...interactiveProps}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${TEMPERATURE_STYLES[normalized]} ${onClick ? "min-h-10 touch-manipulation px-3 transition hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/25 disabled:opacity-60" : ""}`}
+    >
       <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${TEMPERATURE_DOTS[normalized]}`} />
-      {TEMPERATURE_LABELS[normalized]}
-    </span>
+      <span>{label}</span>
+      {manual && (
+        <span className="border-l border-current/20 pl-1.5 text-[9px] font-bold uppercase tracking-wide opacity-70">
+          Manual
+        </span>
+      )}
+      {onClick && <span aria-hidden="true" className={`text-[9px] transition-transform ${expanded ? "rotate-180" : ""}`}>▾</span>}
+    </Component>
   );
 }
 
@@ -87,11 +116,16 @@ function DetailItem({ label, value }) {
 }
 
 export default function ContactInsights({ contactId, className = "" }) {
+  const { permissions } = useAuth();
   const { config } = useBusinessConfig();
   const ui = getBusinessTerminology(config || {});
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [temperatureEditorOpen, setTemperatureEditorOpen] = useState(false);
+  const [temperatureSaving, setTemperatureSaving] = useState(false);
+  const [temperatureError, setTemperatureError] = useState(null);
+  const canManageLeads = permissions.manage_assigned_leads === true;
 
   const load = useCallback(async () => {
     if (!contactId) return;
@@ -110,6 +144,8 @@ export default function ContactInsights({ contactId, className = "" }) {
 
   useEffect(() => {
     setData(null);
+    setTemperatureEditorOpen(false);
+    setTemperatureError(null);
     load();
   }, [load]);
 
@@ -147,6 +183,50 @@ export default function ContactInsights({ contactId, className = "" }) {
   const branch = summary.preferredBranch || lead?.branchName;
   const conversion = conversionDisplay(summary.preferredAppointment, lead, ui);
 
+  async function updateLeadTemperature(patch) {
+    if (!lead?.id || !canManageLeads || temperatureSaving) return;
+    setTemperatureSaving(true);
+    setTemperatureError(null);
+    try {
+      const updated = await api.updateLead(lead.id, patch);
+      setData((current) => {
+        if (!current?.lead || Number(current.lead.id) !== Number(lead.id)) return current;
+        return {
+          ...current,
+          lead: {
+            ...current.lead,
+            temperature: updated?.temperature ?? current.lead.temperature,
+            temperatureLocked:
+              updated?.temperature_locked ??
+              updated?.temperatureLocked ??
+              current.lead.temperatureLocked,
+            temperatureSource:
+              updated?.temperature_source ??
+              updated?.temperatureSource ??
+              current.lead.temperatureSource,
+          },
+        };
+      });
+      setTemperatureEditorOpen(false);
+    } catch (err) {
+      console.error("Failed to update lead temperature:", err);
+      setTemperatureError(err.message || "Couldn't update the lead temperature.");
+    } finally {
+      setTemperatureSaving(false);
+    }
+  }
+
+  function selectTemperature(temperature) {
+    updateLeadTemperature({
+      temperature,
+      temperatureLocked: true,
+    });
+  }
+
+  function allowAutomaticTemperatureUpdates() {
+    updateLeadTemperature({ temperatureLocked: false });
+  }
+
   return (
     <section className={`overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] ${className}`}>
       <div className="flex items-start justify-between gap-4 border-b border-[var(--color-border)] px-5 py-4">
@@ -172,11 +252,72 @@ export default function ContactInsights({ contactId, className = "" }) {
         {lead && (
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-[var(--color-text-muted)]">Current lead status</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <TemperatureBadge temperature={lead.temperature} />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <TemperatureBadge
+                temperature={lead.temperature}
+                manual={lead.temperatureLocked}
+                busy={temperatureSaving}
+                expanded={temperatureEditorOpen}
+                onClick={canManageLeads ? () => setTemperatureEditorOpen((current) => !current) : null}
+              />
               <MiniBadge>{lead.stageName || "No stage"}</MiniBadge>
               {lead.isClosed && <MiniBadge>Closed journey</MiniBadge>}
             </div>
+
+            {canManageLeads && temperatureEditorOpen && (
+              <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]/60 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold">Set lead temperature</p>
+                    <p className="mt-0.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                      Choosing a temperature gives staff control so AI and rules cannot overwrite it.
+                    </p>
+                  </div>
+                  {temperatureSaving && <Spinner className="mt-0.5 shrink-0 text-[var(--color-primary)]" />}
+                </div>
+
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  {["hot", "warm", "cold"].map((temperature) => (
+                    <button
+                      key={temperature}
+                      type="button"
+                      disabled={temperatureSaving}
+                      onClick={() => selectTemperature(temperature)}
+                      className={`min-h-10 touch-manipulation rounded-xl border px-2 py-2 text-xs font-semibold transition disabled:opacity-60 ${lead.temperature === temperature ? TEMPERATURE_STYLES[temperature] : "border-[var(--color-border)] bg-white text-[var(--color-text)] hover:bg-[var(--color-bg)]"}`}
+                    >
+                      {TEMPERATURE_LABELS[temperature]}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-3 flex flex-col gap-2 border-t border-[var(--color-border)] pt-3 min-[390px]:flex-row min-[390px]:items-center min-[390px]:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold">
+                      Automatic scoring {lead.temperatureLocked ? "off" : "on"}
+                    </p>
+                    <p className="mt-0.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                      {lead.temperatureLocked
+                        ? "Staff control is active."
+                        : "AI and conversation rules may update the temperature."}
+                    </p>
+                  </div>
+                  {lead.temperatureLocked && (
+                    <button
+                      type="button"
+                      disabled={temperatureSaving}
+                      onClick={allowAutomaticTemperatureUpdates}
+                      className="min-h-10 shrink-0 touch-manipulation rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-[11px] font-semibold text-[var(--color-primary)] transition hover:bg-[var(--color-primary-light)] disabled:opacity-60"
+                    >
+                      Allow AI updates
+                    </button>
+                  )}
+                </div>
+
+                {temperatureError && (
+                  <p className="mt-2 text-[10px] leading-4 text-[var(--color-danger)]">{temperatureError}</p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
