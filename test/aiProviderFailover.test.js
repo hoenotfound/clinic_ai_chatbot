@@ -382,30 +382,40 @@ test("provider timeout passes a bounded request timeout and abort signal to Clau
   assert.equal(requestControl.signal.aborted, true);
 });
 
-test("fallback-provider retries cannot extend beyond their assigned provider budget", async () => {
+test("fallback-provider retries cannot extend beyond their assigned provider budget", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let nowMs = 0;
   let calls = 0;
+  let requestControl = null;
   const candidate = {
     label: "bounded fallback",
-    async run() {
+    async run(_messages, _options, control) {
       calls += 1;
+      requestControl = control;
       return new Promise(() => {});
     },
   };
 
-  const startedAt = Date.now();
-  await assert.rejects(
+  const result = assert.rejects(
     runCandidate(
       candidate,
       [],
       {},
       1000,
       3,
-      { globalBudgetMs: 60 }
+      { globalBudgetMs: 60, clock: () => nowMs }
     ),
-    (err) => ["AI_TIMEOUT", "AI_GLOBAL_BUDGET_EXCEEDED"].includes(err.code)
+    (err) => err.code === "AI_GLOBAL_BUDGET_EXCEEDED"
   );
-  const elapsed = Date.now() - startedAt;
 
+  assert.equal(requestControl.timeoutMs, 60);
+  nowMs = 59;
+  t.mock.timers.tick(59);
+  assert.equal(requestControl.signal.aborted, false);
+  nowMs = 60;
+  t.mock.timers.tick(1);
+  await result;
+
+  assert.equal(requestControl.signal.aborted, true);
   assert.equal(calls, 1);
-  assert.ok(elapsed < 250, `retry budget should remain bounded, got ${elapsed}ms`);
 });
