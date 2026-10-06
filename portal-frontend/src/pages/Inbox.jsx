@@ -695,6 +695,7 @@ export default function Inbox() {
     const source = new EventSource("/api/conversations/events", { withCredentials: true });
     const pendingContactIds = new Set();
     let debounceTimer = null;
+    let pipelineListTimer = null;
 
     function scheduleRefresh(contactId = null) {
       if (contactId != null) pendingContactIds.add(Number(contactId));
@@ -717,6 +718,14 @@ export default function Inbox() {
             await reconcileLoadedDeliveryStatuses(currentId);
           }
         }
+      }, REALTIME_DEBOUNCE_MS);
+    }
+
+    function schedulePipelineListRefresh() {
+      if (pipelineListTimer) clearTimeout(pipelineListTimer);
+      pipelineListTimer = setTimeout(() => {
+        pipelineListTimer = null;
+        refreshConversations();
       }, REALTIME_DEBOUNCE_MS);
     }
 
@@ -781,8 +790,9 @@ export default function Inbox() {
     function handlePipelineChanged(event) {
       // Temperature, stage and ownership live on the lead, not the contact.
       // Refresh the lightweight conversation list so its compact lead indicator
-      // stays current when AI/rules or staff update the pipeline.
-      refreshConversations();
+      // stays current when AI/rules or staff update the pipeline. Debounce bursts
+      // of scoring events so several updates do not trigger overlapping list reads.
+      schedulePipelineListRefresh();
 
       const currentId = selectedIdRef.current;
       if (currentId == null) return;
@@ -824,6 +834,7 @@ export default function Inbox() {
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
+      if (pipelineListTimer) clearTimeout(pipelineListTimer);
       source.removeEventListener("conversation_changed", handleConversationChanged);
       source.removeEventListener("pipeline_changed", handlePipelineChanged);
       source.close();
