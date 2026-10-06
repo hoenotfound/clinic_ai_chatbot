@@ -2532,7 +2532,7 @@ function ThreadView({
       >
         <div className="mx-auto w-full max-w-4xl">
           {replyingTo && (
-            <div className="mb-2.5 flex items-stretch overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]">
+            <div className="mb-2 flex min-h-12 items-stretch overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]">
               <span className="w-1 shrink-0 bg-[var(--color-primary)]" aria-hidden="true" />
               <div className="min-w-0 flex-1 px-3 py-2">
                 <p className="text-[10px] font-semibold text-[var(--color-primary)]">
@@ -2546,7 +2546,7 @@ function ThreadView({
                 type="button"
                 onClick={() => setReplyingTo(null)}
                 disabled={sending}
-                className="flex w-11 shrink-0 items-center justify-center text-lg text-[var(--color-text-muted)] hover:bg-white disabled:opacity-50"
+                className="flex h-12 w-12 shrink-0 touch-manipulation items-center justify-center text-xl text-[var(--color-text-muted)] active:bg-white hover:bg-white disabled:opacity-50"
                 aria-label="Cancel reply"
                 title="Cancel reply"
               >
@@ -2655,6 +2655,21 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
     setError("");
   }, [message?.id]);
 
+  useEffect(() => {
+    if (!message) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    function handleKeyDown(event) {
+      if (event.key === "Escape" && !sending) onClose();
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [message, onClose, sending]);
+
   if (!message) return null;
 
   const normalizedQuery = query.trim().toLowerCase();
@@ -2697,31 +2712,50 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
   }
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/35 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label="Forward message">
-      <div className="flex max-h-[82vh] w-full flex-col rounded-t-2xl bg-white shadow-xl sm:max-w-md sm:rounded-2xl">
-        <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3.5">
-          <div className="min-w-0">
-            <h3 className="text-sm font-bold">Forward message</h3>
-            <p className="mt-0.5 truncate text-[11px] text-[var(--color-text-muted)]">{replyPreviewText(message)}</p>
-          </div>
-          <button type="button" onClick={onClose} disabled={sending} className="flex h-10 w-10 items-center justify-center rounded-xl text-xl text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-50" aria-label="Close forward message">×</button>
+    <div
+      className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Forward message"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !sending) onClose();
+      }}
+    >
+      <div className="flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-[24px] bg-white shadow-2xl sm:max-h-[82vh] sm:max-w-md sm:rounded-2xl">
+        <div className="flex h-5 shrink-0 items-center justify-center sm:hidden" aria-hidden="true">
+          <span className="h-1 w-10 rounded-full bg-slate-300" />
         </div>
-        <div className="px-4 pt-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] px-4 pb-3 pt-1 sm:py-3.5">
+          <div className="min-w-0 pr-3">
+            <h3 className="text-base font-bold sm:text-sm">Forward message</h3>
+            <p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)] sm:text-[11px]">{replyPreviewText(message)}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={sending}
+            className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-full text-2xl text-[var(--color-text-muted)] active:bg-[var(--color-bg)] hover:bg-[var(--color-bg)] disabled:opacity-50"
+            aria-label="Close forward message"
+          >
+            ×
+          </button>
+        </div>
+        <div className="shrink-0 px-4 pt-3">
           <input
-            autoFocus
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search conversations…"
-            className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
+            aria-label="Search conversations to forward"
+            className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)] sm:text-sm"
           />
-          <div className="mt-2 flex items-center justify-between text-[10px] text-[var(--color-text-muted)]">
-            <span>Select up to 10</span>
-            <span>{selectedIds.length} selected</span>
+          <div className="mt-2 flex items-center justify-between text-[11px] text-[var(--color-text-muted)]">
+            <span>Select up to 10 conversations</span>
+            <span className="font-semibold text-[var(--color-primary)]">{selectedIds.length} selected</span>
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+        <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto px-2 py-2">
           {choices.length === 0 ? (
-            <p className="px-3 py-8 text-center text-xs text-[var(--color-text-muted)]">No conversations found.</p>
+            <p className="px-3 py-10 text-center text-sm text-[var(--color-text-muted)]">No conversations found.</p>
           ) : choices.map((item) => {
             const id = Number(item.contact_id);
             const selected = selectedIds.includes(id);
@@ -2730,25 +2764,41 @@ function ForwardMessageModal({ message, conversations, currentContactId, onClose
                 key={item.contact_id}
                 type="button"
                 onClick={() => toggleContact(id)}
-                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${selected ? "bg-[var(--color-primary-light)]" : "hover:bg-[var(--color-bg)]"}`}
+                aria-pressed={selected}
+                className={`flex min-h-14 w-full touch-manipulation items-center gap-3 rounded-xl px-3 py-2.5 text-left transition active:bg-[var(--color-bg)] ${selected ? "bg-[var(--color-primary-light)]" : "hover:bg-[var(--color-bg)]"}`}
               >
-                <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[11px] font-bold ${selected ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white" : "border-[var(--color-border)] bg-white text-transparent"}`}>✓</span>
-                <ContactAvatar src={item.photo_url} channel={item.channel} size={36} />
+                <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-xs font-bold ${selected ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white" : "border-[var(--color-border)] bg-white text-transparent"}`}>✓</span>
+                <ContactAvatar src={item.photo_url} channel={item.channel} size={40} />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-semibold">
+                  <span className="block truncate text-sm font-semibold">
                     {displayName(item)}{Number(item.contact_id) === Number(currentContactId) ? " (current)" : ""}
                   </span>
-                  <span className="mt-0.5 block truncate text-[10px] text-[var(--color-text-muted)]">{contactMeta(item)}</span>
+                  <span className="mt-0.5 block truncate text-[11px] text-[var(--color-text-muted)]">{contactMeta(item)}</span>
                 </span>
               </button>
             );
           })}
         </div>
-        {error && <p className="mx-4 mb-2 rounded-lg bg-[var(--color-danger-light)] px-3 py-2 text-xs text-[var(--color-danger)]">{error}</p>}
-        <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] px-4 py-3">
-          <button type="button" onClick={onClose} disabled={sending} className="rounded-xl border border-[var(--color-border)] px-4 py-2.5 text-xs font-semibold hover:bg-[var(--color-bg)] disabled:opacity-50">Cancel</button>
-          <button type="button" onClick={submitForward} disabled={!selectedIds.length || sending} className="inline-flex min-w-24 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2.5 text-xs font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-40">
-            {sending && <Spinner />}{sending ? "Forwarding…" : "Forward"}
+        {error && <p className="mx-4 mb-2 shrink-0 rounded-lg bg-[var(--color-danger-light)] px-3 py-2.5 text-xs text-[var(--color-danger)]">{error}</p>}
+        <div
+          className="flex shrink-0 items-center gap-2 border-t border-[var(--color-border)] bg-white px-4 pt-3 sm:justify-end sm:pb-3"
+          style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+        >
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={sending}
+            className="h-11 flex-1 touch-manipulation rounded-xl border border-[var(--color-border)] px-4 text-sm font-semibold active:bg-[var(--color-bg)] hover:bg-[var(--color-bg)] disabled:opacity-50 sm:flex-none"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submitForward}
+            disabled={!selectedIds.length || sending}
+            className="inline-flex h-11 flex-[1.35] touch-manipulation items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 text-sm font-semibold text-white active:bg-[var(--color-primary-hover)] hover:bg-[var(--color-primary-hover)] disabled:opacity-40 sm:flex-none sm:min-w-28"
+          >
+            {sending && <Spinner />}{sending ? "Forwarding…" : selectedIds.length ? `Forward (${selectedIds.length})` : "Forward"}
           </button>
         </div>
       </div>
@@ -2821,6 +2871,9 @@ function MessageBubble({
   canForward,
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const swipeStartRef = useRef(null);
+  const swipeOffsetRef = useRef(0);
   const isPatient = message.role === "user";
   const sentByStaff = !isPatient && !!message.sent_by_username;
   const isWhatsAppTemplate = !!message.whatsapp_template;
@@ -2858,32 +2911,120 @@ function MessageBubble({
   const showActions = canQuote || canForward || canCopy;
   const replyPreview = message.reply_preview || null;
 
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("keydown", handleKeyDown);
+
+    const isMobile = window.matchMedia("(max-width: 639px)").matches;
+    const previousOverflow = document.body.style.overflow;
+    if (isMobile) document.body.style.overflow = "hidden";
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      if (isMobile) document.body.style.overflow = previousOverflow;
+    };
+  }, [menuOpen]);
+
+  function closeAndReply() {
+    setMenuOpen(false);
+    onReply?.(message);
+  }
+
+  function closeAndForward() {
+    setMenuOpen(false);
+    onForward?.(message);
+  }
+
+  function closeAndCopy() {
+    setMenuOpen(false);
+    onCopy?.(message);
+  }
+
+  function handleSwipeStart(event) {
+    if (!canQuote || event.touches?.length !== 1) return;
+    const touch = event.touches[0];
+    swipeStartRef.current = { x: touch.clientX, y: touch.clientY };
+    swipeOffsetRef.current = 0;
+  }
+
+  function handleSwipeMove(event) {
+    const start = swipeStartRef.current;
+    const touch = event.touches?.[0];
+    if (!start || !touch) return;
+
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (dx <= 0 || Math.abs(dx) <= Math.abs(dy) * 1.15) {
+      if (swipeOffsetRef.current !== 0) {
+        swipeOffsetRef.current = 0;
+        setSwipeOffset(0);
+      }
+      return;
+    }
+
+    const nextOffset = Math.min(64, Math.max(0, dx * 0.72));
+    swipeOffsetRef.current = nextOffset;
+    setSwipeOffset(nextOffset);
+  }
+
+  function finishSwipe() {
+    if (!swipeStartRef.current) return;
+    const shouldReply = swipeOffsetRef.current >= 44;
+    swipeStartRef.current = null;
+    swipeOffsetRef.current = 0;
+    setSwipeOffset(0);
+    if (shouldReply) onReply?.(message);
+  }
+
   return (
-    <div className={`flex ${isPatient ? "justify-start" : "justify-end"} ${reactionEmojis.length ? "mb-2" : ""}`}>
-      <div className={`group relative max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryNeedsAction ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}>
+    <div className={`relative flex ${isPatient ? "justify-start" : "justify-end"} ${reactionEmojis.length ? "mb-2" : ""}`}>
+      {canQuote && (
+        <div
+          className={`pointer-events-none absolute left-1 top-1/2 z-0 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-lg font-bold text-[var(--color-primary)] transition-opacity sm:hidden ${swipeOffset > 12 ? "opacity-100" : "opacity-0"}`}
+          style={{ transform: `translateY(-50%) scale(${Math.min(1, 0.75 + swipeOffset / 160)})` }}
+          aria-hidden="true"
+        >
+          ↩
+        </div>
+      )}
+
+      <div
+        className={`group relative z-10 max-w-[88%] touch-pan-y rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm transition-transform duration-150 sm:max-w-[78%] sm:px-4 xl:max-w-[68%] ${isPatient ? "bubble-in rounded-bl-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" : "bubble-out rounded-br-md bg-[var(--color-primary)] text-white shadow-[0_2px_8px_rgba(47,111,98,0.14)]"} ${message._optimistic ? "opacity-70" : ""} ${deliveryNeedsAction ? "ring-2 ring-[var(--color-danger)]/80 ring-offset-2" : ""}`}
+        style={{ transform: swipeOffset ? `translateX(${swipeOffset}px)` : undefined }}
+        onTouchStart={handleSwipeStart}
+        onTouchMove={handleSwipeMove}
+        onTouchEnd={finishSwipe}
+        onTouchCancel={finishSwipe}
+      >
         {showActions && (
-          <div className="absolute right-1.5 top-1.5 z-20">
+          <div className="absolute -right-1 -top-1 z-20 sm:right-1.5 sm:top-1.5">
             <button
               type="button"
               onClick={() => setMenuOpen((open) => !open)}
-              className={`flex h-7 w-7 items-center justify-center rounded-full text-lg leading-none transition ${isPatient ? "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]" : "text-white/75 hover:bg-white/15"} ${menuOpen ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100"}`}
+              className={`flex h-11 w-11 touch-manipulation items-center justify-center rounded-full text-xl leading-none transition sm:h-7 sm:w-7 sm:text-lg ${isPatient ? "text-[var(--color-text-muted)] active:bg-[var(--color-bg)] hover:bg-[var(--color-bg)]" : "text-white/80 active:bg-white/15 hover:bg-white/15"} ${menuOpen ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100"}`}
               aria-label="Message actions"
+              aria-expanded={menuOpen}
+              aria-haspopup="menu"
               title="Message actions"
             >
               ⋮
             </button>
             {menuOpen && (
-              <div className="absolute right-0 top-8 z-30 min-w-32 rounded-xl border border-[var(--color-border)] bg-white p-1.5 text-[var(--color-text)] shadow-lg">
-                {canQuote && <button type="button" onClick={() => { setMenuOpen(false); onReply?.(message); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">Reply</button>}
-                {canForward && <button type="button" onClick={() => { setMenuOpen(false); onForward?.(message); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">Forward</button>}
-                {canCopy && <button type="button" onClick={() => { setMenuOpen(false); onCopy?.(message); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">Copy</button>}
+              <div className="absolute right-0 top-8 z-30 hidden min-w-36 rounded-xl border border-[var(--color-border)] bg-white p-1.5 text-[var(--color-text)] shadow-lg sm:block" role="menu">
+                {canQuote && <button type="button" role="menuitem" onClick={closeAndReply} className="block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">↩&nbsp;&nbsp;Reply</button>}
+                {canForward && <button type="button" role="menuitem" onClick={closeAndForward} className="block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">↪&nbsp;&nbsp;Forward</button>}
+                {canCopy && <button type="button" role="menuitem" onClick={closeAndCopy} className="block min-h-10 w-full rounded-lg px-3 py-2 text-left text-xs font-medium hover:bg-[var(--color-bg)]">⧉&nbsp;&nbsp;Copy</button>}
               </div>
             )}
           </div>
         )}
 
-        {!isPatient && <p className="mb-1 pr-7 text-[10px] font-semibold text-white/65">{senderLabel}</p>}
-        {isPatient && showActions && <div className="h-3" aria-hidden="true" />}
+        {!isPatient && <p className="mb-1 pr-9 text-[10px] font-semibold text-white/65 sm:pr-7">{senderLabel}</p>}
+        {isPatient && showActions && <div className="h-5 sm:h-3" aria-hidden="true" />}
         {message.is_forwarded && (
           <p className={`mb-1 text-[10px] italic ${isPatient ? "text-[var(--color-text-muted)]" : "text-white/65"}`}>↪ Forwarded</p>
         )}
@@ -2949,7 +3090,7 @@ function MessageBubble({
                   type="button"
                   onClick={() => onRetry?.(message.id)}
                   disabled={message._retrying}
-                  className="inline-flex items-center gap-1 rounded-md border border-[var(--color-danger)]/30 px-2 py-1 text-[10px] font-semibold transition-colors hover:bg-[var(--color-danger-light)] disabled:opacity-60"
+                  className="inline-flex min-h-10 touch-manipulation items-center gap-1 rounded-md border border-[var(--color-danger)]/30 px-3 py-1 text-[10px] font-semibold transition-colors active:bg-[var(--color-danger-light)] hover:bg-[var(--color-danger-light)] disabled:opacity-60"
                 >
                   {message._retrying && <Spinner className="h-2.5 w-2.5" />}
                   {message._retrying ? "Retrying…" : "Retry"}
@@ -2972,6 +3113,36 @@ function MessageBubble({
           </div>
         )}
       </div>
+
+      {menuOpen && (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-[80] bg-black/40 sm:hidden"
+            onClick={() => setMenuOpen(false)}
+            aria-label="Close message actions"
+          />
+          <div
+            className="fixed inset-x-0 bottom-0 z-[81] overflow-hidden rounded-t-[24px] bg-white text-[var(--color-text)] shadow-2xl sm:hidden"
+            role="menu"
+            aria-label="Message options"
+            style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+          >
+            <div className="flex h-5 items-center justify-center" aria-hidden="true">
+              <span className="h-1 w-10 rounded-full bg-slate-300" />
+            </div>
+            <div className="border-b border-[var(--color-border)] px-4 pb-3 pt-1">
+              <p className="text-sm font-bold">Message actions</p>
+              <p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">{replyPreviewText(message)}</p>
+            </div>
+            <div className="p-2">
+              {canQuote && <button type="button" role="menuitem" onClick={closeAndReply} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-xl px-4 text-left text-sm font-semibold active:bg-[var(--color-bg)]"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-lg text-[var(--color-primary)]">↩</span>Reply</button>}
+              {canForward && <button type="button" role="menuitem" onClick={closeAndForward} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-xl px-4 text-left text-sm font-semibold active:bg-[var(--color-bg)]"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-bg)] text-lg text-[var(--color-text-muted)]">↪</span>Forward</button>}
+              {canCopy && <button type="button" role="menuitem" onClick={closeAndCopy} className="flex min-h-12 w-full touch-manipulation items-center gap-3 rounded-xl px-4 text-left text-sm font-semibold active:bg-[var(--color-bg)]"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-bg)] text-base text-[var(--color-text-muted)]">⧉</span>Copy</button>}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
