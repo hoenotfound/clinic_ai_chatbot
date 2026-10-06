@@ -140,7 +140,7 @@ function buildConversationPromptContext(
     }
   }
 
-  if (!relevantServiceNames.length && metaAdContext) {
+  if (!relevantServiceNames.length && !serviceSource && metaAdContext) {
     const adText = [
       cleanText(metaAdContext?.headline),
       cleanText(metaAdContext?.body),
