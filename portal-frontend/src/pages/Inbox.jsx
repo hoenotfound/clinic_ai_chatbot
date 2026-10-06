@@ -1056,7 +1056,12 @@ export default function Inbox() {
         setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [visibleResult]));
       }
       void refreshConversations();
-      if (result?.delivered === false) {
+      if (result?.delivery_unknown === true) {
+        showToast(
+          "Image send could not be confirmed. Check WhatsApp before retrying to avoid sending it twice.",
+          "warning"
+        );
+      } else if (result?.delivered === false) {
         showToast(`Image saved but WhatsApp delivery failed — the ${ui.customerSingular} may not have received it. Please try resending.`, "warning");
       }
     } catch (err) {
@@ -2293,8 +2298,16 @@ function ThreadView({
       const result = await onForwardMessage(messageId, targetContactIds);
       const delivered = Number(result?.deliveredCount || 0);
       const requested = Number(result?.requestedCount || targetContactIds.length);
+      const unknownCount = (result?.results || []).filter(
+        (item) => item.deliveryUnknown === true
+      ).length;
       if (delivered === requested) {
         onToast(`Forwarded to ${delivered} conversation${delivered === 1 ? "" : "s"}.`, "info");
+      } else if (unknownCount > 0) {
+        onToast(
+          `${unknownCount} forward${unknownCount === 1 ? "" : "s"} could not be confirmed. Check the customer chat before retrying to avoid duplicates.`,
+          "warning"
+        );
       } else if (delivered > 0) {
         onToast(`Forwarded to ${delivered} of ${requested} conversations. Some sends were blocked or failed.`, "warning");
       } else {
