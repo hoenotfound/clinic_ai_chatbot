@@ -218,6 +218,9 @@ test("Inbox WhatsApp reply and image routes fail closed on invalid provider medi
   assert.match(imageRoute, /channelMessaging[\s\S]*\.sendImageBuffer/);
   assert.match(imageRoute, /Promise\.allSettled/);
   assert.match(imageRoute, /attachStoredMediaForContact/);
+  assert.match(imageRoute, /for \(let attempt = 1; attempt <= 2 && !mediaAttached/);
+  assert.match(imageRoute, /for \(let attempt = 1; attempt <= 2 && !finalMessage/);
+  assert.match(imageRoute, /Meta may already have accepted the image/);
   assert.match(imageRoute, /\[Inbox image timing\]/);
   assert.match(replyHelper, /target\.role !== "user"/);
   assert.match(replyHelper, /\["failed", "unknown"\]\.includes\(targetDeliveryStatus\)/);
@@ -239,7 +242,15 @@ test("Inbox image forwarding keeps normal photos inside R2", () => {
 
   assert.match(forwardRoute, /getMessageForForward/);
   assert.doesNotMatch(forwardRoute, /getMessageForRetry/);
+  assert.match(forwardRoute, /providerTempPromise/);
+  assert.match(forwardRoute, /copyStoredMediaToTemporary/);
   assert.match(forwardRoute, /copyStoredMediaToMessage/);
+  assert.ok(
+    forwardRoute.indexOf("providerTempPromise") <
+      forwardRoute.indexOf("copyStoredMediaToMessage"),
+    "provider-facing R2 copy should start before waiting on the permanent target copy"
+  );
+  assert.match(forwardRoute, /preparedTemporaryMedia/);
   assert.match(forwardRoute, /media_key: targetMediaKey/);
   assert.match(forwardRoute, /\[Inbox forward timing\]/);
   assert.match(storedSend, /message\.media_key/);
@@ -321,6 +332,18 @@ test("Staff Assist cancellation epochs are bounded in memory", () => {
   assert.match(source, /MAX_EPOCH_KEYS/);
   assert.match(source, /function pruneEpochs/);
   assert.match(source, /!pendingEchoes\.has\(key\)/);
+});
+
+test("Inbox optional image optimization has a strict mobile latency budget", () => {
+  const inbox = fs.readFileSync(
+    path.join(__dirname, "../portal-frontend/src/pages/Inbox.jsx"),
+    "utf8"
+  );
+
+  assert.match(inbox, /OPTIONAL_IMAGE_PREPARATION_BUDGET_MS = 1200/);
+  assert.match(inbox, /const mandatoryPreparation =/);
+  assert.match(inbox, /Promise\.race/);
+  assert.match(inbox, /Optional compression must never make a valid image feel stuck/);
 });
 
 test("messaging-policy surfaces keep responsive mobile affordances", () => {
