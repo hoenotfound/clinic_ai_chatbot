@@ -213,16 +213,32 @@ test("Inbox WhatsApp reply and image routes fail closed on invalid provider medi
   assert.match(imageRoute, /WHATSAPP_IMAGE_MAX_BYTES/);
   assert.match(imageRoute, /unsupported_whatsapp_image_type/);
   assert.match(imageRoute, /whatsapp_image_too_large/);
-  assert.match(imageRoute, /getMessageMediaReferenceForContact/);
-  assert.match(imageRoute, /copyStoredMediaToTemporary/);
-  assert.match(imageRoute, /scheduleTemporaryMediaDelete/);
-  assert.match(imageRoute, /channelMessaging\.sendImageByUrl/);
-  assert.match(
-    imageRoute,
-    /try \{[\s\S]*getMessageMediaReferenceForContact[\s\S]*copyStoredMediaToTemporary[\s\S]*\} catch \(copyErr\) \{[\s\S]*channelMessaging\.sendImageBuffer/
-  );
+  assert.match(imageRoute, /publish: false/);
+  assert.match(imageRoute, /mediaStorage\.uploadMedia/);
+  assert.match(imageRoute, /channelMessaging[\s\S]*\.sendImageBuffer/);
+  assert.match(imageRoute, /Promise\.allSettled/);
+  assert.match(imageRoute, /attachStoredMediaForContact/);
+  assert.match(imageRoute, /\[Inbox image timing\]/);
   assert.match(replyHelper, /target\.role !== "user"/);
   assert.match(replyHelper, /\["failed", "unknown"\]\.includes\(targetDeliveryStatus\)/);
+});
+
+test("Inbox image forwarding keeps normal photos inside R2", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../src/routes/conversations.js"),
+    "utf8"
+  );
+  const forwardRoute = source.slice(
+    source.indexOf("async function forwardStoredMessage"),
+    source.indexOf('router.post("/:contactId/messages",')
+  );
+
+  assert.match(forwardRoute, /getMessageForForward/);
+  assert.doesNotMatch(forwardRoute, /getMessageForRetry/);
+  assert.match(forwardRoute, /copyStoredMediaToMessage/);
+  assert.match(forwardRoute, /media_key: targetMediaKey/);
+  assert.match(forwardRoute, /copyStoredMediaToTemporary/);
+  assert.match(forwardRoute, /\[Inbox forward timing\]/);
 });
 
 test("staff voice sends keep Staff Waiting blocked until the voice reply is persisted", () => {
