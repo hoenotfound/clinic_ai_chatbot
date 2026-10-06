@@ -114,6 +114,12 @@ const CLINIC_UNCLEAR_HOT_PATTERNS = frozenPatterns([
 
 const CLINIC_WARM_INTEREST_PATTERNS = frozenPatterns([
   /\b(?:how much|what(?:'s| is) the price|price|pricing|cost)\b/,
+  /\b(?:deposit|payment|instalment|installment)\b.{0,50}\b(?:need|required|how|can|pay|available|option|work)\b/,
+  /\b(?:do|would)\s+(?:i|we)\s+need\s+to\s+(?:pay\s+)?(?:a\s+)?deposit\b/,
+  /\b(?:is|are)\s+(?:a\s+)?deposit\s+(?:required|needed)\b/,
+  /\b(?:is this|would this|is it)\s+(?:suitable|okay|ok|good|right)\s+for\s+me\b/,
+  /\bhow\s+does\s+(?:this|it|the\s+(?:treatment|service|package))\s+work\b/,
+  /\b(?:what|how)\b.{0,35}\b(?:result|results|effect|effects)\b/,
   /\b(?:promo(?:tion)?|discount|offer|package|treatment|service)\b.{0,60}\b(?:details?|info(?:rmation)?|price|cost|available|include|work|suitable)\b/,
   /\b(?:any|got|have any)\s+(?:promo(?:tion)?|discount|offer)s?\b/,
   /\b(?:what|which)\s+(?:treatments?|services?|packages?|promo(?:tion)?s?|options?)\b/,
@@ -122,9 +128,17 @@ const CLINIC_WARM_INTEREST_PATTERNS = frozenPatterns([
   /\b(?:do you have|is there|where is|where are)\b.{0,50}\b(?:branch|clinic|centre|center|location)\b/,
   /\b(?:is|would)\b.{0,50}\b(?:treatment|service|package)\b.{0,30}\b(?:suitable|good|okay|ok|right)\b/,
   /\b(?:berapa\s+harga|harga\s+berapa|harga|promo|promosi|diskaun|pakej|rawatan)\b/,
+  /\b(?:deposit|bayaran|payment|ansuran|instalment)\b.{0,45}\b(?:perlu|kena|macam mana|boleh|ada)\b/,
+  /\b(?:sesuai|okay|ok)\s+(?:tak|ke|kah)?\s*(?:untuk\s+saya)?\b/,
+  /\b(?:macam mana|bagaimana)\s+(?:rawatan|treatment|pakej|ini)\s+(?:berfungsi|jalan|work)\b/,
+  /\b(?:hasil|kesan)\b.{0,35}\b(?:macam mana|apa|boleh|nampak)\b/,
   /\b(?:boleh\s+tahu|nak\s+tahu|mahu\s+tahu)\b.{0,70}\b(?:lebih|harga|pakej|rawatan|promo|cawangan|lokasi)\b/,
   /\b(?:ada|kat mana|di mana)\b.{0,40}\b(?:cawangan|klinik|pusat|lokasi)\b/,
-  /(?:多少钱|多少錢|价格|價格|价钱|價錢|优惠|優惠|配套|套餐|疗程|療程|分行|地址|在哪里|在哪裡|适合|適合|效果)/,
+  /(?:多少钱|多少錢|价格|價格|价钱|價錢|优惠|優惠|配套|套餐|疗程|療程|分行|地址|在哪里|在哪裡|适合|適合|效果|定金|付款|分期)/,
+  /(?:需要|要)(?:付|给|給)?(?:定金|订金|訂金)吗/,
+  /(?:可以|能)(?:分期|付款|付定金)吗/,
+  /(?:这个|這個|它)(?:适合|適合)我吗/,
+  /(?:这个|這個|疗程|療程|配套|套餐)(?:怎么|怎麼|如何)(?:做|进行|進行|运作|運作)/,
   /(?:想了解|想知道|可以了解|可以知道).{0,30}(?:更多|价格|價格|价钱|價錢|配套|套餐|疗程|療程|优惠|優惠|分行)/,
 ]);
 
