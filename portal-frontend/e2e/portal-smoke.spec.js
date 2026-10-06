@@ -807,7 +807,7 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
   });
   await expect(page.getByRole("button", { name: "Replace" }).last()).toBeVisible();
 
-  await page.getByRole("button", { name: "Save promotions" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => savedPayload).not.toBeNull();
 
   expect(savedPayload.automatedFollowUp.quietHours).toEqual({
@@ -1558,7 +1558,7 @@ test("Promotions keeps package setup compact, saves packages, and stays mobile-s
     page.getByText("全身深层调理 + 骨盆全身体态调整（7合1）", { exact: true }).first()
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save promotions" }).click();
   await expect.poll(() => savedPayload).not.toBeNull();
   expect(savedPayload.promotions).toEqual([
     {
@@ -1618,7 +1618,7 @@ test("Promotions blocks saving Multiple packages with no package options", async
   await page.goto("/settings?tab=promotions");
   await page.getByRole("button", { name: "+ Add promotion" }).click();
   await page.getByRole("button", { name: "Multiple packages" }).click();
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save promotions" }).click();
 
   await expect(
     page.getByText("Add at least one package, or switch this promotion to Single offer.")
