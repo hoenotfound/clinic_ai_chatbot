@@ -16,6 +16,10 @@ test("AI follow-up prompt includes live business context and structured decision
 
   assert.match(prompt, /FOLLOW-UP STEP:/);
   assert.match(prompt, /Step: 2/);
+  assert.ok(
+    prompt.indexOf("CURRENT BUSINESS INFORMATION:") < prompt.indexOf("FOLLOW-UP STEP:"),
+    "large static business context should stay before per-follow-up dynamic context for cache reuse"
+  );
   assert.match(prompt, /Current service aliases:/);
   assert.match(prompt, /Current FAQs:/);
   assert.match(prompt, /Current active promotions:/);

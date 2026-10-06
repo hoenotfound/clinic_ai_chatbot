@@ -123,6 +123,11 @@ test("system prompt uses ad creative as soft intent rather than customer truth",
   const prompt = buildSystemPrompt(normalized);
   assert.match(prompt, /Ad headline: 产后小腹凸？了解骨盆调理/);
   assert.match(prompt, /ACTIVE PROMOTIONS/);
+  assert.ok(
+    prompt.indexOf("STANDARD OPERATING PROCEDURES") <
+      prompt.indexOf("META AD ACQUISITION CONTEXT"),
+    "large static clinic instructions should precede per-lead ad context for cache reuse"
+  );
   assert.match(prompt, /answer naturally in the context of that service/);
 });
 
