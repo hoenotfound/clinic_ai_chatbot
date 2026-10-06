@@ -133,6 +133,7 @@ test("shows Branch and Assigned to when they are operationally relevant", () => 
     },
     score,
     config: {
+      businessType: "aesthetic_clinic",
       branches: [{ name: "Puchong" }, { name: "Petaling Jaya" }],
       leadDistribution: { enabled: true },
     },
