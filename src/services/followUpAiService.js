@@ -97,11 +97,19 @@ function trimConversation(messages, {
   });
 }
 
+function meaningfulAppointmentStatus(value) {
+  const normalized = cleanContent(value).toLocaleLowerCase();
+  return Boolean(
+    normalized &&
+    !["none", "unknown", "not captured", "not_captured", "n/a", "null"].includes(normalized)
+  );
+}
+
 function needsSchedulingContext(messages, {
   branchName = null,
   appointmentStatus = null,
 } = {}) {
-  if (cleanContent(branchName) || cleanContent(appointmentStatus)) return true;
+  if (cleanContent(branchName) || meaningfulAppointmentStatus(appointmentStatus)) return true;
   return trimConversation(messages, { maxMessages: 6, maxChars: 2_500 })
     .some((message) => SCHEDULING_CONTEXT_PATTERN.test(message.content));
 }
@@ -418,7 +426,9 @@ async function generatePersonalizedFollowUp({
           treatmentInterest: cleanContent(treatmentInterest),
           stageName: cleanContent(stageName),
           branchName: cleanContent(branchName),
-          appointmentStatus: cleanContent(appointmentStatus),
+          appointmentStatus: meaningfulAppointmentStatus(appointmentStatus)
+            ? cleanContent(appointmentStatus)
+            : "",
           includeSchedulingContext,
           instruction: cleanContent(instruction),
           previousFollowUps: priorFollowUps,
