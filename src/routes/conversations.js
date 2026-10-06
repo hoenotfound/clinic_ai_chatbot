@@ -1415,6 +1415,32 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
   let targetMediaKey = null;
   let fallbackMediaAttachment = null;
   let mediaCopyMs = null;
+  const canUseZeroCopyImageForward =
+    Boolean(sourceMessage.media_key) &&
+    sourceMimeType.startsWith("image/") &&
+    !sourceIsSticker;
+  const providerTempPromise = canUseZeroCopyImageForward
+    ? mediaStorage
+        .copyStoredMediaToTemporary(
+          sourceMessage.media_key,
+          sourceMessage.media_mime_type,
+          {
+            contactId: targetContact.id,
+            expiresSeconds: 10 * 60,
+          }
+        )
+        .then((temporaryMedia) => {
+          mediaStorage.scheduleTemporaryMediaDelete(temporaryMedia.key);
+          return temporaryMedia;
+        })
+        .catch((err) => {
+          console.warn(
+            `[Inbox forward] provider R2 copy failed for message ${sourceMessage.id}; falling back to stored-media send:`,
+            err
+          );
+          return null;
+        })
+    : null;
 
   if (sourceMessage.media_key) {
     const copyStartedAt = Date.now();
@@ -1496,10 +1522,22 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
     is_forwarded: true,
   };
 
+  const preparedTemporaryMedia = providerTempPromise
+    ? await providerTempPromise
+    : null;
   const providerStartedAt = Date.now();
-  const sendResult = await sendStoredMessage(preparedContact, messageForSend, {
-    purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
-  });
+  const sendResult = preparedTemporaryMedia
+    ? await channelMessaging.sendImageByUrl(
+        preparedContact,
+        preparedTemporaryMedia.url,
+        forwardedContent || undefined,
+        socialProviderSendOptions(saved, preparedContact, {
+          purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+        })
+      )
+    : await sendStoredMessage(preparedContact, messageForSend, {
+        purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
+      });
   const providerMs = Date.now() - providerStartedAt;
 
   const errorText = deliveryErrorForSend(
@@ -1871,17 +1909,31 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
         }
       }
 
+      let mediaAttached = false;
       if (mediaKey) {
-        saved =
-          (await conversationStore.attachStoredMediaForContact(
-            preparedContact.id,
-            saved.id,
-            mediaKey,
-            req.file.mimetype
-          )) || saved;
-      } else {
-        // The provider result is still meaningful, but surface the message row
-        // so staff can see that history persistence needs attention.
+        for (let attempt = 1; attempt <= 2 && !mediaAttached; attempt += 1) {
+          try {
+            saved =
+              (await conversationStore.attachStoredMediaForContact(
+                preparedContact.id,
+                saved.id,
+                mediaKey,
+                req.file.mimetype
+              )) || saved;
+            mediaAttached = true;
+          } catch (attachErr) {
+            console.error(
+              `[Inbox image] failed to attach R2 media key to message ${saved.id} (attempt ${attempt}/2):`,
+              attachErr
+            );
+          }
+        }
+      }
+
+      if (!mediaAttached) {
+        // Never turn a successful provider send into a browser-visible 500 just
+        // because the post-upload DB attachment update had a transient problem.
+        // Surface the lightweight row and flag attention instead.
         realtimeEvents.publish("conversation_changed", {
           contactId: preparedContact.id,
           messageId: saved.id,
@@ -1901,10 +1953,12 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
                 "WhatsApp image send failed unexpectedly.",
             };
 
-      if (!mediaKey) {
+      if (!mediaKey || !mediaAttached) {
         await contactsRepo.setDeliveryAttention(
           preparedContact.id,
-          "Image storage failed after send attempt; attachment history/retry may be unavailable."
+          mediaKey
+            ? "Image was sent, but its stored attachment could not be linked to the message. History/retry may be unavailable."
+            : "Image storage failed after send attempt; attachment history/retry may be unavailable."
         );
       }
     } else {
