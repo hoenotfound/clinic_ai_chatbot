@@ -47,6 +47,7 @@ test("default follow-up context is compact and preserves an explicit anchor", ()
   assert.ok(trimmed.reduce((total, item) => total + item.content.length, 0) <= 6_000);
   assert.ok(trimmed.some((item) => item.id === 2), "follow-up anchor should be preserved");
   assert.ok(trimmed.some((item) => item.id === 17), "latest customer message should be preserved");
+  assert.ok(trimmed.some((item) => item.id === 15), "previous customer turn should be preserved");
 });
 
 test("booking, branch and timing language enables scheduling context", () => {
