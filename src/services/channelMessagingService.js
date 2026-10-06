@@ -75,7 +75,10 @@ async function notifyProviderMessageId(options, result, channel) {
     return;
   }
   try {
-    await options.onProviderMessageId(String(result.externalMessageId));
+    const record = () => options.onProviderMessageId(String(result.externalMessageId));
+    if (options.inboxMediaTimings) {
+      await withInboxDatabaseTimeouts(record, options.inboxMediaTimings);
+    } else await record();
   } catch (err) {
     // The provider already accepted this send. Alias persistence is best-effort
     // here; the caller still stores the final provider id as a second guard.

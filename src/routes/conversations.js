@@ -2178,6 +2178,8 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
         socialProviderSendOptions(saved, preparedContact, {
           purpose: whatsappPolicy.manualStaffPurpose(preparedContact),
           replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+          requestId: timings.requestId,
+          inboxMediaTimings: timings,
         })
       );
       providerSendMs = Date.now() - providerStartedAt;

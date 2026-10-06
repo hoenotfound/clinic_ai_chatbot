@@ -3,6 +3,8 @@ const assert = require("node:assert/strict");
 const { createScopedPool, withInboxDatabaseTimeouts } = require("../src/db/inboxDatabaseScope");
 const policy = require("../src/services/whatsappPolicyService");
 const whatsapp = require("../src/services/whatsappService");
+const meta = require("../src/services/metaMessagingService");
+const metaAttachments = require("../src/services/metaAttachmentService");
 const messaging = require("../src/services/channelMessagingService");
 
 function policyDatabase({ fail = false } = {}) {
@@ -95,4 +97,34 @@ test("background AI image sends retain their ordinary policy-query settings", as
   assert.deepEqual(database.checks, [{ ordinary: true }]);
   assert.equal(database.clients.length, 0);
   assert.deepEqual(calls, ["upload", "message-id"]);
+});
+
+test("Messenger image policy and caption/image alias writes get separate short Inbox scopes", async (t) => {
+  const database = policyDatabase();
+  stubProviders(t, database);
+  const accepted = [];
+  const aliases = [];
+  function send(kind) {
+    return async () => {
+      assert.ok(database.clients.every(client => client.released));
+      accepted.push(kind);
+      return { success: true, externalMessageId: kind };
+    };
+  }
+  t.mock.method(meta, "sendText", send("caption"));
+  t.mock.method(metaAttachments, "sendBuffer", send("image"));
+  const result = await messaging.sendImageBuffer(
+    { id: 3, channel: "facebook", channel_user_id: "test-recipient" },
+    Buffer.from("image"), "image/jpeg", "caption", "image.jpg",
+    {
+      inboxMediaTimings: { requestId: "social-policy-regression" },
+      onProviderMessageId: async id => { aliases.push(id); await database.pool.query("ALIAS_WRITE"); },
+    }
+  );
+  assert.equal(result.success, true);
+  assert.deepEqual(accepted, ["caption", "image"]);
+  assert.deepEqual(aliases, ["caption", "image"]);
+  assert.equal(database.clients.length, 3);
+  assert.ok(database.checks.every(check => check.settings[0] === "10000ms" && check.settings[1] === "5000ms"));
+  assert.ok(database.clients.every(client => client.released));
 });
