@@ -25,6 +25,9 @@ const {
 const startupReadiness = require("./startupReadinessService");
 const mediaStorage = require("./mediaStorageService");
 const {
+  startCustomerDataLifecycle,
+} = require("./customerDataLifecycleService");
+const {
   closeHttpServer,
   listenHttpServer,
 } = require("./httpServerStartup");
@@ -102,6 +105,7 @@ async function startApplication({
     startWhatsappOutboundRetryWorker();
     startTelegramImmediateAlertRecovery();
     startScheduledMessageWorker();
+    startCustomerDataLifecycle({ setIntervalFn });
     startAutomatedFollowUps();
     startStaffWaitingAlerts();
     startLeadScoring();

@@ -107,6 +107,8 @@ test("Instagram OPEN_THREAD referral becomes attribution-only work, not a fake m
 
   assert.equal(parsed.length, 1);
   assert.equal(parsed[0].attributionOnly, true);
+  assert.match(parsed[0].id, /^referral:[a-f0-9]{64}$/);
+  assert.equal(parsed[0].id.includes("igsid-1"), false);
   assert.equal(parsed[0].channel, "instagram");
   assert.equal(parsed[0].from, "igsid-1");
   assert.equal(parsed[0].text, undefined);

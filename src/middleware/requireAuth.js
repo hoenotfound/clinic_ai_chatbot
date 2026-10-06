@@ -148,6 +148,13 @@ async function enforceContactsPolicy(req, res, user) {
     return forbidden(res, "This contact isn't assigned to you.");
   }
 
+  if (req.method === "DELETE" && parts.length === 1) {
+    if (!hasCapability(user, "delete_customer_data")) {
+      return forbidden(res, "Deleting customer data is disabled for this account.");
+    }
+    return true;
+  }
+
   const isWrite = req.method !== "GET" && req.method !== "HEAD";
   if (isWrite && !hasCapability(user, "manage_assigned_leads")) {
     return forbidden(res, "Managing assigned leads is disabled for this account.");

@@ -95,6 +95,22 @@ function whatsappMessageSourceCreatedAt(channel, incoming, nowMs = Date.now()) {
  * messages.whatsapp_message_id: exactly one INSERT wins and only that winner
  * receives a processing job.
  */
+async function isDeletedProviderMessageId(providerMessageId, database = pool) {
+  const normalized = String(providerMessageId || "").trim();
+  if (!normalized) return false;
+
+  const result = await database.query(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM customer_data_deleted_message_ids
+       WHERE provider_message_id = $1
+         AND expires_at > now()
+     ) AS deleted`,
+    [normalized]
+  );
+  return result.rows[0]?.deleted === true;
+}
+
 async function storeInboundClaim({
   contactId,
   content,
@@ -1076,6 +1092,7 @@ module.exports = {
   pruneCompleted,
   serializeIncoming,
   whatsappMessageSourceCreatedAt,
+  isDeletedProviderMessageId,
   storeInboundClaim,
   reserveOutboundAttempt,
   cancelOutboundAttempt,

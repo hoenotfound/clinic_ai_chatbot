@@ -1,5 +1,6 @@
 const contactsRepo = require("../db/contactsRepo");
 const whatsappCoexistenceRepo = require("../db/whatsappCoexistenceRepo");
+const inboundProcessingRepo = require("../db/inboundProcessingRepo");
 const messagesRepo = require("../db/messagesRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const realtimeEvents = require("../utils/realtimeEvents");
@@ -53,6 +54,11 @@ async function persistBusinessAppEcho(echo, { pendingStarted = false } = {}) {
   if (!pendingStarted) beginPendingAiForEcho(echo);
 
   try {
+    if (await inboundProcessingRepo.isDeletedProviderMessageId(echo.id)) {
+      releasePendingAiForEcho(echo);
+      return null;
+    }
+
     const contact = await contactsRepo.getOrCreateContact(echo.to);
 
     // Insert the provider message and apply Staff Assist ownership rules in one

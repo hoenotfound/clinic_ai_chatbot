@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const GRAPH_API_VERSION = "v26.0";
 const MAX_REMOTE_MEDIA_BYTES = 16 * 1024 * 1024;
 const PROFILE_FETCH_TIMEOUT_MS = 5000;
@@ -13,6 +14,16 @@ const profileCache = new Map();
 const profileRequests = new Map();
 const commentContextCache = new Map();
 const commentContextRequests = new Map();
+
+function referralEventId(channel, entryId, timestamp, senderId) {
+  const material = [
+    String(channel || ""),
+    String(entryId || "page"),
+    String(timestamp || "unknown"),
+    String(senderId || ""),
+  ].join("\0");
+  return `referral:${crypto.createHash("sha256").update(material).digest("hex")}`;
+}
 
 function channelLabel(channel) {
   if (channel === "facebook") return "Facebook Messenger";
@@ -843,7 +854,12 @@ function parseIncomingMessages(body) {
       if (!message?.mid || !senderId) {
         if (!message?.mid && senderId && attribution) {
           parsed.push({
-            id: `referral:${entry?.id || "page"}:${event?.timestamp || "unknown"}:${senderId}`,
+            id: referralEventId(
+              channel,
+              entry?.id || "page",
+              event?.timestamp || "unknown",
+              senderId
+            ),
             from: String(senderId),
             channel,
             attributionOnly: true,
@@ -964,6 +980,7 @@ module.exports = {
   replyToComment,
   sendPrivateReplyToComment,
   fetchCommentSourceContext,
+  referralEventId,
   parseIncomingMessages,
   parseStaffEchoes,
   resolveClaimedMessageEditJob,

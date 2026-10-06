@@ -4,6 +4,7 @@ const contactNotesRepo = require("../db/contactNotesRepo");
 const contactInsightsRepo = require("../db/contactInsightsRepo");
 const pipelineRepo = require("../db/pipelineRepo");
 const customerExportRepo = require("../db/customerExportRepo");
+const customerDataLifecycle = require("../services/customerDataLifecycleService");
 const { getAccessibleContactIds } = require("../utils/accessControl");
 const { buildCustomerCsv, malaysiaDateStamp } = require("../utils/csvExport");
 
@@ -159,6 +160,39 @@ router.patch("/:id", async (req, res) => {
     }
     console.error("Failed to update contact:", err);
     res.status(500).json({ error: "Something went wrong saving this contact." });
+  }
+});
+
+router.delete("/:id", async (req, res) => {
+  try {
+    if (req.body?.confirm !== "DELETE") {
+      return res.status(400).json({
+        error: 'Permanent deletion requires confirm: "DELETE".',
+      });
+    }
+
+    const result = await customerDataLifecycle.purgeCustomerData({
+      contactId: req.params.id,
+      requestedBy: req.user?.username || req.session?.username || null,
+      reason: "manual",
+    });
+
+    if (result.status === "not_found") {
+      return res.status(404).json({ error: "Contact not found." });
+    }
+
+    return res.status(200).json({
+      purged: true,
+      contactId: Number(req.params.id),
+      deletedCounts: result.deletedCounts || {},
+      mediaCleanupPending: result.mediaCleanupPending === true,
+      deletedMediaObjects: Number(result.deletedMediaObjects || 0),
+    });
+  } catch (err) {
+    console.error("Failed to permanently delete customer data:", err);
+    return res.status(500).json({
+      error: "Something went wrong deleting this customer data.",
+    });
   }
 });
 
