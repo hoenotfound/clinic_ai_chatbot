@@ -291,6 +291,37 @@ async function uploadTemporaryMedia(
  * Render->R2 link twice while also keeping the permanent customer-media key
  * out of third-party URLs/logs.
  */
+async function copyStoredMediaToMessage(
+  sourceKey,
+  mimeType,
+  {
+    contactId = "misc",
+    env = process.env,
+  } = {}
+) {
+  if (!sourceKey) throw new Error("Stored media key is required.");
+
+  const bucket = getBucketName();
+  const key = buildMediaObjectKey({
+    kind: "messages",
+    contactId,
+    mimeType,
+    env,
+  });
+
+  await getClient().send(
+    new CopyObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      CopySource: `${bucket}/${sourceKey}`,
+      MetadataDirective: "REPLACE",
+      ContentType: mimeType || "application/octet-stream",
+    })
+  );
+
+  return key;
+}
+
 async function copyStoredMediaToTemporary(
   sourceKey,
   mimeType,
@@ -460,6 +491,7 @@ module.exports = {
   getMediaIsolationStatus,
   uploadMedia,
   uploadTemporaryMedia,
+  copyStoredMediaToMessage,
   copyStoredMediaToTemporary,
   createPresignedGetUrl,
   scheduleTemporaryMediaDelete,
