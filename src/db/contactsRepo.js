@@ -557,7 +557,12 @@ async function clearStaffAssistStateIfUnchanged(contact) {
   return updated;
 }
 
-async function setAttention(id, needsAttention, reason = null) {
+async function setAttention(
+  id,
+  needsAttention,
+  reason = null,
+  { notifyWebPush: shouldNotifyWebPush = true } = {}
+) {
   const result = await pool.query(
     `UPDATE contacts c
      SET needs_attention = $1, attention_reason = $2, updated_at = now()
@@ -583,7 +588,9 @@ async function setAttention(id, needsAttention, reason = null) {
         "human intervention",
         updated.id
       );
-      notifyWebPush(updated.id, "human_intervention");
+      if (shouldNotifyWebPush) {
+        notifyWebPush(updated.id, "human_intervention");
+      }
     }
   }
   return updated;
