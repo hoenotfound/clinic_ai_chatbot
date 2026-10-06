@@ -494,6 +494,48 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
   return result;
 }
 
+async function sendStickerBuffer(
+  contact,
+  buffer,
+  mimeType,
+  filename = "sticker.webp",
+  options = {}
+) {
+  const channel = channelOf(contact);
+  if (channel !== "whatsapp") {
+    return sendImageBuffer(contact, buffer, mimeType, undefined, filename, options);
+  }
+
+  const guard = await freeformGuard(contact, options.purpose);
+  if (guard.blocked) return guard.blocked;
+  const sendOptions = optionsForPolicy(options, guard.policy);
+  const initialCancellation = await preSendCancelled(sendOptions);
+  if (initialCancellation) return initialCancellation;
+
+  if (String(mimeType || "").toLowerCase() !== "image/webp") {
+    return {
+      success: false,
+      wamid: null,
+      error: "The saved sticker is not a WhatsApp-compatible WebP file.",
+    };
+  }
+
+  const mediaId = await whatsapp.uploadMedia(buffer, mimeType, filename);
+  if (!mediaId) {
+    return {
+      success: false,
+      wamid: null,
+      error: "The sticker could not be uploaded to WhatsApp.",
+    };
+  }
+
+  const cancelled = await preSendCancelled(sendOptions);
+  if (cancelled) return cancelled;
+  return whatsapp.sendStickerById(contact.whatsapp_number, mediaId, {
+    replyToProviderMessageId: sendOptions.replyToProviderMessageId,
+  });
+}
+
 async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3", options = {}) {
   const channel = channelOf(contact);
   const requireStaffMode = options.requireStaffMode !== false;
@@ -635,6 +677,7 @@ module.exports = {
   sendText,
   sendImageByUrl,
   sendImageBuffer,
+  sendStickerBuffer,
   sendAudioBuffer,
   downloadIncomingMedia,
 };
