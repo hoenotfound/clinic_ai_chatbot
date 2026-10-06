@@ -48,7 +48,7 @@ router.delete("/subscriptions", async (req, res) => {
 
 router.post("/test", async (req, res) => {
   try {
-    const result = await webPushService.sendTestToUser(req.user.id);
+    const result = await webPushService.sendTestToUser(req.user.id, req.body?.endpoint);
     if (!result.configured) {
       return res.status(503).json({
         error: result.reason || "Web Push is not configured.",
