@@ -1554,9 +1554,11 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
   if (sendResult.success) {
     await markLeadContacted(preparedContact.id, username, sendResult);
   } else {
+    const deliveryUnknown =
+      sendResult.unknown === true || sendResult.ambiguous === true;
     await contactsRepo.setDeliveryAttention(
       preparedContact.id,
-      `Delivery failed: ${publicDeliveryError(errorText)}`
+      `${deliveryUnknown ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
     );
   }
 
@@ -1734,7 +1736,7 @@ router.post("/:contactId/messages", async (req, res) => {
     if (!sendResult.success) {
       await contactsRepo.setDeliveryAttention(
         preparedContact.id,
-        `Delivery failed: ${publicDeliveryError(errorText)}`
+        `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
       );
     } else {
       await markLeadContacted(preparedContact.id, req.session.username, sendResult);
@@ -2087,7 +2089,7 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       try {
         await contactsRepo.setDeliveryAttention(
           preparedContact.id,
-          `Delivery failed: ${publicDeliveryError(errorText)}`
+          `${sendResult.unknown === true || sendResult.ambiguous === true ? "Delivery unconfirmed" : "Delivery failed"}: ${publicDeliveryError(errorText)}`
         );
       } catch (attentionErr) {
         console.error(
@@ -2115,6 +2117,8 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       ...finalMessage,
       delivery_error: publicDeliveryError(finalMessage.delivery_error),
       delivered: sendResult.success,
+      delivery_unknown:
+        sendResult.unknown === true || sendResult.ambiguous === true,
     });
   } catch (err) {
     console.error("Failed to send staff image:", err);
