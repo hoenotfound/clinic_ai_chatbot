@@ -17,6 +17,7 @@ const STAFF_USER = {
     manage_pipeline_stages: true,
     manage_lead_assignment: true,
     export_customer_data: true,
+    delete_customer_data: true,
   },
   businessProfile: null,
 };
@@ -470,6 +471,36 @@ async function installApi(page, {
       return fulfill(route, rows);
     }
 
+    const contactInsightsMatch = path.match(/^\/api\/contacts\/(\d+)\/insights$/);
+    if (contactInsightsMatch && method === "GET") {
+      return fulfill(route, { lead: null, aiInsights: null });
+    }
+
+    const contactNotesMatch = path.match(/^\/api\/contacts\/(\d+)\/notes$/);
+    if (contactNotesMatch && method === "GET") {
+      return fulfill(route, []);
+    }
+
+    const deleteContactMatch = path.match(/^\/api\/contacts\/(\d+)$/);
+    if (deleteContactMatch && method === "DELETE") {
+      const contactId = Number(deleteContactMatch[1]);
+      const body = request.postDataJSON();
+      record(request, body);
+      contacts = contacts.filter((item) => Number(item.id) !== contactId);
+      conversations = conversations.filter((item) => Number(item.contact_id) !== contactId);
+      pipeline = {
+        ...pipeline,
+        leads: pipeline.leads.filter((lead) => Number(lead.contact_id) !== contactId),
+      };
+      return fulfill(route, {
+        purged: true,
+        contactId,
+        deletedCounts: { messages: 1, leads: 1, notes: 0 },
+        mediaCleanupPending: false,
+        deletedMediaObjects: 0,
+      });
+    }
+
     if (path === "/api/contacts/export" && method === "GET") {
       record(request);
       const search = String(url.searchParams.get("search") || "").trim().toLowerCase();
@@ -791,6 +822,32 @@ test("Contacts export waits for the current search and downloads the filtered CS
   await expect(page.getByText("Exported 1 customer record.", { exact: true })).toBeVisible();
 
   expect(findCall(apiState, "GET", "/api/contacts/export")).toBeTruthy();
+  expectNoUnexpectedApi(apiState);
+});
+
+test("Contacts permanent customer deletion requires typed confirmation", async ({ page }) => {
+  const apiState = await installApi(page);
+
+  await page.goto("/contacts");
+  await page.getByText("Alex Customer", { exact: true }).first().click();
+
+  const deleteButton = page.getByRole("button", { name: "Delete customer data" });
+  await expect(deleteButton).toBeVisible();
+  await deleteButton.click();
+
+  const dialog = page.getByRole("dialog", { name: "Delete customer data" });
+  const confirmButton = dialog.getByRole("button", { name: "Delete permanently" });
+  await expect(confirmButton).toBeDisabled();
+
+  await dialog.getByLabel("Type DELETE to confirm").fill("DELETE");
+  await expect(confirmButton).toBeEnabled();
+  await confirmButton.click();
+
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("Customer data permanently deleted.", { exact: true })).toBeVisible();
+
+  const call = findCall(apiState, "DELETE", "/api/contacts/101");
+  expect(call?.body).toEqual({ confirm: "DELETE" });
   expectNoUnexpectedApi(apiState);
 });
 
