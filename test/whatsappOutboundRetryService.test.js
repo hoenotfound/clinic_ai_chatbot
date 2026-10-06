@@ -62,6 +62,9 @@ test("transient WhatsApp retry is rescheduled without alerting staff", async () 
     inbound: noOpInbound,
     messages,
     contacts,
+    async sendDeliveryFailurePush() {
+      throw new Error("transient retry must not push staff yet");
+    },
     async sendMessage() {
       return {
         success: false,
@@ -164,6 +167,7 @@ test("ambiguous retry never resends automatically", async () => {
 
 test("retry exhaustion alerts staff instead of scheduling attempt four", async () => {
   const calls = [];
+  const pushes = [];
   const repository = {
     async recoverStaleProcessing() { return []; },
     async claimDue() { return [baseRow({ attempts: MAX_RETRY_ATTEMPTS })]; },
@@ -188,6 +192,9 @@ test("retry exhaustion alerts staff instead of scheduling attempt four", async (
     inbound: noOpInbound,
     messages,
     contacts,
+    async sendDeliveryFailurePush(input) {
+      pushes.push(input);
+    },
     async sendMessage() {
       return {
         success: false,
@@ -201,6 +208,7 @@ test("retry exhaustion alerts staff instead of scheduling attempt four", async (
 
   assert.equal(calls.some((entry) => entry[0] === "failed"), true);
   assert.equal(calls.some((entry) => entry[0] === "attention"), true);
+  assert.deepEqual(pushes, [{ contactId: 20 }]);
 });
 
 
