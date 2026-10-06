@@ -307,7 +307,9 @@ async function sendText(contact, text, options = {}) {
   if (cancelled) return cancelled;
 
   if (channel === "whatsapp") {
-    return whatsapp.sendMessage(contact.whatsapp_number, text);
+    return whatsapp.sendMessage(contact.whatsapp_number, text, {
+      replyToProviderMessageId: sendOptions.replyToProviderMessageId,
+    });
   }
   const result = await trackSocialOutbound(
     channel,
@@ -357,7 +359,9 @@ async function sendImageByUrl(contact, imageUrl, caption, options = {}) {
   if (channel === "whatsapp") {
     const cancelled = await preSendCancelled(sendOptions);
     if (cancelled) return cancelled;
-    return whatsapp.sendImage(contact.whatsapp_number, imageUrl, caption);
+    return whatsapp.sendImage(contact.whatsapp_number, imageUrl, caption, {
+      replyToProviderMessageId: sendOptions.replyToProviderMessageId,
+    });
   }
 
   if (channel === "facebook") {
@@ -402,7 +406,8 @@ async function sendImageBuffer(contact, buffer, mimeType, caption, filename = "i
     return whatsapp.sendImageById(
       contact.whatsapp_number,
       mediaId,
-      caption || undefined
+      caption || undefined,
+      { replyToProviderMessageId: sendOptions.replyToProviderMessageId }
     );
   }
 
@@ -516,7 +521,9 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
     const cancelled = await preSendCancelled(sendOptions);
     if (cancelled) return cancelled;
 
-    return whatsapp.sendVoiceById(contact.whatsapp_number, mediaId);
+    return whatsapp.sendVoiceById(contact.whatsapp_number, mediaId, {
+      replyToProviderMessageId: sendOptions.replyToProviderMessageId,
+    });
   }
 
   if (channel === "instagram") {
