@@ -178,10 +178,39 @@ async function purgeContactData({
     if (externalUserId && ["facebook", "instagram"].includes(contact.channel)) {
       const attributionDelete = await client.query(
         `DELETE FROM pending_lead_attributions
-         WHERE channel = $1 AND external_user_id = $2`,
+         WHERE channel = $1 AND external_user_id = $2
+         RETURNING event_id`,
         [contact.channel, externalUserId]
       );
       pendingAttributions = attributionDelete.rowCount || 0;
+
+      const referralEventIds = normalizeJsonArray(
+        attributionDelete.rows.map((row) => row.event_id)
+      );
+      if (referralEventIds.length > 0) {
+        await client.query(
+          `INSERT INTO customer_data_deleted_message_ids (
+             provider_message_id,
+             deleted_at,
+             expires_at
+           )
+           SELECT
+             deleted.event_id,
+             now(),
+             now() + interval '30 days'
+           FROM jsonb_to_recordset($1::jsonb)
+             AS deleted(event_id TEXT)
+           WHERE deleted.event_id IS NOT NULL
+             AND BTRIM(deleted.event_id) <> ''
+           ON CONFLICT (provider_message_id) DO UPDATE
+           SET deleted_at = EXCLUDED.deleted_at,
+               expires_at = GREATEST(
+                 customer_data_deleted_message_ids.expires_at,
+                 EXCLUDED.expires_at
+               )`,
+          [JSON.stringify(referralEventIds.map((eventId) => ({ event_id: eventId })))]
+        );
+      }
 
       const commentDelete = await client.query(
         `DELETE FROM meta_comment_automation_jobs
@@ -254,6 +283,10 @@ async function purgeContactData({
       pendingAttributions,
       commentJobs,
       providerMessageTombstones: tombstoneResult.rowCount || 0,
+      providerReferralTombstones:
+        externalUserId && ["facebook", "instagram"].includes(contact.channel)
+          ? normalizeJsonArray(attributionDelete?.rows?.map((row) => row.event_id)).length
+          : 0,
       providerCommentTombstones: commentJobs,
     };
 
