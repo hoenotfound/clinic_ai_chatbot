@@ -475,7 +475,7 @@ function ImageFieldEditor({
       </div>
       {allowUrl && (
         <details className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
-          <summary className="cursor-pointer text-[11px] font-semibold text-[var(--color-text-muted)]">
+          <summary className="flex min-h-10 cursor-pointer items-center text-[11px] font-semibold text-[var(--color-text-muted)]">
             Advanced · use image URL
           </summary>
           <input
@@ -519,7 +519,7 @@ function PromotionAliasChips({ items, onChange }) {
                 type="button"
                 onClick={() => onChange(items.filter((_, itemIndex) => itemIndex !== index))}
                 aria-label={`Remove ${item}`}
-                className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-base leading-none text-[var(--color-text-muted)] hover:bg-[var(--color-danger-light)] hover:text-[var(--color-danger)]"
               >
                 ×
               </button>
@@ -572,8 +572,8 @@ function PromotionFollowUpTranslationsEditor({ value = {}, onChange }) {
     ["zh", "中文"],
   ];
   return (
-    <details className="rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3">
-      <summary className="cursor-pointer text-xs font-semibold text-[var(--color-primary)]">
+    <details className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2">
+      <summary className="flex min-h-11 cursor-pointer items-center text-xs font-semibold text-[var(--color-primary)]">
         Language-specific follow-up copy
       </summary>
       <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
@@ -743,16 +743,16 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
                     <button
                       type="button"
                       onClick={() => removePackage(index)}
-                      className="h-10 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+                      className="h-11 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] sm:h-10"
                     >
                       Remove package
                     </button>
                     <button
                       type="button"
                       onClick={() => setOpenIndex(null)}
-                      className="h-10 rounded-xl bg-[var(--color-primary)] px-4 text-xs font-semibold text-white"
+                      className="h-11 rounded-xl bg-[var(--color-primary)] px-4 text-xs font-semibold text-white sm:h-10"
                     >
-                      Done
+                      Close package
                     </button>
                   </div>
                 </div>
@@ -1821,7 +1821,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         {items.map((item, index) => {
           const expanded = openIndex === index;
           const packageMode = item._offerType === "packages";
-          const displayName = item.linkedService || item.name || "New promotion";
+          const displayName = item.name || item.linkedService || "New promotion";
           const offerSummary = packageMode
             ? `${item.packages.length} package${item.packages.length === 1 ? "" : "s"}`
             : "Single offer";
@@ -1835,6 +1835,11 @@ function PromotionsTab({ config, onSaved, onError }) {
                 <div className="min-w-0">
                   <p className="truncate text-sm font-bold sm:text-base">{displayName}</p>
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {item.linkedService && (
+                      <span className="max-w-full truncate rounded-full bg-[var(--color-primary-light)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">
+                        {item.linkedService}
+                      </span>
+                    )}
                     <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
                       {offerSummary}
                     </span>
@@ -1882,7 +1887,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                             type="button"
                             aria-pressed={item._offerType === value}
                             onClick={() => changeOfferType(index, value)}
-                            className={`min-h-10 rounded-lg px-3 text-xs font-semibold transition ${item._offerType === value ? "bg-white text-[var(--color-primary)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
+                            className={`min-h-11 rounded-lg px-3 text-xs font-semibold transition sm:min-h-10 ${item._offerType === value ? "bg-[var(--color-surface)] text-[var(--color-primary)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
                           >
                             {label}
                           </button>
@@ -1986,8 +1991,8 @@ function PromotionsTab({ config, onSaved, onError }) {
                       </div>
                     )}
 
-                    <details className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3">
-                      <summary className="cursor-pointer text-xs font-semibold text-[var(--color-text-muted)]">Advanced details</summary>
+                    <details className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2">
+                      <summary className="flex min-h-11 cursor-pointer items-center text-xs font-semibold text-[var(--color-text-muted)]">Advanced details</summary>
                       <div className="mt-3">
                         <label className={labelClass}>Internal campaign name</label>
                         <input
@@ -2011,9 +2016,9 @@ function PromotionsTab({ config, onSaved, onError }) {
                       <button
                         type="button"
                         onClick={() => setOpenIndex(null)}
-                        className="h-11 rounded-xl border border-[var(--color-border)] bg-white px-4 text-xs font-semibold sm:h-10"
+                        className="h-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 text-xs font-semibold sm:h-10"
                       >
-                        Finish editing
+                        Close editor
                       </button>
                     </div>
                   </div>
@@ -2034,7 +2039,7 @@ function PromotionsTab({ config, onSaved, onError }) {
       </div>
 
       <div className="mt-5">
-        <SaveButton saving={saving} onClick={handleSave} />
+        <SaveButton saving={saving} onClick={handleSave} label="Save promotions" />
       </div>
 
       <div className="mt-8 border-t border-[var(--color-border)] pt-7">
@@ -2072,7 +2077,7 @@ function ResultMediaItemsEditor({ items, onChange, onError }) {
             <button
               type="button"
               onClick={() => removeItem(index)}
-              className="h-9 rounded-lg px-2.5 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+              className="h-11 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] sm:h-9 sm:rounded-lg sm:px-2.5"
             >
               Remove
             </button>
@@ -2262,11 +2267,16 @@ function ResultMediaSection({ config, onSaved, onError }) {
       <div className="mb-5">
         <h3 className="font-display text-base font-bold sm:text-lg">Before & After</h3>
         <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)] sm:text-sm">
-          Add approved result examples by service and choose when each set can send.
-          Service enquiries can include clear interest from the customer's message, the current
-          conversation, or unambiguous Meta ad headline/body creative. Automatic result media is suppressed
-          for 7 days after a send, then continues with the next configured example.
+          Add approved result examples for each service and choose when the AI may send them.
         </p>
+        <details className="mt-2 rounded-xl bg-[var(--color-bg)] px-3 py-1.5">
+          <summary className="flex min-h-10 cursor-pointer items-center text-[11px] font-semibold text-[var(--color-text-muted)]">
+            How automatic sending works
+          </summary>
+          <p className="pb-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
+            A clear service enquiry can be detected from the customer message, the current conversation, or a matching Meta ad. Result media has a 7-day cooldown, then rotates to the next configured example.
+          </p>
+        </details>
       </div>
 
       {serviceNames.length === 0 && (
@@ -2413,16 +2423,16 @@ function ResultMediaSection({ config, onSaved, onError }) {
                       <button
                         type="button"
                         onClick={() => removeSet(index)}
-                        className="h-10 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+                        className="h-11 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] sm:h-10"
                       >
                         Remove result set
                       </button>
                       <button
                         type="button"
                         onClick={() => setOpenIndex(null)}
-                        className="h-10 rounded-xl border border-[var(--color-border)] bg-white px-4 text-xs font-semibold"
+                        className="h-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 text-xs font-semibold sm:h-10"
                       >
-                        Finish editing
+                        Close editor
                       </button>
                     </div>
                   </div>
