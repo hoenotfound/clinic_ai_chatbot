@@ -150,3 +150,60 @@ test("disabled retention policy does not query customer candidates", async () =>
   assert.equal(result.enabled, false);
   assert.equal(queried, false);
 });
+
+
+test("lifecycle worker schedules recovery and retention without running them during startup", async () => {
+  const intervals = [];
+  let cleanupClaims = 0;
+  let retentionQueries = 0;
+  let pruneCalls = 0;
+
+  const repository = {
+    async claimPurgeJob() {
+      cleanupClaims += 1;
+      return null;
+    },
+    async listRetentionCandidates() {
+      retentionQueries += 1;
+      return [];
+    },
+    async pruneCompletedPurgeJobs() {
+      pruneCalls += 1;
+      return {};
+    },
+  };
+
+  lifecycle.startCustomerDataLifecycle({
+    env: { CUSTOMER_DATA_RETENTION_DAYS: "90" },
+    repository,
+    storage: {},
+    setIntervalFn(fn, delay) {
+      const timer = { fn, delay, unref() {} };
+      intervals.push(timer);
+      return timer;
+    },
+  });
+
+  // Starting the application must not immediately compete with live media or
+  // DB traffic. The worker only registers its normal recovery intervals.
+  assert.equal(cleanupClaims, 0);
+  assert.equal(retentionQueries, 0);
+  assert.equal(pruneCalls, 0);
+  assert.deepEqual(
+    intervals.map((item) => item.delay),
+    [
+      lifecycle.MEDIA_CLEANUP_INTERVAL_MS,
+      lifecycle.RETENTION_SWEEP_INTERVAL_MS,
+      lifecycle.PURGE_JOB_PRUNE_INTERVAL_MS,
+    ]
+  );
+
+  await intervals[0].fn();
+  assert.equal(cleanupClaims, 1);
+
+  await intervals[1].fn();
+  assert.equal(retentionQueries, 1);
+
+  await intervals[2].fn();
+  assert.equal(pruneCalls, 1);
+});
