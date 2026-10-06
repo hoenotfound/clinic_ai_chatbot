@@ -630,7 +630,8 @@ async function applyRuleBasedTemperature(
 
     const previousTemperature =
       currentTemperature[0].toUpperCase() + currentTemperature.slice(1);
-    const nextTemperature = classification.temperature === "hot" ? "Hot" : "Cold";
+    const nextTemperature =
+      classification.temperature[0].toUpperCase() + classification.temperature.slice(1);
     await addActivity(
       client,
       id,
@@ -640,6 +641,9 @@ async function applyRuleBasedTemperature(
       {
         source: "conversation_rules",
         matchedRule: classification.matchedRule,
+        ...(classification.warmStrength
+          ? { warmStrength: classification.warmStrength }
+          : {}),
         ...(classification.rejectionStrength
           ? { rejectionStrength: classification.rejectionStrength }
           : {}),
