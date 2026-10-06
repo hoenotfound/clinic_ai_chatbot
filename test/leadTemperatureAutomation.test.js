@@ -42,6 +42,8 @@ test("clear purchase, package acceptance, and payment intent becomes Hot", () =>
     "我想付款。",
     "怎么付定金？",
     "发给我付款链接。",
+    "This is expensive, but I'll take this package.",
+    "这个有点贵，不过我要这个配套。",
   ];
 
   for (const messageText of examples) {
@@ -130,6 +132,9 @@ test("general interest, uncertainty, cancellation, and silence remain Warm", () 
     "Perlu saya bayar deposit ke?",
     "这个配套太贵，我考虑一下。",
     "需要付定金吗？",
+    "I don't want this package.",
+    "Saya tak nak pakej ini.",
+    "我不要这个套餐，但我想了解另一个。",
     "",
   ];
 
