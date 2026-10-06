@@ -69,20 +69,30 @@ export default function WhatsAppMessagingDetails({ contact, className = "" }) {
   const replyStatusTone = policy.freeformAllowed
     ? "border-emerald-200 bg-emerald-50 text-emerald-800"
     : "border-amber-200 bg-amber-50 text-amber-900";
-  const headerStatus = optOutAt
+  const headerStatus = !policy.manualReplyAllowed
     ? {
-        label: policy.freeformAllowed ? "Opt-out recorded" : "Sending restricted",
+        label: "Sending restricted",
         tone: "border-amber-200 bg-amber-50 text-amber-900",
       }
-    : marketingOptOutAt
+    : policy.humanAgentAllowed
       ? {
-          label: "Marketing opt-out",
+          label: "Staff reply only",
           tone: "border-amber-200 bg-amber-50 text-amber-900",
         }
-      : {
-          label: policy.freeformAllowed ? "Reply available" : "Sending restricted",
-          tone: replyStatusTone,
-        };
+      : optOutAt
+        ? {
+            label: "Opt-out recorded",
+            tone: "border-amber-200 bg-amber-50 text-amber-900",
+          }
+        : marketingOptOutAt
+          ? {
+              label: "Marketing opt-out",
+              tone: "border-amber-200 bg-amber-50 text-amber-900",
+            }
+          : {
+              label: "Reply available",
+              tone: replyStatusTone,
+            };
 
   return (
     <section className={`overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] ${className}`}>
