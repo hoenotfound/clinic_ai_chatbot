@@ -32,6 +32,16 @@ test(
         await client.query(sql);
       }
 
+      await client.query(`
+        CREATE TABLE customer_data_deleted_comment_ids (
+          channel TEXT NOT NULL,
+          comment_id TEXT NOT NULL,
+          deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '30 days'),
+          PRIMARY KEY (channel, comment_id)
+        )
+      `);
+
       const stored = await repo.storeIncomingComment(
         {
           channel: "instagram",
