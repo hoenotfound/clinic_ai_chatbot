@@ -1784,7 +1784,7 @@ function PromotionsTab({ config, onSaved, onError }) {
       ).length;
       warning = `Changing to Single offer will remove ${packageCount} package option${packageCount === 1 ? "" : "s"} when you save. Continue?`;
     } else if (nextType === "packages" && hasSingleOfferContent(current)) {
-      warning = "Changing to Multiple packages will remove the current single-offer image, caption, first follow-up offer, and first follow-up graphic, plus any language-specific media, when you save. Continue?";
+      warning = "Changing to Multiple packages will remove the current single-offer image, caption, first follow-up offer, and first follow-up graphic when you save. Any language-specific media will also be removed. Continue?";
     }
 
     if (warning && !window.confirm(warning)) return;
