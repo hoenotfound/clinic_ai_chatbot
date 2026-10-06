@@ -40,11 +40,14 @@ function resolveLocalizedMedia(item, language) {
   if (!item || typeof item !== "object") return item;
   const translations = normalizeMediaTranslations(item.mediaTranslations);
   const localized = translations[String(language || "").trim()] || {};
+  const { mediaTranslations: _configuredTranslations, ...baseItem } = item;
   return {
-    ...item,
+    ...baseItem,
     imageUrl: String(localized.imageUrl || item.imageUrl || "").trim(),
     caption: String(localized.caption || item.caption || "").trim(),
-    mediaTranslations: translations,
+    ...(Object.keys(translations).length > 0
+      ? { mediaTranslations: translations }
+      : {}),
   };
 }
 
