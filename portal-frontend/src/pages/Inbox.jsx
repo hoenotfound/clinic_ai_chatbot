@@ -2489,6 +2489,15 @@ function ThreadView({
                 message={message}
                 onImageClick={setLightboxSrc}
                 onRetry={onRetryMessage}
+                onReply={handleReply}
+                onForward={(selectedMessage) => setForwardingMessage(selectedMessage)}
+                onCopy={handleCopyMessage}
+                canReply={
+                  canReplyToLeads &&
+                  (contact.channel || "whatsapp") === "whatsapp" &&
+                  !policyBlocksComposer
+                }
+                canForward={canReplyToLeads && !message._optimistic}
               />
             </div>
           ))}
@@ -2502,6 +2511,29 @@ function ThreadView({
         style={{ paddingBottom: "max(0.625rem, env(safe-area-inset-bottom))" }}
       >
         <div className="mx-auto w-full max-w-4xl">
+          {replyingTo && (
+            <div className="mb-2.5 flex items-stretch overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]">
+              <span className="w-1 shrink-0 bg-[var(--color-primary)]" aria-hidden="true" />
+              <div className="min-w-0 flex-1 px-3 py-2">
+                <p className="text-[10px] font-semibold text-[var(--color-primary)]">
+                  Replying to {replyingTo.role === "user" ? customerSingular : (replyingTo.sent_by_username || "AI")}
+                </p>
+                <p className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">
+                  {replyPreviewText(replyingTo)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReplyingTo(null)}
+                disabled={sending}
+                className="flex w-11 shrink-0 items-center justify-center text-lg text-[var(--color-text-muted)] hover:bg-white disabled:opacity-50"
+                aria-label="Cancel reply"
+                title="Cancel reply"
+              >
+                ×
+              </button>
+            </div>
+          )}
           {isStartingRecording && (
             <div className="mb-2.5 flex items-center gap-3 rounded-xl bg-[var(--color-primary-light)] px-3 py-2.5">
               <Spinner className="text-[var(--color-primary)]" />
@@ -2557,6 +2589,7 @@ function ThreadView({
               ref={textareaRef}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
+              onPaste={handleComposerPaste}
               disabled={isStartingRecording || isRecording || !!voiceBlob}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
@@ -2578,6 +2611,13 @@ function ThreadView({
       </form>
 
       <Lightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
+      <ForwardMessageModal
+        message={forwardingMessage}
+        conversations={conversations}
+        currentContactId={contact.contact_id}
+        onClose={() => setForwardingMessage(null)}
+        onConfirm={handleForwardConfirm}
+      />
     </section>
   );
 }
