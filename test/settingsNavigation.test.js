@@ -68,3 +68,19 @@ test("authenticated portal shell provides one shared business profile without re
   assert.match(app, /SettingsSectionLayout><SetupStatus \/><\/SettingsSectionLayout>/);
   assert.match(app, /path="\/setup" element=\{<Navigate to="\/settings\/setup" replace \/>\}/);
 });
+
+
+test("notifications are reachable by every authenticated staff account", () => {
+  const app = read("portal-frontend/src/App.jsx");
+  const sidebar = read("portal-frontend/src/components/Sidebar.jsx");
+  const notifications = read("portal-frontend/src/pages/Notifications.jsx");
+
+  assert.match(app, /path="\/notifications" element=\{<ProtectedRoute><Notifications \/><\/ProtectedRoute>\}/);
+  assert.match(sidebar, /to: "\/notifications"/);
+  assert.match(sidebar, /label: "Notifications"/);
+  assert.match(notifications, /Normal new customer messages are intentionally excluded/);
+  assert.match(notifications, /Send test notification/);
+  assert.match(notifications, /Android \/ HONOR notification reliability/);
+  assert.match(notifications, /HONOR MagicOS can be especially aggressive/);
+  assert.match(notifications, /Auto-launch, Secondary launch, and Run in background/);
+});
