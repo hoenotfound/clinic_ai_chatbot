@@ -2,6 +2,7 @@ const { pool } = require("./db");
 const { CONVERSATION_LOCK_NAMESPACE } = require("./conversationLock");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("../services/telegramImmediateAlertService");
+const webPushNotifications = require("../services/webPushNotificationService");
 const metaMessaging = require("../services/metaMessagingService");
 const { humanAgentChannelEnabled } = require("../utils/metaHumanAgent");
 
@@ -57,6 +58,10 @@ function notifyTelegram(promise, label, contactId) {
   Promise.resolve(promise).catch((err) => {
     console.error(`Telegram ${label} alert failed for contact ${contactId}:`, err);
   });
+}
+
+function notifyWebPush(contactId, type) {
+  webPushNotifications.sendContactAlertBestEffort({ contactId, type });
 }
 
 function socialChannelLabel(channel) {
@@ -578,6 +583,7 @@ async function setAttention(id, needsAttention, reason = null) {
         "human intervention",
         updated.id
       );
+      notifyWebPush(updated.id, "human_intervention");
     }
   }
   return updated;
@@ -636,6 +642,7 @@ async function setDeliveryAttention(id, reason) {
     "delivery failure",
     id
   );
+  notifyWebPush(id, "delivery_failure");
 
   return updated;
 }

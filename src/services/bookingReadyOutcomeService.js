@@ -4,6 +4,7 @@ const { getConversionProfile } = require("../config/conversionProfiles");
 const realtimeEvents = require("../utils/realtimeEvents");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
 const telegramImmediateAlertRepo = require("../db/telegramImmediateAlertRepo");
+const webPushNotifications = require("./webPushNotificationService");
 
 const BOOKING_READY_REASON =
   "Booking ready: customer provided scheduling preferences; staff should confirm availability.";
@@ -294,6 +295,12 @@ function createBookingReadyOutcomeService({
     }
 
     if (bookingAlertQueued) telegramImmediateAlerts.wakeImmediateAlertQueue(0);
+    if (contactUpdated) {
+      webPushNotifications.sendContactAlertBestEffort({
+        contactId,
+        type: "booking_ready",
+      });
+    }
 
     return {
       contactUpdated,
