@@ -19,6 +19,7 @@ import SetupStatus from "./pages/SetupStatus";
 import GoLive from "./pages/GoLive";
 import ClientSetupWizard from "./pages/ClientSetupWizard";
 import AdvancedConfig from "./pages/AdvancedConfig";
+import Notifications from "./pages/Notifications";
 import {
   readClientSetupProgress,
   shouldAutoStartClientSetup,
@@ -178,6 +179,7 @@ export default function App() {
               )}
             />
             <Route path="/setup" element={<Navigate to="/settings/setup" replace />} />
+            <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
             <Route path="/no-access" element={<ProtectedRoute><NoAccess /></ProtectedRoute>} />
 
             <Route path="*" element={<DefaultRoute />} />
