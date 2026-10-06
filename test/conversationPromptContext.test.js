@@ -189,6 +189,50 @@ test("two-service comparison preserves exactly the two services in the current m
   });
 });
 
+test("explicit request for other treatments does not inherit the previous single treatment", () => {
+  withConfig(scopedConfig(), () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "想了解骨盆调理" },
+      { role: "assistant", content: "可以～" },
+      { role: "user", content: "还有什么其他疗程？" },
+    ]);
+
+    assert.deepEqual(context.relevantServiceNames, []);
+    assert.equal(context.serviceSource, "broad_discovery");
+    assert.equal(context.serviceDiscoveryIntent, true);
+
+    const prompt = buildSystemPrompt({
+      channel: "whatsapp",
+      conversationContext: context,
+    });
+    assert.match(prompt, /THREED_FULL_DETAILS/);
+    assert.match(prompt, /NINED_FULL_DETAILS/);
+    assert.match(prompt, /PELVIS_FULL_DETAILS/);
+    assert.doesNotMatch(prompt, /THREED_PRICE/);
+    assert.doesNotMatch(prompt, /NINED_PRICE/);
+    assert.doesNotMatch(prompt, /PELVIS_PRICE/);
+  });
+});
+
+test("broad treatment price request restores configured prices instead of using the compact catalog", () => {
+  withConfig(scopedConfig(), () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "可以给我全部疗程的price吗？" },
+    ]);
+
+    assert.deepEqual(context.relevantServiceNames, []);
+    assert.equal(context.promotionIntent, true);
+
+    const prompt = buildSystemPrompt({
+      channel: "whatsapp",
+      conversationContext: context,
+    });
+    assert.match(prompt, /THREED_PRICE/);
+    assert.match(prompt, /NINED_PRICE/);
+    assert.match(prompt, /PELVIS_PRICE/);
+  });
+});
+
 test("three-service customer comparison falls back to the broad compact catalog instead of dropping a service", () => {
   withConfig(scopedConfig(), () => {
     const context = buildConversationPromptContext([
