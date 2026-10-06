@@ -26,6 +26,15 @@ const CLIENT_MEDIA_ROOT = "clients";
 const MAX_CLIENT_SLUG_LENGTH = 80;
 let cachedClient = null;
 
+function isStorageConfigured(env = process.env) {
+  return Boolean(
+    env.R2_ACCOUNT_ID &&
+    env.R2_ACCESS_KEY_ID &&
+    env.R2_SECRET_ACCESS_KEY &&
+    env.R2_BUCKET_NAME
+  );
+}
+
 function getStorageConfig() {
   const accountId = process.env.R2_ACCOUNT_ID;
   const accessKeyId = process.env.R2_ACCESS_KEY_ID;
@@ -301,6 +310,7 @@ function temporaryMediaPrefix(env = process.env) {
 
 
 function customerMediaPrefixes(contactId, env = process.env) {
+  if (!isStorageConfigured(env)) return [];
   const isolation = getMediaIsolationStatus(env);
   if (!isolation.prefix) return [];
   const segment = safeObjectSegment(contactId);
@@ -521,6 +531,7 @@ module.exports = {
   buildMediaObjectKey,
   sanitizeClientSlug,
   getMediaIsolationStatus,
+  isStorageConfigured,
   uploadMedia,
   uploadTemporaryMedia,
   createPresignedGetUrl,
