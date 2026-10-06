@@ -1,0 +1,350 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+
+const config = require("../src/config/clinicConfig");
+const {
+  buildConversationPromptContext,
+} = require("../src/utils/conversationPromptContext");
+const {
+  buildSystemPrompt,
+} = require("../src/utils/systemPrompt");
+const geminiService = require("../src/services/geminiService");
+
+function withConfig(overrides, callback) {
+  const previous = JSON.parse(JSON.stringify(config));
+  for (const key of Object.keys(config)) delete config[key];
+  Object.assign(config, previous, overrides);
+  try {
+    return callback();
+  } finally {
+    for (const key of Object.keys(config)) delete config[key];
+    Object.assign(config, previous);
+  }
+}
+
+function scopedConfig() {
+  return {
+    businessName: "Context Clinic",
+    clinicName: "Context Clinic",
+    businessType: "tcm_clinic",
+    businessDescription: "A TCM clinic in Malaysia.",
+    aiAssistantName: "Clinic Assistant",
+    terminology: {
+      customerSingular: "patient",
+      customerPlural: "patients",
+      locationSingular: "clinic branch",
+      locationPlural: "clinic branches",
+      serviceSingular: "treatment",
+      servicePlural: "treatments",
+    },
+    services: [
+      {
+        name: "3D 小颜术",
+        description: "THREED_FULL_DETAILS face shape and contour.",
+        priceRange: "THREED_PRICE RM488",
+        duration: "90 minutes",
+      },
+      {
+        name: "9D 逆龄抗衰",
+        description: "NINED_FULL_DETAILS laxity and ageing concerns.",
+        priceRange: "NINED_PRICE RM588",
+        duration: "90 minutes",
+      },
+      {
+        name: "骨盆调理",
+        description: "PELVIS_FULL_DETAILS posture and pelvic care.",
+        priceRange: "PELVIS_PRICE RM388",
+        duration: "60 minutes",
+      },
+    ],
+    serviceAliases: [
+      { alias: "3D / 小颜 / 大小脸", officialService: "3D 小颜术" },
+      { alias: "9D / 逆龄", officialService: "9D 逆龄抗衰" },
+      { alias: "pelvis / 骨盆", officialService: "骨盆调理" },
+    ],
+    promotions: [
+      {
+        name: "3D Promo",
+        linkedService: "3D 小颜术",
+        caption: "THREED_PROMO_FULL",
+        sendOnPriceQuery: true,
+        packages: [
+          { name: "Package A", caption: "THREED_PACKAGE_FULL" },
+        ],
+      },
+      {
+        name: "9D Promo",
+        linkedService: "9D 逆龄抗衰",
+        caption: "NINED_PROMO_FULL",
+        sendOnPriceQuery: true,
+      },
+      {
+        name: "Pelvis Promo",
+        linkedService: "骨盆调理",
+        caption: "PELVIS_PROMO_FULL",
+        sendOnPriceQuery: true,
+      },
+    ],
+    branches: [
+      {
+        name: "PJ",
+        address: "PJ_ADDRESS_SENTINEL",
+        phone: "PJ_PHONE_SENTINEL",
+      },
+      {
+        name: "KL",
+        address: "KL_ADDRESS_SENTINEL",
+        phone: "KL_PHONE_SENTINEL",
+      },
+    ],
+    hours: {
+      general: "HOURS_SENTINEL 10am to 7pm",
+      closed: "Monday closed",
+    },
+    contact: {
+      whatsapp: "WHATSAPP_SENTINEL",
+      instagram: "INSTAGRAM_SENTINEL",
+      facebook: "FACEBOOK_SENTINEL",
+    },
+    faqs: [
+      {
+        q: "FAQ_QUESTION_SENTINEL",
+        a: "FAQ_ANSWER_SENTINEL",
+      },
+    ],
+    sop: [
+      "GLOBAL SAFETY:",
+      "GLOBAL_SAFETY_SENTINEL never diagnose.",
+      "",
+      "3D 小颜术:",
+      "THREED_SOP_SENTINEL use face-shape wording.",
+      "",
+      "9D 逆龄抗衰:",
+      "NINED_SOP_SENTINEL use laxity wording.",
+      "",
+      "骨盆调理:",
+      "PELVIS_SOP_SENTINEL use posture wording.",
+    ].join("\n"),
+    closingPlaybook: [
+      "GENERAL SALES:",
+      "GLOBAL_SALES_SENTINEL keep one soft CTA.",
+      "",
+      "3D 小颜术:",
+      "THREED_CLOSE_SENTINEL.",
+      "",
+      "骨盆调理:",
+      "PELVIS_CLOSE_SENTINEL.",
+    ].join("\n"),
+    escalation: {
+      outOfScopeTriggers: ["HANDOFF_SENTINEL medical suitability"],
+      handoffMessage: "A team member will help directly.",
+    },
+    guardrails: [
+      "GUARDRAIL_SENTINEL never invent treatment results.",
+    ],
+    tone: "Warm and concise.",
+    messagingStyle: "STYLE_SENTINEL keep replies short and natural.",
+  };
+}
+
+test("current customer treatment overrides older treatment context", () => {
+  withConfig(scopedConfig(), () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "之前我有问骨盆调理" },
+      { role: "assistant", content: "可以" },
+      { role: "user", content: "现在我想了解3D小颜" },
+    ]);
+
+    assert.deepEqual(context.relevantServiceNames, ["3D 小颜术"]);
+    assert.equal(context.serviceSource, "current_customer");
+  });
+});
+
+test("short price question inherits the most recent established treatment", () => {
+  withConfig(scopedConfig(), () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "想了解骨盆调理" },
+      { role: "assistant", content: "可以，主要想改善哪方面？" },
+      { role: "user", content: "多少钱？" },
+    ]);
+
+    assert.deepEqual(context.relevantServiceNames, ["骨盆调理"]);
+    assert.equal(context.serviceSource, "recent_customer");
+    assert.equal(context.promotionIntent, true);
+  });
+});
+
+test("two-service comparison preserves exactly the two services in the current message", () => {
+  withConfig(scopedConfig(), () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "之前问过骨盆" },
+      { role: "assistant", content: "好的" },
+      { role: "user", content: "3D跟9D有什么不同？" },
+    ]);
+
+    assert.deepEqual(
+      context.relevantServiceNames,
+      ["3D 小颜术", "9D 逆龄抗衰"]
+    );
+  });
+});
+
+test("vague lead can use one unambiguous Meta creative service without changing conversation text", () => {
+  withConfig(scopedConfig(), () => {
+    const messages = [{ role: "user", content: "想了解" }];
+    const context = buildConversationPromptContext(messages, {
+      metaAdContext: {
+        headline: "产后骨盆调理",
+        body: "1对1体态评估",
+      },
+    });
+
+    assert.deepEqual(context.relevantServiceNames, ["骨盆调理"]);
+    assert.equal(context.serviceSource, "meta_ad");
+    assert.deepEqual(messages, [{ role: "user", content: "想了解" }]);
+  });
+});
+
+test("scoped normal prompt keeps relevant treatment detail and global safety while dropping unrelated treatment detail", () => {
+  withConfig(scopedConfig(), () => {
+    const prompt = buildSystemPrompt({
+      channel: "whatsapp",
+      isFirstMessage: false,
+      conversationContext: {
+        relevantServiceNames: ["3D 小颜术"],
+        serviceSource: "current_customer",
+        schedulingIntent: false,
+        contactIntent: false,
+        promotionIntent: false,
+      },
+    });
+
+    assert.match(prompt, /THREED_FULL_DETAILS/);
+    assert.match(prompt, /THREED_PRICE/);
+    assert.doesNotMatch(prompt, /NINED_FULL_DETAILS/);
+    assert.doesNotMatch(prompt, /PELVIS_FULL_DETAILS/);
+
+    assert.match(prompt, /THREED_PROMO_FULL/);
+    assert.match(prompt, /THREED_PACKAGE_FULL/);
+    assert.doesNotMatch(prompt, /NINED_PROMO_FULL/);
+    assert.doesNotMatch(prompt, /PELVIS_PROMO_FULL/);
+
+    assert.match(prompt, /GLOBAL_SAFETY_SENTINEL/);
+    assert.match(prompt, /THREED_SOP_SENTINEL/);
+    assert.doesNotMatch(prompt, /NINED_SOP_SENTINEL/);
+    assert.doesNotMatch(prompt, /PELVIS_SOP_SENTINEL/);
+
+    assert.match(prompt, /GLOBAL_SALES_SENTINEL/);
+    assert.match(prompt, /THREED_CLOSE_SENTINEL/);
+    assert.doesNotMatch(prompt, /PELVIS_CLOSE_SENTINEL/);
+
+    assert.match(prompt, /FAQ_ANSWER_SENTINEL/);
+    assert.match(prompt, /GUARDRAIL_SENTINEL/);
+    assert.match(prompt, /HANDOFF_SENTINEL/);
+    assert.match(prompt, /STYLE_SENTINEL/);
+
+    assert.match(prompt, /- PJ/);
+    assert.match(prompt, /- KL/);
+    assert.doesNotMatch(prompt, /PJ_ADDRESS_SENTINEL/);
+    assert.doesNotMatch(prompt, /KL_ADDRESS_SENTINEL/);
+    assert.doesNotMatch(prompt, /HOURS_SENTINEL/);
+    assert.doesNotMatch(prompt, /WHATSAPP_SENTINEL/);
+    assert.doesNotMatch(prompt, /INSTAGRAM_SENTINEL/);
+  });
+});
+
+test("booking or location conversation restores branch addresses and hours", () => {
+  withConfig(scopedConfig(), () => {
+    const prompt = buildSystemPrompt({
+      channel: "whatsapp",
+      conversationContext: {
+        relevantServiceNames: ["骨盆调理"],
+        schedulingIntent: true,
+        contactIntent: false,
+        promotionIntent: false,
+      },
+    });
+
+    assert.match(prompt, /PJ_ADDRESS_SENTINEL/);
+    assert.match(prompt, /KL_ADDRESS_SENTINEL/);
+    assert.match(prompt, /HOURS_SENTINEL/);
+  });
+});
+
+test("generic discovery keeps compact service catalog instead of full prices and unrelated promotion copy", () => {
+  withConfig(scopedConfig(), () => {
+    const prompt = buildSystemPrompt({
+      channel: "whatsapp",
+      conversationContext: {
+        relevantServiceNames: [],
+        schedulingIntent: false,
+        contactIntent: false,
+        promotionIntent: false,
+      },
+    });
+
+    assert.match(prompt, /THREED_FULL_DETAILS/);
+    assert.match(prompt, /NINED_FULL_DETAILS/);
+    assert.match(prompt, /PELVIS_FULL_DETAILS/);
+    assert.doesNotMatch(prompt, /THREED_PRICE/);
+    assert.doesNotMatch(prompt, /NINED_PRICE/);
+    assert.doesNotMatch(prompt, /PELVIS_PRICE/);
+
+    assert.match(prompt, /3D Promo/);
+    assert.match(prompt, /9D Promo/);
+    assert.match(prompt, /Pelvis Promo/);
+    assert.doesNotMatch(prompt, /THREED_PROMO_FULL/);
+    assert.doesNotMatch(prompt, /NINED_PROMO_FULL/);
+    assert.doesNotMatch(prompt, /PELVIS_PROMO_FULL/);
+  });
+});
+
+test("generic promotion enquiry restores full active promotion detail", () => {
+  withConfig(scopedConfig(), () => {
+    const prompt = buildSystemPrompt({
+      channel: "whatsapp",
+      conversationContext: {
+        relevantServiceNames: [],
+        schedulingIntent: false,
+        contactIntent: false,
+        promotionIntent: true,
+      },
+    });
+
+    assert.match(prompt, /THREED_PROMO_FULL/);
+    assert.match(prompt, /NINED_PROMO_FULL/);
+    assert.match(prompt, /PELVIS_PROMO_FULL/);
+  });
+});
+
+test("Gemini request keeps full conversation while scoping repeated static context", () => {
+  withConfig(scopedConfig(), () => {
+    const messages = [
+      { role: "user", content: "想了解骨盆调理" },
+      { role: "assistant", content: "可以～你主要想改善哪方面？" },
+      { role: "user", content: "产后小腹凸，多少钱？" },
+    ];
+
+    const built = geminiService.buildGeminiRequest(
+      messages,
+      { channel: "whatsapp", surface: "conversation" },
+      "gemini-3.8-flash"
+    );
+
+    assert.equal(built.request.contents.length, messages.length);
+    assert.equal(
+      built.request.contents[0].parts[0].text,
+      messages[0].content
+    );
+    assert.equal(
+      built.request.contents[2].parts[0].text,
+      messages[2].content
+    );
+
+    const prompt = built.request.config.systemInstruction;
+    assert.match(prompt, /PELVIS_FULL_DETAILS/);
+    assert.match(prompt, /PELVIS_PRICE/);
+    assert.doesNotMatch(prompt, /THREED_FULL_DETAILS/);
+    assert.doesNotMatch(prompt, /NINED_FULL_DETAILS/);
+  });
+});
