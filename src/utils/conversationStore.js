@@ -136,6 +136,8 @@ async function appendMessageForContact(
       whatsappTemplate: options.whatsappTemplate || null,
       initialDeliveryStatus: options.initialDeliveryStatus || null,
       initialDeliveryError: options.initialDeliveryError || null,
+      replyToProviderMessageId: options.replyToProviderMessageId || null,
+      isForwarded: options.isForwarded === true,
     }
   );
 
