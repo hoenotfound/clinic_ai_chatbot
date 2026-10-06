@@ -1860,10 +1860,16 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
         .uploadMedia(req.file.buffer, req.file.mimetype, {
           contactId: preparedContact.id,
         })
-        .then((mediaKey) => {
-          r2PersistMs = Date.now() - r2StartedAt;
-          return mediaKey;
-        });
+        .then(
+          (mediaKey) => {
+            r2PersistMs = Date.now() - r2StartedAt;
+            return mediaKey;
+          },
+          (err) => {
+            r2PersistMs = Date.now() - r2StartedAt;
+            throw err;
+          }
+        );
 
       const providerStartedAt = Date.now();
       const providerPromise = channelMessaging
@@ -1875,10 +1881,16 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
           req.file.originalname || "image",
           sendOptions
         )
-        .then((result) => {
-          providerSendMs = Date.now() - providerStartedAt;
-          return result;
-        });
+        .then(
+          (result) => {
+            providerSendMs = Date.now() - providerStartedAt;
+            return result;
+          },
+          (err) => {
+            providerSendMs = Date.now() - providerStartedAt;
+            throw err;
+          }
+        );
 
       const [persistOutcome, providerOutcome] = await Promise.allSettled([
         persistPromise,
@@ -1893,14 +1905,13 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
           `[Inbox image] initial R2 persistence failed for contact ${preparedContact.id}; retrying once:`,
           persistOutcome.reason
         );
-        const retryStartedAt = Date.now();
         try {
           mediaKey = await mediaStorage.uploadMedia(
             req.file.buffer,
             req.file.mimetype,
             { contactId: preparedContact.id }
           );
-          r2PersistMs = Date.now() - retryStartedAt;
+          r2PersistMs = Date.now() - r2StartedAt;
         } catch (persistErr) {
           console.error(
             `[Inbox image] R2 persistence failed after retry for contact ${preparedContact.id}:`,
@@ -1954,12 +1965,19 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
             };
 
       if (!mediaKey || !mediaAttached) {
-        await contactsRepo.setDeliveryAttention(
-          preparedContact.id,
-          mediaKey
-            ? "Image was sent, but its stored attachment could not be linked to the message. History/retry may be unavailable."
-            : "Image storage failed after send attempt; attachment history/retry may be unavailable."
-        );
+        try {
+          await contactsRepo.setDeliveryAttention(
+            preparedContact.id,
+            mediaKey
+              ? "Image was sent, but its stored attachment could not be linked to the message. History/retry may be unavailable."
+              : "Image storage failed after send attempt; attachment history/retry may be unavailable."
+          );
+        } catch (attentionErr) {
+          console.error(
+            `[Inbox image] failed to flag media persistence attention for contact ${preparedContact.id}:`,
+            attentionErr
+          );
+        }
       }
     } else {
       // Keep the existing social-channel path unchanged. Those providers have
@@ -2013,18 +2031,59 @@ router.post("/:contactId/media", handleImageUpload, async (req, res) => {
       sendResult,
       sendResult.error || rejectedErrorFor(preparedContact)
     );
-    const finalMessage = await persistSendOutcome(
-      saved,
-      sendResult,
-      errorText,
-      preparedContact.channel || "whatsapp"
-    );
+
+    let finalMessage = null;
+    for (let attempt = 1; attempt <= 2 && !finalMessage; attempt += 1) {
+      try {
+        finalMessage = await persistSendOutcome(
+          saved,
+          sendResult,
+          errorText,
+          preparedContact.channel || "whatsapp"
+        );
+      } catch (outcomeErr) {
+        console.error(
+          `[Inbox image] failed to persist provider outcome for message ${saved.id} (attempt ${attempt}/2):`,
+          outcomeErr
+        );
+      }
+    }
+
+    if (!finalMessage) {
+      // Meta may already have accepted the image. Return the provider truth
+      // instead of a misleading 500 that encourages a duplicate manual resend.
+      finalMessage = {
+        ...saved,
+        whatsapp_message_id:
+          sendResult.wamid || saved.whatsapp_message_id || null,
+        delivery_status: sendResult.success ? "sent" : "failed",
+        delivery_error: sendResult.success ? null : errorText,
+      };
+      try {
+        await contactsRepo.setDeliveryAttention(
+          preparedContact.id,
+          "Provider send completed, but its delivery state could not be fully persisted. Please verify this conversation before retrying."
+        );
+      } catch (attentionErr) {
+        console.error(
+          `[Inbox image] failed to flag provider-persistence attention for contact ${preparedContact.id}:`,
+          attentionErr
+        );
+      }
+    }
 
     if (!sendResult.success) {
-      await contactsRepo.setDeliveryAttention(
-        preparedContact.id,
-        `Delivery failed: ${publicDeliveryError(errorText)}`
-      );
+      try {
+        await contactsRepo.setDeliveryAttention(
+          preparedContact.id,
+          `Delivery failed: ${publicDeliveryError(errorText)}`
+        );
+      } catch (attentionErr) {
+        console.error(
+          `[Inbox image] failed to update delivery attention for contact ${preparedContact.id}:`,
+          attentionErr
+        );
+      }
     } else {
       await markLeadContacted(preparedContact.id, req.session.username, sendResult);
     }
