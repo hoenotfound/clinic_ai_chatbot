@@ -217,6 +217,10 @@ test("Inbox WhatsApp reply and image routes fail closed on invalid provider medi
   assert.match(imageRoute, /copyStoredMediaToTemporary/);
   assert.match(imageRoute, /scheduleTemporaryMediaDelete/);
   assert.match(imageRoute, /channelMessaging\.sendImageByUrl/);
+  assert.match(
+    imageRoute,
+    /try \{[\s\S]*getMessageMediaReferenceForContact[\s\S]*copyStoredMediaToTemporary[\s\S]*\} catch \(copyErr\) \{[\s\S]*channelMessaging\.sendImageBuffer/
+  );
   assert.match(replyHelper, /target\.role !== "user"/);
   assert.match(replyHelper, /\["failed", "unknown"\]\.includes\(targetDeliveryStatus\)/);
 });
