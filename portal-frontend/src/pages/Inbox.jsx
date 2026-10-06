@@ -1002,7 +1002,7 @@ export default function Inbox() {
       if (selectedIdRef.current === contactId) {
         setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [visibleResult]));
       }
-      await refreshConversations();
+      void refreshConversations();
       if (result?.delivered === false) {
         showToast(`Message saved but WhatsApp delivery failed — the ${ui.customerSingular} may not have received it. Please try resending.`, "warning");
       }
@@ -1054,7 +1054,7 @@ export default function Inbox() {
       if (selectedIdRef.current === contactId) {
         setMessages((prev) => mergeMessages(prev.filter((m) => m.id !== optimisticId), [visibleResult]));
       }
-      await refreshConversations();
+      void refreshConversations();
       if (result?.delivered === false) {
         showToast(`Image saved but WhatsApp delivery failed — the ${ui.customerSingular} may not have received it. Please try resending.`, "warning");
       }
@@ -1086,7 +1086,7 @@ export default function Inbox() {
       if (selectedIdRef.current === contactId) {
         setMessages((prev) => mergeMessages(prev, [{ ...visibleResult, has_media_attachment: true }]));
       }
-      await refreshConversations();
+      void refreshConversations();
       if (result?.delivered === false) {
         showToast(`Voice message saved but WhatsApp delivery failed — the ${ui.customerSingular} may not have received it. Please try recording again.`, "warning");
       } else if (result?.transcribed === false) {
@@ -1111,7 +1111,7 @@ export default function Inbox() {
     if (visibleMessages.length) {
       setMessages((current) => mergeMessages(current, visibleMessages));
     }
-    await refreshConversations();
+    void refreshConversations();
     return result;
   }
 
@@ -2238,19 +2238,33 @@ function ThreadView({
 
   async function handleForwardConfirm(targetContactIds) {
     if (!forwardingMessage || !targetContactIds?.length) return;
-    const result = await onForwardMessage(forwardingMessage.id, targetContactIds);
-    const delivered = Number(result?.deliveredCount || 0);
-    const requested = Number(result?.requestedCount || targetContactIds.length);
-    if (delivered === requested) {
-      onToast(`Forwarded to ${delivered} conversation${delivered === 1 ? "" : "s"}.`, "info");
-    } else if (delivered > 0) {
-      onToast(`Forwarded to ${delivered} of ${requested} conversations. Some sends were blocked or failed.`, "warning");
-    } else {
-      const firstError = result?.results?.find((item) => item.error)?.error;
-      onToast(firstError || "The message could not be forwarded.", "warning");
+    const messageId = forwardingMessage.id;
+
+    // Match WhatsApp's feel: close the picker as soon as the action is accepted
+    // locally instead of keeping a blocking sheet open for every provider send.
+    setForwardingMessage(null);
+    onToast(
+      `Forwarding to ${targetContactIds.length} conversation${targetContactIds.length === 1 ? "" : "s"}…`,
+      "info"
+    );
+
+    try {
+      const result = await onForwardMessage(messageId, targetContactIds);
+      const delivered = Number(result?.deliveredCount || 0);
+      const requested = Number(result?.requestedCount || targetContactIds.length);
+      if (delivered === requested) {
+        onToast(`Forwarded to ${delivered} conversation${delivered === 1 ? "" : "s"}.`, "info");
+      } else if (delivered > 0) {
+        onToast(`Forwarded to ${delivered} of ${requested} conversations. Some sends were blocked or failed.`, "warning");
+      } else {
+        const firstError = result?.results?.find((item) => item.error)?.error;
+        onToast(firstError || "The message could not be forwarded.", "warning");
+      }
+      return result;
+    } catch (err) {
+      onToast(err?.message || "The message could not be forwarded.", "error");
+      throw err;
     }
-    if (delivered > 0) setForwardingMessage(null);
-    return result;
   }
 
   function handleBackToConversations() {
@@ -2286,19 +2300,37 @@ function ThreadView({
       onToast(messagingPolicy.explanation, "warning");
       return;
     }
+
+    const selectedImage = imageFile;
+    const selectedReply = replyingTo;
     setSending(true);
+
     try {
-      if (imageFile) {
-        await onSendImage(imageFile, text, replyingTo?.id || null);
-        if (mountedRef.current) clearImage();
-      } else {
-        await onSend(text, replyingTo?.id || null);
-      }
+      // onSend/onSendImage add their optimistic bubble synchronously before
+      // awaiting the network. Clear the composer immediately after that bubble
+      // exists so staff can keep working instead of staring at a blocked draft.
+      const sendPromise = selectedImage
+        ? onSendImage(selectedImage, text, selectedReply?.id || null)
+        : onSend(text, selectedReply?.id || null);
+
       if (mountedRef.current) {
         setDraft("");
         setReplyingTo(null);
+        if (selectedImage) clearImage();
       }
+
+      await sendPromise;
     } catch {
+      // Restore the draft on a hard request failure. Provider-level delivery
+      // failures still return a saved message and are handled by the bubble.
+      if (mountedRef.current) {
+        setDraft(text);
+        setReplyingTo(selectedReply);
+        if (selectedImage && !imageFile) {
+          setImageFile(selectedImage);
+          setImagePreviewUrl(URL.createObjectURL(selectedImage));
+        }
+      }
     } finally {
       if (mountedRef.current) setSending(false);
     }
