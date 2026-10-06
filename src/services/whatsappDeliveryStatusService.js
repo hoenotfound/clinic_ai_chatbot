@@ -1,6 +1,7 @@
 const messagesRepo = require("../db/messagesRepo");
 const repository = require("../db/whatsappDeliveryStatusRepo");
 const telegramImmediateAlerts = require("./telegramImmediateAlertService");
+const webPush = require("./webPushService");
 const whatsappOutboundRetry = require("./whatsappOutboundRetryService");
 const realtimeEvents = require("../utils/realtimeEvents");
 const { createAdaptiveWorkerTimer } = require("../utils/adaptiveWorkerTimer");
@@ -53,6 +54,7 @@ function createWhatsAppDeliveryStatusService({
   publish = defaultPublish,
   publishContact = defaultPublishContact,
   sendDeliveryFailureAlert = telegramImmediateAlerts.sendDeliveryFailureAlert,
+  sendDeliveryFailurePush = null,
   queueTransientFailureRetry = whatsappOutboundRetry.queueDeliveryFailureRetry,
   logger = console,
 } = {}) {
@@ -83,6 +85,11 @@ function createWhatsAppDeliveryStatusService({
       ).catch((err) => {
         logger.error(`Telegram delivery failure alert failed for contact ${contactId}:`, err);
       });
+      if (typeof sendDeliveryFailurePush === "function") {
+        Promise.resolve(sendDeliveryFailurePush({ contactId })).catch((err) => {
+          logger.error(`Web Push delivery failure alert failed for contact ${contactId}:`, err);
+        });
+      }
     } catch (err) {
       logger.error(`Telegram delivery failure alert failed for contact ${contactId}:`, err);
     }
@@ -310,7 +317,9 @@ function createWhatsAppDeliveryStatusService({
   };
 }
 
-const defaultService = createWhatsAppDeliveryStatusService();
+const defaultService = createWhatsAppDeliveryStatusService({
+  sendDeliveryFailurePush: webPush.notifyDeliveryFailure,
+});
 
 module.exports = {
   BATCH_SIZE,
