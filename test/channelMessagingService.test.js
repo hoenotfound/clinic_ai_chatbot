@@ -73,6 +73,55 @@ test("WhatsApp quoted reply context reaches the provider sender", async (t) => {
   });
 });
 
+test("WhatsApp sticker bytes upload then send as a sticker", async (t) => {
+  const originalUpload = whatsapp.uploadMedia;
+  const originalSendSticker = whatsapp.sendStickerById;
+  t.after(() => {
+    whatsapp.uploadMedia = originalUpload;
+    whatsapp.sendStickerById = originalSendSticker;
+  });
+
+  const calls = [];
+  whatsapp.uploadMedia = async (buffer, mimeType, filename) => {
+    calls.push({
+      kind: "upload",
+      bytes: buffer.toString(),
+      mimeType,
+      filename,
+    });
+    return "wa-sticker-media";
+  };
+  whatsapp.sendStickerById = async (to, mediaId, options) => {
+    calls.push({ kind: "send", to, mediaId, options });
+    return { success: true, wamid: "wamid-sticker-forward" };
+  };
+
+  const result = await messaging.sendStickerBuffer(
+    { id: 13, channel: "whatsapp", whatsapp_number: "60123456789" },
+    Buffer.from("sticker-data"),
+    "image/webp",
+    "sticker.webp",
+    { preSendCheck: () => true }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.wamid, "wamid-sticker-forward");
+  assert.deepEqual(calls, [
+    {
+      kind: "upload",
+      bytes: "sticker-data",
+      mimeType: "image/webp",
+      filename: "sticker.webp",
+    },
+    {
+      kind: "send",
+      to: "60123456789",
+      mediaId: "wa-sticker-media",
+      options: { replyToProviderMessageId: undefined },
+    },
+  ]);
+});
+
 test("WhatsApp policy rejection blocks the lower-level send", async (t) => {
   const originalPolicy = whatsappPolicy.checkFreeformAllowed;
   const originalWhatsappSend = whatsapp.sendMessage;
