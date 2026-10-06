@@ -161,6 +161,7 @@ test("general interest, uncertainty, cancellation, and silence remain Warm", () 
     "我不要这个套餐，但我想了解另一个。",
     "If I decide next month, can I book online?",
     "If I want to book later, how do I do it?",
+    "我来了解一下。",
     "Just asking how booking works.",
     "Kalau saya nanti nak book, boleh buat online?",
     "如果我之后想预约，可以线上预约吗？",
@@ -196,18 +197,24 @@ test("reviewer recovers Cold leads to Warm on renewed interest and cools Hot lea
   assert.equal(renewed.classification.warmStrength, "interest");
   assert.equal(applied[0].currentTemperature, "cold");
 
+  activeLead = { id: 20, temperature: "cold", is_closed: false };
+  const promoRenewed = await reviewer(21, 2012, "Any promo now?");
+  assert.equal(promoRenewed.status, "updated");
+  assert.equal(promoRenewed.lead.temperature, "warm");
+  assert.equal(promoRenewed.classification.matchedRule, "renewed_interest");
+
   activeLead = { id: 21, temperature: "hot", is_closed: false };
   const cooled = await reviewer(22, 202, "RM388 is a bit expensive, let me think first.");
   assert.equal(cooled.status, "updated");
   assert.equal(cooled.lead.temperature, "warm");
   assert.equal(cooled.classification.matchedRule, "explicit_hesitation");
   assert.equal(cooled.classification.warmStrength, "cooling");
-  assert.equal(applied[1].currentTemperature, "hot");
+  assert.equal(applied[2].currentTemperature, "hot");
 
   activeLead = { id: 22, temperature: "hot", is_closed: false };
   const paymentQuestion = await reviewer(23, 203, "Do I need to pay a deposit?");
   assert.equal(paymentQuestion.status, "unchanged");
-  assert.equal(applied.length, 2);
+  assert.equal(applied.length, 3);
 });
 
 test("distance and different-state location stay Warm unless the customer withdraws", () => {
