@@ -365,7 +365,7 @@ test("durable temporary-media sweep batches stale R2 deletes", async (t) => {
   process.env.R2_BUCKET_NAME = "private-media";
 
   const oldDate = new Date("2026-10-01T00:00:00.000Z");
-  const recentDate = new Date("2026-10-06T00:00:00.000Z");
+  const recentDate = new Date("2026-10-07T06:00:00.000Z");
   const calls = [];
   S3Client.prototype.send = async function send(command) {
     calls.push(command);
