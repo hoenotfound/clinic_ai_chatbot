@@ -463,6 +463,8 @@ async function markPurgeJobCompleted({
          completed_at = now(),
          lease_token = NULL,
          claimed_at = NULL,
+         media_keys = '[]'::jsonb,
+         media_prefixes = '[]'::jsonb,
          last_error = NULL,
          updated_at = now()
      WHERE id = $1
