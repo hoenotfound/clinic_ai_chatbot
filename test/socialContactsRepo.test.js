@@ -61,6 +61,8 @@ test("hydrates a Facebook contact profile and never exposes its internal key as 
     if (queryCount === 1) {
       assert.match(sql, /FROM contacts c/);
       assert.match(sql, /LEFT JOIN LATERAL/);
+      assert.match(sql, /current_lead\.temperature AS lead_temperature/);
+      assert.match(sql, /SELECT l\.id, l\.owner_username, l\.temperature/);
       assert.match(sql, /AS latest_inbound_at/);
       return {
         rows: [
