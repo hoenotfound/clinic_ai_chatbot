@@ -67,7 +67,10 @@ export const api = {
   sendMessage: (contactId, text, replyToMessageId = null) =>
     request(`/conversations/${contactId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ text, replyToMessageId }),
+      body: JSON.stringify({
+        text,
+        ...(replyToMessageId != null ? { replyToMessageId } : {}),
+      }),
     }),
   listWhatsAppTemplates: (contactId, { force = false } = {}) =>
     request(
