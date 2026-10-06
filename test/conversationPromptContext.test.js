@@ -174,6 +174,155 @@ test("short price question inherits the most recent established treatment", () =
   });
 });
 
+test("real Neutro price phrasing restores promotion context", () => {
+  withConfig(scopedConfig(), () => {
+    for (const phrase of ["How much", "费用多少", "一次疗程是几多", "这288是吗"]) {
+      const context = buildConversationPromptContext([
+        { role: "user", content: "你好！我想了解你们骨盆的疗程" },
+        { role: "assistant", content: "骨盆调理可以先做1对1评估。" },
+        { role: "user", content: phrase },
+      ]);
+
+      assert.deepEqual(context.relevantServiceNames, ["骨盆调理"], phrase);
+      assert.equal(context.promotionIntent, true, phrase);
+    }
+  });
+});
+
+test("real Neutro location phrasing restores full branch details", () => {
+  withConfig(scopedConfig(), () => {
+    for (const phrase of ["店在哪里", "你们的店在哪儿？", "Where is the place"]) {
+      const context = buildConversationPromptContext([
+        { role: "user", content: "你好！我想了解你们骨盆的疗程" },
+        { role: "assistant", content: "可以呀～" },
+        { role: "user", content: phrase },
+      ]);
+      assert.equal(context.schedulingIntent, true, phrase);
+
+      const prompt = buildSystemPrompt({
+        channel: "whatsapp",
+        conversationContext: context,
+      });
+      assert.match(prompt, /PJ_ADDRESS_SENTINEL/, phrase);
+    }
+  });
+});
+
+test("recent assistant can anchor an unambiguous service after an ambiguous customer topic shift", () => {
+  const base = scopedConfig();
+  withConfig({
+    ...base,
+    services: [
+      ...base.services,
+      {
+        name: "徒手体态调理",
+        description: "MANUAL_POSTURE_DETAILS",
+        priceRange: "",
+        duration: "",
+      },
+    ],
+    serviceAliases: [
+      ...base.serviceAliases,
+      { alias: "徒手调理", officialService: "徒手体态调理" },
+    ],
+  }, () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "你好！我想了解你们骨盆的疗程" },
+      { role: "assistant", content: "骨盆调理主要看骨盆和整体体态。" },
+      { role: "user", content: "你看见你的宣传有调整身体" },
+      { role: "assistant", content: "有的呀～我们的徒手体态调理主要是用手法看整体平衡。" },
+      { role: "user", content: "颈不舒服咯" },
+    ]);
+
+    assert.deepEqual(context.relevantServiceNames, ["徒手体态调理"]);
+    assert.equal(context.serviceSource, "recent_assistant");
+  });
+});
+
+test("assessment wording never replaces the actual treatment anchor", () => {
+  const base = scopedConfig();
+  withConfig({
+    ...base,
+    services: [
+      {
+        name: "1对1体态评估",
+        description: "ASSESSMENT_DETAILS",
+        priceRange: "",
+        duration: "",
+      },
+      ...base.services,
+    ],
+    serviceAliases: [
+      { alias: "体态评估", officialService: "1对1体态评估" },
+      ...base.serviceAliases,
+    ],
+  }, () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "你好！我想了解你们骨盆的疗程" },
+      { role: "assistant", content: "可以呀～" },
+      { role: "user", content: "评估需要多久？" },
+      { role: "assistant", content: "整个1对1体态评估+体验大约需要1小时左右。" },
+      { role: "user", content: "也想了解一下价钱" },
+    ]);
+
+    assert.deepEqual(context.relevantServiceNames, ["骨盆调理"]);
+    assert.equal(context.serviceSource, "recent_customer");
+    assert.equal(context.promotionIntent, true);
+  });
+});
+
+test("assistant suggestion cannot override a service explicitly chosen by the customer", () => {
+  withConfig(scopedConfig(), () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "9D是针对什么的呢" },
+      { role: "assistant", content: "如果主要看脸型轮廓，也可以另外了解3D小颜术。" },
+      { role: "user", content: "多少钱" },
+    ]);
+
+    assert.deepEqual(context.relevantServiceNames, ["9D 逆龄抗衰"]);
+    assert.equal(context.serviceSource, "recent_customer");
+  });
+});
+
+test("compact alphanumeric service codes are inferred from a unique configured service name", () => {
+  const base = scopedConfig();
+  withConfig({
+    ...base,
+    services: [
+      base.services[0],
+      base.services[1],
+      {
+        name: "3D + 9D 组合",
+        description: "COMBO_DETAILS",
+        priceRange: "",
+        duration: "",
+      },
+    ],
+    serviceAliases: [
+      { alias: "小颜术", officialService: "3D 小颜术" },
+      { alias: "9D逆龄", officialService: "9D 逆龄抗衰" },
+      { alias: "3D+9D", officialService: "3D + 9D 组合" },
+    ],
+  }, () => {
+    const single = buildConversationPromptContext([
+      { role: "user", content: "price for 3D xiao yan shu?" },
+    ]);
+    assert.deepEqual(single.relevantServiceNames, ["3D 小颜术"]);
+
+    const comparison = buildConversationPromptContext([
+      { role: "user", content: "3D跟9D有什么不同？" },
+    ]);
+    assert.deepEqual(
+      comparison.relevantServiceNames,
+      ["3D 小颜术", "9D 逆龄抗衰"]
+    );
+    assert.doesNotMatch(
+      comparison.relevantServiceNames.join("|"),
+      /3D \+ 9D 组合/
+    );
+  });
+});
+
 test("two-service comparison preserves exactly the two services in the current message", () => {
   withConfig(scopedConfig(), () => {
     const context = buildConversationPromptContext([
