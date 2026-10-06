@@ -597,7 +597,7 @@ async function getMessageForReplyContext(contactId, messageId) {
     `SELECT id, contact_id, role, content, whatsapp_message_id,
             sent_by_username, media_url,
             (media_key IS NOT NULL) AS has_media_attachment,
-            media_mime_type, created_at
+            media_mime_type, created_at, delivery_status
      FROM messages
      WHERE id = $1 AND contact_id = $2
      LIMIT 1`,
