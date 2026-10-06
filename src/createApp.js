@@ -23,6 +23,11 @@ const {
   createWebhookJsonParser,
   payloadTooLargeErrorHandler,
 } = require("./middleware/requestBodyLimits");
+const {
+  applyPortalSecurityHeaders,
+  buildPortalSessionOptions,
+  enforcePortalRequestOrigin,
+} = require("./middleware/portalSecurity");
 const { requireAuth } = require("./middleware/requireAuth");
 const { resolveTrustProxy } = require("./utils/proxyTrust");
 const { verifyTokenMatches } = require("./utils/webhookVerification");
@@ -59,11 +64,13 @@ function createApp({
   }
 
   const app = express();
+  app.disable("x-powered-by");
 
   // Trust only the known proxy hop count. On Render this defaults to one hop,
   // which keeps req.protocol/req.ip correct without trusting arbitrary
   // leftmost X-Forwarded-For values supplied by clients.
   app.set("trust proxy", resolveTrustProxy(process.env));
+  app.use(applyPortalSecurityHeaders);
 
   // Webhooks need the raw body in the verify hook so Meta signatures are
   // validated against the exact bytes received.
@@ -72,9 +79,11 @@ function createApp({
   const portalJsonParser = createPortalJsonParser();
   const advancedConfigJsonParser = createAdvancedConfigJsonParser();
 
-  // Portal API: normal JSON parsing + signed session cookie for staff login.
+  // Portal API: reject browser cross-origin mutations before parsing bodies,
+  // then apply normal JSON parsing + signed session cookies for staff login.
   // Advanced Config alone gets a larger body budget because detailed service,
   // FAQ and AI instruction JSON can legitimately exceed the normal portal cap.
+  app.use("/api", enforcePortalRequestOrigin);
   app.use("/api", (req, res, next) => {
     const parser = req.path === "/advanced-config" || req.path.startsWith("/advanced-config/")
       ? advancedConfigJsonParser
@@ -83,13 +92,7 @@ function createApp({
   });
   app.use(
     "/api",
-    cookieSession({
-      name: "session",
-      secret: sessionSecret,
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-      httpOnly: true,
-      sameSite: "lax",
-    })
+    cookieSession(buildPortalSessionOptions(sessionSecret, process.env))
   );
 
   // Keep "/" as the Render-compatible readiness check for existing deployments.

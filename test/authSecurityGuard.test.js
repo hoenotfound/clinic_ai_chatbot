@@ -7,12 +7,14 @@ function source(relativePath) {
   return fs.readFileSync(path.join(__dirname, "..", relativePath), "utf8");
 }
 
-test("auth route awaits persistent failure recording and replaces pre-auth session state", () => {
+test("auth route awaits persistent failure recording and global session security stays enforced", () => {
   const auth = source("src/routes/auth.js");
+  const portalSecurity = source("src/middleware/portalSecurity.js");
   assert.match(auth, /await recordFailedAttempt\(req\)/);
   assert.match(auth, /await verifyLoginCredentials\(user, password\)/);
   assert.match(auth, /req\.session = \{[\s\S]*userId:[\s\S]*username:[\s\S]*authVersion:/);
-  assert.match(auth, /req\.sessionOptions\.secure = true/);
+  assert.match(portalSecurity, /secure:\s*env\.NODE_ENV === "production"/);
+  assert.doesNotMatch(auth, /req\.sessionOptions\.secure\s*=/);
   assert.match(auth, /Cache-Control", "no-store"/);
 });
 

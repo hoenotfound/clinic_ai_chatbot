@@ -22,7 +22,9 @@ test("application composition preserves security and readiness middleware orderi
   const portalParserAt = appSource.indexOf("const portalJsonParser = createPortalJsonParser()");
   const advancedParserAt = appSource.indexOf("const advancedConfigJsonParser = createAdvancedConfigJsonParser()");
   const parserMuxAt = appSource.indexOf('app.use("/api", (req, res, next) => {');
-  const sessionAt = appSource.indexOf('cookieSession({');
+  const securityHeadersAt = appSource.indexOf("app.use(applyPortalSecurityHeaders)");
+  const originGuardAt = appSource.indexOf('app.use("/api", enforcePortalRequestOrigin)');
+  const sessionAt = appSource.indexOf("cookieSession(buildPortalSessionOptions(");
   const rootHealthAt = appSource.indexOf('app.get("/", startupReadiness.rootReadinessHandler)');
   const readinessGateAt = appSource.indexOf("app.use(startupReadiness.requireReady)");
   const whatsappAt = appSource.indexOf('app.get("/webhook"');
@@ -41,6 +43,9 @@ test("application composition preserves security and readiness middleware orderi
     appSource.includes('req.path === "/advanced-config" || req.path.startsWith("/advanced-config/")'),
     "only Advanced Config should select the larger JSON parser"
   );
+  assert.ok(securityHeadersAt >= 0, "portal security headers should be installed");
+  assert.ok(originGuardAt > securityHeadersAt, "API origin guard should run after global security headers");
+  assert.ok(originGuardAt < parserMuxAt, "API origin guard should run before body parsing");
   assert.ok(sessionAt > parserMuxAt, "session middleware should stay after portal parsing");
   assert.ok(rootHealthAt > sessionAt, "health routes should remain after API session setup");
   assert.ok(readinessGateAt > rootHealthAt, "readiness must gate non-health traffic");
