@@ -36,14 +36,14 @@ const SCHEDULED_MESSAGE_COLUMNS_WITH_ALIAS = `
 
 async function getLatestInboundAt(contactId) {
   const result = await pool.query(
-    `SELECT created_at
+    `SELECT COALESCE(source_created_at, created_at) AS inbound_at
      FROM messages
      WHERE contact_id = $1 AND role = 'user'
-     ORDER BY created_at DESC, id DESC
+     ORDER BY COALESCE(source_created_at, created_at) DESC, id DESC
      LIMIT 1`,
     [contactId]
   );
-  return result.rows[0]?.created_at || null;
+  return result.rows[0]?.inbound_at || null;
 }
 
 async function listForContact(contactId) {
