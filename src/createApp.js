@@ -42,6 +42,7 @@ const setupStatusRoutes = require("./routes/setupStatus");
 const whatsappCoexistenceOnboardingRoutes = require("./routes/whatsappCoexistenceOnboarding");
 const goLiveRoutes = require("./routes/goLive");
 const opsReadinessRoutes = require("./routes/opsReadiness");
+const webPushRoutes = require("./routes/webPush");
 const startupReadiness = require("./services/startupReadinessService");
 
 function createApp({
@@ -324,6 +325,7 @@ function createApp({
     whatsappCoexistenceOnboardingRoutes
   );
   app.use("/api/go-live", requireAuth, goLiveRoutes);
+  app.use("/api/web-push", requireAuth, webPushRoutes);
 
   // Keep oversized JSON failures predictable for Meta retries and portal callers.
   app.use(payloadTooLargeErrorHandler);
