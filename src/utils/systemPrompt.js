@@ -220,6 +220,12 @@ function conversationPromotionsList(conversationContext) {
     return !linked || selectedKeys.has(linked);
   });
   if (!relevant.length) return "- None currently configured for the relevant service.";
+  if (conversationContext?.promotionIntent !== true) {
+    return [
+      "- Relevant active promotion summaries are included below; detailed package/caption copy is omitted until the customer asks about price, packages, offers, or promotions.",
+      ...relevant.map(renderCompactPromotion),
+    ].join("\n");
+  }
   return relevant.map((promotion) => {
     const dates = [
       promotion.validFrom ? `from ${promotion.validFrom}` : null,
