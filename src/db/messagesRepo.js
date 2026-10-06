@@ -126,7 +126,13 @@ async function saveMessage(
   mediaMimeType = null,
   options = {}
 ) {
-  const mediaKey = await persistMediaIfPresent(mediaBase64, mediaMimeType, contactId);
+  const providedMediaKey = String(options?.mediaKey || "").trim() || null;
+  if (providedMediaKey && mediaBase64) {
+    throw new TypeError("Provide media bytes or an existing media key, not both.");
+  }
+  const mediaKey =
+    providedMediaKey ||
+    (await persistMediaIfPresent(mediaBase64, mediaMimeType, contactId));
   const whatsappTemplate = options?.whatsappTemplate || null;
   const initialDeliveryStatus = options?.initialDeliveryStatus || null;
   const initialDeliveryError = options?.initialDeliveryError || null;
@@ -562,6 +568,44 @@ async function getMessageMediaForContact(contactId, messageId) {
   const row = await getMessageMediaReferenceForContact(contactId, messageId);
   if (!row) return null;
   return resolveMediaBase64(row.media_key, row.media_mime_type);
+}
+
+async function setMessageMediaKeyById(
+  messageId,
+  contactId,
+  mediaKey,
+  mediaMimeType
+) {
+  const normalizedKey = String(mediaKey || "").trim();
+  if (!normalizedKey) throw new TypeError("mediaKey is required.");
+
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $2::integer)
+     )
+     UPDATE messages
+     SET media_key = $3, media_mime_type = $4
+     FROM conversation_lock
+     WHERE id = $1 AND contact_id = $2
+     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
+    [messageId, contactId, normalizedKey, mediaMimeType || null]
+  );
+  return result.rows[0] || null;
+}
+
+async function getMessageForForward(contactId, messageId) {
+  const result = await pool.query(
+    `SELECT m.id, m.contact_id, m.role, m.content, m.whatsapp_message_id,
+            m.sent_by_username, m.media_url, m.media_key, m.media_mime_type,
+            m.created_at, m.delivery_status, m.delivery_error,
+            m.is_automated_follow_up, m.whatsapp_template,
+            m.reply_to_provider_message_id, m.is_forwarded
+     FROM messages m
+     WHERE m.id = $1 AND m.contact_id = $2
+     LIMIT 1`,
+    [messageId, contactId]
+  );
+  return result.rows[0] || null;
 }
 
 // Retry needs the original stored attachment bytes. This is deliberately a
@@ -1558,6 +1602,8 @@ module.exports = {
   getMessagePageForContact,
   getMessageMediaReferenceForContact,
   getMessageMediaForContact,
+  setMessageMediaKeyById,
+  getMessageForForward,
   getMessageForRetry,
   getMessageForReplyContext,
   getMessageByProviderIdForContact,
