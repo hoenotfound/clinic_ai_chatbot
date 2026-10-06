@@ -196,6 +196,17 @@ function conversationAliasList(conversationContext) {
     : "- No alternate terms configured for the currently relevant service.";
 }
 
+function compactPromotionKnowledgeText(value, maxLength = 1_400) {
+  const text = String(value || "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return promptContextText(text, maxLength) || "";
+}
+
 function renderCompactPromotion(promotion) {
   const dates = [
     promotion.validFrom ? `from ${promotion.validFrom}` : null,
@@ -210,6 +221,64 @@ function renderCompactPromotion(promotion) {
   return `- ${promptContextText(promotion.name, 240) || "Active promotion"}${linkedService}${autoSend}${dates ? ` | ${dates}` : ""}`;
 }
 
+function promotionKnowledgeLines(promotion) {
+  const packages = Array.isArray(promotion?.packages)
+    ? promotion.packages.filter((item) => item && typeof item === "object")
+    : [];
+
+  if (packages.length) {
+    return [
+      renderCompactPromotion(promotion),
+      "  package options:",
+      ...packages.map((item) => {
+        const aliases = (Array.isArray(item.aliases) ? item.aliases : [])
+          .map((alias) => promptContextText(alias, 120))
+          .filter(Boolean)
+          .slice(0, 12);
+        const parts = [
+          promptContextText(item.name, 160) || "Unnamed package",
+          promptContextText(item.title, 260)
+            ? `title: ${promptContextText(item.title, 260)}`
+            : null,
+          aliases.length ? `aliases: ${aliases.join(", ")}` : null,
+        ].filter(Boolean);
+
+        const details = compactPromotionKnowledgeText(item.caption, 1_600);
+        const followUp = compactPromotionKnowledgeText(item.followUpMessage, 700);
+        return [
+          `  - ${parts.join(" | ")}`,
+          details ? `    offer details: ${details}` : null,
+          followUp && !details.includes(followUp)
+            ? `    follow-up terms: ${followUp}`
+            : null,
+        ].filter(Boolean).join("\n");
+      }),
+    ];
+  }
+
+  const caption = compactPromotionKnowledgeText(promotion?.caption, 1_400);
+  const followUp = compactPromotionKnowledgeText(promotion?.followUpMessage, 1_000);
+  const lines = [renderCompactPromotion(promotion)];
+
+  // The follow-up text normally contains the concise commercial terms
+  // (promo price, gift, duration, inclusions). Prefer it over a long ad-style
+  // caption so the model knows the offer without repeatedly ingesting claims
+  // and decorative marketing copy. Short captions can still contain essential
+  // facts such as a combo price, so preserve those too.
+  if (followUp) {
+    lines.push(`  commercial terms: ${followUp}`);
+  }
+  if (caption && (!followUp || caption.length <= 500)) {
+    lines.push(`  offer details: ${caption}`);
+  }
+  if (caption && followUp && caption.length > 500) {
+    lines.push(
+      "  exact long-form promotional caption is handled by the promotion media system; use SERVICES for treatment/mechanism claims and the commercial terms above for the offer."
+    );
+  }
+  return lines;
+}
+
 function conversationPromotionsList(conversationContext) {
   const active = getActivePromotions(config.promotions || []);
   if (!active.length) return "- None currently configured as active.";
@@ -217,7 +286,10 @@ function conversationPromotionsList(conversationContext) {
   const selected = conversationSelectedServices(conversationContext);
   if (!selected.length) {
     if (conversationContext?.promotionIntent === true) {
-      return activePromotionsList();
+      return active
+        .slice(0, 20)
+        .flatMap((promotion) => promotionKnowledgeLines(promotion))
+        .join("\n");
     }
     return [
       "- Detailed promotion/package copy is omitted until a relevant service or promotion enquiry is established.",
@@ -231,40 +303,17 @@ function conversationPromotionsList(conversationContext) {
     return !linked || selectedKeys.has(linked);
   });
   if (!relevant.length) return "- None currently configured for the relevant service.";
+
   if (conversationContext?.promotionIntent !== true) {
     return [
       "- Relevant active promotion summaries are included below; detailed package/caption copy is omitted until the customer asks about price, packages, offers, or promotions.",
       ...relevant.map(renderCompactPromotion),
     ].join("\n");
   }
-  return relevant.map((promotion) => {
-    const dates = [
-      promotion.validFrom ? `from ${promotion.validFrom}` : null,
-      promotion.validUntil ? `until ${promotion.validUntil}` : null,
-    ].filter(Boolean).join(" ");
-    const linkedService = promotion.linkedService ? ` | service: ${promotion.linkedService}` : "";
-    const autoSend = promotion.sendOnPriceQuery === true
-      ? " | auto-send on price/package enquiry: yes"
-      : " | auto-send on price/package enquiry: no";
-    const packages = Array.isArray(promotion.packages)
-      ? promotion.packages.filter((item) => item && typeof item === "object")
-      : [];
-    if (!packages.length) {
-      return `- ${promotion.name}: ${promotion.caption || "No additional caption configured."}${linkedService}${autoSend}${dates ? ` | ${dates}` : ""}`;
-    }
-    const packageLines = packages.map((item) => {
-      const aliases = Array.isArray(item.aliases)
-        ? item.aliases.map((alias) => String(alias || "").trim()).filter(Boolean)
-        : [];
-      const parts = [
-        item.title ? `title: ${item.title}` : null,
-        aliases.length ? `aliases: ${aliases.join(", ")}` : null,
-        item.caption ? `caption: ${item.caption}` : null,
-      ].filter(Boolean).join(" | ");
-      return `  - ${item.name || "Unnamed package"}${parts ? ` | ${parts}` : ""}`;
-    }).join("\n");
-    return `- ${promotion.name}${linkedService}${autoSend}${dates ? ` | ${dates}` : ""}\n  package options:\n${packageLines}`;
-  }).join("\n");
+
+  return relevant
+    .flatMap((promotion) => promotionKnowledgeLines(promotion))
+    .join("\n");
 }
 
 function blockLeadingServiceNames(block) {
