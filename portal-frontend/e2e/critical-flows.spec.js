@@ -690,7 +690,7 @@ test("mobile swipe right starts a quoted reply", async ({ page }, testInfo) => {
   const actionsButton = page.getByRole("button", { name: "Message actions" }).first();
   const bubble = actionsButton.locator("xpath=../..");
   await bubble.evaluate((element) => {
-    const touch = (x, y) => new Touch({
+    const point = (x, y) => ({
       identifier: 1,
       target: element,
       clientX: x,
@@ -699,32 +699,18 @@ test("mobile swipe right starts a quoted reply", async ({ page }, testInfo) => {
       screenY: y,
       pageX: x,
       pageY: y,
-      radiusX: 2,
-      radiusY: 2,
-      rotationAngle: 0,
-      force: 0.5,
     });
-    element.dispatchEvent(new TouchEvent("touchstart", {
-      bubbles: true,
-      cancelable: true,
-      touches: [touch(40, 160)],
-      targetTouches: [touch(40, 160)],
-      changedTouches: [touch(40, 160)],
-    }));
-    element.dispatchEvent(new TouchEvent("touchmove", {
-      bubbles: true,
-      cancelable: true,
-      touches: [touch(120, 162)],
-      targetTouches: [touch(120, 162)],
-      changedTouches: [touch(120, 162)],
-    }));
-    element.dispatchEvent(new TouchEvent("touchend", {
-      bubbles: true,
-      cancelable: true,
-      touches: [],
-      targetTouches: [],
-      changedTouches: [touch(120, 162)],
-    }));
+    const dispatchTouch = (type, touches, changedTouches = touches) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", { value: touches });
+      Object.defineProperty(event, "targetTouches", { value: touches });
+      Object.defineProperty(event, "changedTouches", { value: changedTouches });
+      element.dispatchEvent(event);
+    };
+
+    dispatchTouch("touchstart", [point(40, 160)]);
+    dispatchTouch("touchmove", [point(120, 162)]);
+    dispatchTouch("touchend", [], [point(120, 162)]);
   });
 
   await expect(page.getByText(/Replying to/i)).toBeVisible();
