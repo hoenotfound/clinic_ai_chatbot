@@ -1455,7 +1455,10 @@ async function forwardStoredMessage(sourceMessage, targetContact, username) {
           null,
           username,
           sourceMessage.media_url || null,
-          fallbackMediaAttachment,
+          fallbackMediaAttachment ||
+            (targetMediaKey
+              ? { mimeType: sourceMessage.media_mime_type }
+              : null),
           {
             isForwarded: true,
             mediaKey: targetMediaKey,
