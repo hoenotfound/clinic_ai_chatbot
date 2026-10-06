@@ -17,6 +17,7 @@ const {
   CopyObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   ListObjectsV2Command,
 } = require("@aws-sdk/client-s3");
 
@@ -402,20 +403,43 @@ async function pruneStaleTemporaryMedia({
   if (!isolation.prefix) return 0;
 
   const prefix = temporaryMediaPrefix(env);
+  const bucket = getBucketName();
   let continuationToken = undefined;
   let deleted = 0;
 
   do {
     const page = await getClient().send(new ListObjectsV2Command({
-      Bucket: getBucketName(),
+      Bucket: bucket,
       Prefix: prefix,
       ContinuationToken: continuationToken,
     }));
 
-    for (const object of page.Contents || []) {
-      if (!isStaleTemporaryObject(object, { now, olderThanMs })) continue;
-      await deleteMedia(object.Key);
-      deleted += 1;
+    const staleKeys = (page.Contents || [])
+      .filter((object) => isStaleTemporaryObject(object, { now, olderThanMs }))
+      .map((object) => object.Key)
+      .filter(Boolean);
+
+    // R2 implements S3 DeleteObjects. Batch cleanup avoids hundreds of
+    // sequential delete requests competing with live customer media traffic.
+    for (let offset = 0; offset < staleKeys.length; offset += 500) {
+      const batch = staleKeys.slice(offset, offset + 500);
+      const result = await getClient().send(new DeleteObjectsCommand({
+        Bucket: bucket,
+        Delete: {
+          Objects: batch.map((Key) => ({ Key })),
+          Quiet: true,
+        },
+      }));
+      const failedKeys = new Set(
+        (result.Errors || []).map((item) => item?.Key).filter(Boolean)
+      );
+      deleted += batch.filter((key) => !failedKeys.has(key)).length;
+
+      if (failedKeys.size) {
+        console.warn(
+          `R2 temporary-media batch cleanup failed for ${failedKeys.size} object(s).`
+        );
+      }
     }
 
     continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
