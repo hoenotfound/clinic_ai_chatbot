@@ -25,13 +25,16 @@ database purge still remains committed and the cleanup job retries with
 backoff. Completed purge jobs are retained for 30 days as a minimal operational
 audit and then pruned.
 
-The purge also retains only opaque provider message IDs, standalone Meta
-referral-event IDs, and Meta comment IDs for 30 days. These are replay
-tombstones: if Meta retries an exact deleted message, staff echo, referral
-event, or comment after its normal dedupe row is gone, the retry is ignored
-before customer-linked data can be recreated. Standalone referral IDs are
-SHA-256 event fingerprints and do not contain the raw PSID/IGSID. A genuinely
-new provider event ID is not blocked and may start a fresh customer journey
+The purge also retains only opaque provider message IDs, WhatsApp reaction
+event IDs, standalone Meta referral-event IDs, and Meta comment IDs for 30 days.
+These are replay tombstones: if Meta retries an exact deleted message, staff
+echo, reaction, referral event, or comment after its normal dedupe row is gone,
+the retry is ignored before customer-linked data can be recreated. A reaction
+targeting a deleted customer message is also ignored, even if the reaction
+event itself is new, so the pending-reaction queue cannot reintroduce the
+customer's WhatsApp ID. Standalone referral IDs are SHA-256 event fingerprints
+and do not contain the raw PSID/IGSID. A genuinely new provider event unrelated
+to deleted customer data is not blocked and may start a fresh customer journey
 normally.
 
 Migration `042_customer_data_referral_replay_guard.sql` adds the pending
