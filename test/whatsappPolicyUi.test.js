@@ -213,6 +213,9 @@ test("Inbox WhatsApp reply and image routes fail closed on invalid provider medi
   assert.match(imageRoute, /WHATSAPP_IMAGE_MAX_BYTES/);
   assert.match(imageRoute, /unsupported_whatsapp_image_type/);
   assert.match(imageRoute, /whatsapp_image_too_large/);
+  assert.match(imageRoute, /getMessageMediaReferenceForContact/);
+  assert.match(imageRoute, /createPresignedGetUrl/);
+  assert.match(imageRoute, /channelMessaging\.sendImageByUrl/);
   assert.match(replyHelper, /target\.role !== "user"/);
   assert.match(replyHelper, /\["failed", "unknown"\]\.includes\(targetDeliveryStatus\)/);
 });
