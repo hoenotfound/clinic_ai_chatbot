@@ -51,6 +51,10 @@ test("lead score prompt protects sales definitions and summary grounding", () =>
   assert.match(prompt, /Living in another city\/state, being far away.*never cold by itself/);
   assert.match(prompt, /price objection.*warm unless the customer clearly says they will not proceed/);
   assert.match(prompt, /Questions such as "do I need to pay a deposit\?"/);
+  assert.match(prompt, /hypothetical future question.*warm, not hot/);
+  assert.match(prompt, /previously cold lead.*recover to warm/);
+  assert.match(prompt, /previously hot lead.*cool to warm/);
+  assert.match(prompt, /Concrete arrival intent.*hot/);
   assert.match(prompt, /High confidence requires at least one customer evidence message ID/);
   assert.match(prompt, /Evidence IDs must refer only to customer messages/);
   assert.match(prompt, /Summarize only facts actually present in the conversation/);
