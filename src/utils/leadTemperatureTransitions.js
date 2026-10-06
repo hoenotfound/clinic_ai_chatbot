@@ -12,7 +12,7 @@ function isAllowedRuleTemperatureTransition(currentTemperature, classification) 
       classification.temperature === "hot" ||
       (
         classification.temperature === "warm" &&
-        classification.warmStrength === "interest"
+        ["interest", "cooling_interest"].includes(classification.warmStrength)
       )
     );
   }
@@ -26,7 +26,7 @@ function isAllowedRuleTemperatureTransition(currentTemperature, classification) 
     }
     return (
       classification.temperature === "warm" &&
-      classification.warmStrength === "cooling"
+      ["cooling", "cooling_interest"].includes(classification.warmStrength)
     );
   }
 
