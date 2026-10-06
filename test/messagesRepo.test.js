@@ -62,6 +62,46 @@ test("outbound message writes take the conversation scoring lock", async (t) => 
   assert.equal(saved.id, 42);
 });
 
+test("stores quoted-reply and forwarded metadata atomically", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /reply_to_provider_message_id, is_forwarded/);
+    assert.equal(params[8], "wamid.quoted-original");
+    assert.equal(params[9], true);
+    return {
+      rows: [{
+        id: 45,
+        contact_id: 7,
+        content: "Forwarded reply",
+        reply_to_provider_message_id: params[8],
+        is_forwarded: params[9],
+      }],
+    };
+  };
+
+  const saved = await messagesRepo.saveMessage(
+    7,
+    "assistant",
+    "Forwarded reply",
+    null,
+    "staff",
+    null,
+    null,
+    null,
+    {
+      replyToProviderMessageId: "wamid.quoted-original",
+      isForwarded: true,
+    }
+  );
+
+  assert.equal(saved.reply_to_provider_message_id, "wamid.quoted-original");
+  assert.equal(saved.is_forwarded, true);
+});
+
 test("uploads Buffer attachments to R2 without a base64 round-trip", async (t) => {
   const originalQuery = pool.query;
   const originalUploadMedia = mediaStorage.uploadMedia;
