@@ -148,6 +148,4 @@ export default function WhatsAppMessagingDetails({ contact, className = "" }) {
       )}
     </section>
   );
-
-
 }
