@@ -1,5 +1,6 @@
 const { normalizeWorkspaceId } = require("./anthropicClient");
 const { buildSystemPrompt, normalizeOptions } = require("../utils/systemPrompt");
+const { buildConversationPromptContext } = require("../utils/conversationPromptContext");
 
 const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
@@ -213,6 +214,14 @@ async function getReply(
   const maxTokens = requestControl?.previousFailureCode === "AI_OUTPUT_TRUNCATED"
     ? TRUNCATION_RETRY_MAX_TOKENS
     : DEFAULT_REPLY_MAX_TOKENS;
+  const promptOptions = options.surface === "conversation"
+    ? {
+        ...options,
+        conversationContext: buildConversationPromptContext(messages, {
+          metaAdContext: options.metaAdContext,
+        }),
+      }
+    : options;
 
   const response = await createClaudeMessage({
     apiKey: resolvedKey,
@@ -222,7 +231,7 @@ async function getReply(
     body: {
       model: MODEL,
       max_tokens: maxTokens,
-      system: buildSystemPrompt(options),
+      system: buildSystemPrompt(promptOptions),
       messages: buildClaudeMessages(messages),
       output_config: {
         effort: DEFAULT_REPLY_EFFORT,

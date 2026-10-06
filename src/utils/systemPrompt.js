@@ -12,6 +12,7 @@ function normalizeOptions(optionsOrFirstMessage = false) {
       privateReplyEnabled: true,
       metaAdContext: null,
       followUpContext: null,
+      conversationContext: null,
     };
   }
   return {
@@ -22,6 +23,7 @@ function normalizeOptions(optionsOrFirstMessage = false) {
     privateReplyEnabled: optionsOrFirstMessage?.privateReplyEnabled !== false,
     metaAdContext: optionsOrFirstMessage?.metaAdContext || null,
     followUpContext: optionsOrFirstMessage?.followUpContext || null,
+    conversationContext: optionsOrFirstMessage?.conversationContext || null,
   };
 }
 
@@ -108,6 +110,272 @@ function activePromotionsList() {
       return `- ${promotion.name}${linkedService}${autoSend}${dates ? ` | ${dates}` : ""}\n  package options:\n${packageLines}`;
     })
     .join("\n");
+}
+
+
+function configuredServiceByExactName(value) {
+  const key = followUpLookupKey(value);
+  if (!key) return null;
+  return (config.services || []).find(
+    (service) => followUpLookupKey(service?.name) === key
+  ) || null;
+}
+
+function conversationSelectedServices(conversationContext) {
+  const names = Array.isArray(conversationContext?.relevantServiceNames)
+    ? conversationContext.relevantServiceNames
+    : [];
+  const selected = [];
+  for (const name of names) {
+    const service = configuredServiceByExactName(name);
+    if (!service || selected.some((item) => item.name === service.name)) continue;
+    selected.push(service);
+    if (selected.length >= 2) break;
+  }
+  return selected;
+}
+
+function renderCompactService(service) {
+  const description = promptContextText(service?.description, 240);
+  return `- ${promptContextText(service?.name, 180) || "Unnamed service"}${description ? `: ${description}` : ""}`;
+}
+
+function conversationServicesList(conversationContext, terms) {
+  const selected = conversationSelectedServices(conversationContext);
+  if (selected.length) {
+    return selected
+      .map((service) => {
+        const description = promptContextText(service?.description, 1_600) || "No description configured.";
+        const price = promptContextText(service?.priceRange, 500) || "Not configured";
+        const duration = promptContextText(service?.duration, 300) || "Not configured";
+        return `- ${service.name}: ${description} | Price: ${price} | Duration: ${duration}`;
+      })
+      .join("\n");
+  }
+
+  const configured = Array.isArray(config.services) ? config.services : [];
+  if (!configured.length) {
+    return `No ${terms.servicePlural} are configured yet. Do not invent any; hand off business-specific questions that require missing information.`;
+  }
+  if (conversationContext?.promotionIntent === true) {
+    return [
+      "- No single current service is established. The customer is asking about price/package/promotion information, so full configured service pricing is included for this turn.",
+      ...configured.slice(0, 30).map((service) => {
+        const description = promptContextText(service?.description, 1_200) || "No description configured.";
+        const price = promptContextText(service?.priceRange, 500) || "Not configured";
+        const duration = promptContextText(service?.duration, 300) || "Not configured";
+        return `- ${service.name}: ${description} | Price: ${price} | Duration: ${duration}`;
+      }),
+    ].join("\n");
+  }
+  return [
+    "- No single current service is established yet. Use this compact catalog for discovery; ask a short clarifying question instead of guessing when needed.",
+    ...configured.slice(0, 30).map(renderCompactService),
+  ].join("\n");
+}
+
+function conversationAliasList(conversationContext) {
+  const selected = conversationSelectedServices(conversationContext);
+  if (!selected.length) {
+    return "- Full alias catalog omitted because no single configured service is established. The application has already used configured aliases to select any unambiguous relevant service.";
+  }
+
+  const selectedKeys = new Set(selected.map((service) => followUpLookupKey(service.name)));
+  const aliases = (config.serviceAliases || [])
+    .filter((alias) => selectedKeys.has(followUpLookupKey(alias?.officialService)))
+    .map((alias) => {
+      const aliasText = promptContextText(alias?.alias, 240);
+      const official = promptContextText(alias?.officialService, 240);
+      return aliasText && official ? `- "${aliasText}" → ${official}` : null;
+    })
+    .filter(Boolean)
+    .slice(0, 30);
+
+  return aliases.length
+    ? aliases.join("\n")
+    : "- No alternate terms configured for the currently relevant service.";
+}
+
+function compactPromotionKnowledgeText(value, maxLength = 1_400) {
+  const text = String(value || "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return promptContextText(text, maxLength) || "";
+}
+
+function renderCompactPromotion(promotion) {
+  const dates = [
+    promotion.validFrom ? `from ${promotion.validFrom}` : null,
+    promotion.validUntil ? `until ${promotion.validUntil}` : null,
+  ].filter(Boolean).join(" ");
+  const linkedService = promotion.linkedService
+    ? ` | service: ${promptContextText(promotion.linkedService, 200)}`
+    : "";
+  const autoSend = promotion.sendOnPriceQuery === true
+    ? " | auto-send on price/package enquiry: yes"
+    : " | auto-send on price/package enquiry: no";
+  return `- ${promptContextText(promotion.name, 240) || "Active promotion"}${linkedService}${autoSend}${dates ? ` | ${dates}` : ""}`;
+}
+
+function promotionKnowledgeLines(promotion) {
+  const packages = Array.isArray(promotion?.packages)
+    ? promotion.packages.filter((item) => item && typeof item === "object")
+    : [];
+
+  if (packages.length) {
+    return [
+      renderCompactPromotion(promotion),
+      "  package options:",
+      ...packages.map((item) => {
+        const aliases = (Array.isArray(item.aliases) ? item.aliases : [])
+          .map((alias) => promptContextText(alias, 120))
+          .filter(Boolean)
+          .slice(0, 12);
+        const parts = [
+          promptContextText(item.name, 160) || "Unnamed package",
+          promptContextText(item.title, 260)
+            ? `title: ${promptContextText(item.title, 260)}`
+            : null,
+          aliases.length ? `aliases: ${aliases.join(", ")}` : null,
+        ].filter(Boolean);
+
+        const details = compactPromotionKnowledgeText(item.caption, 2_400);
+        const followUp = compactPromotionKnowledgeText(item.followUpMessage, 900);
+        return [
+          `  - ${parts.join(" | ")}`,
+          details ? `    offer details: ${details}` : null,
+          followUp && !details.includes(followUp)
+            ? `    follow-up terms: ${followUp}`
+            : null,
+        ].filter(Boolean).join("\n");
+      }),
+    ];
+  }
+
+  const followUp = compactPromotionKnowledgeText(promotion?.followUpMessage, 1_200);
+  const caption = compactPromotionKnowledgeText(
+    promotion?.caption,
+    followUp ? 1_400 : 3_000
+  );
+  const lines = [renderCompactPromotion(promotion)];
+
+  // The follow-up text normally contains the concise commercial terms
+  // (promo price, gift, duration, inclusions). Prefer it over a long ad-style
+  // caption so the model knows the offer without repeatedly ingesting claims
+  // and decorative marketing copy. Short captions can still contain essential
+  // facts such as a combo price, so preserve those too.
+  if (followUp) {
+    lines.push(`  commercial terms: ${followUp}`);
+  }
+  if (caption && (!followUp || caption.length <= 500)) {
+    lines.push(`  offer details: ${caption}`);
+  }
+  if (caption && followUp && caption.length > 500) {
+    lines.push(
+      "  exact long-form promotional caption is handled by the promotion media system; use SERVICES for treatment/mechanism claims and the commercial terms above for the offer."
+    );
+  }
+  return lines;
+}
+
+function conversationPromotionsList(conversationContext) {
+  const active = getActivePromotions(config.promotions || []);
+  if (!active.length) return "- None currently configured as active.";
+
+  const selected = conversationSelectedServices(conversationContext);
+  if (!selected.length) {
+    if (conversationContext?.promotionIntent === true) {
+      return active
+        .slice(0, 20)
+        .flatMap((promotion) => promotionKnowledgeLines(promotion))
+        .join("\n");
+    }
+    return [
+      "- Detailed promotion/package copy is omitted until a relevant service or promotion enquiry is established.",
+      ...active.slice(0, 20).map(renderCompactPromotion),
+    ].join("\n");
+  }
+
+  const selectedKeys = new Set(selected.map((service) => followUpLookupKey(service.name)));
+  const relevant = active.filter((promotion) => {
+    const linked = followUpLookupKey(promotion?.linkedService);
+    return !linked || selectedKeys.has(linked);
+  });
+  if (!relevant.length) return "- None currently configured for the relevant service.";
+
+  if (conversationContext?.promotionIntent !== true) {
+    return [
+      "- Relevant active promotion summaries are included below; detailed package/caption copy is omitted until the customer asks about price, packages, offers, or promotions.",
+      ...relevant.map(renderCompactPromotion),
+    ].join("\n");
+  }
+
+  return relevant
+    .flatMap((promotion) => promotionKnowledgeLines(promotion))
+    .join("\n");
+}
+
+function blockLeadingServiceNames(block) {
+  const firstLine = String(block || "").split("\n").find((line) => line.trim()) || "";
+  const heading = firstLine.slice(0, 260);
+  const headingKey = followUpLookupKey(heading, 1_000);
+  if (!headingKey) return [];
+
+  const names = [];
+  for (const service of config.services || []) {
+    const serviceKey = followUpLookupKey(service?.name);
+    if (serviceKey && headingKey.includes(serviceKey)) {
+      names.push(service.name);
+      continue;
+    }
+    const aliases = (config.serviceAliases || [])
+      .filter(
+        (alias) =>
+          followUpLookupKey(alias?.officialService) === serviceKey
+      )
+      .map((alias) => followUpLookupKey(alias?.alias))
+      .filter((aliasKey) => aliasKey && aliasKey.length >= 2);
+    if (aliases.some((aliasKey) => headingKey.includes(aliasKey))) {
+      names.push(service.name);
+    }
+  }
+  return [...new Set(names)];
+}
+
+function filterServiceScopedGuidance(value, conversationContext) {
+  const text = String(value || "").trim();
+  const selected = conversationSelectedServices(conversationContext);
+  if (!text || !selected.length) return text;
+
+  const selectedKeys = new Set(selected.map((service) => followUpLookupKey(service.name)));
+  const blocks = text.split(/\n\s*\n+/).map((block) => block.trim()).filter(Boolean);
+  const kept = blocks.filter((block) => {
+    const headingServices = blockLeadingServiceNames(block);
+    if (!headingServices.length) return true;
+    return headingServices.some((name) => selectedKeys.has(followUpLookupKey(name)));
+  });
+  return kept.join("\n\n");
+}
+
+function conversationLocationsList(conversationContext, terms) {
+  const locations = Array.isArray(config.branches) ? config.branches : [];
+  if (!locations.length) {
+    return `No ${terms.locationPlural} configured. Do not invent a location.`;
+  }
+  const detailed =
+    conversationContext?.schedulingIntent === true ||
+    conversationContext?.contactIntent === true;
+  return locations.map((location) => {
+    const name = promptContextText(location?.name, 180) || "Unnamed location";
+    if (!detailed) return `- ${name}`;
+    const address = promptContextText(location?.address, 500) || "Address not configured";
+    const phone = promptContextText(location?.phone, 180);
+    return `- ${name}: ${address}${phone ? ` | Phone: ${phone}` : ""}`;
+  }).join("\n");
 }
 
 
@@ -751,13 +1019,18 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
   const { isFirstMessage, channel } = normalizedOptions;
   const context = getBusinessContext();
   const { terminology: terms, conversion } = context;
+  const conversationContext = normalizedOptions.conversationContext;
+  const hasScopedConversationContext =
+    conversationContext && typeof conversationContext === "object";
 
-  const servicesList = listOrNone(
-    config.services,
-    (service) =>
-      `- ${service.name}: ${service.description} | Price: ${service.priceRange} | Duration: ${service.duration}`,
-    `No ${terms.servicePlural} are configured yet. Do not invent any; hand off business-specific questions that require missing information.`
-  );
+  const servicesList = hasScopedConversationContext
+    ? conversationServicesList(conversationContext, terms)
+    : listOrNone(
+        config.services,
+        (service) =>
+          `- ${service.name}: ${service.description} | Price: ${service.priceRange} | Duration: ${service.duration}`,
+        `No ${terms.servicePlural} are configured yet. Do not invent any; hand off business-specific questions that require missing information.`
+      );
 
   const faqList = listOrNone(
     config.faqs,
@@ -765,11 +1038,13 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
     "No FAQs configured."
   );
 
-  const aliasList = listOrNone(
-    config.serviceAliases,
-    (alias) => `- "${alias.alias}" → ${alias.officialService}`,
-    "No alternate service terms configured."
-  );
+  const aliasList = hasScopedConversationContext
+    ? conversationAliasList(conversationContext)
+    : listOrNone(
+        config.serviceAliases,
+        (alias) => `- "${alias.alias}" → ${alias.officialService}`,
+        "No alternate service terms configured."
+      );
 
   const guardrailsList = listOrNone(
     config.guardrails,
@@ -777,11 +1052,13 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
     "Do not invent business facts or confirmations."
   );
 
-  const locationsList = listOrNone(
-    config.branches,
-    (location) => `- ${location.name}: ${location.address} | Phone: ${location.phone}`,
-    `No ${terms.locationPlural} configured. Do not invent a location.`
-  );
+  const locationsList = hasScopedConversationContext
+    ? conversationLocationsList(conversationContext, terms)
+    : listOrNone(
+        config.branches,
+        (location) => `- ${location.name}: ${location.address} | Phone: ${location.phone}`,
+        `No ${terms.locationPlural} configured. Do not invent a location.`
+      );
 
   const serviceAreasList = listOrNone(
     config.serviceAreas,
@@ -797,6 +1074,30 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
 
   const contact = config.contact || {};
   const hours = config.hours || {};
+  const includeSchedulingDetails =
+    !hasScopedConversationContext || conversationContext.schedulingIntent === true;
+  const includeContactDetails =
+    !hasScopedConversationContext || conversationContext.contactIntent === true;
+  const promotionsList = hasScopedConversationContext
+    ? conversationPromotionsList(conversationContext)
+    : activePromotionsList();
+  const sopText = hasScopedConversationContext
+    ? filterServiceScopedGuidance(config.sop, conversationContext)
+    : String(config.sop || "");
+  const closingPlaybookText = hasScopedConversationContext
+    ? filterServiceScopedGuidance(config.closingPlaybook, conversationContext)
+    : String(config.closingPlaybook || "");
+  const hoursText = includeSchedulingDetails
+    ? `${hours.general || "Not configured"}${hours.closed ? `. ${hours.closed}.` : ""}`
+    : "Detailed hours omitted because the current conversation is not about scheduling or opening times.";
+  const contactLines = includeContactDetails
+    ? [
+        `- Main WhatsApp: ${contact.whatsapp || "Not configured"}`,
+        `- Instagram: ${contact.instagram || "Not configured"}`,
+        contact.facebook ? `- Facebook: ${contact.facebook}` : null,
+        contact.tiktok ? `- TikTok: ${contact.tiktok}` : null,
+      ].filter(Boolean).join("\n")
+    : "- Detailed contact/social handles omitted because the current conversation is not asking for contact information.";
   const introMessage = String(config.introMessage || "").trim();
   const serviceAreasSection = config.businessType === "home_renovation"
     ? `- Project service areas / coverage:\n${serviceAreasList}\n`
@@ -821,15 +1122,13 @@ BUSINESS INFO:
 - Business type: ${config.businessType || "generic"}
 - ${terms.locationPlural}:
 ${locationsList}
-${serviceAreasSection}- Hours: ${hours.general || "Not configured"}${hours.closed ? `. ${hours.closed}.` : ""}
-- Main WhatsApp: ${contact.whatsapp || "Not configured"}
-- Instagram: ${contact.instagram || "Not configured"}
-${contact.facebook ? `- Facebook: ${contact.facebook}\n` : ""}${contact.tiktok ? `- TikTok: ${contact.tiktok}\n` : ""}
+${serviceAreasSection}- Hours: ${hoursText}
+${contactLines}
 ${terms.servicePlural.toUpperCase()}:
 ${servicesList}
 
 ACTIVE PROMOTIONS — this structured section is the ONLY authority for whether a promotion, discount, bundle, free add-on, or promotion deadline is currently active:
-${activePromotionsList()}
+${promotionsList}
 
 ${promotionAuthorityRules()}
 
@@ -840,10 +1139,10 @@ FREQUENTLY ASKED QUESTIONS:
 ${faqList}
 
 STANDARD OPERATING PROCEDURES (internal policy — follow this as instructions, not just background info):
-${config.sop || ""}
+${sopText}
 
 ${conversion.guidanceTitle || "THE NEXT SALES STEP"} (follow this as active sales/conversion guidance, not just background):
-${config.closingPlaybook || ""}
+${closingPlaybookText}
 
 WHEN TO HAND OFF TO A HUMAN TEAM MEMBER INSTEAD OF ANSWERING YOURSELF:
 ${handoffTriggers}

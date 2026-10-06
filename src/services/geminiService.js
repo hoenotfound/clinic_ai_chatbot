@@ -1,5 +1,6 @@
 const { GoogleGenAI } = require("@google/genai");
 const { buildSystemPrompt, normalizeOptions } = require("../utils/systemPrompt");
+const { buildConversationPromptContext } = require("../utils/conversationPromptContext");
 const { generateGeminiContent } = require("./aiUsageService");
 
 // Customer-facing replies default to the current stable Gemini Flash model.
@@ -49,6 +50,14 @@ function buildThinkingConfig(model = MODEL, env = process.env) {
 }
 
 function buildGeminiRequest(messages, options, resolvedModel) {
+  const promptOptions = options.surface === "conversation"
+    ? {
+        ...options,
+        conversationContext: buildConversationPromptContext(messages, {
+          metaAdContext: options.metaAdContext,
+        }),
+      }
+    : options;
   const thinkingConfig = buildThinkingConfig(resolvedModel);
   return {
     purpose: options.surface === "follow_up" ? "follow_up_generation" : "customer_reply",
@@ -56,7 +65,7 @@ function buildGeminiRequest(messages, options, resolvedModel) {
       model: resolvedModel,
       contents: buildContents(messages),
       config: {
-        systemInstruction: buildSystemPrompt(options),
+        systemInstruction: buildSystemPrompt(promptOptions),
         maxOutputTokens: 1200,
         responseMimeType: "application/json",
         ...(thinkingConfig ? { thinkingConfig } : {}),
