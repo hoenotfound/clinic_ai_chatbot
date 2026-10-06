@@ -4,6 +4,7 @@ const aiService = require("../src/services/aiService");
 const {
   generatePersonalizedFollowUp,
   isSubstantiallySimilar,
+  needsSchedulingContext,
   previousFollowUps,
   scopePackageSelectionConversation,
   selectPromotionPackageForFollowUp,
@@ -31,6 +32,36 @@ test("follow-up context keeps the newest bounded conversation in chronological o
     "message-23",
     "message-24",
   ]);
+});
+
+
+test("default follow-up context is compact and preserves an explicit anchor", () => {
+  const input = Array.from({ length: 18 }, (_, index) => ({
+    id: index + 1,
+    role: index % 2 ? "assistant" : "user",
+    content: `message-${index}-${"x".repeat(700)}`,
+  }));
+  const trimmed = trimConversation(input, { preserveMessageIds: [2] });
+
+  assert.ok(trimmed.length <= 10);
+  assert.ok(trimmed.reduce((total, item) => total + item.content.length, 0) <= 6_000);
+  assert.ok(trimmed.some((item) => item.id === 2), "follow-up anchor should be preserved");
+  assert.ok(trimmed.some((item) => item.id === 17), "latest customer message should be preserved");
+});
+
+test("booking, branch and timing language enables scheduling context", () => {
+  assert.equal(
+    needsSchedulingContext([{ role: "user", content: "Saturday 3pm can book吗？" }]),
+    true
+  );
+  assert.equal(
+    needsSchedulingContext([{ role: "user", content: "我主要想改善小腹凸" }]),
+    false
+  );
+  assert.equal(
+    needsSchedulingContext([], { branchName: "PJ" }),
+    true
+  );
 });
 
 test("similarity catches near-duplicate Chinese follow-ups", () => {
