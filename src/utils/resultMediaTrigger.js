@@ -40,12 +40,18 @@ function matchingResultMediaSet(resultMedia, treatment) {
         typeof item.caption === "string" &&
         item.caption.trim()
     )
-    .map((item) => ({
-      ...item,
-      imageUrl: item.imageUrl.trim(),
-      caption: item.caption.trim(),
-      mediaTranslations: normalizeMediaTranslations(item.mediaTranslations),
-    }));
+    .map((item) => {
+      const translations = normalizeMediaTranslations(item.mediaTranslations);
+      const { mediaTranslations: _configuredTranslations, ...baseItem } = item;
+      return {
+        ...baseItem,
+        imageUrl: item.imageUrl.trim(),
+        caption: item.caption.trim(),
+        ...(Object.keys(translations).length > 0
+          ? { mediaTranslations: translations }
+          : {}),
+      };
+    });
   if (!items.length) return null;
 
   const configuredCount = Number(entry.autoSendCount);
