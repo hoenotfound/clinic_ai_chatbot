@@ -577,6 +577,160 @@ test("relevant service promotion enquiry restores full matching promotion/packag
   });
 });
 
+test("long promo ad copy is compacted while all commercial terms remain available to the AI", () => {
+  const base = scopedConfig();
+  withConfig({
+    ...base,
+    promotions: [{
+      name: "3D 小颜术 First Trial",
+      linkedService: "3D 小颜术",
+      sendOnPriceQuery: true,
+      packages: [],
+      validFrom: "2026-10-01",
+      validUntil: "2026-10-31",
+      caption: `LONG_AD_CLAIM bone-gap claim and other marketing copy. ${"LONG_AD_FILLER ".repeat(80)}`,
+      followUpMessage: [
+        "RM 488",
+        "(Normal RM 1288)",
+        "2 hours 30 minutes",
+        "Includes 3D 小颜术",
+        "Free 全身通淋巴按摩 - 1 hour",
+        "脸部提升刮痧 / V脸 / 五官塑造按摩 / V-shape mask",
+      ].join("\n"),
+    }],
+  }, () => {
+    const prompt = buildSystemPrompt({
+      channel: "whatsapp",
+      conversationContext: {
+        relevantServiceNames: ["3D 小颜术"],
+        schedulingIntent: false,
+        contactIntent: false,
+        promotionIntent: true,
+      },
+    });
+
+    assert.match(prompt, /3D 小颜术 First Trial/);
+    assert.match(prompt, /RM 488/);
+    assert.match(prompt, /Normal RM 1288/);
+    assert.match(prompt, /2 hours 30 minutes/);
+    assert.match(prompt, /全身通淋巴按摩/);
+    assert.match(prompt, /V-shape mask/);
+    assert.match(prompt, /2026-10-01/);
+    assert.match(prompt, /2026-10-31/);
+    assert.doesNotMatch(prompt, /LONG_AD_CLAIM/);
+    assert.doesNotMatch(prompt, /LONG_AD_FILLER/);
+    assert.match(prompt, /exact long-form promotional caption is handled by the promotion media system/);
+  });
+});
+
+test("short combo caption and follow-up gift are both preserved as promo knowledge", () => {
+  const base = scopedConfig();
+  withConfig({
+    ...base,
+    services: [
+      ...base.services,
+      {
+        name: "3D + 9D 组合",
+        description: "Combination service",
+        priceRange: "Current promotional price comes from active promotions",
+        duration: "",
+      },
+    ],
+    promotions: [{
+      name: "9D + 3D 组合限时优惠",
+      linkedService: "3D + 9D 组合",
+      sendOnPriceQuery: true,
+      packages: [],
+      validFrom: "2026-10-01",
+      validUntil: "2026-10-31",
+      caption: "9D + 3D 组合限时优惠: RM688",
+      followUpMessage: "Includes 经络按摩",
+    }],
+  }, () => {
+    const prompt = buildSystemPrompt({
+      channel: "whatsapp",
+      conversationContext: {
+        relevantServiceNames: ["3D + 9D 组合"],
+        schedulingIntent: false,
+        contactIntent: false,
+        promotionIntent: true,
+      },
+    });
+
+    assert.match(prompt, /RM688/);
+    assert.match(prompt, /Includes 经络按摩/);
+  });
+});
+
+test("package promo knowledge preserves A/B prices, aliases, voucher and inclusions", () => {
+  const base = scopedConfig();
+  withConfig({
+    ...base,
+    promotions: [{
+      name: "骨盆调理套餐",
+      linkedService: "骨盆调理",
+      sendOnPriceQuery: true,
+      packages: [
+        {
+          name: "Package A",
+          title: "尊享护理配套｜2小时30分钟",
+          aliases: ["A套餐", "RM488配套", "488配套"],
+          caption: [
+            "RM100 优惠券限时领取",
+            "原价优惠 RM488",
+            "优惠后仅需 RM388",
+            "包含：骨盆护理｜腹直肌・盆底肌护理",
+            "经络穴位按摩",
+            "子宫草药护理",
+            "AI 身体检测",
+          ].join("\n"),
+          followUpMessage: "RM100 优惠券限时领取（只限100位）",
+        },
+        {
+          name: "Package B",
+          title: "1小时30分钟女性护理配套",
+          aliases: ["B套餐", "RM288配套", "288配套", "女性护理配套"],
+          caption: [
+            "RM100 OFF",
+            "原价 RM388",
+            "现在只需 RM288",
+            "包含：骨盆护理｜腹直肌・盆底肌",
+            "子宫护理",
+            "艾灸桶护理",
+          ].join("\n"),
+          followUpMessage: "本月限时优惠 RM100 OFF",
+        },
+      ],
+    }],
+  }, () => {
+    const prompt = buildSystemPrompt({
+      channel: "whatsapp",
+      conversationContext: {
+        relevantServiceNames: ["骨盆调理"],
+        schedulingIntent: false,
+        contactIntent: false,
+        promotionIntent: true,
+      },
+    });
+
+    assert.match(prompt, /Package A/);
+    assert.match(prompt, /A套餐/);
+    assert.match(prompt, /RM488配套/);
+    assert.match(prompt, /RM388/);
+    assert.match(prompt, /RM100 优惠券/);
+    assert.match(prompt, /经络穴位按摩/);
+    assert.match(prompt, /子宫草药护理/);
+    assert.match(prompt, /AI 身体检测/);
+
+    assert.match(prompt, /Package B/);
+    assert.match(prompt, /B套餐/);
+    assert.match(prompt, /RM288配套/);
+    assert.match(prompt, /RM288/);
+    assert.match(prompt, /子宫护理/);
+    assert.match(prompt, /艾灸桶护理/);
+  });
+});
+
 test("day and time reply restores scheduling details even without booking keywords", () => {
   withConfig(scopedConfig(), () => {
     const context = buildConversationPromptContext([
