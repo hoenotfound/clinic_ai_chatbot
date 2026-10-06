@@ -134,15 +134,35 @@ function resolveFollowUpService(serviceInterest) {
   ) || null;
 }
 
-function followUpServiceContext(serviceInterest) {
+function renderFollowUpService(service) {
+  const description = promptContextText(service?.description, 1_200) || "No description configured.";
+  const price = promptContextText(service?.priceRange, 500) || "Not configured";
+  const duration = promptContextText(service?.duration, 300) || "Not configured";
+  return `- ${service.name}: ${description} | Price: ${price} | Duration: ${duration}`;
+}
+
+function followUpServiceContext(serviceInterest, recentServiceNames = []) {
   const resolved = resolveFollowUpService(serviceInterest);
   if (resolved) {
-    const description = promptContextText(resolved.description, 1_600) || "No description configured.";
-    const price = promptContextText(resolved.priceRange, 500) || "Not configured";
-    const duration = promptContextText(resolved.duration, 300) || "Not configured";
     return {
       resolved,
-      text: `- ${resolved.name}: ${description} | Price: ${price} | Duration: ${duration}`,
+      resolvedServices: [resolved],
+      text: renderFollowUpService(resolved),
+    };
+  }
+
+  const hinted = [];
+  for (const value of Array.isArray(recentServiceNames) ? recentServiceNames : []) {
+    const service = resolveFollowUpService(value);
+    if (!service || hinted.some((item) => item.name === service.name)) continue;
+    hinted.push(service);
+    if (hinted.length >= 2) break;
+  }
+  if (hinted.length) {
+    return {
+      resolved: hinted.length === 1 ? hinted[0] : null,
+      resolvedServices: hinted,
+      text: hinted.map(renderFollowUpService).join("\n"),
     };
   }
 
@@ -153,6 +173,7 @@ function followUpServiceContext(serviceInterest) {
   const crmInterest = promptContextText(serviceInterest, 240);
   return {
     resolved: null,
+    resolvedServices: [],
     text: [
       crmInterest ? `- CRM service interest: ${crmInterest} (not matched confidently to one configured service)` : null,
       names.length
@@ -162,17 +183,24 @@ function followUpServiceContext(serviceInterest) {
   };
 }
 
-function followUpAliasContext(resolvedService) {
-  if (!resolvedService?.name) return "- Omitted until one configured service is known.";
-  const serviceKey = followUpLookupKey(resolvedService.name);
-  const aliases = (config.serviceAliases || [])
-    .filter((item) => followUpLookupKey(item?.officialService) === serviceKey)
-    .map((item) => promptContextText(item?.alias, 160))
-    .filter(Boolean)
-    .slice(0, 20);
-  return aliases.length
-    ? `- ${aliases.join(", ")} → ${resolvedService.name}`
-    : "- No aliases configured for this service.";
+function followUpAliasContext(resolvedServices) {
+  const services = Array.isArray(resolvedServices)
+    ? resolvedServices.filter((service) => service?.name).slice(0, 2)
+    : [];
+  if (!services.length) return "- Omitted until one or more configured services are known.";
+
+  const lines = services.map((service) => {
+    const serviceKey = followUpLookupKey(service.name);
+    const aliases = (config.serviceAliases || [])
+      .filter((item) => followUpLookupKey(item?.officialService) === serviceKey)
+      .map((item) => promptContextText(item?.alias, 160))
+      .filter(Boolean)
+      .slice(0, 12);
+    return aliases.length
+      ? `- ${aliases.join(", ")} → ${service.name}`
+      : `- No aliases configured for ${service.name}.`;
+  });
+  return lines.join("\n");
 }
 
 function renderFollowUpPromotion(promotion) {
@@ -207,9 +235,13 @@ function renderFollowUpPromotion(promotion) {
   ].filter(Boolean).join("\n");
 }
 
-function followUpPromotionContext(resolvedService) {
+function followUpPromotionContext(resolvedService, resolvedServices = []) {
   const active = getActivePromotions(config.promotions || []);
   if (!active.length) return "- None currently configured as active.";
+
+  if (!resolvedService?.name && Array.isArray(resolvedServices) && resolvedServices.length > 1) {
+    return "- Multiple services are being compared; promotion details are omitted to avoid choosing or quoting the wrong offer.";
+  }
 
   if (!resolvedService?.name) {
     const names = active
@@ -242,20 +274,24 @@ function followUpPromotionAuthorityRules() {
 
 // Keep the sales guidance that can materially shape follow-up quality, but
 // exclude unrelated service sections so the prompt stays compact.
-function followUpRelevantGuidance(resolvedService) {
-  const serviceName = promptContextText(resolvedService?.name, 240);
-  const serviceKey = followUpLookupKey(serviceName);
-  const aliasTexts = serviceKey
-    ? (config.serviceAliases || [])
-        .filter((item) => followUpLookupKey(item?.officialService) === serviceKey)
-        .map((item) => promptContextText(item?.alias, 240))
-        .filter(Boolean)
+function followUpRelevantGuidance(resolvedServices) {
+  const services = Array.isArray(resolvedServices)
+    ? resolvedServices.filter((service) => service?.name).slice(0, 2)
     : [];
-  const keys = [serviceKey, ...aliasTexts.map((value) => followUpLookupKey(value))]
-    .filter(Boolean);
-  const rawTerms = [serviceName, ...aliasTexts].filter(Boolean);
+  const multiService = services.length > 1;
 
-  function relevantBlocks(value, maxLength) {
+  function relevantBlocks(value, service, maxLength) {
+    const serviceName = promptContextText(service?.name, 240);
+    const serviceKey = followUpLookupKey(serviceName);
+    const aliasTexts = serviceKey
+      ? (config.serviceAliases || [])
+          .filter((item) => followUpLookupKey(item?.officialService) === serviceKey)
+          .map((item) => promptContextText(item?.alias, 240))
+          .filter(Boolean)
+      : [];
+    const keys = [serviceKey, ...aliasTexts.map((value) => followUpLookupKey(value))]
+      .filter(Boolean);
+    const rawTerms = [serviceName, ...aliasTexts].filter(Boolean);
     const text = String(value || "").trim();
     if (!text || !keys.length) return "";
 
@@ -274,16 +310,12 @@ function followUpRelevantGuidance(resolvedService) {
       return promptContextText(joined, maxLength) || "";
     }
 
-    // Some clients store the whole SOP as one large block. Center the bounded
-    // excerpt around the actual service name/alias instead of taking the first
-    // N characters and accidentally dropping the relevant section.
     const lowered = joined.toLocaleLowerCase();
     const positions = rawTerms
       .map((term) => lowered.indexOf(String(term).toLocaleLowerCase()))
       .filter((position) => position >= 0);
     const matchAt = positions.length ? Math.min(...positions) : 0;
     let excerptStart = Math.max(0, matchAt - Math.min(240, Math.floor(maxLength / 4)));
-
     const nearbyBreak = joined.lastIndexOf("\n", matchAt);
     if (nearbyBreak >= 0 && matchAt - nearbyBreak <= 240) {
       excerptStart = nearbyBreak + 1;
@@ -295,20 +327,29 @@ function followUpRelevantGuidance(resolvedService) {
     ) || "";
   }
 
-  const serviceSop = relevantBlocks(config.sop, 1_600);
-  const serviceClosing = relevantBlocks(config.closingPlaybook, 1_200);
-  const generalClosing = serviceClosing
-    ? ""
-    : promptContextText(config.closingPlaybook, 900) || "";
+  const sections = [];
+  let anyServiceClosing = false;
+  for (const service of services) {
+    const serviceSop = relevantBlocks(config.sop, service, multiService ? 900 : 1_600);
+    const serviceClosing = relevantBlocks(
+      config.closingPlaybook,
+      service,
+      multiService ? 600 : 1_200
+    );
+    anyServiceClosing = anyServiceClosing || Boolean(serviceClosing);
+    if (serviceSop || serviceClosing) {
+      sections.push([
+        `For ${service.name}:`,
+        serviceSop ? `Relevant SOP: ${serviceSop}` : null,
+        serviceClosing ? `Relevant sales playbook: ${serviceClosing}` : null,
+      ].filter(Boolean).join("\n"));
+    }
+  }
 
-  const sections = [
-    serviceSop ? `Relevant SOP:\n${serviceSop}` : null,
-    serviceClosing
-      ? `Relevant sales playbook:\n${serviceClosing}`
-      : generalClosing
-        ? `General sales guidance:\n${generalClosing}`
-        : null,
-  ].filter(Boolean);
+  if (!anyServiceClosing) {
+    const generalClosing = promptContextText(config.closingPlaybook, multiService ? 700 : 900);
+    if (generalClosing) sections.push(`General sales guidance:\n${generalClosing}`);
+  }
 
   return sections.length
     ? sections.join("\n\n")
@@ -585,10 +626,16 @@ function buildFollowUpPrompt(options = {}) {
       ? "Re-engage from a different useful angle. Do not substantially repeat the first follow-up or the last assistant message."
       : "Make one short final, low-pressure check-in. Do not hard-sell. Make it easy for the customer to reply later.";
 
-  const serviceContext = followUpServiceContext(followUp.treatmentInterest);
-  const aliasContext = followUpAliasContext(serviceContext.resolved);
-  const promotionContext = followUpPromotionContext(serviceContext.resolved);
-  const relevantGuidance = followUpRelevantGuidance(serviceContext.resolved);
+  const serviceContext = followUpServiceContext(
+    followUp.treatmentInterest,
+    followUp.recentServiceNames
+  );
+  const aliasContext = followUpAliasContext(serviceContext.resolvedServices);
+  const promotionContext = followUpPromotionContext(
+    serviceContext.resolved,
+    serviceContext.resolvedServices
+  );
+  const relevantGuidance = followUpRelevantGuidance(serviceContext.resolvedServices);
   const includeSchedulingContext = followUp.includeSchedulingContext === true;
   const locationsList = includeSchedulingContext
     ? listOrNone(
