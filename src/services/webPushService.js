@@ -237,7 +237,7 @@ function createWebPushService({
       if (
         await sendToSubscription(row, {
           title: "Notifications are working",
-          body: "Booking Ready and Needs Human Attention alerts will appear here.",
+          body: "Booking Ready, Needs Human Attention and delivery failure alerts will appear here.",
           url: "/inbox",
           tag: "web-push-test",
         })
