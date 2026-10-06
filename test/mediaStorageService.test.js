@@ -120,6 +120,57 @@ test("missing client slug keeps the historical unprefixed key shape", () => {
   );
 });
 
+test("forwarded media is copied server-side into a new permanent message object", async (t) => {
+  const originalSend = S3Client.prototype.send;
+  const original = {
+    accountId: process.env.R2_ACCOUNT_ID,
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    bucket: process.env.R2_BUCKET_NAME,
+  };
+
+  t.after(() => {
+    S3Client.prototype.send = originalSend;
+    if (original.accountId === undefined) delete process.env.R2_ACCOUNT_ID;
+    else process.env.R2_ACCOUNT_ID = original.accountId;
+    if (original.accessKeyId === undefined) delete process.env.R2_ACCESS_KEY_ID;
+    else process.env.R2_ACCESS_KEY_ID = original.accessKeyId;
+    if (original.secretAccessKey === undefined) delete process.env.R2_SECRET_ACCESS_KEY;
+    else process.env.R2_SECRET_ACCESS_KEY = original.secretAccessKey;
+    if (original.bucket === undefined) delete process.env.R2_BUCKET_NAME;
+    else process.env.R2_BUCKET_NAME = original.bucket;
+  });
+
+  process.env.R2_ACCOUNT_ID = "copy-test";
+  process.env.R2_ACCESS_KEY_ID = "AKIDCOPY";
+  process.env.R2_SECRET_ACCESS_KEY = "SECRETCOPY";
+  process.env.R2_BUCKET_NAME = "private-media";
+
+  let copyInput = null;
+  S3Client.prototype.send = async function send(command) {
+    assert.ok(command instanceof CopyObjectCommand);
+    copyInput = command.input;
+    return {};
+  };
+
+  const sourceKey = "clients/acme/messages/42/123-original.jpg";
+  const resultKey = await mediaStorage.copyStoredMediaToMessage(
+    sourceKey,
+    "image/jpeg",
+    {
+      contactId: 99,
+      env: { CLIENT_SLUG: "acme" },
+    }
+  );
+
+  assert.equal(copyInput.Bucket, "private-media");
+  assert.equal(copyInput.CopySource, `private-media/${sourceKey}`);
+  assert.equal(copyInput.MetadataDirective, "REPLACE");
+  assert.equal(copyInput.ContentType, "image/jpeg");
+  assert.match(resultKey, /^clients\/acme\/messages\/99\//);
+  assert.notEqual(resultKey, sourceKey);
+});
+
 test("stored media is copied server-side into a disposable Meta object", async (t) => {
   const originalSend = S3Client.prototype.send;
   const original = {
