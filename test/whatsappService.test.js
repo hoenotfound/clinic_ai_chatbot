@@ -8,7 +8,10 @@ const {
   parseReactionEvents,
   parseStatusUpdates,
   sendMessage,
+  sendImageById,
   sendStickerById,
+  fetchWithTimeout,
+  interruptedDeliveryResult,
 } = require("../src/services/whatsappService");
 const whatsappPolicy = require("../src/services/whatsappPolicyService");
 
@@ -497,6 +500,86 @@ test("does not retry a clear non-transient WhatsApp policy rejection", () => {
 });
 
 
+test("bounded WhatsApp fetch aborts a stalled provider request", async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  global.fetch = async (_url, options = {}) =>
+    await new Promise((_resolve, reject) => {
+      options.signal?.addEventListener(
+        "abort",
+        () => {
+          const err = new Error("aborted");
+          err.name = "AbortError";
+          reject(err);
+        },
+        { once: true }
+      );
+    });
+
+  await assert.rejects(
+    fetchWithTimeout("https://graph.example.test/messages", {}, 5),
+    (err) => err?.name === "AbortError"
+  );
+});
+
+test("interrupted WhatsApp delivery is explicitly unknown to prevent blind retry", () => {
+  const timeout = new Error("aborted");
+  timeout.name = "AbortError";
+  const result = interruptedDeliveryResult(timeout);
+
+  assert.equal(result.success, false);
+  assert.equal(result.ambiguous, true);
+  assert.equal(result.unknown, true);
+  assert.equal(result.retryable, false);
+  assert.match(result.error, /timed out/i);
+});
+
+test("image send timeout is persisted as unknown rather than a definite failure", async (t) => {
+  const originalFetch = global.fetch;
+  const oldPhone = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const oldToken = process.env.WHATSAPP_TOKEN;
+  const oldTimeout = process.env.WHATSAPP_MESSAGE_TIMEOUT_MS;
+  t.after(() => {
+    global.fetch = originalFetch;
+    if (oldPhone === undefined) delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    else process.env.WHATSAPP_PHONE_NUMBER_ID = oldPhone;
+    if (oldToken === undefined) delete process.env.WHATSAPP_TOKEN;
+    else process.env.WHATSAPP_TOKEN = oldToken;
+    if (oldTimeout === undefined) delete process.env.WHATSAPP_MESSAGE_TIMEOUT_MS;
+    else process.env.WHATSAPP_MESSAGE_TIMEOUT_MS = oldTimeout;
+  });
+
+  process.env.WHATSAPP_PHONE_NUMBER_ID = "phone-timeout";
+  process.env.WHATSAPP_TOKEN = "token-timeout";
+  process.env.WHATSAPP_MESSAGE_TIMEOUT_MS = "5";
+  global.fetch = async (_url, options = {}) =>
+    await new Promise((_resolve, reject) => {
+      options.signal?.addEventListener(
+        "abort",
+        () => {
+          const err = new Error("aborted");
+          err.name = "AbortError";
+          reject(err);
+        },
+        { once: true }
+      );
+    });
+
+  const result = await sendImageById(
+    "60112223333",
+    "media-timeout",
+    "Caption"
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.unknown, true);
+  assert.equal(result.ambiguous, true);
+  assert.equal(result.retryable, false);
+});
+
 test("requires a WhatsApp message ID before treating HTTP acceptance as confirmed", () => {
   const confirmed = classifyWhatsappAcceptedResponse({
     messages: [{ id: "wamid.confirmed" }],
@@ -510,5 +593,6 @@ test("requires a WhatsApp message ID before treating HTTP acceptance as confirme
   assert.equal(unconfirmed.wamid, null);
   assert.equal(unconfirmed.retryable, false);
   assert.equal(unconfirmed.ambiguous, true);
+  assert.equal(unconfirmed.unknown, true);
   assert.match(unconfirmed.error, /did not return a message ID/i);
 });
