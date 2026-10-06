@@ -1,3 +1,5 @@
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
 const PORTAL_CSP = [
   "default-src 'self'",
   "base-uri 'none'",
@@ -25,6 +27,39 @@ function buildPortalSessionOptions(sessionSecret, env = process.env) {
   };
 }
 
+function enforcePortalRequestOrigin(req, res, next) {
+  if (SAFE_METHODS.has(String(req.method || "GET").toUpperCase())) {
+    return next();
+  }
+
+  const fetchSite = String(req.get?.("sec-fetch-site") || "").toLowerCase();
+  if (fetchSite && !["same-origin", "same-site", "none"].includes(fetchSite)) {
+    return res.status(403).json({ error: "Cross-site API request blocked." });
+  }
+
+  const origin = req.get?.("origin");
+  if (!origin) return next();
+
+  let originValue;
+  try {
+    originValue = new URL(origin).origin;
+  } catch (_) {
+    return res.status(403).json({ error: "Invalid request origin." });
+  }
+
+  const host = req.get?.("host");
+  if (!host) {
+    return res.status(403).json({ error: "Request host could not be verified." });
+  }
+
+  const expectedOrigin = `${req.protocol}://${host}`;
+  if (originValue !== expectedOrigin) {
+    return res.status(403).json({ error: "Cross-origin API request blocked." });
+  }
+
+  return next();
+}
+
 function applyPortalSecurityHeaders(_req, res, next) {
   res.set("X-Content-Type-Options", "nosniff");
   res.set("X-Frame-Options", "DENY");
@@ -38,4 +73,5 @@ module.exports = {
   PORTAL_CSP,
   applyPortalSecurityHeaders,
   buildPortalSessionOptions,
+  enforcePortalRequestOrigin,
 };
