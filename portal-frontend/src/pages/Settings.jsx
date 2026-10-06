@@ -46,6 +46,17 @@ function isIsoDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 }
 
+function formatPromotionDate(value) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return value || "";
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(date);
+}
+
 export default function Settings() {
   const { user, permissions } = useAuth();
   const navigate = useNavigate();
@@ -449,16 +460,16 @@ function ImageFieldEditor({
         <img
           src={value}
           alt={alt}
-          className="mb-3 max-h-52 w-full rounded-xl border border-[var(--color-border)] object-cover"
+          className="mb-3 max-h-72 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] object-contain"
         />
       )}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex items-center gap-2">
         <input ref={fileInputRef} type="file" accept="image/jpeg,image/png" onChange={handleFilePicked} className="hidden" />
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading}
-          className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 text-xs font-semibold transition-colors hover:bg-[var(--color-surface)] disabled:opacity-50"
+          className="inline-flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold transition-colors hover:bg-[var(--color-surface)] disabled:opacity-50 sm:h-10 sm:flex-none sm:rounded-lg"
         >
           {uploading && <Spinner className="h-3 w-3" />}
           {uploading ? "Uploading…" : value ? "Replace image" : "Upload image"}
@@ -467,7 +478,7 @@ function ImageFieldEditor({
           <button
             type="button"
             onClick={() => onChange("")}
-            className="h-10 rounded-lg px-3 text-xs font-semibold text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-danger-light)] hover:text-[var(--color-danger)]"
+            className="h-11 min-w-0 flex-1 rounded-xl px-3 text-xs font-semibold text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-danger-light)] hover:text-[var(--color-danger)] sm:h-10 sm:flex-none sm:rounded-lg"
           >
             Remove
           </button>
@@ -475,7 +486,7 @@ function ImageFieldEditor({
       </div>
       {allowUrl && (
         <details className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
-          <summary className="cursor-pointer text-[11px] font-semibold text-[var(--color-text-muted)]">
+          <summary className="min-h-10 cursor-pointer py-2 text-[11px] font-semibold text-[var(--color-text-muted)]">
             Advanced · use image URL
           </summary>
           <input
@@ -519,7 +530,7 @@ function PromotionAliasChips({ items, onChange }) {
                 type="button"
                 onClick={() => onChange(items.filter((_, itemIndex) => itemIndex !== index))}
                 aria-label={`Remove ${item}`}
-                className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-base leading-none text-[var(--color-text-muted)] hover:bg-[var(--color-danger-light)] hover:text-[var(--color-danger)]"
               >
                 ×
               </button>
@@ -572,8 +583,8 @@ function PromotionFollowUpTranslationsEditor({ value = {}, onChange }) {
     ["zh", "中文"],
   ];
   return (
-    <details className="rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3">
-      <summary className="cursor-pointer text-xs font-semibold text-[var(--color-primary)]">
+    <details className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2">
+      <summary className="min-h-11 cursor-pointer py-3 text-xs font-semibold text-[var(--color-primary)]">
         Language-specific follow-up copy
       </summary>
       <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
@@ -644,9 +655,9 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
         const subtitle = item.title?.trim() || (item.imageUrl ? "Image added" : "Details not completed");
         return (
           <div key={index} className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-            <div className="flex items-center gap-3 p-3">
+            <div className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-3 p-3 sm:flex sm:items-center">
               <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] text-[10px] text-[var(--color-text-muted)]">
-                {item.imageUrl ? <img src={item.imageUrl} alt="" className="h-full w-full object-cover" /> : "No image"}
+                {item.imageUrl ? <img src={item.imageUrl} alt="" className="h-full w-full object-contain" /> : "No image"}
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-bold">{packageName}</p>
@@ -660,9 +671,9 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
               <button
                 type="button"
                 onClick={() => setOpenIndex(expanded ? null : index)}
-                className="h-10 shrink-0 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold"
+                className="col-span-2 h-11 w-full rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold sm:h-10 sm:w-auto sm:shrink-0"
               >
-                {expanded ? "Close" : "Edit"}
+                {expanded ? "Collapse package" : "Edit package"}
               </button>
             </div>
 
@@ -743,16 +754,16 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
                     <button
                       type="button"
                       onClick={() => removePackage(index)}
-                      className="h-10 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+                      className="h-11 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] sm:h-10"
                     >
                       Remove package
                     </button>
                     <button
                       type="button"
                       onClick={() => setOpenIndex(null)}
-                      className="h-10 rounded-xl bg-[var(--color-primary)] px-4 text-xs font-semibold text-white"
+                      className="h-11 rounded-xl bg-[var(--color-primary)] px-4 text-xs font-semibold text-white sm:h-10"
                     >
-                      Done
+                      Close package
                     </button>
                   </div>
                 </div>
@@ -1821,41 +1832,52 @@ function PromotionsTab({ config, onSaved, onError }) {
         {items.map((item, index) => {
           const expanded = openIndex === index;
           const packageMode = item._offerType === "packages";
-          const displayName = item.linkedService || item.name || "New promotion";
+          const displayName = item.name || item.linkedService || "New promotion";
           const offerSummary = packageMode
             ? `${item.packages.length} package${item.packages.length === 1 ? "" : "s"}`
             : "Single offer";
-          const dateSummary = item.validFrom || item.validUntil
-            ? `${item.validFrom || "Now"} – ${item.validUntil || "No end date"}`
-            : "No date limit";
+          const dateSummary = item.validFrom && item.validUntil
+            ? `${formatPromotionDate(item.validFrom)} to ${formatPromotionDate(item.validUntil)}`
+            : item.validFrom
+              ? `From ${formatPromotionDate(item.validFrom)}`
+              : item.validUntil
+                ? `Until ${formatPromotionDate(item.validUntil)}`
+                : "No date limit";
 
           return (
             <div key={index} className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-              <div className="flex items-start gap-3 p-4">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="truncate text-sm font-bold sm:text-base">{displayName}</p>
+              <div className="grid gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:p-4">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-bold sm:text-base">{displayName}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {item.linkedService && (
+                      <span className="max-w-full truncate rounded-full bg-[var(--color-primary-light)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">
+                        {item.linkedService}
+                      </span>
+                    )}
                     <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
                       {offerSummary}
                     </span>
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${item.sendOnPriceQuery ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"}`}>
                       {item.sendOnPriceQuery ? "Auto-send on" : "Auto-send off"}
                     </span>
+                    <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]">
+                      {dateSummary}
+                    </span>
                   </div>
-                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">{dateSummary}</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setOpenIndex(expanded ? null : index)}
-                  className="h-10 shrink-0 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold"
+                  className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold sm:h-10 sm:w-auto sm:shrink-0"
                 >
-                  {expanded ? "Close" : "Edit"}
+                  {expanded ? "Close editor" : "Edit promotion"}
                 </button>
               </div>
 
               {expanded && (
-                <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-                  <div className="grid gap-5">
+                <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:p-4">
+                  <div className="grid gap-4 sm:gap-5">
                     <div>
                       <label className={labelClass}>Service</label>
                       <select
@@ -1880,7 +1902,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                             type="button"
                             aria-pressed={item._offerType === value}
                             onClick={() => changeOfferType(index, value)}
-                            className={`min-h-10 rounded-lg px-3 text-xs font-semibold transition ${item._offerType === value ? "bg-white text-[var(--color-primary)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
+                            className={`min-h-11 rounded-lg px-3 text-xs font-semibold transition sm:min-h-10 ${item._offerType === value ? "bg-[var(--color-surface)] text-[var(--color-primary)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
                           >
                             {label}
                           </button>
@@ -1984,8 +2006,8 @@ function PromotionsTab({ config, onSaved, onError }) {
                       </div>
                     )}
 
-                    <details className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3">
-                      <summary className="cursor-pointer text-xs font-semibold text-[var(--color-text-muted)]">Advanced details</summary>
+                    <details className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2">
+                      <summary className="min-h-11 cursor-pointer py-3 text-xs font-semibold text-[var(--color-text-muted)]">Advanced details</summary>
                       <div className="mt-3">
                         <label className={labelClass}>Internal campaign name</label>
                         <input
@@ -2002,16 +2024,16 @@ function PromotionsTab({ config, onSaved, onError }) {
                       <button
                         type="button"
                         onClick={() => removePromotion(index)}
-                        className="h-10 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+                        className="h-11 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] sm:h-10"
                       >
                         Remove promotion
                       </button>
                       <button
                         type="button"
                         onClick={() => setOpenIndex(null)}
-                        className="h-10 rounded-xl border border-[var(--color-border)] bg-white px-4 text-xs font-semibold"
+                        className="h-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 text-xs font-semibold sm:h-10"
                       >
-                        Finish editing
+                        Close editor
                       </button>
                     </div>
                   </div>
@@ -2032,7 +2054,7 @@ function PromotionsTab({ config, onSaved, onError }) {
       </div>
 
       <div className="mt-5">
-        <SaveButton saving={saving} onClick={handleSave} />
+        <SaveButton saving={saving} onClick={handleSave} label="Save promotions" />
       </div>
 
       <div className="mt-8 border-t border-[var(--color-border)] pt-7">
@@ -2070,7 +2092,7 @@ function ResultMediaItemsEditor({ items, onChange, onError }) {
             <button
               type="button"
               onClick={() => removeItem(index)}
-              className="h-9 rounded-lg px-2.5 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+              className="h-11 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] sm:h-9 sm:rounded-lg sm:px-2.5"
             >
               Remove
             </button>
@@ -2260,11 +2282,16 @@ function ResultMediaSection({ config, onSaved, onError }) {
       <div className="mb-5">
         <h3 className="font-display text-base font-bold sm:text-lg">Before & After</h3>
         <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)] sm:text-sm">
-          Add approved result examples by service and choose when each set can send.
-          Service enquiries can include clear interest from the customer's message, the current
-          conversation, or unambiguous Meta ad headline/body creative. Automatic result media is suppressed
-          for 7 days after a send, then continues with the next configured example.
+          Add approved result examples for each service and choose when the AI may send them.
         </p>
+        <details className="mt-2 rounded-xl bg-[var(--color-bg)] px-3 py-1.5">
+          <summary className="min-h-10 cursor-pointer py-2 text-[11px] font-semibold text-[var(--color-text-muted)]">
+            How automatic sending works
+          </summary>
+          <p className="pb-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
+            A clear service enquiry can be detected from the customer message, the current conversation, or a matching Meta ad. Result media has a 7-day cooldown, then rotates to the next configured example.
+          </p>
+        </details>
       </div>
 
       {serviceNames.length === 0 && (
@@ -2288,12 +2315,12 @@ function ResultMediaSection({ config, onSaved, onError }) {
               key={index}
               className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]"
             >
-              <div className="flex items-start gap-3 p-4">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="truncate text-sm font-bold sm:text-base">
-                      {entry.service || "New result set"}
-                    </p>
+              <div className="grid gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:p-4">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-bold sm:text-base">
+                    {entry.service || "New result set"}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
                       {entry.items.length} example{entry.items.length === 1 ? "" : "s"}
                     </span>
@@ -2307,7 +2334,7 @@ function ResultMediaSection({ config, onSaved, onError }) {
                       {entry.enabled && entry.triggerMode !== "off" ? "Auto-send on" : "Auto-send off"}
                     </span>
                   </div>
-                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                  <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
                     Sends {Math.min(entry.autoSendCount || 1, Math.max(entry.items.length, 1))} example
                     {Math.min(entry.autoSendCount || 1, Math.max(entry.items.length, 1)) === 1 ? "" : "s"} per eligible{" "}
                     {entry.triggerMode === "service_enquiry"
@@ -2321,15 +2348,15 @@ function ResultMediaSection({ config, onSaved, onError }) {
                 <button
                   type="button"
                   onClick={() => setOpenIndex(expanded ? null : index)}
-                  className="h-10 shrink-0 rounded-xl border border-[var(--color-border)] px-3 text-xs font-semibold"
+                  className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-xs font-semibold sm:h-10 sm:w-auto sm:shrink-0"
                 >
-                  {expanded ? "Close" : "Edit"}
+                  {expanded ? "Close editor" : "Edit set"}
                 </button>
               </div>
 
               {expanded && (
-                <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-                  <div className="grid gap-5">
+                <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] p-3 sm:p-4">
+                  <div className="grid gap-4 sm:gap-5">
                     <div>
                       <label className={labelClass}>Service</label>
                       <select
@@ -2411,16 +2438,16 @@ function ResultMediaSection({ config, onSaved, onError }) {
                       <button
                         type="button"
                         onClick={() => removeSet(index)}
-                        className="h-10 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+                        className="h-11 rounded-xl px-3 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] sm:h-10"
                       >
                         Remove result set
                       </button>
                       <button
                         type="button"
                         onClick={() => setOpenIndex(null)}
-                        className="h-10 rounded-xl border border-[var(--color-border)] bg-white px-4 text-xs font-semibold"
+                        className="h-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 text-xs font-semibold sm:h-10"
                       >
-                        Finish editing
+                        Close editor
                       </button>
                     </div>
                   </div>

@@ -1552,13 +1552,13 @@ test("Promotions keeps package setup compact, saves packages, and stays mobile-s
     .locator("textarea")
     .fill("Package A promo caption");
 
-  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("button", { name: "Close package", exact: true }).click();
   await expect(page.getByText("Package A", { exact: true }).first()).toBeVisible();
   await expect(
     page.getByText("全身深层调理 + 骨盆全身体态调整（7合1）", { exact: true }).first()
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save promotions" }).click();
   await expect.poll(() => savedPayload).not.toBeNull();
   expect(savedPayload.promotions).toEqual([
     {
@@ -1618,7 +1618,7 @@ test("Promotions blocks saving Multiple packages with no package options", async
   await page.goto("/settings?tab=promotions");
   await page.getByRole("button", { name: "+ Add promotion" }).click();
   await page.getByRole("button", { name: "Multiple packages" }).click();
-  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.getByRole("button", { name: "Save promotions" }).click();
 
   await expect(
     page.getByText("Add at least one package, or switch this promotion to Single offer.")
