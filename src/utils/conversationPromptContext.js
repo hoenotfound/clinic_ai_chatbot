@@ -140,10 +140,26 @@ function recentConversationServiceAnchor(messages, candidates, maxMessages = 8) 
     }
 
     if (matches.length === 1) {
-      return {
-        relevantServiceNames: matches,
-        serviceSource: "recent_assistant",
-      };
+      let previousCustomerMatches = [];
+      for (let previous = index - 1; previous >= 0; previous -= 1) {
+        if (source[previous]?.role !== "user") continue;
+        previousCustomerMatches = unique(
+          findServicesInText(messageText(source[previous]), candidates)
+        );
+        break;
+      }
+
+      // An assistant may clarify an ambiguous customer phrase (for example,
+      // "调整身体" -> 徒手体态调理). Use that as a short-lived anchor.
+      // But never let an assistant-introduced service override a service the
+      // customer explicitly named in the message being answered.
+      if (!previousCustomerMatches.length) {
+        return {
+          relevantServiceNames: matches,
+          serviceSource: "recent_assistant",
+        };
+      }
+      continue;
     }
     // Assistant replies that mention several services are usually comparisons
     // or menus. They are useful context, but too ambiguous to choose one.
