@@ -26,15 +26,10 @@ const USERNAME_RE = /^[A-Za-z0-9._-]{3,60}$/;
 const ROLES = new Set(["admin", "sales"]);
 
 // Authentication responses can contain account/session state and should never
-// be cached by browsers or intermediary proxies. Whenever this router changes a
-// session in production, force the cookie to carry the Secure attribute. The
-// app runs behind Render's TLS-terminating proxy, so the browser still receives
-// the cookie over HTTPS even though Render forwards plain HTTP internally.
-router.use((req, res, next) => {
+// be cached by browsers or intermediary proxies. Session cookie security is
+// configured globally when the portal middleware is created.
+router.use((_req, res, next) => {
   res.set("Cache-Control", "no-store");
-  if (req.sessionOptions && process.env.NODE_ENV === "production") {
-    req.sessionOptions.secure = true;
-  }
   next();
 });
 
