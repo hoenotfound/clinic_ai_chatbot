@@ -711,7 +711,7 @@ BUSINESS INFO:
 - Services:
 ${servicesList}
 - Active promotions:
-${activePromotionsList()}
+${promotionsList}
 
 RULES:
 - Match the language or natural language mix used by the commenter.
@@ -950,13 +950,18 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
   const { isFirstMessage, channel } = normalizedOptions;
   const context = getBusinessContext();
   const { terminology: terms, conversion } = context;
+  const conversationContext = normalizedOptions.conversationContext;
+  const hasScopedConversationContext =
+    conversationContext && typeof conversationContext === "object";
 
-  const servicesList = listOrNone(
-    config.services,
-    (service) =>
-      `- ${service.name}: ${service.description} | Price: ${service.priceRange} | Duration: ${service.duration}`,
-    `No ${terms.servicePlural} are configured yet. Do not invent any; hand off business-specific questions that require missing information.`
-  );
+  const servicesList = hasScopedConversationContext
+    ? conversationServicesList(conversationContext, terms)
+    : listOrNone(
+        config.services,
+        (service) =>
+          `- ${service.name}: ${service.description} | Price: ${service.priceRange} | Duration: ${service.duration}`,
+        `No ${terms.servicePlural} are configured yet. Do not invent any; hand off business-specific questions that require missing information.`
+      );
 
   const faqList = listOrNone(
     config.faqs,
@@ -964,11 +969,13 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
     "No FAQs configured."
   );
 
-  const aliasList = listOrNone(
-    config.serviceAliases,
-    (alias) => `- "${alias.alias}" → ${alias.officialService}`,
-    "No alternate service terms configured."
-  );
+  const aliasList = hasScopedConversationContext
+    ? conversationAliasList(conversationContext)
+    : listOrNone(
+        config.serviceAliases,
+        (alias) => `- "${alias.alias}" → ${alias.officialService}`,
+        "No alternate service terms configured."
+      );
 
   const guardrailsList = listOrNone(
     config.guardrails,
@@ -976,11 +983,13 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
     "Do not invent business facts or confirmations."
   );
 
-  const locationsList = listOrNone(
-    config.branches,
-    (location) => `- ${location.name}: ${location.address} | Phone: ${location.phone}`,
-    `No ${terms.locationPlural} configured. Do not invent a location.`
-  );
+  const locationsList = hasScopedConversationContext
+    ? conversationLocationsList(conversationContext, terms)
+    : listOrNone(
+        config.branches,
+        (location) => `- ${location.name}: ${location.address} | Phone: ${location.phone}`,
+        `No ${terms.locationPlural} configured. Do not invent a location.`
+      );
 
   const serviceAreasList = listOrNone(
     config.serviceAreas,
@@ -996,6 +1005,30 @@ function buildSystemPrompt(optionsOrFirstMessage = false) {
 
   const contact = config.contact || {};
   const hours = config.hours || {};
+  const includeSchedulingDetails =
+    !hasScopedConversationContext || conversationContext.schedulingIntent === true;
+  const includeContactDetails =
+    !hasScopedConversationContext || conversationContext.contactIntent === true;
+  const promotionsList = hasScopedConversationContext
+    ? conversationPromotionsList(conversationContext)
+    : activePromotionsList();
+  const sopText = hasScopedConversationContext
+    ? filterServiceScopedGuidance(config.sop, conversationContext)
+    : String(config.sop || "");
+  const closingPlaybookText = hasScopedConversationContext
+    ? filterServiceScopedGuidance(config.closingPlaybook, conversationContext)
+    : String(config.closingPlaybook || "");
+  const hoursText = includeSchedulingDetails
+    ? `${hours.general || "Not configured"}${hours.closed ? `. ${hours.closed}.` : ""}`
+    : "Detailed hours omitted because the current conversation is not about scheduling or opening times.";
+  const contactLines = includeContactDetails
+    ? [
+        `- Main WhatsApp: ${contact.whatsapp || "Not configured"}`,
+        `- Instagram: ${contact.instagram || "Not configured"}`,
+        contact.facebook ? `- Facebook: ${contact.facebook}` : null,
+        contact.tiktok ? `- TikTok: ${contact.tiktok}` : null,
+      ].filter(Boolean).join("\n")
+    : "- Detailed contact/social handles omitted because the current conversation is not asking for contact information.";
   const introMessage = String(config.introMessage || "").trim();
   const serviceAreasSection = config.businessType === "home_renovation"
     ? `- Project service areas / coverage:\n${serviceAreasList}\n`
@@ -1020,10 +1053,8 @@ BUSINESS INFO:
 - Business type: ${config.businessType || "generic"}
 - ${terms.locationPlural}:
 ${locationsList}
-${serviceAreasSection}- Hours: ${hours.general || "Not configured"}${hours.closed ? `. ${hours.closed}.` : ""}
-- Main WhatsApp: ${contact.whatsapp || "Not configured"}
-- Instagram: ${contact.instagram || "Not configured"}
-${contact.facebook ? `- Facebook: ${contact.facebook}\n` : ""}${contact.tiktok ? `- TikTok: ${contact.tiktok}\n` : ""}
+${serviceAreasSection}- Hours: ${hoursText}
+${contactLines}
 ${terms.servicePlural.toUpperCase()}:
 ${servicesList}
 
@@ -1039,10 +1070,10 @@ FREQUENTLY ASKED QUESTIONS:
 ${faqList}
 
 STANDARD OPERATING PROCEDURES (internal policy — follow this as instructions, not just background info):
-${config.sop || ""}
+${sopText}
 
 ${conversion.guidanceTitle || "THE NEXT SALES STEP"} (follow this as active sales/conversion guidance, not just background):
-${config.closingPlaybook || ""}
+${closingPlaybookText}
 
 WHEN TO HAND OFF TO A HUMAN TEAM MEMBER INSTEAD OF ANSWERING YOURSELF:
 ${handoffTriggers}
