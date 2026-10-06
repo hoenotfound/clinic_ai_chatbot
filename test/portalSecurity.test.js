@@ -49,11 +49,14 @@ test("portal security headers prevent framing and external script execution", ()
   const csp = headers.get("content-security-policy");
   assert.equal(csp, PORTAL_CSP);
   assert.match(csp, /frame-ancestors 'none'/);
-  assert.match(csp, /script-src 'self'/);
+  assert.match(csp, /script-src 'self' https:\/\/connect\.facebook\.net/);
   assert.match(csp, /script-src-attr 'none'/);
   assert.doesNotMatch(csp, /script-src[^;]*unsafe-inline/);
   assert.match(csp, /style-src 'self' 'unsafe-inline'/);
   assert.match(csp, /img-src 'self' data: blob: https:/);
+  assert.match(csp, /frame-src 'self' https:\/\/www\.facebook\.com https:\/\/web\.facebook\.com https:\/\/business\.facebook\.com/);
+  assert.match(csp, /connect-src 'self'[^;]*https:\/\/graph\.facebook\.com/);
+  assert.doesNotMatch(csp, /script-src[^;]*https:\s/);
 });
 
 function requestWithHeaders({
