@@ -172,6 +172,39 @@ test("distance and different-state location stay Warm unless the customer withdr
   }
 });
 
+test("package acceptance becomes Hot when it directly answers a sales next-step prompt", () => {
+  const examples = [
+    {
+      messageText: "Yes please",
+      previousClinicMessage: "Would you like to proceed with Package A?",
+    },
+    {
+      messageText: "Package A",
+      previousClinicMessage: "Which package would you like?",
+    },
+    {
+      messageText: "A",
+      previousClinicMessage: "Which package would you like?",
+    },
+    {
+      messageText: "可以",
+      previousClinicMessage: "要不要继续这个配套？",
+    },
+  ];
+
+  for (const example of examples) {
+    const result = classifyTemperatureMessage(example);
+    assert.equal(result?.temperature, "hot", example.messageText);
+    assert.equal(result?.matchedRule, "scheduling_confirmation", example.messageText);
+  }
+
+  assert.equal(classifyTemperatureMessage({ messageText: "Package A" }), null);
+  assert.equal(classifyTemperatureMessage({
+    messageText: "Maybe later",
+    previousClinicMessage: "Would you like to proceed with Package A?",
+  }), null);
+});
+
 test("declining one date while offering another is not a Cold rejection", () => {
   const examples = [
     {
