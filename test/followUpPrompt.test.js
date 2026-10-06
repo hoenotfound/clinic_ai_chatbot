@@ -79,8 +79,20 @@ test("AI follow-up prompt includes only the relevant service and matching promot
       },
     ];
     config.faqs = [{ q: "FAQ_SENTINEL", a: "FAQ_BULK_SHOULD_NOT_APPEAR" }];
-    config.sop = "SOP_SENTINEL_SHOULD_NOT_APPEAR";
-    config.closingPlaybook = "CLOSING_SENTINEL_SHOULD_NOT_APPEAR";
+    config.sop = [
+      "Pelvic Care:",
+      "RELEVANT_PELVIC_SOP_GUIDANCE",
+      "",
+      "Face Lift:",
+      "UNRELATED_FACE_SOP_GUIDANCE",
+    ].join("\n");
+    config.closingPlaybook = [
+      "Pelvic Care:",
+      "RELEVANT_PELVIC_CLOSING_GUIDANCE",
+      "",
+      "Face Lift:",
+      "UNRELATED_FACE_CLOSING_GUIDANCE",
+    ].join("\n");
 
     const prompt = buildFollowUpPrompt({
       channel: "whatsapp",
@@ -97,8 +109,10 @@ test("AI follow-up prompt includes only the relevant service and matching promot
     assert.doesNotMatch(prompt, /UNRELATED_FACE_DETAILS/);
     assert.doesNotMatch(prompt, /UNRELATED_FACE_PROMO/);
     assert.doesNotMatch(prompt, /FAQ_SENTINEL/);
-    assert.doesNotMatch(prompt, /SOP_SENTINEL/);
-    assert.doesNotMatch(prompt, /CLOSING_SENTINEL/);
+    assert.match(prompt, /RELEVANT_PELVIC_SOP_GUIDANCE/);
+    assert.match(prompt, /RELEVANT_PELVIC_CLOSING_GUIDANCE/);
+    assert.doesNotMatch(prompt, /UNRELATED_FACE_SOP_GUIDANCE/);
+    assert.doesNotMatch(prompt, /UNRELATED_FACE_CLOSING_GUIDANCE/);
   } finally {
     Object.assign(config, original);
   }
