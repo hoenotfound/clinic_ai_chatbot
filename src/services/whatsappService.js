@@ -71,6 +71,11 @@ function extractWamid(data) {
   return data?.messages?.[0]?.id || null;
 }
 
+function replyContext(options = {}) {
+  const messageId = String(options?.replyToProviderMessageId || "").trim();
+  return messageId ? { context: { message_id: messageId } } : {};
+}
+
 /**
  * Sends a plain text WhatsApp message via the Cloud API.
  * @param {string} to - recipient's WhatsApp ID (phone number, no '+')
@@ -80,7 +85,7 @@ function extractWamid(data) {
  *   Never throws — callers, e.g. the AI auto-reply flow, already have their own
  *   fallback logic around this.
  */
-async function sendMessage(to, text) {
+async function sendMessage(to, text, options = {}) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -97,6 +102,7 @@ async function sendMessage(to, text) {
         to,
         type: "text",
         text: { body: text },
+        ...replyContext(options),
       }),
     });
 
@@ -130,7 +136,7 @@ async function sendMessage(to, text) {
  *   accepted the send request (never throws — a failed promo image should never
  *   take down the actual text reply around it)
  */
-async function sendImage(to, imageUrl, caption) {
+async function sendImage(to, imageUrl, caption, options = {}) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -147,6 +153,7 @@ async function sendImage(to, imageUrl, caption) {
         to,
         type: "image",
         image: caption ? { link: imageUrl, caption } : { link: imageUrl },
+        ...replyContext(options),
       }),
     });
 
@@ -220,7 +227,7 @@ async function uploadMedia(buffer, mimeType, filename = "upload") {
  * @returns {Promise<{success: boolean, wamid: string|null}>} success is true if
  *   Meta accepted the send request
  */
-async function sendImageById(to, mediaId, caption) {
+async function sendImageById(to, mediaId, caption, options = {}) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -237,6 +244,7 @@ async function sendImageById(to, mediaId, caption) {
         to,
         type: "image",
         image: caption ? { id: mediaId, caption } : { id: mediaId },
+        ...replyContext(options),
       }),
     });
 
@@ -265,7 +273,7 @@ async function sendImageById(to, mediaId, caption) {
  *   outcome (delivered vs. failed, and why) arrives later via the status-update
  *   webhook (see parseStatusUpdates), matched back to this send by wamid.
  */
-async function sendVoiceById(to, mediaId) {
+async function sendVoiceById(to, mediaId, options = {}) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
@@ -282,6 +290,7 @@ async function sendVoiceById(to, mediaId) {
         to,
         type: "audio",
         audio: { id: mediaId, voice: true },
+        ...replyContext(options),
       }),
     });
 
@@ -370,12 +379,20 @@ function parseIncomingMessages(body) {
           const sourceTimestamp = message.timestamp
             ? String(message.timestamp)
             : null;
+          const replyToProviderMessageId = message.context?.id
+            ? String(message.context.id)
+            : null;
+          const isForwarded = Boolean(
+            message.context?.forwarded || message.context?.frequently_forwarded
+          );
           const base = {
             id: message.id,
             from: message.from,
             profileName,
             ...(sourceTimestamp ? { timestamp: sourceTimestamp } : {}),
             ...(attribution ? { attribution } : {}),
+            ...(replyToProviderMessageId ? { replyToProviderMessageId } : {}),
+            ...(isForwarded ? { isForwarded: true } : {}),
           };
 
           if (message.type === "text") {
