@@ -240,6 +240,8 @@ function followUpPromotionAuthorityRules() {
 - Do not use "human_review" only because a STAFF message contains an unconfigured offer. Use "human_review" if the customer asks to confirm its validity/terms, it conflicts with current configured information, or staff judgment is otherwise required.`;
 }
 
+// Keep the sales guidance that can materially shape follow-up quality, but
+// exclude unrelated service sections so the prompt stays compact.
 function followUpRelevantGuidance(resolvedService) {
   const serviceName = promptContextText(resolvedService?.name, 240);
   const serviceKey = followUpLookupKey(serviceName);
