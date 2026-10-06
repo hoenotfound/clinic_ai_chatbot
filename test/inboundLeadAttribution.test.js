@@ -128,6 +128,45 @@ test("concurrent lead creation can still attribute when the journey boundary is 
   assert.equal(calls[0].lead.id, 57);
 });
 
+test("deleted standalone Meta referral retry is suppressed before pending attribution is recreated", async () => {
+  let pendingSaved = false;
+  let contactTouched = false;
+  const claim = createInboundMessageClaimService({
+    contacts: {
+      async getOrCreateContact() { contactTouched = true; },
+      async getOrCreateChannelContact() { contactTouched = true; },
+    },
+    messages: {},
+    pipeline: {},
+    processing: {
+      async isDeletedProviderMessageId(providerMessageId) {
+        assert.equal(providerMessageId, "instagram:referral:deleted-event");
+        return true;
+      },
+      async storeInboundClaim() {
+        assert.fail("deleted referral retry must not create a message");
+      },
+    },
+    attribution: {
+      async rememberPendingReferral() {
+        pendingSaved = true;
+      },
+    },
+  });
+
+  const result = await claim({
+    attributionOnly: true,
+    id: "referral:deleted-event",
+    channel: "instagram",
+    from: "igsid-deleted",
+    attribution: { source: "meta_ads", adId: "old-ad" },
+  });
+
+  assert.equal(result, null);
+  assert.equal(pendingSaved, false);
+  assert.equal(contactTouched, false);
+});
+
 test("attribution-only social referral does not create a contact or message", async () => {
   let contactTouched = false;
   let processingTouched = false;
