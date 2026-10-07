@@ -1218,7 +1218,13 @@ async function sendCandidate(candidate) {
         effectiveVideoFilename,
         {
           purpose: "marketing",
-          preSendCheck: finalPreSendCheck,
+          // The text claim is already provider-accepted at this point, so the
+          // pending-claim guard would intentionally return false. Treat the
+          // video as the same immediate companion send as a social image:
+          // re-check quiet hours here while channelMessaging re-checks the
+          // provider messaging policy before delivery.
+          preSendCheck: async () =>
+            !quietHoursStatus(new Date(), settings.quietHours).active,
         }
       );
       if (!videoResult?.success && !videoResult?.cancelled) {
