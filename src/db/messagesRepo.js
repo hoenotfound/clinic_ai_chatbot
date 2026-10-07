@@ -70,6 +70,7 @@ const LIGHTWEIGHT_MESSAGE_COLUMNS = `
   media_url,
   (media_key IS NOT NULL) AS has_media_attachment,
   media_mime_type,
+  media_filename,
   created_at,
   delivery_status,
   delivery_error,
@@ -99,6 +100,7 @@ const PORTAL_REPLY_PREVIEW_COLUMN = `
       'content', quoted.content,
       'sent_by_username', quoted.sent_by_username,
       'media_mime_type', quoted.media_mime_type,
+      'media_filename', quoted.media_filename,
       'has_media_attachment', (quoted.media_key IS NOT NULL),
       'media_url', quoted.media_url
     )
@@ -138,6 +140,7 @@ async function saveMessage(
   const initialDeliveryError = options?.initialDeliveryError || null;
   const replyToProviderMessageId = options?.replyToProviderMessageId || null;
   const isForwarded = options?.isForwarded === true;
+  const mediaFilename = String(options?.mediaFilename || "").trim() || null;
 
   if (!whatsappTemplate) {
     const result = await pool.query(
@@ -147,9 +150,9 @@ async function saveMessage(
        INSERT INTO messages (
          contact_id, role, content, whatsapp_message_id, sent_by_username,
          media_url, media_key, media_mime_type,
-         reply_to_provider_message_id, is_forwarded
+         reply_to_provider_message_id, is_forwarded, media_filename
        )
-       SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+       SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
        FROM conversation_lock
        RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
       [
@@ -163,6 +166,7 @@ async function saveMessage(
         mediaMimeType,
         replyToProviderMessageId,
         isForwarded,
+        mediaFilename,
       ]
     );
     return result.rows[0];
@@ -175,9 +179,10 @@ async function saveMessage(
      INSERT INTO messages (
        contact_id, role, content, whatsapp_message_id, sent_by_username,
        media_url, media_key, media_mime_type, whatsapp_template,
-       delivery_status, delivery_error, reply_to_provider_message_id, is_forwarded
+       delivery_status, delivery_error, reply_to_provider_message_id, is_forwarded,
+       media_filename
      )
-     SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13
+     SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14
      FROM conversation_lock
      RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}, whatsapp_template`,
     [
@@ -194,6 +199,7 @@ async function saveMessage(
       initialDeliveryError,
       replyToProviderMessageId,
       isForwarded,
+      mediaFilename,
     ]
   );
   return result.rows[0];
@@ -256,7 +262,7 @@ async function getMessagesForContact(contactId, limit = 50, includeMedia = true)
     ? "media_key"
     : "(media_key IS NOT NULL) AS has_media_attachment";
   const result = await pool.query(
-    `SELECT id, role, content, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type FROM messages
+    `SELECT id, role, content, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type, media_filename FROM messages
      WHERE contact_id = $1
        AND (
          role <> 'assistant'
@@ -509,7 +515,7 @@ async function getMessagePageForContact(
 
   if (afterId != null) {
     const result = await pool.query(
-      `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
+      `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type, media_filename,
               delivery_status, delivery_error, is_automated_follow_up, whatsapp_template,
               reply_to_provider_message_id, is_forwarded,
               ${PORTAL_REACTIONS_COLUMN},
@@ -531,7 +537,7 @@ async function getMessagePageForContact(
   params.push(safeLimit + 1);
 
   const result = await pool.query(
-    `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type,
+    `SELECT id, role, content, whatsapp_message_id, created_at, sent_by_username, media_url, ${mediaColumn}, media_mime_type, media_filename,
             delivery_status, delivery_error, is_automated_follow_up, whatsapp_template,
             reply_to_provider_message_id, is_forwarded,
             ${PORTAL_REACTIONS_COLUMN},
@@ -553,7 +559,7 @@ async function getMessagePageForContact(
 // the whole object through Postgres/base64 before it can start responding.
 async function getMessageMediaReferenceForContact(contactId, messageId) {
   const result = await pool.query(
-    `SELECT media_key, media_mime_type
+    `SELECT media_key, media_mime_type, media_filename
      FROM messages
      WHERE id = $1 AND contact_id = $2 AND media_key IS NOT NULL`,
     [messageId, contactId]
@@ -611,7 +617,7 @@ async function setMessageContentById(messageId, contactId, content) {
 async function getMessageForForward(contactId, messageId) {
   const result = await pool.query(
     `SELECT m.id, m.contact_id, m.role, m.content, m.whatsapp_message_id,
-            m.sent_by_username, m.media_url, m.media_key, m.media_mime_type,
+            m.sent_by_username, m.media_url, m.media_key, m.media_mime_type, m.media_filename,
             m.created_at, m.delivery_status, m.delivery_error,
             m.is_automated_follow_up, m.whatsapp_template,
             m.reply_to_provider_message_id, m.is_forwarded
@@ -629,7 +635,7 @@ async function getMessageForForward(contactId, messageId) {
 async function getMessageForRetry(contactId, messageId) {
   const result = await pool.query(
     `SELECT m.id, m.contact_id, m.role, m.content, m.whatsapp_message_id,
-            m.sent_by_username, m.media_url, m.media_key, m.media_mime_type,
+            m.sent_by_username, m.media_url, m.media_key, m.media_mime_type, m.media_filename,
             m.created_at, m.delivery_status, m.delivery_error,
             m.is_automated_follow_up, m.whatsapp_template,
             m.reply_to_provider_message_id, m.is_forwarded,
@@ -647,7 +653,15 @@ async function getMessageForRetry(contactId, messageId) {
 
   const key = row.media_key;
   const mimeType = String(row.media_mime_type || "").toLowerCase();
-  if (key && mimeType.startsWith("video/")) {
+  if (
+    key &&
+    mimeType &&
+    !mimeType.startsWith("image/") &&
+    !mimeType.startsWith("audio/")
+  ) {
+    // Videos and documents are resent from their durable R2 object. Keeping
+    // the key avoids a large base64 round-trip and is required by the stored
+    // document resend path.
     row.media_base64 = null;
     return row;
   }
@@ -661,7 +675,7 @@ async function getMessageForReplyContext(contactId, messageId) {
     `SELECT id, contact_id, role, content, whatsapp_message_id,
             sent_by_username, media_url,
             (media_key IS NOT NULL) AS has_media_attachment,
-            media_mime_type, created_at, delivery_status
+            media_mime_type, media_filename, created_at, delivery_status
      FROM messages
      WHERE id = $1 AND contact_id = $2
      LIMIT 1`,
