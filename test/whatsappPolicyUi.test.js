@@ -194,6 +194,7 @@ test("staff send routes check channel policy before Staff Assist", () => {
     /requireFreeformPolicy\(contact, res, whatsappPolicy\.manualStaffPurpose\(contact\)\)/
   );
   assert.match(source, /message\.is_automated_follow_up !== true/);
+  assert.match(source, /message\.is_automated_follow_up === true[\s\S]*\? "marketing"/);
   assert.match(source, /message\.is_scheduled_message !== true/);
   assert.match(source, /\? whatsappPolicy\.manualStaffPurpose\(contact\)/);
   assert.match(
