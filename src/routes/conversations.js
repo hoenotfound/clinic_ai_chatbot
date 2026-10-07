@@ -531,8 +531,12 @@ async function sendStoredMessage(contact, message, options = {}) {
       contact,
       message.media_key,
       skipCaption ? undefined : (message.content || undefined),
-      message.media_filename || "video.mp4",
-      socialProviderSendOptions(message, contact, { ...options, skipCaption })
+      message.media_filename || null,
+      socialProviderSendOptions(message, contact, {
+        ...options,
+        skipCaption,
+        videoMimeType: mimeType,
+      })
     );
   }
 
