@@ -2462,7 +2462,7 @@ function FollowUpTool({
                       key={previewVideoUrl}
                       src={previewVideoUrl}
                       controls
-                      preload="metadata"
+                      preload="none"
                       playsInline
                       className="max-h-56 w-full bg-black object-contain"
                     />
