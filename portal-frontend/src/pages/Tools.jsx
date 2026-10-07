@@ -60,9 +60,6 @@ const FOLLOW_UP_LANGUAGES = [
 const MAX_FOLLOW_UP_IMAGE_BYTES = 5 * 1024 * 1024;
 const FOLLOW_UP_IMAGE_TYPES = new Set(["image/jpeg", "image/png"]);
 const MAX_FOLLOW_UP_VIDEO_BYTES = 16 * 1024 * 1024;
-function formatMegabytes(bytes) {
-  return `${(Number(bytes || 0) / (1024 * 1024)).toFixed(1)}MB`;
-}
 
 function hasCompleteTranslations(value) {
   return !!value && FOLLOW_UP_LANGUAGES.every(({ key }) => value[key]?.trim());
