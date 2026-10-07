@@ -59,8 +59,12 @@ const FOLLOW_UP_LANGUAGES = [
 
 const MAX_FOLLOW_UP_IMAGE_BYTES = 5 * 1024 * 1024;
 const FOLLOW_UP_IMAGE_TYPES = new Set(["image/jpeg", "image/png"]);
-const MAX_FOLLOW_UP_VIDEO_BYTES = 16 * 1024 * 1024;
+const MAX_FOLLOW_UP_VIDEO_BYTES = 50 * 1024 * 1024;
 const FOLLOW_UP_VIDEO_TYPES = new Set(["video/mp4"]);
+function formatMegabytes(bytes) {
+  return `${(Number(bytes || 0) / (1024 * 1024)).toFixed(1)}MB`;
+}
+
 function hasCompleteTranslations(value) {
   return !!value && FOLLOW_UP_LANGUAGES.every(({ key }) => value[key]?.trim());
 }
@@ -505,13 +509,20 @@ export default function Tools() {
       return null;
     }
     if (file.size > MAX_FOLLOW_UP_VIDEO_BYTES) {
-      showToast("That video is larger than 16MB. Please choose a smaller file.", "error");
+      showToast("That video is larger than 50MB. Please choose a smaller file.", "error");
       return null;
     }
 
     setUploadingVideo(true);
     try {
-      return await api.uploadFollowUpVideo(file);
+      const uploaded = await api.uploadFollowUpVideo(file);
+      if (uploaded?.compressed) {
+        showToast(
+          `Compressed ${formatMegabytes(uploaded.originalBytes)} to ${formatMegabytes(uploaded.storedBytes)} for WhatsApp.`,
+          "info"
+        );
+      }
+      return uploaded;
     } catch (err) {
       showToast(err.message || "Couldn't upload that video.", "error");
       return null;
@@ -1355,7 +1366,7 @@ function ServiceVideoPicker({
             disabled={uploading}
             className="text-[10px] font-semibold text-[var(--color-primary)] disabled:opacity-50"
           >
-            {uploading ? "Uploading…" : videoKey ? "Replace" : "Add video"}
+            {uploading ? "Preparing…" : videoKey ? "Replace" : "Add video"}
           </button>
           {videoKey && (
             <button
@@ -1370,7 +1381,7 @@ function ServiceVideoPicker({
         </div>
       </div>
       <p className="mt-2 text-[10px] leading-4 text-[var(--color-text-muted)]">
-        MP4, up to 16MB. The file stays private in R2 and is shared with the messaging provider only when it is sent.
+        MP4, up to 50MB. Files above 16MB are automatically compressed to a WhatsApp-safe H.264/AAC copy before being stored privately in R2.
       </p>
     </div>
   );
