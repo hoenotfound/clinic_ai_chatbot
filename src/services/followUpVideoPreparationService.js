@@ -1,24 +1,11 @@
 const { spawn } = require("node:child_process");
-const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
-const os = require("node:os");
-const path = require("node:path");
 const ffmpegPath = require("ffmpeg-static");
 
 const MIB = 1024 * 1024;
-const MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES = 50 * MIB;
 const MAX_WHATSAPP_VIDEO_BYTES = 16 * MIB;
-const TARGET_WHATSAPP_VIDEO_BYTES = 14 * MIB;
-const MIN_VIDEO_KBPS = 96;
-const MIN_AUDIO_KBPS = 48;
-const MAX_VIDEO_KBPS = 3000;
+const MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES = MAX_WHATSAPP_VIDEO_BYTES;
 const DEFAULT_PROBE_TIMEOUT_MS = 10_000;
-// Keep conversion bounded on small web-service instances. A long-running FFmpeg
-// child competes with the Node process for the same container memory and can
-// trigger an instance restart before the old 3-minute timeout fires.
-const DEFAULT_TRANSCODE_TIMEOUT_MS = 90 * 1000;
-const MAX_TRANSCODE_DIMENSION = 960;
-const MAX_TRANSCODE_FPS = 30;
 
 function followUpVideoError(message, code) {
   const error = new Error(message);
@@ -36,103 +23,6 @@ function parseFfmpegDuration(stderr) {
   const seconds = Number(match[3]);
   const total = hours * 3600 + minutes * 60 + seconds;
   return Number.isFinite(total) && total > 0 ? total : null;
-}
-
-function createCompressionQueue({
-  maxWaiting = 2,
-  waitTimeoutMs = 30 * 1000,
-} = {}) {
-  let active = false;
-  const waiting = [];
-
-  function lease() {
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      const next = waiting.shift();
-      if (next) {
-        clearTimeout(next.timer);
-        next.resolve(lease());
-      } else {
-        active = false;
-      }
-    };
-  }
-
-  return {
-    acquire() {
-      if (!active) {
-        active = true;
-        return Promise.resolve(lease());
-      }
-      if (waiting.length >= maxWaiting) {
-        return Promise.reject(
-          followUpVideoError(
-            "Video compression is busy. Please try again shortly.",
-            "FOLLOW_UP_VIDEO_COMPRESSION_BUSY"
-          )
-        );
-      }
-      return new Promise((resolve, reject) => {
-        const entry = { resolve, timer: null };
-        entry.timer = setTimeout(() => {
-          const index = waiting.indexOf(entry);
-          if (index >= 0) waiting.splice(index, 1);
-          reject(
-            followUpVideoError(
-              "Video compression is busy. Please try again shortly.",
-              "FOLLOW_UP_VIDEO_COMPRESSION_BUSY"
-            )
-          );
-        }, waitTimeoutMs);
-        entry.timer.unref?.();
-        waiting.push(entry);
-      });
-    },
-  };
-}
-
-const compressionQueue = createCompressionQueue();
-
-function bitratePlan(durationSeconds, {
-  targetBytes = TARGET_WHATSAPP_VIDEO_BYTES,
-} = {}) {
-  const duration = Number(durationSeconds);
-  if (!Number.isFinite(duration) || duration <= 0) {
-    throw followUpVideoError(
-      "This MP4 does not have a readable duration.",
-      "INVALID_FOLLOW_UP_VIDEO"
-    );
-  }
-
-  // Leave room for MP4 container overhead and encoder variance. The encoder uses
-  // bounded average bitrate and the final file is checked before it reaches R2.
-  const totalKbps = Math.floor((targetBytes * 8) / duration / 1000);
-  const audioKbps =
-    totalKbps >= 500 ? 96 : totalKbps >= 250 ? 64 : MIN_AUDIO_KBPS;
-  const containerAllowanceKbps = 16;
-  const uncappedVideoKbps = totalKbps - audioKbps - containerAllowanceKbps;
-
-  if (uncappedVideoKbps < MIN_VIDEO_KBPS) {
-    throw followUpVideoError(
-      "This video is too long to compress below WhatsApp's 16MB limit with usable audio and video quality.",
-      "FOLLOW_UP_VIDEO_TOO_LONG"
-    );
-  }
-
-  const videoKbps = Math.min(MAX_VIDEO_KBPS, uncappedVideoKbps);
-  const maxDimension =
-    videoKbps >= 1800 ? 1280
-      : videoKbps >= 900 ? 960
-        : videoKbps >= 450 ? 720
-          : 540;
-
-  return {
-    audioKbps,
-    videoKbps,
-    maxDimension,
-  };
 }
 
 function parseFfmpegMediaInfo(stderr) {
@@ -167,8 +57,8 @@ function probeVideoInfo(
   if (!ffmpegPath) {
     return Promise.reject(
       followUpVideoError(
-        "Video inspection is unavailable on this server.",
-        "FOLLOW_UP_VIDEO_COMPRESSION_UNAVAILABLE"
+        "Video compatibility checking is unavailable on this server.",
+        "VIDEO_VALIDATION_UNAVAILABLE"
       )
     );
   }
@@ -178,7 +68,12 @@ function probeVideoInfo(
     try {
       child = spawnFn(
         ffmpegPath,
-        ["-hide_banner", "-i", inputPath],
+        [
+          "-hide_banner",
+          "-nostdin",
+          "-threads", "1",
+          "-i", inputPath,
+        ],
         { stdio: ["ignore", "ignore", "pipe"] }
       );
     } catch (error) {
@@ -199,7 +94,7 @@ function probeVideoInfo(
     const timer = setTimeout(() => {
       if (settled) return;
       timeoutError = followUpVideoError(
-        "The video took too long to inspect.",
+        "The video took too long to inspect. Please export it again as a standard H.264 MP4.",
         "INVALID_FOLLOW_UP_VIDEO"
       );
       child.kill("SIGKILL");
@@ -216,10 +111,10 @@ function probeVideoInfo(
         return;
       }
       const info = parseFfmpegMediaInfo(stderr);
-      if (!info.durationSeconds) {
+      if (!info.durationSeconds || !info.videoCodec) {
         settle(
           followUpVideoError(
-            "This video could not be read. Please export it again as a standard video file.",
+            "This video could not be validated. Please export it again as an H.264 MP4 with AAC audio.",
             "INVALID_FOLLOW_UP_VIDEO"
           )
         );
@@ -230,153 +125,14 @@ function probeVideoInfo(
   });
 }
 
-function probeDurationSeconds(inputPath, options = {}) {
-  return probeVideoInfo(inputPath, options).then((info) => info.durationSeconds);
-}
-
-function runFfmpeg(args, {
-  spawnFn = spawn,
-  timeoutMs = DEFAULT_TRANSCODE_TIMEOUT_MS,
-} = {}) {
-  if (!ffmpegPath) {
-    return Promise.reject(
-      followUpVideoError(
-        "Video compression is unavailable on this server.",
-        "FOLLOW_UP_VIDEO_COMPRESSION_UNAVAILABLE"
-      )
-    );
-  }
-
-  return new Promise((resolve, reject) => {
-    let child;
-    try {
-      child = spawnFn(ffmpegPath, args, {
-        stdio: ["ignore", "ignore", "pipe"],
-      });
-    } catch (error) {
-      reject(error);
-      return;
-    }
-
-    let stderr = "";
-    let settled = false;
-    let timeoutError = null;
-    const settle = (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (error) reject(error);
-      else resolve();
-    };
-    const timer = setTimeout(() => {
-      if (settled) return;
-      timeoutError = followUpVideoError(
-        "Video conversion took too long. Please try a shorter video or export it as H.264 / Most Compatible.",
-        "FOLLOW_UP_VIDEO_COMPRESSION_TIMEOUT"
-      );
-      // Keep the queue lease until close/error confirms the encoder is gone.
-      child.kill("SIGKILL");
-    }, timeoutMs);
-    timer.unref?.();
-
-    child.on("error", (error) => settle(timeoutError || error));
-    child.stderr.on("data", (chunk) => {
-      if (stderr.length < 128 * 1024) stderr += chunk.toString("utf8");
-    });
-    child.on("close", (code) => {
-      if (timeoutError) {
-        settle(timeoutError);
-        return;
-      }
-      if (code === 0) {
-        settle();
-        return;
-      }
-      const error = followUpVideoError(
-        "The video could not be compressed into a WhatsApp-compatible MP4.",
-        "FOLLOW_UP_VIDEO_COMPRESSION_FAILED"
-      );
-      error.ffmpegStderr = stderr.slice(-4000);
-      settle(error);
-    });
-  });
-}
-
-function videoEncodeArgs(inputPath, outputPath, plan) {
-  // 960p is sufficient for an Inbox/customer-service video and materially
-  // reduces x264 working memory compared with the previous 1280px ceiling.
-  const maxDimension = Math.min(
-    Number(plan.maxDimension) || MAX_TRANSCODE_DIMENSION,
-    MAX_TRANSCODE_DIMENSION
-  );
-  const scale =
-    `scale=w=min(${maxDimension}\\,iw):h=min(${maxDimension}\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2:flags=fast_bilinear`;
-  const maxrateKbps = Math.max(
-    plan.videoKbps,
-    Math.ceil(plan.videoKbps * 1.2)
-  );
-  return [
-    "-hide_banner",
-    "-loglevel", "error",
-    "-nostdin",
-    "-y",
-
-    // Important for low-memory Render instances: FFmpeg otherwise chooses
-    // decoder threads automatically. 4K HEVC can keep many full-resolution
-    // reference frames alive at once even though the output encoder is already
-    // limited to one thread.
-    "-filter_threads", "1",
-    "-threads", "1",
-    "-i", inputPath,
-
-    "-map", "0:v:0",
-    "-map", "0:a:0?",
-    "-vf", scale,
-    "-fpsmax", String(MAX_TRANSCODE_FPS),
-    "-c:v", "libx264",
-    "-preset", "superfast",
-    "-tune", "zerolatency",
-    "-profile:v", "main",
-    "-pix_fmt", "yuv420p",
-    "-b:v", `${plan.videoKbps}k`,
-    "-maxrate", `${maxrateKbps}k`,
-    "-bufsize", `${Math.max(plan.videoKbps * 2, 256)}k`,
-    "-c:a", "aac",
-    "-b:a", `${plan.audioKbps}k`,
-    "-movflags", "+faststart",
-    "-max_muxing_queue_size", "128",
-    "-map_metadata", "-1",
-    "-sn",
-    "-threads", "1",
-    "-f", "mp4",
-    outputPath,
-  ];
-}
-
-async function transcodeWhatsAppVideo(
-  inputPath,
-  outputPath,
-  plan,
-  {
-    runFfmpegFn = runFfmpeg,
-  } = {}
-) {
-  await runFfmpegFn(videoEncodeArgs(inputPath, outputPath, plan));
-}
-
 async function prepareFollowUpVideoFile(
   inputPath,
   {
     originalBytes = null,
     fsApi = fs,
-    queue = compressionQueue,
-    probeDurationFn = probeDurationSeconds,
     probeVideoInfoFn = probeVideoInfo,
-    transcodeFn = transcodeWhatsAppVideo,
     maxUploadBytes = MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES,
     maxWhatsAppBytes = MAX_WHATSAPP_VIDEO_BYTES,
-    targetBytes = TARGET_WHATSAPP_VIDEO_BYTES,
-    forceTranscode = false,
     ensureWhatsAppCompatible = false,
   } = {}
 ) {
@@ -392,113 +148,48 @@ async function prepareFollowUpVideoFile(
       "INVALID_FOLLOW_UP_VIDEO"
     );
   }
-  if (sourceBytes > maxUploadBytes) {
+
+  const hardLimit = Math.min(maxUploadBytes, maxWhatsAppBytes);
+  if (sourceBytes > hardLimit) {
     throw followUpVideoError(
-      "Video is too large. Please choose a video file under 50MB.",
-      "FOLLOW_UP_VIDEO_UPLOAD_TOO_LARGE"
+      "This video is larger than 16MB. Automatic video compression is disabled to keep the chatbot server stable. Please compress or export it before uploading.",
+      "WHATSAPP_VIDEO_TOO_LARGE"
     );
   }
 
-  const sourceWithinProviderLimit = sourceBytes <= maxWhatsAppBytes;
   let sourceInfo = null;
-
-  if (
-    sourceWithinProviderLimit &&
-    !forceTranscode &&
-    ensureWhatsAppCompatible
-  ) {
+  if (ensureWhatsAppCompatible) {
     sourceInfo = await probeVideoInfoFn(inputPath);
-    if (isWhatsAppSafeVideoInfo(sourceInfo)) {
-      return {
-        buffer: await fsApi.readFile(inputPath),
-        compressed: false,
-        transcoded: false,
-        durationSeconds: sourceInfo.durationSeconds,
-        sourceVideoCodec: sourceInfo.videoCodec,
-        sourceAudioCodec: sourceInfo.audioCodec,
-        originalBytes: sourceBytes,
-        storedBytes: sourceBytes,
-      };
-    }
-  } else if (sourceWithinProviderLimit && !forceTranscode) {
-    return {
-      buffer: await fsApi.readFile(inputPath),
-      compressed: false,
-      transcoded: false,
-      originalBytes: sourceBytes,
-      storedBytes: sourceBytes,
-    };
-  }
-
-  const release = await queue.acquire();
-  const outputPath = path.join(
-    os.tmpdir(),
-    `follow-up-video-${process.pid}-${crypto.randomUUID()}.mp4`
-  );
-
-  try {
-    const durationSeconds =
-      sourceInfo?.durationSeconds || await probeDurationFn(inputPath);
-    const effectiveTargetBytes =
-      sourceBytes <= maxWhatsAppBytes && forceTranscode
-        ? Math.min(
-            targetBytes,
-            Math.max(sourceBytes * 2, 4 * MIB)
-          )
-        : targetBytes;
-    let plan = bitratePlan(durationSeconds, { targetBytes: effectiveTargetBytes });
-    await transcodeFn(inputPath, outputPath, plan);
-
-    let outputStat = await fsApi.stat(outputPath);
-    if (outputStat.size > maxWhatsAppBytes) {
-      // One-pass average bitrate is intentionally targeted below the provider cap,
-      // but unusual content/container overhead can still overshoot. Retry once
-      // with extra headroom instead of asking staff to manually re-export.
-      await fsApi.unlink(outputPath).catch(() => {});
-      plan = bitratePlan(durationSeconds, {
-        targetBytes: Math.floor(effectiveTargetBytes * 0.82),
-      });
-      await transcodeFn(inputPath, outputPath, plan);
-      outputStat = await fsApi.stat(outputPath);
-    }
-
-    if (outputStat.size <= 0 || outputStat.size > maxWhatsAppBytes) {
+    if (!isWhatsAppSafeVideoInfo(sourceInfo)) {
+      const videoCodec = sourceInfo.videoCodec || "unknown";
+      const audioCodec = sourceInfo.audioCodec || "none";
       throw followUpVideoError(
-        "The video could not be reduced below WhatsApp's 16MB limit. Please try a shorter or lower-resolution video.",
-        "FOLLOW_UP_VIDEO_STILL_TOO_LARGE"
+        `WhatsApp cannot send this video's codec (video: ${videoCodec}, audio: ${audioCodec}). Please export it as H.264 video with AAC audio in an MP4 file. Automatic conversion is disabled on this server.`,
+        "WHATSAPP_VIDEO_CODEC_UNSUPPORTED"
       );
     }
-
-    return {
-      buffer: await fsApi.readFile(outputPath),
-      compressed: outputStat.size < sourceBytes,
-      transcoded: true,
-      durationSeconds,
-      originalBytes: sourceBytes,
-      storedBytes: outputStat.size,
-    };
-  } finally {
-    await fsApi.unlink(outputPath).catch(() => {});
-    release();
   }
+
+  const buffer = await fsApi.readFile(inputPath);
+  return {
+    buffer,
+    compressed: false,
+    transcoded: false,
+    durationSeconds: sourceInfo?.durationSeconds || null,
+    sourceVideoCodec: sourceInfo?.videoCodec || null,
+    sourceAudioCodec: sourceInfo?.audioCodec || null,
+    originalBytes: sourceBytes,
+    storedBytes: sourceBytes,
+  };
 }
 
 module.exports = {
   MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES,
   MAX_WHATSAPP_VIDEO_BYTES,
-  TARGET_WHATSAPP_VIDEO_BYTES,
-  DEFAULT_TRANSCODE_TIMEOUT_MS,
-  MAX_TRANSCODE_DIMENSION,
-  MAX_TRANSCODE_FPS,
+  DEFAULT_PROBE_TIMEOUT_MS,
   parseFfmpegDuration,
   parseFfmpegMediaInfo,
   isWhatsAppSafeVideoInfo,
-  bitratePlan,
-  createCompressionQueue,
   probeVideoInfo,
-  probeDurationSeconds,
-  runFfmpeg,
-  videoEncodeArgs,
-  transcodeWhatsAppVideo,
   prepareFollowUpVideoFile,
 };
