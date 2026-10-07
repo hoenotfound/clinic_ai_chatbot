@@ -13,7 +13,12 @@ const MIN_VIDEO_KBPS = 96;
 const MIN_AUDIO_KBPS = 48;
 const MAX_VIDEO_KBPS = 3000;
 const DEFAULT_PROBE_TIMEOUT_MS = 10_000;
-const DEFAULT_TRANSCODE_TIMEOUT_MS = 3 * 60 * 1000;
+// Keep conversion bounded on small web-service instances. A long-running FFmpeg
+// child competes with the Node process for the same container memory and can
+// trigger an instance restart before the old 3-minute timeout fires.
+const DEFAULT_TRANSCODE_TIMEOUT_MS = 90 * 1000;
+const MAX_TRANSCODE_DIMENSION = 960;
+const MAX_TRANSCODE_FPS = 30;
 
 function followUpVideoError(message, code) {
   const error = new Error(message);
@@ -266,7 +271,7 @@ function runFfmpeg(args, {
     const timer = setTimeout(() => {
       if (settled) return;
       timeoutError = followUpVideoError(
-        "Video compression timed out. Please try a shorter video.",
+        "Video conversion took too long. Please try a shorter video or export it as H.264 / Most Compatible.",
         "FOLLOW_UP_VIDEO_COMPRESSION_TIMEOUT"
       );
       // Keep the queue lease until close/error confirms the encoder is gone.
@@ -298,8 +303,14 @@ function runFfmpeg(args, {
 }
 
 function videoEncodeArgs(inputPath, outputPath, plan) {
+  // 960p is sufficient for an Inbox/customer-service video and materially
+  // reduces x264 working memory compared with the previous 1280px ceiling.
+  const maxDimension = Math.min(
+    Number(plan.maxDimension) || MAX_TRANSCODE_DIMENSION,
+    MAX_TRANSCODE_DIMENSION
+  );
   const scale =
-    `scale=w=min(${plan.maxDimension}\\,iw):h=min(${plan.maxDimension}\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2`;
+    `scale=w=min(${maxDimension}\\,iw):h=min(${maxDimension}\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2:flags=fast_bilinear`;
   const maxrateKbps = Math.max(
     plan.videoKbps,
     Math.ceil(plan.videoKbps * 1.2)
@@ -307,13 +318,24 @@ function videoEncodeArgs(inputPath, outputPath, plan) {
   return [
     "-hide_banner",
     "-loglevel", "error",
+    "-nostdin",
     "-y",
+
+    // Important for low-memory Render instances: FFmpeg otherwise chooses
+    // decoder threads automatically. 4K HEVC can keep many full-resolution
+    // reference frames alive at once even though the output encoder is already
+    // limited to one thread.
+    "-filter_threads", "1",
+    "-threads", "1",
     "-i", inputPath,
+
     "-map", "0:v:0",
     "-map", "0:a:0?",
     "-vf", scale,
+    "-fpsmax", String(MAX_TRANSCODE_FPS),
     "-c:v", "libx264",
-    "-preset", "veryfast",
+    "-preset", "superfast",
+    "-tune", "zerolatency",
     "-profile:v", "main",
     "-pix_fmt", "yuv420p",
     "-b:v", `${plan.videoKbps}k`,
@@ -322,6 +344,7 @@ function videoEncodeArgs(inputPath, outputPath, plan) {
     "-c:a", "aac",
     "-b:a", `${plan.audioKbps}k`,
     "-movflags", "+faststart",
+    "-max_muxing_queue_size", "128",
     "-map_metadata", "-1",
     "-sn",
     "-threads", "1",
@@ -464,6 +487,9 @@ module.exports = {
   MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES,
   MAX_WHATSAPP_VIDEO_BYTES,
   TARGET_WHATSAPP_VIDEO_BYTES,
+  DEFAULT_TRANSCODE_TIMEOUT_MS,
+  MAX_TRANSCODE_DIMENSION,
+  MAX_TRANSCODE_FPS,
   parseFfmpegDuration,
   parseFfmpegMediaInfo,
   isWhatsAppSafeVideoInfo,
@@ -472,6 +498,7 @@ module.exports = {
   probeVideoInfo,
   probeDurationSeconds,
   runFfmpeg,
+  videoEncodeArgs,
   transcodeWhatsAppVideo,
   prepareFollowUpVideoFile,
 };
