@@ -82,18 +82,42 @@ function normalizeServiceOverrides(value) {
       message
     );
     if (!translations) return null;
-    normalized.push({ serviceName, message, translations });
+    normalized.push({
+      serviceName,
+      message,
+      translations,
+      videoKey:
+        typeof item?.videoKey === "string" ? item.videoKey.trim() : "",
+      videoFilename:
+        typeof item?.videoFilename === "string"
+          ? item.videoFilename.trim().slice(0, 255)
+          : "",
+    });
   }
   return normalized;
 }
 
 function normalizeFollowUpStep(value) {
-  const delayMinutes = Number(value?.delayMinutes);
+  const timingMode =
+    value?.timingMode === "before_window_expiry"
+      ? "before_window_expiry"
+      : "after_reply";
+  const beforeWindowExpiryMinutes = Number(
+    value?.beforeWindowExpiryMinutes ?? 120
+  );
+  const delayMinutes =
+    timingMode === "before_window_expiry" &&
+    Number.isInteger(beforeWindowExpiryMinutes)
+      ? 24 * 60 - beforeWindowExpiryMinutes
+      : Number(value?.delayMinutes);
   const message = typeof value?.message === "string" ? value.message.trim() : "";
   if (
     !Number.isInteger(delayMinutes) ||
     delayMinutes < 5 ||
     delayMinutes > 23 * 60 ||
+    !Number.isInteger(beforeWindowExpiryMinutes) ||
+    beforeWindowExpiryMinutes < 60 ||
+    beforeWindowExpiryMinutes > 360 ||
     !message ||
     message.length > 1000 ||
     (value?.imageUrl !== undefined && typeof value.imageUrl !== "string")
@@ -110,6 +134,8 @@ function normalizeFollowUpStep(value) {
 
   return {
     delayMinutes,
+    timingMode,
+    beforeWindowExpiryMinutes,
     messageMode: value?.messageMode === "ai" ? "ai" : "fixed",
     aiInstruction:
       typeof value?.aiInstruction === "string"
@@ -518,6 +544,8 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
   return {
     message: source.translations[language] || source.message,
     targetedService: targeted?.serviceName || null,
+    targetedVideoKey: targeted?.videoKey || "",
+    targetedVideoFilename: targeted?.videoFilename || "",
     promotionFollowUp: false,
     promotionPackageSelection,
   };
@@ -779,6 +807,9 @@ async function sendCandidate(candidate) {
   );
   let followUpMessage = fallbackSelection.message;
   let targetedService = fallbackSelection.targetedService;
+  let targetedVideoKey = fallbackSelection.targetedVideoKey || "";
+  let targetedVideoFilename =
+    fallbackSelection.targetedVideoFilename || "";
   let promotionFollowUp = fallbackSelection.promotionFollowUp === true;
   let promotionPackageName = fallbackSelection.promotionPackageName || null;
   let promotionFollowUpImageUrl =
@@ -802,6 +833,8 @@ async function sendCandidate(candidate) {
       delayMinutes: step.delayMinutes,
       previousDelayMinutes:
         stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
+      timingMode: step.timingMode,
+      beforeWindowExpiryMinutes: step.beforeWindowExpiryMinutes,
       triggerMode: settings.triggerMode,
       activatedAt: settings.activatedAt,
     });
@@ -1000,6 +1033,14 @@ async function sendCandidate(candidate) {
   const effectiveImageUrl = promotionFollowUp
     ? promotionFollowUpImageUrl
     : step.imageUrl;
+  const effectiveVideoKey =
+    !promotionFollowUp &&
+    followUpMessageMode !== "ai_personalized" &&
+    targetedVideoKey
+      ? targetedVideoKey
+      : "";
+  const effectiveVideoFilename =
+    targetedVideoFilename || "service-video.mp4";
 
   // WhatsApp can send its image + caption as one tracked message. Messenger
   // and Instagram require separate text/image API messages, so the atomic
@@ -1017,6 +1058,8 @@ async function sendCandidate(candidate) {
       delayMinutes: step.delayMinutes,
       previousDelayMinutes:
         stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
+      timingMode: step.timingMode,
+      beforeWindowExpiryMinutes: step.beforeWindowExpiryMinutes,
       triggerMode: settings.triggerMode,
       activatedAt: settings.activatedAt,
     });
@@ -1092,18 +1135,26 @@ async function sendCandidate(candidate) {
         purpose: "marketing",
         preSendCheck: finalPreSendCheck,
       };
-      sendResult = effectiveImageUrl
-        ? await channelMessaging.sendImageByUrl(
+      sendResult = effectiveVideoKey
+        ? await channelMessaging.sendVideoByStoredKey(
             contact,
-            effectiveImageUrl,
+            effectiveVideoKey,
             followUpMessage,
+            effectiveVideoFilename,
             policyOptions
           )
-        : await channelMessaging.sendText(
-            contact,
-            followUpMessage,
-            policyOptions
-          );
+        : effectiveImageUrl
+          ? await channelMessaging.sendImageByUrl(
+              contact,
+              effectiveImageUrl,
+              followUpMessage,
+              policyOptions
+            )
+          : await channelMessaging.sendText(
+              contact,
+              followUpMessage,
+              policyOptions
+            );
     }
   } catch (err) {
     console.error("Automated follow-up send failed:", err);
@@ -1160,7 +1211,35 @@ async function sendCandidate(candidate) {
   // Contacted. Optional social image delivery is tracked independently below.
   await markContacted(candidate.contact_id);
 
-  if (isSocial && effectiveImageUrl) {
+  if (isSocial && effectiveVideoKey) {
+    try {
+      const videoResult = await channelMessaging.sendVideoByStoredKey(
+        contact,
+        effectiveVideoKey,
+        undefined,
+        effectiveVideoFilename,
+        {
+          purpose: "marketing",
+          preSendCheck: finalPreSendCheck,
+        }
+      );
+      if (!videoResult?.success && !videoResult?.cancelled) {
+        const videoError =
+          videoResult?.error ||
+          `${channelMessaging.labelForChannel(channel)} did not accept the service video.`;
+        await contactsRepo.setDeliveryAttention(
+          candidate.contact_id,
+          `Delivery failed: ${videoError}`
+        );
+      }
+    } catch (err) {
+      console.error("Optional social follow-up video send failed:", err);
+      await contactsRepo.setDeliveryAttention(
+        candidate.contact_id,
+        "Follow-up text was sent, but the service video could not be delivered."
+      );
+    }
+  } else if (isSocial && effectiveImageUrl) {
     await sendSocialImageCompanion(
       contact,
       candidate.contact_id,
@@ -1242,6 +1321,10 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
 
     const candidates = await followUpRepo.findCandidates({
       delayMinutes: settings.steps.map((step) => step.delayMinutes),
+      timingModes: settings.steps.map((step) => step.timingMode),
+      beforeWindowExpiryMinutes: settings.steps.map(
+        (step) => step.beforeWindowExpiryMinutes
+      ),
       triggerMode: settings.triggerMode,
       activatedAt: settings.activatedAt,
       limit: FOLLOW_UP_BATCH_SIZE,
@@ -1262,6 +1345,10 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
     const nextDueAt = liveSettings && typeof followUpRepo.getNextCandidateDueAt === "function"
       ? await followUpRepo.getNextCandidateDueAt({
           delayMinutes: liveSettings.steps.map((step) => step.delayMinutes),
+          timingModes: liveSettings.steps.map((step) => step.timingMode),
+          beforeWindowExpiryMinutes: liveSettings.steps.map(
+            (step) => step.beforeWindowExpiryMinutes
+          ),
           triggerMode: liveSettings.triggerMode,
           activatedAt: liveSettings.activatedAt,
         })
