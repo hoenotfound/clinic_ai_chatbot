@@ -9,6 +9,7 @@ function read(relativePath) {
 
 const inboxSource = read("portal-frontend/src/pages/Inbox.jsx");
 const conversationsSource = read("src/routes/conversations.js");
+const configSource = read("src/routes/config.js");
 
 test("Inbox video picker does not restrict iOS Files to exact video/mp4 MIME", () => {
   assert.match(
@@ -41,5 +42,17 @@ test("Inbox backend accepts iPhone video containers and normalizes every upload 
   assert.match(
     conversationsSource,
     /normalizedInboxVideoFilename\(req\.file\.originalname\)/
+  );
+});
+
+
+test("configured follow-up videos are normalized before reuse", () => {
+  assert.match(
+    configSource,
+    /prepareFollowUpVideoFile\([\s\S]*forceTranscode: true/
+  );
+  assert.match(
+    configSource,
+    /transcoded: prepared\.transcoded === true/
   );
 });
