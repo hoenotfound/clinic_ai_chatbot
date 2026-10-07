@@ -747,10 +747,26 @@ async function sendVideoByStoredKey(
   contact,
   videoKey,
   caption,
-  filename = "service-video.mp4",
+  filename = null,
   options = {}
 ) {
   const channel = channelOf(contact);
+  const requestedVideoMimeType = String(options.videoMimeType || "video/mp4")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  const videoMimeType = requestedVideoMimeType.startsWith("video/")
+    ? requestedVideoMimeType
+    : "video/mp4";
+  const videoFilename =
+    filename ||
+    (videoMimeType === "video/3gpp"
+      ? "video.3gp"
+      : videoMimeType === "video/quicktime"
+        ? "video.mov"
+        : videoMimeType === "video/webm"
+          ? "video.webm"
+          : "video.mp4");
   const guard = await freeformGuard(
     contact,
     options.purpose,
@@ -784,8 +800,8 @@ async function sendVideoByStoredKey(
   if (channel === "whatsapp") {
     const mediaId = await whatsapp.uploadMedia(
       buffer,
-      "video/mp4",
-      filename || "service-video.mp4",
+      videoMimeType,
+      videoFilename,
       options
     );
     if (!mediaId) {
@@ -843,7 +859,7 @@ async function sendVideoByStoredKey(
     result = await withTemporaryMediaUrl(
       contact,
       buffer,
-      "video/mp4",
+      videoMimeType,
       async (mediaUrl) => {
         const lateCancellation = await preSendCancelled(sendOptions);
         if (lateCancellation) return lateCancellation;
@@ -864,8 +880,8 @@ async function sendVideoByStoredKey(
         recipientFor(contact),
         "video",
         buffer,
-        "video/mp4",
-        filename || "service-video.mp4",
+        videoMimeType,
+        videoFilename,
         sendOptions
       )
     );
