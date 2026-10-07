@@ -2137,7 +2137,7 @@ function FollowUpTool({
               onChange={(media) =>
                 setForm((current) => ({ ...current, ...media }))
               }
-              label="Media"
+              label="Follow-up 1 media"
               description="Optional. Attach one image or one video to Follow-up 1."
             />
 
