@@ -27,11 +27,13 @@ function isStickerRow(row) {
 function aiContextTextForRow(row) {
   const content = String(row?.content || "");
   const mimeType = String(row?.media_mime_type || "").toLowerCase();
-  if (row?.role !== "user" || !mimeType.startsWith("video/")) {
+  const trimmed = content.trim();
+  const isVideoTurn =
+    mimeType.startsWith("video/") ||
+    /^🎥(?:\s|$)/u.test(trimmed);
+  if (row?.role !== "user" || !isVideoTurn) {
     return content;
   }
-
-  const trimmed = content.trim();
   const captionless =
     /^🎥\s*\[[^\]]+ sent a video\]$/i.test(trimmed);
   if (captionless) {
