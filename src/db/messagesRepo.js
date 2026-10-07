@@ -1623,6 +1623,7 @@ module.exports = {
   getMessageMediaReferenceForContact,
   getMessageMediaForContact,
   setMessageMediaKeyById,
+  setMessageContentById,
   getMessageForForward,
   getMessageForRetry,
   getMessageForReplyContext,
