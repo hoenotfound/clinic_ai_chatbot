@@ -13,7 +13,7 @@ const FOLLOW_UP_MESSAGE_COLUMNS = `
   whatsapp_message_id,
   sent_by_username,
   media_url,
-  false AS has_media_attachment,
+  (media_key IS NOT NULL) AS has_media_attachment,
   media_mime_type,
   created_at,
   delivery_status,
@@ -256,8 +256,16 @@ async function findCandidates({
        AND has_blocking_claim = false
        AND CASE
              WHEN ($5::text[])[next_follow_up_step] = 'before_window_expiry'
-               THEN latest_inbound_created_at
-                 + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute')
+               THEN GREATEST(
+                 latest_inbound_created_at
+                   + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up_created_at
+                     + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+                   latest_inbound_created_at
+                     + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute')
+                 )
+               )
              ELSE GREATEST(
                trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
                COALESCE(
@@ -269,8 +277,16 @@ async function findCandidates({
            END <= now()
        AND CASE
              WHEN ($5::text[])[next_follow_up_step] = 'before_window_expiry'
-               THEN latest_inbound_created_at
-                 + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute')
+               THEN GREATEST(
+                 latest_inbound_created_at
+                   + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up_created_at
+                     + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+                   latest_inbound_created_at
+                     + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute')
+                 )
+               )
              ELSE GREATEST(
                trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
                COALESCE(
@@ -283,8 +299,16 @@ async function findCandidates({
      ORDER BY
        CASE
              WHEN ($5::text[])[next_follow_up_step] = 'before_window_expiry'
-               THEN latest_inbound_created_at
-                 + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute')
+               THEN GREATEST(
+                 latest_inbound_created_at
+                   + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up_created_at
+                     + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+                   latest_inbound_created_at
+                     + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute')
+                 )
+               )
              ELSE GREATEST(
                trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
                COALESCE(
@@ -427,8 +451,16 @@ async function getNextCandidateDueAt({
      SELECT MIN(
        CASE
              WHEN ($4::text[])[next_follow_up_step] = 'before_window_expiry'
-               THEN latest_inbound_created_at
-                 + ((1440 - ($5::integer[])[next_follow_up_step]) * interval '1 minute')
+               THEN GREATEST(
+                 latest_inbound_created_at
+                   + ((1440 - ($5::integer[])[next_follow_up_step]) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up_created_at
+                     + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+                   latest_inbound_created_at
+                     + ((1440 - ($5::integer[])[next_follow_up_step]) * interval '1 minute')
+                 )
+               )
              ELSE GREATEST(
                trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
                COALESCE(
@@ -444,8 +476,16 @@ async function getNextCandidateDueAt({
        AND has_blocking_claim = false
        AND CASE
              WHEN ($4::text[])[next_follow_up_step] = 'before_window_expiry'
-               THEN latest_inbound_created_at
-                 + ((1440 - ($5::integer[])[next_follow_up_step]) * interval '1 minute')
+               THEN GREATEST(
+                 latest_inbound_created_at
+                   + ((1440 - ($5::integer[])[next_follow_up_step]) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up_created_at
+                     + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+                   latest_inbound_created_at
+                     + ((1440 - ($5::integer[])[next_follow_up_step]) * interval '1 minute')
+                 )
+               )
              ELSE GREATEST(
                trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
                COALESCE(
@@ -486,6 +526,8 @@ async function saveIfStillEligible({
   triggerMessageId,
   content,
   mediaUrl,
+  mediaKey = null,
+  mediaMimeType = null,
   stepIndex = 1,
   targetedService = null,
   messageMode = "fixed",
@@ -505,6 +547,8 @@ async function saveIfStillEligible({
       : "after_reply";
   const numericStep = Number(stepIndex);
   const normalizedMessageMode = String(messageMode || "fixed").trim().toLowerCase();
+  const normalizedMediaKey = String(mediaKey || "").trim() || null;
+  const normalizedMediaMimeType = String(mediaMimeType || "").trim() || null;
   if (
     !Number.isInteger(numericDelay) ||
     numericDelay < 5 ||
@@ -522,7 +566,9 @@ async function saveIfStillEligible({
     !Number.isInteger(numericStep) ||
     numericStep < 1 ||
     numericStep > MAX_FOLLOW_UP_STEPS ||
-    !FOLLOW_UP_MESSAGE_MODES.has(normalizedMessageMode)
+    !FOLLOW_UP_MESSAGE_MODES.has(normalizedMessageMode) ||
+    (normalizedMediaKey && normalizedMediaMimeType !== "video/mp4") ||
+    (!normalizedMediaKey && normalizedMediaMimeType)
   ) {
     throw new TypeError("Invalid automated follow-up step or delay.");
   }
@@ -587,6 +633,8 @@ async function saveIfStillEligible({
        content,
        sent_by_username,
        media_url,
+       media_key,
+       media_mime_type,
        is_automated_follow_up,
        automated_follow_up_for_message_id,
        automated_follow_up_step,
@@ -594,7 +642,7 @@ async function saveIfStillEligible({
        automated_follow_up_targeting_recorded,
        automated_follow_up_message_mode
      )
-     SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2, $5, $6, true, $11
+     SELECT $1, 'assistant', $3, 'Follow-up automation', $4, $14, $15, true, $2, $5, $6, true, $11
      FROM anchor, latest_inbound, progress, contacts c
      LEFT JOIN previous_follow_up ON true
      LEFT JOIN LATERAL (
@@ -643,8 +691,16 @@ async function saveIfStillEligible({
        AND anchor.created_at >= $9::timestamptz
        AND CASE
              WHEN $12 = 'before_window_expiry'
-               THEN latest_inbound.created_at
-                 + ((1440 - $13::integer) * interval '1 minute')
+               THEN GREATEST(
+                 latest_inbound.created_at
+                   + ((1440 - $13::integer) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up.created_at
+                     + (($7::integer - $10::integer) * interval '1 minute'),
+                   latest_inbound.created_at
+                     + ((1440 - $13::integer) * interval '1 minute')
+                 )
+               )
              ELSE GREATEST(
                anchor.created_at + ($7::integer * interval '1 minute'),
                COALESCE(
@@ -655,8 +711,16 @@ async function saveIfStillEligible({
            END <= now()
        AND CASE
              WHEN $12 = 'before_window_expiry'
-               THEN latest_inbound.created_at
-                 + ((1440 - $13::integer) * interval '1 minute')
+               THEN GREATEST(
+                 latest_inbound.created_at
+                   + ((1440 - $13::integer) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up.created_at
+                     + (($7::integer - $10::integer) * interval '1 minute'),
+                   latest_inbound.created_at
+                     + ((1440 - $13::integer) * interval '1 minute')
+                 )
+               )
              ELSE GREATEST(
                anchor.created_at + ($7::integer * interval '1 minute'),
                COALESCE(
@@ -686,6 +750,8 @@ async function saveIfStillEligible({
       normalizedMessageMode,
       normalizedTimingMode,
       numericBeforeWindowExpiryMinutes,
+      normalizedMediaKey,
+      normalizedMediaMimeType,
     ]
   );
   return result.rows[0] || null;
@@ -908,8 +974,16 @@ async function recordAiDecisionIfStillEligible({
          AND anchor.created_at >= $9::timestamptz
          AND CASE
                WHEN $11 = 'before_window_expiry'
-                 THEN latest_inbound.created_at
-                   + ((1440 - $12::integer) * interval '1 minute')
+                 THEN GREATEST(
+                   latest_inbound.created_at
+                     + ((1440 - $12::integer) * interval '1 minute'),
+                   COALESCE(
+                     previous_follow_up.created_at
+                       + (($7::integer - $10::integer) * interval '1 minute'),
+                     latest_inbound.created_at
+                       + ((1440 - $12::integer) * interval '1 minute')
+                   )
+                 )
                ELSE GREATEST(
                  anchor.created_at + ($7::integer * interval '1 minute'),
                  COALESCE(
@@ -920,8 +994,16 @@ async function recordAiDecisionIfStillEligible({
              END <= now()
          AND CASE
                WHEN $11 = 'before_window_expiry'
-                 THEN latest_inbound.created_at
-                   + ((1440 - $12::integer) * interval '1 minute')
+                 THEN GREATEST(
+                   latest_inbound.created_at
+                     + ((1440 - $12::integer) * interval '1 minute'),
+                   COALESCE(
+                     previous_follow_up.created_at
+                       + (($7::integer - $10::integer) * interval '1 minute'),
+                     latest_inbound.created_at
+                       + ((1440 - $12::integer) * interval '1 minute')
+                   )
+                 )
                ELSE GREATEST(
                  anchor.created_at + ($7::integer * interval '1 minute'),
                  COALESCE(
@@ -1127,6 +1209,71 @@ async function saveSocialImageCompanion({ contactId, imageUrl }) {
   return result.rows[0] || null;
 }
 
+async function saveSocialVideoCompanion({
+  contactId,
+  mediaKey,
+  mediaMimeType = "video/mp4",
+}) {
+  const normalizedKey = String(mediaKey || "").trim();
+  if (!normalizedKey || mediaMimeType !== "video/mp4") {
+    throw new TypeError("A durable MP4 media key is required.");
+  }
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     )
+     INSERT INTO messages (
+       contact_id,
+       role,
+       content,
+       sent_by_username,
+       media_key,
+       media_mime_type,
+       is_automated_follow_up
+     )
+     SELECT $1, 'assistant', '', 'Follow-up automation', $2, $3, true
+     FROM conversation_lock
+     RETURNING ${FOLLOW_UP_MESSAGE_COLUMNS}`,
+    [contactId, normalizedKey, mediaMimeType]
+  );
+  return result.rows[0] || null;
+}
+
+async function discardUnsentSocialVideoCompanion({ messageId, contactId }) {
+  const numericMessageId = Number(messageId);
+  const numericContactId = Number(contactId);
+  if (
+    !Number.isInteger(numericMessageId) ||
+    numericMessageId <= 0 ||
+    !Number.isInteger(numericContactId) ||
+    numericContactId <= 0
+  ) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     )
+     DELETE FROM messages
+     WHERE id = $2
+       AND contact_id = $1
+       AND role = 'assistant'
+       AND is_automated_follow_up = true
+       AND automated_follow_up_for_message_id IS NULL
+       AND content = ''
+       AND media_key IS NOT NULL
+       AND media_mime_type = 'video/mp4'
+       AND delivery_status IS NULL
+       AND whatsapp_message_id IS NULL
+       AND EXISTS (SELECT 1 FROM conversation_lock)
+     RETURNING ${FOLLOW_UP_MESSAGE_COLUMNS}`,
+    [numericContactId, numericMessageId]
+  );
+
+  return result.rows[0] || null;
+}
+
 async function discardUnsentSocialImageCompanion({ messageId, contactId }) {
   const numericMessageId = Number(messageId);
   const numericContactId = Number(contactId);
@@ -1199,6 +1346,8 @@ module.exports = {
   isClaimStillEligible,
   discardUnsentClaim,
   saveSocialImageCompanion,
+  saveSocialVideoCompanion,
   discardUnsentSocialImageCompanion,
+  discardUnsentSocialVideoCompanion,
   markStaleClaimsUnconfirmed,
 };
