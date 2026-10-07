@@ -131,6 +131,52 @@ export const api = {
     console.info("[Inbox image request]", { requestId, headersMs, totalMs: Math.round(performance.now() - startedAt), status: res.status });
     return result;
   },
+  sendVideo: async (contactId, file, caption, replyToMessageId = null, requestId = null) => {
+    const form = new FormData();
+    form.append("video", file);
+    if (caption) form.append("caption", caption);
+    if (replyToMessageId != null) form.append("replyToMessageId", String(replyToMessageId));
+
+    const res = await fetch(`${BASE}/conversations/${contactId}/video`, {
+      method: "POST",
+      credentials: "include",
+      headers: requestId ? { "X-Inbox-Request-Id": requestId } : {},
+      body: form,
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const error = new Error(body.error || `Request failed (${res.status})`);
+      error.status = res.status;
+      error.code = body.code || null;
+      error.policyBlocked = body.policyBlocked === true;
+      throw error;
+    }
+    return res.json();
+  },
+  sendDocument: async (contactId, file, caption, replyToMessageId = null, requestId = null) => {
+    const form = new FormData();
+    form.append("document", file);
+    if (caption) form.append("caption", caption);
+    if (replyToMessageId != null) form.append("replyToMessageId", String(replyToMessageId));
+
+    const res = await fetch(`${BASE}/conversations/${contactId}/document`, {
+      method: "POST",
+      credentials: "include",
+      headers: requestId ? { "X-Inbox-Request-Id": requestId } : {},
+      body: form,
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const error = new Error(body.error || `Request failed (${res.status})`);
+      error.status = res.status;
+      error.code = body.code || null;
+      error.policyBlocked = body.policyBlocked === true;
+      throw error;
+    }
+    return res.json();
+  },
   sendVoice: async (contactId, recording, mimeType, replyToMessageId = null) => {
     const form = new FormData();
     const extension = mimeType?.includes("mp4") ? "m4a" : mimeType?.includes("ogg") ? "ogg" : "webm";
