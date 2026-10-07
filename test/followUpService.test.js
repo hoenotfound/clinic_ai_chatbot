@@ -2244,6 +2244,77 @@ test("customer service history beats a multi-service package anchor for targeted
   assert.equal(claimInput.content, "Pelvic care video follow-up");
 });
 
+test("a single current anchor service beats older customer service history", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.additionalSteps = [
+    {
+      delayMinutes: 480,
+      message: "General second follow-up",
+      translations: {
+        en: "General second follow-up",
+        ms: "Susulan umum kedua",
+        zh: "第二次一般跟进",
+      },
+      imageUrl: "",
+      serviceOverrides: [
+        {
+          serviceName: "Pelvic Care",
+          message: "Pelvic follow-up",
+          translations: {
+            en: "Pelvic follow-up",
+            ms: "Susulan Pelvic",
+            zh: "骨盆跟进",
+          },
+        },
+        {
+          serviceName: "3D 小颜术",
+          message: "3D follow-up",
+          translations: {
+            en: "3D follow-up",
+            ms: "Susulan 3D",
+            zh: "3D小颜术跟进",
+          },
+        },
+      ],
+    },
+  ];
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 203,
+      whatsapp_number: "60120000203",
+      trigger_message_id: 202,
+      next_follow_up_step: 2,
+      treatment_interest: "Pelvic Care",
+      recent_inbound_messages: ["Hello, can I get more info?"],
+      recent_service_messages: [
+        "Hello, can I get more info?",
+        "I asked about Pelvic Care yesterday",
+      ],
+      trigger_message_content:
+        "Here is a Before & After from one 3D 小颜术 session.",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 204, contact_id: 203, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-204" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 203,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(claimInput.targetedService, "3D 小颜术");
+  assert.equal(claimInput.content, "3D follow-up");
+});
+
 test("can infer one targeted service from a configured alias in recent conversation", async (t) => {
   enableTool();
   const originalAliases = clinicConfig.serviceAliases;
