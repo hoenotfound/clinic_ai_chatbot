@@ -234,6 +234,67 @@ test("follow-up config accepts a targeted sequence and keeps legacy one-step pay
   );
 });
 
+test("follow-up video keys must belong to the current client namespace", (t) => {
+  const previousSlug = process.env.CLIENT_SLUG;
+  process.env.CLIENT_SLUG = "neutro";
+  t.after(() => {
+    if (previousSlug === undefined) delete process.env.CLIENT_SLUG;
+    else process.env.CLIENT_SLUG = previousSlug;
+  });
+
+  const current = currentConfig();
+  const baseFollowUp = {
+    ...current.automatedFollowUp,
+    serviceOverrides: [
+      {
+        serviceName: "Consultation",
+        message: "Consultation follow-up",
+        translations: {
+          en: "Consultation follow-up",
+          ms: "Susulan konsultasi",
+          zh: "咨询跟进",
+        },
+        videoFilename: "consultation.mp4",
+      },
+    ],
+    additionalSteps: [],
+  };
+
+  const wrongClient = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        ...baseFollowUp,
+        serviceOverrides: [
+          {
+            ...baseFollowUp.serviceOverrides[0],
+            videoKey:
+              "clients/another-client/messages/follow-up-config/video.mp4",
+          },
+        ],
+      },
+    },
+    current
+  );
+  assert.equal(wrongClient.ok, false);
+
+  const owned = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        ...baseFollowUp,
+        serviceOverrides: [
+          {
+            ...baseFollowUp.serviceOverrides[0],
+            videoKey:
+              "clients/neutro/messages/follow-up-config/video.mp4",
+          },
+        ],
+      },
+    },
+    current
+  );
+  assert.equal(owned.ok, true);
+});
+
 test("follow-up quiet hours validate and do not reset an active sequence", () => {
   const current = currentConfig();
   current.automatedFollowUp = {
