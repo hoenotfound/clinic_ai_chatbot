@@ -154,9 +154,17 @@ test("startup schedules R2 temp cleanup without running an immediate sweep", () 
   const workerBlock = startupSource.slice(workerBlockStart, workerBlockEnd);
 
   assert.match(workerBlock, /setIntervalFn\(\s*pruneStaleTemporaryMediaSafely/);
+  assert.match(
+    startupSource,
+    /pruneStaleFollowUpConfigVideos\(\{[\s\S]*referencedKeys:\s*configuredFollowUpVideoKeys\(\)/
+  );
   assert.doesNotMatch(
     workerBlock,
     /(?:^|\n)\s*pruneStaleTemporaryMediaSafely\(\);/
+  );
+  assert.doesNotMatch(
+    workerBlock,
+    /(?:^|\n)\s*mediaStorage\.pruneStaleFollowUpConfigVideos\(/
   );
 });
 
