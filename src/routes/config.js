@@ -1213,6 +1213,32 @@ router.post(
   }
 );
 
+router.get("/automated-follow-up/video-preview", async (req, res) => {
+  try {
+    const key = String(req.query.key || "").trim();
+    if (!key || !isFollowUpVideoKey(key)) {
+      return res.status(404).send("Not found");
+    }
+    if (!mediaStorage.isStorageConfigured()) {
+      return res.status(503).send("Video storage is not configured.");
+    }
+
+    // Keep the permanent R2 object private, but let the authenticated staff
+    // browser stream it directly for a few minutes. This avoids proxying up to
+    // 16MB through Render just to render the Tools preview and preserves R2
+    // byte-range playback/seeking.
+    const url = mediaStorage.createPresignedGetUrl(key, {
+      expiresSeconds: 5 * 60,
+    });
+    res.set("Cache-Control", "private, no-store");
+    res.set("Referrer-Policy", "no-referrer");
+    return res.redirect(302, url);
+  } catch (err) {
+    console.error("Failed to create private follow-up video preview:", err);
+    return res.status(500).send("Something went wrong.");
+  }
+});
+
 router.get("/result-media/image/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);

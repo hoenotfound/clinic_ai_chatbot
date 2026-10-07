@@ -1117,7 +1117,7 @@ function FollowUpMessageMode({
   ];
 
   return (
-    <div className="mt-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+    <div className="mt-5">
       <div>
         <p className="text-sm font-semibold">Message type</p>
         <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
@@ -1387,6 +1387,145 @@ function ServiceVideoPicker({
   );
 }
 
+function FollowUpMediaPicker({
+  imageUrl,
+  videoKey,
+  videoFilename,
+  uploadingImage,
+  uploadingVideo,
+  onUploadImage,
+  onUploadVideo,
+  onChange,
+  label = "Media",
+  description = "Optional. Attach one image or one MP4 video.",
+}) {
+  const initialType = videoKey ? "video" : imageUrl ? "image" : "none";
+  const [selectedType, setSelectedType] = useState(initialType);
+
+  useEffect(() => {
+    if (videoKey) setSelectedType("video");
+    else if (imageUrl) setSelectedType("image");
+  }, [imageUrl, videoKey]);
+
+  function choose(type) {
+    setSelectedType(type);
+    if (type === "none") {
+      onChange({ imageUrl: "", videoKey: "", videoFilename: "" });
+      return;
+    }
+    if (type === "image" && videoKey) {
+      onChange({ imageUrl: "", videoKey: "", videoFilename: "" });
+    }
+    if (type === "video" && imageUrl) {
+      onChange({ imageUrl: "", videoKey: "", videoFilename: "" });
+    }
+  }
+
+  return (
+    <div className="mt-5 border-t border-[var(--color-border)] pt-5">
+      <div>
+        <p className="text-sm font-semibold">{label}</p>
+        <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">{description}</p>
+      </div>
+
+      <div
+        className="mt-3 grid grid-cols-3 gap-1 rounded-xl border border-[var(--color-border)] bg-white p-1"
+        role="radiogroup"
+        aria-label={`${label} type`}
+      >
+        {[
+          ["none", "No media"],
+          ["image", "Image"],
+          ["video", "Video"],
+        ].map(([type, text]) => {
+          const active = selectedType === type;
+          return (
+            <button
+              key={type}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => choose(type)}
+              disabled={uploadingImage || uploadingVideo}
+              className={`rounded-lg px-2 py-2 text-[11px] font-semibold transition sm:text-xs ${active
+                ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
+            >
+              {text}
+            </button>
+          );
+        })}
+      </div>
+
+      {selectedType === "image" && (
+        <StepImagePicker
+          imageUrl={imageUrl}
+          uploading={uploadingImage}
+          onUpload={onUploadImage}
+          onChange={(nextImageUrl) =>
+            onChange({
+              imageUrl: nextImageUrl,
+              videoKey: "",
+              videoFilename: "",
+            })
+          }
+          label={`${label} image`}
+        />
+      )}
+
+      {selectedType === "video" && (
+        <ServiceVideoPicker
+          videoKey={videoKey}
+          videoFilename={videoFilename}
+          uploading={uploadingVideo}
+          onUpload={onUploadVideo}
+          onChange={({ key, filename }) =>
+            onChange({
+              imageUrl: "",
+              videoKey: key,
+              videoFilename: filename,
+            })
+          }
+          label={`${label} video`}
+          description="MP4 attachment. Large files are prepared automatically."
+        />
+      )}
+    </div>
+  );
+}
+
+function followUpTimingSummary(step) {
+  return step?.timingMode === "before_window_expiry"
+    ? `${formatDelay(Number(step?.beforeWindowExpiryMinutes || 120))} before window expiry`
+    : formatDelay(Number(step?.delayMinutes || 0));
+}
+
+function StepSummaryChips({ step }) {
+  const serviceCount = Array.isArray(step?.serviceOverrides)
+    ? step.serviceOverrides.length
+    : 0;
+  const chips = [
+    ...(step?.messageMode === "ai" ? ["AI"] : []),
+    ...(step?.videoKey ? ["Video"] : step?.imageUrl ? ["Image"] : []),
+    ...(serviceCount ? [`${serviceCount} service${serviceCount === 1 ? "" : "s"}`] : []),
+  ];
+
+  if (!chips.length) return null;
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {chips.map((chip) => (
+        <span
+          key={chip}
+          className="rounded-full border border-[var(--color-border)] bg-white px-2 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]"
+        >
+          {chip}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function ServiceOverridesEditor({
   overrides = [],
   services = [],
@@ -1584,48 +1723,25 @@ function ServiceOverridesEditor({
                         )
                       }
                     />
-                    <StepImagePicker
+                    <FollowUpMediaPicker
                       imageUrl={item.imageUrl}
-                      uploading={uploadingImage}
-                      onUpload={onUploadImage}
-                      onChange={(imageUrl) =>
-                        onChange(
-                          overrides.map((override, overrideIndex) =>
-                            overrideIndex === index
-                              ? {
-                                  ...override,
-                                  imageUrl,
-                                  ...(imageUrl
-                                    ? { videoKey: "", videoFilename: "" }
-                                    : {}),
-                                }
-                              : override
-                          )
-                        )
-                      }
-                      label="Service image"
-                    />
-                    <ServiceVideoPicker
                       videoKey={item.videoKey}
                       videoFilename={item.videoFilename}
-                      uploading={uploadingVideo}
-                      onUpload={onUploadVideo}
-                      onChange={({ key, filename }) =>
+                      uploadingImage={uploadingImage}
+                      uploadingVideo={uploadingVideo}
+                      onUploadImage={onUploadImage}
+                      onUploadVideo={onUploadVideo}
+                      onChange={(media) =>
                         onChange(
                           overrides.map((override, overrideIndex) =>
                             overrideIndex === index
-                              ? {
-                                  ...override,
-                                  videoKey: key,
-                                  videoFilename: filename,
-                                  ...(key ? { imageUrl: "" } : {}),
-                                }
+                              ? { ...override, ...media }
                               : override
                           )
                         )
                       }
-                      label="Service video"
-                      description="Optional. Sent only when this service is the clear current interest."
+                      label="Service media"
+                      description="Optional. Used only when this service is the clear current interest; otherwise the default follow-up media is used."
                     />
                   </div>
                 );
@@ -1666,15 +1782,48 @@ function FollowUpTool({
   toasts,
   dismissToast,
 }) {
+  const [expandedStepIndex, setExpandedStepIndex] = useState(null);
+  const [previewStepIndex, setPreviewStepIndex] = useState(0);
+  const [previewServiceName, setPreviewServiceName] = useState("");
+  const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
+
   const allSteps = [
     {
       delayMinutes: form.delayMinutes,
       timingMode: form.timingMode,
       beforeWindowExpiryMinutes: form.beforeWindowExpiryMinutes,
+      messageMode: form.messageMode,
+      aiInstruction: form.aiInstruction,
       message: form.message,
+      translations: form.translations,
+      imageUrl: form.imageUrl,
+      videoKey: form.videoKey,
+      videoFilename: form.videoFilename,
+      serviceOverrides: form.serviceOverrides,
     },
     ...(form.additionalSteps || []),
   ];
+  const safePreviewIndex = Math.min(
+    previewStepIndex,
+    Math.max(0, allSteps.length - 1)
+  );
+  const previewStep = allSteps[safePreviewIndex] || allSteps[0];
+  const previewOverride =
+    (previewStep?.serviceOverrides || []).find(
+      (item) => item.serviceName === previewServiceName
+    ) || null;
+  const previewCopySource = previewOverride || previewStep;
+  const previewMediaSource =
+    previewOverride && (previewOverride.imageUrl || previewOverride.videoKey)
+      ? previewOverride
+      : previewStep;
+  const previewMessage =
+    previewCopySource?.translations?.[translationLanguage] ||
+    previewCopySource?.message ||
+    "Your follow-up message will appear here.";
+  const previewVideoUrl = previewMediaSource?.videoKey
+    ? `/api/config/automated-follow-up/video-preview?key=${encodeURIComponent(previewMediaSource.videoKey)}`
+    : "";
   const lastDelay = allSteps[allSteps.length - 1]?.delayMinutes;
   const suggestedNextDelay = nextSequenceDelay(lastDelay);
   const hasPromotionFollowUps = (Array.isArray(promotions) ? promotions : []).some(
@@ -1692,6 +1841,17 @@ function FollowUpTool({
       )
   );
 
+  useEffect(() => {
+    if (
+      previewServiceName &&
+      !(previewStep?.serviceOverrides || []).some(
+        (item) => item.serviceName === previewServiceName
+      )
+    ) {
+      setPreviewServiceName("");
+    }
+  }, [previewServiceName, previewStep]);
+
   function updateAdditionalStep(index, patch) {
     setForm((current) => ({
       ...current,
@@ -1699,6 +1859,19 @@ function FollowUpTool({
         stepIndex === index ? { ...step, ...patch } : step
       ),
     }));
+  }
+
+  function removeAdditionalStep(index) {
+    setForm((current) => ({
+      ...current,
+      additionalSteps: current.additionalSteps.filter(
+        (_, stepIndex) => stepIndex !== index
+      ),
+    }));
+    setExpandedStepIndex(null);
+    setPreviewStepIndex((current) =>
+      current > index + 1 ? current - 1 : Math.min(current, index)
+    );
   }
 
   return (
@@ -1722,15 +1895,30 @@ function FollowUpTool({
       toasts={toasts}
       dismissToast={dismissToast}
     >
-      <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
-        <div className="space-y-5">
+      {uploadingVideo && (
+        <div
+          role="status"
+          className="mb-5 flex items-start gap-3 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/55 px-3.5 py-3"
+        >
+          <Spinner className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-primary)]" />
+          <div>
+            <p className="text-xs font-semibold text-[var(--color-primary)]">Preparing video…</p>
+            <p className="mt-0.5 text-[11px] leading-4 text-[var(--color-text-muted)]">
+              Large videos are uploaded and compressed automatically. Keep this page open until the attachment appears.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(19rem,0.7fr)]">
+        <div className="order-2 space-y-5 xl:order-1">
           <Card>
             <SectionHeading
               number="1"
               title="Choose when it starts"
-              description="Each step can wait after the outgoing reply or run shortly before the customer's messaging window expires."
+              description="Set the first follow-up timing, who can start a sequence, and when automation should stay quiet."
             />
-            <div className="mt-6 grid gap-6 xl:grid-cols-2">
+            <div className="mt-6 grid gap-6 lg:grid-cols-2">
               <FollowUpTimingFields
                 step={form}
                 label="Follow-up 1 timing"
@@ -1834,24 +2022,26 @@ function FollowUpTool({
           <Card>
             <SectionHeading
               number="2"
-              title="Follow-up 1 message"
+              title="Follow-up 1"
               description={form.messageMode === "ai"
-                ? "AI writes from the recent conversation. The message below remains the safe fallback if generation fails."
-                : "Use a reviewed fixed message, with optional service-specific versions."}
+                ? "AI writes from the recent conversation. Configure the fallback, media and service targeting together here."
+                : "Configure the default message, languages, media and optional service-specific version in one place."}
             />
             {hasPromotionFollowUps && (
               <div className="mt-4 rounded-xl border border-[var(--color-primary)]/20 bg-[var(--color-primary-light)]/45 px-3.5 py-3">
                 <p className="text-xs font-semibold text-[var(--color-primary)]">Promotion override is available</p>
                 <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-                  For an eligible recent price/package enquiry, a configured promotion follow-up can replace Follow-up 1. It uses this same timing. If no safe promotion match is found, the normal Follow-up 1 message below is used.
+                  For an eligible recent price/package enquiry, a configured promotion follow-up can replace Follow-up 1. If no safe promotion match is found, this normal Follow-up 1 is used.
                 </p>
               </div>
             )}
+
             <FollowUpMessageMode
               mode={form.messageMode}
               instruction={form.aiInstruction}
               onChange={(patch) => setForm((current) => ({ ...current, ...patch }))}
             />
+
             <div className="mt-6 flex items-center justify-between gap-3">
               <label htmlFor="follow-up-message" className="text-sm font-semibold">
                 {form.messageMode === "ai" ? "Fallback message" : "Default message"}
@@ -1867,7 +2057,7 @@ function FollowUpTool({
               className="mt-2 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-primary-light)]"
             />
 
-            <div className="mt-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+            <div className="mt-5 border-t border-[var(--color-border)] pt-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -1876,7 +2066,7 @@ function FollowUpTool({
                   </div>
                   <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
                     {translationsNeedRefresh
-                      ? "Language versions will refresh automatically when you save. Manual edits made after the latest message change will be kept."
+                      ? "Language versions will refresh automatically when you save. Manual edits made after the latest message change are kept."
                       : `${translationReadyCount} language versions are ready and matched to the customer automatically.`}
                   </p>
                 </div>
@@ -1892,7 +2082,7 @@ function FollowUpTool({
               {reviewTranslations && (
                 <div className="mt-4 border-t border-[var(--color-border)] pt-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-xs text-[var(--color-text-muted)]">Review or fine-tune any language. Your manual edits are preserved when Save refreshes the other versions.</p>
+                    <p className="text-xs text-[var(--color-text-muted)]">Review or fine-tune any language. Manual edits are preserved when Save refreshes the other versions.</p>
                     <button
                       type="button"
                       onClick={onGenerateTranslations}
@@ -1934,6 +2124,21 @@ function FollowUpTool({
               )}
             </div>
 
+            <FollowUpMediaPicker
+              imageUrl={form.imageUrl}
+              videoKey={form.videoKey}
+              videoFilename={form.videoFilename}
+              uploadingImage={uploadingImage}
+              uploadingVideo={uploadingVideo}
+              onUploadImage={onUploadImage}
+              onUploadVideo={onUploadVideo}
+              onChange={(media) =>
+                setForm((current) => ({ ...current, ...media }))
+              }
+              label="Follow-up 1 media"
+              description="Optional. Attach one image or one video to Follow-up 1."
+            />
+
             <ServiceOverridesEditor
               overrides={form.serviceOverrides}
               services={services}
@@ -1953,141 +2158,155 @@ function FollowUpTool({
           <Card>
             <SectionHeading
               number="3"
-              title="Follow-up sequence"
-              description="Add up to two more messages. A step can use normal inactivity timing or the customer's live messaging-window expiry."
+              title="More follow-ups"
+              description="Add up to two more messages. Keep them collapsed when you are not editing them."
             />
 
             {form.additionalSteps.length > 0 ? (
-              <div className="mt-5 space-y-4">
-                {form.additionalSteps.map((step, index) => (
-                  <div key={index} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 sm:p-5">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-bold">Follow-up {index + 2}</p>
-                        <p className="mt-1 text-xs text-[var(--color-text-muted)]">Stops automatically if the customer replies first.</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setForm((current) => ({
-                            ...current,
-                            additionalSteps: current.additionalSteps.filter(
-                              (_, stepIndex) => stepIndex !== index
-                            ),
-                          }))
-                        }
-                        className="text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
-                      >
-                        Remove
-                      </button>
-                    </div>
-
-                    <FollowUpMessageMode
-                      mode={step.messageMode}
-                      instruction={step.aiInstruction}
-                      onChange={(patch) => updateAdditionalStep(index, patch)}
-                    />
-
-                    <div className="mt-4 grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
-                      <FollowUpTimingFields
-                        step={step}
-                        compact
-                        label="Send timing"
-                        onChange={(patch) =>
-                          updateAdditionalStep(index, patch)
-                        }
-                      />
-                      <div>
-                        <div className="flex items-center justify-between gap-3">
-                          <label className="text-xs font-semibold">
-                            {step.messageMode === "ai" ? "Fallback message" : "Default message"}
-                          </label>
-                          <span className="text-[10px] text-[var(--color-text-muted)]">{step.message.length}/1000</span>
+              <div className="mt-5 space-y-3">
+                {form.additionalSteps.map((step, index) => {
+                  const expanded = expandedStepIndex === index;
+                  return (
+                    <div
+                      key={index}
+                      className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]"
+                    >
+                      <div className="flex items-start gap-3 p-4">
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 text-left"
+                          onClick={() => {
+                            setExpandedStepIndex(expanded ? null : index);
+                            setPreviewStepIndex(index + 1);
+                            setPreviewServiceName("");
+                          }}
+                          aria-expanded={expanded}
+                        >
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                            <p className="text-sm font-bold">Follow-up {index + 2}</p>
+                            <span className="text-xs text-[var(--color-text-muted)]">
+                              {followUpTimingSummary(step)}
+                            </span>
+                          </div>
+                          <StepSummaryChips step={step} />
+                        </button>
+                        <div className="flex shrink-0 items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => removeAdditionalStep(index)}
+                            className="text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
+                          >
+                            Remove
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExpandedStepIndex(expanded ? null : index);
+                              setPreviewStepIndex(index + 1);
+                              setPreviewServiceName("");
+                            }}
+                            className="text-xs font-semibold text-[var(--color-primary)]"
+                          >
+                            {expanded ? "Close" : "Edit"}
+                          </button>
                         </div>
-                        <textarea
-                          rows="3"
-                          maxLength="1000"
-                          value={step.message}
-                          onChange={(event) =>
-                            updateAdditionalStep(index, {
-                              message: event.target.value,
-                              translations: { en: "", ms: "", zh: "" },
-                            })
-                          }
-                          placeholder="Write the next follow-up message."
-                          className="mt-1.5 w-full resize-y rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)]"
-                        />
-                        <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-                          {step.messageMode === "ai"
-                            ? "Used only if AI generation is unavailable or invalid. Language versions are prepared automatically."
-                            : "Language versions are generated automatically when you save."}
-                        </p>
-                        <TranslationDetails
-                          sourceMessage={step.message}
-                          translations={step.translations}
-                          translating={translating}
-                          onTranslate={onTranslateMessage}
-                          onReplace={(translations) =>
-                            updateAdditionalStep(index, { translations })
-                          }
-                          onChange={(languageKey, value) =>
-                            updateAdditionalStep(index, {
-                              translations: {
-                                ...step.translations,
-                                [languageKey]: value,
-                              },
-                            })
-                          }
-                        />
                       </div>
+
+                      {expanded && (
+                        <div className="border-t border-[var(--color-border)] bg-white p-4 sm:p-5">
+                          <FollowUpMessageMode
+                            mode={step.messageMode}
+                            instruction={step.aiInstruction}
+                            onChange={(patch) => updateAdditionalStep(index, patch)}
+                          />
+
+                          <div className="mt-4 grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
+                            <FollowUpTimingFields
+                              step={step}
+                              compact
+                              label="Send timing"
+                              onChange={(patch) =>
+                                updateAdditionalStep(index, patch)
+                              }
+                            />
+                            <div>
+                              <div className="flex items-center justify-between gap-3">
+                                <label className="text-xs font-semibold">
+                                  {step.messageMode === "ai" ? "Fallback message" : "Default message"}
+                                </label>
+                                <span className="text-[10px] text-[var(--color-text-muted)]">{step.message.length}/1000</span>
+                              </div>
+                              <textarea
+                                rows="3"
+                                maxLength="1000"
+                                value={step.message}
+                                onChange={(event) =>
+                                  updateAdditionalStep(index, {
+                                    message: event.target.value,
+                                    translations: { en: "", ms: "", zh: "" },
+                                  })
+                                }
+                                placeholder="Write the next follow-up message."
+                                className="mt-1.5 w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-3 text-sm leading-6 outline-none focus:border-[var(--color-primary)]"
+                              />
+                              <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                                {step.messageMode === "ai"
+                                  ? "Used only if AI generation is unavailable or invalid. Language versions are prepared automatically."
+                                  : "Language versions are generated automatically when you save."}
+                              </p>
+                              <TranslationDetails
+                                sourceMessage={step.message}
+                                translations={step.translations}
+                                translating={translating}
+                                onTranslate={onTranslateMessage}
+                                onReplace={(translations) =>
+                                  updateAdditionalStep(index, { translations })
+                                }
+                                onChange={(languageKey, value) =>
+                                  updateAdditionalStep(index, {
+                                    translations: {
+                                      ...step.translations,
+                                      [languageKey]: value,
+                                    },
+                                  })
+                                }
+                              />
+                            </div>
+                          </div>
+
+                          <FollowUpMediaPicker
+                            imageUrl={step.imageUrl}
+                            videoKey={step.videoKey}
+                            videoFilename={step.videoFilename}
+                            uploadingImage={uploadingImage}
+                            uploadingVideo={uploadingVideo}
+                            onUploadImage={onUploadImage}
+                            onUploadVideo={onUploadVideo}
+                            onChange={(media) =>
+                              updateAdditionalStep(index, media)
+                            }
+                            label={`Follow-up ${index + 2} media`}
+                          />
+
+                          <ServiceOverridesEditor
+                            overrides={step.serviceOverrides}
+                            services={services}
+                            stepLabel={`Follow-up ${index + 2}`}
+                            translating={translating}
+                            uploadingImage={uploadingImage}
+                            uploadingVideo={uploadingVideo}
+                            onUploadImage={onUploadImage}
+                            onUploadVideo={onUploadVideo}
+                            onTranslateMessage={onTranslateMessage}
+                            onChange={(serviceOverrides) =>
+                              updateAdditionalStep(index, { serviceOverrides })
+                            }
+                          />
+                        </div>
+                      )}
                     </div>
-
-                    <StepImagePicker
-                      imageUrl={step.imageUrl}
-                      uploading={uploadingImage}
-                      onUpload={onUploadImage}
-                      onChange={(imageUrl) =>
-                        updateAdditionalStep(index, {
-                          imageUrl,
-                          ...(imageUrl
-                            ? { videoKey: "", videoFilename: "" }
-                            : {}),
-                        })
-                      }
-                      label={`Follow-up ${index + 2} image`}
-                    />
-                    <ServiceVideoPicker
-                      videoKey={step.videoKey}
-                      videoFilename={step.videoFilename}
-                      uploading={uploadingVideo}
-                      onUpload={onUploadVideo}
-                      onChange={({ key, filename }) =>
-                        updateAdditionalStep(index, {
-                          videoKey: key,
-                          videoFilename: filename,
-                          ...(key ? { imageUrl: "" } : {}),
-                        })
-                      }
-                      label={`Follow-up ${index + 2} video`}
-                      description="Optional alternative to an image."
-                    />
-
-                    <ServiceOverridesEditor
-                      overrides={step.serviceOverrides}
-                      services={services}
-                      stepLabel={`Follow-up ${index + 2}`}
-                      translating={translating}
-                      uploadingImage={uploadingImage}
-                      uploadingVideo={uploadingVideo}
-                      onUploadImage={onUploadImage}
-                      onUploadVideo={onUploadVideo}
-                      onTranslateMessage={onTranslateMessage}
-                      onChange={(serviceOverrides) =>
-                        updateAdditionalStep(index, { serviceOverrides })
-                      }
-                    />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="mt-5 rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-6 text-center">
@@ -2101,6 +2320,7 @@ function FollowUpTool({
               disabled={form.additionalSteps.length >= 2 || suggestedNextDelay === null}
               onClick={() => {
                 if (suggestedNextDelay === null) return;
+                const nextIndex = form.additionalSteps.length;
                 setForm((current) => ({
                   ...current,
                   additionalSteps: [
@@ -2120,109 +2340,164 @@ function FollowUpTool({
                     },
                   ],
                 }));
+                setExpandedStepIndex(nextIndex);
+                setPreviewStepIndex(nextIndex + 1);
+                setPreviewServiceName("");
               }}
               className="mt-4 rounded-xl border border-[var(--color-primary)]/25 bg-white px-4 py-2.5 text-xs font-semibold text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-40"
             >
               + Add follow-up
             </button>
           </Card>
-
-          <Card>
-            <SectionHeading
-              number="4"
-              title="Add media to Follow-up 1"
-              description="Optional. Attach either one image or one MP4 video. The final fixed or AI-generated text is used as the caption where the channel supports it."
-            />
-            <StepImagePicker
-              imageUrl={form.imageUrl}
-              uploading={uploadingImage}
-              onUpload={onUploadImage}
-              onChange={(imageUrl) =>
-                setForm((current) => ({
-                  ...current,
-                  imageUrl,
-                  ...(imageUrl ? { videoKey: "", videoFilename: "" } : {}),
-                }))
-              }
-              label="Follow-up 1 image"
-            />
-            <ServiceVideoPicker
-              videoKey={form.videoKey}
-              videoFilename={form.videoFilename}
-              uploading={uploadingVideo}
-              onUpload={onUploadVideo}
-              onChange={({ key, filename }) =>
-                setForm((current) => ({
-                  ...current,
-                  videoKey: key,
-                  videoFilename: filename,
-                  ...(key ? { imageUrl: "" } : {}),
-                }))
-              }
-              label="Follow-up 1 video"
-              description="Optional alternative to an image."
-            />
-          </Card>
         </div>
 
-        <aside className="space-y-5 2xl:sticky 2xl:top-6 2xl:self-start">
-          <Card>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Preview</p>
-            <h2 className="mt-1 font-display text-sm font-bold">Follow-up 1</h2>
-            {form.messageMode === "ai" && (
-              <p className="mt-1 text-[10px] leading-4 text-[var(--color-text-muted)]">
-                AI will write the live message from the conversation. Previewing the fixed fallback below.
+        <aside className="order-1 xl:order-2 xl:sticky xl:top-6 xl:self-start">
+          <button
+            type="button"
+            aria-label="Toggle follow-up preview"
+            aria-expanded={mobilePreviewOpen}
+            onClick={() => setMobilePreviewOpen((current) => !current)}
+            className="flex w-full items-center justify-between gap-3 rounded-2xl border border-[var(--color-border)] bg-white px-4 py-3.5 text-left shadow-sm xl:hidden"
+          >
+            <div className="min-w-0">
+              <p className="text-sm font-bold">Preview message</p>
+              <p className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
+                Follow-up {safePreviewIndex + 1} · {followUpTimingSummary(previewStep)}
               </p>
-            )}
-            <div className="inbox-thread-bg mt-4 min-h-48 rounded-2xl border border-[var(--color-border)] p-4">
-              <div className="ml-auto max-w-[94%] overflow-hidden rounded-2xl rounded-br-md bg-[var(--color-primary)] text-white shadow-sm">
-                {form.imageUrl && <img src={form.imageUrl} alt="" className="max-h-56 w-full object-cover" />}
-                {form.videoKey && (
-                  <div className="border-b border-white/15 px-3.5 py-3 text-xs font-semibold text-white/85">
-                    ▶ {form.videoFilename || "MP4 video attached"}
-                  </div>
-                )}
-                <div className="px-3.5 py-2.5">
-                  <p className="mb-1 text-[10px] font-semibold text-white/70">Automated follow-up</p>
-                  <p className="whitespace-pre-wrap break-words text-xs leading-5">
-                    {reviewTranslations
-                      ? form.translations[translationLanguage] || form.message || "Your follow-up message will appear here."
-                      : form.message || "Your follow-up message will appear here."}
-                  </p>
+            </div>
+            <span className="shrink-0 text-xs font-semibold text-[var(--color-primary)]">
+              {mobilePreviewOpen ? "Hide" : "Open"}
+            </span>
+          </button>
+
+          <div className={`${mobilePreviewOpen ? "mt-3 block" : "hidden"} xl:mt-0 xl:block`}>
+            <Card>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Preview</p>
+                  <h2 className="mt-1 font-display text-sm font-bold">Follow-up {safePreviewIndex + 1}</h2>
+                </div>
+                <div className="flex rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-1">
+                  {allSteps.map((_, index) => (
+                    <button
+                      key={index}
+                      type="button"
+                      aria-label={`Preview Follow-up ${index + 1}`}
+                      onClick={() => {
+                        setPreviewStepIndex(index);
+                        setPreviewServiceName("");
+                      }}
+                      className={`min-w-8 rounded-md px-2 py-1 text-[10px] font-bold ${safePreviewIndex === index ? "bg-white text-[var(--color-primary)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
+                    >
+                      {index + 1}
+                    </button>
+                  ))}
                 </div>
               </div>
-            </div>
-          </Card>
 
-          <Card>
-            <h2 className="font-display text-sm font-bold">Sequence</h2>
-            <div className="mt-4 space-y-2">
-              {allSteps.map((step, index) => (
-                <div key={index} className="flex items-center justify-between gap-3 rounded-xl bg-[var(--color-bg)] px-3 py-2.5">
-                  <span className="text-xs font-semibold">Follow-up {index + 1}</span>
-                  <span className="text-xs text-[var(--color-text-muted)]">
-                    {step.timingMode === "before_window_expiry"
-                      ? `${formatDelay(Number(step.beforeWindowExpiryMinutes || 120))} before window expiry`
-                      : formatDelay(Number(step.delayMinutes))}
+              <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+                <span className="font-semibold">{followUpTimingSummary(previewStep)}</span>
+                {previewStep?.messageMode === "ai" && (
+                  <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">AI</span>
+                )}
+                {previewMediaSource?.videoKey && (
+                  <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">Video</span>
+                )}
+                {!previewMediaSource?.videoKey && previewMediaSource?.imageUrl && (
+                  <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">Image</span>
+                )}
+                {(previewStep?.serviceOverrides || []).length > 0 && (
+                  <span className="rounded-full bg-[var(--color-bg)] px-2 py-1 font-semibold">
+                    {previewStep.serviceOverrides.length} service{previewStep.serviceOverrides.length === 1 ? "" : "s"}
                   </span>
-                </div>
-              ))}
-            </div>
-          </Card>
+                )}
+              </div>
 
-          <Card>
-            <h2 className="font-display text-sm font-bold">Before it sends</h2>
-            <ul className="mt-4 space-y-3">
-              <Rule text="Any customer reply stops all remaining follow-ups in that sequence." />
-              <Rule text="If AI decides to skip or request human review, the remaining steps for that conversation cycle stop too." />
-              <Rule text="A real staff takeover cancels an older AI-started sequence. A later staff reply can start a fresh sequence." />
-              <Rule text="A newer normal AI or staff reply starts a fresh sequence from that message. Sent scheduled staff messages count as staff replies." />
-              <Rule text="A targeted message is used only when the lead interest clearly matches one configured service; otherwise the default message is used." />
-              <Rule text="WhatsApp, Messenger, and Instagram follow-ups only send inside the permitted reply window. WhatsApp opt-outs remain a hard stop." />
-              <Rule text="A failed or unconfirmed follow-up blocks later steps for staff review instead of continuing blindly." />
-              <Rule text="Saving does not add follow-ups to older conversations." />
-            </ul>
-          </Card>
+              <div className="mt-3 flex gap-1 overflow-x-auto border-b border-[var(--color-border)]" role="tablist" aria-label="Preview language">
+                {FOLLOW_UP_LANGUAGES.map((language) => (
+                  <button
+                    key={language.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={translationLanguage === language.key}
+                    onClick={() => setTranslationLanguage(language.key)}
+                    className={`shrink-0 border-b-2 px-2 py-1.5 text-[10px] font-semibold ${translationLanguage === language.key ? "border-[var(--color-primary)] text-[var(--color-primary)]" : "border-transparent text-[var(--color-text-muted)]"}`}
+                  >
+                    {language.label}
+                  </button>
+                ))}
+              </div>
+
+              {(previewStep?.serviceOverrides || []).length > 0 && (
+                <div className="mt-3">
+                  <label className="text-[10px] font-semibold text-[var(--color-text-muted)]">Preview version</label>
+                  <select
+                    value={previewServiceName}
+                    onChange={(event) => setPreviewServiceName(event.target.value)}
+                    className="mt-1.5 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2 text-xs outline-none focus:border-[var(--color-primary)]"
+                  >
+                    <option value="">Default</option>
+                    {(previewStep.serviceOverrides || []).map((item) => (
+                      <option key={item.serviceName} value={item.serviceName}>
+                        {item.serviceName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {previewStep?.messageMode === "ai" && (
+                <p className="mt-3 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                  AI writes the live message from the conversation. This preview shows the configured fallback.
+                </p>
+              )}
+
+              <div className="inbox-thread-bg mt-4 min-h-48 rounded-2xl border border-[var(--color-border)] p-4">
+                <div className="ml-auto max-w-[94%] overflow-hidden rounded-2xl rounded-br-md bg-[var(--color-primary)] text-white shadow-sm">
+                  {previewMediaSource?.imageUrl && (
+                    <img src={previewMediaSource.imageUrl} alt="" className="max-h-56 w-full object-cover" />
+                  )}
+                  {previewMediaSource?.videoKey && (
+                    <video
+                      key={previewVideoUrl}
+                      src={previewVideoUrl}
+                      controls
+                      preload="none"
+                      playsInline
+                      className="max-h-56 w-full bg-black object-contain"
+                    />
+                  )}
+                  <div className="px-3.5 py-2.5">
+                    <p className="mb-1 text-[10px] font-semibold text-white/70">
+                      {previewServiceName ? `Automated follow-up · ${previewServiceName}` : "Automated follow-up"}
+                    </p>
+                    <p className="whitespace-pre-wrap break-words text-xs leading-5">{previewMessage}</p>
+                  </div>
+                </div>
+              </div>
+
+              <details className="group mt-4 border-t border-[var(--color-border)] pt-3">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs font-semibold">
+                  <span>Sending rules</span>
+                  <span className="text-[var(--color-primary)]">
+                    <span className="group-open:hidden">View</span>
+                    <span className="hidden group-open:inline">Hide</span>
+                  </span>
+                </summary>
+                <ul className="mt-3 space-y-3">
+                  <Rule text="Any customer reply stops all remaining follow-ups in that sequence." />
+                  <Rule text="WhatsApp, Messenger, and Instagram follow-ups only send while the permitted reply window is open." />
+                  <Rule text="A failed or unconfirmed follow-up blocks later steps for staff review." />
+                  <Rule text="If AI decides to skip or request human review, the remaining steps for that conversation cycle stop too." />
+                  <Rule text="A real staff takeover cancels an older AI-started sequence. A later staff reply can start a fresh sequence." />
+                  <Rule text="A newer normal AI or staff reply starts a fresh sequence from that message. Sent scheduled staff messages count as staff replies." />
+                  <Rule text="A targeted message is used only when the lead interest clearly matches one configured service; otherwise the default message is used." />
+                  <Rule text="WhatsApp opt-outs remain a hard stop." />
+                  <Rule text="Saving does not add follow-ups to older conversations." />
+                </ul>
+              </details>
+            </Card>
+          </div>
         </aside>
       </div>
     </ToolShell>
@@ -2803,12 +3078,12 @@ function ToolShell({ title, description, enabled, savedEnabled, hasUnsavedChange
 
       {(hasUnsavedChanges || saving) && (
         <footer className="shrink-0 border-t border-[var(--color-border)] bg-white px-4 py-3 sm:px-6 xl:px-10">
-          <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2.5">
               <span className={`h-2 w-2 shrink-0 rounded-full ${saving ? "bg-[var(--color-primary)]" : "bg-[var(--color-accent)]"}`} />
               <p className="truncate text-[13px] font-medium text-[var(--color-text-muted)]">{saving ? "Saving changes…" : "You have unsaved changes"}</p>
             </div>
-            <button type="button" onClick={onSave} disabled={saveDisabled} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50">
+            <button type="button" onClick={onSave} disabled={saveDisabled} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-primary)] px-4 py-2 text-xs font-semibold text-white hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50 sm:px-5 sm:py-2.5 sm:text-sm">
               {saving && <Spinner />}
               {saving ? "Saving…" : saveLabel}
             </button>
