@@ -35,16 +35,59 @@ const {
 const PROMO_IMAGE_PRUNE_INTERVAL_MS = 30 * 60 * 1000;
 const TEMP_MEDIA_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
-function pruneStaleTemporaryMediaSafely() {
-  mediaStorage.pruneStaleTemporaryMedia()
-    .then((deleted) => {
-      if (deleted > 0) {
-        console.log(`Pruned ${deleted} stale temporary Meta media object(s).`);
-      }
-    })
-    .catch((err) => {
-      console.error("Failed to prune stale temporary Meta media:", err);
-    });
+function configuredFollowUpVideoKeys() {
+  const followUp = configRepo.getConfig()?.automatedFollowUp;
+  if (!followUp || typeof followUp !== "object") return [];
+  const steps = [
+    followUp,
+    ...(Array.isArray(followUp.additionalSteps) ? followUp.additionalSteps : []),
+  ];
+  return [
+    ...new Set(
+      steps.flatMap((step) =>
+        Array.isArray(step?.serviceOverrides)
+          ? step.serviceOverrides
+              .map((item) => String(item?.videoKey || "").trim())
+              .filter(Boolean)
+          : []
+      )
+    ),
+  ];
+}
+
+async function pruneStaleTemporaryMediaSafely() {
+  const [temporaryResult, followUpVideoResult] = await Promise.allSettled([
+    mediaStorage.pruneStaleTemporaryMedia(),
+    mediaStorage.pruneStaleFollowUpConfigVideos({
+      referencedKeys: configuredFollowUpVideoKeys(),
+    }),
+  ]);
+
+  if (temporaryResult.status === "fulfilled") {
+    if (temporaryResult.value > 0) {
+      console.log(
+        `Pruned ${temporaryResult.value} stale temporary Meta media object(s).`
+      );
+    }
+  } else {
+    console.error(
+      "Failed to prune stale temporary Meta media:",
+      temporaryResult.reason
+    );
+  }
+
+  if (followUpVideoResult.status === "fulfilled") {
+    if (followUpVideoResult.value > 0) {
+      console.log(
+        `Pruned ${followUpVideoResult.value} stale follow-up video object(s).`
+      );
+    }
+  } else {
+    console.error(
+      "Failed to prune stale follow-up videos:",
+      followUpVideoResult.reason
+    );
+  }
 }
 
 async function startApplication({
