@@ -2505,7 +2505,6 @@ function FollowUpTool({
             </Card>
           </div>
         </aside>
-        </aside>
       </div>
     </ToolShell>
   );
