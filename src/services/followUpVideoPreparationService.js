@@ -381,10 +381,22 @@ async function prepareFollowUpVideoFile(
 
   try {
     const durationSeconds = await probeDurationFn(inputPath);
-    const plan = bitratePlan(durationSeconds, { targetBytes });
+    let plan = bitratePlan(durationSeconds, { targetBytes });
     await transcodeFn(inputPath, outputPath, plan);
 
-    const outputStat = await fsApi.stat(outputPath);
+    let outputStat = await fsApi.stat(outputPath);
+    if (outputStat.size > maxWhatsAppBytes) {
+      // Two-pass encoding is normally very close to target, but container/audio
+      // overhead can still push a borderline file over 16MB. Retry once with
+      // extra headroom instead of making staff manually re-export the video.
+      await fsApi.unlink(outputPath).catch(() => {});
+      plan = bitratePlan(durationSeconds, {
+        targetBytes: Math.floor(targetBytes * 0.85),
+      });
+      await transcodeFn(inputPath, outputPath, plan);
+      outputStat = await fsApi.stat(outputPath);
+    }
+
     if (outputStat.size <= 0 || outputStat.size > maxWhatsAppBytes) {
       throw followUpVideoError(
         "The video could not be reduced below WhatsApp's 16MB limit. Please try a shorter or lower-resolution video.",
