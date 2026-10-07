@@ -659,14 +659,6 @@ async function sendSocialImageCompanion(contact, contactId, imageUrl, quietHours
       contactId,
     });
     if (discarded) {
-      if (durableVideoKey) {
-        await mediaStorage.deleteMedia(durableVideoKey).catch((cleanupErr) => {
-          console.error(
-            `Failed to clean up cancelled follow-up video ${durableVideoKey}:`,
-            cleanupErr
-          );
-        });
-      }
       publishConversationChange(discarded, "message_cancelled");
     }
     return;
@@ -1357,6 +1349,14 @@ async function sendCandidate(candidate) {
       contactId: candidate.contact_id,
     });
     if (discarded) {
+      if (durableVideoKey) {
+        await mediaStorage.deleteMedia(durableVideoKey).catch((cleanupErr) => {
+          console.error(
+            `Failed to clean up cancelled follow-up video ${durableVideoKey}:`,
+            cleanupErr
+          );
+        });
+      }
       publishConversationChange(discarded, "message_cancelled");
     }
     return;
