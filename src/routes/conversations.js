@@ -77,12 +77,6 @@ function isAllowedInboxVideo(file) {
   );
 }
 
-function inboxVideoNeedsTranscode(file) {
-  const mimeType = String(file?.mimetype || "").toLowerCase();
-  const extension = inboxDocumentExtension(file?.originalname);
-  return mimeType !== "video/mp4" || extension !== "mp4";
-}
-
 function normalizedInboxVideoFilename(filename) {
   const safe = safeInboxFilename(filename, "video.mp4");
   return /\.mp4$/i.test(safe)
@@ -2493,7 +2487,10 @@ router.post("/:contactId/video", handleVideoUpload, async (req, res) => {
       "videoPreparationMs",
       () => followUpVideoPreparation.prepareFollowUpVideoFile(req.file.path, {
         originalBytes: req.file.size,
-        forceTranscode: inboxVideoNeedsTranscode(req.file),
+        // WhatsApp can reject an MP4 container when its internal video codec is
+        // HEVC/H.265. Normalize every staff-sent Inbox video to the known-safe
+        // H.264/AAC profile instead of trusting the filename or multipart MIME.
+        forceTranscode: true,
       })
     );
     let mediaKey = null;
