@@ -183,6 +183,43 @@ test("WhatsApp stored service video uploads privately then sends by media id", a
   ]);
 });
 
+test("WhatsApp forwarded videos preserve the stored MIME type and use a matching fallback filename", async (t) => {
+  const originalDownload = mediaStorage.downloadMedia;
+  const originalUpload = whatsapp.uploadMedia;
+  const originalSendVideo = whatsapp.sendVideoById;
+  t.after(() => {
+    mediaStorage.downloadMedia = originalDownload;
+    whatsapp.uploadMedia = originalUpload;
+    whatsapp.sendVideoById = originalSendVideo;
+  });
+
+  const calls = [];
+  mediaStorage.downloadMedia = async () => Buffer.from("3gp-video");
+  whatsapp.uploadMedia = async (buffer, mimeType, filename) => {
+    calls.push({ bytes: buffer.toString(), mimeType, filename });
+    return "wa-video-3gp";
+  };
+  whatsapp.sendVideoById = async () => ({ success: true, wamid: "wamid-video-3gp" });
+
+  const result = await messaging.sendVideoByStoredKey(
+    { id: 15, channel: "whatsapp", whatsapp_number: "60123456789" },
+    "clients/neutro/messages/15/video.bin",
+    undefined,
+    null,
+    {
+      preSendCheck: () => true,
+      videoMimeType: "video/3gpp",
+    }
+  );
+
+  assert.equal(result.success, true);
+  assert.deepEqual(calls, [{
+    bytes: "3gp-video",
+    mimeType: "video/3gpp",
+    filename: "video.3gp",
+  }]);
+});
+
 test("WhatsApp policy rejection blocks the lower-level send", async (t) => {
   const originalPolicy = whatsappPolicy.checkFreeformAllowed;
   const originalWhatsappSend = whatsapp.sendMessage;
