@@ -179,12 +179,19 @@ async function pruneOrphanedPromoImages(force = false, now = Date.now()) {
       )
       .map(extractPromoImageId)
       .filter((id) => id !== null);
-    const followUpImageIds = [
-      clinicConfig.automatedFollowUp?.imageUrl,
+    const followUpSteps = [
+      clinicConfig.automatedFollowUp,
       ...(Array.isArray(clinicConfig.automatedFollowUp?.additionalSteps)
-        ? clinicConfig.automatedFollowUp.additionalSteps.map((step) => step?.imageUrl)
+        ? clinicConfig.automatedFollowUp.additionalSteps
         : []),
-    ]
+    ].filter(Boolean);
+    const followUpImageIds = followUpSteps
+      .flatMap((step) => [
+        step?.imageUrl,
+        ...(Array.isArray(step?.serviceOverrides)
+          ? step.serviceOverrides.map((item) => item?.imageUrl)
+          : []),
+      ])
       .map(extractPromoImageId)
       .filter((id) => id !== null);
     const snapshotImageIds =
