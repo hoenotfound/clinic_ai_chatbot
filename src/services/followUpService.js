@@ -245,34 +245,117 @@ function textContainsServiceTerm(text, term) {
   return normalizedText.includes(term);
 }
 
-function configuredServicesMentionedInConversation(candidate) {
-  const transcript = [
-    ...(candidate.recent_inbound_messages || []),
-    candidate.trigger_message_content,
-  ]
-    .filter((value) => typeof value === "string" && value.trim())
-    .join("\n");
+function configuredServicesMentionedInText(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) return [];
 
-  if (!transcript) return [];
-
-  const matched = new Map();
+  const matches = [];
   for (const service of Array.isArray(clinicConfig.services)
     ? clinicConfig.services
     : []) {
     const serviceName =
       typeof service?.name === "string" ? service.name.trim() : "";
     const normalized = normalizedServiceName(serviceName);
-    if (!normalized || matched.has(normalized)) continue;
+    if (!normalized) continue;
 
-    if (
-      serviceTerms(serviceName).some((term) =>
-        textContainsServiceTerm(transcript, term)
-      )
-    ) {
-      matched.set(normalized, serviceName);
+    const matchedTerms = serviceTerms(serviceName).filter((term) =>
+      textContainsServiceTerm(text, term)
+    );
+    if (matchedTerms.length > 0) {
+      matches.push({ serviceName, matchedTerms });
     }
   }
-  return [...matched.values()];
+
+  if (matches.length <= 1) {
+    return matches.map((item) => item.serviceName);
+  }
+
+  // Prefer one explicitly named combined service only when its matched phrase
+  // fully contains the component-service phrases and those components do not
+  // also appear separately elsewhere in the same customer message. This turns
+  // "3D+9D" into the configured combination service while keeping genuine
+  // comparisons such as "3D or 9D?" ambiguous.
+  const normalizedText = normalizedServiceName(text);
+  const covering = matches.filter((candidate) =>
+    candidate.matchedTerms.some((candidateTerm) =>
+      matches.every((other) => {
+        if (other === candidate) return true;
+        return other.matchedTerms.some(
+          (otherTerm) =>
+            candidateTerm.length > otherTerm.length &&
+            candidateTerm.includes(otherTerm)
+        );
+      })
+    )
+  );
+
+  if (covering.length === 1) {
+    const [candidate] = covering;
+    const residual = candidate.matchedTerms.reduce(
+      (current, term) => current.split(term).join(" "),
+      normalizedText
+    );
+    const hasSeparateComponent = matches.some(
+      (other) =>
+        other !== candidate &&
+        serviceTerms(other.serviceName).some((term) =>
+          textContainsServiceTerm(residual, term)
+        )
+    );
+    if (!hasSeparateComponent) {
+      return [candidate.serviceName];
+    }
+  }
+
+  return matches.map((item) => item.serviceName);
+}
+
+function serviceMentionFromMessages(messages) {
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const matches = configuredServicesMentionedInText(message);
+    if (matches.length === 1) {
+      return { serviceName: matches[0], mentioned: true };
+    }
+    if (matches.length > 1) {
+      return { serviceName: null, mentioned: true };
+    }
+  }
+  return { serviceName: null, mentioned: false };
+}
+
+function followUpServiceContext(candidate) {
+  // The current customer exchange is authoritative. An explicit service switch
+  // or comparison here must never be overridden by older history.
+  const currentCustomer = serviceMentionFromMessages(
+    candidate.recent_inbound_messages
+  );
+  if (currentCustomer.mentioned) return currentCustomer;
+
+  // A single service in the latest outbound anchor is strong current context
+  // (for example a 3D result/ad reply). A multi-service package anchor is not:
+  // its included treatments should not hijack the customer's primary interest.
+  const anchorMatches = configuredServicesMentionedInText(
+    candidate.trigger_message_content
+  );
+  if (anchorMatches.length === 1) {
+    return { serviceName: anchorMatches[0], mentioned: true };
+  }
+
+  // When the current customer turn is generic ("price?", "how much?") and the
+  // anchor lists several package components, carry forward the most recent
+  // customer-named service from the last 24 hours. This is what keeps a Pelvic
+  // Care enquiry targeted even when the package caption also mentions uterus
+  // care or moxibustion.
+  const recentCustomer = serviceMentionFromMessages(
+    candidate.recent_service_messages
+  );
+  if (recentCustomer.mentioned) return recentCustomer;
+
+  if (anchorMatches.length > 1) {
+    return { serviceName: null, mentioned: true };
+  }
+
+  return { serviceName: null, mentioned: false };
 }
 
 function looksLikePromotionEnquiry(value) {
@@ -527,8 +610,7 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
     promotionPackageSelection = promotionFollowUp?.packageSelection || null;
   }
 
-  const conversationServices =
-    configuredServicesMentionedInConversation(candidate);
+  const currentService = followUpServiceContext(candidate);
   const overrideForService = (serviceName) =>
     step.serviceOverrides.find(
       (item) =>
@@ -543,27 +625,26 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
       )
     : null;
 
-  // The current exchange is authoritative across ALL configured services, not
-  // just services that happen to have a custom message on this step.
-  // - one current service + override -> targeted copy
-  // - one current service without override -> general copy
-  // - multiple current services -> general copy
-  // - no current service -> CRM interest may supply an exact override
-  const targeted =
-    conversationServices.length === 1
-      ? overrideForService(conversationServices[0])
-      : conversationServices.length > 1
-        ? null
-        : exactInterest || null;
+  // The newest customer-named service wins, even when the outbound package
+  // caption lists several included services. Ambiguous customer or anchor
+  // wording fails closed to the general step. CRM interest is only a fallback
+  // when the current conversation does not name any configured service.
+  const targeted = currentService.mentioned
+    ? currentService.serviceName
+      ? overrideForService(currentService.serviceName)
+      : null
+    : exactInterest || null;
   const source = targeted || step;
   // Service-specific media overrides the general attachment only when that
   // service actually has media configured. Otherwise keep the general media
   // as the safe fallback, preserving the existing general-image behavior.
-  const mediaSource =
-    targeted && (targeted.imageUrl || targeted.videoKey) ? targeted : step;
+  const targetedMedia =
+    targeted && (targeted.imageUrl || targeted.videoKey) ? targeted : null;
+  const mediaSource = targetedMedia || step;
   return {
     message: source.translations[language] || source.message,
     targetedService: targeted?.serviceName || null,
+    targetedMediaService: targetedMedia?.serviceName || null,
     selectedImageUrl: mediaSource.imageUrl || "",
     selectedVideoKey: mediaSource.videoKey || "",
     selectedVideoFilename: mediaSource.videoFilename || "",
@@ -965,6 +1046,7 @@ async function sendCandidate(candidate) {
   );
   let followUpMessage = fallbackSelection.message;
   let targetedService = fallbackSelection.targetedService;
+  let targetedMediaService = fallbackSelection.targetedMediaService || null;
   let selectedImageUrl = fallbackSelection.selectedImageUrl || "";
   let selectedVideoKey = fallbackSelection.selectedVideoKey || "";
   let selectedVideoFilename =
@@ -1068,8 +1150,10 @@ async function sendCandidate(candidate) {
       }
     }
 
-    // Configured promotion copy remains exact. AI personalization is used only
-    // when no single promotion package was safely selected.
+    // Configured promotion copy remains exact. AI still reviews an AI-mode
+    // targeted-media follow-up so skip/human-review safety decisions remain
+    // active, but a send decision must not rewrite the configured caption that
+    // was authored together with the service image/video.
     if (step.messageMode === "ai" && !promotionFollowUp) {
       if (!aiContext) {
         followUpMessageMode = "ai_fallback";
@@ -1155,6 +1239,11 @@ async function sendCandidate(candidate) {
               }
               return;
             }
+          } else if (targetedMediaService) {
+            // Keep the exact configured caption paired with the selected
+            // service media. The model has approved sending, but its generated
+            // prose is intentionally ignored for this targeted attachment.
+            followUpMessageMode = "fixed";
           } else {
             followUpMessage = aiDecision.message;
             followUpMessageMode = "ai_personalized";
@@ -1236,7 +1325,10 @@ async function sendCandidate(candidate) {
       mediaKey: durableVideoKey,
       mediaMimeType: durableVideoKey ? "video/mp4" : null,
       stepIndex,
-      targetedService: followUpMessageMode === "ai_personalized" ? null : targetedService,
+      targetedService:
+        followUpMessageMode === "ai_personalized"
+          ? targetedMediaService
+          : targetedService,
       messageMode: followUpMessageMode,
       delayMinutes: step.delayMinutes,
       previousDelayMinutes:

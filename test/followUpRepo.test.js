@@ -130,6 +130,12 @@ test("automated follow-up discovery excludes conversations already waiting for s
     assert.match(sql, /previous_outbound/);
     assert.match(sql, /recent_inbound\.id <= latest_inbound\.id/);
     assert.match(sql, /recent_inbound\.id > previous_outbound\.id/);
+    assert.match(sql, /service_inbound\.id <= latest_inbound\.id/);
+    assert.match(
+      sql,
+      /service_inbound\.created_at >=\s*latest_inbound\.created_at - interval '24 hours'/
+    );
+    assert.match(sql, /AS recent_service_messages/);
     assert.match(sql, /latest_lead\.is_closed = false/);
     assert.match(sql, /appointment_set.*visited/);
     assert.match(sql, /appointment_status.*set.*visited/);
