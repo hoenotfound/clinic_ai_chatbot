@@ -4,6 +4,8 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { spawn } = require("node:child_process");
+const ffmpegPath = require("ffmpeg-static");
 
 const {
   MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES,
@@ -12,6 +14,21 @@ const {
   bitratePlan,
   prepareFollowUpVideoFile,
 } = require("../src/services/followUpVideoPreparationService");
+
+function runBinary(binary, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(binary, args, { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr || `process exited with code ${code}`));
+    });
+  });
+}
 
 async function withTempInput(buffer, work) {
   const inputPath = path.join(
@@ -93,6 +110,44 @@ test("follow-up video preparation compresses a >16MB source before storage", asy
     assert.deepEqual(prepared.buffer, Buffer.from("whatsapp-safe"));
     assert.ok(planSeen.videoKbps > 0);
   });
+});
+
+test("real FFmpeg path produces a WhatsApp-safe H.264/AAC MP4", async () => {
+  assert.ok(ffmpegPath, "ffmpeg-static binary should be available");
+  const inputPath = path.join(
+    os.tmpdir(),
+    `follow-up-video-real-${process.pid}-${crypto.randomUUID()}.mp4`
+  );
+  try {
+    await runBinary(ffmpegPath, [
+      "-hide_banner",
+      "-loglevel", "error",
+      "-y",
+      "-f", "lavfi",
+      "-i", "testsrc=size=320x240:rate=10",
+      "-f", "lavfi",
+      "-i", "sine=frequency=1000:sample_rate=44100",
+      "-t", "1",
+      "-c:v", "mpeg4",
+      "-c:a", "aac",
+      inputPath,
+    ]);
+
+    const prepared = await prepareFollowUpVideoFile(inputPath, {
+      // Force the preparation branch without creating a real 16MB fixture.
+      originalBytes: 20 * 1024 * 1024,
+    });
+
+    assert.equal(prepared.compressed, true);
+    assert.ok(prepared.storedBytes > 0);
+    assert.ok(prepared.storedBytes <= MAX_WHATSAPP_VIDEO_BYTES);
+    const ascii = prepared.buffer.toString("latin1");
+    assert.match(ascii, /ftyp/);
+    assert.match(ascii, /avc1/);
+    assert.match(ascii, /mp4a/);
+  } finally {
+    await fs.unlink(inputPath).catch(() => {});
+  }
 });
 
 test("follow-up video preparation refuses output that still exceeds the provider cap", async () => {
