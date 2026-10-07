@@ -172,22 +172,30 @@ export default function ScheduledInboxMessages() {
     function findComposer() {
       const conversationSection = document.querySelector('section[aria-label^="Conversation with "]');
       const form = conversationSection?.querySelector("form");
-      const sendButton = form?.querySelector('button[type="submit"]');
-      if (!form || !sendButton) return;
+      if (!form) return;
 
       composerFormRef.current = form;
       let mount = form.querySelector("[data-scheduled-message-composer-slot]");
       if (!mount) {
+        const anchor =
+          form.querySelector('button[type="submit"]') ||
+          form.querySelector('button[aria-label="Record a voice message"]') ||
+          form.querySelector('button[aria-label="Send voice message"]') ||
+          form.querySelector('button[aria-label="Stop voice recording"]') ||
+          form.querySelector('button[aria-label="Starting microphone"]');
+        if (!anchor) return;
         mount = document.createElement("span");
         mount.dataset.scheduledMessageComposerSlot = "true";
         mount.style.display = "contents";
-        sendButton.parentElement?.insertBefore(mount, sendButton);
+        anchor.parentElement?.insertBefore(mount, anchor);
         ownedMount = mount;
       }
       setComposerMount((current) => (current === mount ? current : mount));
 
       const textarea = form.querySelector("textarea");
-      const hasMedia = !!form.querySelector('img[alt="Selected attachment"], audio');
+      const hasMedia = !!form.querySelector(
+        'img[alt="Selected attachment"], video, audio, button[aria-label="Remove selected attachment"], button[aria-label="Remove selected image"], button[aria-label="Discard voice message"], button[aria-label="Stop voice recording"], button[aria-label="Cancel voice recording"]'
+      );
       const blocked = !!textarea?.disabled || hasMedia;
       setComposerMediaBlocked((current) => (current === blocked ? current : blocked));
     }
