@@ -1372,7 +1372,7 @@ function shouldNormalizeStoredWhatsAppVideoForRetry(contact, message) {
   }
   if (message.delivery_status !== "failed") return false;
   const errorText = String(message.delivery_error || "");
-  return /Video file uploaded with mimetype|(?:videoCodec|audioCodec)\\s*=/i.test(errorText);
+  return /Video file uploaded with mimetype|(?:videoCodec|audioCodec)\s*=/i.test(errorText);
 }
 
 async function normalizeStoredWhatsAppVideoForRetry(contact, message) {
@@ -1415,7 +1415,7 @@ async function normalizeStoredWhatsAppVideoForRetry(contact, message) {
 
     message.media_key = replacementKey;
     message.media_mime_type = "video/mp4";
-    if (!/\\.mp4$/i.test(String(message.media_filename || ""))) {
+    if (!/\.mp4$/i.test(String(message.media_filename || ""))) {
       message.media_filename = normalizedInboxVideoFilename(
         message.media_filename || "video.mp4"
       );
