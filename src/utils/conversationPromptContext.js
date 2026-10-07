@@ -32,17 +32,25 @@ function negatedServicesInText(text, candidates) {
     let rejected = false;
     for (const clause of clauses) {
       const normalized = normalizeComparable(clause);
+      const mentions = [];
       for (const { key } of candidate.terms) {
         let start = 0;
         let at;
         while ((at = normalized.indexOf(key, start)) !== -1) {
-          const prefix = normalized.slice(Math.max(0, at - 24), at);
-          if (/(?:不要|不是|不想(?:了解|做|问|問)?|不用|不需要|不考虑|不考慮|not(?:interestedin|interested|the)?|dontwant(?:the)?|donotwant(?:the)?|bukan|taknak|tidakmahu)$/iu.test(prefix)) {
-            rejected = true;
-          } else {
-            affirmative = true;
-          }
+          mentions.push({ start: at, end: at + key.length });
           start = at + key.length;
+        }
+      }
+      // A short alias inside a longer service mention shares its negation.
+      // For example, 小颜 must not affirm the rejected 不要3D小颜术.
+      for (const mention of mentions) {
+        if (mentions.some((other) => other.start <= mention.start &&
+          other.end >= mention.end && (other.start < mention.start || other.end > mention.end))) continue;
+        const prefix = normalized.slice(Math.max(0, mention.start - 24), mention.start);
+        if (/(?:不要|不是|不想(?:了解|做|问|問)?|不用|不需要|不考虑|不考慮|not(?:interestedin|interested|the)?|dontwant(?:the)?|donotwant(?:the)?|bukan|taknak|tidakmahu)$/iu.test(prefix)) {
+          rejected = true;
+        } else {
+          affirmative = true;
         }
       }
     }
@@ -64,6 +72,20 @@ function promotionReferencedServices(text, candidates, promotions) {
     candidates.find((candidate) => normalizeComparable(candidate.name) ===
       normalizeComparable(promotion.linkedService))?.name
   ));
+}
+
+function customerServiceIntent(text, candidates, promotions) {
+  const rejected = new Set(negatedServicesInText(text, candidates));
+  const currentMatches = unique(findServicesInText(text, candidates).filter((name) => !rejected.has(name)));
+  const packageServices = promotionReferencedServices(text, candidates, promotions)
+    .filter((name) => !rejected.has(name));
+  const explicitMatches = currentMatches.length ? currentMatches : packageServices;
+  const serviceDiscoveryIntent = SERVICE_DISCOVERY_PATTERN.test(text);
+  const broadPriceIntent = BROAD_PRICE_PATTERN.test(text);
+  const topicChangeIntent = !explicitMatches.length && (TOPIC_CHANGE_PATTERN.test(text) || rejected.size > 0);
+  const broadIntent = serviceDiscoveryIntent || broadPriceIntent || topicChangeIntent ||
+    (!currentMatches.length && configuredPromotionReference(text, promotions) && packageServices.length !== 1);
+  return { currentMatches, explicitMatches, serviceDiscoveryIntent, broadPriceIntent, topicChangeIntent, broadIntent };
 }
 
 function configuredPromotionReference(text, promotions = config.promotions) {
@@ -247,18 +269,9 @@ function recentConversationServiceAnchor(messages, candidates, maxMessages = 16,
     if (inspected > maxMessages) break;
 
     const text = messageText(message);
-    const directMatches = unique(affirmedServicesInText(text, candidates));
-    const matches = message.role === "user" && !directMatches.length
-      ? promotionReferencedServices(text, candidates, promotions)
-      : directMatches;
-    if (message.role === "user" && !directMatches.length && matches.length > 1) {
-      return { relevantServiceNames: [], serviceSource: "recent_broad_context" };
-    }
-    if (message.role === "user" && !matches.length && (
-      TOPIC_CHANGE_PATTERN.test(text) ||
-      negatedServicesInText(text, candidates).length ||
-      SERVICE_DISCOVERY_PATTERN.test(text) || BROAD_PRICE_PATTERN.test(text)
-    )) {
+    const intent = message.role === "user" ? customerServiceIntent(text, candidates, promotions) : null;
+    const matches = intent ? intent.explicitMatches : unique(affirmedServicesInText(text, candidates));
+    if (intent?.broadIntent) {
       return { relevantServiceNames: [], serviceSource: "recent_broad_context" };
     }
     if (!matches.length) continue;
@@ -286,17 +299,24 @@ function recentConversationServiceAnchor(messages, candidates, maxMessages = 16,
       }
 
       let previousCustomerMatches = [];
+      let customerTurns = 0;
       for (let previous = index - 1; previous >= 0; previous -= 1) {
         if (source[previous]?.role !== "user") continue;
-        previousCustomerMatches = unique(
-          affirmedServicesInText(messageText(source[previous]), candidates)
-        );
-        if (!previousCustomerMatches.length) {
-          previousCustomerMatches = promotionReferencedServices(
-            messageText(source[previous]), candidates, promotions
-          );
+        customerTurns += 1;
+        if (customerTurns > 8) break;
+        const previousIntent = customerServiceIntent(messageText(source[previous]), candidates, promotions);
+        if (previousIntent.broadIntent) {
+          return { relevantServiceNames: [], serviceSource: "recent_broad_context" };
         }
-        break;
+        if (previousIntent.explicitMatches.length) {
+          // A package choice and a topic reset remain authoritative across
+          // vague follow-ups. Keep the existing assistant clarification path
+          // for an ambiguous new concern after an older direct service topic.
+          if (customerTurns === 1 || !previousIntent.currentMatches.length) {
+            previousCustomerMatches = previousIntent.explicitMatches;
+          }
+          break;
+        }
       }
 
       // An assistant may clarify an ambiguous customer phrase (for example,
@@ -344,18 +364,8 @@ function buildConversationPromptContext(
   const candidates = serviceCandidates(services, aliases);
   const customerMessages = latestCustomerMessages(messages, 8);
   const currentCustomerText = messageText(customerMessages.at(-1));
-  const currentMatches = unique(affirmedServicesInText(currentCustomerText, candidates));
-  const serviceDiscoveryIntent = SERVICE_DISCOVERY_PATTERN.test(currentCustomerText);
-  const broadPriceIntent = BROAD_PRICE_PATTERN.test(currentCustomerText);
-  const packageServices = promotionReferencedServices(currentCustomerText, candidates, promotions);
-  const promotionReference = configuredPromotionReference(currentCustomerText, promotions);
-  const topicChangeIntent = !currentMatches.length && (
-    TOPIC_CHANGE_PATTERN.test(currentCustomerText) ||
-    negatedServicesInText(currentCustomerText, candidates).length > 0
-  );
-  const broadIntent = serviceDiscoveryIntent || broadPriceIntent || topicChangeIntent ||
-    (!currentMatches.length && promotionReference && packageServices.length !== 1);
-  const explicitMatches = currentMatches.length ? currentMatches : packageServices;
+  const { currentMatches, explicitMatches, serviceDiscoveryIntent, broadPriceIntent, topicChangeIntent, broadIntent } =
+    customerServiceIntent(currentCustomerText, candidates, promotions);
 
   let relevantServiceNames = broadIntent
     ? []
@@ -375,27 +385,13 @@ function buildConversationPromptContext(
     currentMatches.length <= 2 &&
     !broadIntent
   ) {
-    const recentAnchor = recentConversationServiceAnchor(messages, candidates, 16, promotions);
+    // Apply the same package and topic-reset rules to the customer-only window
+    // if numerous assistant/media rows exhaust the mixed-message window.
+    const recentAnchor = recentConversationServiceAnchor(messages, candidates, 16, promotions) ||
+      recentConversationServiceAnchor(customerMessages, candidates, 8, promotions);
     if (recentAnchor) {
       relevantServiceNames = recentAnchor.relevantServiceNames;
       serviceSource = recentAnchor.serviceSource;
-    } else {
-      // Preserve the original customer-only memory window as a fallback.
-      // Assistant/result-media rows can be numerous, so an 8-message mixed
-      // window must not make the selector forget a still-active customer topic.
-      for (let index = customerMessages.length - 2; index >= 0; index -= 1) {
-        const matches = unique(
-          affirmedServicesInText(messageText(customerMessages[index]), candidates)
-        );
-        if (!matches.length) continue;
-        if (matches.length > 2) {
-          serviceSource = "multi_service_broad";
-          break;
-        }
-        relevantServiceNames = matches;
-        serviceSource = "recent_customer";
-        break;
-      }
     }
   }
 

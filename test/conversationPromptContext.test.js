@@ -206,6 +206,12 @@ test("an assistant suggestion cannot replace a uniquely customer-chosen package 
       { role: "user", content: "包括什么？" },
     ]);
     assert.deepEqual(context.relevantServiceNames, ["骨盆调理"]);
+    const later = buildConversationPromptContext([
+      { role: "user", content: "A套餐" }, { role: "assistant", content: "可以" },
+      { role: "user", content: "包括什么？" }, { role: "assistant", content: "也可以了解9D 逆龄抗衰" },
+      { role: "user", content: "需要多久？" },
+    ]);
+    assert.deepEqual(later.relevantServiceNames, ["骨盆调理"]);
   });
 });
 
@@ -255,6 +261,8 @@ test("negated services and explicit unmapped topic changes stop stale treatment 
     for (const content of ["不要骨盆，我想改善法令纹", "现在想了解脸部松弛", "Not pelvis, I want to ask about face concerns", "bukan pelvis, nak tanya muka"]) {
       const history = [{ role: "user", content: "骨盆调理" }, { role: "assistant", content: "可以" }, { role: "user", content }];
       assert.deepEqual(buildConversationPromptContext(history).relevantServiceNames, []);
+      const later = [...history, { role: "assistant", content: "骨盆调理适合体态问题" }, { role: "user", content: "需要多久？" }];
+      assert.deepEqual(buildConversationPromptContext(later).relevantServiceNames, []);
       const next = [...history, { role: "assistant", content: "你比较在意哪方面？" }, { role: "user", content: "多少钱？" }];
       assert.deepEqual(buildConversationPromptContext(next).relevantServiceNames, []);
     }
@@ -294,11 +302,63 @@ test("standing normal prices override promotional copy without mutating media or
   });
 });
 
+test("nested aliases do not affirm a rejected treatment, while a separate mention can", () => {
+  const overrides = scopedConfig();
+  overrides.serviceAliases.push({ alias: "小颜术 / 3D小颜", officialService: "3D 小颜术" });
+  withConfig(overrides, () => {
+    for (const content of ["不要3D小颜术，我想了解9D", "不是3D小颜术，是9D", "Not interested in 3D小颜术, tell me about 9D"]) {
+      const context = buildConversationPromptContext([{ role: "user", content }]);
+      assert.deepEqual(context.relevantServiceNames, ["9D 逆龄抗衰"]);
+    }
+    const question = buildConversationPromptContext([{ role: "user", content: "不是说不要3D小颜术，3D适合我吗？" }]);
+    assert.deepEqual(question.relevantServiceNames, ["3D 小颜术"]);
+  });
+});
+
+test("a unique package selection stays scoped when the customer explicitly switches to it", () => {
+  withConfig(pelvisPackageConfig(), () => {
+    for (const content of ["Now I want Package A", "Package A instead", "现在想了解A套餐"]) {
+      const history = [{ role: "user", content: "3D" }, { role: "assistant", content: "3D 小颜术" }, { role: "user", content }];
+      assert.deepEqual(buildConversationPromptContext(history).relevantServiceNames, ["骨盆调理"]);
+      assert.deepEqual(buildConversationPromptContext([...history, { role: "assistant", content: "可以" }, { role: "user", content: "包括什么？" }]).relevantServiceNames, ["骨盆调理"]);
+    }
+    assert.deepEqual(buildConversationPromptContext([{ role: "user", content: "不要骨盆的Package A" }]).relevantServiceNames, []);
+  });
+});
+
+test("assistant rows cannot narrow a customer topic reset or broad price request", () => {
+  withConfig(scopedConfig(), () => {
+    for (const content of ["不要骨盆，我想改善脸部松弛", "现在想了解脸部松弛", "Can I see the full price list?", "What other treatments do you offer?"]) {
+      const history = [
+        { role: "user", content: "骨盆调理" }, { role: "assistant", content: "可以" },
+        { role: "user", content }, { role: "assistant", content: "骨盆调理适合体态问题" },
+        { role: "user", content: "多少钱？" },
+      ];
+      assert.deepEqual(buildConversationPromptContext(history).relevantServiceNames, []);
+      const later = [...history, { role: "assistant", content: "骨盆调理适合体态问题" }, { role: "user", content: "需要多久？" }];
+      assert.deepEqual(buildConversationPromptContext(later).relevantServiceNames, []);
+    }
+  });
+});
+
+test("customer topic resets and package selections survive many intervening media rows", () => {
+  withConfig(pelvisPackageConfig(), () => {
+    for (const [content, expected] of [["现在想了解脸部松弛", []], ["全部价钱", []], ["Package A", ["骨盆调理"]]]) {
+      const history = [
+        { role: "user", content: "3D" }, { role: "assistant", content: "可以" }, { role: "user", content },
+        ...Array.from({ length: 18 }, () => ({ role: "assistant", content: "[image]" })),
+        { role: "user", content: "多少钱？" },
+      ];
+      assert.deepEqual(buildConversationPromptContext(history).relevantServiceNames, expected);
+    }
+  });
+});
+
 test("Gemini and Claude receive identical scoped knowledge including images and every history turn", async () => {
   const previous = JSON.parse(JSON.stringify(config));
   Object.assign(config, pelvisPackageConfig());
   try {
-    for (const text of ["Package A和B有什么不同？", "全部价钱", "有送什么吗？", "发定位给我", "不要骨盆，我想改善法令纹"]) {
+    for (const text of ["Package A和B有什么不同？", "全部价钱", "有送什么吗？", "发定位给我", "不要骨盆，我想改善法令纹", "不要3D小颜术，我想了解9D", "Now I want Package A"]) {
       const messages = [
         { role: "user", content: "3D小颜术" },
         { role: "assistant", content: "RESULT_MEDIA_REFERENCE 3D 小颜术" },
