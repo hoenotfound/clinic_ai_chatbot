@@ -26,7 +26,7 @@ test("Inbox video picker does not restrict iOS Files to exact video/mp4 MIME", (
   );
 });
 
-test("Inbox backend accepts iPhone video containers and normalizes every upload for codec safety", () => {
+test("Inbox backend accepts iPhone containers and checks codec compatibility before sending", () => {
   assert.match(
     conversationsSource,
     /INBOX_VIDEO_EXTENSIONS = new Set\(\["mp4", "mov", "m4v"\]\)/
@@ -58,5 +58,25 @@ test("configured follow-up videos are normalized before reuse", () => {
   assert.match(
     configSource,
     /transcoded: prepared\.transcoded === true/
+  );
+});
+
+
+test("Retry repairs historical WhatsApp codec-rejected videos before resending", () => {
+  assert.match(
+    conversationsSource,
+    /shouldNormalizeStoredWhatsAppVideoForRetry/
+  );
+  assert.match(
+    conversationsSource,
+    /Video file uploaded with mimetype\|\(\?:videoCodec\|audioCodec\)\\s\*=/
+  );
+  assert.match(
+    conversationsSource,
+    /normalizeStoredWhatsAppVideoForRetry[\s\S]*forceTranscode: true/
+  );
+  assert.match(
+    conversationsSource,
+    /await normalizeStoredWhatsAppVideoForRetry\(contact, message\)/
   );
 });
