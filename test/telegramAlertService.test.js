@@ -343,6 +343,10 @@ test("flush rechecks inactivity at claim time and formats from the claimed snaps
 
 test("normal summary send releases the shared contact lock before waiting for Telegram", async () => {
   const steps = [];
+  let resolveSend;
+  let resolveLockReleased;
+  const sendGate = new Promise((resolve) => { resolveSend = resolve; });
+  const lockReleased = new Promise((resolve) => { resolveLockReleased = resolve; });
   const service = createTelegramAlertService({
     env: {
       TELEGRAM_ALERTS_ENABLED: "true",
@@ -366,22 +370,38 @@ test("normal summary send releases the shared contact lock before waiting for Te
       steps.push("lock:start");
       const result = await work();
       steps.push("lock:end");
+      resolveLockReleased();
       return result;
     },
-    sendMessage: async () => {
-      steps.push("send");
-      return { message_id: 99 };
+    sendMessage() {
+      steps.push("send:start");
+      return sendGate.then(() => {
+        steps.push("send:finish");
+        return { message_id: 99 };
+      });
     },
   });
 
-  const result = await service.flushConversationSummaries({ inactivityMinutes: 10 });
+  const flushPromise = service.flushConversationSummaries({ inactivityMinutes: 10 });
+  await lockReleased;
+
+  assert.deepEqual(steps, [
+    "lock:start",
+    "coverage",
+    "send:start",
+    "lock:end",
+  ]);
+
+  resolveSend();
+  const result = await flushPromise;
 
   assert.deepEqual(result, { status: "completed", sent: 1 });
   assert.deepEqual(steps, [
     "lock:start",
     "coverage",
-    "send",
+    "send:start",
     "lock:end",
+    "send:finish",
     "markSent",
   ]);
 });
