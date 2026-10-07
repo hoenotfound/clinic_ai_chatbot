@@ -631,6 +631,11 @@ async function getMessageForRetry(contactId, messageId) {
   if (!row) return null;
 
   const key = row.media_key;
+  const mimeType = String(row.media_mime_type || "").toLowerCase();
+  if (key && mimeType.startsWith("video/")) {
+    row.media_base64 = null;
+    return row;
+  }
   delete row.media_key;
   row.media_base64 = key ? (await mediaStorage.downloadMedia(key)).toString("base64") : null;
   return row;
