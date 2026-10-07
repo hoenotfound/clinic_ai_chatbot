@@ -326,6 +326,7 @@ function createTelegramAlertService({
         if (!claim) continue;
 
         try {
+          let sendOutcomePromise = null;
           const outcome = await withContactAlertLock(
             claim.contact_id,
             async () => {
@@ -350,16 +351,31 @@ function createTelegramAlertService({
                 env,
                 config,
               });
-              await sendMessage({
+
+              // Start the request while the final coverage check is still
+              // fenced, then release the contact lock before waiting on
+              // Telegram. Inbox replies must not be blocked by Telegram
+              // response time or timeout behaviour.
+              sendOutcomePromise = Promise.resolve(sendMessage({
                 token: env.TELEGRAM_BOT_TOKEN,
                 chatId: env.TELEGRAM_CHAT_ID,
                 text,
-              });
-              await repository.markSent(claim.alert_id);
-              return "sent";
+              })).then(
+                (value) => ({ status: "fulfilled", value }),
+                (reason) => ({ status: "rejected", reason })
+              );
+              return "submitted";
             }
           );
-          if (outcome === "sent") sent += 1;
+
+          if (outcome === "submitted") {
+            const sendOutcome = await sendOutcomePromise;
+            if (sendOutcome.status === "rejected") {
+              throw sendOutcome.reason;
+            }
+            await repository.markSent(claim.alert_id);
+            sent += 1;
+          }
         } catch (err) {
           await repository.markFailed(claim.alert_id, err);
           console.error(
