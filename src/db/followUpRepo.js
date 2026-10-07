@@ -748,6 +748,8 @@ async function recordAiDecisionIfStillEligible({
   topic = "",
   delayMinutes,
   previousDelayMinutes = 0,
+  timingMode = "after_reply",
+  beforeWindowExpiryMinutes = 120,
   triggerMode,
   activatedAt,
 }) {
@@ -756,6 +758,11 @@ async function recordAiDecisionIfStillEligible({
   const numericStep = Number(stepIndex);
   const numericDelay = Number(delayMinutes);
   const numericPreviousDelay = Number(previousDelayMinutes);
+  const numericBeforeWindowExpiryMinutes = Number(beforeWindowExpiryMinutes);
+  const normalizedTimingMode =
+    timingMode === "before_window_expiry"
+      ? "before_window_expiry"
+      : "after_reply";
   const normalizedAction = String(action || "").trim().toLowerCase();
   const normalizedReason = String(reason || "").slice(0, 1000);
   const normalizedTopic = String(topic || "").slice(0, 500);
@@ -777,6 +784,11 @@ async function recordAiDecisionIfStillEligible({
     numericPreviousDelay >= numericDelay ||
     (numericStep === 1 && numericPreviousDelay !== 0) ||
     (numericStep > 1 && numericPreviousDelay < 5) ||
+    !Number.isInteger(numericBeforeWindowExpiryMinutes) ||
+    numericBeforeWindowExpiryMinutes < 60 ||
+    numericBeforeWindowExpiryMinutes > 360 ||
+    (normalizedTimingMode === "before_window_expiry" &&
+      numericDelay !== 24 * 60 - numericBeforeWindowExpiryMinutes) ||
     !["all", "staff"].includes(triggerMode) ||
     typeof activatedAt !== "string" ||
     Number.isNaN(Date.parse(activatedAt))
@@ -894,20 +906,30 @@ async function recordAiDecisionIfStillEligible({
              AND existing.action IN ('skip', 'human_review')
          )
          AND anchor.created_at >= $9::timestamptz
-         AND GREATEST(
-               anchor.created_at + ($7::integer * interval '1 minute'),
-               COALESCE(
-                 previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
-                 anchor.created_at + ($7::integer * interval '1 minute')
+         AND CASE
+               WHEN $11 = 'before_window_expiry'
+                 THEN latest_inbound.created_at
+                   + ((1440 - $12::integer) * interval '1 minute')
+               ELSE GREATEST(
+                 anchor.created_at + ($7::integer * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
+                   anchor.created_at + ($7::integer * interval '1 minute')
+                 )
                )
-             ) <= now()
-         AND GREATEST(
-               anchor.created_at + ($7::integer * interval '1 minute'),
-               COALESCE(
-                 previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
-                 anchor.created_at + ($7::integer * interval '1 minute')
+             END <= now()
+         AND CASE
+               WHEN $11 = 'before_window_expiry'
+                 THEN latest_inbound.created_at
+                   + ((1440 - $12::integer) * interval '1 minute')
+               ELSE GREATEST(
+                 anchor.created_at + ($7::integer * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
+                   anchor.created_at + ($7::integer * interval '1 minute')
+                 )
                )
-             ) <= latest_inbound.created_at + interval '23 hours 50 minutes'
+             END <= latest_inbound.created_at + interval '23 hours 50 minutes'
          AND ($8 = 'all' OR anchor.sent_by_username IS NOT NULL)
          AND COALESCE(progress.max_step, 0) + 1 = $3
          AND COALESCE(progress.has_blocking_claim, false) = false
@@ -944,6 +966,8 @@ async function recordAiDecisionIfStillEligible({
       triggerMode,
       activatedAt,
       numericPreviousDelay,
+      normalizedTimingMode,
+      numericBeforeWindowExpiryMinutes,
     ]
   );
 
