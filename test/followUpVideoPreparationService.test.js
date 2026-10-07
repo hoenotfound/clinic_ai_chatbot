@@ -4,39 +4,17 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { spawn } = require("node:child_process");
 const { EventEmitter } = require("node:events");
-const ffmpegPath = require("ffmpeg-static");
 
 const {
   MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES,
   MAX_WHATSAPP_VIDEO_BYTES,
-  DEFAULT_TRANSCODE_TIMEOUT_MS,
-  MAX_TRANSCODE_DIMENSION,
-  MAX_TRANSCODE_FPS,
   parseFfmpegDuration,
   parseFfmpegMediaInfo,
   isWhatsAppSafeVideoInfo,
-  bitratePlan,
-  runFfmpeg,
-  videoEncodeArgs,
+  probeVideoInfo,
   prepareFollowUpVideoFile,
 } = require("../src/services/followUpVideoPreparationService");
-
-function runBinary(binary, args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { stdio: ["ignore", "ignore", "pipe"] });
-    let stderr = "";
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(stderr || `process exited with code ${code}`));
-    });
-  });
-}
 
 async function withTempInput(buffer, work) {
   const inputPath = path.join(
@@ -51,29 +29,31 @@ async function withTempInput(buffer, work) {
   }
 }
 
-test("parses FFmpeg duration output", () => {
+test("parses FFmpeg duration and codec metadata", () => {
   assert.equal(
     parseFfmpegDuration("Duration: 00:01:23.45, start: 0.000000, bitrate: 1200 kb/s"),
     83.45
   );
   assert.equal(parseFfmpegDuration("no duration here"), null);
+
+  assert.deepEqual(
+    parseFfmpegMediaInfo(
+      "Duration: 00:00:12.50, start: 0.000000, bitrate: 1200 kb/s\n" +
+      "Stream #0:0: Video: hevc (Main), yuv420p\n" +
+      "Stream #0:1: Audio: aac (LC), 44100 Hz"
+    ),
+    {
+      durationSeconds: 12.5,
+      videoCodec: "hevc",
+      audioCodec: "aac",
+    }
+  );
 });
 
-test("parses FFmpeg codecs and recognizes WhatsApp-safe H.264/AAC", () => {
-  const info = parseFfmpegMediaInfo(
-    "Duration: 00:00:12.50, start: 0.000000, bitrate: 1200 kb/s\n" +
-    "Stream #0:0: Video: hevc (Main), yuv420p\n" +
-    "Stream #0:1: Audio: aac (LC), 44100 Hz"
-  );
-  assert.deepEqual(info, {
-    durationSeconds: 12.5,
-    videoCodec: "hevc",
-    audioCodec: "aac",
-  });
-  assert.equal(isWhatsAppSafeVideoInfo(info), false);
+test("WhatsApp compatibility accepts H.264/AAC and rejects HEVC", () => {
   assert.equal(
     isWhatsAppSafeVideoInfo({
-      durationSeconds: 12.5,
+      durationSeconds: 10,
       videoCodec: "h264",
       audioCodec: "aac",
     }),
@@ -81,88 +61,65 @@ test("parses FFmpeg codecs and recognizes WhatsApp-safe H.264/AAC", () => {
   );
   assert.equal(
     isWhatsAppSafeVideoInfo({
-      durationSeconds: 12.5,
+      durationSeconds: 10,
       videoCodec: "h264",
       audioCodec: null,
     }),
     true
   );
-});
-
-test("compression bitrate plan keeps a practical H.264/AAC budget", () => {
-  const plan = bitratePlan(60);
-  assert.ok(plan.videoKbps >= 96);
-  assert.ok(plan.videoKbps <= 3000);
-  assert.ok([48, 64, 96].includes(plan.audioKbps));
-  assert.ok([540, 720, 960, 1280].includes(plan.maxDimension));
-});
-
-test("resource-safe FFmpeg args cap resolution, fps, decoder threads and encoder work", () => {
-  const args = videoEncodeArgs("/tmp/input.mp4", "/tmp/output.mp4", {
-    videoKbps: 2400,
-    audioKbps: 96,
-    maxDimension: 1280,
-  });
-
-  assert.equal(MAX_TRANSCODE_DIMENSION, 960);
-  assert.equal(MAX_TRANSCODE_FPS, 30);
-  assert.equal(DEFAULT_TRANSCODE_TIMEOUT_MS, 90_000);
-
-  const inputIndex = args.indexOf("-i");
-  assert.ok(inputIndex > 0);
-  const inputPrefix = args.slice(0, inputIndex);
-  assert.deepEqual(
-    inputPrefix.slice(inputPrefix.indexOf("-threads"), inputPrefix.indexOf("-threads") + 2),
-    ["-threads", "1"],
-    "decoder threads must be bounded before the input is opened"
-  );
-  assert.match(args[args.indexOf("-vf") + 1], /min\(960\\,iw\)/);
-  assert.match(args[args.indexOf("-vf") + 1], /flags=fast_bilinear/);
-  assert.equal(args[args.indexOf("-fpsmax") + 1], "30");
-  assert.equal(args[args.indexOf("-preset") + 1], "superfast");
-  assert.equal(args[args.indexOf("-tune") + 1], "zerolatency");
-  assert.equal(args[args.indexOf("-filter_threads") + 1], "1");
-  assert.equal(args[args.indexOf("-max_muxing_queue_size") + 1], "128");
-  assert.deepEqual(args.slice(-5), ["-threads", "1", "-f", "mp4", "/tmp/output.mp4"]);
-});
-
-test("compression planner rejects videos too long for a usable <=16MB copy", () => {
-  assert.throws(
-    () => bitratePlan(60 * 60),
-    (error) => error?.code === "FOLLOW_UP_VIDEO_TOO_LONG"
+  assert.equal(
+    isWhatsAppSafeVideoInfo({
+      durationSeconds: 10,
+      videoCodec: "hevc",
+      audioCodec: "aac",
+    }),
+    false
   );
 });
 
-test("follow-up video preparation bypasses FFmpeg for an already-safe MP4", async () => {
-  const source = Buffer.from("already-small");
-  await withTempInput(source, async (inputPath) => {
-    let probed = false;
-    let transcoded = false;
-    const prepared = await prepareFollowUpVideoFile(inputPath, {
-      originalBytes: source.length,
-      probeDurationFn: async () => {
-        probed = true;
-        return 30;
-      },
-      transcodeFn: async () => {
-        transcoded = true;
-      },
+test("video probe opens the file in inspection-only mode with bounded threads", async () => {
+  const argsSeen = [];
+  const fakeSpawn = (binary, args) => {
+    argsSeen.push({ binary, args });
+    const child = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => true;
+    queueMicrotask(() => {
+      child.stderr.emit(
+        "data",
+        Buffer.from(
+          "Duration: 00:00:03.00, start: 0.000000, bitrate: 800 kb/s\n" +
+          "Stream #0:0: Video: h264 (Main), yuv420p\n" +
+          "Stream #0:1: Audio: aac (LC), 44100 Hz"
+        )
+      );
+      child.emit("close", 1);
     });
+    return child;
+  };
 
-    assert.equal(prepared.compressed, false);
-    assert.equal(prepared.transcoded, false);
-    assert.equal(prepared.originalBytes, source.length);
-    assert.equal(prepared.storedBytes, source.length);
-    assert.deepEqual(prepared.buffer, source);
-    assert.equal(probed, false);
-    assert.equal(transcoded, false);
-  });
+  const info = await probeVideoInfo("/tmp/input.mp4", { spawnFn: fakeSpawn });
+
+  assert.equal(info.videoCodec, "h264");
+  assert.equal(info.audioCodec, "aac");
+  assert.equal(argsSeen.length, 1);
+  assert.deepEqual(argsSeen[0].args.slice(0, 5), [
+    "-hide_banner",
+    "-nostdin",
+    "-threads",
+    "1",
+    "-i",
+  ]);
+  assert.equal(
+    argsSeen[0].args.some((arg) => String(arg).includes("libx264")),
+    false,
+    "compatibility probing must never start a video encoder"
+  );
 });
 
-test("codec-safe small MP4 bypasses transcoding after inspection", async () => {
-  const source = Buffer.from("safe-h264");
+test("safe H.264/AAC video is returned unchanged with no compression", async () => {
+  const source = Buffer.from("safe-h264-video");
   await withTempInput(source, async (inputPath) => {
-    let transcoded = false;
     const prepared = await prepareFollowUpVideoFile(inputPath, {
       originalBytes: source.length,
       ensureWhatsAppCompatible: true,
@@ -171,187 +128,80 @@ test("codec-safe small MP4 bypasses transcoding after inspection", async () => {
         videoCodec: "h264",
         audioCodec: "aac",
       }),
-      transcodeFn: async () => {
-        transcoded = true;
-      },
     });
 
+    assert.deepEqual(prepared.buffer, source);
+    assert.equal(prepared.compressed, false);
     assert.equal(prepared.transcoded, false);
     assert.equal(prepared.sourceVideoCodec, "h264");
     assert.equal(prepared.sourceAudioCodec, "aac");
-    assert.deepEqual(prepared.buffer, source);
-    assert.equal(transcoded, false);
+    assert.equal(prepared.originalBytes, source.length);
+    assert.equal(prepared.storedBytes, source.length);
   });
 });
 
-test("HEVC MP4 is transcoded even when already under the size cap", async () => {
-  await withTempInput(Buffer.from("hevc-source"), async (inputPath) => {
-    let planSeen = null;
-    const prepared = await prepareFollowUpVideoFile(inputPath, {
-      originalBytes: 5 * 1024 * 1024,
-      ensureWhatsAppCompatible: true,
-      probeVideoInfoFn: async () => ({
-        durationSeconds: 30,
-        videoCodec: "hevc",
-        audioCodec: "aac",
-      }),
-      transcodeFn: async (sourcePath, outputPath, plan) => {
-        assert.equal(sourcePath, inputPath);
-        planSeen = plan;
-        await fs.writeFile(outputPath, Buffer.from("h264-aac-mp4"));
-      },
-    });
-
-    assert.equal(prepared.transcoded, true);
-    assert.deepEqual(prepared.buffer, Buffer.from("h264-aac-mp4"));
-    assert.ok(planSeen.videoKbps > 0);
-  });
-});
-
-test("forced normalization transcodes a small iPhone video into WhatsApp-safe MP4", async () => {
-  await withTempInput(Buffer.from("iphone-video"), async (inputPath) => {
-    let planSeen = null;
-    const prepared = await prepareFollowUpVideoFile(inputPath, {
-      originalBytes: 5 * 1024 * 1024,
-      forceTranscode: true,
-      probeDurationFn: async () => 30,
-      transcodeFn: async (sourcePath, outputPath, plan) => {
-        assert.equal(sourcePath, inputPath);
-        planSeen = plan;
-        await fs.writeFile(outputPath, Buffer.from("normalized-mp4"));
-      },
-    });
-
-    assert.equal(prepared.transcoded, true);
-    assert.equal(prepared.originalBytes, 5 * 1024 * 1024);
-    assert.equal(prepared.storedBytes, Buffer.byteLength("normalized-mp4"));
-    assert.deepEqual(prepared.buffer, Buffer.from("normalized-mp4"));
-    assert.ok(planSeen.videoKbps > 0);
-  });
-});
-
-test("follow-up video preparation compresses a >16MB source before storage", async () => {
-  await withTempInput(Buffer.from("source-placeholder"), async (inputPath) => {
-    let planSeen = null;
-    const prepared = await prepareFollowUpVideoFile(inputPath, {
-      originalBytes: 20 * 1024 * 1024,
-      probeDurationFn: async () => 45,
-      transcodeFn: async (sourcePath, outputPath, plan) => {
-        assert.equal(sourcePath, inputPath);
-        planSeen = plan;
-        await fs.writeFile(outputPath, Buffer.from("whatsapp-safe"));
-      },
-    });
-
-    assert.equal(prepared.compressed, true);
-    assert.equal(prepared.originalBytes, 20 * 1024 * 1024);
-    assert.equal(prepared.storedBytes, Buffer.byteLength("whatsapp-safe"));
-    assert.deepEqual(prepared.buffer, Buffer.from("whatsapp-safe"));
-    assert.ok(planSeen.videoKbps > 0);
-  });
-});
-
-test("real FFmpeg path produces a WhatsApp-safe H.264/AAC MP4", async () => {
-  assert.ok(ffmpegPath, "ffmpeg-static binary should be available");
-  const inputPath = path.join(
-    os.tmpdir(),
-    `follow-up-video-real-${process.pid}-${crypto.randomUUID()}.mp4`
-  );
-  try {
-    await runBinary(ffmpegPath, [
-      "-hide_banner",
-      "-loglevel", "error",
-      "-y",
-      "-f", "lavfi",
-      "-i", "testsrc=size=320x240:rate=10",
-      "-f", "lavfi",
-      "-i", "sine=frequency=1000:sample_rate=44100",
-      "-t", "1",
-      "-c:v", "mpeg4",
-      "-c:a", "aac",
-      inputPath,
-    ]);
-
-    const prepared = await prepareFollowUpVideoFile(inputPath, {
-      // Force the preparation branch without creating a real 16MB fixture.
-      originalBytes: 20 * 1024 * 1024,
-    });
-
-    assert.equal(prepared.transcoded, true);
-    assert.ok(prepared.storedBytes > 0);
-    assert.ok(prepared.storedBytes <= MAX_WHATSAPP_VIDEO_BYTES);
-    const ascii = prepared.buffer.toString("latin1");
-    assert.match(ascii, /ftyp/);
-    assert.match(ascii, /avc1/);
-    assert.match(ascii, /mp4a/);
-  } finally {
-    await fs.unlink(inputPath).catch(() => {});
-  }
-});
-
-test("follow-up video preparation refuses output that still exceeds the provider cap", async () => {
-  await withTempInput(Buffer.from("source-placeholder"), async (inputPath) => {
+test("HEVC video is rejected instead of transcoded", async () => {
+  await withTempInput(Buffer.from("hevc-video"), async (inputPath) => {
     await assert.rejects(
       prepareFollowUpVideoFile(inputPath, {
-        originalBytes: 20,
-        maxUploadBytes: 100,
-        maxWhatsAppBytes: 5,
-        probeDurationFn: async () => 45,
-        transcodeFn: async (sourcePath, outputPath) => {
-          await fs.writeFile(outputPath, Buffer.alloc(6));
-        },
+        originalBytes: 1024,
+        ensureWhatsAppCompatible: true,
+        probeVideoInfoFn: async () => ({
+          durationSeconds: 20,
+          videoCodec: "hevc",
+          audioCodec: "aac",
+        }),
       }),
-      (error) => error?.code === "FOLLOW_UP_VIDEO_STILL_TOO_LARGE"
+      (error) => {
+        assert.equal(error?.code, "WHATSAPP_VIDEO_CODEC_UNSUPPORTED");
+        assert.match(error.message, /H\.264 video with AAC audio/);
+        assert.match(error.message, /Automatic conversion is disabled/);
+        return true;
+      }
     );
   });
 });
 
-test("follow-up video preparation enforces the 50MB source cap", async () => {
-  await withTempInput(Buffer.from("source-placeholder"), async (inputPath) => {
+test("videos larger than 16MB are rejected instead of compressed", async () => {
+  await withTempInput(Buffer.from("placeholder"), async (inputPath) => {
     await assert.rejects(
       prepareFollowUpVideoFile(inputPath, {
-        originalBytes: MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES + 1,
+        originalBytes: MAX_WHATSAPP_VIDEO_BYTES + 1,
       }),
-      (error) => error?.code === "FOLLOW_UP_VIDEO_UPLOAD_TOO_LARGE"
+      (error) => {
+        assert.equal(error?.code, "WHATSAPP_VIDEO_TOO_LARGE");
+        assert.match(error.message, /larger than 16MB/);
+        assert.match(error.message, /Automatic video compression is disabled/);
+        return true;
+      }
     );
   });
 });
 
-test("FFmpeg timeout waits for the killed encoder to exit before rejecting", async () => {
+test("video probe timeout kills only the inspection child", async () => {
   let killed = false;
-  const keepAlive = setTimeout(() => {}, 250);
   const fakeSpawn = () => {
     const child = new EventEmitter();
     child.stderr = new EventEmitter();
     child.kill = () => {
       killed = true;
-      setTimeout(() => child.emit("close", null, "SIGKILL"), 25);
+      setTimeout(() => child.emit("close", null, "SIGKILL"), 5);
       return true;
     };
     return child;
   };
 
-  const startedAt = Date.now();
-  try {
-    await assert.rejects(
-      runFfmpeg(["-version"], {
-        spawnFn: fakeSpawn,
-        timeoutMs: 5,
-      }),
-      (error) => error?.code === "FOLLOW_UP_VIDEO_COMPRESSION_TIMEOUT"
-    );
-  } finally {
-    clearTimeout(keepAlive);
-  }
-
-  assert.equal(killed, true);
-  assert.ok(
-    Date.now() - startedAt >= 20,
-    "timeout must not release before the encoder close event"
+  await assert.rejects(
+    probeVideoInfo("/tmp/input.mp4", {
+      spawnFn: fakeSpawn,
+      timeoutMs: 1,
+    }),
+    (error) => error?.code === "INVALID_FOLLOW_UP_VIDEO"
   );
+  assert.equal(killed, true);
 });
 
-test("configured provider cap stays at 16MB", () => {
+test("video upload cap equals WhatsApp's 16MB provider limit", () => {
   assert.equal(MAX_WHATSAPP_VIDEO_BYTES, 16 * 1024 * 1024);
-  assert.equal(MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES, 50 * 1024 * 1024);
+  assert.equal(MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES, MAX_WHATSAPP_VIDEO_BYTES);
 });
