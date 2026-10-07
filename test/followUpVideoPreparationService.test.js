@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
+const { EventEmitter } = require("node:events");
 const ffmpegPath = require("ffmpeg-static");
 
 const {
@@ -12,6 +13,7 @@ const {
   MAX_WHATSAPP_VIDEO_BYTES,
   parseFfmpegDuration,
   bitratePlan,
+  runFfmpeg,
   prepareFollowUpVideoFile,
 } = require("../src/services/followUpVideoPreparationService");
 
@@ -176,6 +178,40 @@ test("follow-up video preparation enforces the 50MB source cap", async () => {
       (error) => error?.code === "FOLLOW_UP_VIDEO_UPLOAD_TOO_LARGE"
     );
   });
+});
+
+test("FFmpeg timeout waits for the killed encoder to exit before rejecting", async () => {
+  let killed = false;
+  const keepAlive = setTimeout(() => {}, 250);
+  const fakeSpawn = () => {
+    const child = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {
+      killed = true;
+      setTimeout(() => child.emit("close", null, "SIGKILL"), 25);
+      return true;
+    };
+    return child;
+  };
+
+  const startedAt = Date.now();
+  try {
+    await assert.rejects(
+      runFfmpeg(["-version"], {
+        spawnFn: fakeSpawn,
+        timeoutMs: 5,
+      }),
+      (error) => error?.code === "FOLLOW_UP_VIDEO_COMPRESSION_TIMEOUT"
+    );
+  } finally {
+    clearTimeout(keepAlive);
+  }
+
+  assert.equal(killed, true);
+  assert.ok(
+    Date.now() - startedAt >= 20,
+    "timeout must not release before the encoder close event"
+  );
 });
 
 test("configured provider cap stays at 16MB", () => {
