@@ -79,7 +79,7 @@ function handleFollowUpVideoUpload(req, res, next) {
     }
     if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({
-        error: "Video is too large. Please choose an MP4 file under 50MB.",
+        error: "Video is too large for WhatsApp. Please choose an H.264/AAC MP4 under 16MB.",
       });
     }
     return res.status(400).json({
@@ -1164,9 +1164,8 @@ router.post(
         req.file.path,
         {
           originalBytes: req.file.size,
-          // MP4 is only a container. Inspect the actual codec so an iPhone HEVC
-          // export is normalized once, while already-safe H.264/AAC keeps its
-          // original bytes and quality.
+          // Validation only. Follow-up videos are never compressed/transcoded
+          // inside the live Render service.
           ensureWhatsAppCompatible: true,
         }
       );
@@ -1197,20 +1196,18 @@ router.post(
     } catch (err) {
       const clientErrors = new Set([
         "INVALID_FOLLOW_UP_VIDEO",
-        "FOLLOW_UP_VIDEO_TOO_LONG",
-        "FOLLOW_UP_VIDEO_STILL_TOO_LARGE",
-        "FOLLOW_UP_VIDEO_UPLOAD_TOO_LARGE",
-        "FOLLOW_UP_VIDEO_COMPRESSION_BUSY",
+        "WHATSAPP_VIDEO_TOO_LARGE",
+        "WHATSAPP_VIDEO_CODEC_UNSUPPORTED",
       ]);
       if (clientErrors.has(err?.code)) {
-        return res.status(400).json({ error: err.message });
+        return res.status(400).json({ error: err.message, code: err.code });
+      }
+      if (err?.code === "VIDEO_VALIDATION_UNAVAILABLE") {
+        return res.status(503).json({ error: err.message, code: err.code });
       }
       console.error("Failed to upload automated follow-up video:", err);
       return res.status(500).json({
-        error:
-          err?.code === "FOLLOW_UP_VIDEO_COMPRESSION_TIMEOUT"
-            ? err.message
-            : "Something went wrong preparing this video.",
+        error: "Something went wrong validating this video.",
       });
     } finally {
       if (req.file?.path) {
