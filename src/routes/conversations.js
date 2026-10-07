@@ -1387,42 +1387,57 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     };
 
     if (isManualStaffRetry) {
-      const retried = await telegramImmediateAlertRepo.withContactAlertLock(
+      // Keep only the durable Staff Assist preparation under the shared
+      // per-contact alert lock. Provider delivery and persistence can take
+      // seconds and must not block unrelated staff actions for this contact.
+      const preparedContact = await telegramImmediateAlertRepo.withContactAlertLock(
         contact.id,
         async () => {
-          const preparedContact = await prepareStaffSend(
+          const currentContact = await prepareStaffSend(
             contact,
             req.session.username
           );
 
           // A failed row is intentionally ignored by the durable Staff Assist
           // guard. Mark this retry unconfirmed before contacting the provider
-          // so concurrent/restarted AI work sees that staff is actively handling
-          // this turn. If the request is interrupted, "unknown" is also the
-          // safest delivery state because blindly retrying could duplicate it.
+          // so a process interruption cannot make an ambiguous send look safe
+          // to retry blindly.
           const retryPending = await messagesRepo.setDeliveryStatusById(
             message.id,
             "unknown",
             "Retry started; delivery has not been confirmed yet."
           );
           publishDeliveryStatus(retryPending);
-
-          const outcome = await executeRetry(preparedContact);
-          let finalContact = preparedContact;
-          if (outcome.result.success) {
-            finalContact =
-              await finalizeStaffSendState(
-                preparedContact.id,
-                req.session.username
-              ) || preparedContact;
-          }
-          return { ...outcome, sendContact: finalContact };
+          return currentContact;
         }
       );
 
+      const retried = await executeRetry(preparedContact);
       sendResult = retried.result;
       updated = retried.persisted;
-      sendContact = retried.sendContact;
+      sendContact = preparedContact;
+
+      if (sendResult.success) {
+        try {
+          sendContact =
+            await telegramImmediateAlertRepo.withContactAlertLock(
+              preparedContact.id,
+              async () =>
+                await finalizeStaffSendState(
+                  preparedContact.id,
+                  req.session.username
+                ) || preparedContact
+            );
+        } catch (finalizeErr) {
+          // A successful provider retry must never become a browser-visible
+          // failure just because the post-send Staff Assist cleanup contended.
+          console.error(
+            `Failed to finalize Staff Assist after retry for contact ${preparedContact.id}:`,
+            finalizeErr
+          );
+          sendContact = preparedContact;
+        }
+      }
     } else {
       const retried = await executeRetry(contact);
       sendResult = retried.result;
@@ -2240,81 +2255,110 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
     if (!reply.ok) return;
     const replyTarget = reply.target;
 
-    // Stop an in-flight AI reply immediately; conversion/transcription below
-    // can take several seconds. Ownership/attention state is changed only after
-    // the recording is valid.
+    // Stop an in-flight AI reply immediately. Expensive conversion, R2
+    // persistence, transcription, and provider delivery all stay outside the
+    // shared Telegram/contact advisory lock.
     aiReplyCancellation.cancelForContact(contact);
 
-    const voicePreparation = await telegramImmediateAlertRepo.withContactAlertLock(
-      contact.id,
-      async () => {
-        // Voice conversion/transcription can take several seconds. Hold the same
-        // per-contact alert lock used by Staff Waiting so another conversation
-        // event cannot validate/send a false reminder while Staff is actively
-        // preparing this reply but the persisted voice-message row does not yet exist.
-        const converted = await convertToWhatsAppVoice(req.file.buffer, req.file.mimetype);
-        if (!converted) return { status: "conversion_failed" };
-
-        const transcript = await resolveWithin(
-          transcribeStaffAudio(converted.whatsapp.buffer, converted.whatsapp.mimeType),
-          STAFF_TRANSCRIPTION_TIMEOUT_MS,
-          null
-        );
-
-        const currentContact = await contactsRepo.getContactById(contact.id);
-        if (!currentContact) {
-          return { status: "contact_missing" };
-        }
-
-        // Match text/image sends: ordinary AI-owned chats remain AI-owned,
-        // while a synthetic AI handoff is claimed as real Staff ownership.
-        const preparedContact = await prepareStaffSend(
-          currentContact,
-          req.session.username
-        );
-
-        const content = transcript ? `🎤 ${transcript}` : "🎤 Staff sent a voice message";
-        const saved = await conversationStore.appendMessageForContact(
-          preparedContact.id,
-          "assistant",
-          content,
-          null,
-          req.session.username,
-          null,
-          {
-            mimeType: converted.playback.mimeType,
-            buffer: converted.playback.buffer,
-          },
-          {
-            replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
-          }
-        );
-        const finalContact =
-          await finalizeStaffSendState(preparedContact.id, req.session.username);
-
-        return {
-          status: "ready",
-          converted,
-          transcript,
-          currentContact: finalContact || preparedContact,
-          saved,
-        };
-      }
+    const converted = await convertToWhatsAppVoice(
+      req.file.buffer,
+      req.file.mimetype
     );
-
-    if (voicePreparation.status === "conversion_failed") {
+    if (!converted) {
       return res.status(422).json({ error: "Couldn't process that recording. Please record it again." });
     }
+
+    let voiceMediaKey = null;
+    let voicePreparation;
+    try {
+      voiceMediaKey = await mediaStorage.uploadMedia(
+        converted.playback.buffer,
+        converted.playback.mimeType,
+        { contactId: contact.id }
+      );
+
+      // Persist a valid staff-authored voice row quickly under the shared lock
+      // so Staff Waiting resolves while transcription and provider delivery
+      // continue outside the critical section.
+      voicePreparation = await telegramImmediateAlertRepo.withContactAlertLock(
+        contact.id,
+        async () => {
+          const currentContact = await contactsRepo.getContactById(contact.id);
+          if (!currentContact) {
+            return { status: "contact_missing" };
+          }
+
+          const preparedContact = await prepareStaffSend(
+            currentContact,
+            req.session.username
+          );
+
+          const saved = await conversationStore.appendMessageForContact(
+            preparedContact.id,
+            "assistant",
+            "🎤 Staff sent a voice message",
+            null,
+            req.session.username,
+            null,
+            { mimeType: converted.playback.mimeType },
+            {
+              mediaKey: voiceMediaKey,
+              replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
+            }
+          );
+          let finalContact = preparedContact;
+          try {
+            finalContact =
+              await finalizeStaffSendState(
+                preparedContact.id,
+                req.session.username
+              ) || preparedContact;
+          } catch (finalizeErr) {
+            // The staff-authored row is already durable at this point. Do not
+            // discard its R2 media or abort the send because attention cleanup
+            // encountered a transient database conflict.
+            console.error(
+              `Failed to finalize Staff Assist before voice send for contact ${preparedContact.id}:`,
+              finalizeErr
+            );
+          }
+
+          return {
+            status: "ready",
+            currentContact: finalContact,
+            saved,
+          };
+        }
+      );
+    } catch (err) {
+      if (voiceMediaKey) {
+        await mediaStorage.deleteMedia(voiceMediaKey).catch((cleanupErr) => {
+          console.error(
+            `Failed to clean up unsaved staff voice media ${voiceMediaKey}:`,
+            cleanupErr
+          );
+        });
+      }
+      throw err;
+    }
+
     if (voicePreparation.status === "contact_missing") {
+      if (voiceMediaKey) {
+        await mediaStorage.deleteMedia(voiceMediaKey).catch(() => {});
+      }
       return res.status(404).json({ error: "Contact not found." });
     }
 
-    const {
-      converted,
-      transcript,
+    let {
       currentContact,
       saved,
     } = voicePreparation;
+
+    const transcriptPromise = resolveWithin(
+      transcribeStaffAudio(converted.whatsapp.buffer, converted.whatsapp.mimeType),
+      STAFF_TRANSCRIPTION_TIMEOUT_MS,
+      null
+    );
 
     const channel = currentContact.channel || "whatsapp";
     const outboundAudio = channel === "whatsapp" ? converted.whatsapp : {
@@ -2322,7 +2366,7 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
       mimeType: converted.playback.mimeType,
       filename: "voice.mp3",
     };
-    const sendResult = await channelMessaging.sendAudioBuffer(
+    const sendPromise = channelMessaging.sendAudioBuffer(
       currentContact,
       outboundAudio.buffer,
       outboundAudio.mimeType,
@@ -2333,6 +2377,38 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
         replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
       })
     );
+
+    const [transcript, sendResult] = await Promise.all([
+      transcriptPromise,
+      sendPromise,
+    ]);
+
+    if (transcript) {
+      try {
+        const updatedVoiceMessage = await messagesRepo.setMessageContentById(
+          saved.id,
+          currentContact.id,
+          `🎤 ${transcript}`
+        );
+        if (updatedVoiceMessage) {
+          saved = updatedVoiceMessage;
+          realtimeEvents.publish("conversation_changed", {
+            contactId: currentContact.id,
+            messageId: updatedVoiceMessage.id,
+            message: updatedVoiceMessage,
+            reason: "message_updated",
+          });
+        }
+      } catch (transcriptSaveErr) {
+        // Transcription is useful context, but losing it must not change the
+        // result of the staff voice send.
+        console.error(
+          `Failed to save staff voice transcript for message ${saved.id}:`,
+          transcriptSaveErr
+        );
+      }
+    }
+
     const errorText = sendResult.error || rejectedErrorFor(currentContact);
     const finalMessage = await persistSendOutcome(
       saved,

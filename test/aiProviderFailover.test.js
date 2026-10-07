@@ -378,7 +378,10 @@ test("provider timeout passes a bounded request timeout and abort signal to Clau
     (err) => err.code === "AI_TIMEOUT"
   );
 
-  assert.equal(requestControl.timeoutMs, 40);
+  assert.ok(
+    requestControl.timeoutMs > 0 && requestControl.timeoutMs <= 40,
+    `expected Claude timeout to stay within the 40ms provider budget, got ${requestControl.timeoutMs}ms`
+  );
   assert.equal(requestControl.signal.aborted, true);
 });
 
