@@ -239,7 +239,7 @@ test("video retry keeps the durable R2 key without a base64 download", async (t)
   };
   pool.query = async (sql, params) => {
     assert.match(sql, /m\.media_key/);
-    assert.deepEqual(params, [7, 91]);
+    assert.deepEqual(params, [91, 7]);
     return {
       rows: [{
         id: 91,
