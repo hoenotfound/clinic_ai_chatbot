@@ -50,10 +50,9 @@ function handleImageUpload(req, res, next) {
 
 const MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES =
   followUpVideoPreparation.MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES;
-const FOLLOW_UP_VIDEO_MIME_TYPES = new Set(["video/mp4"]);
 const followUpVideoUpload = multer({
-  // Large source videos stay on ephemeral disk while FFmpeg works. Only the
-  // WhatsApp-safe <=16MB output is read into memory for the R2 upload.
+  // Keep uploads on ephemeral disk so the compatibility probe does not require
+  // holding the whole MP4 in memory before validation.
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, os.tmpdir()),
     filename: (req, file, cb) =>
@@ -64,8 +63,15 @@ const followUpVideoUpload = multer({
   }),
   limits: { fileSize: MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES },
   fileFilter: (req, file, cb) => {
-    if (!FOLLOW_UP_VIDEO_MIME_TYPES.has(file.mimetype)) {
-      return cb(new Error("Only MP4 videos are allowed."));
+    const filename = String(file?.originalname || "").toLowerCase();
+    const mimeType = String(file?.mimetype || "").toLowerCase();
+    const isMp4 = filename.endsWith(".mp4");
+    const looksLikeVideo =
+      mimeType.startsWith("video/") ||
+      mimeType === "" ||
+      mimeType === "application/octet-stream";
+    if (!isMp4 || !looksLikeVideo) {
+      return cb(new Error("Only MP4 videos are allowed. WhatsApp requires H.264 video with AAC audio."));
     }
     cb(null, true);
   },
