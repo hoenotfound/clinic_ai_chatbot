@@ -1028,6 +1028,7 @@ test("Messenger stays closed after 24 hours when Human Agent is not enabled", as
 
   await expect(page.getByText("Reply window closed", { exact: true })).toBeVisible();
   await expect(page.getByText(/Staff reply only/)).toHaveCount(0);
+  // WhatsApp-style empty composers show the mic action, not a disabled Send button.
   await expect(page.getByRole("button", { name: "Send message" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Record a voice message" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Attach photo, video, or file" })).toBeDisabled();
