@@ -1213,6 +1213,32 @@ router.post(
   }
 );
 
+router.get("/automated-follow-up/video-preview", async (req, res) => {
+  try {
+    const key = String(req.query.key || "").trim();
+    if (!key || !isFollowUpVideoKey(key)) {
+      return res.status(404).send("Not found");
+    }
+    if (!mediaStorage.isStorageConfigured()) {
+      return res.status(503).send("Video storage is not configured.");
+    }
+
+    const buffer = await mediaStorage.downloadMedia(key, {
+      maxBytes: followUpVideoPreparation.MAX_WHATSAPP_VIDEO_BYTES,
+    });
+    res.set("Content-Type", "video/mp4");
+    res.set("Cache-Control", "private, no-store");
+    res.set("Content-Disposition", "inline");
+    return res.send(buffer);
+  } catch (err) {
+    if (err?.code === "MEDIA_TOO_LARGE") {
+      return res.status(413).send("Video is too large to preview.");
+    }
+    console.error("Failed to serve private follow-up video preview:", err);
+    return res.status(500).send("Something went wrong.");
+  }
+});
+
 router.get("/result-media/image/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
