@@ -83,12 +83,18 @@ function normalizeServiceOverrides(value) {
       message
     );
     if (!translations) return null;
+    const imageUrl =
+      typeof item?.imageUrl === "string" ? item.imageUrl.trim() : "";
+    const videoKey =
+      typeof item?.videoKey === "string" ? item.videoKey.trim() : "";
+    if (imageUrl && videoKey) return null;
+
     normalized.push({
       serviceName,
       message,
       translations,
-      videoKey:
-        typeof item?.videoKey === "string" ? item.videoKey.trim() : "",
+      imageUrl,
+      videoKey,
       videoFilename:
         typeof item?.videoFilename === "string"
           ? item.videoFilename.trim().slice(0, 255)
@@ -121,7 +127,10 @@ function normalizeFollowUpStep(value) {
     beforeWindowExpiryMinutes > 360 ||
     !message ||
     message.length > 1000 ||
-    (value?.imageUrl !== undefined && typeof value.imageUrl !== "string")
+    (value?.imageUrl !== undefined && typeof value.imageUrl !== "string") ||
+    (value?.videoKey !== undefined && typeof value.videoKey !== "string") ||
+    (value?.videoFilename !== undefined && typeof value.videoFilename !== "string") ||
+    (String(value?.imageUrl || "").trim() && String(value?.videoKey || "").trim())
   ) {
     return null;
   }
@@ -145,6 +154,11 @@ function normalizeFollowUpStep(value) {
     message,
     translations,
     imageUrl: value.imageUrl?.trim() || "",
+    videoKey: value.videoKey?.trim() || "",
+    videoFilename:
+      typeof value?.videoFilename === "string"
+        ? value.videoFilename.trim().slice(0, 255)
+        : "",
     serviceOverrides,
   };
 }
@@ -542,11 +556,17 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
         ? null
         : exactInterest || null;
   const source = targeted || step;
+  // Service-specific media overrides the general attachment only when that
+  // service actually has media configured. Otherwise keep the general media
+  // as the safe fallback, preserving the existing general-image behavior.
+  const mediaSource =
+    targeted && (targeted.imageUrl || targeted.videoKey) ? targeted : step;
   return {
     message: source.translations[language] || source.message,
     targetedService: targeted?.serviceName || null,
-    targetedVideoKey: targeted?.videoKey || "",
-    targetedVideoFilename: targeted?.videoFilename || "",
+    selectedImageUrl: mediaSource.imageUrl || "",
+    selectedVideoKey: mediaSource.videoKey || "",
+    selectedVideoFilename: mediaSource.videoFilename || "",
     promotionFollowUp: false,
     promotionPackageSelection,
   };
@@ -945,9 +965,10 @@ async function sendCandidate(candidate) {
   );
   let followUpMessage = fallbackSelection.message;
   let targetedService = fallbackSelection.targetedService;
-  let targetedVideoKey = fallbackSelection.targetedVideoKey || "";
-  let targetedVideoFilename =
-    fallbackSelection.targetedVideoFilename || "";
+  let selectedImageUrl = fallbackSelection.selectedImageUrl || "";
+  let selectedVideoKey = fallbackSelection.selectedVideoKey || "";
+  let selectedVideoFilename =
+    fallbackSelection.selectedVideoFilename || "";
   let promotionFollowUp = fallbackSelection.promotionFollowUp === true;
   let promotionPackageName = fallbackSelection.promotionPackageName || null;
   let promotionFollowUpImageUrl =
@@ -1172,11 +1193,11 @@ async function sendCandidate(candidate) {
   // generic step image because it may belong to a different offer.
   const effectiveImageUrl = promotionFollowUp
     ? promotionFollowUpImageUrl
-    : step.imageUrl;
+    : selectedImageUrl;
   const effectiveVideoKey =
-    !promotionFollowUp && targetedVideoKey ? targetedVideoKey : "";
+    !promotionFollowUp && selectedVideoKey ? selectedVideoKey : "";
   const effectiveVideoFilename =
-    targetedVideoFilename || "service-video.mp4";
+    selectedVideoFilename || "follow-up-video.mp4";
 
   // WhatsApp keeps the video on the same durable follow-up row so Inbox
   // history and Retry can resend the exact attachment. Copy the shared config
