@@ -44,13 +44,14 @@ function configuredFollowUpVideoKeys() {
   ];
   return [
     ...new Set(
-      steps.flatMap((step) =>
-        Array.isArray(step?.serviceOverrides)
-          ? step.serviceOverrides
-              .map((item) => String(item?.videoKey || "").trim())
-              .filter(Boolean)
-          : []
-      )
+      steps.flatMap((step) => [
+        String(step?.videoKey || "").trim(),
+        ...(Array.isArray(step?.serviceOverrides)
+          ? step.serviceOverrides.map((item) =>
+              String(item?.videoKey || "").trim()
+            )
+          : []),
+      ]).filter(Boolean)
     ),
   ];
 }
