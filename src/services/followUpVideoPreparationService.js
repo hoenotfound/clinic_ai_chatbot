@@ -8,12 +8,12 @@ const ffmpegPath = require("ffmpeg-static");
 const MIB = 1024 * 1024;
 const MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES = 50 * MIB;
 const MAX_WHATSAPP_VIDEO_BYTES = 16 * MIB;
-const TARGET_WHATSAPP_VIDEO_BYTES = 15 * MIB;
+const TARGET_WHATSAPP_VIDEO_BYTES = 14 * MIB;
 const MIN_VIDEO_KBPS = 96;
 const MIN_AUDIO_KBPS = 48;
 const MAX_VIDEO_KBPS = 3000;
 const DEFAULT_PROBE_TIMEOUT_MS = 10_000;
-const DEFAULT_TRANSCODE_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_TRANSCODE_TIMEOUT_MS = 3 * 60 * 1000;
 
 function followUpVideoError(message, code) {
   const error = new Error(message);
@@ -35,7 +35,7 @@ function parseFfmpegDuration(stderr) {
 
 function createCompressionQueue({
   maxWaiting = 2,
-  waitTimeoutMs = 5 * 60 * 1000,
+  waitTimeoutMs = 30 * 1000,
 } = {}) {
   let active = false;
   const waiting = [];
@@ -101,8 +101,8 @@ function bitratePlan(durationSeconds, {
     );
   }
 
-  // Leave room for MP4 container overhead and encoder variance. Two-pass H.264
-  // then spends the remaining budget much more predictably than CRF encoding.
+  // Leave room for MP4 container overhead and encoder variance. The encoder uses
+  // bounded average bitrate and the final file is checked before it reaches R2.
   const totalKbps = Math.floor((targetBytes * 8) / duration / 1000);
   const audioKbps =
     totalKbps >= 500 ? 96 : totalKbps >= 250 ? 64 : MIN_AUDIO_KBPS;
@@ -160,36 +160,40 @@ function probeDurationSeconds(
     }
 
     let stderr = "";
-    let finished = false;
+    let settled = false;
+    let timeoutError = null;
+    const settle = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(value);
+    };
     const timer = setTimeout(() => {
-      if (finished) return;
-      finished = true;
-      child.kill("SIGKILL");
-      reject(
-        followUpVideoError(
-          "The video took too long to inspect.",
-          "INVALID_FOLLOW_UP_VIDEO"
-        )
+      if (settled) return;
+      timeoutError = followUpVideoError(
+        "The video took too long to inspect.",
+        "INVALID_FOLLOW_UP_VIDEO"
       );
+      // Do not settle until the child actually exits. The caller holds the
+      // compression lease around probing + encoding, so releasing here would
+      // allow an overlapping FFmpeg process while SIGKILL is still pending.
+      child.kill("SIGKILL");
     }, timeoutMs);
     timer.unref?.();
 
-    child.on("error", (error) => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      reject(error);
-    });
+    child.on("error", (error) => settle(timeoutError || error));
     child.stderr.on("data", (chunk) => {
       if (stderr.length < 128 * 1024) stderr += chunk.toString("utf8");
     });
     child.on("close", () => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
+      if (timeoutError) {
+        settle(timeoutError);
+        return;
+      }
       const duration = parseFfmpegDuration(stderr);
       if (!duration) {
-        reject(
+        settle(
           followUpVideoError(
             "This MP4 could not be read. Please export it again as a standard MP4 video.",
             "INVALID_FOLLOW_UP_VIDEO"
@@ -197,7 +201,7 @@ function probeDurationSeconds(
         );
         return;
       }
-      resolve(duration);
+      settle(null, duration);
     });
   });
 }
@@ -227,35 +231,37 @@ function runFfmpeg(args, {
     }
 
     let stderr = "";
-    let finished = false;
+    let settled = false;
+    let timeoutError = null;
+    const settle = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    };
     const timer = setTimeout(() => {
-      if (finished) return;
-      finished = true;
-      child.kill("SIGKILL");
-      reject(
-        followUpVideoError(
-          "Video compression timed out. Please try a shorter video.",
-          "FOLLOW_UP_VIDEO_COMPRESSION_TIMEOUT"
-        )
+      if (settled) return;
+      timeoutError = followUpVideoError(
+        "Video compression timed out. Please try a shorter video.",
+        "FOLLOW_UP_VIDEO_COMPRESSION_TIMEOUT"
       );
+      // Keep the queue lease until close/error confirms the encoder is gone.
+      child.kill("SIGKILL");
     }, timeoutMs);
     timer.unref?.();
 
-    child.on("error", (error) => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      reject(error);
-    });
+    child.on("error", (error) => settle(timeoutError || error));
     child.stderr.on("data", (chunk) => {
       if (stderr.length < 128 * 1024) stderr += chunk.toString("utf8");
     });
     child.on("close", (code) => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
+      if (timeoutError) {
+        settle(timeoutError);
+        return;
+      }
       if (code === 0) {
-        resolve();
+        settle();
         return;
       }
       const error = followUpVideoError(
@@ -263,73 +269,53 @@ function runFfmpeg(args, {
         "FOLLOW_UP_VIDEO_COMPRESSION_FAILED"
       );
       error.ffmpegStderr = stderr.slice(-4000);
-      reject(error);
+      settle(error);
     });
   });
 }
 
-function videoEncodeArgs(inputPath, plan, passPrefix) {
+function videoEncodeArgs(inputPath, outputPath, plan) {
   const scale =
     `scale=w=min(${plan.maxDimension}\\,iw):h=min(${plan.maxDimension}\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2`;
+  const maxrateKbps = Math.max(
+    plan.videoKbps,
+    Math.ceil(plan.videoKbps * 1.2)
+  );
   return [
     "-hide_banner",
     "-loglevel", "error",
     "-y",
     "-i", inputPath,
     "-map", "0:v:0",
+    "-map", "0:a:0?",
     "-vf", scale,
     "-c:v", "libx264",
     "-preset", "veryfast",
     "-profile:v", "main",
     "-pix_fmt", "yuv420p",
     "-b:v", `${plan.videoKbps}k`,
-    "-passlogfile", passPrefix,
+    "-maxrate", `${maxrateKbps}k`,
+    "-bufsize", `${Math.max(plan.videoKbps * 2, 256)}k`,
+    "-c:a", "aac",
+    "-b:a", `${plan.audioKbps}k`,
+    "-movflags", "+faststart",
+    "-map_metadata", "-1",
+    "-sn",
     "-threads", "1",
+    "-f", "mp4",
+    outputPath,
   ];
 }
 
-async function transcodeTwoPass(
+async function transcodeWhatsAppVideo(
   inputPath,
   outputPath,
   plan,
   {
     runFfmpegFn = runFfmpeg,
-    passPrefix = path.join(
-      os.tmpdir(),
-      `follow-up-video-pass-${process.pid}-${crypto.randomUUID()}`
-    ),
   } = {}
 ) {
-  const baseArgs = videoEncodeArgs(inputPath, plan, passPrefix);
-  try {
-    await runFfmpegFn([
-      ...baseArgs,
-      "-pass", "1",
-      "-an",
-      "-f", "null",
-      os.devNull,
-    ]);
-
-    await runFfmpegFn([
-      ...baseArgs,
-      "-pass", "2",
-      "-map", "0:a:0?",
-      "-c:a", "aac",
-      "-b:a", `${plan.audioKbps}k`,
-      "-movflags", "+faststart",
-      "-map_metadata", "-1",
-      "-sn",
-      "-f", "mp4",
-      outputPath,
-    ]);
-  } finally {
-    await Promise.all([
-      fs.unlink(`${passPrefix}-0.log`).catch(() => {}),
-      fs.unlink(`${passPrefix}-0.log.mbtree`).catch(() => {}),
-      fs.unlink(`${passPrefix}.log`).catch(() => {}),
-      fs.unlink(`${passPrefix}.log.mbtree`).catch(() => {}),
-    ]);
-  }
+  await runFfmpegFn(videoEncodeArgs(inputPath, outputPath, plan));
 }
 
 async function prepareFollowUpVideoFile(
@@ -339,7 +325,7 @@ async function prepareFollowUpVideoFile(
     fsApi = fs,
     queue = compressionQueue,
     probeDurationFn = probeDurationSeconds,
-    transcodeFn = transcodeTwoPass,
+    transcodeFn = transcodeWhatsAppVideo,
     maxUploadBytes = MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES,
     maxWhatsAppBytes = MAX_WHATSAPP_VIDEO_BYTES,
     targetBytes = TARGET_WHATSAPP_VIDEO_BYTES,
@@ -386,12 +372,12 @@ async function prepareFollowUpVideoFile(
 
     let outputStat = await fsApi.stat(outputPath);
     if (outputStat.size > maxWhatsAppBytes) {
-      // Two-pass encoding is normally very close to target, but container/audio
-      // overhead can still push a borderline file over 16MB. Retry once with
-      // extra headroom instead of making staff manually re-export the video.
+      // One-pass average bitrate is intentionally targeted below the provider cap,
+      // but unusual content/container overhead can still overshoot. Retry once
+      // with extra headroom instead of asking staff to manually re-export.
       await fsApi.unlink(outputPath).catch(() => {});
       plan = bitratePlan(durationSeconds, {
-        targetBytes: Math.floor(targetBytes * 0.85),
+        targetBytes: Math.floor(targetBytes * 0.82),
       });
       await transcodeFn(inputPath, outputPath, plan);
       outputStat = await fsApi.stat(outputPath);
@@ -425,6 +411,7 @@ module.exports = {
   bitratePlan,
   createCompressionQueue,
   probeDurationSeconds,
-  transcodeTwoPass,
+  runFfmpeg,
+  transcodeWhatsAppVideo,
   prepareFollowUpVideoFile,
 };
