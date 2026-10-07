@@ -41,6 +41,8 @@ test("automated follow-up inserts take the conversation scoring lock and re-chec
       "2026-08-28T00:00:00.000Z",
       0,
       "fixed",
+      "after_reply",
+      120,
     ]);
     assert.match(sql, /automated_follow_up_step/);
     assert.match(sql, /automated_follow_up_target_service/);
@@ -93,6 +95,8 @@ test("later follow-up claims preserve spacing from the actual previous send", as
       "2026-08-28T00:00:00.000Z",
       120,
       "fixed",
+      "after_reply",
+      120,
     ]);
     return { rows: [] };
   };
@@ -134,6 +138,8 @@ test("automated follow-up discovery excludes conversations already waiting for s
       "all",
       "2026-08-28T00:00:00.000Z",
       25,
+      ["after_reply"],
+      [120],
     ]);
     return { rows: [] };
   };
@@ -148,6 +154,42 @@ test("automated follow-up discovery excludes conversations already waiting for s
   assert.deepEqual(candidates, []);
 });
 
+
+test("pre-expiry timing is anchored to the latest inbound customer message", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(
+      sql,
+      /latest_inbound_created_at\s*\+ \(\(1440 - \(\$6::integer\[\]\)\[next_follow_up_step\]\) \* interval '1 minute'\)/
+    );
+    assert.match(
+      sql,
+      /\(\$5::text\[\]\)\[next_follow_up_step\] = 'before_window_expiry'/
+    );
+    assert.deepEqual(params, [
+      [1320],
+      "all",
+      "2026-10-07T00:00:00.000Z",
+      25,
+      ["before_window_expiry"],
+      [120],
+    ]);
+    return { rows: [] };
+  };
+
+  await followUpRepo.findCandidates({
+    delayMinutes: [1320],
+    timingModes: ["before_window_expiry"],
+    beforeWindowExpiryMinutes: [120],
+    triggerMode: "all",
+    activatedAt: "2026-10-07T00:00:00.000Z",
+    limit: 25,
+  });
+});
 
 test("next follow-up due calculation excludes booked visited and closed latest leads", async (t) => {
   const originalQuery = pool.query;
