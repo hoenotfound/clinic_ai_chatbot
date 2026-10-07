@@ -113,6 +113,7 @@ function extensionForMimeType(mimeType) {
   if (type === "audio/mp4" || type === "audio/x-m4a") return "m4a";
   if (type === "audio/aac") return "aac";
   if (type === "audio/amr") return "amr";
+  if (type === "video/mp4") return "mp4";
   return "bin";
 }
 
