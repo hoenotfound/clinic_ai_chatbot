@@ -23,6 +23,10 @@ const {
   pruneOldSnapshots,
 } = require("../src/db/configImportHistoryRepo");
 const { getIndustryProfile } = require("../src/config/industryProfiles");
+const configImportHistoryRepo = require("../src/db/configImportHistoryRepo");
+const clinicConfig = require("../src/config/clinicConfig");
+const configRepo = require("../src/db/configRepo");
+const promoImagesRepo = require("../src/db/promoImagesRepo");
 
 function read(relativePath) {
   return fs.readFileSync(path.join(__dirname, "..", relativePath), "utf8");
@@ -232,6 +236,132 @@ test("follow-up config accepts a targeted sequence and keeps legacy one-step pay
     aiMode.updates.automatedFollowUp.aiInstruction,
     "Continue from the unresolved concern without being pushy."
   );
+});
+
+test("follow-up image cleanup keeps service-specific images referenced by every sequence step", async (t) => {
+  const originalFollowUp = clinicConfig.automatedFollowUp;
+  const originalPromotions = clinicConfig.promotions;
+  const originalResultMedia = clinicConfig.resultMedia;
+  const originalPrune = promoImagesRepo.pruneUnreferenced;
+  const originalSnapshots = configImportHistoryRepo.listReferencedPromoImageIds;
+
+  t.after(() => {
+    clinicConfig.automatedFollowUp = originalFollowUp;
+    clinicConfig.promotions = originalPromotions;
+    clinicConfig.resultMedia = originalResultMedia;
+    promoImagesRepo.pruneUnreferenced = originalPrune;
+    configImportHistoryRepo.listReferencedPromoImageIds = originalSnapshots;
+  });
+
+  clinicConfig.promotions = [];
+  clinicConfig.resultMedia = [];
+  clinicConfig.automatedFollowUp = {
+    imageUrl: "https://example.com/promo-images/101",
+    serviceOverrides: [
+      { imageUrl: "https://example.com/promo-images/102" },
+    ],
+    additionalSteps: [
+      {
+        imageUrl: "https://example.com/promo-images/103",
+        serviceOverrides: [
+          { imageUrl: "https://example.com/promo-images/104" },
+        ],
+      },
+    ],
+  };
+  configImportHistoryRepo.listReferencedPromoImageIds = async () => [];
+  let protectedIds = null;
+  promoImagesRepo.pruneUnreferenced = async (ids) => {
+    protectedIds = [...ids].sort((a, b) => a - b);
+    return [];
+  };
+
+  const pruned = await configRepo.pruneOrphanedPromoImages(true);
+  assert.equal(pruned, true);
+  assert.deepEqual(protectedIds, [101, 102, 103, 104]);
+});
+
+test("follow-up media accepts general videos and service images but rejects mixed attachments", (t) => {
+  const previousSlug = process.env.CLIENT_SLUG;
+  process.env.CLIENT_SLUG = "test-clinic";
+  t.after(() => {
+    if (previousSlug === undefined) delete process.env.CLIENT_SLUG;
+    else process.env.CLIENT_SLUG = previousSlug;
+  });
+
+  const current = currentConfig();
+  const base = {
+    ...current.automatedFollowUp,
+    enabled: true,
+    triggerMode: "all",
+    message: "General follow-up",
+    translations: {
+      en: "General follow-up",
+      ms: "General follow-up",
+      zh: "General follow-up",
+    },
+    imageUrl: "",
+    videoKey:
+      "clients/test-clinic/messages/follow-up-config/general.mp4",
+    videoFilename: "general.mp4",
+    serviceOverrides: [
+      {
+        serviceName: "Consultation",
+        message: "Consultation follow-up",
+        translations: {
+          en: "Consultation follow-up",
+          ms: "Susulan konsultasi",
+          zh: "咨询跟进",
+        },
+        imageUrl: "https://example.com/consultation.jpg",
+        videoKey: "",
+        videoFilename: "",
+      },
+    ],
+    additionalSteps: [],
+  };
+
+  const valid = prepareConfigUpdatePayload({ automatedFollowUp: base }, current);
+  assert.equal(valid.ok, true);
+  assert.equal(
+    valid.updates.automatedFollowUp.videoKey,
+    "clients/test-clinic/messages/follow-up-config/general.mp4"
+  );
+  assert.equal(
+    valid.updates.automatedFollowUp.serviceOverrides[0].imageUrl,
+    "https://example.com/consultation.jpg"
+  );
+
+  const mixedGeneral = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        ...base,
+        imageUrl: "https://example.com/general.jpg",
+      },
+    },
+    current
+  );
+  assert.equal(mixedGeneral.ok, false);
+
+  const mixedService = prepareConfigUpdatePayload(
+    {
+      automatedFollowUp: {
+        ...base,
+        videoKey: "",
+        videoFilename: "",
+        serviceOverrides: [
+          {
+            ...base.serviceOverrides[0],
+            videoKey:
+              "clients/test-clinic/messages/follow-up-config/consultation.mp4",
+            videoFilename: "consultation.mp4",
+          },
+        ],
+      },
+    },
+    current
+  );
+  assert.equal(mixedService.ok, false);
 });
 
 test("follow-up video keys must belong to the current client namespace", (t) => {
