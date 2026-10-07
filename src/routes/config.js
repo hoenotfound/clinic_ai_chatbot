@@ -74,10 +74,56 @@ function handleFollowUpVideoUpload(req, res, next) {
 function isFollowUpVideoKey(value) {
   if (value === undefined || value === "") return true;
   if (!isString(value) || value.length > 1024 || value.includes("..")) return false;
-  return (
-    value.startsWith("messages/follow-up-config/") ||
-    /\/messages\/follow-up-config\//.test(value)
-  );
+  try {
+    const expectedPrefix = mediaStorage.followUpConfigVideoPrefix();
+    return (
+      mediaStorage.isOwnedStoredMediaKey(value) &&
+      value.startsWith(expectedPrefix) &&
+      value.toLowerCase().endsWith(".mp4")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function followUpVideoKeys(value) {
+  if (!isPlainObject(value)) return [];
+  const steps = [
+    value,
+    ...(Array.isArray(value.additionalSteps) ? value.additionalSteps : []),
+  ];
+  return [
+    ...new Set(
+      steps.flatMap((step) =>
+        Array.isArray(step?.serviceOverrides)
+          ? step.serviceOverrides
+              .map((item) => String(item?.videoKey || "").trim())
+              .filter(Boolean)
+          : []
+      )
+    ),
+  ];
+}
+
+async function cleanupRemovedFollowUpVideos(previousValue, nextValue) {
+  const previousKeys = new Set(followUpVideoKeys(previousValue));
+  const nextKeys = new Set(followUpVideoKeys(nextValue));
+  const removed = [...previousKeys].filter((key) => !nextKeys.has(key));
+
+  for (const key of removed) {
+    if (!isFollowUpVideoKey(key)) continue;
+    try {
+      await mediaStorage.deleteMedia(key);
+    } catch (err) {
+      console.error(`Failed to delete replaced follow-up video ${key}:`, err);
+    }
+  }
+
+  mediaStorage.pruneStaleFollowUpConfigVideos({
+    referencedKeys: [...nextKeys],
+  }).catch((err) => {
+    console.error("Failed to prune stale follow-up videos:", err);
+  });
 }
 
 const VALIDATORS = {
@@ -1106,6 +1152,14 @@ router.post(
       const filename = String(req.file.originalname || "service-video.mp4")
         .replace(/[\\/\0]/g, "")
         .slice(0, 255) || "service-video.mp4";
+      mediaStorage.pruneStaleFollowUpConfigVideos({
+        referencedKeys: [
+          ...followUpVideoKeys(configRepo.getConfig().automatedFollowUp),
+          key,
+        ],
+      }).catch((err) => {
+        console.error("Failed to prune stale follow-up videos after upload:", err);
+      });
       return res.status(201).json({ key, filename });
     } catch (err) {
       console.error("Failed to upload automated follow-up video:", err);
@@ -1166,7 +1220,9 @@ router.get("/", async (req, res) => {
 
 router.patch("/", async (req, res) => {
   try {
-    const prepared = prepareConfigUpdatePayload(req.body || {}, configRepo.getConfig());
+    const currentConfig = configRepo.getConfig();
+    const previousFollowUp = currentConfig.automatedFollowUp;
+    const prepared = prepareConfigUpdatePayload(req.body || {}, currentConfig);
     if (!prepared.ok) {
       return res.status(prepared.status || 400).json({
         error: prepared.error,
@@ -1176,6 +1232,12 @@ router.patch("/", async (req, res) => {
     }
 
     const updated = await configRepo.updateConfig(prepared.updates);
+    if (Object.prototype.hasOwnProperty.call(prepared.updates, "automatedFollowUp")) {
+      await cleanupRemovedFollowUpVideos(
+        previousFollowUp,
+        updated.automatedFollowUp
+      );
+    }
     res.json(decorateConfig(updated));
   } catch (err) {
     const status = Number(err?.status) || 500;
