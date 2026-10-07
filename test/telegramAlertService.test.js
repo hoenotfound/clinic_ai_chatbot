@@ -341,7 +341,7 @@ test("flush rechecks inactivity at claim time and formats from the claimed snaps
   assert.deepEqual(result, { status: "completed", sent: 1 });
 });
 
-test("normal summary send is fenced by the shared contact lock through final coverage check", async () => {
+test("normal summary send releases the shared contact lock before waiting for Telegram", async () => {
   const steps = [];
   const service = createTelegramAlertService({
     env: {
@@ -381,8 +381,8 @@ test("normal summary send is fenced by the shared contact lock through final cov
     "lock:start",
     "coverage",
     "send",
-    "markSent",
     "lock:end",
+    "markSent",
   ]);
 });
 
