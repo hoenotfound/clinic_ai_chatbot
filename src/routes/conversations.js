@@ -1387,42 +1387,57 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
     };
 
     if (isManualStaffRetry) {
-      const retried = await telegramImmediateAlertRepo.withContactAlertLock(
+      // Keep only the durable Staff Assist preparation under the shared
+      // per-contact alert lock. Provider delivery and persistence can take
+      // seconds and must not block unrelated staff actions for this contact.
+      const preparedContact = await telegramImmediateAlertRepo.withContactAlertLock(
         contact.id,
         async () => {
-          const preparedContact = await prepareStaffSend(
+          const currentContact = await prepareStaffSend(
             contact,
             req.session.username
           );
 
           // A failed row is intentionally ignored by the durable Staff Assist
           // guard. Mark this retry unconfirmed before contacting the provider
-          // so concurrent/restarted AI work sees that staff is actively handling
-          // this turn. If the request is interrupted, "unknown" is also the
-          // safest delivery state because blindly retrying could duplicate it.
+          // so a process interruption cannot make an ambiguous send look safe
+          // to retry blindly.
           const retryPending = await messagesRepo.setDeliveryStatusById(
             message.id,
             "unknown",
             "Retry started; delivery has not been confirmed yet."
           );
           publishDeliveryStatus(retryPending);
-
-          const outcome = await executeRetry(preparedContact);
-          let finalContact = preparedContact;
-          if (outcome.result.success) {
-            finalContact =
-              await finalizeStaffSendState(
-                preparedContact.id,
-                req.session.username
-              ) || preparedContact;
-          }
-          return { ...outcome, sendContact: finalContact };
+          return currentContact;
         }
       );
 
+      const retried = await executeRetry(preparedContact);
       sendResult = retried.result;
       updated = retried.persisted;
-      sendContact = retried.sendContact;
+      sendContact = preparedContact;
+
+      if (sendResult.success) {
+        try {
+          sendContact =
+            await telegramImmediateAlertRepo.withContactAlertLock(
+              preparedContact.id,
+              async () =>
+                await finalizeStaffSendState(
+                  preparedContact.id,
+                  req.session.username
+                ) || preparedContact
+            );
+        } catch (finalizeErr) {
+          // A successful provider retry must never become a browser-visible
+          // failure just because the post-send Staff Assist cleanup contended.
+          console.error(
+            `Failed to finalize Staff Assist after retry for contact ${preparedContact.id}:`,
+            finalizeErr
+          );
+          sendContact = preparedContact;
+        }
+      }
     } else {
       const retried = await executeRetry(contact);
       sendResult = retried.result;
