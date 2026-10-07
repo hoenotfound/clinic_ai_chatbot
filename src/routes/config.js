@@ -2,6 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const configRepo = require("../db/configRepo");
 const promoImagesRepo = require("../db/promoImagesRepo");
+const mediaStorage = require("../services/mediaStorageService");
 const usersRepo = require("../db/usersRepo");
 const leadDistributionRepo = require("../db/leadDistributionRepo");
 const followUpTranslationService = require("../services/followUpTranslationService");
@@ -41,6 +42,42 @@ function handleImageUpload(req, res, next) {
     }
     return res.status(400).json({ error: err.message || "Failed to upload image." });
   });
+}
+
+const MAX_FOLLOW_UP_VIDEO_BYTES = 16 * 1024 * 1024;
+const FOLLOW_UP_VIDEO_MIME_TYPES = new Set(["video/mp4"]);
+const followUpVideoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FOLLOW_UP_VIDEO_BYTES },
+  fileFilter: (req, file, cb) => {
+    if (!FOLLOW_UP_VIDEO_MIME_TYPES.has(file.mimetype)) {
+      return cb(new Error("Only MP4 videos are allowed."));
+    }
+    cb(null, true);
+  },
+});
+
+function handleFollowUpVideoUpload(req, res, next) {
+  followUpVideoUpload.single("video")(req, res, (err) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({
+        error: "Video is too large. Please choose an MP4 file under 16MB.",
+      });
+    }
+    return res.status(400).json({
+      error: err.message || "Failed to upload video.",
+    });
+  });
+}
+
+function isFollowUpVideoKey(value) {
+  if (value === undefined || value === "") return true;
+  if (!isString(value) || value.length > 1024 || value.includes("..")) return false;
+  return (
+    value.startsWith("messages/follow-up-config/") ||
+    /\/messages\/follow-up-config\//.test(value)
+  );
 }
 
 const VALIDATORS = {
@@ -239,16 +276,27 @@ function isFollowUpServiceOverride(value) {
     value.serviceName.trim().length <= 200 &&
     isNonEmptyString(value.message) &&
     value.message.trim().length <= 1000 &&
-    isFollowUpTranslations(value.translations)
+    isFollowUpTranslations(value.translations) &&
+    isFollowUpVideoKey(value.videoKey) &&
+    (value.videoFilename === undefined ||
+      (isString(value.videoFilename) && value.videoFilename.trim().length <= 255))
   );
 }
 
 function isFollowUpStep(value) {
+  const timingMode = value?.timingMode || "after_reply";
+  const beforeWindowExpiryMinutes = Number(value?.beforeWindowExpiryMinutes ?? 120);
   return (
     isPlainObject(value) &&
     Number.isInteger(value.delayMinutes) &&
     value.delayMinutes >= 5 &&
     value.delayMinutes <= 23 * 60 &&
+    ["after_reply", "before_window_expiry"].includes(timingMode) &&
+    Number.isInteger(beforeWindowExpiryMinutes) &&
+    beforeWindowExpiryMinutes >= 60 &&
+    beforeWindowExpiryMinutes <= 360 &&
+    (timingMode !== "before_window_expiry" ||
+      value.delayMinutes === 24 * 60 - beforeWindowExpiryMinutes) &&
     ["fixed", "ai"].includes(value.messageMode) &&
     isString(value.aiInstruction) &&
     value.aiInstruction.trim().length <= 1000 &&
@@ -368,8 +416,22 @@ function prepareFollowUpServiceOverrides(requested) {
     ) {
       return null;
     }
+    const videoKey =
+      typeof item.videoKey === "string" ? item.videoKey.trim() : "";
+    const videoFilename =
+      typeof item.videoFilename === "string"
+        ? item.videoFilename.trim().slice(0, 255)
+        : "";
+    if (!isFollowUpVideoKey(videoKey)) return null;
+
     seen.add(normalizedService);
-    prepared.push({ serviceName, message, translations });
+    prepared.push({
+      serviceName,
+      message,
+      translations,
+      videoKey,
+      videoFilename,
+    });
   }
   return prepared;
 }
@@ -377,7 +439,18 @@ function prepareFollowUpServiceOverrides(requested) {
 function prepareFollowUpStep(requested) {
   if (!isPlainObject(requested)) return null;
 
-  const delayMinutes = Number(requested.delayMinutes);
+  const timingMode =
+    requested.timingMode === "before_window_expiry"
+      ? "before_window_expiry"
+      : "after_reply";
+  const beforeWindowExpiryMinutes = Number(
+    requested.beforeWindowExpiryMinutes ?? 120
+  );
+  const delayMinutes =
+    timingMode === "before_window_expiry" &&
+    Number.isInteger(beforeWindowExpiryMinutes)
+      ? 24 * 60 - beforeWindowExpiryMinutes
+      : Number(requested.delayMinutes);
   const messageMode = requested.messageMode === "ai" ? "ai" : "fixed";
   const aiInstruction =
     typeof requested.aiInstruction === "string"
@@ -397,6 +470,8 @@ function prepareFollowUpStep(requested) {
 
   const prepared = {
     delayMinutes,
+    timingMode,
+    beforeWindowExpiryMinutes,
     messageMode,
     aiInstruction,
     message,
@@ -453,17 +528,24 @@ function prepareAutomatedFollowUpConfig(requested, current) {
     }
   }
 
-  const requestedDelays = allSteps.map((step) => step.delayMinutes);
+  const scheduleShape = (step) => ({
+    delayMinutes: Number(step?.delayMinutes),
+    timingMode:
+      step?.timingMode === "before_window_expiry"
+        ? "before_window_expiry"
+        : "after_reply",
+    beforeWindowExpiryMinutes: Number(step?.beforeWindowExpiryMinutes ?? 120),
+  });
+  const requestedSchedule = allSteps.map(scheduleShape);
   const currentAdditionalSteps = Array.isArray(current?.additionalSteps)
     ? current.additionalSteps
     : [];
-  const currentDelays = [
-    Number(current?.delayMinutes),
-    ...currentAdditionalSteps.map((step) => Number(step?.delayMinutes)),
+  const currentSchedule = [
+    scheduleShape(current),
+    ...currentAdditionalSteps.map(scheduleShape),
   ];
   const scheduleUnchanged =
-    currentDelays.length === requestedDelays.length &&
-    currentDelays.every((delay, index) => delay === requestedDelays[index]);
+    JSON.stringify(currentSchedule) === JSON.stringify(requestedSchedule);
   const triggerModeUnchanged = current?.triggerMode === triggerMode;
 
   // A timing/sequence change or trigger-mode change can make an old silent
@@ -1000,6 +1082,38 @@ router.post("/result-media/image", handleImageUpload, (req, res) =>
 );
 router.post("/automated-follow-up/image", handleImageUpload, (req, res) =>
   saveUploadedImage(req, res)
+);
+
+router.post(
+  "/automated-follow-up/video",
+  handleFollowUpVideoUpload,
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "An MP4 video file is required." });
+      }
+      if (!mediaStorage.isStorageConfigured()) {
+        return res.status(503).json({
+          error: "Video storage is not configured on this deployment.",
+        });
+      }
+
+      const key = await mediaStorage.uploadMedia(
+        req.file.buffer,
+        req.file.mimetype,
+        { contactId: "follow-up-config" }
+      );
+      const filename = String(req.file.originalname || "service-video.mp4")
+        .replace(/[\\/\0]/g, "")
+        .slice(0, 255) || "service-video.mp4";
+      return res.status(201).json({ key, filename });
+    } catch (err) {
+      console.error("Failed to upload automated follow-up video:", err);
+      return res.status(500).json({
+        error: "Something went wrong uploading this video.",
+      });
+    }
+  }
 );
 
 router.get("/result-media/image/:id", async (req, res) => {
