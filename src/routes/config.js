@@ -105,29 +105,6 @@ function followUpVideoKeys(value) {
   ];
 }
 
-async function cleanupRemovedFollowUpVideos(previousVideoKeys, nextValue) {
-  const previousKeys = new Set(
-    Array.isArray(previousVideoKeys) ? previousVideoKeys : []
-  );
-  const nextKeys = new Set(followUpVideoKeys(nextValue));
-  const removed = [...previousKeys].filter((key) => !nextKeys.has(key));
-
-  for (const key of removed) {
-    if (!isFollowUpVideoKey(key)) continue;
-    try {
-      await mediaStorage.deleteMedia(key);
-    } catch (err) {
-      console.error(`Failed to delete replaced follow-up video ${key}:`, err);
-    }
-  }
-
-  mediaStorage.pruneStaleFollowUpConfigVideos({
-    referencedKeys: [...nextKeys],
-  }).catch((err) => {
-    console.error("Failed to prune stale follow-up videos:", err);
-  });
-}
-
 const VALIDATORS = {
   businessName: isNonEmptyString,
   businessDescription: isString,
@@ -1223,9 +1200,6 @@ router.get("/", async (req, res) => {
 router.patch("/", async (req, res) => {
   try {
     const currentConfig = configRepo.getConfig();
-    const previousFollowUpVideoKeys = followUpVideoKeys(
-      currentConfig.automatedFollowUp
-    );
     const prepared = prepareConfigUpdatePayload(req.body || {}, currentConfig);
     if (!prepared.ok) {
       return res.status(prepared.status || 400).json({
@@ -1236,12 +1210,10 @@ router.patch("/", async (req, res) => {
     }
 
     const updated = await configRepo.updateConfig(prepared.updates);
-    if (Object.prototype.hasOwnProperty.call(prepared.updates, "automatedFollowUp")) {
-      await cleanupRemovedFollowUpVideos(
-        previousFollowUpVideoKeys,
-        updated.automatedFollowUp
-      );
-    }
+    // Follow-up config videos are intentionally not deleted inline here. A
+    // worker may already be copying the previous file for an in-flight send.
+    // The periodic stale-media worker removes unreferenced settings videos
+    // after the grace period instead.
     res.json(decorateConfig(updated));
   } catch (err) {
     const status = Number(err?.status) || 500;
