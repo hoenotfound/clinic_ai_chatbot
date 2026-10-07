@@ -249,24 +249,65 @@ function configuredServicesMentionedInText(value) {
   const text = typeof value === "string" ? value.trim() : "";
   if (!text) return [];
 
-  const matched = new Map();
+  const matches = [];
   for (const service of Array.isArray(clinicConfig.services)
     ? clinicConfig.services
     : []) {
     const serviceName =
       typeof service?.name === "string" ? service.name.trim() : "";
     const normalized = normalizedServiceName(serviceName);
-    if (!normalized || matched.has(normalized)) continue;
+    if (!normalized) continue;
 
-    if (
-      serviceTerms(serviceName).some((term) =>
-        textContainsServiceTerm(text, term)
-      )
-    ) {
-      matched.set(normalized, serviceName);
+    const matchedTerms = serviceTerms(serviceName).filter((term) =>
+      textContainsServiceTerm(text, term)
+    );
+    if (matchedTerms.length > 0) {
+      matches.push({ serviceName, matchedTerms });
     }
   }
-  return [...matched.values()];
+
+  if (matches.length <= 1) {
+    return matches.map((item) => item.serviceName);
+  }
+
+  // Prefer one explicitly named combined service only when its matched phrase
+  // fully contains the component-service phrases and those components do not
+  // also appear separately elsewhere in the same customer message. This turns
+  // "3D+9D" into the configured combination service while keeping genuine
+  // comparisons such as "3D or 9D?" ambiguous.
+  const normalizedText = normalizedServiceName(text);
+  const covering = matches.filter((candidate) =>
+    candidate.matchedTerms.some((candidateTerm) =>
+      matches.every((other) => {
+        if (other === candidate) return true;
+        return other.matchedTerms.some(
+          (otherTerm) =>
+            candidateTerm.length > otherTerm.length &&
+            candidateTerm.includes(otherTerm)
+        );
+      })
+    )
+  );
+
+  if (covering.length === 1) {
+    const [candidate] = covering;
+    const residual = candidate.matchedTerms.reduce(
+      (current, term) => current.split(term).join(" "),
+      normalizedText
+    );
+    const hasSeparateComponent = matches.some(
+      (other) =>
+        other !== candidate &&
+        serviceTerms(other.serviceName).some((term) =>
+          textContainsServiceTerm(residual, term)
+        )
+    );
+    if (!hasSeparateComponent) {
+      return [candidate.serviceName];
+    }
+  }
+
+  return matches.map((item) => item.serviceName);
 }
 
 function serviceMentionFromMessages(messages) {
@@ -1021,7 +1062,11 @@ async function sendCandidate(candidate) {
   let aiLeaseToken = null;
   const needsAiWork =
     Boolean(promotionPackageSelection) ||
-    (step.messageMode === "ai" && !promotionFollowUp);
+    (
+      step.messageMode === "ai" &&
+      !promotionFollowUp &&
+      !targetedMediaService
+    );
 
   if (needsAiWork) {
     aiLeaseToken = randomUUID();
@@ -1109,9 +1154,15 @@ async function sendCandidate(candidate) {
       }
     }
 
-    // Configured promotion copy remains exact. AI personalization is used only
-    // when no single promotion package was safely selected.
-    if (step.messageMode === "ai" && !promotionFollowUp) {
+    // Configured promotion copy remains exact. A service-specific media
+    // attachment also keeps its configured targeted caption exact, because the
+    // message and testimonial/video are authored as one unit. AI personalization
+    // is reserved for the general fallback when no targeted media was selected.
+    if (
+      step.messageMode === "ai" &&
+      !promotionFollowUp &&
+      !targetedMediaService
+    ) {
       if (!aiContext) {
         followUpMessageMode = "ai_fallback";
       } else {
