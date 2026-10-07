@@ -18,6 +18,9 @@ function initialInboundText(incoming, config = clinicConfig) {
   if (incoming.mediaType === "image") {
     return incoming.text ? `📷 ${incoming.text}` : `📷 [${customerLabel} sent a photo]`;
   }
+  if (incoming.mediaType === "video") {
+    return incoming.text ? `🎥 ${incoming.text}` : `🎥 [${customerLabel} sent a video]`;
+  }
   if (incoming.mediaType === "sticker") {
     return `🙂 [${customerLabel} sent a sticker]`;
   }
