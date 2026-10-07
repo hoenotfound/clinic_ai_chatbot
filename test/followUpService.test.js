@@ -2321,6 +2321,7 @@ test("plain 3D alias targets 3D 小颜术 without stealing 3D+9D", async (t) => 
   t.after(() => {
     clinicConfig.serviceAliases = originalAliases;
   });
+  clinicConfig.services.push({ name: "9D 逆龄抗衰" });
   clinicConfig.services.push({ name: "3D + 9D 组合" });
   clinicConfig.serviceAliases = [
     { alias: "3D", officialService: "3D 小颜术" },
@@ -2416,6 +2417,7 @@ test("explicit 3D and 9D comparison stays ambiguous instead of choosing the comb
   t.after(() => {
     clinicConfig.serviceAliases = originalAliases;
   });
+  clinicConfig.services.push({ name: "9D 逆龄抗衰" });
   clinicConfig.services.push({ name: "3D + 9D 组合" });
   clinicConfig.serviceAliases = [
     { alias: "3D", officialService: "3D 小颜术" },
