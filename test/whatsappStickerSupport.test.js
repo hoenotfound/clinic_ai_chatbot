@@ -45,7 +45,7 @@ test("sticker media is saved for Inbox display without AI interpretation", () =>
 test("sticker attachment storage failures stay internal and do not enter the generic handoff path", () => {
   const stickerStart = serverSource.indexOf('if (mediaType === "sticker")');
   const stickerEnd = serverSource.indexOf(
-    "// Photos without captions and stickers",
+    "// Photos/videos without captions and stickers",
     stickerStart
   );
   assert.ok(stickerStart >= 0 && stickerEnd > stickerStart);
@@ -66,7 +66,7 @@ test("a trailing sticker does not suppress a useful reply to an earlier burst me
   );
   assert.match(
     serverSource,
-    /return incoming\?\.mediaType !== "sticker"/
+    /if \(incoming\?\.mediaType === "sticker"\) return false;/
   );
   assert.match(
     serverSource,
