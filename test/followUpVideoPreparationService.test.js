@@ -11,11 +11,15 @@ const ffmpegPath = require("ffmpeg-static");
 const {
   MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES,
   MAX_WHATSAPP_VIDEO_BYTES,
+  DEFAULT_TRANSCODE_TIMEOUT_MS,
+  MAX_TRANSCODE_DIMENSION,
+  MAX_TRANSCODE_FPS,
   parseFfmpegDuration,
   parseFfmpegMediaInfo,
   isWhatsAppSafeVideoInfo,
   bitratePlan,
   runFfmpeg,
+  videoEncodeArgs,
   prepareFollowUpVideoFile,
 } = require("../src/services/followUpVideoPreparationService");
 
@@ -91,6 +95,37 @@ test("compression bitrate plan keeps a practical H.264/AAC budget", () => {
   assert.ok(plan.videoKbps <= 3000);
   assert.ok([48, 64, 96].includes(plan.audioKbps));
   assert.ok([540, 720, 960, 1280].includes(plan.maxDimension));
+});
+
+test("resource-safe FFmpeg args cap resolution, fps, decoder threads and encoder work", () => {
+  const args = videoEncodeArgs("/tmp/input.mp4", "/tmp/output.mp4", {
+    videoKbps: 2400,
+    audioKbps: 96,
+    maxDimension: 1280,
+  });
+
+  assert.equal(MAX_TRANSCODE_DIMENSION, 960);
+  assert.equal(MAX_TRANSCODE_FPS, 30);
+  assert.equal(DEFAULT_TRANSCODE_TIMEOUT_MS, 90_000);
+
+  const inputIndex = args.indexOf("-i");
+  assert.ok(inputIndex > 0);
+  const inputPrefix = args.slice(0, inputIndex);
+  assert.deepEqual(
+    inputPrefix.slice(inputPrefix.indexOf("-threads"), inputPrefix.indexOf("-threads") + 2),
+    ["-threads", "1"],
+    "decoder threads must be bounded before the input is opened"
+  );
+  assert.match(args[args.indexOf("-vf") + 1], /min\(960\\,iw\)/);
+  assert.match(args[args.indexOf("-vf") + 1], /flags=fast_bilinear/);
+  assert.equal(args[args.indexOf("-fpsmax") + 1], "30");
+  assert.equal(args[args.indexOf("-preset") + 1], "superfast");
+  assert.equal(args[args.indexOf("-tune") + 1], "zerolatency");
+  assert.equal(args[args.indexOf("-filter_threads") + 1], "1");
+  assert.equal(args[args.indexOf("-max_muxing_queue_size") + 1], "128");
+  assert.equal(args.at(-3), "1");
+  assert.equal(args.at(-2), "-f");
+  assert.equal(args.at(-1), "mp4");
 });
 
 test("compression planner rejects videos too long for a usable <=16MB copy", () => {
