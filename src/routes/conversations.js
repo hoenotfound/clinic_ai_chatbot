@@ -42,7 +42,7 @@ const MAX_DELIVERY_STATUS_IDS = 500;
 const WHATSAPP_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const WHATSAPP_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
 const MAX_INBOX_VIDEO_UPLOAD_BYTES = followUpVideoPreparation.MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES;
-const INBOX_VIDEO_EXTENSIONS = new Set(["mp4", "mov", "m4v"]);
+const INBOX_VIDEO_EXTENSIONS = new Set(["mp4"]);
 const MAX_INBOX_DOCUMENT_BYTES = 16 * 1024 * 1024;
 const INBOX_DOCUMENT_MIME_TYPES = new Set([
   "application/pdf",
@@ -79,15 +79,7 @@ function isAllowedInboxVideo(file) {
 
 function normalizedInboxVideoFilename(filename) {
   const safe = safeInboxFilename(filename, "video.mp4");
-  return /\.mp4$/i.test(safe)
-    ? safe
-    : `${safe.replace(/\.[^.]+$/, "") || "video"}.mp4`;
-}
-
-function inboxVideoNeedsContainerNormalization(file) {
-  const mimeType = String(file?.mimetype || "").toLowerCase();
-  const extension = inboxDocumentExtension(file?.originalname);
-  return mimeType !== "video/mp4" || extension !== "mp4";
+  return /\.mp4$/i.test(safe) ? safe : "video.mp4";
 }
 
 function isAllowedInboxDocument(file) {
@@ -188,7 +180,7 @@ const inboxVideoUpload = multer({
   limits: { fileSize: MAX_INBOX_VIDEO_UPLOAD_BYTES },
   fileFilter: (req, file, cb) => {
     if (!isAllowedInboxVideo(file)) {
-      return cb(new Error("Please choose an MP4, MOV, or M4V video."));
+      return cb(new Error("Please choose an MP4 video. H.264 video with AAC audio is required."));
     }
     cb(null, true);
   },
@@ -1364,78 +1356,14 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
   }
 });
 
-function shouldNormalizeStoredWhatsAppVideoForRetry(contact, message) {
+function isKnownWhatsAppVideoCodecFailure(contact, message) {
   if ((contact?.channel || "whatsapp") !== "whatsapp") return false;
-  if (!message?.media_key) return false;
-  if (!String(message.media_mime_type || "").toLowerCase().startsWith("video/")) {
+  if (!String(message?.media_mime_type || "").toLowerCase().startsWith("video/")) {
     return false;
   }
-  if (message.delivery_status !== "failed") return false;
-  const errorText = String(message.delivery_error || "");
+  if (message?.delivery_status !== "failed") return false;
+  const errorText = String(message?.delivery_error || "");
   return /Video file uploaded with mimetype|(?:videoCodec|audioCodec)\s*=/i.test(errorText);
-}
-
-async function normalizeStoredWhatsAppVideoForRetry(contact, message) {
-  if (!shouldNormalizeStoredWhatsAppVideoForRetry(contact, message)) return message;
-
-  const originalKey = message.media_key;
-  const inputPath = `${os.tmpdir()}/inbox-retry-video-${process.pid}-${randomUUID()}.mp4`;
-  let replacementKey = null;
-
-  try {
-    const originalBuffer = await mediaStorage.downloadMedia(originalKey, {
-      maxBytes: MAX_INBOX_VIDEO_UPLOAD_BYTES,
-    });
-    await fs.writeFile(inputPath, originalBuffer);
-
-    const prepared = await followUpVideoPreparation.prepareFollowUpVideoFile(
-      inputPath,
-      {
-        originalBytes: originalBuffer.length,
-        // The provider already told us the stored video has an unsupported
-        // codec. Force a known-safe H.264/AAC MP4 before retrying.
-        forceTranscode: true,
-      }
-    );
-
-    replacementKey = await mediaStorage.uploadMedia(
-      prepared.buffer,
-      "video/mp4",
-      { contactId: contact.id }
-    );
-    const attached = await conversationStore.attachStoredMediaForContact(
-      contact.id,
-      message.id,
-      replacementKey,
-      "video/mp4"
-    );
-    if (!attached) {
-      throw new Error("The normalized retry video could not be linked to its message.");
-    }
-
-    message.media_key = replacementKey;
-    message.media_mime_type = "video/mp4";
-    if (!/\.mp4$/i.test(String(message.media_filename || ""))) {
-      message.media_filename = normalizedInboxVideoFilename(
-        message.media_filename || "video.mp4"
-      );
-    }
-
-    mediaStorage.deleteMedia(originalKey).catch((cleanupErr) => {
-      console.error(
-        `Failed to delete rejected WhatsApp video ${originalKey} after normalization:`,
-        cleanupErr
-      );
-    });
-    return message;
-  } catch (err) {
-    if (replacementKey) {
-      await mediaStorage.deleteMedia(replacementKey).catch(() => {});
-    }
-    throw err;
-  } finally {
-    await fs.unlink(inputPath).catch(() => {});
-  }
 }
 
 router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
@@ -1608,10 +1536,13 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
             : "service";
       if (!(await requireFreeformPolicy(contact, res, retryPurpose))) return;
 
-      // Historical iPhone MP4s may already be stored with HEVC/H.265. Only
-      // repair the attachment after policy says a retry is actually allowed,
-      // so a closed reply window does not spend FFmpeg/R2 work unnecessarily.
-      await normalizeStoredWhatsAppVideoForRetry(contact, message);
+      if (isKnownWhatsAppVideoCodecFailure(contact, message)) {
+        return res.status(409).json({
+          error:
+            "This saved video was rejected by WhatsApp because its codec is not supported. Please send a new MP4 exported as H.264 video with AAC audio and keep it under 16MB.",
+          code: "video_requires_compatible_reupload",
+        });
+      }
 
       performRetrySend = (activeContact) =>
         sendStoredMessage(activeContact, message, {
@@ -2223,7 +2154,9 @@ function handleVideoUpload(req, res, next) {
     if (!err) return next();
     if (req.file?.path) fs.unlink(req.file.path).catch(() => {});
     if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
-      return res.status(400).json({ error: "Video is too large. Please choose a video under 50MB." });
+      return res.status(400).json({
+        error: "Video is too large for WhatsApp. Please choose an H.264/AAC MP4 under 16MB. Automatic compression is disabled on this server.",
+      });
     }
     return res.status(400).json({ error: err.message || "Failed to upload video." });
   });
@@ -2572,10 +2505,8 @@ router.post("/:contactId/video", handleVideoUpload, async (req, res) => {
       "videoPreparationMs",
       () => followUpVideoPreparation.prepareFollowUpVideoFile(req.file.path, {
         originalBytes: req.file.size,
-        // MOV/M4V and generic multipart types must be remuxed/transcoded into
-        // MP4. For ordinary MP4 uploads, inspect the real codecs first: safe
-        // H.264/AAC can pass through unchanged, while HEVC/H.265 is normalized.
-        forceTranscode: inboxVideoNeedsContainerNormalization(req.file),
+        // Validation only. Never transcode/compress video inside the live web
+        // service; incompatible files are rejected before R2/provider upload.
         ensureWhatsAppCompatible: true,
       })
     );
@@ -2591,8 +2522,7 @@ router.post("/:contactId/video", handleVideoUpload, async (req, res) => {
         })
       );
       // The provider send below reads the durable R2 object. Drop our reference
-      // to the converted Buffer as soon as persistence completes so Node can
-      // reclaim up to ~16MB before the R2 read/provider upload allocates again.
+      // to the uploaded Buffer before the provider path loads the stored copy.
       preparedVideo.buffer = null;
 
       prepared = await timedMediaStage(
@@ -2685,9 +2615,8 @@ router.post("/:contactId/video", handleVideoUpload, async (req, res) => {
     console.error("Failed to send staff video:", err);
     const clientErrors = new Set([
       "INVALID_FOLLOW_UP_VIDEO",
-      "FOLLOW_UP_VIDEO_UPLOAD_TOO_LARGE",
-      "FOLLOW_UP_VIDEO_TOO_LONG",
-      "FOLLOW_UP_VIDEO_STILL_TOO_LARGE",
+      "WHATSAPP_VIDEO_TOO_LARGE",
+      "WHATSAPP_VIDEO_CODEC_UNSUPPORTED",
     ]);
     res.status(clientErrors.has(err?.code) ? 400 : 500).json({
       error: err?.message || "Something went wrong sending this video.",
