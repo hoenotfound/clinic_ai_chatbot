@@ -423,9 +423,13 @@ test("immediate queue runner sends claimed rows and marks them sent", async () =
   ]);
 });
 
-test("actionable sends hold the shared contact lock through final revalidation and sent state", async () => {
+test("actionable sends release the shared contact lock before waiting for Telegram", async () => {
   const steps = [];
   const lockQuery = async () => ({ rows: [] });
+  let resolveSend;
+  let resolveLockReleased;
+  const sendGate = new Promise((resolve) => { resolveSend = resolve; });
+  const lockReleased = new Promise((resolve) => { resolveLockReleased = resolve; });
   const repository = {
     async markExhaustedStale() {
       return [];
@@ -445,10 +449,10 @@ test("actionable sends hold the shared contact lock through final revalidation a
       steps.push(["lock:start", contactId]);
       const result = await work(lockQuery);
       steps.push(["lock:end", contactId]);
+      resolveLockReleased();
       return result;
     },
-    async markSent(id, leaseToken, query) {
-      assert.equal(query, lockQuery);
+    async markSent(id, leaseToken) {
       steps.push(["markSent", id, leaseToken]);
       return {
         id,
@@ -474,21 +478,36 @@ test("actionable sends hold the shared contact lock through final revalidation a
       steps.push(["revalidate", alert.id]);
       return true;
     },
-    async sendMessage() {
-      steps.push(["send"]);
-      return { message_id: 101 };
+    sendMessage() {
+      steps.push(["send:start"]);
+      return sendGate.then(() => {
+        steps.push(["send:finish"]);
+        return { message_id: 101 };
+      });
     },
   });
 
-  const result = await run();
+  const runPromise = run();
+  await lockReleased;
+
+  assert.deepEqual(steps, [
+    ["lock:start", 12],
+    ["revalidate", 9],
+    ["send:start"],
+    ["lock:end", 12],
+  ]);
+
+  resolveSend();
+  const result = await runPromise;
 
   assert.equal(result.sentCount, 1);
   assert.deepEqual(steps, [
     ["lock:start", 12],
     ["revalidate", 9],
-    ["send"],
-    ["markSent", 9, "lease-9"],
+    ["send:start"],
     ["lock:end", 12],
+    ["send:finish"],
+    ["markSent", 9, "lease-9"],
   ]);
 });
 

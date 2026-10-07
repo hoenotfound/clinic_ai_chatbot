@@ -313,7 +313,8 @@ function createImmediateAlertQueueRunner({
 
       for (const alert of alerts) {
         try {
-          const processClaimedAlert = async (query) => {
+          let sendOutcomePromise = null;
+          const prepareClaimedAlert = async (query) => {
             const stillApplies = await shouldSendAlert(alert, query);
             if (!stillApplies) {
               const cancelled = await repository.markCancelled(
@@ -327,34 +328,49 @@ function createImmediateAlertQueueRunner({
                 query
               );
               publishImmediateTerminalState(cancelled);
-              return;
+              return false;
             }
 
-            await sendMessage({
+            // Submit the Telegram request while the contact state is still
+            // fenced, but do not wait for Telegram while holding the advisory
+            // lock. Staff Inbox sends must never sit behind external network
+            // latency or a Telegram timeout.
+            sendOutcomePromise = Promise.resolve(sendMessage({
               token: env.TELEGRAM_BOT_TOKEN,
               chatId: env.TELEGRAM_CHAT_ID,
               text: alert.message_text,
-            });
-            const sent = await repository.markSent(
-              alert.id,
-              alert.lease_token,
-              query
+            })).then(
+              (value) => ({ status: "fulfilled", value }),
+              (reason) => ({ status: "rejected", reason })
             );
-            publishImmediateTerminalState(sent);
-            sentCount += 1;
+            return true;
           };
 
+          let submitted;
           if (
             shouldWakeConversationSummary(alert) &&
             typeof repository.withContactAlertLock === "function"
           ) {
-            await repository.withContactAlertLock(
+            submitted = await repository.withContactAlertLock(
               alert.contact_id,
-              processClaimedAlert
+              prepareClaimedAlert
             );
           } else {
-            await processClaimedAlert();
+            submitted = await prepareClaimedAlert();
           }
+          if (!submitted) continue;
+
+          const sendOutcome = await sendOutcomePromise;
+          if (sendOutcome.status === "rejected") {
+            throw sendOutcome.reason;
+          }
+
+          const sent = await repository.markSent(
+            alert.id,
+            alert.lease_token
+          );
+          publishImmediateTerminalState(sent);
+          sentCount += 1;
         } catch (err) {
           failedCount += 1;
           const retryDelaySeconds = Math.ceil(
