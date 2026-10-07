@@ -223,6 +223,100 @@ test("Instagram image follow-up records text first and sends the graphic as a se
   ]);
 });
 
+test("Instagram service image overrides the general attachment and stays retry-safe", async () => {
+  clinicConfig.services = [{ name: "Pelvic Care" }];
+  clinicConfig.serviceAliases = [];
+  clinicConfig.promotions = [];
+  clinicConfig.automatedFollowUp.imageUrl = "https://example.com/general.jpg";
+  clinicConfig.automatedFollowUp.serviceOverrides = [
+    {
+      serviceName: "Pelvic Care",
+      message: "Here is the Pelvic Care image.",
+      translations: {
+        en: "Here is the Pelvic Care image.",
+        ms: "Ini gambar Pelvic Care.",
+        zh: "给您看看骨盆调理图片。",
+      },
+      imageUrl: "https://example.com/pelvic.jpg",
+      videoKey: "",
+      videoFilename: "",
+    },
+  ];
+
+  const sends = [];
+  let companionInput = null;
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 106,
+      channel: "instagram",
+      whatsapp_number: "+instagram:106",
+      channel_user_id: "igsid-106",
+      trigger_message_id: 550,
+      recent_inbound_messages: ["Pelvic Care details"],
+      treatment_interest: "Pelvic Care",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => ({
+    id: 551,
+    contact_id: 106,
+    content: input.content,
+    media_url: input.mediaUrl,
+    delivery_status: null,
+  });
+  followUpRepo.saveSocialImageCompanion = async (input) => {
+    companionInput = input;
+    return {
+      id: 552,
+      contact_id: 106,
+      media_url: input.imageUrl,
+      delivery_status: null,
+    };
+  };
+  channelMessaging.sendText = async (contact, text) => {
+    sends.push({ type: "text", contact, text });
+    return {
+      success: true,
+      wamid: null,
+      externalMessageId: "mid-instagram-text-551",
+    };
+  };
+  channelMessaging.sendImageByUrl = async (contact, imageUrl, caption) => {
+    sends.push({ type: "image", contact, imageUrl, caption });
+    return {
+      success: true,
+      wamid: null,
+      externalMessageId: "mid-instagram-image-552",
+    };
+  };
+  messagesRepo.setDeliveryStatusById = async (id, status, error) => ({
+    id,
+    contact_id: 106,
+    delivery_status: status,
+    delivery_error: error,
+  });
+
+  await runAutomatedFollowUps();
+
+  assert.deepEqual(companionInput, {
+    contactId: 106,
+    imageUrl: "https://example.com/pelvic.jpg",
+  });
+  assert.equal(sends.length, 2);
+  assert.equal(sends[0].type, "text");
+  assert.equal(sends[0].text, "Here is the Pelvic Care image.");
+  assert.deepEqual(sends[1], {
+    type: "image",
+    contact: {
+      id: 106,
+      channel: "instagram",
+      whatsapp_number: "+instagram:106",
+      channel_user_id: "igsid-106",
+    },
+    imageUrl: "https://example.com/pelvic.jpg",
+    caption: undefined,
+  });
+});
+
 test("Instagram sends a service video after the accepted follow-up text", async () => {
   clinicConfig.services = [{ name: "Pelvic Care" }];
   clinicConfig.serviceAliases = [];

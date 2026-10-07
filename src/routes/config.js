@@ -94,13 +94,14 @@ function followUpVideoKeys(value) {
   ];
   return [
     ...new Set(
-      steps.flatMap((step) =>
-        Array.isArray(step?.serviceOverrides)
-          ? step.serviceOverrides
-              .map((item) => String(item?.videoKey || "").trim())
-              .filter(Boolean)
-          : []
-      )
+      steps.flatMap((step) => [
+        String(step?.videoKey || "").trim(),
+        ...(Array.isArray(step?.serviceOverrides)
+          ? step.serviceOverrides.map((item) =>
+              String(item?.videoKey || "").trim()
+            )
+          : []),
+      ]).filter(Boolean)
     ),
   ];
 }
@@ -295,6 +296,8 @@ function isFollowUpTranslations(value) {
 }
 
 function isFollowUpServiceOverride(value) {
+  const imageUrl = isString(value?.imageUrl) ? value.imageUrl.trim() : "";
+  const videoKey = isString(value?.videoKey) ? value.videoKey.trim() : "";
   return (
     isPlainObject(value) &&
     isNonEmptyString(value.serviceName) &&
@@ -302,9 +305,11 @@ function isFollowUpServiceOverride(value) {
     isNonEmptyString(value.message) &&
     value.message.trim().length <= 1000 &&
     isFollowUpTranslations(value.translations) &&
+    (value.imageUrl === undefined || isString(value.imageUrl)) &&
     isFollowUpVideoKey(value.videoKey) &&
     (value.videoFilename === undefined ||
-      (isString(value.videoFilename) && value.videoFilename.trim().length <= 255))
+      (isString(value.videoFilename) && value.videoFilename.trim().length <= 255)) &&
+    !(imageUrl && videoKey)
   );
 }
 
@@ -329,6 +334,10 @@ function isFollowUpStep(value) {
     value.message.trim().length <= 1000 &&
     isFollowUpTranslations(value.translations) &&
     isString(value.imageUrl) &&
+    isFollowUpVideoKey(value.videoKey) &&
+    (value.videoFilename === undefined ||
+      (isString(value.videoFilename) && value.videoFilename.trim().length <= 255)) &&
+    !(value.imageUrl.trim() && String(value.videoKey || "").trim()) &&
     Array.isArray(value.serviceOverrides) &&
     value.serviceOverrides.length <= 50 &&
     value.serviceOverrides.every(isFollowUpServiceOverride)
@@ -441,19 +450,22 @@ function prepareFollowUpServiceOverrides(requested) {
     ) {
       return null;
     }
+    const imageUrl =
+      typeof item.imageUrl === "string" ? item.imageUrl.trim() : "";
     const videoKey =
       typeof item.videoKey === "string" ? item.videoKey.trim() : "";
     const videoFilename =
       typeof item.videoFilename === "string"
         ? item.videoFilename.trim().slice(0, 255)
         : "";
-    if (!isFollowUpVideoKey(videoKey)) return null;
+    if (!isFollowUpVideoKey(videoKey) || (imageUrl && videoKey)) return null;
 
     seen.add(normalizedService);
     prepared.push({
       serviceName,
       message,
       translations,
+      imageUrl,
       videoKey,
       videoFilename,
     });
@@ -489,6 +501,12 @@ function prepareFollowUpStep(requested) {
   );
   const imageUrl =
     typeof requested.imageUrl === "string" ? requested.imageUrl.trim() : "";
+  const videoKey =
+    typeof requested.videoKey === "string" ? requested.videoKey.trim() : "";
+  const videoFilename =
+    typeof requested.videoFilename === "string"
+      ? requested.videoFilename.trim().slice(0, 255)
+      : "";
   const serviceOverrides = prepareFollowUpServiceOverrides(
     requested.serviceOverrides
   );
@@ -502,6 +520,8 @@ function prepareFollowUpStep(requested) {
     message,
     translations,
     imageUrl,
+    videoKey,
+    videoFilename,
     serviceOverrides,
   };
   return serviceOverrides && isFollowUpStep(prepared) ? prepared : null;

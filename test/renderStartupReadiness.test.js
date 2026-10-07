@@ -158,6 +158,10 @@ test("startup schedules R2 temp cleanup without running an immediate sweep", () 
     startupSource,
     /pruneStaleFollowUpConfigVideos\(\{[\s\S]*referencedKeys:\s*configuredFollowUpVideoKeys\(\)/
   );
+  assert.match(
+    startupSource,
+    /String\(step\?\.videoKey \|\| ""\)\.trim\(\)/
+  );
   assert.doesNotMatch(
     workerBlock,
     /(?:^|\n)\s*pruneStaleTemporaryMediaSafely\(\);/

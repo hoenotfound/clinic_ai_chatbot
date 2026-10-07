@@ -26,6 +26,8 @@ const DEFAULT_FOLLOW_UP = {
     zh: "嗨！想跟进一下，看看您是否还需要任何帮助。方便时回复我们就可以了 😊",
   },
   imageUrl: "",
+  videoKey: "",
+  videoFilename: "",
   serviceOverrides: [],
   additionalSteps: [],
 };
@@ -87,6 +89,7 @@ function normalizeServiceOverrides(value) {
         serviceName,
         message,
         translations: normalizeTranslations(item?.translations, message),
+        imageUrl: String(item?.imageUrl || ""),
         videoKey: String(item?.videoKey || ""),
         videoFilename: String(item?.videoFilename || ""),
       };
@@ -114,6 +117,8 @@ function normalizeSequenceStep(value = {}) {
     message,
     translations: normalizeTranslations(value.translations, message),
     imageUrl: value.imageUrl || "",
+    videoKey: value.videoKey || "",
+    videoFilename: value.videoFilename || "",
     serviceOverrides: normalizeServiceOverrides(value.serviceOverrides),
   };
 }
@@ -150,6 +155,8 @@ function normalizeFollowUpSettings(value = {}) {
       usesDefaultMessage
     ),
     imageUrl: settings.imageUrl || "",
+    videoKey: settings.videoKey || "",
+    videoFilename: settings.videoFilename || "",
     serviceOverrides: normalizeServiceOverrides(value.serviceOverrides),
   };
 
@@ -181,6 +188,8 @@ function followUpFormFromSettings(value = {}) {
     message: settings.message,
     translations: settings.translations,
     imageUrl: settings.imageUrl,
+    videoKey: settings.videoKey,
+    videoFilename: settings.videoFilename,
     serviceOverrides: settings.serviceOverrides,
     additionalSteps: settings.additionalSteps,
   };
@@ -260,7 +269,6 @@ export default function Tools() {
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [distributionDirty, setDistributionDirty] = useState(false);
   const [distributionActive, setDistributionActive] = useState(false);
-  const imageInputRef = useRef(null);
   const { user } = useAuth();
   const { toasts, showToast, dismissToast } = useToasts();
 
@@ -490,13 +498,6 @@ export default function Tools() {
     }
   }
 
-  async function handleImagePicked(event) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    const url = await uploadFollowUpImage(file);
-    if (url) setForm((current) => ({ ...current, imageUrl: url }));
-  }
-
   async function uploadFollowUpVideo(file) {
     if (!file) return null;
     if (!FOLLOW_UP_VIDEO_TYPES.has(file.type)) {
@@ -539,6 +540,8 @@ export default function Tools() {
         messageMode: form.messageMode,
         aiInstruction: form.aiInstruction,
         message: form.message,
+        imageUrl: form.imageUrl,
+        videoKey: form.videoKey,
         serviceOverrides: form.serviceOverrides,
       },
       ...(form.additionalSteps || []),
@@ -567,6 +570,9 @@ export default function Tools() {
       const messageMode = step.messageMode === "ai" ? "ai" : "fixed";
       const aiInstruction = String(step.aiInstruction || "").trim();
       const message = String(step.message || "").trim();
+      if (String(step.imageUrl || "").trim() && String(step.videoKey || "").trim()) {
+        return `Follow-up ${index + 1} can use either an image or a video, not both.`;
+      }
       if (
         timingMode === "before_window_expiry" &&
         (
@@ -614,6 +620,9 @@ export default function Tools() {
         }
         if (targetedMessage.length > 1000) {
           return `Keep targeted messages in Follow-up ${index + 1} under 1,000 characters.`;
+        }
+        if (String(override.imageUrl || "").trim() && String(override.videoKey || "").trim()) {
+          return `${serviceName} in Follow-up ${index + 1} can use either an image or a video, not both.`;
         }
         const serviceKey = serviceName.toLocaleLowerCase();
         if (seenServices.has(serviceKey)) {
@@ -678,6 +687,7 @@ export default function Tools() {
         serviceName: item.serviceName.trim(),
         message,
         translations,
+        imageUrl: String(item.imageUrl || "").trim(),
         videoKey: String(item.videoKey || "").trim(),
         videoFilename: String(item.videoFilename || "").trim(),
       };
@@ -719,6 +729,8 @@ export default function Tools() {
         message,
         translations,
         imageUrl: step.imageUrl || "",
+        videoKey: step.videoKey || "",
+        videoFilename: step.videoFilename || "",
         serviceOverrides: preparedServiceOverrides(
           step.serviceOverrides,
           generatedByMessage
@@ -793,6 +805,8 @@ export default function Tools() {
           message,
           translations,
           imageUrl: form.imageUrl,
+          videoKey: form.videoKey,
+          videoFilename: form.videoFilename,
           serviceOverrides,
           additionalSteps,
         },
@@ -941,14 +955,12 @@ export default function Tools() {
             saving={saving}
             services={config.services || []}
             promotions={config.promotions || []}
-            imageInputRef={imageInputRef}
             onSourceMessageChange={handleSourceMessageChange}
             onTranslationChange={handleTranslationChange}
             onGenerateTranslations={handleGenerateTranslations}
             onTranslateMessage={generateTranslationsForMessage}
             onUploadImage={uploadFollowUpImage}
             onUploadVideo={uploadFollowUpVideo}
-            onImagePicked={handleImagePicked}
             onSave={handleSave}
             toasts={toasts}
             dismissToast={dismissToast}
@@ -1306,6 +1318,8 @@ function ServiceVideoPicker({
   uploading,
   onUpload,
   onChange,
+  label = "Video",
+  description = "Optional MP4 attachment.",
 }) {
   const inputRef = useRef(null);
 
@@ -1321,11 +1335,9 @@ function ServiceVideoPicker({
     <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <p className="text-xs font-semibold">Service video</p>
+          <p className="text-xs font-semibold">{label}</p>
           <p className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
-            {videoKey
-              ? videoFilename || "MP4 video attached"
-              : "Optional. Sent only when this service is the clear current interest."}
+            {videoKey ? videoFilename || "MP4 video attached" : description}
           </p>
         </div>
         <input
@@ -1333,7 +1345,7 @@ function ServiceVideoPicker({
           type="file"
           accept="video/mp4"
           className="hidden"
-          aria-label="Service video upload"
+          aria-label={`${label} upload`}
           onChange={handlePicked}
         />
         <div className="flex shrink-0 gap-3">
@@ -1370,7 +1382,9 @@ function ServiceOverridesEditor({
   onChange,
   stepLabel,
   translating,
+  uploadingImage,
   uploadingVideo,
+  onUploadImage,
   onUploadVideo,
   onTranslateMessage,
 }) {
@@ -1399,6 +1413,7 @@ function ServiceOverridesEditor({
         serviceName: available[0],
         message: "",
         translations: { en: "", ms: "", zh: "" },
+        imageUrl: "",
         videoKey: "",
         videoFilename: "",
       },
@@ -1558,6 +1573,27 @@ function ServiceOverridesEditor({
                         )
                       }
                     />
+                    <StepImagePicker
+                      imageUrl={item.imageUrl}
+                      uploading={uploadingImage}
+                      onUpload={onUploadImage}
+                      onChange={(imageUrl) =>
+                        onChange(
+                          overrides.map((override, overrideIndex) =>
+                            overrideIndex === index
+                              ? {
+                                  ...override,
+                                  imageUrl,
+                                  ...(imageUrl
+                                    ? { videoKey: "", videoFilename: "" }
+                                    : {}),
+                                }
+                              : override
+                          )
+                        )
+                      }
+                      label="Service image"
+                    />
                     <ServiceVideoPicker
                       videoKey={item.videoKey}
                       videoFilename={item.videoFilename}
@@ -1571,11 +1607,14 @@ function ServiceOverridesEditor({
                                   ...override,
                                   videoKey: key,
                                   videoFilename: filename,
+                                  ...(key ? { imageUrl: "" } : {}),
                                 }
                               : override
                           )
                         )
                       }
+                      label="Service video"
+                      description="Optional. Sent only when this service is the clear current interest."
                     />
                   </div>
                 );
@@ -1606,14 +1645,12 @@ function FollowUpTool({
   saving,
   services,
   promotions,
-  imageInputRef,
   onSourceMessageChange,
   onTranslationChange,
   onGenerateTranslations,
   onTranslateMessage,
   onUploadImage,
   onUploadVideo,
-  onImagePicked,
   onSave,
   toasts,
   dismissToast,
@@ -1891,7 +1928,9 @@ function FollowUpTool({
               services={services}
               stepLabel="Follow-up 1"
               translating={translating}
+              uploadingImage={uploadingImage}
               uploadingVideo={uploadingVideo}
+              onUploadImage={onUploadImage}
               onUploadVideo={onUploadVideo}
               onTranslateMessage={onTranslateMessage}
               onChange={(serviceOverrides) =>
@@ -1997,9 +2036,29 @@ function FollowUpTool({
                       uploading={uploadingImage}
                       onUpload={onUploadImage}
                       onChange={(imageUrl) =>
-                        updateAdditionalStep(index, { imageUrl })
+                        updateAdditionalStep(index, {
+                          imageUrl,
+                          ...(imageUrl
+                            ? { videoKey: "", videoFilename: "" }
+                            : {}),
+                        })
                       }
-                      label={`Follow-up ${index + 2} graphic`}
+                      label={`Follow-up ${index + 2} image`}
+                    />
+                    <ServiceVideoPicker
+                      videoKey={step.videoKey}
+                      videoFilename={step.videoFilename}
+                      uploading={uploadingVideo}
+                      onUpload={onUploadVideo}
+                      onChange={({ key, filename }) =>
+                        updateAdditionalStep(index, {
+                          videoKey: key,
+                          videoFilename: filename,
+                          ...(key ? { imageUrl: "" } : {}),
+                        })
+                      }
+                      label={`Follow-up ${index + 2} video`}
+                      description="Optional alternative to an image."
                     />
 
                     <ServiceOverridesEditor
@@ -2007,7 +2066,9 @@ function FollowUpTool({
                       services={services}
                       stepLabel={`Follow-up ${index + 2}`}
                       translating={translating}
+                      uploadingImage={uploadingImage}
                       uploadingVideo={uploadingVideo}
+                      onUploadImage={onUploadImage}
                       onUploadVideo={onUploadVideo}
                       onTranslateMessage={onTranslateMessage}
                       onChange={(serviceOverrides) =>
@@ -2042,6 +2103,8 @@ function FollowUpTool({
                       message: "",
                       translations: { en: "", ms: "", zh: "" },
                       imageUrl: "",
+                      videoKey: "",
+                      videoFilename: "",
                       serviceOverrides: [],
                     },
                   ],
@@ -2054,31 +2117,40 @@ function FollowUpTool({
           </Card>
 
           <Card>
-            <SectionHeading number="4" title="Add a graphic to Follow-up 1" description="Optional. The final follow-up text, AI-generated or fixed, is used as the image caption." />
-            <input ref={imageInputRef} type="file" accept="image/jpeg,image/png" onChange={onImagePicked} className="hidden" />
-            {form.imageUrl ? (
-              <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg)]">
-                <img src={form.imageUrl} alt="Follow-up graphic preview" className="max-h-72 w-full object-contain" />
-                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] bg-white px-4 py-3">
-                  <span className="text-xs text-[var(--color-text-muted)]">Graphic attached</span>
-                  <div className="flex gap-3">
-                    <button type="button" onClick={() => imageInputRef.current?.click()} disabled={uploadingImage} className="text-xs font-semibold text-[var(--color-primary)] disabled:opacity-50">Replace</button>
-                    <button type="button" onClick={() => setForm((current) => ({ ...current, imageUrl: "" }))} disabled={uploadingImage} className="text-xs font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)] disabled:opacity-50">Remove</button>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => imageInputRef.current?.click()}
-                disabled={uploadingImage}
-                className="mt-5 flex w-full flex-col items-center justify-center rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-8 text-center hover:border-[var(--color-primary)]/40 disabled:opacity-50"
-              >
-                {uploadingImage ? <Spinner className="h-5 w-5" /> : <ImageIcon className="h-5 w-5 text-[var(--color-primary)]" />}
-                <span className="mt-2 text-xs font-semibold">{uploadingImage ? "Uploading graphic…" : "Choose a graphic"}</span>
-                <span className="mt-1 text-xs text-[var(--color-text-muted)]">JPG or PNG, up to 5MB</span>
-              </button>
-            )}
+            <SectionHeading
+              number="4"
+              title="Add media to Follow-up 1"
+              description="Optional. Attach either one image or one MP4 video. The final fixed or AI-generated text is used as the caption where the channel supports it."
+            />
+            <StepImagePicker
+              imageUrl={form.imageUrl}
+              uploading={uploadingImage}
+              onUpload={onUploadImage}
+              onChange={(imageUrl) =>
+                setForm((current) => ({
+                  ...current,
+                  imageUrl,
+                  ...(imageUrl ? { videoKey: "", videoFilename: "" } : {}),
+                }))
+              }
+              label="Follow-up 1 image"
+            />
+            <ServiceVideoPicker
+              videoKey={form.videoKey}
+              videoFilename={form.videoFilename}
+              uploading={uploadingVideo}
+              onUpload={onUploadVideo}
+              onChange={({ key, filename }) =>
+                setForm((current) => ({
+                  ...current,
+                  videoKey: key,
+                  videoFilename: filename,
+                  ...(key ? { imageUrl: "" } : {}),
+                }))
+              }
+              label="Follow-up 1 video"
+              description="Optional alternative to an image."
+            />
           </Card>
         </div>
 
@@ -2094,6 +2166,11 @@ function FollowUpTool({
             <div className="inbox-thread-bg mt-4 min-h-48 rounded-2xl border border-[var(--color-border)] p-4">
               <div className="ml-auto max-w-[94%] overflow-hidden rounded-2xl rounded-br-md bg-[var(--color-primary)] text-white shadow-sm">
                 {form.imageUrl && <img src={form.imageUrl} alt="" className="max-h-56 w-full object-cover" />}
+                {form.videoKey && (
+                  <div className="border-b border-white/15 px-3.5 py-3 text-xs font-semibold text-white/85">
+                    ▶ {form.videoFilename || "MP4 video attached"}
+                  </div>
+                )}
                 <div className="px-3.5 py-2.5">
                   <p className="mb-1 text-[10px] font-semibold text-white/70">Automated follow-up</p>
                   <p className="whitespace-pre-wrap break-words text-xs leading-5">
@@ -2942,7 +3019,6 @@ function CommentIcon(props) { return <IconBase {...props}><path d="M4 5h16v11H9l
 function ChevronDownIcon(props) { return <IconBase {...props}><path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
 function ScoreIcon(props) { return <IconBase {...props}><path d="M4 19V9M10 19V5M16 19v-7M22 19V8" strokeLinecap="round" /><path d="m3 7 6-4 6 7 6-4" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
 function DistributionIcon(props) { return <IconBase {...props}><circle cx="6" cy="6" r="2" /><circle cx="18" cy="6" r="2" /><circle cx="12" cy="18" r="2" /><path d="M7.7 7.1 10.8 16M16.3 7.1 13.2 16M8 6h8" strokeLinecap="round" /></IconBase>; }
-function ImageIcon(props) { return <IconBase {...props}><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m21 15-5-5L5 20" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
 function HotIcon(props) { return <IconBase {...props}><path d="M13 3c1 4-2 5-2 8 0 1.7 1.3 3 3 3 2.2 0 4-1.8 4-4 2 2.1 3 4.2 3 6.1A9 9 0 1 1 6.3 9.2C7 12 8.7 13 10 13c-1.5-4 1-6.8 3-10Z" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
 function ColdIcon(props) { return <IconBase {...props}><path d="M12 2v20M4.2 6.5l15.6 11M19.8 6.5l-15.6 11M8.5 4.5 12 7l3.5-2.5M8.5 19.5 12 17l3.5 2.5M3.5 10 7 12l-3.5 2M20.5 10 17 12l3.5 2" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
 function StaffIcon(props) { return <IconBase {...props}><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6" strokeLinecap="round" strokeLinejoin="round" /></IconBase>; }
