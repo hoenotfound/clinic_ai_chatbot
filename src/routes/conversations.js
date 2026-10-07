@@ -84,6 +84,12 @@ function normalizedInboxVideoFilename(filename) {
     : `${safe.replace(/\.[^.]+$/, "") || "video"}.mp4`;
 }
 
+function inboxVideoNeedsContainerNormalization(file) {
+  const mimeType = String(file?.mimetype || "").toLowerCase();
+  const extension = inboxDocumentExtension(file?.originalname);
+  return mimeType !== "video/mp4" || extension !== "mp4";
+}
+
 function isAllowedInboxDocument(file) {
   const mimeType = String(file?.mimetype || "").toLowerCase();
   const extension = inboxDocumentExtension(file?.originalname);
@@ -2487,10 +2493,11 @@ router.post("/:contactId/video", handleVideoUpload, async (req, res) => {
       "videoPreparationMs",
       () => followUpVideoPreparation.prepareFollowUpVideoFile(req.file.path, {
         originalBytes: req.file.size,
-        // WhatsApp can reject an MP4 container when its internal video codec is
-        // HEVC/H.265. Normalize every staff-sent Inbox video to the known-safe
-        // H.264/AAC profile instead of trusting the filename or multipart MIME.
-        forceTranscode: true,
+        // MOV/M4V and generic multipart types must be remuxed/transcoded into
+        // MP4. For ordinary MP4 uploads, inspect the real codecs first: safe
+        // H.264/AAC can pass through unchanged, while HEVC/H.265 is normalized.
+        forceTranscode: inboxVideoNeedsContainerNormalization(req.file),
+        ensureWhatsAppCompatible: true,
       })
     );
     let mediaKey = null;
