@@ -694,6 +694,146 @@ async function sendAudioBuffer(contact, buffer, mimeType, filename = "voice.mp3"
   return result;
 }
 
+async function sendVideoByStoredKey(
+  contact,
+  videoKey,
+  caption,
+  filename = "service-video.mp4",
+  options = {}
+) {
+  const channel = channelOf(contact);
+  const guard = await freeformGuard(
+    contact,
+    options.purpose,
+    options.inboxMediaTimings
+  );
+  if (guard.blocked) return guard.blocked;
+  const sendOptions = optionsForPolicy(options, guard.policy);
+
+  let cancelled = await preSendCancelled(sendOptions);
+  if (cancelled) return cancelled;
+
+  let buffer;
+  try {
+    buffer = await mediaStorage.downloadMedia(videoKey, {
+      maxBytes: 16 * 1024 * 1024,
+    });
+  } catch (err) {
+    console.error(`Failed to load follow-up video ${videoKey}:`, err);
+    return temporaryMediaFailure(channel, err);
+  }
+
+  if (!buffer?.length) {
+    return {
+      success: false,
+      wamid: null,
+      externalMessageId: null,
+      error: "The configured follow-up video is missing. Please upload it again.",
+    };
+  }
+
+  if (channel === "whatsapp") {
+    const mediaId = await whatsapp.uploadMedia(
+      buffer,
+      "video/mp4",
+      filename || "service-video.mp4",
+      options
+    );
+    if (!mediaId) {
+      return {
+        success: false,
+        wamid: null,
+        externalMessageId: null,
+        error: "WhatsApp could not upload the follow-up video.",
+      };
+    }
+    cancelled = await preSendCancelled(sendOptions);
+    if (cancelled) return cancelled;
+    return whatsapp.sendVideoById(
+      contact.whatsapp_number,
+      mediaId,
+      caption,
+      {
+        replyToProviderMessageId: sendOptions.replyToProviderMessageId,
+        ...(options.requestId ? { requestId: options.requestId } : {}),
+      }
+    );
+  }
+
+  let captionSent = false;
+  let captionProviderMessageId = null;
+  if (caption?.trim() && options.skipCaption !== true) {
+    const captionResult = await meta.sendText(
+      channel,
+      recipientFor(contact),
+      caption.trim(),
+      sendOptions
+    );
+    if (!captionResult.success) return captionResult;
+    captionSent = true;
+    captionProviderMessageId = captionResult.externalMessageId || null;
+    await notifyProviderMessageId(sendOptions, captionResult, channel);
+  }
+
+  cancelled = await preSendCancelled(sendOptions);
+  if (cancelled) {
+    if (!captionSent) return cancelled;
+    return {
+      success: false,
+      wamid: null,
+      externalMessageId: null,
+      cancelled: false,
+      partialCaptionSent: true,
+      captionProviderMessageId,
+      error: "The conversation changed before the video could be sent.",
+    };
+  }
+
+  let result;
+  if (channel === "instagram") {
+    result = await withTemporaryMediaUrl(
+      contact,
+      buffer,
+      "video/mp4",
+      async (mediaUrl) => {
+        const lateCancellation = await preSendCancelled(sendOptions);
+        if (lateCancellation) return lateCancellation;
+        return metaAttachments.sendUrlAttachment(
+          channel,
+          recipientFor(contact),
+          "video",
+          mediaUrl,
+          sendOptions
+        );
+      }
+    );
+  } else {
+    result = await trackSocialOutbound(
+      channel,
+      metaAttachments.sendBuffer(
+        channel,
+        recipientFor(contact),
+        "video",
+        buffer,
+        "video/mp4",
+        filename || "service-video.mp4",
+        sendOptions
+      )
+    );
+  }
+
+  const tracked = recordAcceptedSocialOutbound(channel, result);
+  await notifyProviderMessageId(sendOptions, tracked, channel);
+  if (!tracked.success && captionSent) {
+    return {
+      ...tracked,
+      partialCaptionSent: true,
+      captionProviderMessageId,
+    };
+  }
+  return tracked;
+}
+
 async function downloadIncomingMedia(incoming) {
   const channel = channelOf(incoming);
   if (channel === "whatsapp") {
@@ -710,5 +850,6 @@ module.exports = {
   sendImageBuffer,
   sendStickerBuffer,
   sendAudioBuffer,
+  sendVideoByStoredKey,
   downloadIncomingMedia,
 };
