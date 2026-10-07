@@ -808,7 +808,18 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
 
   await page.getByRole("button", { name: "+ Add follow-up" }).click();
   await expect(page.getByRole("button", { name: "Close" })).toBeVisible();
+
+  const viewport = page.viewportSize();
+  if (viewport && viewport.width < 1280) {
+    const previewToggle = page.getByRole("button", {
+      name: "Toggle follow-up preview",
+    });
+    await expect(previewToggle).toBeVisible();
+    await expect(page.getByRole("button", { name: "Preview Follow-up 2" })).not.toBeVisible();
+    await previewToggle.click();
+  }
   await expect(page.getByRole("button", { name: "Preview Follow-up 2" })).toBeVisible();
+
   await page
     .getByPlaceholder("Write the next follow-up message.")
     .fill("Still deciding? I can help with the details.");
