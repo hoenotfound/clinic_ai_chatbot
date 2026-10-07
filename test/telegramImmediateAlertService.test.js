@@ -423,7 +423,7 @@ test("immediate queue runner sends claimed rows and marks them sent", async () =
   ]);
 });
 
-test("actionable sends hold the shared contact lock through final revalidation and sent state", async () => {
+test("actionable sends release the shared contact lock before waiting for Telegram", async () => {
   const steps = [];
   const lockQuery = async () => ({ rows: [] });
   const repository = {
@@ -447,8 +447,7 @@ test("actionable sends hold the shared contact lock through final revalidation a
       steps.push(["lock:end", contactId]);
       return result;
     },
-    async markSent(id, leaseToken, query) {
-      assert.equal(query, lockQuery);
+    async markSent(id, leaseToken) {
       steps.push(["markSent", id, leaseToken]);
       return {
         id,
@@ -487,8 +486,8 @@ test("actionable sends hold the shared contact lock through final revalidation a
     ["lock:start", 12],
     ["revalidate", 9],
     ["send"],
-    ["markSent", 9, "lease-9"],
     ["lock:end", 12],
+    ["markSent", 9, "lease-9"],
   ]);
 });
 
