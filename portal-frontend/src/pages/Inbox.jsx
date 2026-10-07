@@ -146,6 +146,7 @@ function replyPreviewText(message) {
   const mimeType = String(message.media_mime_type || "").toLowerCase();
   const content = String(message.content || "").trim();
   if (mimeType.startsWith("audio/")) return content || "Voice message";
+  if (mimeType.startsWith("video/")) return content || "Video";
   if (mimeType === "image/webp") return "Sticker";
   if (mimeType.startsWith("image/")) {
     const placeholder = /\[[^\]]+sent (?:a photo|a sticker)\]$/iu.test(content);
@@ -3209,6 +3210,7 @@ function MessageBubble({
     ? message.sent_by_username
     : "AI";
   const isAudio = message.media_mime_type?.startsWith("audio/");
+  const isVideo = message.media_mime_type?.startsWith("video/");
   const isSticker =
     String(message.media_mime_type || "").toLowerCase() === "image/webp" &&
     /(?:sent a sticker|forwarded sticker|sticker sent from)/i.test(
@@ -3223,8 +3225,12 @@ function MessageBubble({
     : message.has_media_attachment
     ? api.messageMediaUrl(contactId, message.id)
     : null;
-  const permanentImageSrc = message.media_url || (!isAudio ? storedMediaSrc : null);
-  const imageSrc = message.previewUrl && !storedImageLoaded ? message.previewUrl : permanentImageSrc || message.previewUrl;
+  const permanentImageSrc =
+    message.media_url || (!isAudio && !isVideo ? storedMediaSrc : null);
+  const imageSrc =
+    message.previewUrl && !storedImageLoaded
+      ? message.previewUrl
+      : permanentImageSrc || message.previewUrl;
   useEffect(() => () => {
     if (message.previewUrl && !message._optimistic) URL.revokeObjectURL(message.previewUrl);
   }, [message.previewUrl, message._optimistic]);
@@ -3408,6 +3414,14 @@ function MessageBubble({
         )}
         {isAudio && storedMediaSrc ? (
           <audio controls preload="none" src={storedMediaSrc} className="mb-1.5 max-w-full" style={{ height: "36px" }} />
+        ) : isVideo && storedMediaSrc ? (
+          <video
+            controls
+            preload="metadata"
+            playsInline
+            src={storedMediaSrc}
+            className="mb-1.5 max-h-72 w-full max-w-full rounded-lg bg-black"
+          />
         ) : (
           hasImage && (
             <div className="relative mb-1.5">
