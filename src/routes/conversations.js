@@ -2590,6 +2590,10 @@ router.post("/:contactId/video", handleVideoUpload, async (req, res) => {
           contactId: contact.id,
         })
       );
+      // The provider send below reads the durable R2 object. Drop our reference
+      // to the converted Buffer as soon as persistence completes so Node can
+      // reclaim up to ~16MB before the R2 read/provider upload allocates again.
+      preparedVideo.buffer = null;
 
       prepared = await timedMediaStage(
         timings,
