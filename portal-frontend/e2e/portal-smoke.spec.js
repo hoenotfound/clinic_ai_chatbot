@@ -439,9 +439,10 @@ async function mockPortalApi(
         body: JSON.stringify({
           key: "clients/test-clinic/messages/follow-up-config/follow-up.mp4",
           filename: "follow-up.mp4",
-          compressed: true,
-          originalBytes: 20 * 1024 * 1024,
-          storedBytes: 15 * 1024 * 1024,
+          compressed: false,
+          transcoded: false,
+          originalBytes: 5 * 1024 * 1024,
+          storedBytes: 5 * 1024 * 1024,
         }),
       });
     }
@@ -969,8 +970,9 @@ test("Automated follow-up switches cleanly between image and video attachments",
   });
 
   await expect(
-    page.getByText("Compressed 20.0MB to 15.0MB for WhatsApp.")
+    page.getByText(/MP4 only, up to 16MB/)
   ).toBeVisible();
+  await expect(page.getByText(/automatically compressed/i)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Remove image" })).toHaveCount(0);
   await expect(page.getByText("follow-up.mp4", { exact: true }).first()).toBeVisible();
 
