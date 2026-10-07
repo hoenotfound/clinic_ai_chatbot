@@ -1,8 +1,12 @@
+const crypto = require("node:crypto");
+const fs = require("node:fs/promises");
+const os = require("node:os");
 const express = require("express");
 const multer = require("multer");
 const configRepo = require("../db/configRepo");
 const promoImagesRepo = require("../db/promoImagesRepo");
 const mediaStorage = require("../services/mediaStorageService");
+const followUpVideoPreparation = require("../services/followUpVideoPreparationService");
 const usersRepo = require("../db/usersRepo");
 const leadDistributionRepo = require("../db/leadDistributionRepo");
 const followUpTranslationService = require("../services/followUpTranslationService");
@@ -44,11 +48,21 @@ function handleImageUpload(req, res, next) {
   });
 }
 
-const MAX_FOLLOW_UP_VIDEO_BYTES = 16 * 1024 * 1024;
+const MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES =
+  followUpVideoPreparation.MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES;
 const FOLLOW_UP_VIDEO_MIME_TYPES = new Set(["video/mp4"]);
 const followUpVideoUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_FOLLOW_UP_VIDEO_BYTES },
+  // Large source videos stay on ephemeral disk while FFmpeg works. Only the
+  // WhatsApp-safe <=16MB output is read into memory for the R2 upload.
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, os.tmpdir()),
+    filename: (req, file, cb) =>
+      cb(
+        null,
+        `follow-up-upload-${process.pid}-${crypto.randomUUID()}.mp4`
+      ),
+  }),
+  limits: { fileSize: MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES },
   fileFilter: (req, file, cb) => {
     if (!FOLLOW_UP_VIDEO_MIME_TYPES.has(file.mimetype)) {
       return cb(new Error("Only MP4 videos are allowed."));
@@ -60,9 +74,12 @@ const followUpVideoUpload = multer({
 function handleFollowUpVideoUpload(req, res, next) {
   followUpVideoUpload.single("video")(req, res, (err) => {
     if (!err) return next();
+    if (req.file?.path) {
+      fs.unlink(req.file.path).catch(() => {});
+    }
     if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({
-        error: "Video is too large. Please choose an MP4 file under 16MB.",
+        error: "Video is too large. Please choose an MP4 file under 50MB.",
       });
     }
     return res.status(400).json({
@@ -1143,14 +1160,18 @@ router.post(
         });
       }
 
+      const prepared = await followUpVideoPreparation.prepareFollowUpVideoFile(
+        req.file.path,
+        { originalBytes: req.file.size }
+      );
       const key = await mediaStorage.uploadMedia(
-        req.file.buffer,
-        req.file.mimetype,
+        prepared.buffer,
+        "video/mp4",
         { contactId: "follow-up-config" }
       );
-      const filename = String(req.file.originalname || "service-video.mp4")
+      const filename = String(req.file.originalname || "follow-up-video.mp4")
         .replace(/[\\/\0]/g, "")
-        .slice(0, 255) || "service-video.mp4";
+        .slice(0, 255) || "follow-up-video.mp4";
       mediaStorage.pruneStaleFollowUpConfigVideos({
         referencedKeys: [
           ...followUpVideoKeys(configRepo.getConfig().automatedFollowUp),
@@ -1159,12 +1180,35 @@ router.post(
       }).catch((err) => {
         console.error("Failed to prune stale follow-up videos after upload:", err);
       });
-      return res.status(201).json({ key, filename });
+      return res.status(201).json({
+        key,
+        filename,
+        compressed: prepared.compressed,
+        originalBytes: prepared.originalBytes,
+        storedBytes: prepared.storedBytes,
+      });
     } catch (err) {
+      const clientErrors = new Set([
+        "INVALID_FOLLOW_UP_VIDEO",
+        "FOLLOW_UP_VIDEO_TOO_LONG",
+        "FOLLOW_UP_VIDEO_STILL_TOO_LARGE",
+        "FOLLOW_UP_VIDEO_UPLOAD_TOO_LARGE",
+        "FOLLOW_UP_VIDEO_COMPRESSION_BUSY",
+      ]);
+      if (clientErrors.has(err?.code)) {
+        return res.status(400).json({ error: err.message });
+      }
       console.error("Failed to upload automated follow-up video:", err);
       return res.status(500).json({
-        error: "Something went wrong uploading this video.",
+        error:
+          err?.code === "FOLLOW_UP_VIDEO_COMPRESSION_TIMEOUT"
+            ? err.message
+            : "Something went wrong preparing this video.",
       });
+    } finally {
+      if (req.file?.path) {
+        await fs.unlink(req.file.path).catch(() => {});
+      }
     }
   }
 );
