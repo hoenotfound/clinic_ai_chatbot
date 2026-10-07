@@ -130,7 +130,29 @@ function bitratePlan(durationSeconds, {
   };
 }
 
-function probeDurationSeconds(
+function parseFfmpegMediaInfo(stderr) {
+  const text = String(stderr || "");
+  const videoMatch = text.match(/Stream #[^\n]*Video:\s*([A-Za-z0-9_]+)/i);
+  const audioMatch = text.match(/Stream #[^\n]*Audio:\s*([A-Za-z0-9_]+)/i);
+  return {
+    durationSeconds: parseFfmpegDuration(text),
+    videoCodec: videoMatch?.[1]?.toLowerCase() || null,
+    audioCodec: audioMatch?.[1]?.toLowerCase() || null,
+  };
+}
+
+function isWhatsAppSafeVideoInfo(info) {
+  const videoCodec = String(info?.videoCodec || "").toLowerCase();
+  const audioCodec = String(info?.audioCodec || "").toLowerCase();
+  const safeVideo = videoCodec === "h264" || videoCodec === "avc1";
+  const safeAudio =
+    !audioCodec ||
+    audioCodec === "aac" ||
+    audioCodec === "mp4a";
+  return safeVideo && safeAudio;
+}
+
+function probeVideoInfo(
   inputPath,
   {
     spawnFn = spawn,
@@ -140,7 +162,7 @@ function probeDurationSeconds(
   if (!ffmpegPath) {
     return Promise.reject(
       followUpVideoError(
-        "Video compression is unavailable on this server.",
+        "Video inspection is unavailable on this server.",
         "FOLLOW_UP_VIDEO_COMPRESSION_UNAVAILABLE"
       )
     );
@@ -175,9 +197,6 @@ function probeDurationSeconds(
         "The video took too long to inspect.",
         "INVALID_FOLLOW_UP_VIDEO"
       );
-      // Do not settle until the child actually exits. The caller holds the
-      // compression lease around probing + encoding, so releasing here would
-      // allow an overlapping FFmpeg process while SIGKILL is still pending.
       child.kill("SIGKILL");
     }, timeoutMs);
     timer.unref?.();
@@ -191,19 +210,23 @@ function probeDurationSeconds(
         settle(timeoutError);
         return;
       }
-      const duration = parseFfmpegDuration(stderr);
-      if (!duration) {
+      const info = parseFfmpegMediaInfo(stderr);
+      if (!info.durationSeconds) {
         settle(
           followUpVideoError(
-            "This MP4 could not be read. Please export it again as a standard MP4 video.",
+            "This video could not be read. Please export it again as a standard video file.",
             "INVALID_FOLLOW_UP_VIDEO"
           )
         );
         return;
       }
-      settle(null, duration);
+      settle(null, info);
     });
   });
+}
+
+function probeDurationSeconds(inputPath, options = {}) {
+  return probeVideoInfo(inputPath, options).then((info) => info.durationSeconds);
 }
 
 function runFfmpeg(args, {
@@ -325,10 +348,13 @@ async function prepareFollowUpVideoFile(
     fsApi = fs,
     queue = compressionQueue,
     probeDurationFn = probeDurationSeconds,
+    probeVideoInfoFn = probeVideoInfo,
     transcodeFn = transcodeWhatsAppVideo,
     maxUploadBytes = MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES,
     maxWhatsAppBytes = MAX_WHATSAPP_VIDEO_BYTES,
     targetBytes = TARGET_WHATSAPP_VIDEO_BYTES,
+    forceTranscode = false,
+    ensureWhatsAppCompatible = false,
   } = {}
 ) {
   const inputStat =
@@ -345,15 +371,37 @@ async function prepareFollowUpVideoFile(
   }
   if (sourceBytes > maxUploadBytes) {
     throw followUpVideoError(
-      "Video is too large. Please choose an MP4 file under 50MB.",
+      "Video is too large. Please choose a video file under 50MB.",
       "FOLLOW_UP_VIDEO_UPLOAD_TOO_LARGE"
     );
   }
 
-  if (sourceBytes <= maxWhatsAppBytes) {
+  const sourceWithinProviderLimit = sourceBytes <= maxWhatsAppBytes;
+  let sourceInfo = null;
+
+  if (
+    sourceWithinProviderLimit &&
+    !forceTranscode &&
+    ensureWhatsAppCompatible
+  ) {
+    sourceInfo = await probeVideoInfoFn(inputPath);
+    if (isWhatsAppSafeVideoInfo(sourceInfo)) {
+      return {
+        buffer: await fsApi.readFile(inputPath),
+        compressed: false,
+        transcoded: false,
+        durationSeconds: sourceInfo.durationSeconds,
+        sourceVideoCodec: sourceInfo.videoCodec,
+        sourceAudioCodec: sourceInfo.audioCodec,
+        originalBytes: sourceBytes,
+        storedBytes: sourceBytes,
+      };
+    }
+  } else if (sourceWithinProviderLimit && !forceTranscode) {
     return {
       buffer: await fsApi.readFile(inputPath),
       compressed: false,
+      transcoded: false,
       originalBytes: sourceBytes,
       storedBytes: sourceBytes,
     };
@@ -366,8 +414,16 @@ async function prepareFollowUpVideoFile(
   );
 
   try {
-    const durationSeconds = await probeDurationFn(inputPath);
-    let plan = bitratePlan(durationSeconds, { targetBytes });
+    const durationSeconds =
+      sourceInfo?.durationSeconds || await probeDurationFn(inputPath);
+    const effectiveTargetBytes =
+      sourceBytes <= maxWhatsAppBytes && forceTranscode
+        ? Math.min(
+            targetBytes,
+            Math.max(sourceBytes * 2, 4 * MIB)
+          )
+        : targetBytes;
+    let plan = bitratePlan(durationSeconds, { targetBytes: effectiveTargetBytes });
     await transcodeFn(inputPath, outputPath, plan);
 
     let outputStat = await fsApi.stat(outputPath);
@@ -377,7 +433,7 @@ async function prepareFollowUpVideoFile(
       // with extra headroom instead of asking staff to manually re-export.
       await fsApi.unlink(outputPath).catch(() => {});
       plan = bitratePlan(durationSeconds, {
-        targetBytes: Math.floor(targetBytes * 0.82),
+        targetBytes: Math.floor(effectiveTargetBytes * 0.82),
       });
       await transcodeFn(inputPath, outputPath, plan);
       outputStat = await fsApi.stat(outputPath);
@@ -392,7 +448,8 @@ async function prepareFollowUpVideoFile(
 
     return {
       buffer: await fsApi.readFile(outputPath),
-      compressed: true,
+      compressed: outputStat.size < sourceBytes,
+      transcoded: true,
       durationSeconds,
       originalBytes: sourceBytes,
       storedBytes: outputStat.size,
@@ -408,8 +465,11 @@ module.exports = {
   MAX_WHATSAPP_VIDEO_BYTES,
   TARGET_WHATSAPP_VIDEO_BYTES,
   parseFfmpegDuration,
+  parseFfmpegMediaInfo,
+  isWhatsAppSafeVideoInfo,
   bitratePlan,
   createCompressionQueue,
+  probeVideoInfo,
   probeDurationSeconds,
   runFfmpeg,
   transcodeWhatsAppVideo,

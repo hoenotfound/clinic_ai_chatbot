@@ -1162,7 +1162,13 @@ router.post(
 
       const prepared = await followUpVideoPreparation.prepareFollowUpVideoFile(
         req.file.path,
-        { originalBytes: req.file.size }
+        {
+          originalBytes: req.file.size,
+          // MP4 is only a container. Inspect the actual codec so an iPhone HEVC
+          // export is normalized once, while already-safe H.264/AAC keeps its
+          // original bytes and quality.
+          ensureWhatsAppCompatible: true,
+        }
       );
       const key = await mediaStorage.uploadMedia(
         prepared.buffer,
@@ -1184,6 +1190,7 @@ router.post(
         key,
         filename,
         compressed: prepared.compressed,
+        transcoded: prepared.transcoded === true,
         originalBytes: prepared.originalBytes,
         storedBytes: prepared.storedBytes,
       });
