@@ -270,7 +270,7 @@ function runFfmpeg(args, {
 
 function videoEncodeArgs(inputPath, plan, passPrefix) {
   const scale =
-    `scale=w=${plan.maxDimension}:h=${plan.maxDimension}:force_original_aspect_ratio=decrease:force_divisible_by=2`;
+    `scale=w=min(${plan.maxDimension}\\,iw):h=min(${plan.maxDimension}\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2`;
   return [
     "-hide_banner",
     "-loglevel", "error",
