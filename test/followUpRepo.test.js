@@ -99,6 +99,8 @@ test("later follow-up claims preserve spacing from the actual previous send", as
       "fixed",
       "after_reply",
       120,
+      null,
+      null,
     ]);
     return { rows: [] };
   };
@@ -319,6 +321,41 @@ test("discarding an unsent final claim only removes a still-unaccepted automated
   assert.equal(discarded.contact_id, 22);
 });
 
+
+test("social follow-up video companion persists a durable MP4 attachment", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /media_key/);
+    assert.match(sql, /media_mime_type/);
+    assert.match(sql, /is_automated_follow_up/);
+    assert.deepEqual(params, [
+      23,
+      "clients/neutro/messages/23/service-video.mp4",
+      "video/mp4",
+    ]);
+    return {
+      rows: [{
+        id: 131,
+        contact_id: 23,
+        has_media_attachment: true,
+        media_mime_type: "video/mp4",
+      }],
+    };
+  };
+
+  const saved = await followUpRepo.saveSocialVideoCompanion({
+    contactId: 23,
+    mediaKey: "clients/neutro/messages/23/service-video.mp4",
+    mediaMimeType: "video/mp4",
+  });
+
+  assert.equal(saved.id, 131);
+  assert.equal(saved.has_media_attachment, true);
+});
 
 test("discarding an unsent social follow-up image only removes an unaccepted companion", async (t) => {
   const originalQuery = pool.query;
