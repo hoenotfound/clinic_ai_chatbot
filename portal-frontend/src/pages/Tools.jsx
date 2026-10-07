@@ -1500,12 +1500,6 @@ function followUpTimingSummary(step) {
     : formatDelay(Number(step?.delayMinutes || 0));
 }
 
-function followUpMediaSummary(step) {
-  if (step?.videoKey) return "Video";
-  if (step?.imageUrl) return "Image";
-  return "No media";
-}
-
 function StepSummaryChips({ step }) {
   const serviceCount = Array.isArray(step?.serviceOverrides)
     ? step.serviceOverrides.length
@@ -1917,7 +1911,7 @@ function FollowUpTool({
       )}
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.3fr)_minmax(19rem,0.7fr)]">
-        <div className="space-y-5">
+        <div className="order-2 space-y-5 xl:order-1">
           <Card>
             <SectionHeading
               number="1"
@@ -2357,7 +2351,7 @@ function FollowUpTool({
           </Card>
         </div>
 
-        <aside className="xl:sticky xl:top-6 xl:self-start">
+        <aside className="order-1 xl:order-2 xl:sticky xl:top-6 xl:self-start">
           <button
             type="button"
             aria-label="Toggle follow-up preview"
