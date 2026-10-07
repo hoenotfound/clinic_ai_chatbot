@@ -43,6 +43,7 @@ test(
           media_url TEXT,
           media_key TEXT,
           media_mime_type TEXT,
+          media_filename TEXT,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           delivery_status TEXT,
           delivery_error TEXT,
