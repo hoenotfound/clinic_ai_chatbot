@@ -2068,7 +2068,7 @@ function FollowUpTool({
                   </div>
                   <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
                     {translationsNeedRefresh
-                      ? "Language versions refresh automatically when you save. Manual edits made after the latest message change are kept."
+                      ? "Language versions will refresh automatically when you save. Manual edits made after the latest message change are kept."
                       : `${translationReadyCount} language versions are ready and matched to the customer automatically.`}
                   </p>
                 </div>
@@ -2481,7 +2481,7 @@ function FollowUpTool({
             <h2 className="font-display text-sm font-bold">Before it sends</h2>
             <ul className="mt-4 space-y-3">
               <Rule text="Any customer reply stops all remaining follow-ups in that sequence." />
-              <Rule text="WhatsApp, Messenger, and Instagram only send while the permitted reply window is open." />
+              <Rule text="WhatsApp, Messenger, and Instagram follow-ups only send while the permitted reply window is open." />
               <Rule text="A failed or unconfirmed follow-up blocks later steps for staff review." />
             </ul>
             <details className="group mt-3 border-t border-[var(--color-border)] pt-3">
