@@ -37,7 +37,11 @@ test("Inbox backend accepts iPhone video containers and normalizes every upload 
   );
   assert.match(
     conversationsSource,
-    /forceTranscode: true/
+    /forceTranscode: inboxVideoNeedsContainerNormalization\(req\.file\)/
+  );
+  assert.match(
+    conversationsSource,
+    /ensureWhatsAppCompatible: true/
   );
   assert.match(
     conversationsSource,
@@ -49,7 +53,7 @@ test("Inbox backend accepts iPhone video containers and normalizes every upload 
 test("configured follow-up videos are normalized before reuse", () => {
   assert.match(
     configSource,
-    /prepareFollowUpVideoFile\([\s\S]*forceTranscode: true/
+    /prepareFollowUpVideoFile\([\s\S]*ensureWhatsAppCompatible: true/
   );
   assert.match(
     configSource,
