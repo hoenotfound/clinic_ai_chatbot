@@ -131,6 +131,158 @@ test("sends and records one claimed automated follow-up", async () => {
 });
 
 
+test("targeted message falls back to the general video when the service has no media", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.videoKey =
+    "clients/neutro/messages/follow-up-config/general.mp4";
+  clinicConfig.automatedFollowUp.videoFilename = "general.mp4";
+  clinicConfig.automatedFollowUp.serviceOverrides = [
+    {
+      serviceName: "Pelvic Care",
+      message: "Pelvic Care follow-up",
+      translations: {
+        en: "Pelvic Care follow-up",
+        ms: "Susulan Pelvic Care",
+        zh: "骨盆调理跟进",
+      },
+      imageUrl: "",
+      videoKey: "",
+      videoFilename: "",
+    },
+  ];
+
+  let claimInput = null;
+  let videoSend = null;
+  mediaStorage.copyStoredMediaToMessage = async (key, mimeType, options) => {
+    assert.equal(
+      key,
+      "clients/neutro/messages/follow-up-config/general.mp4"
+    );
+    assert.equal(mimeType, "video/mp4");
+    assert.deepEqual(options, { contactId: 81 });
+    return "clients/neutro/messages/81/general.mp4";
+  };
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 81,
+      channel: "whatsapp",
+      whatsapp_number: "60120000081",
+      trigger_message_id: 80,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["I want Pelvic Care"],
+      treatment_interest: "Pelvic Care",
+      trigger_message_content: "Here are the Pelvic Care details",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 82, contact_id: 81, delivery_status: null };
+  };
+  channelMessaging.sendVideoByStoredKey = async (
+    contact,
+    key,
+    caption,
+    filename
+  ) => {
+    videoSend = { contact, key, caption, filename };
+    return { success: true, wamid: "wamid-general-video-82" };
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 81,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(claimInput.content, "Pelvic Care follow-up");
+  assert.equal(claimInput.targetedService, "Pelvic Care");
+  assert.equal(claimInput.mediaKey, "clients/neutro/messages/81/general.mp4");
+  assert.equal(claimInput.mediaMimeType, "video/mp4");
+  assert.equal(claimInput.mediaUrl, null);
+  assert.deepEqual(videoSend, {
+    contact: {
+      id: 81,
+      channel: "whatsapp",
+      whatsapp_number: "60120000081",
+      channel_user_id: undefined,
+    },
+    key: "clients/neutro/messages/81/general.mp4",
+    caption: "Pelvic Care follow-up",
+    filename: "general.mp4",
+  });
+});
+
+test("service image overrides a general video for the matched service", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.videoKey =
+    "clients/neutro/messages/follow-up-config/general.mp4";
+  clinicConfig.automatedFollowUp.videoFilename = "general.mp4";
+  clinicConfig.automatedFollowUp.serviceOverrides = [
+    {
+      serviceName: "Pelvic Care",
+      message: "See this Pelvic Care result.",
+      translations: {
+        en: "See this Pelvic Care result.",
+        ms: "Lihat hasil Pelvic Care ini.",
+        zh: "看看这个骨盆调理案例。",
+      },
+      imageUrl: "https://example.com/pelvic-care.jpg",
+      videoKey: "",
+      videoFilename: "",
+    },
+  ];
+
+  let copyCalls = 0;
+  let imageSend = null;
+  let claimInput = null;
+  mediaStorage.copyStoredMediaToMessage = async () => {
+    copyCalls += 1;
+    throw new Error("general video must not be copied when service image wins");
+  };
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 83,
+      channel: "whatsapp",
+      whatsapp_number: "60120000083",
+      trigger_message_id: 82,
+      next_follow_up_step: 1,
+      recent_inbound_messages: ["Pelvic Care please"],
+      treatment_interest: "Pelvic Care",
+      trigger_message_content: "Pelvic Care details",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 84, contact_id: 83, delivery_status: null };
+  };
+  whatsapp.sendImage = async (number, imageUrl, caption) => {
+    imageSend = { number, imageUrl, caption };
+    return { success: true, wamid: "wamid-service-image-84" };
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 83,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(copyCalls, 0);
+  assert.equal(claimInput.mediaKey, null);
+  assert.equal(claimInput.mediaMimeType, null);
+  assert.equal(claimInput.mediaUrl, "https://example.com/pelvic-care.jpg");
+  assert.deepEqual(imageSend, {
+    number: "60120000083",
+    imageUrl: "https://example.com/pelvic-care.jpg",
+    caption: "See this Pelvic Care result.",
+  });
+});
+
 test("pre-expiry follow-up sends the video mapped to the customer's current service", async () => {
   enableTool();
   clinicConfig.automatedFollowUp.delayMinutes = 1320;
