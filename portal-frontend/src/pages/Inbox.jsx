@@ -61,8 +61,8 @@ const inboxRequestId = () => globalThis.crypto?.randomUUID?.() || `image-${Date.
 const JPEG_INSPECTION_BYTES = 1024 * 1024;
 const MAX_VOICE_BYTES = 16 * 1024 * 1024;
 const MAX_VOICE_SECONDS = 120;
-const MAX_INBOX_VIDEO_BYTES = 50 * 1024 * 1024;
-const INBOX_VIDEO_EXTENSIONS = new Set(["mp4", "mov", "m4v"]);
+const MAX_INBOX_VIDEO_BYTES = 16 * 1024 * 1024;
+const INBOX_VIDEO_EXTENSIONS = new Set(["mp4"]);
 const MAX_INBOX_DOCUMENT_BYTES = 16 * 1024 * 1024;
 const INBOX_DOCUMENT_EXTENSIONS = new Set(["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv"]);
 const VOICE_MIME_TYPES = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"];
@@ -1252,13 +1252,6 @@ export default function Inbox() {
         showToast(`${label} send could not be confirmed. Check the customer chat before retrying to avoid duplicates.`, "warning");
       } else if (result?.delivered === false) {
         showToast(`${label} was saved but delivery failed. Please try resending.`, "warning");
-      } else if (kind === "video" && result?.transcoded === true) {
-        showToast(
-          result?.compressed === true
-            ? "Video compressed, optimized, and sent."
-            : "Video optimized and sent.",
-          "info"
-        );
       }
     } catch (err) {
       console.error(`Failed to send ${kind} attachment:`, err);
@@ -2365,11 +2358,11 @@ function ThreadView({
       INBOX_VIDEO_EXTENSIONS.has(extension);
     if (isVideo) {
       if (!INBOX_VIDEO_EXTENSIONS.has(extension)) {
-        onToast("Please choose an MP4, MOV, or M4V video.", "error");
+        onToast("Please choose an MP4 video. WhatsApp requires H.264 video with AAC audio.", "error");
         return;
       }
       if (file.size > MAX_INBOX_VIDEO_BYTES) {
-        onToast("That video is larger than 50MB. Please choose a smaller video.", "error");
+        onToast("That video is larger than 16MB. Please compress or export it before uploading.", "error");
         return;
       }
       clearImage();
@@ -2382,7 +2375,7 @@ function ThreadView({
     }
 
     if (!INBOX_DOCUMENT_EXTENSIONS.has(extension)) {
-      onToast("Please choose an image, MP4/MOV/M4V video, PDF, Word, Excel, PowerPoint, TXT, or CSV file.", "error");
+      onToast("Please choose an image, MP4 video, PDF, Word, Excel, PowerPoint, TXT, or CSV file.", "error");
       return;
     }
     if ((contact?.channel || "whatsapp") !== "whatsapp") {
@@ -3174,7 +3167,7 @@ function ThreadView({
                 <p className="truncate text-xs font-semibold">{attachmentFile.name}</p>
                 <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
                   {attachmentKind === "video"
-                    ? (attachmentFile.size > 16 * 1024 * 1024 ? "Video · Will compress automatically" : "Video · Caption optional")
+                    ? "Video · H.264/AAC MP4 · Max 16MB"
                     : "Document · Caption optional"}
                 </p>
               </div>
@@ -3183,7 +3176,7 @@ function ThreadView({
           )}
           <div className={`relative ${attachmentMenuOpen ? "z-[60]" : ""}`}>
             <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFilePicked} className="hidden" />
-            <input ref={videoInputRef} type="file" accept="video/*,.mp4,.mov,.m4v" onChange={handleFilePicked} className="hidden" />
+            <input ref={videoInputRef} type="file" accept=".mp4,video/*" onChange={handleFilePicked} className="hidden" />
             <input ref={documentInputRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" onChange={handleFilePicked} className="hidden" />
 
             {isStartingRecording || isRecording || voiceBlob ? (
