@@ -1062,11 +1062,7 @@ async function sendCandidate(candidate) {
   let aiLeaseToken = null;
   const needsAiWork =
     Boolean(promotionPackageSelection) ||
-    (
-      step.messageMode === "ai" &&
-      !promotionFollowUp &&
-      !targetedMediaService
-    );
+    (step.messageMode === "ai" && !promotionFollowUp);
 
   if (needsAiWork) {
     aiLeaseToken = randomUUID();
@@ -1154,15 +1150,11 @@ async function sendCandidate(candidate) {
       }
     }
 
-    // Configured promotion copy remains exact. A service-specific media
-    // attachment also keeps its configured targeted caption exact, because the
-    // message and testimonial/video are authored as one unit. AI personalization
-    // is reserved for the general fallback when no targeted media was selected.
-    if (
-      step.messageMode === "ai" &&
-      !promotionFollowUp &&
-      !targetedMediaService
-    ) {
+    // Configured promotion copy remains exact. AI still reviews an AI-mode
+    // targeted-media follow-up so skip/human-review safety decisions remain
+    // active, but a send decision must not rewrite the configured caption that
+    // was authored together with the service image/video.
+    if (step.messageMode === "ai" && !promotionFollowUp) {
       if (!aiContext) {
         followUpMessageMode = "ai_fallback";
       } else {
@@ -1247,6 +1239,11 @@ async function sendCandidate(candidate) {
               }
               return;
             }
+          } else if (targetedMediaService) {
+            // Keep the exact configured caption paired with the selected
+            // service media. The model has approved sending, but its generated
+            // prose is intentionally ignored for this targeted attachment.
+            followUpMessageMode = "fixed";
           } else {
             followUpMessage = aiDecision.message;
             followUpMessageMode = "ai_personalized";
