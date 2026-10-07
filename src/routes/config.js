@@ -105,8 +105,10 @@ function followUpVideoKeys(value) {
   ];
 }
 
-async function cleanupRemovedFollowUpVideos(previousValue, nextValue) {
-  const previousKeys = new Set(followUpVideoKeys(previousValue));
+async function cleanupRemovedFollowUpVideos(previousVideoKeys, nextValue) {
+  const previousKeys = new Set(
+    Array.isArray(previousVideoKeys) ? previousVideoKeys : []
+  );
   const nextKeys = new Set(followUpVideoKeys(nextValue));
   const removed = [...previousKeys].filter((key) => !nextKeys.has(key));
 
@@ -1221,7 +1223,9 @@ router.get("/", async (req, res) => {
 router.patch("/", async (req, res) => {
   try {
     const currentConfig = configRepo.getConfig();
-    const previousFollowUp = currentConfig.automatedFollowUp;
+    const previousFollowUpVideoKeys = followUpVideoKeys(
+      currentConfig.automatedFollowUp
+    );
     const prepared = prepareConfigUpdatePayload(req.body || {}, currentConfig);
     if (!prepared.ok) {
       return res.status(prepared.status || 400).json({
@@ -1234,7 +1238,7 @@ router.patch("/", async (req, res) => {
     const updated = await configRepo.updateConfig(prepared.updates);
     if (Object.prototype.hasOwnProperty.call(prepared.updates, "automatedFollowUp")) {
       await cleanupRemovedFollowUpVideos(
-        previousFollowUp,
+        previousFollowUpVideoKeys,
         updated.automatedFollowUp
       );
     }
