@@ -1467,11 +1467,6 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
       });
     }
 
-    // Historical iPhone MP4s may already be stored with HEVC/H.265. If Meta
-    // explicitly rejected the codec, repair the durable attachment once so the
-    // visible Retry button sends the normalized bytes instead of failing again.
-    await normalizeStoredWhatsAppVideoForRetry(contact, message);
-
     const isManualStaffRetry =
       Boolean(message.sent_by_username) &&
       message.is_automated_follow_up !== true &&
@@ -1612,6 +1607,11 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
             ? whatsappPolicy.manualStaffPurpose(contact)
             : "service";
       if (!(await requireFreeformPolicy(contact, res, retryPurpose))) return;
+
+      // Historical iPhone MP4s may already be stored with HEVC/H.265. Only
+      // repair the attachment after policy says a retry is actually allowed,
+      // so a closed reply window does not spend FFmpeg/R2 work unnecessarily.
+      await normalizeStoredWhatsAppVideoForRetry(contact, message);
 
       performRetrySend = (activeContact) =>
         sendStoredMessage(activeContact, message, {
