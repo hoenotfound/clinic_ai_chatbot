@@ -245,15 +245,9 @@ function textContainsServiceTerm(text, term) {
   return normalizedText.includes(term);
 }
 
-function configuredServicesMentionedInConversation(candidate) {
-  const transcript = [
-    ...(candidate.recent_inbound_messages || []),
-    candidate.trigger_message_content,
-  ]
-    .filter((value) => typeof value === "string" && value.trim())
-    .join("\n");
-
-  if (!transcript) return [];
+function configuredServicesMentionedInText(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) return [];
 
   const matched = new Map();
   for (const service of Array.isArray(clinicConfig.services)
@@ -266,13 +260,49 @@ function configuredServicesMentionedInConversation(candidate) {
 
     if (
       serviceTerms(serviceName).some((term) =>
-        textContainsServiceTerm(transcript, term)
+        textContainsServiceTerm(text, term)
       )
     ) {
       matched.set(normalized, serviceName);
     }
   }
   return [...matched.values()];
+}
+
+function followUpServiceContext(candidate) {
+  const customerMessages = Array.isArray(candidate.recent_service_messages)
+    ? candidate.recent_service_messages
+    : Array.isArray(candidate.recent_inbound_messages)
+      ? candidate.recent_inbound_messages
+      : [];
+
+  // Customer wording is authoritative. Walk newest -> oldest so a generic
+  // "price?" can inherit the service the customer named earlier, while an
+  // explicit comparison in the newest relevant message still fails closed.
+  for (const message of customerMessages) {
+    const matches = configuredServicesMentionedInText(message);
+    if (matches.length === 1) {
+      return { serviceName: matches[0], mentioned: true };
+    }
+    if (matches.length > 1) {
+      return { serviceName: null, mentioned: true };
+    }
+  }
+
+  // Outbound content is only a fallback. Package captions often list included
+  // services such as pelvis + uterus + moxibustion, so never guess when the
+  // anchor itself names more than one configured service.
+  const anchorMatches = configuredServicesMentionedInText(
+    candidate.trigger_message_content
+  );
+  if (anchorMatches.length === 1) {
+    return { serviceName: anchorMatches[0], mentioned: true };
+  }
+  if (anchorMatches.length > 1) {
+    return { serviceName: null, mentioned: true };
+  }
+
+  return { serviceName: null, mentioned: false };
 }
 
 function looksLikePromotionEnquiry(value) {
@@ -527,8 +557,7 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
     promotionPackageSelection = promotionFollowUp?.packageSelection || null;
   }
 
-  const conversationServices =
-    configuredServicesMentionedInConversation(candidate);
+  const currentService = followUpServiceContext(candidate);
   const overrideForService = (serviceName) =>
     step.serviceOverrides.find(
       (item) =>
@@ -543,27 +572,26 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
       )
     : null;
 
-  // The current exchange is authoritative across ALL configured services, not
-  // just services that happen to have a custom message on this step.
-  // - one current service + override -> targeted copy
-  // - one current service without override -> general copy
-  // - multiple current services -> general copy
-  // - no current service -> CRM interest may supply an exact override
-  const targeted =
-    conversationServices.length === 1
-      ? overrideForService(conversationServices[0])
-      : conversationServices.length > 1
-        ? null
-        : exactInterest || null;
+  // The newest customer-named service wins, even when the outbound package
+  // caption lists several included services. Ambiguous customer or anchor
+  // wording fails closed to the general step. CRM interest is only a fallback
+  // when the current conversation does not name any configured service.
+  const targeted = currentService.mentioned
+    ? currentService.serviceName
+      ? overrideForService(currentService.serviceName)
+      : null
+    : exactInterest || null;
   const source = targeted || step;
   // Service-specific media overrides the general attachment only when that
   // service actually has media configured. Otherwise keep the general media
   // as the safe fallback, preserving the existing general-image behavior.
-  const mediaSource =
-    targeted && (targeted.imageUrl || targeted.videoKey) ? targeted : step;
+  const targetedMedia =
+    targeted && (targeted.imageUrl || targeted.videoKey) ? targeted : null;
+  const mediaSource = targetedMedia || step;
   return {
     message: source.translations[language] || source.message,
     targetedService: targeted?.serviceName || null,
+    targetedMediaService: targetedMedia?.serviceName || null,
     selectedImageUrl: mediaSource.imageUrl || "",
     selectedVideoKey: mediaSource.videoKey || "",
     selectedVideoFilename: mediaSource.videoFilename || "",
@@ -965,6 +993,7 @@ async function sendCandidate(candidate) {
   );
   let followUpMessage = fallbackSelection.message;
   let targetedService = fallbackSelection.targetedService;
+  let targetedMediaService = fallbackSelection.targetedMediaService || null;
   let selectedImageUrl = fallbackSelection.selectedImageUrl || "";
   let selectedVideoKey = fallbackSelection.selectedVideoKey || "";
   let selectedVideoFilename =
@@ -1236,7 +1265,10 @@ async function sendCandidate(candidate) {
       mediaKey: durableVideoKey,
       mediaMimeType: durableVideoKey ? "video/mp4" : null,
       stepIndex,
-      targetedService: followUpMessageMode === "ai_personalized" ? null : targetedService,
+      targetedService:
+        followUpMessageMode === "ai_personalized"
+          ? targetedMediaService
+          : targetedService,
       messageMode: followUpMessageMode,
       delayMinutes: step.delayMinutes,
       previousDelayMinutes:
