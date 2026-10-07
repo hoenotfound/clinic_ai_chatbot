@@ -183,8 +183,8 @@ test("video turns remain text-only and explicitly opaque in AI context", async (
         contact_id: 7,
         role: "user",
         content: "🎥 这个是我走路的时候",
-        has_media_attachment: true,
-        media_mime_type: "video/mp4",
+        has_media_attachment: false,
+        media_mime_type: null,
         delivery_status: null,
       },
     ],
@@ -208,6 +208,11 @@ test("video turns remain text-only and explicitly opaque in AI context", async (
   assert.match(history[0].content, /Do not infer what it shows or sounds like/);
   assert.match(history[1].content, /AI cannot inspect the video's visual or audio content/);
   assert.match(history[1].content, /Customer caption: 这个是我走路的时候/);
+  assert.doesNotMatch(
+    history[1].content,
+    /^🎥 这个是我走路的时候$/,
+    "even a failed media download must not make the caption look like AI-viewable video content"
+  );
   assert.deepEqual(
     mediaReads,
     [],
