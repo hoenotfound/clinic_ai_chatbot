@@ -39,7 +39,7 @@ test("captionless videos never ask the AI to interpret media content", () => {
 });
 
 test("Inbox uses authenticated stored-media streaming for received videos", () => {
-  assert.match(inboxSource, /const isVideo = message\.media_mime_type\?\.startsWith\("video\/"\)/);
+  assert.match(inboxSource, /const isVideo = mediaMimeType\.startsWith\("video\/"\)/);
   assert.match(inboxSource, /api\.messageMediaUrl\(contactId, message\.id\)/);
-  assert.match(inboxSource, /isVideo && storedMediaSrc[\s\S]*<video[\s\S]*controls[\s\S]*playsInline/);
+  assert.match(inboxSource, /isVideo[\s\S]*videoSrc[\s\S]*<video[\s\S]*controls[\s\S]*playsInline/);
 });
