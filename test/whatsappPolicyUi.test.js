@@ -323,7 +323,7 @@ test("manual WhatsApp templates use Staff Assist without automatic takeover", ()
   );
 });
 
-test("manual failed-message retry participates in Staff Assist race protection", () => {
+test("manual failed-message retry releases the contact alert lock before provider delivery", () => {
   const source = fs.readFileSync(
     path.join(__dirname, "../src/routes/conversations.js"),
     "utf8"
@@ -333,12 +333,21 @@ test("manual failed-message retry participates in Staff Assist race protection",
     source.indexOf('router.post("/:contactId/messages",')
   );
 
-  assert.match(retryRoute, /isManualStaffRetry/);
-  assert.match(
-    retryRoute,
-    /telegramImmediateAlertRepo\.withContactAlertLock\([\s\S]*prepareStaffSend\([\s\S]*setDeliveryStatusById\([\s\S]*"unknown"/
+  const firstLockIndex = retryRoute.indexOf("telegramImmediateAlertRepo.withContactAlertLock");
+  const prepareIndex = retryRoute.indexOf("prepareStaffSend");
+  const unknownIndex = retryRoute.indexOf("setDeliveryStatusById");
+  const providerIndex = retryRoute.indexOf("const retried = await executeRetry(preparedContact);");
+  const finalizeLockIndex = retryRoute.indexOf(
+    "telegramImmediateAlertRepo.withContactAlertLock",
+    firstLockIndex + 1
   );
-  assert.match(retryRoute, /finalizeStaffSendState/);
+
+  assert.match(retryRoute, /isManualStaffRetry/);
+  assert.ok(firstLockIndex >= 0 && prepareIndex > firstLockIndex);
+  assert.ok(unknownIndex > prepareIndex && providerIndex > unknownIndex);
+  assert.ok(finalizeLockIndex > providerIndex);
+  assert.match(retryRoute, /return currentContact;[\s\S]*const retried = await executeRetry\(preparedContact\);/);
+  assert.match(retryRoute, /Failed to finalize Staff Assist after retry/);
   assert.match(retryRoute, /requireStaffMode: activeContact\.mode === "human"/);
   assert.match(retryRoute, /markLeadContacted\(sendContact\.id/);
 });
