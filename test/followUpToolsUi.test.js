@@ -28,7 +28,9 @@ test("follow-up video preview stays private and validates stored keys", () => {
 
   assert.match(source, /router\.get\("\/automated-follow-up\/video-preview"/);
   assert.match(source, /!key \|\| !isFollowUpVideoKey\(key\)/);
-  assert.match(source, /mediaStorage\.downloadMedia\(key/);
+  assert.match(source, /mediaStorage\.createPresignedGetUrl\(key/);
+  assert.match(source, /expiresSeconds: 5 \* 60/);
   assert.match(source, /Cache-Control", "private, no-store"/);
-  assert.match(source, /Content-Disposition", "inline"/);
+  assert.match(source, /Referrer-Policy", "no-referrer"/);
+  assert.match(source, /res\.redirect\(302, url\)/);
 });
