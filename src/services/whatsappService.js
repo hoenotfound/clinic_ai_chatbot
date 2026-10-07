@@ -659,6 +659,14 @@ function parseIncomingMessages(body) {
               mediaType: "image",
               unsupportedType: null,
             });
+          } else if (message.type === "video") {
+            parsed.push({
+              ...base,
+              text: message.video?.caption || null,
+              mediaId: message.video?.id || null,
+              mediaType: "video",
+              unsupportedType: null,
+            });
           } else if (message.type === "sticker") {
             // Stickers are genuine customer messages, but they are not treated
             // as photos for AI vision. The media is downloaded later for Inbox
