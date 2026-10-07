@@ -25,7 +25,7 @@ test("Inbox video picker does not restrict iOS Files to exact video/mp4 MIME", (
   );
 });
 
-test("Inbox backend accepts iPhone video containers and normalizes non-MP4 uploads", () => {
+test("Inbox backend accepts iPhone video containers and normalizes every upload for codec safety", () => {
   assert.match(
     conversationsSource,
     /INBOX_VIDEO_EXTENSIONS = new Set\(\["mp4", "mov", "m4v"\]\)/
@@ -36,7 +36,7 @@ test("Inbox backend accepts iPhone video containers and normalizes non-MP4 uploa
   );
   assert.match(
     conversationsSource,
-    /forceTranscode: inboxVideoNeedsTranscode\(req\.file\)/
+    /forceTranscode: true/
   );
   assert.match(
     conversationsSource,
