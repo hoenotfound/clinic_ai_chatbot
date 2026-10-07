@@ -429,6 +429,20 @@ async function mockPortalApi(
       });
     }
 
+    if (
+      path === "/api/config/automated-follow-up/video" &&
+      method === "POST"
+    ) {
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          key: "clients/test-clinic/messages/follow-up-config/follow-up.mp4",
+          filename: "follow-up.mp4",
+        }),
+      });
+    }
+
     if (path === "/api/config") {
       const configResponse = businessConfig || {
           automatedFollowUp: {
@@ -799,7 +813,7 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
     .last()
     .fill("For Pelvis 骨盆调理, I can help you understand which concern this suits.");
 
-  const stepImageInput = page.getByLabel("Follow-up 2 graphic upload");
+  const stepImageInput = page.getByLabel("Follow-up 2 image upload");
   await stepImageInput.setInputFiles({
     name: "follow-up.jpg",
     mimeType: "image/jpeg",
@@ -836,6 +850,115 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
   expect(
     savedPayload.automatedFollowUp.additionalSteps[0].translations.zh
   ).toBe("这是我手动调整的第二次跟进。");
+
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test("Automated follow-up switches cleanly between image and video attachments", async ({ page }) => {
+  let savedPayload = null;
+  await mockPortalApi(page, {
+    loggedIn: true,
+    businessConfig: {
+      businessType: "tcm_clinic",
+      businessName: "Test TCM",
+      clinicName: "Test TCM",
+      services: [
+        { name: "Pelvis 骨盆调理", description: "", priceRange: "", duration: "" },
+      ],
+      serviceAliases: [],
+      automatedFollowUp: {
+        enabled: false,
+        delayMinutes: 120,
+        triggerMode: "all",
+        message: "Just checking in.",
+        translations: {
+          en: "Just checking in.",
+          ms: "Sekadar ingin membuat susulan.",
+          zh: "想跟进一下。",
+        },
+        imageUrl: "",
+        videoKey: "",
+        videoFilename: "",
+        serviceOverrides: [],
+        additionalSteps: [],
+        activatedAt: null,
+      },
+      commentAutomation: {
+        enabled: false,
+        facebookEnabled: false,
+        instagramEnabled: false,
+        publicReplyEnabled: false,
+        privateReplyEnabled: false,
+        publicReplyStyle: "ai",
+        fixedPublicReply: "",
+        skipEmojiOnly: true,
+        skipNestedReplies: true,
+        activatedAt: null,
+      },
+      leadScoring: {
+        enabled: false,
+        inactivityMinutes: 10,
+        maxConversationMinutes: 60,
+        maxMessages: 40,
+        activatedAt: null,
+      },
+      leadDistribution: {
+        enabled: false,
+        mode: "round_robin",
+      },
+    },
+    onConfigUpdate: (payload) => {
+      savedPayload = payload;
+    },
+  });
+
+  await page.goto("/tools");
+  await expect(page.getByRole("heading", { name: "Automated follow-up" })).toBeVisible();
+
+  const imageInput = page.getByLabel("Follow-up 1 image upload");
+  const videoInput = page.getByLabel("Follow-up 1 video upload");
+
+  await imageInput.setInputFiles({
+    name: "follow-up.jpg",
+    mimeType: "image/jpeg",
+    buffer: Buffer.from("fake-jpeg"),
+  });
+  await expect(page.getByRole("button", { name: "Remove image" })).toBeVisible();
+
+  await videoInput.setInputFiles({
+    name: "follow-up.mp4",
+    mimeType: "video/mp4",
+    buffer: Buffer.from("fake-mp4"),
+  });
+
+  await expect(page.getByRole("button", { name: "Remove image" })).toHaveCount(0);
+  await expect(page.getByText("follow-up.mp4", { exact: true }).first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => savedPayload).not.toBeNull();
+  expect(savedPayload.automatedFollowUp).toMatchObject({
+    imageUrl: "",
+    videoKey: "clients/test-clinic/messages/follow-up-config/follow-up.mp4",
+    videoFilename: "follow-up.mp4",
+  });
+
+  savedPayload = null;
+  await imageInput.setInputFiles({
+    name: "follow-up-replacement.jpg",
+    mimeType: "image/jpeg",
+    buffer: Buffer.from("fake-jpeg-2"),
+  });
+
+  await expect(page.getByRole("button", { name: "Remove image" })).toBeVisible();
+  await expect(page.getByText("follow-up.mp4", { exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(() => savedPayload).not.toBeNull();
+  expect(savedPayload.automatedFollowUp).toMatchObject({
+    imageUrl: "https://cdn.example.test/follow-up-step.jpg",
+    videoKey: "",
+    videoFilename: "",
+  });
 
   await expectNoHorizontalPageOverflow(page);
 });
