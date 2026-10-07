@@ -1252,8 +1252,13 @@ export default function Inbox() {
         showToast(`${label} send could not be confirmed. Check the customer chat before retrying to avoid duplicates.`, "warning");
       } else if (result?.delivered === false) {
         showToast(`${label} was saved but delivery failed. Please try resending.`, "warning");
-      } else if (kind === "video" && result?.compressed === true) {
-        showToast("Video compressed and sent.", "info");
+      } else if (kind === "video" && result?.transcoded === true) {
+        showToast(
+          result?.compressed === true
+            ? "Video compressed, optimized, and sent."
+            : "Video optimized and sent.",
+          "info"
+        );
       }
     } catch (err) {
       console.error(`Failed to send ${kind} attachment:`, err);
