@@ -12,6 +12,7 @@ const pipelineRepo = require("../src/db/pipelineRepo");
 const realtimeEvents = require("../src/utils/realtimeEvents");
 const whatsapp = require("../src/services/whatsappService");
 const channelMessaging = require("../src/services/channelMessagingService");
+const mediaStorage = require("../src/services/mediaStorageService");
 const whatsappPolicy = require("../src/services/whatsappPolicyService");
 const followUpAiService = require("../src/services/followUpAiService");
 const {
@@ -22,6 +23,8 @@ const {
 const originalPolicyCheck = whatsappPolicy.checkFreeformAllowed;
 const originalWhatsappSendImage = whatsapp.sendImage;
 const originalSendVideoByStoredKey = channelMessaging.sendVideoByStoredKey;
+const originalCopyStoredMediaToMessage = mediaStorage.copyStoredMediaToMessage;
+const originalDeleteMedia = mediaStorage.deleteMedia;
 const originalGeneratePersonalizedFollowUp =
   followUpAiService.generatePersonalizedFollowUp;
 const originalSelectPromotionPackageForFollowUp =
@@ -30,6 +33,8 @@ const originalSelectPromotionPackageForFollowUp =
 test.beforeEach(() => {
   whatsapp.sendImage = originalWhatsappSendImage;
   channelMessaging.sendVideoByStoredKey = originalSendVideoByStoredKey;
+  mediaStorage.copyStoredMediaToMessage = originalCopyStoredMediaToMessage;
+  mediaStorage.deleteMedia = originalDeleteMedia;
   followUpAiService.generatePersonalizedFollowUp =
     originalGeneratePersonalizedFollowUp;
   followUpAiService.selectPromotionPackageForFollowUp =
@@ -40,6 +45,8 @@ test.beforeEach(() => {
   followUpRepo.isClaimStillEligible = async () => true;
   followUpRepo.discardUnsentClaim = async () => null;
   followUpRepo.discardUnsentSocialImageCompanion = async () => null;
+  followUpRepo.saveSocialVideoCompanion = async () => null;
+  followUpRepo.discardUnsentSocialVideoCompanion = async () => null;
   followUpRepo.getAiFollowUpContext = async () => ({ messages: [], lead: null });
   followUpRepo.recordAiDecisionIfStillEligible = async () => null;
   followUpAiLeaseRepo.claimIfStillEligible = async (input) => ({ id: 1, ...input });
@@ -146,6 +153,12 @@ test("pre-expiry follow-up sends the video mapped to the customer's current serv
   let candidateQuery = null;
   let claimInput = null;
   let videoSend = null;
+  mediaStorage.copyStoredMediaToMessage = async (key, mimeType, options) => {
+    assert.equal(key, "clients/neutro/messages/follow-up-config/pelvis.mp4");
+    assert.equal(mimeType, "video/mp4");
+    assert.deepEqual(options, { contactId: 77 });
+    return "clients/neutro/messages/77/durable-pelvis.mp4";
+  };
   followUpRepo.findCandidates = async (input) => {
     candidateQuery = input;
     return [
@@ -190,6 +203,8 @@ test("pre-expiry follow-up sends the video mapped to the customer's current serv
   assert.equal(claimInput.timingMode, "before_window_expiry");
   assert.equal(claimInput.beforeWindowExpiryMinutes, 120);
   assert.equal(claimInput.targetedService, "Pelvic Care");
+  assert.equal(claimInput.mediaKey, "clients/neutro/messages/77/durable-pelvis.mp4");
+  assert.equal(claimInput.mediaMimeType, "video/mp4");
   assert.deepEqual(videoSend, {
     contact: {
       id: 77,
@@ -197,7 +212,7 @@ test("pre-expiry follow-up sends the video mapped to the customer's current serv
       whatsapp_number: "60122223333",
       channel_user_id: undefined,
     },
-    key: "clients/neutro/messages/follow-up-config/pelvis.mp4",
+    key: "clients/neutro/messages/77/durable-pelvis.mp4",
     caption: "Here is a short Pelvic Care video.",
     filename: "pelvis-care.mp4",
   });
