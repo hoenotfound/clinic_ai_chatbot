@@ -1117,7 +1117,7 @@ function FollowUpMessageMode({
   ];
 
   return (
-    <div className="mt-5 border-t border-[var(--color-border)] pt-5">
+    <div className="mt-5">
       <div>
         <p className="text-sm font-semibold">Message type</p>
         <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
