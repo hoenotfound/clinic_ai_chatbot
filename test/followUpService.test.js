@@ -2315,6 +2315,184 @@ test("a single current anchor service beats older customer service history", asy
   assert.equal(claimInput.content, "3D follow-up");
 });
 
+test("plain 3D alias targets 3D 小颜术 without stealing 3D+9D", async (t) => {
+  enableTool();
+  const originalAliases = clinicConfig.serviceAliases;
+  t.after(() => {
+    clinicConfig.serviceAliases = originalAliases;
+  });
+  clinicConfig.services.push({ name: "3D + 9D 组合" });
+  clinicConfig.serviceAliases = [
+    { alias: "3D", officialService: "3D 小颜术" },
+    { alias: "9D", officialService: "9D 逆龄抗衰" },
+    { alias: "3D+9D", officialService: "3D + 9D 组合" },
+    { alias: "9D+3D", officialService: "3D + 9D 组合" },
+  ];
+  clinicConfig.automatedFollowUp.additionalSteps = [
+    {
+      delayMinutes: 480,
+      message: "General second follow-up",
+      translations: {
+        en: "General second follow-up",
+        ms: "Susulan umum kedua",
+        zh: "第二次一般跟进",
+      },
+      imageUrl: "",
+      serviceOverrides: [
+        {
+          serviceName: "3D 小颜术",
+          message: "3D targeted follow-up",
+          translations: {
+            en: "3D targeted follow-up",
+            ms: "Susulan 3D",
+            zh: "3D小颜术跟进",
+          },
+        },
+        {
+          serviceName: "3D + 9D 组合",
+          message: "3D+9D combo follow-up",
+          translations: {
+            en: "3D+9D combo follow-up",
+            ms: "Susulan kombinasi 3D+9D",
+            zh: "3D+9D组合跟进",
+          },
+        },
+      ],
+    },
+  ];
+
+  const candidates = [
+    {
+      contact_id: 205,
+      whatsapp_number: "60120000205",
+      trigger_message_id: 204,
+      next_follow_up_step: 2,
+      treatment_interest: null,
+      recent_inbound_messages: ["3D price?"],
+      trigger_message_content: "Here are the details.",
+    },
+    {
+      contact_id: 207,
+      whatsapp_number: "60120000207",
+      trigger_message_id: 206,
+      next_follow_up_step: 2,
+      treatment_interest: null,
+      recent_inbound_messages: ["3D+9D price?"],
+      trigger_message_content: "Here are the combo details.",
+    },
+  ];
+  followUpRepo.findCandidates = async () => candidates;
+
+  const claims = [];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claims.push(input);
+    return {
+      id: 300 + claims.length,
+      contact_id: input.contactId,
+      delivery_status: null,
+    };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-target" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: id,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(claims.length, 2);
+  assert.equal(claims[0].targetedService, "3D 小颜术");
+  assert.equal(claims[0].content, "3D targeted follow-up");
+  assert.equal(claims[1].targetedService, "3D + 9D 组合");
+  assert.equal(claims[1].content, "3D+9D combo follow-up");
+});
+
+test("explicit 3D and 9D comparison stays ambiguous instead of choosing the combo", async (t) => {
+  enableTool();
+  const originalAliases = clinicConfig.serviceAliases;
+  t.after(() => {
+    clinicConfig.serviceAliases = originalAliases;
+  });
+  clinicConfig.services.push({ name: "3D + 9D 组合" });
+  clinicConfig.serviceAliases = [
+    { alias: "3D", officialService: "3D 小颜术" },
+    { alias: "9D", officialService: "9D 逆龄抗衰" },
+    { alias: "3D+9D", officialService: "3D + 9D 组合" },
+  ];
+  clinicConfig.automatedFollowUp.additionalSteps = [
+    {
+      delayMinutes: 480,
+      message: "General second follow-up",
+      translations: {
+        en: "General second follow-up",
+        ms: "Susulan umum kedua",
+        zh: "第二次一般跟进",
+      },
+      imageUrl: "",
+      serviceOverrides: [
+        {
+          serviceName: "3D 小颜术",
+          message: "3D targeted follow-up",
+          translations: {
+            en: "3D targeted follow-up",
+            ms: "Susulan 3D",
+            zh: "3D小颜术跟进",
+          },
+        },
+        {
+          serviceName: "9D 逆龄抗衰",
+          message: "9D targeted follow-up",
+          translations: {
+            en: "9D targeted follow-up",
+            ms: "Susulan 9D",
+            zh: "9D跟进",
+          },
+        },
+        {
+          serviceName: "3D + 9D 组合",
+          message: "Combo targeted follow-up",
+          translations: {
+            en: "Combo targeted follow-up",
+            ms: "Susulan kombinasi",
+            zh: "组合跟进",
+          },
+        },
+      ],
+    },
+  ];
+
+  let claimInput = null;
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 209,
+    whatsapp_number: "60120000209",
+    trigger_message_id: 208,
+    next_follow_up_step: 2,
+    treatment_interest: "3D + 9D 组合",
+    recent_inbound_messages: ["3D or 9D, which one suits me?"],
+    trigger_message_content: "I can explain both.",
+  }];
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 210, contact_id: 209, delivery_status: null };
+  };
+  whatsapp.sendMessage = async () => ({ success: true, wamid: "wamid-210" });
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 209,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.equal(claimInput.targetedService, null);
+  assert.equal(claimInput.content, "General second follow-up");
+});
+
 test("can infer one targeted service from a configured alias in recent conversation", async (t) => {
   enableTool();
   const originalAliases = clinicConfig.serviceAliases;
@@ -2854,18 +3032,18 @@ test("AI mode sends the personalized message instead of the fixed fallback", asy
   assert.equal(claimedInput.targetedService, null);
 });
 
-test("AI-personalized follow-up records the service when targeted media is used", async () => {
+test("AI-mode targeted media keeps the configured targeted caption and skips AI rewriting", async () => {
   enableTool();
   clinicConfig.automatedFollowUp.messageMode = "ai";
   clinicConfig.automatedFollowUp.aiInstruction = "Continue naturally.";
   clinicConfig.automatedFollowUp.serviceOverrides = [
     {
       serviceName: "Pelvic Care",
-      message: "Pelvic Care fallback with video",
+      message: "Pelvic Care configured video caption",
       translations: {
-        en: "Pelvic Care fallback with video",
-        ms: "Susulan Pelvic Care dengan video",
-        zh: "骨盆调理视频跟进",
+        en: "Pelvic Care configured video caption",
+        ms: "Kapsyen video Pelvic Care yang ditetapkan",
+        zh: "骨盆调理已设定的视频文案",
       },
       imageUrl: "",
       videoKey: "clients/neutro/messages/follow-up-config/pelvis-ai.mp4",
@@ -2884,19 +3062,17 @@ test("AI-personalized follow-up records the service when targeted media is used"
     treatment_interest: null,
     next_follow_up_step: 1,
   }];
-  followUpRepo.getAiFollowUpContext = async () => ({
-    messages: [
-      { id: 319, role: "user", content: "Tell me about Pelvic Care" },
-      { id: 320, role: "assistant", content: "Here are the package details." },
-    ],
-    lead: null,
-  });
-  followUpAiService.generatePersonalizedFollowUp = async () => ({
-    action: "send",
-    message: "If this feels similar to your situation, I can help you check whether an assessment would suit you 😊",
-    reason: "Continue the customer's Pelvic Care interest.",
-    topic: "Pelvic Care",
-  });
+
+  let aiCalls = 0;
+  followUpAiService.generatePersonalizedFollowUp = async () => {
+    aiCalls += 1;
+    return {
+      action: "send",
+      message: "This AI text must not replace the configured media caption.",
+      reason: "Should not be called.",
+      topic: "Pelvic Care",
+    };
+  };
 
   let claimInput = null;
   let videoSend = null;
@@ -2932,8 +3108,10 @@ test("AI-personalized follow-up records the service when targeted media is used"
 
   await runAutomatedFollowUps();
 
-  assert.equal(claimInput.messageMode, "ai_personalized");
+  assert.equal(aiCalls, 0);
+  assert.equal(claimInput.messageMode, "fixed");
   assert.equal(claimInput.targetedService, "Pelvic Care");
+  assert.equal(claimInput.content, "Pelvic Care configured video caption");
   assert.equal(
     claimInput.mediaKey,
     "clients/neutro/messages/321/pelvis-ai.mp4"
@@ -2946,8 +3124,7 @@ test("AI-personalized follow-up records the service when targeted media is used"
       channel_user_id: undefined,
     },
     key: "clients/neutro/messages/321/pelvis-ai.mp4",
-    caption:
-      "If this feels similar to your situation, I can help you check whether an assessment would suit you 😊",
+    caption: "Pelvic Care configured video caption",
     filename: "pelvis-ai.mp4",
   });
 });
