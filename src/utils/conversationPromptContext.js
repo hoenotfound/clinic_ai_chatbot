@@ -16,6 +16,55 @@ const NON_TREATMENT_ANCHOR_PATTERN =
   /(assessment|consult(?:ation)?|evaluation|评估|評估|咨询|諮詢|面诊|面診)/iu;
 const SERVICE_DISCOVERY_PATTERN =
   /(what|which|show|list|any).{0,30}(treatments|services|options)|(other|more).{0,20}(treatments?|services?|options?)|(treatments|services).{0,30}(do you have|available|offer)|还有什么.{0,12}(疗程|療程|服务|服務)|其他.{0,12}(疗程|療程|服务|服務)|有什么.{0,12}(疗程|療程|服务|服務)|有哪些.{0,12}(疗程|療程|服务|服務)|rawatan apa|rawatan lain|servis apa|servis lain/iu;
+const BROAD_PRICE_PATTERN =
+  /(?:full|complete|all|whole).{0,20}(?:price|pricing|cost|fee)|(?:price|pricing|cost|fee).{0,20}(?:list|all|every|treatments|services)|(?:全部|所有|完整|整份).{0,20}(?:价|價|费用|費用|收费|收費)|(?:价|價|费用|費用).{0,20}(?:全部|所有)|senarai\s+harga|harga.{0,25}(?:semua|keseluruhan)|(?:semua|keseluruhan).{0,25}harga/iu;
+const PROMOTION_DETAIL_PATTERN =
+  /\b(?:includ\w*|gift\w*|free\s+(?:add|extra)|duration|how\s+long)\b|包括|包含|赠|贈|有送|送什么|送什麼|多久|几小时|幾小時|berapa\s+lama|termasuk|hadiah|percuma/iu;
+const MAP_PATTERN = /定位|地[图圖]|\b(?:maps?|peta)\b|(?:location|lokasi)\s+pin|pin\s+(?:location|lokasi)/iu;
+const TOPIC_CHANGE_PATTERN =
+  /(?:现在|現在|这次|這次).{0,12}(?:想了解|想问|想問|想改善|咨询|諮詢)|换个|換個|改聊|另外想|\b(?:instead|rather|switch|another\s+treatment)\b|\bnow\b.{0,20}\b(?:interested|ask|discuss|want)\b|(?:nak|mahu).{0,20}(?:rawatan|servis).{0,12}lain/iu;
+
+function negatedServicesInText(text, candidates) {
+  const clauses = cleanText(text).split(/[，,。.!！?？;；]|\b(?:but|instead|tetapi|tapi)\b/iu);
+  const negated = [];
+  for (const candidate of candidates) {
+    let affirmative = false;
+    let rejected = false;
+    for (const clause of clauses) {
+      const normalized = normalizeComparable(clause);
+      for (const { key } of candidate.terms) {
+        let start = 0;
+        let at;
+        while ((at = normalized.indexOf(key, start)) !== -1) {
+          const prefix = normalized.slice(Math.max(0, at - 24), at);
+          if (/(?:不要|不是|不想(?:了解|做|问|問)?|不用|不需要|不考虑|不考慮|not(?:interestedin|interested|the)?|dontwant(?:the)?|donotwant(?:the)?|bukan|taknak|tidakmahu)$/iu.test(prefix)) {
+            rejected = true;
+          } else {
+            affirmative = true;
+          }
+          start = at + key.length;
+        }
+      }
+    }
+    if (rejected && !affirmative) negated.push(candidate.name);
+  }
+  return negated;
+}
+
+function affirmedServicesInText(text, candidates) {
+  const rejected = new Set(negatedServicesInText(text, candidates));
+  return findServicesInText(text, candidates).filter((name) => !rejected.has(name));
+}
+
+function promotionReferencedServices(text, candidates, promotions) {
+  const referenced = getActivePromotions(promotions || []).filter((promotion) =>
+    configuredPromotionReference(text, [promotion])
+  );
+  return unique(referenced.map((promotion) =>
+    candidates.find((candidate) => normalizeComparable(candidate.name) ===
+      normalizeComparable(promotion.linkedService))?.name
+  ));
+}
 
 function configuredPromotionReference(text, promotions = config.promotions) {
   const value = cleanText(text);
@@ -178,7 +227,7 @@ function strongServiceMatchesInText(text, candidates) {
 }
 
 
-function recentConversationServiceAnchor(messages, candidates, maxMessages = 16) {
+function recentConversationServiceAnchor(messages, candidates, maxMessages = 16, promotions = config.promotions) {
   const source = Array.isArray(messages) ? messages : [];
   let skippedCurrentCustomer = false;
   let inspected = 0;
@@ -197,7 +246,21 @@ function recentConversationServiceAnchor(messages, candidates, maxMessages = 16)
     inspected += 1;
     if (inspected > maxMessages) break;
 
-    const matches = unique(findServicesInText(messageText(message), candidates));
+    const text = messageText(message);
+    const directMatches = unique(affirmedServicesInText(text, candidates));
+    const matches = message.role === "user" && !directMatches.length
+      ? promotionReferencedServices(text, candidates, promotions)
+      : directMatches;
+    if (message.role === "user" && !directMatches.length && matches.length > 1) {
+      return { relevantServiceNames: [], serviceSource: "recent_broad_context" };
+    }
+    if (message.role === "user" && !matches.length && (
+      TOPIC_CHANGE_PATTERN.test(text) ||
+      negatedServicesInText(text, candidates).length ||
+      SERVICE_DISCOVERY_PATTERN.test(text) || BROAD_PRICE_PATTERN.test(text)
+    )) {
+      return { relevantServiceNames: [], serviceSource: "recent_broad_context" };
+    }
     if (!matches.length) continue;
 
     if (message.role === "user") {
@@ -226,8 +289,13 @@ function recentConversationServiceAnchor(messages, candidates, maxMessages = 16)
       for (let previous = index - 1; previous >= 0; previous -= 1) {
         if (source[previous]?.role !== "user") continue;
         previousCustomerMatches = unique(
-          findServicesInText(messageText(source[previous]), candidates)
+          affirmedServicesInText(messageText(source[previous]), candidates)
         );
+        if (!previousCustomerMatches.length) {
+          previousCustomerMatches = promotionReferencedServices(
+            messageText(source[previous]), candidates, promotions
+          );
+        }
         break;
       }
 
@@ -269,34 +337,45 @@ function buildConversationPromptContext(
   {
     services = config.services,
     aliases = config.serviceAliases,
+    promotions = config.promotions,
     metaAdContext = null,
   } = {}
 ) {
   const candidates = serviceCandidates(services, aliases);
   const customerMessages = latestCustomerMessages(messages, 8);
   const currentCustomerText = messageText(customerMessages.at(-1));
-  const currentMatches = unique(findServicesInText(currentCustomerText, candidates));
+  const currentMatches = unique(affirmedServicesInText(currentCustomerText, candidates));
   const serviceDiscoveryIntent = SERVICE_DISCOVERY_PATTERN.test(currentCustomerText);
+  const broadPriceIntent = BROAD_PRICE_PATTERN.test(currentCustomerText);
+  const packageServices = promotionReferencedServices(currentCustomerText, candidates, promotions);
+  const promotionReference = configuredPromotionReference(currentCustomerText, promotions);
+  const topicChangeIntent = !currentMatches.length && (
+    TOPIC_CHANGE_PATTERN.test(currentCustomerText) ||
+    negatedServicesInText(currentCustomerText, candidates).length > 0
+  );
+  const broadIntent = serviceDiscoveryIntent || broadPriceIntent || topicChangeIntent ||
+    (!currentMatches.length && promotionReference && packageServices.length !== 1);
+  const explicitMatches = currentMatches.length ? currentMatches : packageServices;
 
-  let relevantServiceNames = serviceDiscoveryIntent
+  let relevantServiceNames = broadIntent
     ? []
-    : currentMatches.length <= 2
-      ? currentMatches
+    : explicitMatches.length <= 2
+      ? explicitMatches
       : [];
-  let serviceSource = serviceDiscoveryIntent
-    ? "broad_discovery"
+  let serviceSource = broadIntent
+    ? (broadPriceIntent ? "broad_price" : topicChangeIntent ? "topic_change" : "broad_discovery")
     : currentMatches.length > 2
       ? "multi_service_broad"
       : relevantServiceNames.length
-        ? "current_customer"
+        ? (currentMatches.length ? "current_customer" : "current_promotion")
         : null;
 
   if (
     !relevantServiceNames.length &&
     currentMatches.length <= 2 &&
-    !serviceDiscoveryIntent
+    !broadIntent
   ) {
-    const recentAnchor = recentConversationServiceAnchor(messages, candidates);
+    const recentAnchor = recentConversationServiceAnchor(messages, candidates, 16, promotions);
     if (recentAnchor) {
       relevantServiceNames = recentAnchor.relevantServiceNames;
       serviceSource = recentAnchor.serviceSource;
@@ -306,7 +385,7 @@ function buildConversationPromptContext(
       // window must not make the selector forget a still-active customer topic.
       for (let index = customerMessages.length - 2; index >= 0; index -= 1) {
         const matches = unique(
-          findServicesInText(messageText(customerMessages[index]), candidates)
+          affirmedServicesInText(messageText(customerMessages[index]), candidates)
         );
         if (!matches.length) continue;
         if (matches.length > 2) {
@@ -342,23 +421,26 @@ function buildConversationPromptContext(
   const currentPromotionIntent =
     PROMOTION_PATTERN.test(currentCustomerText) ||
     (currentCustomerText.length <= 24 && BARE_AMOUNT_PATTERN.test(currentCustomerText)) ||
-    configuredPromotionReference(currentCustomerText);
+    configuredPromotionReference(currentCustomerText, promotions) ||
+    PROMOTION_DETAIL_PATTERN.test(currentCustomerText);
   const previousCustomerText = customerMessages.length > 1
     ? messageText(customerMessages.at(-2))
     : "";
   const carriedPromotionIntent =
     !currentPromotionIntent &&
     currentCustomerText.length <= 40 &&
-    configuredPromotionReference(previousCustomerText);
+    !topicChangeIntent &&
+    configuredPromotionReference(previousCustomerText, promotions);
 
   return {
     relevantServiceNames,
     serviceSource,
     currentCustomerText,
-    schedulingIntent: SCHEDULING_PATTERN.test(recentCustomerText),
+    schedulingIntent: SCHEDULING_PATTERN.test(recentCustomerText) || MAP_PATTERN.test(recentCustomerText),
     contactIntent: CONTACT_PATTERN.test(recentCustomerText),
     promotionIntent: currentPromotionIntent || carriedPromotionIntent,
     serviceDiscoveryIntent,
+    broadPriceIntent,
   };
 }
 

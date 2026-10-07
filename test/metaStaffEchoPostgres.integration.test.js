@@ -209,13 +209,39 @@ test(
          WHERE id = $1`,
         [contactId]
       );
+      // All three rows deliberately share one JavaScript millisecond. Native
+      // pg Dates lose PostgreSQL's microseconds, so a JS timestamp boundary
+      // would incorrectly exclude this earlier AI handoff anchor.
+      await client.query(
+        `UPDATE messages
+         SET created_at = CASE id
+           WHEN $1 THEN TIMESTAMPTZ '2026-10-06 00:00:00.123100+00'
+           ELSE TIMESTAMPTZ '2026-10-06 00:00:00.123500+00'
+         END
+         WHERE id IN ($1, $2)`,
+        [handoffInbound.rows[0].id, handoffAnchor.rows[0].id]
+      );
+      const preciseEchoClient = {
+        query(sql, values) {
+          const timedSql = typeof sql === "string" && sql.includes("INSERT INTO messages (")
+            ? sql.replace(
+                "contact_id, role, content, whatsapp_message_id, sent_by_username",
+                "contact_id, role, content, whatsapp_message_id, sent_by_username, created_at"
+              ).replace(
+                "VALUES ($1, 'assistant', $2, $3, $4)",
+                "VALUES ($1, 'assistant', $2, $3, $4, TIMESTAMPTZ '2026-10-06 00:00:00.123900+00')"
+              )
+            : sql;
+          return client.query(timedSql, values);
+        },
+      };
       const syntheticOwner = await metaStaffEchoRepo.persistStaffEchoIfNew(
         contactId,
         "Claim synthetic handoff",
         "instagram:ig-manual-3",
         "Instagram",
         "AI handoff",
-        client
+        preciseEchoClient
       );
       assert.equal(syntheticOwner.isNew, true);
       assert.equal(syntheticOwner.contact.mode, "human");

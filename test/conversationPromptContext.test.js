@@ -9,6 +9,7 @@ const {
   buildSystemPrompt,
 } = require("../src/utils/systemPrompt");
 const geminiService = require("../src/services/geminiService");
+const claudeService = require("../src/services/claudeService");
 
 function withConfig(overrides, callback) {
   const previous = JSON.parse(JSON.stringify(config));
@@ -146,6 +147,183 @@ function scopedConfig() {
     messagingStyle: "STYLE_SENTINEL keep replies short and natural.",
   };
 }
+
+function pelvisPackageConfig() {
+  return {
+    ...scopedConfig(),
+    promotions: [{
+      name: "Pelvis Promo", linkedService: "骨盆调理", sendOnPriceQuery: true,
+      packages: [
+        { name: "Package A", aliases: ["A套餐"], caption: "PACKAGE_A RM388, 150 minutes, meridian massage" },
+        { name: "Package B", aliases: ["B套餐"], caption: "PACKAGE_B RM288, 90 minutes, womb care" },
+      ],
+    }],
+  };
+}
+
+test("configured package topic overrides an old treatment and survives several short follow-ups", () => {
+  withConfig(pelvisPackageConfig(), () => {
+    const history = [
+      { role: "user", content: "3D多少钱？" },
+      { role: "assistant", content: "3D 小颜术" },
+      { role: "user", content: "Package A和B有什么不同？" },
+    ];
+    for (const followUp of [null, "包括什么？", "需要多久？", "apa yang termasuk?"]) {
+      if (followUp) history.push({ role: "assistant", content: "可以，配套有多项护理。" }, { role: "user", content: followUp });
+      const context = buildConversationPromptContext(history);
+      assert.deepEqual(context.relevantServiceNames, ["骨盆调理"]);
+      assert.equal(context.promotionIntent, true);
+      const prompt = buildSystemPrompt({ conversationContext: context });
+      assert.match(prompt, /PACKAGE_A RM388/);
+      assert.match(prompt, /PACKAGE_B RM288/);
+    }
+  });
+});
+
+test("ambiguous package labels fail broad while an explicit treatment remains authoritative", () => {
+  const overrides = pelvisPackageConfig();
+  overrides.promotions.push({
+    name: "Face Promo", linkedService: "3D 小颜术",
+    packages: [{ name: "Package A", caption: "FACE_PACKAGE_A RM488" }],
+  });
+  withConfig(overrides, () => {
+    const history = [{ role: "user", content: "骨盆调理" }, { role: "assistant", content: "可以" }];
+    const broad = buildConversationPromptContext([...history, { role: "user", content: "Package A" }]);
+    assert.deepEqual(broad.relevantServiceNames, []);
+    assert.match(buildSystemPrompt({ conversationContext: broad }), /FACE_PACKAGE_A/);
+    const selected = buildConversationPromptContext([...history, { role: "user", content: "3D Package A" }]);
+    assert.deepEqual(selected.relevantServiceNames, ["3D 小颜术"]);
+  });
+});
+
+test("an assistant suggestion cannot replace a uniquely customer-chosen package service", () => {
+  withConfig(pelvisPackageConfig(), () => {
+    const context = buildConversationPromptContext([
+      { role: "user", content: "3D小颜术" },
+      { role: "assistant", content: "可以" },
+      { role: "user", content: "A套餐" },
+      { role: "assistant", content: "也可以了解9D 逆龄抗衰" },
+      { role: "user", content: "包括什么？" },
+    ]);
+    assert.deepEqual(context.relevantServiceNames, ["骨盆调理"]);
+  });
+});
+
+test("broad price lists restore all service prices in Chinese English and Malay after a scoped topic", () => {
+  withConfig(scopedConfig(), () => {
+    for (const content of ["全部疗程的价钱可以给我吗？", "Can I see the full price list?", "Boleh bagi senarai harga semua rawatan?"]) {
+      const history = [{ role: "user", content: "骨盆调理" }, { role: "assistant", content: "可以" }, { role: "user", content }];
+      const context = buildConversationPromptContext(history);
+      assert.deepEqual(context.relevantServiceNames, []);
+      assert.equal(context.promotionIntent, true);
+      const prompt = buildSystemPrompt({ conversationContext: context });
+      for (const price of ["PELVIS_PRICE", "THREED_PRICE", "NINED_PRICE"]) assert.ok(prompt.includes(price));
+    }
+  });
+});
+
+test("gift and duration follow-ups retain active commercial facts without changing output trigger rules", () => {
+  withConfig(pelvisPackageConfig(), () => {
+    for (const content of ["有送什么吗？", "What is included?", "apa yang termasuk?", "需要多久？", "berapa lama?"]) {
+      const context = buildConversationPromptContext([
+        { role: "user", content: "骨盆多少钱？" }, { role: "assistant", content: "可以" }, { role: "user", content },
+      ]);
+      assert.equal(context.promotionIntent, true);
+      const prompt = buildSystemPrompt({ conversationContext: context });
+      assert.match(prompt, /PACKAGE_A RM388/);
+      assert.match(prompt, /Set "priceQuery" to true ONLY when the customer's CURRENT message explicitly asks/);
+    }
+  });
+});
+
+test("map and pin requests restore the configured location after an unrelated service turn", () => {
+  withConfig(scopedConfig(), () => {
+    for (const content of ["发定位给我", "boleh bagi pin maps?", "Can you send a map?", "boleh bagi peta?"]) {
+      const context = buildConversationPromptContext([
+        { role: "user", content: "骨盆" }, { role: "assistant", content: "可以" }, { role: "user", content },
+      ]);
+      assert.equal(context.schedulingIntent, true);
+      const prompt = buildSystemPrompt({ conversationContext: context });
+      assert.match(prompt, /PJ_ADDRESS_SENTINEL/);
+      assert.match(prompt, /HOURS_SENTINEL/);
+    }
+  });
+});
+
+test("negated services and explicit unmapped topic changes stop stale treatment selection", () => {
+  withConfig(scopedConfig(), () => {
+    for (const content of ["不要骨盆，我想改善法令纹", "现在想了解脸部松弛", "Not pelvis, I want to ask about face concerns", "bukan pelvis, nak tanya muka"]) {
+      const history = [{ role: "user", content: "骨盆调理" }, { role: "assistant", content: "可以" }, { role: "user", content }];
+      assert.deepEqual(buildConversationPromptContext(history).relevantServiceNames, []);
+      const next = [...history, { role: "assistant", content: "你比较在意哪方面？" }, { role: "user", content: "多少钱？" }];
+      assert.deepEqual(buildConversationPromptContext(next).relevantServiceNames, []);
+    }
+    for (const content of ["Not sure about pelvis, is it suitable?", "骨盆是不是适合我？", "现在我想了解9D"]) {
+      const context = buildConversationPromptContext([{ role: "user", content }]);
+      assert.deepEqual(context.relevantServiceNames, [content.includes("9D") ? "9D 逆龄抗衰" : "骨盆调理"]);
+    }
+    const correction = buildConversationPromptContext([{ role: "user", content: "不是骨盆，我要9D" }]);
+    assert.deepEqual(correction.relevantServiceNames, ["9D 逆龄抗衰"]);
+  });
+});
+
+test("standing normal prices override promotional copy without mutating media or package prices", () => {
+  const overrides = pelvisPackageConfig();
+  overrides.services[0].priceRange = "Normal Price RM888; active offers come from promotions";
+  overrides.services[0].duration = "90 minutes";
+  overrides.promotions.push({
+    name: "3D First Trial", linkedService: "3D 小颜术",
+    caption: "First trial RM488 (Normal Price RM1,288)",
+    followUpMessage: "RM4️⃣8️⃣8️⃣ (原价Rm 1288). Free massage. Total 150 minutes.",
+  });
+  withConfig(overrides, () => {
+    const before = JSON.stringify(config.promotions);
+    const context = buildConversationPromptContext([{ role: "user", content: "3D多少钱？" }]);
+    const prompt = buildSystemPrompt({ conversationContext: context });
+    const active = prompt.slice(prompt.indexOf("ACTIVE PROMOTIONS —"), prompt.indexOf("COMMON TERMS ", prompt.indexOf("ACTIVE PROMOTIONS —")));
+    assert.match(active, /standing treatment facts \(SERVICES\): Normal Price RM888/);
+    assert.doesNotMatch(active, /(?:Normal Price RM1,288|原价Rm 1288)/);
+    assert.match(active, /First trial RM488/);
+    assert.match(active, /Free massage/);
+    assert.match(active, /standalone treatment duration: 90 minutes/);
+    assert.match(active, /Total 150 minutes/);
+    assert.equal(JSON.stringify(config.promotions), before);
+    const pelvis = buildSystemPrompt({ conversationContext: buildConversationPromptContext([{ role: "user", content: "骨盆价钱" }]) });
+    assert.match(pelvis, /PACKAGE_A RM388/);
+    assert.match(pelvis, /PACKAGE_B RM288/);
+  });
+});
+
+test("Gemini and Claude receive identical scoped knowledge including images and every history turn", async () => {
+  const previous = JSON.parse(JSON.stringify(config));
+  Object.assign(config, pelvisPackageConfig());
+  try {
+    for (const text of ["Package A和B有什么不同？", "全部价钱", "有送什么吗？", "发定位给我", "不要骨盆，我想改善法令纹"]) {
+      const messages = [
+        { role: "user", content: "3D小颜术" },
+        { role: "assistant", content: "RESULT_MEDIA_REFERENCE 3D 小颜术" },
+        { role: "user", content: [{ type: "text", text }, { type: "image", mimeType: "image/jpeg", data: "dGVzdA==" }] },
+      ];
+      const built = geminiService.buildGeminiRequest(messages, { surface: "conversation" }, "gemini-test");
+      let body;
+      await claudeService.getReply(messages, { surface: "conversation" }, "test-key", null, {
+        fetchImpl: async (_, options) => {
+          body = JSON.parse(options.body);
+          return { ok: true, status: 200, text: async () => JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: "{}" }] }) };
+        },
+      });
+      assert.equal(built.request.config.systemInstruction, body.system);
+      assert.equal(built.request.contents.length, messages.length);
+      assert.equal(body.messages.length, messages.length);
+      assert.match(JSON.stringify(body.messages), /RESULT_MEDIA_REFERENCE/);
+      assert.match(JSON.stringify(body.messages), /dGVzdA==/);
+      assert.match(JSON.stringify(built.request.contents), /dGVzdA==/);
+    }
+  } finally {
+    for (const key of Object.keys(config)) delete config[key];
+    Object.assign(config, previous);
+  }
+});
 
 test("current customer treatment overrides older treatment context", () => {
   withConfig(scopedConfig(), () => {
