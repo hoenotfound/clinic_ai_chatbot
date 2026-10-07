@@ -1896,9 +1896,9 @@ function FollowUpTool({
         >
           <Spinner className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-primary)]" />
           <div>
-            <p className="text-xs font-semibold text-[var(--color-primary)]">Preparing video…</p>
+            <p className="text-xs font-semibold text-[var(--color-primary)]">Checking video…</p>
             <p className="mt-0.5 text-[11px] leading-4 text-[var(--color-text-muted)]">
-              Large videos are uploaded and compressed automatically. Keep this page open until the attachment appears.
+              Checking MP4 size and codec compatibility. This server will not compress or convert the video.
             </p>
           </div>
         </div>
