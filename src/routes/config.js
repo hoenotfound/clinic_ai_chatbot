@@ -1162,7 +1162,13 @@ router.post(
 
       const prepared = await followUpVideoPreparation.prepareFollowUpVideoFile(
         req.file.path,
-        { originalBytes: req.file.size }
+        {
+          originalBytes: req.file.size,
+          // MP4 is only a container. iPhone exports can still carry HEVC/H.265,
+          // which WhatsApp rejects asynchronously. Normalize configured videos
+          // once at upload time so every later follow-up send reuses safe bytes.
+          forceTranscode: true,
+        }
       );
       const key = await mediaStorage.uploadMedia(
         prepared.buffer,
@@ -1184,6 +1190,7 @@ router.post(
         key,
         filename,
         compressed: prepared.compressed,
+        transcoded: prepared.transcoded === true,
         originalBytes: prepared.originalBytes,
         storedBytes: prepared.storedBytes,
       });
