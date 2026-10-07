@@ -85,11 +85,34 @@ test("follow-up video preparation bypasses FFmpeg for an already-safe MP4", asyn
     });
 
     assert.equal(prepared.compressed, false);
+    assert.equal(prepared.transcoded, false);
     assert.equal(prepared.originalBytes, source.length);
     assert.equal(prepared.storedBytes, source.length);
     assert.deepEqual(prepared.buffer, source);
     assert.equal(probed, false);
     assert.equal(transcoded, false);
+  });
+});
+
+test("forced normalization transcodes a small iPhone video into WhatsApp-safe MP4", async () => {
+  await withTempInput(Buffer.from("iphone-video"), async (inputPath) => {
+    let planSeen = null;
+    const prepared = await prepareFollowUpVideoFile(inputPath, {
+      originalBytes: 5 * 1024 * 1024,
+      forceTranscode: true,
+      probeDurationFn: async () => 30,
+      transcodeFn: async (sourcePath, outputPath, plan) => {
+        assert.equal(sourcePath, inputPath);
+        planSeen = plan;
+        await fs.writeFile(outputPath, Buffer.from("normalized-mp4"));
+      },
+    });
+
+    assert.equal(prepared.transcoded, true);
+    assert.equal(prepared.originalBytes, 5 * 1024 * 1024);
+    assert.equal(prepared.storedBytes, Buffer.byteLength("normalized-mp4"));
+    assert.deepEqual(prepared.buffer, Buffer.from("normalized-mp4"));
+    assert.ok(planSeen.videoKbps > 0);
   });
 });
 
@@ -140,7 +163,7 @@ test("real FFmpeg path produces a WhatsApp-safe H.264/AAC MP4", async () => {
       originalBytes: 20 * 1024 * 1024,
     });
 
-    assert.equal(prepared.compressed, true);
+    assert.equal(prepared.transcoded, true);
     assert.ok(prepared.storedBytes > 0);
     assert.ok(prepared.storedBytes <= MAX_WHATSAPP_VIDEO_BYTES);
     const ascii = prepared.buffer.toString("latin1");
