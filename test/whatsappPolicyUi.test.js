@@ -271,7 +271,7 @@ test("Inbox image forwarding keeps normal photos inside R2", () => {
   assert.match(storedSend, /channelMessaging\.sendImageByUrl/);
 });
 
-test("staff voice sends keep Staff Waiting blocked until the voice reply is persisted", () => {
+test("staff voice sends persist quickly without holding the alert lock across slow work", () => {
   const source = fs.readFileSync(
     path.join(__dirname, "../src/routes/conversations.js"),
     "utf8"
@@ -282,16 +282,23 @@ test("staff voice sends keep Staff Waiting blocked until the voice reply is pers
   );
 
   const policyIndex = voiceRoute.indexOf("requireFreeformPolicy");
+  const conversionIndex = voiceRoute.indexOf("convertToWhatsAppVoice");
+  const mediaUploadIndex = voiceRoute.indexOf("mediaStorage.uploadMedia");
   const lockIndex = voiceRoute.indexOf("telegramImmediateAlertRepo.withContactAlertLock");
   const prepareIndex = voiceRoute.indexOf("prepareStaffSend");
   const persistIndex = voiceRoute.indexOf("conversationStore.appendMessageForContact");
+  const transcriptIndex = voiceRoute.indexOf("transcribeStaffAudio");
+  const providerIndex = voiceRoute.indexOf("channelMessaging.sendAudioBuffer");
 
-  assert.ok(policyIndex >= 0 && lockIndex > policyIndex);
+  assert.ok(policyIndex >= 0 && conversionIndex > policyIndex);
+  assert.ok(mediaUploadIndex > conversionIndex && lockIndex > mediaUploadIndex);
   assert.ok(prepareIndex > lockIndex && persistIndex > prepareIndex);
-  assert.match(voiceRoute, /transcribeStaffAudio[\s\S]*prepareStaffSend[\s\S]*appendMessageForContact/);
-  assert.match(voiceRoute, /voicePreparation\.status === "conversion_failed"/);
+  assert.ok(transcriptIndex > persistIndex && providerIndex > transcriptIndex);
+  assert.match(voiceRoute, /mediaKey: voiceMediaKey/);
+  assert.match(voiceRoute, /messagesRepo\.setMessageContentById/);
   assert.match(voiceRoute, /voicePreparation\.status === "contact_missing"/);
   assert.match(voiceRoute, /requireStaffMode: currentContact\.mode === "human"/);
+  assert.doesNotMatch(voiceRoute, /withContactAlertLock\([\s\S]*transcribeStaffAudio[\s\S]*return \{[\s\S]*status: "ready"/);
   assert.doesNotMatch(voiceRoute, /Take over this conversation before sending a voice message/);
 });
 
