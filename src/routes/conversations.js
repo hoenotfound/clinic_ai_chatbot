@@ -1364,6 +1364,80 @@ router.post("/:contactId/whatsapp-templates/send", async (req, res) => {
   }
 });
 
+function shouldNormalizeStoredWhatsAppVideoForRetry(contact, message) {
+  if ((contact?.channel || "whatsapp") !== "whatsapp") return false;
+  if (!message?.media_key) return false;
+  if (!String(message.media_mime_type || "").toLowerCase().startsWith("video/")) {
+    return false;
+  }
+  if (message.delivery_status !== "failed") return false;
+  const errorText = String(message.delivery_error || "");
+  return /Video file uploaded with mimetype|(?:videoCodec|audioCodec)\\s*=/i.test(errorText);
+}
+
+async function normalizeStoredWhatsAppVideoForRetry(contact, message) {
+  if (!shouldNormalizeStoredWhatsAppVideoForRetry(contact, message)) return message;
+
+  const originalKey = message.media_key;
+  const inputPath = `${os.tmpdir()}/inbox-retry-video-${process.pid}-${randomUUID()}.mp4`;
+  let replacementKey = null;
+
+  try {
+    const originalBuffer = await mediaStorage.downloadMedia(originalKey, {
+      maxBytes: MAX_INBOX_VIDEO_UPLOAD_BYTES,
+    });
+    await fs.writeFile(inputPath, originalBuffer);
+
+    const prepared = await followUpVideoPreparation.prepareFollowUpVideoFile(
+      inputPath,
+      {
+        originalBytes: originalBuffer.length,
+        // The provider already told us the stored video has an unsupported
+        // codec. Force a known-safe H.264/AAC MP4 before retrying.
+        forceTranscode: true,
+      }
+    );
+
+    replacementKey = await mediaStorage.uploadMedia(
+      prepared.buffer,
+      "video/mp4",
+      { contactId: contact.id }
+    );
+    const attached = await conversationStore.attachStoredMediaForContact(
+      contact.id,
+      message.id,
+      replacementKey,
+      "video/mp4"
+    );
+    if (!attached) {
+      throw new Error("The normalized retry video could not be linked to its message.");
+    }
+
+    message.media_key = replacementKey;
+    message.media_mime_type = "video/mp4";
+    if (!/\\.mp4$/i.test(String(message.media_filename || ""))) {
+      message.media_filename = normalizedInboxVideoFilename(
+        message.media_filename || "video.mp4"
+      );
+    }
+
+    mediaStorage.deleteMedia(originalKey).catch((cleanupErr) => {
+      console.error(
+        `Failed to delete rejected WhatsApp video ${originalKey} after normalization:`,
+        cleanupErr
+      );
+    });
+    return message;
+  } catch (err) {
+    if (replacementKey) {
+      await mediaStorage.deleteMedia(replacementKey).catch(() => {});
+    }
+    throw err;
+  } finally {
+    await fs.unlink(inputPath).catch(() => {});
+  }
+}
+
 router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
   const contactId = parsePositiveInt(req.params.contactId);
   const messageId = parsePositiveInt(req.params.messageId);
@@ -1392,6 +1466,11 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
         error: "Only failed or unconfirmed messages can be retried.",
       });
     }
+
+    // Historical iPhone MP4s may already be stored with HEVC/H.265. If Meta
+    // explicitly rejected the codec, repair the durable attachment once so the
+    // visible Retry button sends the normalized bytes instead of failing again.
+    await normalizeStoredWhatsAppVideoForRetry(contact, message);
 
     const isManualStaffRetry =
       Boolean(message.sent_by_username) &&
