@@ -42,6 +42,7 @@ const MAX_DELIVERY_STATUS_IDS = 500;
 const WHATSAPP_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const WHATSAPP_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
 const MAX_INBOX_VIDEO_UPLOAD_BYTES = followUpVideoPreparation.MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES;
+const INBOX_VIDEO_EXTENSIONS = new Set(["mp4", "mov", "m4v"]);
 const MAX_INBOX_DOCUMENT_BYTES = 16 * 1024 * 1024;
 const INBOX_DOCUMENT_MIME_TYPES = new Set([
   "application/pdf",
@@ -61,6 +62,32 @@ const INBOX_DOCUMENT_EXTENSIONS = new Set([
 function inboxDocumentExtension(filename) {
   const match = String(filename || "").toLowerCase().match(/\.([a-z0-9]+)$/);
   return match?.[1] || "";
+}
+
+function isAllowedInboxVideo(file) {
+  const mimeType = String(file?.mimetype || "").toLowerCase();
+  const extension = inboxDocumentExtension(file?.originalname);
+  return (
+    INBOX_VIDEO_EXTENSIONS.has(extension) &&
+    (
+      mimeType.startsWith("video/") ||
+      mimeType === "" ||
+      mimeType === "application/octet-stream"
+    )
+  );
+}
+
+function inboxVideoNeedsTranscode(file) {
+  const mimeType = String(file?.mimetype || "").toLowerCase();
+  const extension = inboxDocumentExtension(file?.originalname);
+  return mimeType !== "video/mp4" || extension !== "mp4";
+}
+
+function normalizedInboxVideoFilename(filename) {
+  const safe = safeInboxFilename(filename, "video.mp4");
+  return /\.mp4$/i.test(safe)
+    ? safe
+    : `${safe.replace(/\.[^.]+$/, "") || "video"}.mp4`;
 }
 
 function isAllowedInboxDocument(file) {
@@ -150,13 +177,18 @@ const voiceUpload = multer({
 const inboxVideoUpload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, os.tmpdir()),
-    filename: (req, file, cb) =>
-      cb(null, `inbox-video-${process.pid}-${randomUUID()}.mp4`),
+    filename: (req, file, cb) => {
+      const extension = inboxDocumentExtension(file?.originalname);
+      cb(
+        null,
+        `inbox-video-${process.pid}-${randomUUID()}.${INBOX_VIDEO_EXTENSIONS.has(extension) ? extension : "mp4"}`
+      );
+    },
   }),
   limits: { fileSize: MAX_INBOX_VIDEO_UPLOAD_BYTES },
   fileFilter: (req, file, cb) => {
-    if (String(file.mimetype || "").toLowerCase() !== "video/mp4") {
-      return cb(new Error("Only MP4 videos are allowed."));
+    if (!isAllowedInboxVideo(file)) {
+      return cb(new Error("Please choose an MP4, MOV, or M4V video."));
     }
     cb(null, true);
   },
@@ -2112,7 +2144,7 @@ function handleVideoUpload(req, res, next) {
     if (!err) return next();
     if (req.file?.path) fs.unlink(req.file.path).catch(() => {});
     if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
-      return res.status(400).json({ error: "Video is too large. Please choose an MP4 file under 50MB." });
+      return res.status(400).json({ error: "Video is too large. Please choose a video under 50MB." });
     }
     return res.status(400).json({ error: err.message || "Failed to upload video." });
   });
@@ -2436,7 +2468,7 @@ router.post("/:contactId/video", handleVideoUpload, async (req, res) => {
     );
     if (!contact) return res.status(404).json({ error: "Contact not found." });
     if (!req.file?.path) {
-      return res.status(400).json({ error: "An MP4 video is required." });
+      return res.status(400).json({ error: "A video is required." });
     }
 
     const reply = await timedMediaStage(
@@ -2455,12 +2487,13 @@ router.post("/:contactId/video", handleVideoUpload, async (req, res) => {
 
     aiReplyCancellation.cancelForContact(contact);
 
-    const videoFilename = safeInboxFilename(req.file.originalname, "video.mp4");
+    const videoFilename = normalizedInboxVideoFilename(req.file.originalname);
     const preparedVideo = await timedMediaStage(
       timings,
       "videoPreparationMs",
       () => followUpVideoPreparation.prepareFollowUpVideoFile(req.file.path, {
         originalBytes: req.file.size,
+        forceTranscode: inboxVideoNeedsTranscode(req.file),
       })
     );
     let mediaKey = null;
@@ -2554,6 +2587,7 @@ router.post("/:contactId/video", handleVideoUpload, async (req, res) => {
     res.status(201).json({
       ...finalMessage,
       compressed: preparedVideo.compressed === true,
+      transcoded: preparedVideo.transcoded === true,
       original_bytes: preparedVideo.originalBytes,
       stored_bytes: preparedVideo.storedBytes,
       delivery_error: publicDeliveryError(finalMessage.delivery_error),
