@@ -98,7 +98,7 @@ async function persistStaffEchoIfNew(
          FROM contacts
          WHERE id = $1
            AND mode = 'human'
-           AND takeover_by = $4
+           AND takeover_by = $3
        ), latest_inbound AS (
          SELECT inbound.id, inbound.created_at
          FROM messages inbound, eligible_contact
@@ -115,7 +115,10 @@ async function persistStaffEchoIfNew(
            AND (outbound.created_at, outbound.id) >
                (latest_inbound.created_at, latest_inbound.id)
            AND (outbound.created_at, outbound.id) <
-               ($2::timestamptz, $3::bigint)
+               (SELECT staff_message.created_at, staff_message.id
+                FROM messages staff_message
+                WHERE staff_message.id = $2::bigint
+                  AND staff_message.contact_id = $1)
          ORDER BY outbound.created_at DESC, outbound.id DESC
          LIMIT 1
        )
@@ -139,7 +142,6 @@ async function persistStaffEchoIfNew(
        ON CONFLICT (trigger_message_id, follow_up_step) DO NOTHING`,
       [
         contactId,
-        message.created_at,
         message.id,
         syntheticHandoffOwner || null,
       ]

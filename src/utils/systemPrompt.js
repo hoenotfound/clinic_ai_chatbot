@@ -256,12 +256,28 @@ function promotionKnowledgeLines(promotion) {
     ];
   }
 
-  const followUp = compactPromotionKnowledgeText(promotion?.followUpMessage, 1_200);
+  const service = configuredServiceByExactName(promotion?.linkedService);
+  const standingPrice = promptContextText(service?.priceRange, 500);
+  const hasStandingNormalPrice = /(?:normal|regular|standard)\s+(?:price|rate)|正常价|正常價/iu.test(standingPrice || "");
+  // This is prompt-only knowledge. Do not edit the configured copy used by
+  // outbound media. A normal treatment price belongs to SERVICES, not a
+  // promotional caption that may describe a different package or older price.
+  const omitStandingPrice = (value) => hasStandingNormalPrice
+    ? String(value || "").replace(
+        /(?:normal\s+price|regular\s+price|standard\s+price|原价|原價)\s*[:：]?\s*(?:RM|MYR)\s*[\d,\.\uFE0F\u20E3]+/giu,
+        ""
+      ).replace(/[（(]\s*[)）]/gu, "")
+    : value;
+  const followUp = compactPromotionKnowledgeText(omitStandingPrice(promotion?.followUpMessage), 1_200);
   const caption = compactPromotionKnowledgeText(
-    promotion?.caption,
+    omitStandingPrice(promotion?.caption),
     followUp ? 1_400 : 3_000
   );
   const lines = [renderCompactPromotion(promotion)];
+  if (hasStandingNormalPrice) {
+    lines.push(`  standing treatment facts (SERVICES): ${standingPrice} | standalone treatment duration: ${promptContextText(service.duration, 300) || "Not configured"}`);
+    lines.push("  Durations in offer wording below may include gifts/add-ons. Do not substitute them for the standalone treatment duration; clarify or ask staff if the package total is unclear.");
+  }
 
   // The follow-up text normally contains the concise commercial terms
   // (promo price, gift, duration, inclusions). Prefer it over a long ad-style
@@ -648,6 +664,7 @@ function promotionAuthorityRules() {
   return `PROMOTION AUTHORITY — follow this even if another section contains older wording:
 - ACTIVE PROMOTIONS is the only authority for whether a promotion, discount, bundle, free add-on, or promotion deadline is currently active.
 - ACTIVE PROMOTIONS overrides promotion/discount/deadline wording in SERVICES, FAQs, SOP, the conversion playbook, guardrails, or earlier chat history.
+- SERVICES remains authoritative for standing normal/regular treatment prices, standalone treatment durations, mechanisms and safety. Promotional advertising copy may describe a package total or an older normal price; never use it to override those standing facts. If conflicting package totals or offer facts remain, ask the team to confirm instead of guessing.
 - A promotion that shows "service: X" applies ONLY to that exact canonical configured service X. Never borrow its price, discount, bundle, free add-on, or deadline for another service, even if the services sound related.
 - If more than one ACTIVE PROMOTION with "auto-send on price/package enquiry: yes" is listed for the same service, treat the automatic promotion as ambiguous: do not choose one, do not quote one as the current automatic offer, and say the current promotion needs team confirmation.
 - A promotion without a linked service is not eligible for automatic promotional media. Only describe it as a general promotion if its own wording clearly says it applies generally.
