@@ -1219,12 +1219,170 @@ function StepImagePicker({
   );
 }
 
+function FollowUpTimingFields({
+  step,
+  onChange,
+  label = "Send timing",
+  compact = false,
+}) {
+  const timingMode =
+    step?.timingMode === "before_window_expiry"
+      ? "before_window_expiry"
+      : "after_reply";
+  const beforeWindowExpiryMinutes = Number(
+    step?.beforeWindowExpiryMinutes || 120
+  );
+
+  return (
+    <div>
+      <label className={compact ? "text-xs font-semibold" : "text-sm font-semibold"}>
+        {label}
+      </label>
+      <select
+        value={timingMode}
+        onChange={(event) => {
+          const nextMode = event.target.value;
+          if (nextMode === "before_window_expiry") {
+            onChange({
+              timingMode: "before_window_expiry",
+              beforeWindowExpiryMinutes: 120,
+              delayMinutes: 1320,
+            });
+          } else {
+            onChange({
+              timingMode: "after_reply",
+              delayMinutes: 120,
+            });
+          }
+        }}
+        className="mt-1.5 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
+      >
+        <option value="after_reply">After the latest AI/staff reply</option>
+        <option value="before_window_expiry">Before messaging window expires</option>
+      </select>
+
+      {timingMode === "before_window_expiry" ? (
+        <div className="mt-2">
+          <select
+            value={beforeWindowExpiryMinutes}
+            onChange={(event) => {
+              const minutes = Number(event.target.value);
+              onChange({
+                beforeWindowExpiryMinutes: minutes,
+                delayMinutes: 24 * 60 - minutes,
+              });
+            }}
+            className="w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
+          >
+            <option value="60">1 hour before expiry</option>
+            <option value="120">2 hours before expiry</option>
+            <option value="180">3 hours before expiry</option>
+            <option value="240">4 hours before expiry</option>
+            <option value="360">6 hours before expiry</option>
+          </select>
+          <p className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
+            Uses the customer's latest inbound message. A newer customer reply resets the window and this timing automatically.
+          </p>
+        </div>
+      ) : (
+        <div className="mt-2">
+          <div className="flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-white focus-within:border-[var(--color-primary)]">
+            <input
+              type="number"
+              min="5"
+              max="1380"
+              step="1"
+              value={step?.delayMinutes ?? 120}
+              onChange={(event) =>
+                onChange({ delayMinutes: event.target.value })
+              }
+              className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm outline-none"
+            />
+            <span className="border-l border-[var(--color-border)] px-2.5 py-2.5 text-[10px] text-[var(--color-text-muted)]">
+              min
+            </span>
+          </div>
+          <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+            {formatDelay(Number(step?.delayMinutes || 0))} after the original reply
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ServiceVideoPicker({
+  videoKey,
+  videoFilename,
+  uploading,
+  onUpload,
+  onChange,
+}) {
+  const inputRef = useRef(null);
+
+  async function handlePicked(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const uploaded = await onUpload(file);
+    if (uploaded?.key) onChange(uploaded);
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold">Service video</p>
+          <p className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
+            {videoKey
+              ? videoFilename || "MP4 video attached"
+              : "Optional. Sent only when this service is the clear current interest."}
+          </p>
+        </div>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="video/mp4"
+          className="hidden"
+          aria-label="Service video upload"
+          onChange={handlePicked}
+        />
+        <div className="flex shrink-0 gap-3">
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={uploading}
+            className="text-[10px] font-semibold text-[var(--color-primary)] disabled:opacity-50"
+          >
+            {uploading ? "Uploading…" : videoKey ? "Replace" : "Add video"}
+          </button>
+          {videoKey && (
+            <button
+              type="button"
+              onClick={() => onChange({ key: "", filename: "" })}
+              disabled={uploading}
+              className="text-[10px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)] disabled:opacity-50"
+            >
+              Remove
+            </button>
+          )}
+        </div>
+      </div>
+      <p className="mt-2 text-[10px] leading-4 text-[var(--color-text-muted)]">
+        MP4, up to 16MB. The file stays private in R2 and is shared with the messaging provider only when it is sent.
+      </p>
+    </div>
+  );
+}
+
 function ServiceOverridesEditor({
   overrides = [],
   services = [],
   onChange,
   stepLabel,
   translating,
+  uploadingVideo,
+  onUploadVideo,
   onTranslateMessage,
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -1252,6 +1410,8 @@ function ServiceOverridesEditor({
         serviceName: available[0],
         message: "",
         translations: { en: "", ms: "", zh: "" },
+        videoKey: "",
+        videoFilename: "",
       },
     ]);
   }
@@ -1409,6 +1569,25 @@ function ServiceOverridesEditor({
                         )
                       }
                     />
+                    <ServiceVideoPicker
+                      videoKey={item.videoKey}
+                      videoFilename={item.videoFilename}
+                      uploading={uploadingVideo}
+                      onUpload={onUploadVideo}
+                      onChange={({ key, filename }) =>
+                        onChange(
+                          overrides.map((override, overrideIndex) =>
+                            overrideIndex === index
+                              ? {
+                                  ...override,
+                                  videoKey: key,
+                                  videoFilename: filename,
+                                }
+                              : override
+                          )
+                        )
+                      }
+                    />
                   </div>
                 );
               })}
@@ -1434,6 +1613,7 @@ function FollowUpTool({
   activeLanguage,
   translating,
   uploadingImage,
+  uploadingVideo,
   saving,
   delayDescription,
   services,
@@ -1444,6 +1624,7 @@ function FollowUpTool({
   onGenerateTranslations,
   onTranslateMessage,
   onUploadImage,
+  onUploadVideo,
   onImagePicked,
   onSave,
   toasts,
@@ -1489,7 +1670,13 @@ function FollowUpTool({
       onToggle={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
       saveLabel="Save changes"
       saving={saving || translating}
-      saveDisabled={saving || translating || uploadingImage || !hasUnsavedChanges}
+      saveDisabled={
+        saving ||
+        translating ||
+        uploadingImage ||
+        uploadingVideo ||
+        !hasUnsavedChanges
+      }
       onSave={onSave}
       toasts={toasts}
       dismissToast={dismissToast}
@@ -1497,37 +1684,19 @@ function FollowUpTool({
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
         <div className="space-y-5">
           <Card>
-            <SectionHeading number="1" title="Choose when it starts" description="The sequence is timed from the latest normal AI or staff reply." />
+            <SectionHeading
+              number="1"
+              title="Choose when it starts"
+              description="Each step can wait after the outgoing reply or run shortly before the customer's messaging window expires."
+            />
             <div className="mt-6 grid gap-6 xl:grid-cols-2">
-              <div>
-                <label htmlFor="follow-up-delay" className="text-sm font-semibold">Follow-up 1 sends after</label>
-                <div className="mt-2 flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)]">
-                  <input
-                    id="follow-up-delay"
-                    type="number"
-                    min="5"
-                    max="1380"
-                    step="1"
-                    value={form.delayMinutes}
-                    onChange={(event) => setForm((current) => ({ ...current, delayMinutes: event.target.value }))}
-                    className="min-w-0 flex-1 bg-transparent px-3.5 py-2.5 text-sm outline-none"
-                  />
-                  <span className="border-l border-[var(--color-border)] px-3 py-2.5 text-xs text-[var(--color-text-muted)]">minutes</span>
-                </div>
-                <p className="mt-1.5 text-xs text-[var(--color-text-muted)]">Current wait: {delayDescription}.</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {DELAY_PRESETS.map((preset) => (
-                    <button
-                      key={preset.minutes}
-                      type="button"
-                      onClick={() => setForm((current) => ({ ...current, delayMinutes: preset.minutes }))}
-                      className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${Number(form.delayMinutes) === preset.minutes ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <FollowUpTimingFields
+                step={form}
+                label="Follow-up 1 timing"
+                onChange={(patch) =>
+                  setForm((current) => ({ ...current, ...patch }))
+                }
+              />
 
               <fieldset>
                 <legend className="text-sm font-semibold">Start the sequence after</legend>
@@ -1729,6 +1898,8 @@ function FollowUpTool({
               services={services}
               stepLabel="Follow-up 1"
               translating={translating}
+              uploadingVideo={uploadingVideo}
+              onUploadVideo={onUploadVideo}
               onTranslateMessage={onTranslateMessage}
               onChange={(serviceOverrides) =>
                 setForm((current) => ({ ...current, serviceOverrides }))
@@ -1740,7 +1911,7 @@ function FollowUpTool({
             <SectionHeading
               number="3"
               title="Follow-up sequence"
-              description="Add up to two more messages. Times are cumulative from the original outgoing reply, not from the previous follow-up."
+              description="Add up to two more messages. A step can use normal inactivity timing or the customer's live messaging-window expiry."
             />
 
             {form.additionalSteps.length > 0 ? (
@@ -1775,28 +1946,14 @@ function FollowUpTool({
                     />
 
                     <div className="mt-4 grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
-                      <div>
-                        <label className="text-xs font-semibold">Send after</label>
-                        <div className="mt-1.5 flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-white">
-                          <input
-                            type="number"
-                            min="5"
-                            max="1380"
-                            step="1"
-                            value={step.delayMinutes}
-                            onChange={(event) =>
-                              updateAdditionalStep(index, {
-                                delayMinutes: event.target.value,
-                              })
-                            }
-                            className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm outline-none"
-                          />
-                          <span className="border-l border-[var(--color-border)] px-2.5 py-2.5 text-[10px] text-[var(--color-text-muted)]">min</span>
-                        </div>
-                        <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-                          {formatDelay(Number(step.delayMinutes))} after the original reply
-                        </p>
-                      </div>
+                      <FollowUpTimingFields
+                        step={step}
+                        compact
+                        label="Send timing"
+                        onChange={(patch) =>
+                          updateAdditionalStep(index, patch)
+                        }
+                      />
                       <div>
                         <div className="flex items-center justify-between gap-3">
                           <label className="text-xs font-semibold">
@@ -1857,6 +2014,8 @@ function FollowUpTool({
                       services={services}
                       stepLabel={`Follow-up ${index + 2}`}
                       translating={translating}
+                      uploadingVideo={uploadingVideo}
+                      onUploadVideo={onUploadVideo}
                       onTranslateMessage={onTranslateMessage}
                       onChange={(serviceOverrides) =>
                         updateAdditionalStep(index, { serviceOverrides })
@@ -1883,6 +2042,8 @@ function FollowUpTool({
                     ...current.additionalSteps,
                     {
                       delayMinutes: suggestedNextDelay,
+                      timingMode: "after_reply",
+                      beforeWindowExpiryMinutes: 120,
                       messageMode: "fixed",
                       aiInstruction: "",
                       message: "",
