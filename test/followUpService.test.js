@@ -11,6 +11,7 @@ const contactsRepo = require("../src/db/contactsRepo");
 const pipelineRepo = require("../src/db/pipelineRepo");
 const realtimeEvents = require("../src/utils/realtimeEvents");
 const whatsapp = require("../src/services/whatsappService");
+const channelMessaging = require("../src/services/channelMessagingService");
 const whatsappPolicy = require("../src/services/whatsappPolicyService");
 const followUpAiService = require("../src/services/followUpAiService");
 const {
@@ -20,6 +21,7 @@ const {
 
 const originalPolicyCheck = whatsappPolicy.checkFreeformAllowed;
 const originalWhatsappSendImage = whatsapp.sendImage;
+const originalSendVideoByStoredKey = channelMessaging.sendVideoByStoredKey;
 const originalGeneratePersonalizedFollowUp =
   followUpAiService.generatePersonalizedFollowUp;
 const originalSelectPromotionPackageForFollowUp =
@@ -27,6 +29,7 @@ const originalSelectPromotionPackageForFollowUp =
 
 test.beforeEach(() => {
   whatsapp.sendImage = originalWhatsappSendImage;
+  channelMessaging.sendVideoByStoredKey = originalSendVideoByStoredKey;
   followUpAiService.generatePersonalizedFollowUp =
     originalGeneratePersonalizedFollowUp;
   followUpAiService.selectPromotionPackageForFollowUp =
@@ -120,6 +123,85 @@ test("sends and records one claimed automated follow-up", async () => {
   assert.deepEqual(contacted, { contactId: 7, actor: "Automated follow-up" });
 });
 
+
+test("pre-expiry follow-up sends the video mapped to the customer's current service", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.delayMinutes = 1320;
+  clinicConfig.automatedFollowUp.timingMode = "before_window_expiry";
+  clinicConfig.automatedFollowUp.beforeWindowExpiryMinutes = 120;
+  clinicConfig.automatedFollowUp.serviceOverrides = [
+    {
+      serviceName: "Pelvic Care",
+      message: "Here is a short Pelvic Care video.",
+      translations: {
+        en: "Here is a short Pelvic Care video.",
+        ms: "Ini video ringkas Pelvic Care.",
+        zh: "给您看看骨盆调理的简短视频。",
+      },
+      videoKey: "clients/neutro/messages/follow-up-config/pelvis.mp4",
+      videoFilename: "pelvis-care.mp4",
+    },
+  ];
+
+  let candidateQuery = null;
+  let claimInput = null;
+  let videoSend = null;
+  followUpRepo.findCandidates = async (input) => {
+    candidateQuery = input;
+    return [
+      {
+        contact_id: 77,
+        channel: "whatsapp",
+        whatsapp_number: "60122223333",
+        trigger_message_id: 76,
+        next_follow_up_step: 1,
+        recent_inbound_messages: ["I want to know more about Pelvic Care"],
+        treatment_interest: "Pelvic Care",
+        trigger_message_content: "Sure, here are the Pelvic Care details.",
+      },
+    ];
+  };
+  followUpRepo.saveIfStillEligible = async (input) => {
+    claimInput = input;
+    return { id: 78, contact_id: 77, delivery_status: null };
+  };
+  channelMessaging.sendVideoByStoredKey = async (
+    contact,
+    key,
+    caption,
+    filename
+  ) => {
+    videoSend = { contact, key, caption, filename };
+    return { success: true, wamid: "wamid-video-78" };
+  };
+  messagesRepo.setWhatsappMessageId = async (id, wamid) => ({
+    id,
+    contact_id: 77,
+    whatsapp_message_id: wamid,
+    delivery_status: "pending",
+  });
+  realtimeEvents.publish = () => {};
+
+  await runAutomatedFollowUps();
+
+  assert.deepEqual(candidateQuery.timingModes, ["before_window_expiry"]);
+  assert.deepEqual(candidateQuery.beforeWindowExpiryMinutes, [120]);
+  assert.deepEqual(candidateQuery.delayMinutes, [1320]);
+  assert.equal(claimInput.timingMode, "before_window_expiry");
+  assert.equal(claimInput.beforeWindowExpiryMinutes, 120);
+  assert.equal(claimInput.targetedService, "Pelvic Care");
+  assert.deepEqual(videoSend, {
+    contact: {
+      id: 77,
+      channel: "whatsapp",
+      whatsapp_number: "60122223333",
+      channel_user_id: undefined,
+    },
+    key: "clients/neutro/messages/follow-up-config/pelvis.mp4",
+    caption: "Here is a short Pelvic Care video.",
+    filename: "pelvis-care.mp4",
+  });
+});
 
 test("first follow-up uses hidden active-promotion copy and does not let AI rewrite it", async () => {
   enableTool();
