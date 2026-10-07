@@ -593,6 +593,21 @@ async function setMessageMediaKeyById(
   return result.rows[0] || null;
 }
 
+async function setMessageContentById(messageId, contactId, content) {
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $2::integer)
+     )
+     UPDATE messages
+     SET content = $3
+     FROM conversation_lock
+     WHERE id = $1 AND contact_id = $2 AND role = 'assistant'
+     RETURNING ${LIGHTWEIGHT_MESSAGE_COLUMNS}`,
+    [messageId, contactId, content]
+  );
+  return result.rows[0] || null;
+}
+
 async function getMessageForForward(contactId, messageId) {
   const result = await pool.query(
     `SELECT m.id, m.contact_id, m.role, m.content, m.whatsapp_message_id,
