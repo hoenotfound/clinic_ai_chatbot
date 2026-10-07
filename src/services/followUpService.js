@@ -16,6 +16,7 @@ const {
 } = require("../utils/activePromotion");
 const { randomUUID } = require("node:crypto");
 const channelMessaging = require("./channelMessagingService");
+const mediaStorage = require("./mediaStorageService");
 const followUpAiService = require("./followUpAiService");
 const followUpAiLeaseRepo = require("../db/followUpAiLeaseRepo");
 const { automatedRepliesEnabled } = require("./automaticReplyControl");
@@ -82,18 +83,42 @@ function normalizeServiceOverrides(value) {
       message
     );
     if (!translations) return null;
-    normalized.push({ serviceName, message, translations });
+    normalized.push({
+      serviceName,
+      message,
+      translations,
+      videoKey:
+        typeof item?.videoKey === "string" ? item.videoKey.trim() : "",
+      videoFilename:
+        typeof item?.videoFilename === "string"
+          ? item.videoFilename.trim().slice(0, 255)
+          : "",
+    });
   }
   return normalized;
 }
 
 function normalizeFollowUpStep(value) {
-  const delayMinutes = Number(value?.delayMinutes);
+  const timingMode =
+    value?.timingMode === "before_window_expiry"
+      ? "before_window_expiry"
+      : "after_reply";
+  const beforeWindowExpiryMinutes = Number(
+    value?.beforeWindowExpiryMinutes ?? 120
+  );
+  const delayMinutes =
+    timingMode === "before_window_expiry" &&
+    Number.isInteger(beforeWindowExpiryMinutes)
+      ? 24 * 60 - beforeWindowExpiryMinutes
+      : Number(value?.delayMinutes);
   const message = typeof value?.message === "string" ? value.message.trim() : "";
   if (
     !Number.isInteger(delayMinutes) ||
     delayMinutes < 5 ||
     delayMinutes > 23 * 60 ||
+    !Number.isInteger(beforeWindowExpiryMinutes) ||
+    beforeWindowExpiryMinutes < 60 ||
+    beforeWindowExpiryMinutes > 360 ||
     !message ||
     message.length > 1000 ||
     (value?.imageUrl !== undefined && typeof value.imageUrl !== "string")
@@ -110,6 +135,8 @@ function normalizeFollowUpStep(value) {
 
   return {
     delayMinutes,
+    timingMode,
+    beforeWindowExpiryMinutes,
     messageMode: value?.messageMode === "ai" ? "ai" : "fixed",
     aiInstruction:
       typeof value?.aiInstruction === "string"
@@ -518,6 +545,8 @@ function messageForCandidate(step, candidate, language, stepIndex = 1) {
   return {
     message: source.translations[language] || source.message,
     targetedService: targeted?.serviceName || null,
+    targetedVideoKey: targeted?.videoKey || "",
+    targetedVideoFilename: targeted?.videoFilename || "",
     promotionFollowUp: false,
     promotionPackageSelection,
   };
@@ -664,6 +693,143 @@ async function sendSocialImageCompanion(contact, contactId, imageUrl, quietHours
   }
 }
 
+async function sendSocialVideoCompanion(
+  contact,
+  contactId,
+  sourceVideoKey,
+  filename,
+  quietHours
+) {
+  if (quietHoursStatus(new Date(), quietHours).active) return;
+
+  let durableVideoKey = null;
+  try {
+    durableVideoKey = await mediaStorage.copyStoredMediaToMessage(
+      sourceVideoKey,
+      "video/mp4",
+      { contactId }
+    );
+  } catch (err) {
+    console.error(
+      `Failed to prepare optional social follow-up video for contact ${contactId}:`,
+      err
+    );
+    await contactsRepo.setDeliveryAttention(
+      contactId,
+      "Follow-up text was sent, but the service video could not be prepared."
+    );
+    return;
+  }
+
+  let videoMessage;
+  try {
+    videoMessage = await followUpRepo.saveSocialVideoCompanion({
+      contactId,
+      mediaKey: durableVideoKey,
+      mediaMimeType: "video/mp4",
+    });
+  } catch (err) {
+    console.error(
+      `Failed to save optional social follow-up video for contact ${contactId}:`,
+      err
+    );
+    await mediaStorage.deleteMedia(durableVideoKey).catch((cleanupErr) => {
+      console.error(
+        `Failed to clean up unsaved social follow-up video ${durableVideoKey}:`,
+        cleanupErr
+      );
+    });
+    await contactsRepo.setDeliveryAttention(
+      contactId,
+      "Follow-up text was sent, but the service video could not be queued."
+    );
+    return;
+  }
+
+  if (!videoMessage) {
+    await mediaStorage.deleteMedia(durableVideoKey).catch((cleanupErr) => {
+      console.error(
+        `Failed to clean up unclaimed social follow-up video ${durableVideoKey}:`,
+        cleanupErr
+      );
+    });
+    return;
+  }
+
+  publishConversationChange(videoMessage, "message");
+
+  let videoResult;
+  try {
+    const videoProviderRecorder = messagesRepo.socialProviderAliasRecorder(
+      videoMessage.id,
+      contact.channel
+    );
+    videoResult = await channelMessaging.sendVideoByStoredKey(
+      contact,
+      durableVideoKey,
+      undefined,
+      filename || "service-video.mp4",
+      {
+        purpose: "marketing",
+        preSendCheck: async () =>
+          !quietHoursStatus(new Date(), quietHours).active,
+        ...(videoProviderRecorder
+          ? { onProviderMessageId: videoProviderRecorder }
+          : {}),
+      }
+    );
+  } catch (err) {
+    console.error("Optional social follow-up video send failed:", err);
+    videoResult = { success: false, wamid: null, externalMessageId: null };
+  }
+
+  if (videoResult?.cancelled && !videoResult?.preSendCheckFailed) {
+    const discarded = await followUpRepo.discardUnsentSocialVideoCompanion({
+      messageId: videoMessage.id,
+      contactId,
+    });
+    if (discarded) {
+      await mediaStorage.deleteMedia(durableVideoKey).catch((cleanupErr) => {
+        console.error(
+          `Failed to clean up cancelled social follow-up video ${durableVideoKey}:`,
+          cleanupErr
+        );
+      });
+      publishConversationChange(discarded, "message_cancelled");
+    }
+    return;
+  }
+
+  const videoError =
+    videoResult?.policyBlocked && videoResult.error
+      ? videoResult.error
+      : `${channelMessaging.labelForChannel(contact.channel)} did not accept the optional service video. The follow-up text was sent; retry this video from the Inbox if needed.`;
+  let finalVideoMessage = videoMessage;
+  if (videoResult?.success && videoResult.externalMessageId) {
+    finalVideoMessage =
+      (await messagesRepo.setSocialProviderMessageId(
+        videoMessage.id,
+        `${contact.channel}:${videoResult.externalMessageId}`,
+        "sent"
+      )) || videoMessage;
+  } else {
+    finalVideoMessage =
+      (await messagesRepo.setDeliveryStatusById(
+        videoMessage.id,
+        videoResult?.success ? "sent" : "failed",
+        videoResult?.success ? null : videoError
+      )) || videoMessage;
+  }
+  publishConversationChange(finalVideoMessage, "delivery_status");
+
+  if (!videoResult?.success) {
+    await contactsRepo.setDeliveryAttention(
+      contactId,
+      `Delivery failed: ${videoError}`
+    );
+  }
+}
+
 async function releaseAiGenerationLease({
   contactId,
   triggerMessageId,
@@ -779,6 +945,9 @@ async function sendCandidate(candidate) {
   );
   let followUpMessage = fallbackSelection.message;
   let targetedService = fallbackSelection.targetedService;
+  let targetedVideoKey = fallbackSelection.targetedVideoKey || "";
+  let targetedVideoFilename =
+    fallbackSelection.targetedVideoFilename || "";
   let promotionFollowUp = fallbackSelection.promotionFollowUp === true;
   let promotionPackageName = fallbackSelection.promotionPackageName || null;
   let promotionFollowUpImageUrl =
@@ -802,6 +971,8 @@ async function sendCandidate(candidate) {
       delayMinutes: step.delayMinutes,
       previousDelayMinutes:
         stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
+      timingMode: step.timingMode,
+      beforeWindowExpiryMinutes: step.beforeWindowExpiryMinutes,
       triggerMode: settings.triggerMode,
       activatedAt: settings.activatedAt,
     });
@@ -927,6 +1098,8 @@ async function sendCandidate(candidate) {
                   delayMinutes: step.delayMinutes,
                   previousDelayMinutes:
                     stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
+                  timingMode: step.timingMode,
+                  beforeWindowExpiryMinutes: step.beforeWindowExpiryMinutes,
                   triggerMode: settings.triggerMode,
                   activatedAt: settings.activatedAt,
                 });
@@ -1000,10 +1173,38 @@ async function sendCandidate(candidate) {
   const effectiveImageUrl = promotionFollowUp
     ? promotionFollowUpImageUrl
     : step.imageUrl;
+  const effectiveVideoKey =
+    !promotionFollowUp && targetedVideoKey ? targetedVideoKey : "";
+  const effectiveVideoFilename =
+    targetedVideoFilename || "service-video.mp4";
 
-  // WhatsApp can send its image + caption as one tracked message. Messenger
-  // and Instagram require separate text/image API messages, so the atomic
-  // follow-up claim represents only the durable text message on those channels.
+  // WhatsApp keeps the video on the same durable follow-up row so Inbox
+  // history and Retry can resend the exact attachment. Copy the shared config
+  // object into the contact's media namespace before claiming the row.
+  let durableVideoKey = null;
+  if (!isSocial && effectiveVideoKey) {
+    try {
+      durableVideoKey = await mediaStorage.copyStoredMediaToMessage(
+        effectiveVideoKey,
+        "video/mp4",
+        { contactId: candidate.contact_id }
+      );
+    } catch (err) {
+      console.error(
+        `Failed to prepare follow-up video for contact ${candidate.contact_id}:`,
+        err
+      );
+      await contactsRepo.setDeliveryAttention(
+        candidate.contact_id,
+        "Automated follow-up paused because the service video could not be prepared."
+      );
+      return;
+    }
+  }
+
+  // WhatsApp can send its media + caption as one tracked message. Messenger
+  // and Instagram keep the sequence claim as text and persist media companions
+  // separately so either provider message can be retried without duplication.
   let saved;
   try {
     saved = await followUpRepo.saveIfStillEligible({
@@ -1011,15 +1212,29 @@ async function sendCandidate(candidate) {
       triggerMessageId: candidate.trigger_message_id,
       content: followUpMessage,
       mediaUrl: !isSocial && effectiveImageUrl ? effectiveImageUrl : null,
+      mediaKey: durableVideoKey,
+      mediaMimeType: durableVideoKey ? "video/mp4" : null,
       stepIndex,
       targetedService: followUpMessageMode === "ai_personalized" ? null : targetedService,
       messageMode: followUpMessageMode,
       delayMinutes: step.delayMinutes,
       previousDelayMinutes:
         stepIndex > 1 ? settings.steps[stepIndex - 2].delayMinutes : 0,
+      timingMode: step.timingMode,
+      beforeWindowExpiryMinutes: step.beforeWindowExpiryMinutes,
       triggerMode: settings.triggerMode,
       activatedAt: settings.activatedAt,
     });
+  } catch (err) {
+    if (durableVideoKey) {
+      await mediaStorage.deleteMedia(durableVideoKey).catch((cleanupErr) => {
+        console.error(
+          `Failed to clean up unclaimed follow-up video ${durableVideoKey}:`,
+          cleanupErr
+        );
+      });
+    }
+    throw err;
   } finally {
     if (aiLeaseToken) {
       await releaseAiGenerationLease({
@@ -1034,7 +1249,17 @@ async function sendCandidate(candidate) {
 
   // The customer may have replied since the candidate query, or another
   // server instance may already have claimed this exact trigger.
-  if (!saved) return;
+  if (!saved) {
+    if (durableVideoKey) {
+      await mediaStorage.deleteMedia(durableVideoKey).catch((cleanupErr) => {
+        console.error(
+          `Failed to clean up unused follow-up video ${durableVideoKey}:`,
+          cleanupErr
+        );
+      });
+    }
+    return;
+  }
 
   publishConversationChange(saved, "message");
 
@@ -1092,18 +1317,26 @@ async function sendCandidate(candidate) {
         purpose: "marketing",
         preSendCheck: finalPreSendCheck,
       };
-      sendResult = effectiveImageUrl
-        ? await channelMessaging.sendImageByUrl(
+      sendResult = effectiveVideoKey
+        ? await channelMessaging.sendVideoByStoredKey(
             contact,
-            effectiveImageUrl,
+            durableVideoKey,
             followUpMessage,
+            effectiveVideoFilename,
             policyOptions
           )
-        : await channelMessaging.sendText(
-            contact,
-            followUpMessage,
-            policyOptions
-          );
+        : effectiveImageUrl
+          ? await channelMessaging.sendImageByUrl(
+              contact,
+              effectiveImageUrl,
+              followUpMessage,
+              policyOptions
+            )
+          : await channelMessaging.sendText(
+              contact,
+              followUpMessage,
+              policyOptions
+            );
     }
   } catch (err) {
     console.error("Automated follow-up send failed:", err);
@@ -1116,6 +1349,14 @@ async function sendCandidate(candidate) {
       contactId: candidate.contact_id,
     });
     if (discarded) {
+      if (durableVideoKey) {
+        await mediaStorage.deleteMedia(durableVideoKey).catch((cleanupErr) => {
+          console.error(
+            `Failed to clean up cancelled follow-up video ${durableVideoKey}:`,
+            cleanupErr
+          );
+        });
+      }
       publishConversationChange(discarded, "message_cancelled");
     }
     return;
@@ -1160,7 +1401,15 @@ async function sendCandidate(candidate) {
   // Contacted. Optional social image delivery is tracked independently below.
   await markContacted(candidate.contact_id);
 
-  if (isSocial && effectiveImageUrl) {
+  if (isSocial && effectiveVideoKey) {
+    await sendSocialVideoCompanion(
+      contact,
+      candidate.contact_id,
+      effectiveVideoKey,
+      effectiveVideoFilename,
+      settings.quietHours
+    );
+  } else if (isSocial && effectiveImageUrl) {
     await sendSocialImageCompanion(
       contact,
       candidate.contact_id,
@@ -1242,6 +1491,10 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
 
     const candidates = await followUpRepo.findCandidates({
       delayMinutes: settings.steps.map((step) => step.delayMinutes),
+      timingModes: settings.steps.map((step) => step.timingMode),
+      beforeWindowExpiryMinutes: settings.steps.map(
+        (step) => step.beforeWindowExpiryMinutes
+      ),
       triggerMode: settings.triggerMode,
       activatedAt: settings.activatedAt,
       limit: FOLLOW_UP_BATCH_SIZE,
@@ -1262,6 +1515,10 @@ async function runAutomatedFollowUps({ now = new Date() } = {}) {
     const nextDueAt = liveSettings && typeof followUpRepo.getNextCandidateDueAt === "function"
       ? await followUpRepo.getNextCandidateDueAt({
           delayMinutes: liveSettings.steps.map((step) => step.delayMinutes),
+          timingModes: liveSettings.steps.map((step) => step.timingMode),
+          beforeWindowExpiryMinutes: liveSettings.steps.map(
+            (step) => step.beforeWindowExpiryMinutes
+          ),
           triggerMode: liveSettings.triggerMode,
           activatedAt: liveSettings.activatedAt,
         })

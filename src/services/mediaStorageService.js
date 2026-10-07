@@ -113,6 +113,7 @@ function extensionForMimeType(mimeType) {
   if (type === "audio/mp4" || type === "audio/x-m4a") return "m4a";
   if (type === "audio/aac") return "aac";
   if (type === "audio/amr") return "amr";
+  if (type === "video/mp4") return "mp4";
   return "bin";
 }
 
@@ -445,6 +446,10 @@ function temporaryMediaPrefix(env = process.env) {
   return applyClientNamespace("meta-outbound/", env);
 }
 
+function followUpConfigVideoPrefix(env = process.env) {
+  return applyClientNamespace("messages/follow-up-config/", env);
+}
+
 function customerMediaPrefixes(contactId, env = process.env) {
   if (!isStorageConfigured(env)) return [];
   const isolation = getMediaIsolationStatus(env);
@@ -745,6 +750,67 @@ async function deleteMedia(key) {
   await sendR2(new DeleteObjectCommand({ Bucket: getBucketName(), Key: key }));
 }
 
+async function pruneStaleFollowUpConfigVideos({
+  referencedKeys = [],
+  olderThanMs = 24 * 60 * 60 * 1000,
+  now = Date.now(),
+  env = process.env,
+} = {}) {
+  if (!isStorageConfigured(env)) return 0;
+  const isolation = getMediaIsolationStatus(env);
+  // Legacy shared-bucket mode cannot prove ownership of this settings prefix.
+  // Do not perform broad cleanup there; explicit configured-key deletion still
+  // remains safe through isOwnedStoredMediaKey().
+  if (!isolation.prefix) return 0;
+
+  const keep = new Set(
+    (Array.isArray(referencedKeys) ? referencedKeys : [])
+      .map((key) => String(key || "").trim())
+      .filter(Boolean)
+  );
+  const prefix = followUpConfigVideoPrefix(env);
+  const bucket = getBucketName();
+  let continuationToken;
+  let deleted = 0;
+
+  do {
+    const page = await sendR2(new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: prefix,
+      ContinuationToken: continuationToken,
+    }));
+    const staleKeys = (page.Contents || [])
+      .filter((object) => isStaleTemporaryObject(object, { now, olderThanMs }))
+      .map((object) => object?.Key)
+      .filter((key) => key && !keep.has(key));
+
+    for (let offset = 0; offset < staleKeys.length; offset += 500) {
+      const batch = staleKeys.slice(offset, offset + 500);
+      const result = await sendR2(new DeleteObjectsCommand({
+        Bucket: bucket,
+        Delete: {
+          Objects: batch.map((Key) => ({ Key })),
+          Quiet: true,
+        },
+      }));
+      const failed = new Set(
+        (result.Errors || []).map((item) => item?.Key).filter(Boolean)
+      );
+      deleted += batch.filter((key) => !failed.has(key)).length;
+      if (failed.size) {
+        console.warn(
+          `R2 follow-up-video cleanup failed for ${failed.size} object(s).`
+        );
+      }
+    }
+
+    continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  return deleted;
+}
+
+
 module.exports = {
   CLIENT_MEDIA_ROOT,
   DEFAULT_R2_REQUEST_TIMEOUT_MS,
@@ -763,6 +829,7 @@ module.exports = {
   createPresignedGetUrl,
   scheduleTemporaryMediaDelete,
   temporaryMediaPrefix,
+  followUpConfigVideoPrefix,
   customerMediaPrefixes,
   deleteCustomerMediaObjects,
   deleteMediaPrefix,
@@ -770,6 +837,7 @@ module.exports = {
   isOwnedStoredMediaKey,
   isStaleTemporaryObject,
   pruneStaleTemporaryMedia,
+  pruneStaleFollowUpConfigVideos,
   openMediaStream,
   downloadMedia,
   isRangeNotSatisfiableError,

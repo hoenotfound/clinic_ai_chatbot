@@ -414,6 +414,16 @@ async function sendStoredMessage(contact, message, options = {}) {
       String(message.content || "")
     );
 
+  if (mimeType.startsWith("video/") && message.media_key) {
+    return channelMessaging.sendVideoByStoredKey(
+      contact,
+      message.media_key,
+      skipCaption ? undefined : (message.content || undefined),
+      "video.mp4",
+      socialProviderSendOptions(message, contact, { ...options, skipCaption })
+    );
+  }
+
   // Normal stored images can stay entirely inside R2. Create a disposable
   // provider-facing copy and let Meta fetch it instead of downloading the
   // permanent object into Render and uploading those bytes again.
@@ -1339,11 +1349,12 @@ router.post("/:contactId/messages/:messageId/retry", async (req, res) => {
         });
     } else {
       const retryPurpose =
-        message.sent_by_username &&
-        message.is_automated_follow_up !== true &&
-        message.is_scheduled_message !== true
-          ? whatsappPolicy.manualStaffPurpose(contact)
-          : "service";
+        message.is_automated_follow_up === true
+          ? "marketing"
+          : message.sent_by_username &&
+              message.is_scheduled_message !== true
+            ? whatsappPolicy.manualStaffPurpose(contact)
+            : "service";
       if (!(await requireFreeformPolicy(contact, res, retryPurpose))) return;
 
       performRetrySend = (activeContact) =>

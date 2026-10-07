@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
@@ -9,6 +9,8 @@ import LeadDistribution from "./LeadDistribution";
 const DEFAULT_FOLLOW_UP = {
   enabled: false,
   delayMinutes: 120,
+  timingMode: "after_reply",
+  beforeWindowExpiryMinutes: 120,
   triggerMode: "all",
   quietHours: {
     enabled: true,
@@ -55,15 +57,8 @@ const FOLLOW_UP_LANGUAGES = [
 
 const MAX_FOLLOW_UP_IMAGE_BYTES = 5 * 1024 * 1024;
 const FOLLOW_UP_IMAGE_TYPES = new Set(["image/jpeg", "image/png"]);
-const DELAY_PRESETS = [
-  { minutes: 30, label: "30 min" },
-  { minutes: 60, label: "1 hour" },
-  { minutes: 120, label: "2 hours" },
-  { minutes: 360, label: "6 hours" },
-  { minutes: 720, label: "12 hours" },
-  { minutes: 1380, label: "23 hours" },
-];
-
+const MAX_FOLLOW_UP_VIDEO_BYTES = 16 * 1024 * 1024;
+const FOLLOW_UP_VIDEO_TYPES = new Set(["video/mp4"]);
 function hasCompleteTranslations(value) {
   return !!value && FOLLOW_UP_LANGUAGES.every(({ key }) => value[key]?.trim());
 }
@@ -92,6 +87,8 @@ function normalizeServiceOverrides(value) {
         serviceName,
         message,
         translations: normalizeTranslations(item?.translations, message),
+        videoKey: String(item?.videoKey || ""),
+        videoFilename: String(item?.videoFilename || ""),
       };
     })
     .filter(Boolean);
@@ -99,8 +96,19 @@ function normalizeServiceOverrides(value) {
 
 function normalizeSequenceStep(value = {}) {
   const message = String(value.message || "").trim();
+  const timingMode =
+    value.timingMode === "before_window_expiry"
+      ? "before_window_expiry"
+      : "after_reply";
+  const beforeWindowExpiryMinutes =
+    Number(value.beforeWindowExpiryMinutes) || 120;
   return {
-    delayMinutes: Number(value.delayMinutes) || 120,
+    delayMinutes:
+      timingMode === "before_window_expiry"
+        ? 24 * 60 - beforeWindowExpiryMinutes
+        : Number(value.delayMinutes) || 120,
+    timingMode,
+    beforeWindowExpiryMinutes,
     messageMode: value.messageMode === "ai" ? "ai" : "fixed",
     aiInstruction: String(value.aiInstruction || ""),
     message,
@@ -119,8 +127,20 @@ function normalizeFollowUpSettings(value = {}) {
       : {}),
   };
   const usesDefaultMessage = settings.message === DEFAULT_FOLLOW_UP.message;
+  const firstTimingMode =
+    settings.timingMode === "before_window_expiry"
+      ? "before_window_expiry"
+      : "after_reply";
+  const firstBeforeWindowExpiryMinutes =
+    Number(settings.beforeWindowExpiryMinutes) ||
+    DEFAULT_FOLLOW_UP.beforeWindowExpiryMinutes;
   const firstStep = {
-    delayMinutes: Number(settings.delayMinutes) || DEFAULT_FOLLOW_UP.delayMinutes,
+    delayMinutes:
+      firstTimingMode === "before_window_expiry"
+        ? 24 * 60 - firstBeforeWindowExpiryMinutes
+        : Number(settings.delayMinutes) || DEFAULT_FOLLOW_UP.delayMinutes,
+    timingMode: firstTimingMode,
+    beforeWindowExpiryMinutes: firstBeforeWindowExpiryMinutes,
     messageMode: settings.messageMode === "ai" ? "ai" : "fixed",
     aiInstruction: String(settings.aiInstruction || ""),
     message: settings.message || DEFAULT_FOLLOW_UP.message,
@@ -154,6 +174,8 @@ function followUpFormFromSettings(value = {}) {
     triggerMode: settings.triggerMode === "staff" ? "staff" : "all",
     quietHours: settings.quietHours,
     delayMinutes: settings.delayMinutes,
+    timingMode: settings.timingMode,
+    beforeWindowExpiryMinutes: settings.beforeWindowExpiryMinutes,
     messageMode: settings.messageMode,
     aiInstruction: settings.aiInstruction,
     message: settings.message,
@@ -235,6 +257,7 @@ export default function Tools() {
   const [manualTranslationEdits, setManualTranslationEdits] = useState([]);
   const [reviewTranslations, setReviewTranslations] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
   const [distributionDirty, setDistributionDirty] = useState(false);
   const [distributionActive, setDistributionActive] = useState(false);
   const imageInputRef = useRef(null);
@@ -306,7 +329,6 @@ export default function Tools() {
     form.message.trim() !== translationsSource || !hasCompleteTranslations(form.translations);
   const translationReadyCount = FOLLOW_UP_LANGUAGES.filter(({ key }) => form.translations[key]?.trim()).length;
   const activeLanguage = FOLLOW_UP_LANGUAGES.find(({ key }) => key === translationLanguage);
-  const delayDescription = useMemo(() => formatDelay(Number(form.delayMinutes)), [form.delayMinutes]);
 
   function currentToolHasUnsavedChanges() {
     if (activeTool === "followUp") return hasUnsavedChanges;
@@ -475,6 +497,28 @@ export default function Tools() {
     if (url) setForm((current) => ({ ...current, imageUrl: url }));
   }
 
+  async function uploadFollowUpVideo(file) {
+    if (!file) return null;
+    if (!FOLLOW_UP_VIDEO_TYPES.has(file.type)) {
+      showToast("Please choose an MP4 video.", "error");
+      return null;
+    }
+    if (file.size > MAX_FOLLOW_UP_VIDEO_BYTES) {
+      showToast("That video is larger than 16MB. Please choose a smaller file.", "error");
+      return null;
+    }
+
+    setUploadingVideo(true);
+    try {
+      return await api.uploadFollowUpVideo(file);
+    } catch (err) {
+      showToast(err.message || "Couldn't upload that video.", "error");
+      return null;
+    } finally {
+      setUploadingVideo(false);
+    }
+  }
+
   function followUpValidationError() {
     const quietTimePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
     const quietStart = String(form.quietHours?.start || "").trim();
@@ -490,6 +534,8 @@ export default function Tools() {
     const steps = [
       {
         delayMinutes: form.delayMinutes,
+        timingMode: form.timingMode,
+        beforeWindowExpiryMinutes: form.beforeWindowExpiryMinutes,
         messageMode: form.messageMode,
         aiInstruction: form.aiInstruction,
         message: form.message,
@@ -507,10 +553,30 @@ export default function Tools() {
     let previousDelay = 0;
     for (let index = 0; index < steps.length; index += 1) {
       const step = steps[index];
-      const delayMinutes = Number(step.delayMinutes);
+      const timingMode =
+        step.timingMode === "before_window_expiry"
+          ? "before_window_expiry"
+          : "after_reply";
+      const beforeWindowExpiryMinutes = Number(
+        step.beforeWindowExpiryMinutes ?? 120
+      );
+      const delayMinutes =
+        timingMode === "before_window_expiry"
+          ? 24 * 60 - beforeWindowExpiryMinutes
+          : Number(step.delayMinutes);
       const messageMode = step.messageMode === "ai" ? "ai" : "fixed";
       const aiInstruction = String(step.aiInstruction || "").trim();
       const message = String(step.message || "").trim();
+      if (
+        timingMode === "before_window_expiry" &&
+        (
+          !Number.isInteger(beforeWindowExpiryMinutes) ||
+          beforeWindowExpiryMinutes < 60 ||
+          beforeWindowExpiryMinutes > 360
+        )
+      ) {
+        return `Follow-up ${index + 1} needs an expiry offset between 1 and 6 hours.`;
+      }
       if (
         !Number.isInteger(delayMinutes) ||
         delayMinutes < 5 ||
@@ -612,6 +678,8 @@ export default function Tools() {
         serviceName: item.serviceName.trim(),
         message,
         translations,
+        videoKey: String(item.videoKey || "").trim(),
+        videoFilename: String(item.videoFilename || "").trim(),
       };
     });
   }
@@ -632,8 +700,20 @@ export default function Tools() {
           existingTranslations[key] || generated?.[key] || "",
         ])
       );
+      const timingMode =
+        step.timingMode === "before_window_expiry"
+          ? "before_window_expiry"
+          : "after_reply";
+      const beforeWindowExpiryMinutes = Number(
+        step.beforeWindowExpiryMinutes ?? 120
+      );
       return {
-        delayMinutes: Number(step.delayMinutes),
+        delayMinutes:
+          timingMode === "before_window_expiry"
+            ? 24 * 60 - beforeWindowExpiryMinutes
+            : Number(step.delayMinutes),
+        timingMode,
+        beforeWindowExpiryMinutes,
         messageMode: step.messageMode === "ai" ? "ai" : "fixed",
         aiInstruction: String(step.aiInstruction || "").trim(),
         message,
@@ -691,7 +771,17 @@ export default function Tools() {
       const updated = await api.updateConfig({
         automatedFollowUp: {
           enabled: form.enabled,
-          delayMinutes,
+          delayMinutes:
+            form.timingMode === "before_window_expiry"
+              ? 24 * 60 - Number(form.beforeWindowExpiryMinutes || 120)
+              : delayMinutes,
+          timingMode:
+            form.timingMode === "before_window_expiry"
+              ? "before_window_expiry"
+              : "after_reply",
+          beforeWindowExpiryMinutes: Number(
+            form.beforeWindowExpiryMinutes || 120
+          ),
           messageMode: form.messageMode === "ai" ? "ai" : "fixed",
           aiInstruction: String(form.aiInstruction || "").trim(),
           triggerMode: form.triggerMode,
@@ -847,8 +937,8 @@ export default function Tools() {
             activeLanguage={activeLanguage}
             translating={translating}
             uploadingImage={uploadingImage}
+            uploadingVideo={uploadingVideo}
             saving={saving}
-            delayDescription={delayDescription}
             services={config.services || []}
             promotions={config.promotions || []}
             imageInputRef={imageInputRef}
@@ -857,6 +947,7 @@ export default function Tools() {
             onGenerateTranslations={handleGenerateTranslations}
             onTranslateMessage={generateTranslationsForMessage}
             onUploadImage={uploadFollowUpImage}
+            onUploadVideo={uploadFollowUpVideo}
             onImagePicked={handleImagePicked}
             onSave={handleSave}
             toasts={toasts}
@@ -1117,12 +1208,170 @@ function StepImagePicker({
   );
 }
 
+function FollowUpTimingFields({
+  step,
+  onChange,
+  label = "Send timing",
+  compact = false,
+}) {
+  const timingMode =
+    step?.timingMode === "before_window_expiry"
+      ? "before_window_expiry"
+      : "after_reply";
+  const beforeWindowExpiryMinutes = Number(
+    step?.beforeWindowExpiryMinutes || 120
+  );
+
+  return (
+    <div>
+      <label className={compact ? "text-xs font-semibold" : "text-sm font-semibold"}>
+        {label}
+      </label>
+      <select
+        value={timingMode}
+        onChange={(event) => {
+          const nextMode = event.target.value;
+          if (nextMode === "before_window_expiry") {
+            onChange({
+              timingMode: "before_window_expiry",
+              beforeWindowExpiryMinutes: 120,
+              delayMinutes: 1320,
+            });
+          } else {
+            onChange({
+              timingMode: "after_reply",
+              delayMinutes: 120,
+            });
+          }
+        }}
+        className="mt-1.5 w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
+      >
+        <option value="after_reply">After the latest AI/staff reply</option>
+        <option value="before_window_expiry">Before messaging window expires</option>
+      </select>
+
+      {timingMode === "before_window_expiry" ? (
+        <div className="mt-2">
+          <select
+            value={beforeWindowExpiryMinutes}
+            onChange={(event) => {
+              const minutes = Number(event.target.value);
+              onChange({
+                beforeWindowExpiryMinutes: minutes,
+                delayMinutes: 24 * 60 - minutes,
+              });
+            }}
+            className="w-full rounded-xl border border-[var(--color-border)] bg-white px-3 py-2.5 text-sm outline-none focus:border-[var(--color-primary)]"
+          >
+            <option value="60">1 hour before expiry</option>
+            <option value="120">2 hours before expiry</option>
+            <option value="180">3 hours before expiry</option>
+            <option value="240">4 hours before expiry</option>
+            <option value="360">6 hours before expiry</option>
+          </select>
+          <p className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
+            Uses the customer's latest inbound message. A newer customer reply resets the window and this timing automatically.
+          </p>
+        </div>
+      ) : (
+        <div className="mt-2">
+          <div className="flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-white focus-within:border-[var(--color-primary)]">
+            <input
+              type="number"
+              min="5"
+              max="1380"
+              step="1"
+              value={step?.delayMinutes ?? 120}
+              onChange={(event) =>
+                onChange({ delayMinutes: event.target.value })
+              }
+              className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm outline-none"
+            />
+            <span className="border-l border-[var(--color-border)] px-2.5 py-2.5 text-[10px] text-[var(--color-text-muted)]">
+              min
+            </span>
+          </div>
+          <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+            {formatDelay(Number(step?.delayMinutes || 0))} after the original reply
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ServiceVideoPicker({
+  videoKey,
+  videoFilename,
+  uploading,
+  onUpload,
+  onChange,
+}) {
+  const inputRef = useRef(null);
+
+  async function handlePicked(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const uploaded = await onUpload(file);
+    if (uploaded?.key) onChange(uploaded);
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold">Service video</p>
+          <p className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
+            {videoKey
+              ? videoFilename || "MP4 video attached"
+              : "Optional. Sent only when this service is the clear current interest."}
+          </p>
+        </div>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="video/mp4"
+          className="hidden"
+          aria-label="Service video upload"
+          onChange={handlePicked}
+        />
+        <div className="flex shrink-0 gap-3">
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={uploading}
+            className="text-[10px] font-semibold text-[var(--color-primary)] disabled:opacity-50"
+          >
+            {uploading ? "Uploading…" : videoKey ? "Replace" : "Add video"}
+          </button>
+          {videoKey && (
+            <button
+              type="button"
+              onClick={() => onChange({ key: "", filename: "" })}
+              disabled={uploading}
+              className="text-[10px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-danger)] disabled:opacity-50"
+            >
+              Remove
+            </button>
+          )}
+        </div>
+      </div>
+      <p className="mt-2 text-[10px] leading-4 text-[var(--color-text-muted)]">
+        MP4, up to 16MB. The file stays private in R2 and is shared with the messaging provider only when it is sent.
+      </p>
+    </div>
+  );
+}
+
 function ServiceOverridesEditor({
   overrides = [],
   services = [],
   onChange,
   stepLabel,
   translating,
+  uploadingVideo,
+  onUploadVideo,
   onTranslateMessage,
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -1150,6 +1399,8 @@ function ServiceOverridesEditor({
         serviceName: available[0],
         message: "",
         translations: { en: "", ms: "", zh: "" },
+        videoKey: "",
+        videoFilename: "",
       },
     ]);
   }
@@ -1307,6 +1558,25 @@ function ServiceOverridesEditor({
                         )
                       }
                     />
+                    <ServiceVideoPicker
+                      videoKey={item.videoKey}
+                      videoFilename={item.videoFilename}
+                      uploading={uploadingVideo}
+                      onUpload={onUploadVideo}
+                      onChange={({ key, filename }) =>
+                        onChange(
+                          overrides.map((override, overrideIndex) =>
+                            overrideIndex === index
+                              ? {
+                                  ...override,
+                                  videoKey: key,
+                                  videoFilename: filename,
+                                }
+                              : override
+                          )
+                        )
+                      }
+                    />
                   </div>
                 );
               })}
@@ -1332,8 +1602,8 @@ function FollowUpTool({
   activeLanguage,
   translating,
   uploadingImage,
+  uploadingVideo,
   saving,
-  delayDescription,
   services,
   promotions,
   imageInputRef,
@@ -1342,13 +1612,19 @@ function FollowUpTool({
   onGenerateTranslations,
   onTranslateMessage,
   onUploadImage,
+  onUploadVideo,
   onImagePicked,
   onSave,
   toasts,
   dismissToast,
 }) {
   const allSteps = [
-    { delayMinutes: form.delayMinutes, message: form.message },
+    {
+      delayMinutes: form.delayMinutes,
+      timingMode: form.timingMode,
+      beforeWindowExpiryMinutes: form.beforeWindowExpiryMinutes,
+      message: form.message,
+    },
     ...(form.additionalSteps || []),
   ];
   const lastDelay = allSteps[allSteps.length - 1]?.delayMinutes;
@@ -1387,7 +1663,13 @@ function FollowUpTool({
       onToggle={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
       saveLabel="Save changes"
       saving={saving || translating}
-      saveDisabled={saving || translating || uploadingImage || !hasUnsavedChanges}
+      saveDisabled={
+        saving ||
+        translating ||
+        uploadingImage ||
+        uploadingVideo ||
+        !hasUnsavedChanges
+      }
       onSave={onSave}
       toasts={toasts}
       dismissToast={dismissToast}
@@ -1395,37 +1677,19 @@ function FollowUpTool({
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
         <div className="space-y-5">
           <Card>
-            <SectionHeading number="1" title="Choose when it starts" description="The sequence is timed from the latest normal AI or staff reply." />
+            <SectionHeading
+              number="1"
+              title="Choose when it starts"
+              description="Each step can wait after the outgoing reply or run shortly before the customer's messaging window expires."
+            />
             <div className="mt-6 grid gap-6 xl:grid-cols-2">
-              <div>
-                <label htmlFor="follow-up-delay" className="text-sm font-semibold">Follow-up 1 sends after</label>
-                <div className="mt-2 flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] focus-within:border-[var(--color-primary)] focus-within:ring-2 focus-within:ring-[var(--color-primary-light)]">
-                  <input
-                    id="follow-up-delay"
-                    type="number"
-                    min="5"
-                    max="1380"
-                    step="1"
-                    value={form.delayMinutes}
-                    onChange={(event) => setForm((current) => ({ ...current, delayMinutes: event.target.value }))}
-                    className="min-w-0 flex-1 bg-transparent px-3.5 py-2.5 text-sm outline-none"
-                  />
-                  <span className="border-l border-[var(--color-border)] px-3 py-2.5 text-xs text-[var(--color-text-muted)]">minutes</span>
-                </div>
-                <p className="mt-1.5 text-xs text-[var(--color-text-muted)]">Current wait: {delayDescription}.</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {DELAY_PRESETS.map((preset) => (
-                    <button
-                      key={preset.minutes}
-                      type="button"
-                      onClick={() => setForm((current) => ({ ...current, delayMinutes: preset.minutes }))}
-                      className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${Number(form.delayMinutes) === preset.minutes ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)]"}`}
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <FollowUpTimingFields
+                step={form}
+                label="Follow-up 1 timing"
+                onChange={(patch) =>
+                  setForm((current) => ({ ...current, ...patch }))
+                }
+              />
 
               <fieldset>
                 <legend className="text-sm font-semibold">Start the sequence after</legend>
@@ -1627,6 +1891,8 @@ function FollowUpTool({
               services={services}
               stepLabel="Follow-up 1"
               translating={translating}
+              uploadingVideo={uploadingVideo}
+              onUploadVideo={onUploadVideo}
               onTranslateMessage={onTranslateMessage}
               onChange={(serviceOverrides) =>
                 setForm((current) => ({ ...current, serviceOverrides }))
@@ -1638,7 +1904,7 @@ function FollowUpTool({
             <SectionHeading
               number="3"
               title="Follow-up sequence"
-              description="Add up to two more messages. Times are cumulative from the original outgoing reply, not from the previous follow-up."
+              description="Add up to two more messages. A step can use normal inactivity timing or the customer's live messaging-window expiry."
             />
 
             {form.additionalSteps.length > 0 ? (
@@ -1673,28 +1939,14 @@ function FollowUpTool({
                     />
 
                     <div className="mt-4 grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
-                      <div>
-                        <label className="text-xs font-semibold">Send after</label>
-                        <div className="mt-1.5 flex items-center overflow-hidden rounded-xl border border-[var(--color-border)] bg-white">
-                          <input
-                            type="number"
-                            min="5"
-                            max="1380"
-                            step="1"
-                            value={step.delayMinutes}
-                            onChange={(event) =>
-                              updateAdditionalStep(index, {
-                                delayMinutes: event.target.value,
-                              })
-                            }
-                            className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm outline-none"
-                          />
-                          <span className="border-l border-[var(--color-border)] px-2.5 py-2.5 text-[10px] text-[var(--color-text-muted)]">min</span>
-                        </div>
-                        <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-                          {formatDelay(Number(step.delayMinutes))} after the original reply
-                        </p>
-                      </div>
+                      <FollowUpTimingFields
+                        step={step}
+                        compact
+                        label="Send timing"
+                        onChange={(patch) =>
+                          updateAdditionalStep(index, patch)
+                        }
+                      />
                       <div>
                         <div className="flex items-center justify-between gap-3">
                           <label className="text-xs font-semibold">
@@ -1755,6 +2007,8 @@ function FollowUpTool({
                       services={services}
                       stepLabel={`Follow-up ${index + 2}`}
                       translating={translating}
+                      uploadingVideo={uploadingVideo}
+                      onUploadVideo={onUploadVideo}
                       onTranslateMessage={onTranslateMessage}
                       onChange={(serviceOverrides) =>
                         updateAdditionalStep(index, { serviceOverrides })
@@ -1781,6 +2035,8 @@ function FollowUpTool({
                     ...current.additionalSteps,
                     {
                       delayMinutes: suggestedNextDelay,
+                      timingMode: "after_reply",
+                      beforeWindowExpiryMinutes: 120,
                       messageMode: "fixed",
                       aiInstruction: "",
                       message: "",
@@ -1856,7 +2112,11 @@ function FollowUpTool({
               {allSteps.map((step, index) => (
                 <div key={index} className="flex items-center justify-between gap-3 rounded-xl bg-[var(--color-bg)] px-3 py-2.5">
                   <span className="text-xs font-semibold">Follow-up {index + 1}</span>
-                  <span className="text-xs text-[var(--color-text-muted)]">{formatDelay(Number(step.delayMinutes))}</span>
+                  <span className="text-xs text-[var(--color-text-muted)]">
+                    {step.timingMode === "before_window_expiry"
+                      ? `${formatDelay(Number(step.beforeWindowExpiryMinutes || 120))} before window expiry`
+                      : formatDelay(Number(step.delayMinutes))}
+                  </span>
                 </div>
               ))}
             </div>

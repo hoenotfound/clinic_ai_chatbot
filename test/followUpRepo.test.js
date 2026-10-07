@@ -41,6 +41,10 @@ test("automated follow-up inserts take the conversation scoring lock and re-chec
       "2026-08-28T00:00:00.000Z",
       0,
       "fixed",
+      "after_reply",
+      120,
+      null,
+      null,
     ]);
     assert.match(sql, /automated_follow_up_step/);
     assert.match(sql, /automated_follow_up_target_service/);
@@ -93,6 +97,10 @@ test("later follow-up claims preserve spacing from the actual previous send", as
       "2026-08-28T00:00:00.000Z",
       120,
       "fixed",
+      "after_reply",
+      120,
+      null,
+      null,
     ]);
     return { rows: [] };
   };
@@ -134,6 +142,8 @@ test("automated follow-up discovery excludes conversations already waiting for s
       "all",
       "2026-08-28T00:00:00.000Z",
       25,
+      ["after_reply"],
+      [120],
     ]);
     return { rows: [] };
   };
@@ -148,6 +158,70 @@ test("automated follow-up discovery excludes conversations already waiting for s
   assert.deepEqual(candidates, []);
 });
 
+
+test("pre-expiry timing is anchored to the latest inbound customer message", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(
+      sql,
+      /latest_inbound_created_at\s*\+ \(\(1440 - \(\$6::integer\[\]\)\[next_follow_up_step\]\) \* interval '1 minute'\)/
+    );
+    assert.match(
+      sql,
+      /\(\$5::text\[\]\)\[next_follow_up_step\] = 'before_window_expiry'/
+    );
+    assert.deepEqual(params, [
+      [1320],
+      "all",
+      "2026-10-07T00:00:00.000Z",
+      25,
+      ["before_window_expiry"],
+      [120],
+    ]);
+    return { rows: [] };
+  };
+
+  await followUpRepo.findCandidates({
+    delayMinutes: [1320],
+    timingModes: ["before_window_expiry"],
+    beforeWindowExpiryMinutes: [120],
+    triggerMode: "all",
+    activatedAt: "2026-10-07T00:00:00.000Z",
+    limit: 25,
+  });
+});
+
+test("pre-expiry steps preserve spacing from the previous actual follow-up", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql) => {
+    assert.match(
+      sql,
+      /previous_follow_up_created_at\s*\+ \(\(\(\$1::integer\[\]\)\[next_follow_up_step\] - \(\$1::integer\[\]\)\[next_follow_up_step - 1\]\) \* interval '1 minute'\)/
+    );
+    assert.match(
+      sql,
+      /WHEN \(\$5::text\[\]\)\[next_follow_up_step\] = 'before_window_expiry'\s*THEN GREATEST/
+    );
+    return { rows: [] };
+  };
+
+  await followUpRepo.findCandidates({
+    delayMinutes: [720, 1080],
+    timingModes: ["after_reply", "before_window_expiry"],
+    beforeWindowExpiryMinutes: [120, 360],
+    triggerMode: "all",
+    activatedAt: "2026-10-07T00:00:00.000Z",
+    limit: 25,
+  });
+});
 
 test("next follow-up due calculation excludes booked visited and closed latest leads", async (t) => {
   const originalQuery = pool.query;
@@ -247,6 +321,41 @@ test("discarding an unsent final claim only removes a still-unaccepted automated
   assert.equal(discarded.contact_id, 22);
 });
 
+
+test("social follow-up video companion persists a durable MP4 attachment", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql, params) => {
+    assert.match(sql, /media_key/);
+    assert.match(sql, /media_mime_type/);
+    assert.match(sql, /is_automated_follow_up/);
+    assert.deepEqual(params, [
+      23,
+      "clients/neutro/messages/23/service-video.mp4",
+      "video/mp4",
+    ]);
+    return {
+      rows: [{
+        id: 131,
+        contact_id: 23,
+        has_media_attachment: true,
+        media_mime_type: "video/mp4",
+      }],
+    };
+  };
+
+  const saved = await followUpRepo.saveSocialVideoCompanion({
+    contactId: 23,
+    mediaKey: "clients/neutro/messages/23/service-video.mp4",
+    mediaMimeType: "video/mp4",
+  });
+
+  assert.equal(saved.id, 131);
+  assert.equal(saved.has_media_attachment, true);
+});
 
 test("discarding an unsent social follow-up image only removes an unaccepted companion", async (t) => {
   const originalQuery = pool.query;

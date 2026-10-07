@@ -13,7 +13,7 @@ const FOLLOW_UP_MESSAGE_COLUMNS = `
   whatsapp_message_id,
   sent_by_username,
   media_url,
-  false AS has_media_attachment,
+  (media_key IS NOT NULL) AS has_media_attachment,
   media_mime_type,
   created_at,
   delivery_status,
@@ -48,6 +48,41 @@ function normalizeDelayMinutes(value) {
   return delays;
 }
 
+function normalizeTimingModes(value, count) {
+  const source = Array.isArray(value)
+    ? value
+    : Array.from({ length: count }, () => "after_reply");
+  if (
+    source.length !== count ||
+    source.some(
+      (mode) => !["after_reply", "before_window_expiry"].includes(mode)
+    )
+  ) {
+    throw new TypeError("Invalid automated follow-up timing mode.");
+  }
+  return source;
+}
+
+function normalizeBeforeWindowExpiryMinutes(value, count) {
+  const source = Array.isArray(value)
+    ? value
+    : Array.from({ length: count }, () => 120);
+  const minutes = source.map((item) => Number(item));
+  if (
+    minutes.length !== count ||
+    minutes.some(
+      (item) =>
+        !Number.isInteger(item) ||
+        item < 60 ||
+        item > 360
+    )
+  ) {
+    throw new TypeError("Invalid automated follow-up expiry offset.");
+  }
+  return minutes;
+}
+
+
 /**
  * Returns conversations whose latest normal outbound reply can advance to the
  * next configured follow-up sequence step. A customer reply starts a new cycle,
@@ -57,8 +92,20 @@ function normalizeDelayMinutes(value) {
  * steps. This keeps the worker from progressing past a send that staff may need
  * to inspect or retry.
  */
-async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 25 }) {
+async function findCandidates({
+  delayMinutes,
+  timingModes,
+  beforeWindowExpiryMinutes,
+  triggerMode,
+  activatedAt,
+  limit = 25,
+}) {
   const delays = normalizeDelayMinutes(delayMinutes);
+  const modes = normalizeTimingModes(timingModes, delays.length);
+  const expiryOffsets = normalizeBeforeWindowExpiryMinutes(
+    beforeWindowExpiryMinutes,
+    delays.length
+  );
   const result = await pool.query(
     `WITH conversation_state AS (
        SELECT
@@ -207,34 +254,73 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
      FROM conversation_state
      WHERE next_follow_up_step <= cardinality($1::integer[])
        AND has_blocking_claim = false
-       AND GREATEST(
-             trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
-             COALESCE(
-               previous_follow_up_created_at
-                 + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
-               trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+       AND CASE
+             WHEN ($5::text[])[next_follow_up_step] = 'before_window_expiry'
+               THEN GREATEST(
+                 latest_inbound_created_at
+                   + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up_created_at
+                     + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+                   latest_inbound_created_at
+                     + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute')
+                 )
+               )
+             ELSE GREATEST(
+               trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
+               COALESCE(
+                 previous_follow_up_created_at
+                   + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+                 trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+               )
              )
-           ) <= now()
-       AND GREATEST(
-             trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
-             COALESCE(
-               previous_follow_up_created_at
-                 + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
-               trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+           END <= now()
+       AND CASE
+             WHEN ($5::text[])[next_follow_up_step] = 'before_window_expiry'
+               THEN GREATEST(
+                 latest_inbound_created_at
+                   + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up_created_at
+                     + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+                   latest_inbound_created_at
+                     + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute')
+                 )
+               )
+             ELSE GREATEST(
+               trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
+               COALESCE(
+                 previous_follow_up_created_at
+                   + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+                 trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+               )
              )
-           ) <= latest_inbound_created_at + interval '23 hours 50 minutes'
+           END <= latest_inbound_created_at + interval '23 hours 50 minutes'
      ORDER BY
-       GREATEST(
-             trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
-             COALESCE(
-               previous_follow_up_created_at
-                 + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
-               trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+       CASE
+             WHEN ($5::text[])[next_follow_up_step] = 'before_window_expiry'
+               THEN GREATEST(
+                 latest_inbound_created_at
+                   + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up_created_at
+                     + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+                   latest_inbound_created_at
+                     + ((1440 - ($6::integer[])[next_follow_up_step]) * interval '1 minute')
+                 )
+               )
+             ELSE GREATEST(
+               trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
+               COALESCE(
+                 previous_follow_up_created_at
+                   + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+                 trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+               )
              )
-           ) ASC,
+           END ASC,
        contact_id ASC
      LIMIT $4`,
-    [delays, triggerMode, activatedAt, limit]
+    [delays, triggerMode, activatedAt, limit, modes, expiryOffsets]
   );
   return result.rows;
 }
@@ -243,8 +329,19 @@ async function findCandidates({ delayMinutes, triggerMode, activatedAt, limit = 
  * Returns the earliest due time for the next eligible sequence step. The worker
  * sleeps until this timestamp rather than polling Postgres every minute.
  */
-async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt }) {
+async function getNextCandidateDueAt({
+  delayMinutes,
+  timingModes,
+  beforeWindowExpiryMinutes,
+  triggerMode,
+  activatedAt,
+}) {
   const delays = normalizeDelayMinutes(delayMinutes);
+  const modes = normalizeTimingModes(timingModes, delays.length);
+  const expiryOffsets = normalizeBeforeWindowExpiryMinutes(
+    beforeWindowExpiryMinutes,
+    delays.length
+  );
   const result = await pool.query(
     `WITH conversation_state AS (
        SELECT
@@ -352,27 +449,53 @@ async function getNextCandidateDueAt({ delayMinutes, triggerMode, activatedAt })
          AND ($2 = 'all' OR anchor.sent_by_username IS NOT NULL)
      )
      SELECT MIN(
-       GREATEST(
-             trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
-             COALESCE(
-               previous_follow_up_created_at
-                 + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
-               trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+       CASE
+             WHEN ($4::text[])[next_follow_up_step] = 'before_window_expiry'
+               THEN GREATEST(
+                 latest_inbound_created_at
+                   + ((1440 - ($5::integer[])[next_follow_up_step]) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up_created_at
+                     + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+                   latest_inbound_created_at
+                     + ((1440 - ($5::integer[])[next_follow_up_step]) * interval '1 minute')
+                 )
+               )
+             ELSE GREATEST(
+               trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
+               COALESCE(
+                 previous_follow_up_created_at
+                   + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+                 trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+               )
              )
-           )
+           END
      ) AS due_at
      FROM conversation_state
      WHERE next_follow_up_step <= cardinality($1::integer[])
        AND has_blocking_claim = false
-       AND GREATEST(
-             trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
-             COALESCE(
-               previous_follow_up_created_at
-                 + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
-               trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+       AND CASE
+             WHEN ($4::text[])[next_follow_up_step] = 'before_window_expiry'
+               THEN GREATEST(
+                 latest_inbound_created_at
+                   + ((1440 - ($5::integer[])[next_follow_up_step]) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up_created_at
+                     + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+                   latest_inbound_created_at
+                     + ((1440 - ($5::integer[])[next_follow_up_step]) * interval '1 minute')
+                 )
+               )
+             ELSE GREATEST(
+               trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute'),
+               COALESCE(
+                 previous_follow_up_created_at
+                   + ((($1::integer[])[next_follow_up_step] - ($1::integer[])[next_follow_up_step - 1]) * interval '1 minute'),
+                 trigger_created_at + (($1::integer[])[next_follow_up_step] * interval '1 minute')
+               )
              )
-           ) <= latest_inbound_created_at + interval '23 hours 50 minutes'`,
-    [delays, triggerMode, activatedAt]
+           END <= latest_inbound_created_at + interval '23 hours 50 minutes'`,
+    [delays, triggerMode, activatedAt, modes, expiryOffsets]
   );
   return result.rows[0]?.due_at || null;
 }
@@ -403,18 +526,29 @@ async function saveIfStillEligible({
   triggerMessageId,
   content,
   mediaUrl,
+  mediaKey = null,
+  mediaMimeType = null,
   stepIndex = 1,
   targetedService = null,
   messageMode = "fixed",
   delayMinutes,
   previousDelayMinutes = 0,
+  timingMode = "after_reply",
+  beforeWindowExpiryMinutes = 120,
   triggerMode,
   activatedAt,
 }) {
   const numericDelay = Number(delayMinutes);
   const numericPreviousDelay = Number(previousDelayMinutes);
+  const numericBeforeWindowExpiryMinutes = Number(beforeWindowExpiryMinutes);
+  const normalizedTimingMode =
+    timingMode === "before_window_expiry"
+      ? "before_window_expiry"
+      : "after_reply";
   const numericStep = Number(stepIndex);
   const normalizedMessageMode = String(messageMode || "fixed").trim().toLowerCase();
+  const normalizedMediaKey = String(mediaKey || "").trim() || null;
+  const normalizedMediaMimeType = String(mediaMimeType || "").trim() || null;
   if (
     !Number.isInteger(numericDelay) ||
     numericDelay < 5 ||
@@ -424,10 +558,17 @@ async function saveIfStillEligible({
     numericPreviousDelay >= numericDelay ||
     (numericStep === 1 && numericPreviousDelay !== 0) ||
     (numericStep > 1 && numericPreviousDelay < 5) ||
+    !Number.isInteger(numericBeforeWindowExpiryMinutes) ||
+    numericBeforeWindowExpiryMinutes < 60 ||
+    numericBeforeWindowExpiryMinutes > 360 ||
+    (normalizedTimingMode === "before_window_expiry" &&
+      numericDelay !== 24 * 60 - numericBeforeWindowExpiryMinutes) ||
     !Number.isInteger(numericStep) ||
     numericStep < 1 ||
     numericStep > MAX_FOLLOW_UP_STEPS ||
-    !FOLLOW_UP_MESSAGE_MODES.has(normalizedMessageMode)
+    !FOLLOW_UP_MESSAGE_MODES.has(normalizedMessageMode) ||
+    (normalizedMediaKey && normalizedMediaMimeType !== "video/mp4") ||
+    (!normalizedMediaKey && normalizedMediaMimeType)
   ) {
     throw new TypeError("Invalid automated follow-up step or delay.");
   }
@@ -492,6 +633,8 @@ async function saveIfStillEligible({
        content,
        sent_by_username,
        media_url,
+       media_key,
+       media_mime_type,
        is_automated_follow_up,
        automated_follow_up_for_message_id,
        automated_follow_up_step,
@@ -499,7 +642,7 @@ async function saveIfStillEligible({
        automated_follow_up_targeting_recorded,
        automated_follow_up_message_mode
      )
-     SELECT $1, 'assistant', $3, 'Follow-up automation', $4, true, $2, $5, $6, true, $11
+     SELECT $1, 'assistant', $3, 'Follow-up automation', $4, $14, $15, true, $2, $5, $6, true, $11
      FROM anchor, latest_inbound, progress, contacts c
      LEFT JOIN previous_follow_up ON true
      LEFT JOIN LATERAL (
@@ -546,20 +689,46 @@ async function saveIfStillEligible({
            AND decision.action IN ('skip', 'human_review')
        )
        AND anchor.created_at >= $9::timestamptz
-       AND GREATEST(
-             anchor.created_at + ($7::integer * interval '1 minute'),
-             COALESCE(
-               previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
-               anchor.created_at + ($7::integer * interval '1 minute')
+       AND CASE
+             WHEN $12 = 'before_window_expiry'
+               THEN GREATEST(
+                 latest_inbound.created_at
+                   + ((1440 - $13::integer) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up.created_at
+                     + (($7::integer - $10::integer) * interval '1 minute'),
+                   latest_inbound.created_at
+                     + ((1440 - $13::integer) * interval '1 minute')
+                 )
+               )
+             ELSE GREATEST(
+               anchor.created_at + ($7::integer * interval '1 minute'),
+               COALESCE(
+                 previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
+                 anchor.created_at + ($7::integer * interval '1 minute')
+               )
              )
-           ) <= now()
-       AND GREATEST(
-             anchor.created_at + ($7::integer * interval '1 minute'),
-             COALESCE(
-               previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
-               anchor.created_at + ($7::integer * interval '1 minute')
+           END <= now()
+       AND CASE
+             WHEN $12 = 'before_window_expiry'
+               THEN GREATEST(
+                 latest_inbound.created_at
+                   + ((1440 - $13::integer) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up.created_at
+                     + (($7::integer - $10::integer) * interval '1 minute'),
+                   latest_inbound.created_at
+                     + ((1440 - $13::integer) * interval '1 minute')
+                 )
+               )
+             ELSE GREATEST(
+               anchor.created_at + ($7::integer * interval '1 minute'),
+               COALESCE(
+                 previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
+                 anchor.created_at + ($7::integer * interval '1 minute')
+               )
              )
-           ) <= latest_inbound.created_at + interval '23 hours 50 minutes'
+           END <= latest_inbound.created_at + interval '23 hours 50 minutes'
        AND ($8 = 'all' OR anchor.sent_by_username IS NOT NULL)
        AND COALESCE(progress.max_step, 0) + 1 = $5
        AND COALESCE(progress.has_blocking_claim, false) = false
@@ -579,6 +748,10 @@ async function saveIfStillEligible({
       activatedAt,
       numericPreviousDelay,
       normalizedMessageMode,
+      normalizedTimingMode,
+      numericBeforeWindowExpiryMinutes,
+      normalizedMediaKey,
+      normalizedMediaMimeType,
     ]
   );
   return result.rows[0] || null;
@@ -641,6 +814,8 @@ async function recordAiDecisionIfStillEligible({
   topic = "",
   delayMinutes,
   previousDelayMinutes = 0,
+  timingMode = "after_reply",
+  beforeWindowExpiryMinutes = 120,
   triggerMode,
   activatedAt,
 }) {
@@ -649,6 +824,11 @@ async function recordAiDecisionIfStillEligible({
   const numericStep = Number(stepIndex);
   const numericDelay = Number(delayMinutes);
   const numericPreviousDelay = Number(previousDelayMinutes);
+  const numericBeforeWindowExpiryMinutes = Number(beforeWindowExpiryMinutes);
+  const normalizedTimingMode =
+    timingMode === "before_window_expiry"
+      ? "before_window_expiry"
+      : "after_reply";
   const normalizedAction = String(action || "").trim().toLowerCase();
   const normalizedReason = String(reason || "").slice(0, 1000);
   const normalizedTopic = String(topic || "").slice(0, 500);
@@ -670,6 +850,11 @@ async function recordAiDecisionIfStillEligible({
     numericPreviousDelay >= numericDelay ||
     (numericStep === 1 && numericPreviousDelay !== 0) ||
     (numericStep > 1 && numericPreviousDelay < 5) ||
+    !Number.isInteger(numericBeforeWindowExpiryMinutes) ||
+    numericBeforeWindowExpiryMinutes < 60 ||
+    numericBeforeWindowExpiryMinutes > 360 ||
+    (normalizedTimingMode === "before_window_expiry" &&
+      numericDelay !== 24 * 60 - numericBeforeWindowExpiryMinutes) ||
     !["all", "staff"].includes(triggerMode) ||
     typeof activatedAt !== "string" ||
     Number.isNaN(Date.parse(activatedAt))
@@ -787,20 +972,46 @@ async function recordAiDecisionIfStillEligible({
              AND existing.action IN ('skip', 'human_review')
          )
          AND anchor.created_at >= $9::timestamptz
-         AND GREATEST(
-               anchor.created_at + ($7::integer * interval '1 minute'),
-               COALESCE(
-                 previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
-                 anchor.created_at + ($7::integer * interval '1 minute')
+         AND CASE
+               WHEN $11 = 'before_window_expiry'
+                 THEN GREATEST(
+                   latest_inbound.created_at
+                     + ((1440 - $12::integer) * interval '1 minute'),
+                   COALESCE(
+                     previous_follow_up.created_at
+                       + (($7::integer - $10::integer) * interval '1 minute'),
+                     latest_inbound.created_at
+                       + ((1440 - $12::integer) * interval '1 minute')
+                   )
+                 )
+               ELSE GREATEST(
+                 anchor.created_at + ($7::integer * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
+                   anchor.created_at + ($7::integer * interval '1 minute')
+                 )
                )
-             ) <= now()
-         AND GREATEST(
-               anchor.created_at + ($7::integer * interval '1 minute'),
-               COALESCE(
-                 previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
-                 anchor.created_at + ($7::integer * interval '1 minute')
+             END <= now()
+         AND CASE
+               WHEN $11 = 'before_window_expiry'
+                 THEN GREATEST(
+                   latest_inbound.created_at
+                     + ((1440 - $12::integer) * interval '1 minute'),
+                   COALESCE(
+                     previous_follow_up.created_at
+                       + (($7::integer - $10::integer) * interval '1 minute'),
+                     latest_inbound.created_at
+                       + ((1440 - $12::integer) * interval '1 minute')
+                   )
+                 )
+               ELSE GREATEST(
+                 anchor.created_at + ($7::integer * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up.created_at + (($7::integer - $10::integer) * interval '1 minute'),
+                   anchor.created_at + ($7::integer * interval '1 minute')
+                 )
                )
-             ) <= latest_inbound.created_at + interval '23 hours 50 minutes'
+             END <= latest_inbound.created_at + interval '23 hours 50 minutes'
          AND ($8 = 'all' OR anchor.sent_by_username IS NOT NULL)
          AND COALESCE(progress.max_step, 0) + 1 = $3
          AND COALESCE(progress.has_blocking_claim, false) = false
@@ -837,6 +1048,8 @@ async function recordAiDecisionIfStillEligible({
       triggerMode,
       activatedAt,
       numericPreviousDelay,
+      normalizedTimingMode,
+      numericBeforeWindowExpiryMinutes,
     ]
   );
 
@@ -996,6 +1209,71 @@ async function saveSocialImageCompanion({ contactId, imageUrl }) {
   return result.rows[0] || null;
 }
 
+async function saveSocialVideoCompanion({
+  contactId,
+  mediaKey,
+  mediaMimeType = "video/mp4",
+}) {
+  const normalizedKey = String(mediaKey || "").trim();
+  if (!normalizedKey || mediaMimeType !== "video/mp4") {
+    throw new TypeError("A durable MP4 media key is required.");
+  }
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     )
+     INSERT INTO messages (
+       contact_id,
+       role,
+       content,
+       sent_by_username,
+       media_key,
+       media_mime_type,
+       is_automated_follow_up
+     )
+     SELECT $1, 'assistant', '', 'Follow-up automation', $2, $3, true
+     FROM conversation_lock
+     RETURNING ${FOLLOW_UP_MESSAGE_COLUMNS}`,
+    [contactId, normalizedKey, mediaMimeType]
+  );
+  return result.rows[0] || null;
+}
+
+async function discardUnsentSocialVideoCompanion({ messageId, contactId }) {
+  const numericMessageId = Number(messageId);
+  const numericContactId = Number(contactId);
+  if (
+    !Number.isInteger(numericMessageId) ||
+    numericMessageId <= 0 ||
+    !Number.isInteger(numericContactId) ||
+    numericContactId <= 0
+  ) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `WITH conversation_lock AS MATERIALIZED (
+       SELECT pg_advisory_xact_lock(${CONVERSATION_LOCK_NAMESPACE}, $1::integer)
+     )
+     DELETE FROM messages
+     WHERE id = $2
+       AND contact_id = $1
+       AND role = 'assistant'
+       AND is_automated_follow_up = true
+       AND automated_follow_up_for_message_id IS NULL
+       AND content = ''
+       AND media_key IS NOT NULL
+       AND media_mime_type = 'video/mp4'
+       AND delivery_status IS NULL
+       AND whatsapp_message_id IS NULL
+       AND EXISTS (SELECT 1 FROM conversation_lock)
+     RETURNING ${FOLLOW_UP_MESSAGE_COLUMNS}`,
+    [numericContactId, numericMessageId]
+  );
+
+  return result.rows[0] || null;
+}
+
 async function discardUnsentSocialImageCompanion({ messageId, contactId }) {
   const numericMessageId = Number(messageId);
   const numericContactId = Number(contactId);
@@ -1068,6 +1346,8 @@ module.exports = {
   isClaimStillEligible,
   discardUnsentClaim,
   saveSocialImageCompanion,
+  saveSocialVideoCompanion,
   discardUnsentSocialImageCompanion,
+  discardUnsentSocialVideoCompanion,
   markStaleClaimsUnconfirmed,
 };

@@ -224,6 +224,41 @@ test("attaching persisted media updates the existing lightweight message row", a
   assert.equal(updated.has_media_attachment, true);
 });
 
+test("video retry keeps the durable R2 key without a base64 download", async (t) => {
+  const originalQuery = pool.query;
+  const originalDownload = mediaStorage.downloadMedia;
+  t.after(() => {
+    pool.query = originalQuery;
+    mediaStorage.downloadMedia = originalDownload;
+  });
+
+  let downloads = 0;
+  mediaStorage.downloadMedia = async () => {
+    downloads += 1;
+    throw new Error("video retry should not download in messagesRepo");
+  };
+  pool.query = async (sql, params) => {
+    assert.match(sql, /m\.media_key/);
+    assert.deepEqual(params, [91, 7]);
+    return {
+      rows: [{
+        id: 91,
+        contact_id: 7,
+        role: "assistant",
+        content: "Service video",
+        media_key: "clients/neutro/messages/7/service-video.mp4",
+        media_mime_type: "video/mp4",
+        delivery_status: "failed",
+      }],
+    };
+  };
+
+  const row = await messagesRepo.getMessageForRetry(7, 91);
+  assert.equal(row.media_key, "clients/neutro/messages/7/service-video.mp4");
+  assert.equal(row.media_base64, null);
+  assert.equal(downloads, 0);
+});
+
 test("uploads Buffer attachments to R2 without a base64 round-trip", async (t) => {
   const originalQuery = pool.query;
   const originalUploadMedia = mediaStorage.uploadMedia;

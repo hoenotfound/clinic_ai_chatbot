@@ -122,6 +122,67 @@ test("WhatsApp sticker bytes upload then send as a sticker", async (t) => {
   ]);
 });
 
+test("WhatsApp stored service video uploads privately then sends by media id", async (t) => {
+  const originalDownload = mediaStorage.downloadMedia;
+  const originalUpload = whatsapp.uploadMedia;
+  const originalSendVideo = whatsapp.sendVideoById;
+  t.after(() => {
+    mediaStorage.downloadMedia = originalDownload;
+    whatsapp.uploadMedia = originalUpload;
+    whatsapp.sendVideoById = originalSendVideo;
+  });
+
+  const calls = [];
+  mediaStorage.downloadMedia = async (key, options) => {
+    calls.push({ kind: "download", key, maxBytes: options.maxBytes });
+    return Buffer.from("video-data");
+  };
+  whatsapp.uploadMedia = async (buffer, mimeType, filename) => {
+    calls.push({
+      kind: "upload",
+      bytes: buffer.toString(),
+      mimeType,
+      filename,
+    });
+    return "wa-video-media";
+  };
+  whatsapp.sendVideoById = async (to, mediaId, caption, options) => {
+    calls.push({ kind: "send", to, mediaId, caption, options });
+    return { success: true, wamid: "wamid-video-1" };
+  };
+
+  const result = await messaging.sendVideoByStoredKey(
+    { id: 14, channel: "whatsapp", whatsapp_number: "60123456789" },
+    "clients/neutro/messages/follow-up-config/123-video.mp4",
+    "Here is the service video",
+    "pelvis.mp4",
+    { preSendCheck: () => true }
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.wamid, "wamid-video-1");
+  assert.deepEqual(calls, [
+    {
+      kind: "download",
+      key: "clients/neutro/messages/follow-up-config/123-video.mp4",
+      maxBytes: 16 * 1024 * 1024,
+    },
+    {
+      kind: "upload",
+      bytes: "video-data",
+      mimeType: "video/mp4",
+      filename: "pelvis.mp4",
+    },
+    {
+      kind: "send",
+      to: "60123456789",
+      mediaId: "wa-video-media",
+      caption: "Here is the service video",
+      options: { replyToProviderMessageId: undefined },
+    },
+  ]);
+});
+
 test("WhatsApp policy rejection blocks the lower-level send", async (t) => {
   const originalPolicy = whatsappPolicy.checkFreeformAllowed;
   const originalWhatsappSend = whatsapp.sendMessage;
