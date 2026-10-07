@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
@@ -59,15 +59,6 @@ const MAX_FOLLOW_UP_IMAGE_BYTES = 5 * 1024 * 1024;
 const FOLLOW_UP_IMAGE_TYPES = new Set(["image/jpeg", "image/png"]);
 const MAX_FOLLOW_UP_VIDEO_BYTES = 16 * 1024 * 1024;
 const FOLLOW_UP_VIDEO_TYPES = new Set(["video/mp4"]);
-const DELAY_PRESETS = [
-  { minutes: 30, label: "30 min" },
-  { minutes: 60, label: "1 hour" },
-  { minutes: 120, label: "2 hours" },
-  { minutes: 360, label: "6 hours" },
-  { minutes: 720, label: "12 hours" },
-  { minutes: 1380, label: "23 hours" },
-];
-
 function hasCompleteTranslations(value) {
   return !!value && FOLLOW_UP_LANGUAGES.every(({ key }) => value[key]?.trim());
 }
@@ -338,7 +329,6 @@ export default function Tools() {
     form.message.trim() !== translationsSource || !hasCompleteTranslations(form.translations);
   const translationReadyCount = FOLLOW_UP_LANGUAGES.filter(({ key }) => form.translations[key]?.trim()).length;
   const activeLanguage = FOLLOW_UP_LANGUAGES.find(({ key }) => key === translationLanguage);
-  const delayDescription = useMemo(() => formatDelay(Number(form.delayMinutes)), [form.delayMinutes]);
 
   function currentToolHasUnsavedChanges() {
     if (activeTool === "followUp") return hasUnsavedChanges;
@@ -949,7 +939,6 @@ export default function Tools() {
             uploadingImage={uploadingImage}
             uploadingVideo={uploadingVideo}
             saving={saving}
-            delayDescription={delayDescription}
             services={config.services || []}
             promotions={config.promotions || []}
             imageInputRef={imageInputRef}
@@ -1615,7 +1604,6 @@ function FollowUpTool({
   uploadingImage,
   uploadingVideo,
   saving,
-  delayDescription,
   services,
   promotions,
   imageInputRef,
@@ -1631,7 +1619,12 @@ function FollowUpTool({
   dismissToast,
 }) {
   const allSteps = [
-    { delayMinutes: form.delayMinutes, message: form.message },
+    {
+      delayMinutes: form.delayMinutes,
+      timingMode: form.timingMode,
+      beforeWindowExpiryMinutes: form.beforeWindowExpiryMinutes,
+      message: form.message,
+    },
     ...(form.additionalSteps || []),
   ];
   const lastDelay = allSteps[allSteps.length - 1]?.delayMinutes;
@@ -2119,7 +2112,11 @@ function FollowUpTool({
               {allSteps.map((step, index) => (
                 <div key={index} className="flex items-center justify-between gap-3 rounded-xl bg-[var(--color-bg)] px-3 py-2.5">
                   <span className="text-xs font-semibold">Follow-up {index + 1}</span>
-                  <span className="text-xs text-[var(--color-text-muted)]">{formatDelay(Number(step.delayMinutes))}</span>
+                  <span className="text-xs text-[var(--color-text-muted)]">
+                    {step.timingMode === "before_window_expiry"
+                      ? `${formatDelay(Number(step.beforeWindowExpiryMinutes || 120))} before window expiry`
+                      : formatDelay(Number(step.delayMinutes))}
+                  </span>
                 </div>
               ))}
             </div>
