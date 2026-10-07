@@ -329,6 +329,7 @@ async function prepareFollowUpVideoFile(
     maxUploadBytes = MAX_FOLLOW_UP_VIDEO_UPLOAD_BYTES,
     maxWhatsAppBytes = MAX_WHATSAPP_VIDEO_BYTES,
     targetBytes = TARGET_WHATSAPP_VIDEO_BYTES,
+    forceTranscode = false,
   } = {}
 ) {
   const inputStat =
@@ -350,10 +351,11 @@ async function prepareFollowUpVideoFile(
     );
   }
 
-  if (sourceBytes <= maxWhatsAppBytes) {
+  if (sourceBytes <= maxWhatsAppBytes && !forceTranscode) {
     return {
       buffer: await fsApi.readFile(inputPath),
       compressed: false,
+      transcoded: false,
       originalBytes: sourceBytes,
       storedBytes: sourceBytes,
     };
@@ -367,7 +369,14 @@ async function prepareFollowUpVideoFile(
 
   try {
     const durationSeconds = await probeDurationFn(inputPath);
-    let plan = bitratePlan(durationSeconds, { targetBytes });
+    const effectiveTargetBytes =
+      sourceBytes <= maxWhatsAppBytes && forceTranscode
+        ? Math.min(
+            targetBytes,
+            Math.max(sourceBytes * 2, 4 * MIB)
+          )
+        : targetBytes;
+    let plan = bitratePlan(durationSeconds, { targetBytes: effectiveTargetBytes });
     await transcodeFn(inputPath, outputPath, plan);
 
     let outputStat = await fsApi.stat(outputPath);
@@ -377,7 +386,7 @@ async function prepareFollowUpVideoFile(
       // with extra headroom instead of asking staff to manually re-export.
       await fsApi.unlink(outputPath).catch(() => {});
       plan = bitratePlan(durationSeconds, {
-        targetBytes: Math.floor(targetBytes * 0.82),
+        targetBytes: Math.floor(effectiveTargetBytes * 0.82),
       });
       await transcodeFn(inputPath, outputPath, plan);
       outputStat = await fsApi.stat(outputPath);
@@ -392,7 +401,8 @@ async function prepareFollowUpVideoFile(
 
     return {
       buffer: await fsApi.readFile(outputPath),
-      compressed: true,
+      compressed: outputStat.size < sourceBytes,
+      transcoded: true,
       durationSeconds,
       originalBytes: sourceBytes,
       storedBytes: outputStat.size,
