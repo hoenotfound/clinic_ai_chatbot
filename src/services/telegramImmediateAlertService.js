@@ -25,6 +25,7 @@ const IMMEDIATE_ALERT_RETRY_DELAYS_MS = Object.freeze([
   15 * 60 * 1000,
 ]);
 const IMMEDIATE_ALERT_WORKER_ERROR_RETRY_MS = 60 * 1000;
+const QUEUE_PERSIST_RETRY_DELAYS_MS = Object.freeze([150, 500]);
 
 let immediateAlertWorker = null;
 
@@ -430,6 +431,8 @@ function createTelegramImmediateAlertService({
   repository = telegramImmediateAlertRepo,
   wakeQueue = wakeImmediateAlertQueue,
   config = clinicConfig,
+  queuePersistRetryDelaysMs = QUEUE_PERSIST_RETRY_DELAYS_MS,
+  wait = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
 } = {}) {
   async function queuePreparedAlert({
     eventKey,
@@ -441,14 +444,30 @@ function createTelegramImmediateAlertService({
   }) {
     if (!isTelegramEnabled(env)) return { status: "disabled" };
 
-    const queued = await repository.queueAlert({
+    const input = {
       eventKey,
       type,
       contactId,
       leadId,
       messageText,
       cooldownMinutes,
-    });
+    };
+    const retryableCodes = new Set(["55P03", "40P01", "40001"]);
+    let queued;
+
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        queued = await repository.queueAlert(input);
+        break;
+      } catch (err) {
+        const delayMs = Number(queuePersistRetryDelaysMs?.[attempt]);
+        if (!retryableCodes.has(String(err?.code || "")) || !Number.isFinite(delayMs)) {
+          throw err;
+        }
+        await wait(Math.max(0, delayMs));
+      }
+    }
+
     if (!queued) return { status: "suppressed" };
 
     wakeQueue(0);
@@ -550,6 +569,7 @@ module.exports = {
   HUMAN_ALERT_LOCK_NAMESPACE: telegramImmediateAlertRepo.HUMAN_ALERT_LOCK_NAMESPACE,
   IMMEDIATE_ALERT_RETRY_DELAYS_MS,
   IMMEDIATE_ALERT_WORKER_ERROR_RETRY_MS,
+  QUEUE_PERSIST_RETRY_DELAYS_MS,
   IMMEDIATE_MESSAGE_LIMIT,
   buildImmediateAlertMessage,
   bookingReadyEventKey,
