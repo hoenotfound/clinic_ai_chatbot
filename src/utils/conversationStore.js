@@ -139,6 +139,7 @@ async function appendMessageForContact(
       replyToProviderMessageId: options.replyToProviderMessageId || null,
       isForwarded: options.isForwarded === true,
       mediaKey: options.mediaKey || null,
+      mediaFilename: options.mediaFilename || null,
     }
   );
 
