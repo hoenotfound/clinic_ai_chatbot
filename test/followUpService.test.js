@@ -428,7 +428,7 @@ test("first follow-up uses hidden active-promotion copy and does not let AI rewr
 
   await runAutomatedFollowUps();
 
-  assert.equal(aiCalls, 0);
+  assert.equal(aiCalls, 1);
   assert.equal(
     claimInput.content,
     "🎁 Free 1-hour 全身通淋巴按摩 + 脸部提升刮痧"
@@ -3034,7 +3034,7 @@ test("AI mode sends the personalized message instead of the fixed fallback", asy
   assert.equal(claimedInput.targetedService, null);
 });
 
-test("AI-mode targeted media keeps the configured targeted caption and skips AI rewriting", async () => {
+test("AI-mode targeted media keeps the configured caption after AI safety review", async () => {
   enableTool();
   clinicConfig.automatedFollowUp.messageMode = "ai";
   clinicConfig.automatedFollowUp.aiInstruction = "Continue naturally.";
@@ -3071,7 +3071,7 @@ test("AI-mode targeted media keeps the configured targeted caption and skips AI 
     return {
       action: "send",
       message: "This AI text must not replace the configured media caption.",
-      reason: "Should not be called.",
+      reason: "The follow-up is still appropriate to send.",
       topic: "Pelvic Care",
     };
   };
@@ -3129,6 +3129,87 @@ test("AI-mode targeted media keeps the configured targeted caption and skips AI 
     caption: "Pelvic Care configured video caption",
     filename: "pelvis-ai.mp4",
   });
+});
+
+test("AI-mode targeted media still honors human-review decisions before sending", async () => {
+  enableTool();
+  clinicConfig.automatedFollowUp.messageMode = "ai";
+  clinicConfig.automatedFollowUp.aiInstruction = "Continue naturally.";
+  clinicConfig.automatedFollowUp.serviceOverrides = [
+    {
+      serviceName: "Pelvic Care",
+      message: "Pelvic Care configured video caption",
+      translations: {
+        en: "Pelvic Care configured video caption",
+        ms: "Kapsyen video Pelvic Care yang ditetapkan",
+        zh: "骨盆调理已设定的视频文案",
+      },
+      imageUrl: "",
+      videoKey: "clients/neutro/messages/follow-up-config/pelvis-safety.mp4",
+      videoFilename: "pelvis-safety.mp4",
+    },
+  ];
+
+  followUpRepo.findCandidates = async () => [{
+    contact_id: 323,
+    channel: "whatsapp",
+    whatsapp_number: "60120000323",
+    trigger_message_id: 322,
+    trigger_message_content: "Here are the Pelvic Care details.",
+    recent_inbound_messages: ["I am pregnant, can I do this?"],
+    recent_service_messages: ["I am pregnant, can I do this?", "Pelvic Care"],
+    treatment_interest: "Pelvic Care",
+    next_follow_up_step: 1,
+  }];
+  followUpRepo.getAiFollowUpContext = async () => ({
+    messages: [
+      { id: 321, role: "user", content: "I am pregnant, can I do this?" },
+      { id: 322, role: "assistant", content: "Here are the Pelvic Care details." },
+    ],
+    lead: { treatment_interest: "Pelvic Care", stage_name: "Warm" },
+  });
+  followUpAiService.generatePersonalizedFollowUp = async () => ({
+    action: "human_review",
+    message: "",
+    reason: "Pregnancy suitability requires staff review.",
+    topic: "Pelvic Care",
+  });
+
+  let decision = null;
+  let attention = null;
+  let saveCount = 0;
+  let videoSendCount = 0;
+  const originalSetAttention = contactsRepo.setAttention;
+  followUpRepo.recordAiDecisionIfStillEligible = async (input) => {
+    decision = input;
+    return { id: 323, ...input };
+  };
+  followUpRepo.saveIfStillEligible = async () => {
+    saveCount += 1;
+    return null;
+  };
+  contactsRepo.setAttention = async (contactId, enabled, reason) => {
+    attention = { contactId, enabled, reason };
+    return null;
+  };
+  channelMessaging.sendVideoByStoredKey = async () => {
+    videoSendCount += 1;
+    return { success: true, wamid: "unexpected" };
+  };
+  realtimeEvents.publish = () => {};
+
+  try {
+    await runAutomatedFollowUps();
+  } finally {
+    contactsRepo.setAttention = originalSetAttention;
+  }
+
+  assert.equal(decision.action, "human_review");
+  assert.equal(saveCount, 0);
+  assert.equal(videoSendCount, 0);
+  assert.equal(attention.contactId, 323);
+  assert.equal(attention.enabled, true);
+  assert.match(attention.reason, /pregnancy/i);
 });
 
 test("promotion-config-only human review after a staff promo falls back without attention", async () => {
