@@ -2306,12 +2306,26 @@ router.post("/:contactId/voice", handleVoiceUpload, async (req, res) => {
               replyToProviderMessageId: replyTarget?.whatsapp_message_id || null,
             }
           );
-          const finalContact =
-            await finalizeStaffSendState(preparedContact.id, req.session.username);
+          let finalContact = preparedContact;
+          try {
+            finalContact =
+              await finalizeStaffSendState(
+                preparedContact.id,
+                req.session.username
+              ) || preparedContact;
+          } catch (finalizeErr) {
+            // The staff-authored row is already durable at this point. Do not
+            // discard its R2 media or abort the send because attention cleanup
+            // encountered a transient database conflict.
+            console.error(
+              `Failed to finalize Staff Assist before voice send for contact ${preparedContact.id}:`,
+              finalizeErr
+            );
+          }
 
           return {
             status: "ready",
-            currentContact: finalContact || preparedContact,
+            currentContact: finalContact,
             saved,
           };
         }
