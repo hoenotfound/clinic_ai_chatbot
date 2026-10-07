@@ -9,6 +9,8 @@ import LeadDistribution from "./LeadDistribution";
 const DEFAULT_FOLLOW_UP = {
   enabled: false,
   delayMinutes: 120,
+  timingMode: "after_reply",
+  beforeWindowExpiryMinutes: 120,
   triggerMode: "all",
   quietHours: {
     enabled: true,
@@ -55,6 +57,8 @@ const FOLLOW_UP_LANGUAGES = [
 
 const MAX_FOLLOW_UP_IMAGE_BYTES = 5 * 1024 * 1024;
 const FOLLOW_UP_IMAGE_TYPES = new Set(["image/jpeg", "image/png"]);
+const MAX_FOLLOW_UP_VIDEO_BYTES = 16 * 1024 * 1024;
+const FOLLOW_UP_VIDEO_TYPES = new Set(["video/mp4"]);
 const DELAY_PRESETS = [
   { minutes: 30, label: "30 min" },
   { minutes: 60, label: "1 hour" },
@@ -92,6 +96,8 @@ function normalizeServiceOverrides(value) {
         serviceName,
         message,
         translations: normalizeTranslations(item?.translations, message),
+        videoKey: String(item?.videoKey || ""),
+        videoFilename: String(item?.videoFilename || ""),
       };
     })
     .filter(Boolean);
@@ -99,8 +105,19 @@ function normalizeServiceOverrides(value) {
 
 function normalizeSequenceStep(value = {}) {
   const message = String(value.message || "").trim();
+  const timingMode =
+    value.timingMode === "before_window_expiry"
+      ? "before_window_expiry"
+      : "after_reply";
+  const beforeWindowExpiryMinutes =
+    Number(value.beforeWindowExpiryMinutes) || 120;
   return {
-    delayMinutes: Number(value.delayMinutes) || 120,
+    delayMinutes:
+      timingMode === "before_window_expiry"
+        ? 24 * 60 - beforeWindowExpiryMinutes
+        : Number(value.delayMinutes) || 120,
+    timingMode,
+    beforeWindowExpiryMinutes,
     messageMode: value.messageMode === "ai" ? "ai" : "fixed",
     aiInstruction: String(value.aiInstruction || ""),
     message,
@@ -119,8 +136,20 @@ function normalizeFollowUpSettings(value = {}) {
       : {}),
   };
   const usesDefaultMessage = settings.message === DEFAULT_FOLLOW_UP.message;
+  const firstTimingMode =
+    settings.timingMode === "before_window_expiry"
+      ? "before_window_expiry"
+      : "after_reply";
+  const firstBeforeWindowExpiryMinutes =
+    Number(settings.beforeWindowExpiryMinutes) ||
+    DEFAULT_FOLLOW_UP.beforeWindowExpiryMinutes;
   const firstStep = {
-    delayMinutes: Number(settings.delayMinutes) || DEFAULT_FOLLOW_UP.delayMinutes,
+    delayMinutes:
+      firstTimingMode === "before_window_expiry"
+        ? 24 * 60 - firstBeforeWindowExpiryMinutes
+        : Number(settings.delayMinutes) || DEFAULT_FOLLOW_UP.delayMinutes,
+    timingMode: firstTimingMode,
+    beforeWindowExpiryMinutes: firstBeforeWindowExpiryMinutes,
     messageMode: settings.messageMode === "ai" ? "ai" : "fixed",
     aiInstruction: String(settings.aiInstruction || ""),
     message: settings.message || DEFAULT_FOLLOW_UP.message,
@@ -154,6 +183,8 @@ function followUpFormFromSettings(value = {}) {
     triggerMode: settings.triggerMode === "staff" ? "staff" : "all",
     quietHours: settings.quietHours,
     delayMinutes: settings.delayMinutes,
+    timingMode: settings.timingMode,
+    beforeWindowExpiryMinutes: settings.beforeWindowExpiryMinutes,
     messageMode: settings.messageMode,
     aiInstruction: settings.aiInstruction,
     message: settings.message,
@@ -235,6 +266,7 @@ export default function Tools() {
   const [manualTranslationEdits, setManualTranslationEdits] = useState([]);
   const [reviewTranslations, setReviewTranslations] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
   const [distributionDirty, setDistributionDirty] = useState(false);
   const [distributionActive, setDistributionActive] = useState(false);
   const imageInputRef = useRef(null);
@@ -475,6 +507,28 @@ export default function Tools() {
     if (url) setForm((current) => ({ ...current, imageUrl: url }));
   }
 
+  async function uploadFollowUpVideo(file) {
+    if (!file) return null;
+    if (!FOLLOW_UP_VIDEO_TYPES.has(file.type)) {
+      showToast("Please choose an MP4 video.", "error");
+      return null;
+    }
+    if (file.size > MAX_FOLLOW_UP_VIDEO_BYTES) {
+      showToast("That video is larger than 16MB. Please choose a smaller file.", "error");
+      return null;
+    }
+
+    setUploadingVideo(true);
+    try {
+      return await api.uploadFollowUpVideo(file);
+    } catch (err) {
+      showToast(err.message || "Couldn't upload that video.", "error");
+      return null;
+    } finally {
+      setUploadingVideo(false);
+    }
+  }
+
   function followUpValidationError() {
     const quietTimePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
     const quietStart = String(form.quietHours?.start || "").trim();
@@ -490,6 +544,8 @@ export default function Tools() {
     const steps = [
       {
         delayMinutes: form.delayMinutes,
+        timingMode: form.timingMode,
+        beforeWindowExpiryMinutes: form.beforeWindowExpiryMinutes,
         messageMode: form.messageMode,
         aiInstruction: form.aiInstruction,
         message: form.message,
@@ -507,10 +563,30 @@ export default function Tools() {
     let previousDelay = 0;
     for (let index = 0; index < steps.length; index += 1) {
       const step = steps[index];
-      const delayMinutes = Number(step.delayMinutes);
+      const timingMode =
+        step.timingMode === "before_window_expiry"
+          ? "before_window_expiry"
+          : "after_reply";
+      const beforeWindowExpiryMinutes = Number(
+        step.beforeWindowExpiryMinutes ?? 120
+      );
+      const delayMinutes =
+        timingMode === "before_window_expiry"
+          ? 24 * 60 - beforeWindowExpiryMinutes
+          : Number(step.delayMinutes);
       const messageMode = step.messageMode === "ai" ? "ai" : "fixed";
       const aiInstruction = String(step.aiInstruction || "").trim();
       const message = String(step.message || "").trim();
+      if (
+        timingMode === "before_window_expiry" &&
+        (
+          !Number.isInteger(beforeWindowExpiryMinutes) ||
+          beforeWindowExpiryMinutes < 60 ||
+          beforeWindowExpiryMinutes > 360
+        )
+      ) {
+        return `Follow-up ${index + 1} needs an expiry offset between 1 and 6 hours.`;
+      }
       if (
         !Number.isInteger(delayMinutes) ||
         delayMinutes < 5 ||
@@ -612,6 +688,8 @@ export default function Tools() {
         serviceName: item.serviceName.trim(),
         message,
         translations,
+        videoKey: String(item.videoKey || "").trim(),
+        videoFilename: String(item.videoFilename || "").trim(),
       };
     });
   }
@@ -632,8 +710,20 @@ export default function Tools() {
           existingTranslations[key] || generated?.[key] || "",
         ])
       );
+      const timingMode =
+        step.timingMode === "before_window_expiry"
+          ? "before_window_expiry"
+          : "after_reply";
+      const beforeWindowExpiryMinutes = Number(
+        step.beforeWindowExpiryMinutes ?? 120
+      );
       return {
-        delayMinutes: Number(step.delayMinutes),
+        delayMinutes:
+          timingMode === "before_window_expiry"
+            ? 24 * 60 - beforeWindowExpiryMinutes
+            : Number(step.delayMinutes),
+        timingMode,
+        beforeWindowExpiryMinutes,
         messageMode: step.messageMode === "ai" ? "ai" : "fixed",
         aiInstruction: String(step.aiInstruction || "").trim(),
         message,
@@ -691,7 +781,17 @@ export default function Tools() {
       const updated = await api.updateConfig({
         automatedFollowUp: {
           enabled: form.enabled,
-          delayMinutes,
+          delayMinutes:
+            form.timingMode === "before_window_expiry"
+              ? 24 * 60 - Number(form.beforeWindowExpiryMinutes || 120)
+              : delayMinutes,
+          timingMode:
+            form.timingMode === "before_window_expiry"
+              ? "before_window_expiry"
+              : "after_reply",
+          beforeWindowExpiryMinutes: Number(
+            form.beforeWindowExpiryMinutes || 120
+          ),
           messageMode: form.messageMode === "ai" ? "ai" : "fixed",
           aiInstruction: String(form.aiInstruction || "").trim(),
           triggerMode: form.triggerMode,
@@ -847,6 +947,7 @@ export default function Tools() {
             activeLanguage={activeLanguage}
             translating={translating}
             uploadingImage={uploadingImage}
+            uploadingVideo={uploadingVideo}
             saving={saving}
             delayDescription={delayDescription}
             services={config.services || []}
@@ -857,6 +958,7 @@ export default function Tools() {
             onGenerateTranslations={handleGenerateTranslations}
             onTranslateMessage={generateTranslationsForMessage}
             onUploadImage={uploadFollowUpImage}
+            onUploadVideo={uploadFollowUpVideo}
             onImagePicked={handleImagePicked}
             onSave={handleSave}
             toasts={toasts}
