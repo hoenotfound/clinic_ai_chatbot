@@ -59,8 +59,7 @@ const FOLLOW_UP_LANGUAGES = [
 
 const MAX_FOLLOW_UP_IMAGE_BYTES = 5 * 1024 * 1024;
 const FOLLOW_UP_IMAGE_TYPES = new Set(["image/jpeg", "image/png"]);
-const MAX_FOLLOW_UP_VIDEO_BYTES = 50 * 1024 * 1024;
-const FOLLOW_UP_VIDEO_TYPES = new Set(["video/mp4"]);
+const MAX_FOLLOW_UP_VIDEO_BYTES = 16 * 1024 * 1024;
 function formatMegabytes(bytes) {
   return `${(Number(bytes || 0) / (1024 * 1024)).toFixed(1)}MB`;
 }
@@ -504,25 +503,23 @@ export default function Tools() {
 
   async function uploadFollowUpVideo(file) {
     if (!file) return null;
-    if (!FOLLOW_UP_VIDEO_TYPES.has(file.type)) {
-      showToast("Please choose an MP4 video.", "error");
+    const extension = String(file.name || "").toLowerCase().split(".").pop() || "";
+    const mimeType = String(file.type || "").toLowerCase();
+    if (
+      extension !== "mp4" ||
+      (mimeType && mimeType !== "application/octet-stream" && !mimeType.startsWith("video/"))
+    ) {
+      showToast("Please choose an MP4 video. WhatsApp requires H.264 video with AAC audio.", "error");
       return null;
     }
     if (file.size > MAX_FOLLOW_UP_VIDEO_BYTES) {
-      showToast("That video is larger than 50MB. Please choose a smaller file.", "error");
+      showToast("That video is larger than 16MB. Please compress or export it before uploading.", "error");
       return null;
     }
 
     setUploadingVideo(true);
     try {
-      const uploaded = await api.uploadFollowUpVideo(file);
-      if (uploaded?.compressed) {
-        showToast(
-          `Compressed ${formatMegabytes(uploaded.originalBytes)} to ${formatMegabytes(uploaded.storedBytes)} for WhatsApp.`,
-          "info"
-        );
-      }
-      return uploaded;
+      return await api.uploadFollowUpVideo(file);
     } catch (err) {
       showToast(err.message || "Couldn't upload that video.", "error");
       return null;
@@ -1354,7 +1351,7 @@ function ServiceVideoPicker({
         <input
           ref={inputRef}
           type="file"
-          accept="video/mp4"
+          accept=".mp4,video/*"
           className="hidden"
           aria-label={`${label} upload`}
           onChange={handlePicked}
@@ -1366,7 +1363,7 @@ function ServiceVideoPicker({
             disabled={uploading}
             className="text-[10px] font-semibold text-[var(--color-primary)] disabled:opacity-50"
           >
-            {uploading ? "Preparing…" : videoKey ? "Replace" : "Add video"}
+            {uploading ? "Checking…" : videoKey ? "Replace" : "Add video"}
           </button>
           {videoKey && (
             <button
@@ -1381,7 +1378,7 @@ function ServiceVideoPicker({
         </div>
       </div>
       <p className="mt-2 text-[10px] leading-4 text-[var(--color-text-muted)]">
-        MP4, up to 50MB. Files above 16MB are automatically compressed to a WhatsApp-safe H.264/AAC copy before being stored privately in R2.
+        MP4 only, up to 16MB. WhatsApp requires H.264 video with AAC audio. Automatic video compression is disabled to keep the chatbot server stable.
       </p>
     </div>
   );
