@@ -68,6 +68,31 @@ test("stored result media is delivered through provider uploads instead of perma
   );
 });
 
+test("translated media images are retained and result variants stay private", () => {
+  const configRepo = read("src/db/configRepo.js");
+
+  assert.match(
+    configRepo,
+    /mediaTranslationImageUrls\(promotion\?\.mediaTranslations\)/
+  );
+  assert.match(
+    configRepo,
+    /mediaTranslationImageUrls\(item\?\.mediaTranslations\)/
+  );
+  assert.match(
+    configRepo,
+    /normalizeResultMediaTranslations\(item\.mediaTranslations\)/
+  );
+  assert.match(
+    configRepo,
+    /imageUrl:\s*privateResultMediaUrl\(entry\.imageUrl\)/
+  );
+  assert.match(
+    configRepo,
+    /promoImagesRepo\.markResultMedia\(resultImageIds, client\)/
+  );
+});
+
 test("legacy result-media URLs are reclassified and normalized to the private preview path", () => {
   const configRepo = read("src/db/configRepo.js");
   const migration = read("src/db/migrations/032_private_result_media.sql");

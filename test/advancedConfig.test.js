@@ -468,6 +468,135 @@ test("Advanced Config exposes business and AI content only", () => {
   }
 });
 
+test("promotion and result media support optional English BM and Chinese overrides", () => {
+  const current = currentConfig();
+
+  const promotion = prepareConfigUpdatePayload(
+    {
+      promotions: [{
+        name: "Localized media promo",
+        linkedService: "Consultation",
+        sendOnPriceQuery: true,
+        imageUrl: "https://example.test/default.jpg",
+        caption: "Default offer",
+        mediaTranslations: {
+          en: { caption: "English offer" },
+          ms: { imageUrl: "https://example.test/ms.jpg", caption: "Tawaran BM" },
+          zh: { imageUrl: "https://example.test/zh.jpg", caption: "中文优惠" },
+        },
+        packages: [],
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(promotion.ok, true);
+  assert.equal(
+    promotion.updates.promotions[0].mediaTranslations.zh.caption,
+    "中文优惠"
+  );
+
+  const packagePromotion = prepareConfigUpdatePayload(
+    {
+      promotions: [{
+        name: "Localized package promo",
+        linkedService: "Consultation",
+        sendOnPriceQuery: true,
+        imageUrl: "",
+        caption: "",
+        packages: [{
+          name: "Package A",
+          imageUrl: "https://example.test/a.jpg",
+          caption: "Default A",
+          mediaTranslations: {
+            ms: { caption: "Pakej A BM" },
+            zh: { imageUrl: "https://example.test/a-zh.jpg" },
+          },
+        }],
+        validFrom: null,
+        validUntil: null,
+      }],
+    },
+    current
+  );
+  assert.equal(packagePromotion.ok, true);
+
+  const result = prepareConfigUpdatePayload(
+    {
+      resultMedia: [{
+        service: "Consultation",
+        enabled: true,
+        triggerMode: "service_enquiry",
+        autoSendCount: 1,
+        items: [{
+          imageUrl: "https://example.test/result.jpg",
+          caption: "Default result",
+          mediaTranslations: {
+            en: { caption: "English result" },
+            ms: { caption: "Contoh hasil BM" },
+            zh: { imageUrl: "https://example.test/result-zh.jpg", caption: "中文效果参考" },
+          },
+        }],
+      }],
+    },
+    current
+  );
+  assert.equal(result.ok, true);
+
+  const invalidPromotion = prepareConfigUpdatePayload(
+    {
+      promotions: [{
+        name: "Bad localized promo",
+        linkedService: "Consultation",
+        sendOnPriceQuery: false,
+        imageUrl: "",
+        caption: "",
+        mediaTranslations: { zh: { caption: 123 } },
+      }],
+    },
+    current
+  );
+  assert.equal(invalidPromotion.ok, false);
+  assert.deepEqual(invalidPromotion.invalidKeys, ["promotions"]);
+
+  const invalidResult = prepareConfigUpdatePayload(
+    {
+      resultMedia: [{
+        service: "Consultation",
+        enabled: true,
+        triggerMode: "service_enquiry",
+        autoSendCount: 1,
+        items: [{
+          imageUrl: "https://example.test/result.jpg",
+          caption: "Default result",
+          mediaTranslations: { ms: "not-an-object" },
+        }],
+      }],
+    },
+    current
+  );
+  assert.equal(invalidResult.ok, false);
+  assert.deepEqual(invalidResult.invalidKeys, ["resultMedia"]);
+
+  const legacy = prepareConfigUpdatePayload(
+    {
+      resultMedia: [{
+        service: "Consultation",
+        enabled: true,
+        sendAfterPrice: true,
+        autoSendCount: 1,
+        items: [{
+          imageUrl: "https://example.test/legacy.jpg",
+          caption: "Legacy result",
+        }],
+      }],
+    },
+    current
+  );
+  assert.equal(legacy.ok, true);
+});
+
 test("promotion follow-up translations are validated and remain backward compatible", () => {
   const current = currentConfig();
 

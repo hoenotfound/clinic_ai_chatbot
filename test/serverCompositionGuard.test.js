@@ -151,10 +151,15 @@ test("post-reply runtime keeps text then promo then result-media ordering and fo
     /automaticPromoMediaSent <= 1/
   );
 
-  const resultCall = serverSource.slice(resultResolveAt, resultResolveAt + 900);
+  const promoCall = serverSource.slice(promoResolveAt, resultResolveAt);
+  const resultCall = serverSource.slice(resultResolveAt, resultResolveAt + 1200);
+  assert.match(serverSource, /const mediaLanguage = detectConversationLanguage\(/);
+  assert.match(serverSource, /\.reverse\(\)[\s\S]*?message\?\.role === "user"/);
+  assert.match(promoCall, /language: mediaLanguage/);
   assert.match(resultCall, /serviceQuery,/);
   assert.match(resultCall, /serviceQuerySource,/);
   assert.match(resultCall, /metaAdCreativeService,/);
   assert.match(resultCall, /priceQuery,/);
   assert.match(resultCall, /packageQuery,/);
+  assert.match(resultCall, /language: mediaLanguage/);
 });

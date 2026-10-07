@@ -368,3 +368,73 @@ test("meta_ad result media is rejected when creative resolves to a different ser
     null
   );
 });
+
+test("Before and After uses the configured language version while cooldown covers every image variant", async () => {
+  const localized = [{
+    ...resultMedia[0],
+    items: [{
+      imageUrl: "https://example.test/default-result.jpg",
+      caption: "Default result caption",
+      mediaTranslations: {
+        zh: {
+          imageUrl: "https://example.test/zh-result.jpg",
+          caption: "中文效果参考",
+        },
+        ms: {
+          caption: "Contoh hasil BM",
+        },
+      },
+    }],
+  }];
+
+  const checked = [];
+  const zh = await resolveResultMediaForReply(base({
+    resultMedia: localized,
+    language: "zh",
+    wasMediaRecentlySent: async (_contactId, imageUrl) => {
+      checked.push(imageUrl);
+      return false;
+    },
+  }));
+  assert.equal(zh.items[0].imageUrl, "https://example.test/zh-result.jpg");
+  assert.equal(zh.items[0].caption, "中文效果参考");
+  assert.deepEqual(checked, [
+    "https://example.test/default-result.jpg",
+    "https://example.test/zh-result.jpg",
+  ]);
+
+  const ms = await resolveResultMediaForReply(base({
+    resultMedia: localized,
+    language: "ms",
+  }));
+  assert.equal(ms.items[0].imageUrl, "https://example.test/default-result.jpg");
+  assert.equal(ms.items[0].caption, "Contoh hasil BM");
+
+  const blocked = await resolveResultMediaForReply(base({
+    resultMedia: localized,
+    language: "en",
+    wasMediaRecentlySent: async (_contactId, imageUrl) =>
+      imageUrl === "https://example.test/zh-result.jpg",
+  }));
+  assert.equal(blocked, null);
+});
+
+test("result rotation recognizes a language-specific image as the same configured example", () => {
+  const items = [
+    {
+      imageUrl: "https://example.test/default-1.jpg",
+      caption: "one",
+      mediaTranslations: {
+        zh: { imageUrl: "https://example.test/zh-1.jpg" },
+      },
+    },
+    {
+      imageUrl: "https://example.test/default-2.jpg",
+      caption: "two",
+    },
+  ];
+  assert.deepEqual(
+    rotateAfter(items, "https://example.test/zh-1.jpg"),
+    [items[1], items[0]]
+  );
+});

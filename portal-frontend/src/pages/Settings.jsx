@@ -560,6 +560,105 @@ function PromotionAliasChips({ items, onChange }) {
   );
 }
 
+function cleanMediaTranslations(value = {}) {
+  return Object.fromEntries(
+    [
+      ["en", "English"],
+      ["ms", "Bahasa Malaysia"],
+      ["zh", "中文"],
+    ]
+      .map(([key]) => {
+        const entry = value?.[key] || {};
+        const imageUrl = String(entry?.imageUrl || "").trim();
+        const caption = String(entry?.caption || "").trim();
+        return [
+          key,
+          {
+            ...(imageUrl ? { imageUrl } : {}),
+            ...(caption ? { caption } : {}),
+          },
+        ];
+      })
+      .filter(([, entry]) => entry.imageUrl || entry.caption)
+  );
+}
+
+function hasMediaTranslation(value = {}) {
+  return Object.values(value || {}).some(
+    (entry) =>
+      String(entry?.imageUrl || "").trim() ||
+      String(entry?.caption || "").trim()
+  );
+}
+
+function MediaTranslationsEditor({
+  value = {},
+  onChange,
+  onError,
+  uploadImage = null,
+  allowUrl = true,
+  title = "Language-specific media",
+}) {
+  const languages = [
+    ["en", "English"],
+    ["ms", "Bahasa Malaysia"],
+    ["zh", "中文"],
+  ];
+
+  function updateLanguage(language, patch) {
+    onChange({
+      ...(value || {}),
+      [language]: {
+        ...(value?.[language] || {}),
+        ...patch,
+      },
+    });
+  }
+
+  return (
+    <details className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-2">
+      <summary className="min-h-11 cursor-pointer py-3 text-xs font-semibold text-[var(--color-primary)]">
+        {title}
+      </summary>
+      <p className="mt-2 text-[11px] leading-5 text-[var(--color-text-muted)]">
+        Optional. The customer&apos;s detected language uses the matching version. Leave an image or caption blank to fall back to the default version above.
+      </p>
+      <div className="mt-3 grid gap-3">
+        {languages.map(([key, label]) => (
+          <div key={key} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+            <p className="text-xs font-bold">{label}</p>
+            <div className="mt-3 grid gap-3">
+              <div>
+                <label className={labelClass}>Caption <span className="font-normal">(optional override)</span></label>
+                <textarea
+                  rows={2}
+                  maxLength={1000}
+                  className={textareaClass}
+                  value={value?.[key]?.caption || ""}
+                  onChange={(event) =>
+                    updateLanguage(key, { caption: event.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Image <span className="font-normal">(optional override)</span></label>
+                <ImageFieldEditor
+                  value={value?.[key]?.imageUrl || ""}
+                  onChange={(imageUrl) => updateLanguage(key, { imageUrl })}
+                  onError={onError}
+                  uploadImage={uploadImage}
+                  allowUrl={allowUrl}
+                  alt={`${label} media version`}
+                />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function cleanPromotionFollowUpTranslations(value = {}) {
   return Object.fromEntries(
     [
@@ -637,7 +736,7 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
   function addPackage() {
     const next = [
       ...items,
-      { name: "", title: "", aliases: [], imageUrl: "", caption: "", followUpMessage: "", followUpImageUrl: "", followUpTranslations: {} },
+      { name: "", title: "", aliases: [], imageUrl: "", caption: "", mediaTranslations: {}, followUpMessage: "", followUpImageUrl: "", followUpTranslations: {} },
     ];
     onChange(next);
     setOpenIndex(next.length - 1);
@@ -722,6 +821,12 @@ function PromotionPackagesEditor({ items, onChange, onError }) {
                       onChange={(e) => updatePackage(index, "caption", e.target.value)}
                     />
                   </div>
+                  <MediaTranslationsEditor
+                    title="English / BM / 中文 promotion versions"
+                    value={item.mediaTranslations || {}}
+                    onChange={(value) => updatePackage(index, "mediaTranslations", value)}
+                    onError={onError}
+                  />
                   <div>
                     <label className={labelClass}>First follow-up offer</label>
                     <textarea
@@ -1568,6 +1673,7 @@ function PromotionsTab({ config, onSaved, onError }) {
             aliases: Array.isArray(item.aliases) ? [...item.aliases] : [],
             imageUrl: item.imageUrl || "",
             caption: item.caption || "",
+            mediaTranslations: { ...(item.mediaTranslations || {}) },
             followUpMessage: item.followUpMessage || "",
             followUpImageUrl: item.followUpImageUrl || "",
             followUpTranslations: { ...(item.followUpTranslations || {}) },
@@ -1575,6 +1681,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         : [],
       imageUrl: p.imageUrl || "",
       caption: p.caption || "",
+      mediaTranslations: { ...(p.mediaTranslations || {}) },
       followUpMessage: p.followUpMessage || "",
       followUpImageUrl: p.followUpImageUrl || "",
       followUpTranslations: { ...(p.followUpTranslations || {}) },
@@ -1603,6 +1710,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         packages: [],
         imageUrl: "",
         caption: "",
+        mediaTranslations: {},
         followUpMessage: "",
         followUpImageUrl: "",
         followUpTranslations: {},
@@ -1638,6 +1746,7 @@ function PromotionsTab({ config, onSaved, onError }) {
       String(item?.title || "").trim() ||
       String(item?.imageUrl || "").trim() ||
       String(item?.caption || "").trim() ||
+      hasMediaTranslation(item?.mediaTranslations) ||
       String(item?.followUpMessage || "").trim() ||
       String(item?.followUpImageUrl || "").trim() ||
       hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
@@ -1649,6 +1758,7 @@ function PromotionsTab({ config, onSaved, onError }) {
     return Boolean(
       String(promotion?.imageUrl || "").trim() ||
       String(promotion?.caption || "").trim() ||
+      hasMediaTranslation(promotion?.mediaTranslations) ||
       String(promotion?.followUpMessage || "").trim() ||
       String(promotion?.followUpImageUrl || "").trim() ||
       hasPromotionFollowUpTranslation(promotion?.followUpTranslations)
@@ -1666,6 +1776,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         String(item?.title || "").trim() ||
         String(item?.imageUrl || "").trim() ||
         String(item?.caption || "").trim() ||
+        hasMediaTranslation(item?.mediaTranslations) ||
         String(item?.followUpMessage || "").trim() ||
         String(item?.followUpImageUrl || "").trim() ||
         hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
@@ -1673,7 +1784,7 @@ function PromotionsTab({ config, onSaved, onError }) {
       ).length;
       warning = `Changing to Single offer will remove ${packageCount} package option${packageCount === 1 ? "" : "s"} when you save. Continue?`;
     } else if (nextType === "packages" && hasSingleOfferContent(current)) {
-      warning = "Changing to Multiple packages will remove the current single-offer image, caption, first follow-up offer, and first follow-up graphic when you save. Continue?";
+      warning = "Changing to Multiple packages will remove the current single-offer image, caption, first follow-up offer, and first follow-up graphic when you save. Any language-specific media will also be removed. Continue?";
     }
 
     if (warning && !window.confirm(warning)) return;
@@ -1697,6 +1808,7 @@ function PromotionsTab({ config, onSaved, onError }) {
         p.linkedService.trim() ||
         p.imageUrl.trim() ||
         p.caption.trim() ||
+        hasMediaTranslation(p.mediaTranslations) ||
         String(p.followUpMessage || "").trim() ||
         String(p.followUpImageUrl || "").trim() ||
         hasPromotionFollowUpTranslation(p.followUpTranslations) ||
@@ -1717,6 +1829,7 @@ function PromotionsTab({ config, onSaved, onError }) {
                   String(item?.title || "").trim() ||
                   String(item?.imageUrl || "").trim() ||
                   String(item?.caption || "").trim() ||
+                  hasMediaTranslation(item?.mediaTranslations) ||
                   String(item?.followUpMessage || "").trim() ||
                   String(item?.followUpImageUrl || "").trim() ||
                   hasPromotionFollowUpTranslation(item?.followUpTranslations) ||
@@ -1728,6 +1841,9 @@ function PromotionsTab({ config, onSaved, onError }) {
                   aliases: cleanStrings(item.aliases || []),
                   imageUrl: String(item.imageUrl || "").trim(),
                   caption: String(item.caption || "").trim(),
+                  ...(Object.keys(cleanMediaTranslations(item.mediaTranslations)).length
+                    ? { mediaTranslations: cleanMediaTranslations(item.mediaTranslations) }
+                    : {}),
                   ...(String(item.followUpMessage || "").trim()
                     ? { followUpMessage: String(item.followUpMessage || "").trim() }
                     : {}),
@@ -1741,6 +1857,9 @@ function PromotionsTab({ config, onSaved, onError }) {
             : [],
           imageUrl: packageMode ? "" : p.imageUrl.trim(),
           caption: packageMode ? "" : p.caption.trim(),
+          ...(!packageMode && Object.keys(cleanMediaTranslations(p.mediaTranslations)).length
+            ? { mediaTranslations: cleanMediaTranslations(p.mediaTranslations) }
+            : {}),
           ...(!packageMode && String(p.followUpMessage || "").trim()
             ? { followUpMessage: String(p.followUpMessage || "").trim() }
             : {}),
@@ -1972,6 +2091,12 @@ function PromotionsTab({ config, onSaved, onError }) {
                             onChange={(e) => updateItem(index, { caption: e.target.value })}
                           />
                         </div>
+                        <MediaTranslationsEditor
+                          title="English / BM / 中文 promotion versions"
+                          value={item.mediaTranslations || {}}
+                          onChange={(mediaTranslations) => updateItem(index, { mediaTranslations })}
+                          onError={onError}
+                        />
                         <div>
                           <label className={labelClass}>First follow-up offer</label>
                           <textarea
@@ -2077,7 +2202,7 @@ function ResultMediaItemsEditor({ items, onChange, onError }) {
 
   function addItem() {
     if (items.length >= 10) return;
-    onChange([...items, { imageUrl: "", caption: "" }]);
+    onChange([...items, { imageUrl: "", caption: "", mediaTranslations: {} }]);
   }
 
   return (
@@ -2124,6 +2249,14 @@ function ResultMediaItemsEditor({ items, onChange, onError }) {
                 onChange={(event) => updateItem(index, { caption: event.target.value })}
               />
             </div>
+            <MediaTranslationsEditor
+              title="English / BM / 中文 Before & After versions"
+              value={item.mediaTranslations || {}}
+              onChange={(mediaTranslations) => updateItem(index, { mediaTranslations })}
+              onError={onError}
+              uploadImage={api.uploadResultMediaImage}
+              allowUrl={false}
+            />
           </div>
         </div>
       ))}
@@ -2159,6 +2292,7 @@ function ResultMediaSection({ config, onSaved, onError }) {
         ? entry.items.map((item) => ({
             imageUrl: item.imageUrl || "",
             caption: item.caption || "",
+            mediaTranslations: { ...(item.mediaTranslations || {}) },
           }))
         : [],
     }))
@@ -2182,7 +2316,7 @@ function ResultMediaSection({ config, onSaved, onError }) {
         enabled: true,
         triggerMode: "service_enquiry",
         autoSendCount: 1,
-        items: [{ imageUrl: "", caption: "" }],
+        items: [{ imageUrl: "", caption: "", mediaTranslations: {} }],
       },
     ];
     setSets(next);
@@ -2206,7 +2340,8 @@ function ResultMediaSection({ config, onSaved, onError }) {
           entry.items.some(
             (item) =>
               String(item?.imageUrl || "").trim() ||
-              String(item?.caption || "").trim()
+              String(item?.caption || "").trim() ||
+              hasMediaTranslation(item?.mediaTranslations)
           ))
       )
       .map((entry) => {
@@ -2214,11 +2349,15 @@ function ResultMediaSection({ config, onSaved, onError }) {
           .filter(
             (item) =>
               String(item?.imageUrl || "").trim() ||
-              String(item?.caption || "").trim()
+              String(item?.caption || "").trim() ||
+              hasMediaTranslation(item?.mediaTranslations)
           )
           .map((item) => ({
             imageUrl: String(item.imageUrl || "").trim(),
             caption: String(item.caption || "").trim(),
+            ...(Object.keys(cleanMediaTranslations(item.mediaTranslations)).length
+              ? { mediaTranslations: cleanMediaTranslations(item.mediaTranslations) }
+              : {}),
           }));
 
         return {

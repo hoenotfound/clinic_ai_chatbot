@@ -30,6 +30,7 @@ const { resolvePricePromotionForReply } = require("./utils/pricePromotionTrigger
 const { resolveResultMediaForReply } = require("./utils/resultMediaTrigger");
 const { parseAiReplyResult } = require("./utils/aiReplyResult");
 const { fallbackHandoffReply } = require("./utils/handoffReply");
+const { detectConversationLanguage } = require("./utils/chatLanguage");
 const clinicConfig = require("./config/clinicConfig");
 const { getOperationalLabels } = require("./utils/businessTerminology");
 const {
@@ -784,6 +785,13 @@ async function processIncomingMessage(
     const history = await conversationStore.getHistoryForContact(contact.id, {
       throughMessageId: savedInbound.id,
     });
+    const mediaLanguage = detectConversationLanguage(
+      history
+        .slice()
+        .reverse()
+        .filter((message) => message?.role === "user")
+        .map((message) => message.content)
+    );
     const isFirstMessage = forceFirstMessage || history.length === 1;
 
     // High-confidence urgent safety phrases must not depend on an AI provider.
@@ -996,6 +1004,7 @@ async function processIncomingMessage(
         needsAttention: contact.needs_attention,
         textSendSucceeded: sendOutcome.sendResult.success,
         promotions: clinicConfig.promotions,
+        language: mediaLanguage,
         contactId: contact.id,
         wasPromoRecentlySent: messagesRepo.wasPromoRecentlySent,
       });
@@ -1106,6 +1115,7 @@ async function processIncomingMessage(
           needsAttention: contact.needs_attention,
           textSendSucceeded: sendOutcome.sendResult.success,
           resultMedia: clinicConfig.resultMedia,
+          language: mediaLanguage,
           contactId: contact.id,
           wasMediaRecentlySent: messagesRepo.wasMediaRecentlySent,
           getMostRecentlySentMediaUrl: messagesRepo.getMostRecentlySentMediaUrl,
