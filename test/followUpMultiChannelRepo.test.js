@@ -38,6 +38,8 @@ test("candidate discovery covers all supported messaging channels inside the saf
     "all",
     "2026-08-28T00:00:00.000Z",
     25,
+    ["after_reply"],
+    [120],
   ]);
 });
 
