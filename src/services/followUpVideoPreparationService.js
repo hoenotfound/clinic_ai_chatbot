@@ -346,7 +346,7 @@ async function prepareFollowUpVideoFile(
   }
   if (sourceBytes > maxUploadBytes) {
     throw followUpVideoError(
-      "Video is too large. Please choose an MP4 file under 50MB.",
+      "Video is too large. Please choose a video file under 50MB.",
       "FOLLOW_UP_VIDEO_UPLOAD_TOO_LARGE"
     );
   }
