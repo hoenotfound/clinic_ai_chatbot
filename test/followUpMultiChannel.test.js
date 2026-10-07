@@ -8,6 +8,7 @@ const contactsRepo = require("../src/db/contactsRepo");
 const pipelineRepo = require("../src/db/pipelineRepo");
 const realtimeEvents = require("../src/utils/realtimeEvents");
 const channelMessaging = require("../src/services/channelMessagingService");
+const mediaStorage = require("../src/services/mediaStorageService");
 const { runAutomatedFollowUps } = require("../src/services/followUpService");
 
 const originals = {
@@ -16,6 +17,8 @@ const originals = {
   getNextStaleClaimDueAt: followUpRepo.getNextStaleClaimDueAt,
   saveIfStillEligible: followUpRepo.saveIfStillEligible,
   saveSocialImageCompanion: followUpRepo.saveSocialImageCompanion,
+  saveSocialVideoCompanion: followUpRepo.saveSocialVideoCompanion,
+  discardUnsentSocialVideoCompanion: followUpRepo.discardUnsentSocialVideoCompanion,
   markStaleClaimsUnconfirmed: followUpRepo.markStaleClaimsUnconfirmed,
   setWhatsappMessageId: messagesRepo.setWhatsappMessageId,
   setSocialProviderMessageId: messagesRepo.setSocialProviderMessageId,
@@ -26,6 +29,8 @@ const originals = {
   sendText: channelMessaging.sendText,
   sendImageByUrl: channelMessaging.sendImageByUrl,
   sendVideoByStoredKey: channelMessaging.sendVideoByStoredKey,
+  copyStoredMediaToMessage: mediaStorage.copyStoredMediaToMessage,
+  deleteMedia: mediaStorage.deleteMedia,
 };
 
 test.after(() => {
@@ -35,6 +40,8 @@ test.after(() => {
     getNextStaleClaimDueAt: originals.getNextStaleClaimDueAt,
     saveIfStillEligible: originals.saveIfStillEligible,
     saveSocialImageCompanion: originals.saveSocialImageCompanion,
+    saveSocialVideoCompanion: originals.saveSocialVideoCompanion,
+    discardUnsentSocialVideoCompanion: originals.discardUnsentSocialVideoCompanion,
     markStaleClaimsUnconfirmed: originals.markStaleClaimsUnconfirmed,
   });
   Object.assign(messagesRepo, {
@@ -48,6 +55,8 @@ test.after(() => {
   channelMessaging.sendText = originals.sendText;
   channelMessaging.sendImageByUrl = originals.sendImageByUrl;
   channelMessaging.sendVideoByStoredKey = originals.sendVideoByStoredKey;
+  mediaStorage.copyStoredMediaToMessage = originals.copyStoredMediaToMessage;
+  mediaStorage.deleteMedia = originals.deleteMedia;
 });
 
 function enableTool({ imageUrl = "" } = {}) {
@@ -77,6 +86,10 @@ test.beforeEach(() => {
   followUpRepo.getNextCandidateDueAt = async () => null;
   followUpRepo.getNextStaleClaimDueAt = async () => null;
   followUpRepo.saveSocialImageCompanion = async () => null;
+  followUpRepo.saveSocialVideoCompanion = async () => null;
+  followUpRepo.discardUnsentSocialVideoCompanion = async () => null;
+  mediaStorage.copyStoredMediaToMessage = originals.copyStoredMediaToMessage;
+  mediaStorage.deleteMedia = originals.deleteMedia;
   contactsRepo.setDeliveryAttention = async () => {};
   pipelineRepo.markContactedForContact = async () => false;
   realtimeEvents.publish = () => {};
@@ -229,6 +242,26 @@ test("Instagram sends a service video after the accepted follow-up text", async 
   ];
 
   const sends = [];
+  mediaStorage.copyStoredMediaToMessage = async (key, mimeType, options) => {
+    assert.equal(key, "clients/neutro/messages/follow-up-config/pelvis.mp4");
+    assert.equal(mimeType, "video/mp4");
+    assert.deepEqual(options, { contactId: 105 });
+    return "clients/neutro/messages/105/durable-pelvis.mp4";
+  };
+  followUpRepo.saveSocialVideoCompanion = async (input) => {
+    assert.deepEqual(input, {
+      contactId: 105,
+      mediaKey: "clients/neutro/messages/105/durable-pelvis.mp4",
+      mediaMimeType: "video/mp4",
+    });
+    return {
+      id: 542,
+      contact_id: 105,
+      has_media_attachment: true,
+      media_mime_type: "video/mp4",
+      delivery_status: null,
+    };
+  };
   followUpRepo.findCandidates = async () => [
     {
       contact_id: 105,
@@ -288,7 +321,7 @@ test("Instagram sends a service video after the accepted follow-up text", async 
   assert.equal(sends.length, 2);
   assert.equal(sends[0].type, "text");
   assert.equal(sends[1].type, "video");
-  assert.equal(sends[1].key, "clients/neutro/messages/follow-up-config/pelvis.mp4");
+  assert.equal(sends[1].key, "clients/neutro/messages/105/durable-pelvis.mp4");
   assert.equal(sends[1].caption, undefined);
   assert.equal(sends[1].filename, "pelvis.mp4");
   assert.equal(sends[1].preSendAllowed, true);
