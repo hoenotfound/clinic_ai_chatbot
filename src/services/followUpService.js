@@ -1036,11 +1036,7 @@ async function sendCandidate(candidate) {
     ? promotionFollowUpImageUrl
     : step.imageUrl;
   const effectiveVideoKey =
-    !promotionFollowUp &&
-    followUpMessageMode !== "ai_personalized" &&
-    targetedVideoKey
-      ? targetedVideoKey
-      : "";
+    !promotionFollowUp && targetedVideoKey ? targetedVideoKey : "";
   const effectiveVideoFilename =
     targetedVideoFilename || "service-video.mp4";
 
