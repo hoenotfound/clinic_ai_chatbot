@@ -406,6 +406,53 @@ async function sendVideoById(to, mediaId, caption, options = {}) {
   }
 }
 
+async function sendDocumentById(to, mediaId, filename, caption, options = {}) {
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const token = process.env.WHATSAPP_TOKEN;
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
+
+  try {
+    const document = {
+      id: mediaId,
+      ...(filename ? { filename } : {}),
+      ...(caption ? { caption } : {}),
+    };
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to,
+          type: "document",
+          document,
+          ...replyContext(options),
+        }),
+      },
+      requestTimeoutMs(
+        process.env.WHATSAPP_MESSAGE_TIMEOUT_MS,
+        DEFAULT_META_MESSAGE_REQUEST_TIMEOUT_MS
+      ),
+      { requestId: options.requestId || null, operation: "document_message_id", bytes: null }
+    );
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error("WhatsApp document (by id) send failed:", res.status, errBody);
+      return classifyWhatsappSendFailure(res.status, errBody);
+    }
+    const data = await res.json();
+    return classifyWhatsappAcceptedResponse(data);
+  } catch (err) {
+    console.error("WhatsApp document (by id) send threw an error:", err);
+    return interruptedDeliveryResult(err);
+  }
+}
+
 async function sendStickerById(to, mediaId, options = {}) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_TOKEN;
@@ -806,6 +853,7 @@ module.exports = {
   uploadMedia,
   sendImageById,
   sendVideoById,
+  sendDocumentById,
   sendStickerById,
   sendVoiceById,
   downloadMedia,
