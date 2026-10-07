@@ -1164,10 +1164,10 @@ router.post(
         req.file.path,
         {
           originalBytes: req.file.size,
-          // MP4 is only a container. iPhone exports can still carry HEVC/H.265,
-          // which WhatsApp rejects asynchronously. Normalize configured videos
-          // once at upload time so every later follow-up send reuses safe bytes.
-          forceTranscode: true,
+          // MP4 is only a container. Inspect the actual codec so an iPhone HEVC
+          // export is normalized once, while already-safe H.264/AAC keeps its
+          // original bytes and quality.
+          ensureWhatsAppCompatible: true,
         }
       );
       const key = await mediaStorage.uploadMedia(
