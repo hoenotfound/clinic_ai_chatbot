@@ -6,6 +6,7 @@ const {
   DELIVERY_ALERT_COOLDOWN_MINUTES,
   HUMAN_ALERT_COOLDOWN_MINUTES,
   IMMEDIATE_ALERT_RETRY_DELAYS_MS,
+  QUEUE_PERSIST_RETRY_DELAYS_MS,
   buildImmediateAlertMessage,
   createImmediateAlertQueueRunner,
   createTelegramImmediateAlertService,
@@ -325,6 +326,48 @@ test("delivery failures are durably queued with the rendered alert text", async 
   assert.equal(queued[0].cooldownMinutes, DELIVERY_ALERT_COOLDOWN_MINUTES);
   assert.match(queued[0].eventKey, /^delivery:12:event:/);
   assert.match(queued[0].messageText, /outside reply window/);
+});
+
+test("delivery alert queue persistence retries transient advisory-lock timeouts without losing the alert", async () => {
+  const attempts = [];
+  const waits = [];
+  let wakes = 0;
+  const lockTimeout = new Error("canceling statement due to lock timeout");
+  lockTimeout.code = "55P03";
+
+  const service = createTelegramImmediateAlertService({
+    env: enabledEnv,
+    getContext: async () => context,
+    repository: {
+      async queueAlert(input) {
+        attempts.push(input);
+        if (attempts.length === 1) throw lockTimeout;
+        return { id: 92 };
+      },
+    },
+    queuePersistRetryDelaysMs: [0],
+    async wait(delayMs) {
+      waits.push(delayMs);
+    },
+    wakeQueue() {
+      wakes += 1;
+    },
+  });
+
+  const result = await service.sendDeliveryFailureAlert({
+    contactId: 12,
+    reason: "Delivery failed: provider rejected the video.",
+  });
+
+  assert.deepEqual(result, { status: "queued", alertId: 92 });
+  assert.equal(attempts.length, 2);
+  assert.deepEqual(waits, [0]);
+  assert.equal(wakes, 1);
+  assert.equal(attempts[0].eventKey, attempts[1].eventKey);
+});
+
+test("queue persistence retry schedule is bounded", () => {
+  assert.deepEqual(QUEUE_PERSIST_RETRY_DELAYS_MS, [150, 500]);
 });
 
 test("human interventions keep the 30-minute cooldown while queueing instead of sending inline", async () => {
