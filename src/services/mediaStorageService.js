@@ -114,6 +114,9 @@ function extensionForMimeType(mimeType) {
   if (type === "audio/aac") return "aac";
   if (type === "audio/amr") return "amr";
   if (type === "video/mp4") return "mp4";
+  if (type === "video/3gpp") return "3gp";
+  if (type === "video/quicktime") return "mov";
+  if (type === "video/webm") return "webm";
   if (type === "application/pdf") return "pdf";
   if (type === "application/msword") return "doc";
   if (type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return "docx";
