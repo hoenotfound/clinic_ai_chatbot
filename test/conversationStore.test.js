@@ -157,6 +157,64 @@ test("excludes WhatsApp sticker turns entirely from AI history and vision contex
 });
 
 
+test("video turns remain text-only and explicitly opaque in AI context", async (t) => {
+  const originalGetPage = messagesRepo.getMessagePageForContact;
+  const originalGetMedia = messagesRepo.getMessageMediaForContact;
+  const mediaReads = [];
+
+  t.after(() => {
+    messagesRepo.getMessagePageForContact = originalGetPage;
+    messagesRepo.getMessageMediaForContact = originalGetMedia;
+  });
+
+  messagesRepo.getMessagePageForContact = async () => ({
+    rows: [
+      {
+        id: 72,
+        contact_id: 7,
+        role: "user",
+        content: "🎥 [Customer sent a video]",
+        has_media_attachment: true,
+        media_mime_type: "video/3gpp",
+        delivery_status: null,
+      },
+      {
+        id: 73,
+        contact_id: 7,
+        role: "user",
+        content: "🎥 这个是我走路的时候",
+        has_media_attachment: true,
+        media_mime_type: "video/mp4",
+        delivery_status: null,
+      },
+    ],
+    hasMore: false,
+  });
+
+  messagesRepo.getMessageMediaForContact = async (...args) => {
+    mediaReads.push(args);
+    return {
+      media_mime_type: "video/mp4",
+      media_base64: "video-bytes",
+    };
+  };
+
+  const history = await conversationStore.getHistoryForContact(7, {
+    throughMessageId: 73,
+  });
+
+  assert.equal(history.length, 2);
+  assert.match(history[0].content, /AI cannot inspect the video's visual or audio content/);
+  assert.match(history[0].content, /Do not infer what it shows or sounds like/);
+  assert.match(history[1].content, /AI cannot inspect the video's visual or audio content/);
+  assert.match(history[1].content, /Customer caption: 这个是我走路的时候/);
+  assert.deepEqual(
+    mediaReads,
+    [],
+    "video bytes must never be loaded into Gemini/Claude context"
+  );
+});
+
 test("aiVisibleRows removes sticker placeholders while retaining real customer text", () => {
   const rows = conversationStore.aiVisibleRows([
     {
