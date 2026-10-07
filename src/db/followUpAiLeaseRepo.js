@@ -158,8 +158,16 @@ async function claimIfStillEligible({
        AND anchor.created_at >= $8::timestamptz
        AND CASE
              WHEN $10 = 'before_window_expiry'
-               THEN latest_inbound.created_at
-                 + ((1440 - $11::integer) * interval '1 minute')
+               THEN GREATEST(
+                 latest_inbound.created_at
+                   + ((1440 - $11::integer) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up.created_at
+                     + (($5::integer - $6::integer) * interval '1 minute'),
+                   latest_inbound.created_at
+                     + ((1440 - $11::integer) * interval '1 minute')
+                 )
+               )
              ELSE GREATEST(
                anchor.created_at + ($5::integer * interval '1 minute'),
                COALESCE(
@@ -170,8 +178,16 @@ async function claimIfStillEligible({
            END <= now()
        AND CASE
              WHEN $10 = 'before_window_expiry'
-               THEN latest_inbound.created_at
-                 + ((1440 - $11::integer) * interval '1 minute')
+               THEN GREATEST(
+                 latest_inbound.created_at
+                   + ((1440 - $11::integer) * interval '1 minute'),
+                 COALESCE(
+                   previous_follow_up.created_at
+                     + (($5::integer - $6::integer) * interval '1 minute'),
+                   latest_inbound.created_at
+                     + ((1440 - $11::integer) * interval '1 minute')
+                 )
+               )
              ELSE GREATEST(
                anchor.created_at + ($5::integer * interval '1 minute'),
                COALESCE(
