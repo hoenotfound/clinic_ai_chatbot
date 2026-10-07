@@ -65,6 +65,7 @@ test(
           whatsapp_message_id TEXT,
           sent_by_username TEXT,
           media_url TEXT,
+          media_key TEXT,
           media_mime_type TEXT,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           delivery_status TEXT,
