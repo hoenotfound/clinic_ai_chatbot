@@ -446,6 +446,17 @@ async function mockPortalApi(
       });
     }
 
+    if (
+      path === "/api/config/automated-follow-up/video-preview" &&
+      method === "GET"
+    ) {
+      return route.fulfill({
+        status: 200,
+        contentType: "video/mp4",
+        body: "fake-mp4-preview",
+      });
+    }
+
     if (path === "/api/config") {
       const configResponse = businessConfig || {
           automatedFollowUp: {
@@ -796,6 +807,8 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
   await expect(page.getByLabel("Follow-up quiet hours end")).toHaveValue("07:00");
 
   await page.getByRole("button", { name: "+ Add follow-up" }).click();
+  await expect(page.getByRole("button", { name: "Close" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Preview Follow-up 2" })).toBeVisible();
   await page
     .getByPlaceholder("Write the next follow-up message.")
     .fill("Still deciding? I can help with the details.");
@@ -816,7 +829,11 @@ test("Automated follow-up saves a multi-step service-targeted sequence", async (
     .last()
     .fill("For Pelvis 骨盆调理, I can help you understand which concern this suits.");
 
-  const stepImageInput = page.getByLabel("Follow-up 2 image upload");
+  const stepMediaGroup = page.getByRole("radiogroup", {
+    name: "Follow-up 2 media type",
+  });
+  await stepMediaGroup.getByRole("radio", { name: "Image" }).click();
+  const stepImageInput = page.getByLabel("Follow-up 2 media image upload");
   await stepImageInput.setInputFiles({
     name: "follow-up.jpg",
     mimeType: "image/jpeg",
@@ -918,8 +935,12 @@ test("Automated follow-up switches cleanly between image and video attachments",
   await page.goto("/tools");
   await expect(page.getByRole("heading", { name: "Automated follow-up" })).toBeVisible();
 
-  const imageInput = page.getByLabel("Follow-up 1 image upload");
-  const videoInput = page.getByLabel("Follow-up 1 video upload");
+  const mediaGroup = page.getByRole("radiogroup", {
+    name: "Follow-up 1 media type",
+  });
+
+  await mediaGroup.getByRole("radio", { name: "Image" }).click();
+  const imageInput = page.getByLabel("Follow-up 1 media image upload");
 
   await imageInput.setInputFiles({
     name: "follow-up.jpg",
@@ -928,6 +949,8 @@ test("Automated follow-up switches cleanly between image and video attachments",
   });
   await expect(page.getByRole("button", { name: "Remove image" })).toBeVisible();
 
+  await mediaGroup.getByRole("radio", { name: "Video" }).click();
+  const videoInput = page.getByLabel("Follow-up 1 media video upload");
   await videoInput.setInputFiles({
     name: "follow-up.mp4",
     mimeType: "video/mp4",
@@ -949,7 +972,9 @@ test("Automated follow-up switches cleanly between image and video attachments",
   });
 
   savedPayload = null;
-  await imageInput.setInputFiles({
+  await mediaGroup.getByRole("radio", { name: "Image" }).click();
+  const replacementImageInput = page.getByLabel("Follow-up 1 media image upload");
+  await replacementImageInput.setInputFiles({
     name: "follow-up-replacement.jpg",
     mimeType: "image/jpeg",
     buffer: Buffer.from("fake-jpeg-2"),
