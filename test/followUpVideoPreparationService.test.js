@@ -123,9 +123,7 @@ test("resource-safe FFmpeg args cap resolution, fps, decoder threads and encoder
   assert.equal(args[args.indexOf("-tune") + 1], "zerolatency");
   assert.equal(args[args.indexOf("-filter_threads") + 1], "1");
   assert.equal(args[args.indexOf("-max_muxing_queue_size") + 1], "128");
-  assert.equal(args.at(-3), "1");
-  assert.equal(args.at(-2), "-f");
-  assert.equal(args.at(-1), "mp4");
+  assert.deepEqual(args.slice(-5), ["-threads", "1", "-f", "mp4", "/tmp/output.mp4"]);
 });
 
 test("compression planner rejects videos too long for a usable <=16MB copy", () => {
