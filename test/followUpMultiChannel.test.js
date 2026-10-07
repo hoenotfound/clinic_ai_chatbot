@@ -25,6 +25,7 @@ const originals = {
   publish: realtimeEvents.publish,
   sendText: channelMessaging.sendText,
   sendImageByUrl: channelMessaging.sendImageByUrl,
+  sendVideoByStoredKey: channelMessaging.sendVideoByStoredKey,
 };
 
 test.after(() => {
@@ -46,6 +47,7 @@ test.after(() => {
   realtimeEvents.publish = originals.publish;
   channelMessaging.sendText = originals.sendText;
   channelMessaging.sendImageByUrl = originals.sendImageByUrl;
+  channelMessaging.sendVideoByStoredKey = originals.sendVideoByStoredKey;
 });
 
 function enableTool({ imageUrl = "" } = {}) {
@@ -206,6 +208,90 @@ test("Instagram image follow-up records text first and sends the graphic as a se
     { id: 511, status: "sent", error: null },
     { id: 512, status: "sent", error: null },
   ]);
+});
+
+test("Instagram sends a service video after the accepted follow-up text", async () => {
+  clinicConfig.services = [{ name: "Pelvic Care" }];
+  clinicConfig.serviceAliases = [];
+  clinicConfig.promotions = [];
+  clinicConfig.automatedFollowUp.serviceOverrides = [
+    {
+      serviceName: "Pelvic Care",
+      message: "Here is the Pelvic Care video.",
+      translations: {
+        en: "Here is the Pelvic Care video.",
+        ms: "Ini video Pelvic Care.",
+        zh: "给您看看骨盆调理视频。",
+      },
+      videoKey: "clients/neutro/messages/follow-up-config/pelvis.mp4",
+      videoFilename: "pelvis.mp4",
+    },
+  ];
+
+  const sends = [];
+  followUpRepo.findCandidates = async () => [
+    {
+      contact_id: 105,
+      channel: "instagram",
+      whatsapp_number: "+instagram:105",
+      channel_user_id: "igsid-105",
+      trigger_message_id: 540,
+      recent_inbound_messages: ["Pelvic Care details"],
+      treatment_interest: "Pelvic Care",
+    },
+  ];
+  followUpRepo.saveIfStillEligible = async (input) => ({
+    id: 541,
+    contact_id: 105,
+    content: input.content,
+    delivery_status: null,
+  });
+  followUpRepo.isClaimStillEligible = async () => true;
+  channelMessaging.sendText = async (contact, text) => {
+    sends.push({ type: "text", contact, text });
+    return {
+      success: true,
+      wamid: null,
+      externalMessageId: "mid-instagram-text-541",
+    };
+  };
+  channelMessaging.sendVideoByStoredKey = async (
+    contact,
+    key,
+    caption,
+    filename,
+    options
+  ) => {
+    sends.push({
+      type: "video",
+      contact,
+      key,
+      caption,
+      filename,
+      preSendAllowed: await options.preSendCheck(),
+    });
+    return {
+      success: true,
+      wamid: null,
+      externalMessageId: "mid-instagram-video-541",
+    };
+  };
+  messagesRepo.setDeliveryStatusById = async (id, status, error) => ({
+    id,
+    contact_id: 105,
+    delivery_status: status,
+    delivery_error: error,
+  });
+
+  await runAutomatedFollowUps();
+
+  assert.equal(sends.length, 2);
+  assert.equal(sends[0].type, "text");
+  assert.equal(sends[1].type, "video");
+  assert.equal(sends[1].key, "clients/neutro/messages/follow-up-config/pelvis.mp4");
+  assert.equal(sends[1].caption, undefined);
+  assert.equal(sends[1].filename, "pelvis.mp4");
+  assert.equal(sends[1].preSendAllowed, true);
 });
 
 test("a failed optional social graphic never makes the already-sent follow-up text retryable", async () => {
