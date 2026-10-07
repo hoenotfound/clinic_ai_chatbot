@@ -43,6 +43,8 @@ test("automated follow-up inserts take the conversation scoring lock and re-chec
       "fixed",
       "after_reply",
       120,
+      null,
+      null,
     ]);
     assert.match(sql, /automated_follow_up_step/);
     assert.match(sql, /automated_follow_up_target_service/);
@@ -185,6 +187,34 @@ test("pre-expiry timing is anchored to the latest inbound customer message", asy
     delayMinutes: [1320],
     timingModes: ["before_window_expiry"],
     beforeWindowExpiryMinutes: [120],
+    triggerMode: "all",
+    activatedAt: "2026-10-07T00:00:00.000Z",
+    limit: 25,
+  });
+});
+
+test("pre-expiry steps preserve spacing from the previous actual follow-up", async (t) => {
+  const originalQuery = pool.query;
+  t.after(() => {
+    pool.query = originalQuery;
+  });
+
+  pool.query = async (sql) => {
+    assert.match(
+      sql,
+      /previous_follow_up_created_at\s*\+ \(\(\(\$1::integer\[\]\)\[next_follow_up_step\] - \(\$1::integer\[\]\)\[next_follow_up_step - 1\]\) \* interval '1 minute'\)/
+    );
+    assert.match(
+      sql,
+      /WHEN \(\$5::text\[\]\)\[next_follow_up_step\] = 'before_window_expiry'\s*THEN GREATEST/
+    );
+    return { rows: [] };
+  };
+
+  await followUpRepo.findCandidates({
+    delayMinutes: [720, 1080],
+    timingModes: ["after_reply", "before_window_expiry"],
+    beforeWindowExpiryMinutes: [120, 360],
     triggerMode: "all",
     activatedAt: "2026-10-07T00:00:00.000Z",
     limit: 25,
